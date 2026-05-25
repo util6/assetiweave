@@ -167,7 +167,16 @@ MVP 阶段先采用前端静态 `NavigationModel`：
 - `subNavItems`：二级导航，按当前上方 Tab 提供该资产域内部的子功能。
 - `NavigationIcon`：使用字符串标识图标，不把 React 组件写入配置，便于后续从 SQLite 或 JSON 读取。
 
-后续迭代把 `NavigationModel` 接入 SQLite：
+当前实现已经把 `NavigationModel` 接入 SQLite。菜单不再只存在于前端静态配置；启动时后端会创建并 seed 以下表：
+
+- `navigation_state`：当前默认激活的侧边菜单、顶部 Tab 和二级导航。
+- `rail_menu_items`：侧边导航菜单项，包含 scope、position、enabled 和排序。
+- `header_tab_items`：顶部资产域 Tab，包含对应资产类型和排序。
+- `sub_nav_items`：按顶部 Tab 分组的二级导航。
+
+前端通过 Tauri command `get_navigation_model` 读取菜单模型；浏览器预览模式仍保留静态 fallback，便于不启动 Tauri 时开发 UI。
+
+后续迭代继续完善菜单管理：
 
 - 支持内置菜单 seed。
 - 支持用户启用/隐藏菜单。

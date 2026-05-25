@@ -37,3 +37,43 @@ pub(crate) struct ExecutionResult {
     pub(crate) conflict_count: usize,
     pub(crate) errors: Vec<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NavigationModel {
+    pub(crate) active_rail_id: String,
+    pub(crate) active_header_tab_id: String,
+    pub(crate) active_sub_nav_id: String,
+    pub(crate) rail_items: Vec<RailMenuItem>,
+    pub(crate) header_tabs: Vec<HeaderTabItem>,
+    pub(crate) sub_nav_items: std::collections::BTreeMap<String, Vec<SubNavItem>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RailMenuItem {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) icon: String,
+    pub(crate) scope: String,
+    pub(crate) enabled: bool,
+    pub(crate) position: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HeaderTabItem {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) asset_kind: Option<String>,
+    pub(crate) enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SubNavItem {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) route_key: String,
+    pub(crate) enabled: bool,
+}

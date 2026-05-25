@@ -1,6 +1,6 @@
 use crate::{
     executor, planner, platform, scanner, store,
-    types::{AppOverview, AppResult, AppState, ExecutionResult, SourceInput},
+    types::{AppOverview, AppResult, AppState, ExecutionResult, NavigationModel, SourceInput},
 };
 use assetiweave_core::{Asset, DeploymentPlan, Source, TargetProfile};
 use chrono::Utc;
@@ -74,6 +74,13 @@ pub(crate) fn list_profiles(state: State<'_, AppState>) -> AppResult<Vec<TargetP
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
     let conn = store::open_initialized(&state.db_path)?;
     store::load_profiles(&conn)
+}
+
+#[tauri::command]
+pub(crate) fn get_navigation_model(state: State<'_, AppState>) -> AppResult<NavigationModel> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    let conn = store::open_initialized(&state.db_path)?;
+    store::load_navigation_model(&conn)
 }
 
 #[tauri::command]

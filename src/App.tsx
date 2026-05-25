@@ -22,8 +22,9 @@ import {
 import { HeaderTabs } from "./components/navigation/HeaderTabs";
 import { SideRail } from "./components/navigation/SideRail";
 import { SubNavigation } from "./components/navigation/SubNavigation";
-import { navigationModel } from "./navigation/menu";
-import { createPlan, executePlan, getOverview, listAssets, revealPath, scanSources } from "./services/catalog";
+import { navigationModel as fallbackNavigationModel } from "./navigation/menu";
+import type { NavigationModel } from "./navigation/types";
+import { createPlan, executePlan, getNavigationModel, getOverview, listAssets, revealPath, scanSources } from "./services/catalog";
 import type { AppOverview, Asset, AssetKind, DeploymentPlan, ExecutionResult } from "./types";
 
 const kindLabel: Record<AssetKind, string> = {
@@ -45,15 +46,17 @@ export function App() {
   const [overview, setOverview] = useState<AppOverview | null>(null);
   const [plan, setPlan] = useState<DeploymentPlan | null>(null);
   const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
+  const [navigationModel, setNavigationModel] = useState<NavigationModel>(fallbackNavigationModel);
   const [busy, setBusy] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const activeSubNavItems = navigationModel.subNavItems[navigationModel.activeHeaderTabId] ?? [];
 
   useEffect(() => {
-    void Promise.all([listAssets(), getOverview()]).then(([assetList, appOverview]) => {
+    void Promise.all([listAssets(), getOverview(), getNavigationModel()]).then(([assetList, appOverview, appNavigationModel]) => {
       setAssets(assetList);
       setOverview(appOverview);
+      setNavigationModel(appNavigationModel);
     });
   }, []);
 

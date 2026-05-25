@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { navigationModel } from "../navigation/menu";
+import type { NavigationModel } from "../navigation/types";
 import type { AppOverview, Asset, DeploymentPlan, ExecutionResult, Source, TargetProfile } from "../types";
 
 const fallbackAssets: Asset[] = [
@@ -119,6 +121,14 @@ export async function listProfiles(): Promise<TargetProfile[]> {
     return await invoke<TargetProfile[]>("list_profiles");
   } catch {
     return [];
+  }
+}
+
+export async function getNavigationModel(): Promise<NavigationModel> {
+  try {
+    return await invoke<NavigationModel>("get_navigation_model");
+  } catch {
+    return navigationModel;
   }
 }
 

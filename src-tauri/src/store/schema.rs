@@ -2,7 +2,10 @@ use crate::{defaults, types::AppResult};
 use rusqlite::{Connection, OptionalExtension};
 use std::path::Path;
 
-use super::{codec::db_error, profile_repo::upsert_profile, source_repo::upsert_source, sql};
+use super::{
+    codec::db_error, menu_repo::seed_navigation_model, profile_repo::upsert_profile,
+    source_repo::upsert_source, sql,
+};
 
 pub(crate) fn open_initialized(db_path: &Path) -> AppResult<Connection> {
     let conn = Connection::open(db_path).map_err(db_error)?;
@@ -28,6 +31,10 @@ fn seed_defaults(conn: &Connection) -> AppResult<()> {
         }
     }
 
+    if count_rows(conn, "navigation_state")? == 0 {
+        seed_navigation_model(conn, &defaults::default_navigation_model())?;
+    }
+
     Ok(())
 }
 
@@ -45,6 +52,7 @@ pub(crate) fn count_rows(conn: &Connection, table: &str) -> AppResult<usize> {
         "sources" => sql::COUNT_SOURCES,
         "assets" => sql::COUNT_ASSETS,
         "profiles" => sql::COUNT_PROFILES,
+        "navigation_state" => sql::COUNT_NAVIGATION_STATE,
         other => return Err(format!("unsupported count table: {other}")),
     };
     let count: i64 = conn

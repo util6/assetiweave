@@ -1,7 +1,9 @@
+use crate::types::{HeaderTabItem, NavigationModel, RailMenuItem, SubNavItem};
 use assetiweave_core::{
     AppKind, AssetKind, DeploymentStrategy, ProfileSafety, RuleSet, Source, SourceKind,
     TargetProfile,
 };
+use std::collections::BTreeMap;
 
 pub(crate) fn default_sources() -> Vec<Source> {
     let mut sources = Vec::new();
@@ -118,4 +120,111 @@ pub(crate) fn default_profiles() -> Vec<TargetProfile> {
         },
     })
     .collect()
+}
+
+pub(crate) fn default_navigation_model() -> NavigationModel {
+    NavigationModel {
+        active_rail_id: "catalog".to_string(),
+        active_header_tab_id: "skills".to_string(),
+        active_sub_nav_id: "overview".to_string(),
+        rail_items: vec![
+            rail_item("home", "启动台", "rocket", "global", "primary"),
+            rail_item("dashboard", "运行概览", "gauge", "global", "primary"),
+            rail_item("routes", "路由", "navigation", "global", "primary"),
+            rail_item("knowledge", "知识资产", "brain", "asset-catalog", "primary"),
+            rail_item(
+                "sources",
+                "Source 管理",
+                "layers",
+                "asset-catalog",
+                "primary",
+            ),
+            rail_item("profiles", "Profile", "boxes", "profile", "primary"),
+            rail_item("commands", "命令", "command", "profile", "primary"),
+            rail_item("catalog", "资产目录", "archive", "asset-catalog", "primary"),
+            rail_item("apps", "App 管理", "grid", "profile", "primary"),
+            rail_item("security", "安全策略", "shield", "settings", "secondary"),
+            rail_item("docs", "文档", "file-code", "global", "secondary"),
+            rail_item("settings", "设置", "settings", "settings", "secondary"),
+        ],
+        header_tabs: vec![
+            header_tab("skills", "Skills", Some("skill")),
+            header_tab("mcp", "MCP", Some("mcp")),
+            header_tab("prompts", "Prompts", Some("prompt")),
+            header_tab("rules", "Rules", Some("rule")),
+            header_tab("profiles", "Profiles", Some("profile")),
+        ],
+        sub_nav_items: BTreeMap::from([
+            (
+                "skills".to_string(),
+                vec![
+                    sub_nav("overview", "目录总览", "skills.overview"),
+                    sub_nav("groups", "分组管理", "skills.groups"),
+                    sub_nav("sources", "Skill 源管理", "skills.sources"),
+                    sub_nav("mounts", "挂载管理", "skills.mounts"),
+                ],
+            ),
+            (
+                "mcp".to_string(),
+                vec![
+                    sub_nav("overview", "服务总览", "mcp.overview"),
+                    sub_nav("servers", "Server 管理", "mcp.servers"),
+                    sub_nav("configs", "配置投影", "mcp.configs"),
+                ],
+            ),
+            (
+                "prompts".to_string(),
+                vec![
+                    sub_nav("overview", "Prompt 总览", "prompts.overview"),
+                    sub_nav("templates", "模板管理", "prompts.templates"),
+                    sub_nav("targets", "目标 App", "prompts.targets"),
+                ],
+            ),
+            (
+                "rules".to_string(),
+                vec![
+                    sub_nav("overview", "规则总览", "rules.overview"),
+                    sub_nav("policies", "启用策略", "rules.policies"),
+                    sub_nav("conflicts", "冲突检测", "rules.conflicts"),
+                ],
+            ),
+            (
+                "profiles".to_string(),
+                vec![
+                    sub_nav("overview", "App 总览", "profiles.overview"),
+                    sub_nav("templates", "Profile 模板", "profiles.templates"),
+                    sub_nav("plans", "部署计划", "profiles.plans"),
+                ],
+            ),
+        ]),
+    }
+}
+
+fn rail_item(id: &str, label: &str, icon: &str, scope: &str, position: &str) -> RailMenuItem {
+    RailMenuItem {
+        id: id.to_string(),
+        label: label.to_string(),
+        icon: icon.to_string(),
+        scope: scope.to_string(),
+        enabled: true,
+        position: position.to_string(),
+    }
+}
+
+fn header_tab(id: &str, label: &str, asset_kind: Option<&str>) -> HeaderTabItem {
+    HeaderTabItem {
+        id: id.to_string(),
+        label: label.to_string(),
+        asset_kind: asset_kind.map(str::to_string),
+        enabled: true,
+    }
+}
+
+fn sub_nav(id: &str, label: &str, route_key: &str) -> SubNavItem {
+    SubNavItem {
+        id: id.to_string(),
+        label: label.to_string(),
+        route_key: route_key.to_string(),
+        enabled: true,
+    }
 }

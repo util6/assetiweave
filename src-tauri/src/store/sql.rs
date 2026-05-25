@@ -43,6 +43,41 @@ CREATE TABLE IF NOT EXISTS deployment_state (
     managed_by TEXT NOT NULL,
     PRIMARY KEY (profile_id, asset_id, target_path)
 );
+
+CREATE TABLE IF NOT EXISTS navigation_state (
+    id TEXT PRIMARY KEY,
+    active_rail_id TEXT NOT NULL,
+    active_header_tab_id TEXT NOT NULL,
+    active_sub_nav_id TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rail_menu_items (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    icon TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    enabled INTEGER NOT NULL,
+    position TEXT NOT NULL,
+    sort_order INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS header_tab_items (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    asset_kind TEXT,
+    enabled INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sub_nav_items (
+    parent_tab_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    route_key TEXT NOT NULL,
+    enabled INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL,
+    PRIMARY KEY (parent_tab_id, id)
+);
 "#;
 
 pub(crate) const LATEST_SCAN_STATUS: &str =
@@ -67,6 +102,72 @@ pub(crate) const LIST_PROFILES: &str = "SELECT payload FROM profiles ORDER BY id
 pub(crate) const COUNT_SOURCES: &str = "SELECT COUNT(*) FROM sources";
 pub(crate) const COUNT_ASSETS: &str = "SELECT COUNT(*) FROM assets";
 pub(crate) const COUNT_PROFILES: &str = "SELECT COUNT(*) FROM profiles";
+pub(crate) const COUNT_NAVIGATION_STATE: &str = "SELECT COUNT(*) FROM navigation_state";
+
+pub(crate) const GET_NAVIGATION_STATE: &str = r#"
+SELECT active_rail_id, active_header_tab_id, active_sub_nav_id
+FROM navigation_state
+WHERE id = 'default'
+"#;
+
+pub(crate) const LIST_RAIL_MENU_ITEMS: &str = r#"
+SELECT id, label, icon, scope, enabled, position
+FROM rail_menu_items
+ORDER BY sort_order ASC, id ASC
+"#;
+
+pub(crate) const LIST_HEADER_TAB_ITEMS: &str = r#"
+SELECT id, label, asset_kind, enabled
+FROM header_tab_items
+ORDER BY sort_order ASC, id ASC
+"#;
+
+pub(crate) const LIST_SUB_NAV_ITEMS: &str = r#"
+SELECT parent_tab_id, id, label, route_key, enabled
+FROM sub_nav_items
+ORDER BY parent_tab_id ASC, sort_order ASC, id ASC
+"#;
+
+pub(crate) const UPSERT_NAVIGATION_STATE: &str = r#"
+INSERT INTO navigation_state (id, active_rail_id, active_header_tab_id, active_sub_nav_id)
+VALUES ('default', ?1, ?2, ?3)
+ON CONFLICT(id) DO UPDATE SET
+    active_rail_id = excluded.active_rail_id,
+    active_header_tab_id = excluded.active_header_tab_id,
+    active_sub_nav_id = excluded.active_sub_nav_id
+"#;
+
+pub(crate) const UPSERT_RAIL_MENU_ITEM: &str = r#"
+INSERT INTO rail_menu_items (id, label, icon, scope, enabled, position, sort_order)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+ON CONFLICT(id) DO UPDATE SET
+    label = excluded.label,
+    icon = excluded.icon,
+    scope = excluded.scope,
+    enabled = excluded.enabled,
+    position = excluded.position,
+    sort_order = excluded.sort_order
+"#;
+
+pub(crate) const UPSERT_HEADER_TAB_ITEM: &str = r#"
+INSERT INTO header_tab_items (id, label, asset_kind, enabled, sort_order)
+VALUES (?1, ?2, ?3, ?4, ?5)
+ON CONFLICT(id) DO UPDATE SET
+    label = excluded.label,
+    asset_kind = excluded.asset_kind,
+    enabled = excluded.enabled,
+    sort_order = excluded.sort_order
+"#;
+
+pub(crate) const UPSERT_SUB_NAV_ITEM: &str = r#"
+INSERT INTO sub_nav_items (parent_tab_id, id, label, route_key, enabled, sort_order)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+ON CONFLICT(parent_tab_id, id) DO UPDATE SET
+    label = excluded.label,
+    route_key = excluded.route_key,
+    enabled = excluded.enabled,
+    sort_order = excluded.sort_order
+"#;
 
 pub(crate) const UPSERT_SOURCE: &str = r#"
 INSERT INTO sources (
