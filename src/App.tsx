@@ -2,37 +2,29 @@ import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import {
   Archive,
-  Boxes,
-  Brain,
-  Command,
   Download,
   Eye,
-  FileCode2,
   Filter,
   Folder,
-  Gauge,
   Grid3X3,
-  Layers3,
   List,
   Menu,
-  Navigation,
   Pencil,
   Plus,
   RefreshCw,
-  Rocket,
   Search,
   Settings,
-  ShieldCheck,
   SlidersHorizontal,
-  Sparkles,
   Tag,
   Trash2,
   Upload,
 } from "lucide-react";
+import { HeaderTabs } from "./components/navigation/HeaderTabs";
+import { SideRail } from "./components/navigation/SideRail";
+import { SubNavigation } from "./components/navigation/SubNavigation";
+import { navigationModel } from "./navigation/menu";
 import { createPlan, executePlan, getOverview, listAssets, revealPath, scanSources } from "./services/catalog";
 import type { AppOverview, Asset, AssetKind, DeploymentPlan, ExecutionResult } from "./types";
-
-const navItems = [Rocket, Gauge, Navigation, Brain, Layers3, Boxes, FileCode2, Command, Sparkles, Archive, Grid3X3];
 
 const kindLabel: Record<AssetKind, string> = {
   prompt: "Prompt",
@@ -56,6 +48,7 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
+  const activeSubNavItems = navigationModel.subNavItems[navigationModel.activeHeaderTabId] ?? [];
 
   useEffect(() => {
     void Promise.all([listAssets(), getOverview()]).then(([assetList, appOverview]) => {
@@ -132,39 +125,7 @@ export function App() {
 
   return (
     <div className="grid-texture flex min-h-screen bg-background text-on-surface">
-      <aside
-        className="fixed inset-y-0 left-0 z-30 flex w-sidebar-width flex-col items-center justify-between border-r border-outline-variant bg-surface-low/95 px-2 py-4 backdrop-blur"
-        aria-label="主导航"
-      >
-        <div className="flex w-full flex-col items-center gap-2">
-          <button
-            className="mb-4 grid size-10 place-items-center rounded-xl border border-status-update/20 bg-status-update/15 text-status-update transition-transform active:scale-95"
-            aria-label="AssetIWeave"
-          >
-            <Rocket size={22} strokeWidth={2.4} />
-          </button>
-          <nav className="flex w-full flex-col items-center gap-2">
-            {navItems.map((Icon, index) => (
-              <button
-                className={clsx(
-                  "grid size-10 place-items-center rounded-xl border border-transparent text-on-surface-variant/75 transition-all hover:border-outline-variant hover:bg-surface-highest/70 hover:text-primary active:scale-95",
-                  index === 9 && "border-outline-variant bg-surface-highest/70 text-primary",
-                )}
-                key={`${Icon.displayName ?? Icon.name}-${index}`}
-                aria-label={`导航 ${index + 1}`}
-              >
-                <Icon size={19} />
-              </button>
-            ))}
-          </nav>
-        </div>
-
-        <div className="flex w-full flex-col items-center gap-2">
-          <RailButton label="安全策略" icon={<ShieldCheck size={19} />} />
-          <RailButton label="文档" icon={<FileCode2 size={19} />} />
-          <RailButton label="设置" icon={<Settings size={19} />} active />
-        </div>
-      </aside>
+      <SideRail activeId={navigationModel.activeRailId} items={navigationModel.railItems} />
 
       <main className="ml-sidebar-width flex min-h-screen w-[calc(100%-64px)] flex-1 flex-col">
         <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center px-8 backdrop-blur">
@@ -172,44 +133,13 @@ export function App() {
             <Archive size={22} />
             <span>资产目录</span>
           </div>
-          <div
-            className="absolute left-1/2 flex -translate-x-1/2 gap-0.5 rounded-full border border-border bg-surface-low/90 p-1"
-            role="tablist"
-            aria-label="资产类型"
-          >
-            {["Skills", "MCP", "Prompts", "Rules"].map((label, index) => (
-              <button
-                className={clsx(
-                  "min-w-24 rounded-full px-5 py-2 text-label-caps text-on-surface-variant transition-colors hover:text-on-surface",
-                  index === 0 && "bg-surface-highest text-primary shadow-lg",
-                )}
-                key={label}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <HeaderTabs activeId={navigationModel.activeHeaderTabId} tabs={navigationModel.headerTabs} />
           <div className="ml-auto max-w-[300px] overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">
             {overview?.last_scan_status ?? "加载中..."}
           </div>
         </header>
 
-        <section
-          className="sticky top-16 z-10 flex shrink-0 gap-3 border-y border-border bg-surface-lowest/70 px-8 py-3 backdrop-blur"
-          aria-label="Skills 子导航"
-        >
-          {["目录总览", "分组管理", "Skill 源管理", "挂载管理"].map((label, index) => (
-            <button
-              className={clsx(
-                "rounded-full border border-transparent px-4 py-1.5 text-body-sm text-on-surface-variant transition-colors hover:bg-surface-high hover:text-on-surface",
-                index === 0 && "border-primary-strong/30 bg-surface-high text-primary",
-              )}
-              key={label}
-            >
-              {label}
-            </button>
-          ))}
-        </section>
+        <SubNavigation activeId={navigationModel.activeSubNavId} items={activeSubNavItems} />
 
         <section
           className="sticky top-[113px] z-10 flex justify-between gap-4 border-b border-border bg-surface-low/50 px-8 py-4 backdrop-blur max-[1160px]:flex-col"
@@ -362,22 +292,6 @@ export function App() {
         </section>
       </main>
     </div>
-  );
-}
-
-function RailButton({ label, icon, active = false }: { label: string; icon: React.ReactNode; active?: boolean }) {
-  return (
-    <button
-      className={clsx(
-        "grid size-10 place-items-center rounded-xl border transition-all active:scale-95",
-        active
-          ? "border-outline-variant bg-surface-highest/70 text-primary"
-          : "border-transparent text-on-surface-variant/75 hover:border-outline-variant hover:bg-surface-highest/70 hover:text-primary",
-      )}
-      aria-label={label}
-    >
-      {icon}
-    </button>
   );
 }
 

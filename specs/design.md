@@ -156,6 +156,25 @@ flowchart TB
 - 后台同步设置。
 - cc-switch 迁移入口。
 
+### 4.6 Menu Management
+
+菜单管理是独立模块，而不是页面里的静态 JSX。AssetIWeave 的核心目标之一是支持更多 AI App、更多资产形态和更多 Profile，因此导航体系必须可以扩展、排序、启停和配置。
+
+MVP 阶段先采用前端静态 `NavigationModel`：
+
+- `railItems`：侧边主导航，按 `primary`、`secondary` 分组，承载 Catalog、Profiles、App 管理、Settings 等入口。
+- `headerTabs`：页面上方的资产类型导航，映射 Skill、MCP、Prompt、Rule、Profile 等资产域。
+- `subNavItems`：二级导航，按当前上方 Tab 提供该资产域内部的子功能。
+- `NavigationIcon`：使用字符串标识图标，不把 React 组件写入配置，便于后续从 SQLite 或 JSON 读取。
+
+后续迭代把 `NavigationModel` 接入 SQLite：
+
+- 支持内置菜单 seed。
+- 支持用户启用/隐藏菜单。
+- 支持 App/Profile 安装后自动注册菜单入口。
+- 支持按资产类型、目标 App、Profile 能力动态生成子菜单。
+- 支持菜单迁移版本，避免升级时覆盖用户配置。
+
 ## 5. 核心数据模型
 
 ### 5.1 Source

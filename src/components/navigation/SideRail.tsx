@@ -1,0 +1,49 @@
+import clsx from "clsx";
+import { MenuIcon } from "../../navigation/icons";
+import type { RailMenuItem } from "../../navigation/types";
+
+export function SideRail({ activeId, items }: { activeId: string; items: RailMenuItem[] }) {
+  const primaryItems = items.filter((item) => item.enabled && item.position === "primary");
+  const secondaryItems = items.filter((item) => item.enabled && item.position === "secondary");
+
+  return (
+    <aside
+      className="fixed inset-y-0 left-0 z-30 flex w-sidebar-width flex-col items-center justify-between border-r border-outline-variant bg-surface-low/95 px-2 py-4 backdrop-blur"
+      aria-label="主导航"
+    >
+      <div className="flex w-full flex-col items-center gap-2">
+        <button
+          className="mb-4 grid size-10 place-items-center rounded-xl border border-status-update/20 bg-status-update/15 text-status-update transition-transform active:scale-95"
+          aria-label="AssetIWeave"
+        >
+          <MenuIcon name="rocket" size={22} />
+        </button>
+        <RailGroup activeId={activeId} items={primaryItems} />
+      </div>
+
+      <RailGroup activeId={activeId} items={secondaryItems} />
+    </aside>
+  );
+}
+
+function RailGroup({ activeId, items }: { activeId: string; items: RailMenuItem[] }) {
+  return (
+    <nav className="flex w-full flex-col items-center gap-2">
+      {items.map((item) => (
+        <button
+          className={clsx(
+            "grid size-10 place-items-center rounded-xl border transition-all active:scale-95",
+            item.id === activeId
+              ? "border-outline-variant bg-surface-highest/70 text-primary"
+              : "border-transparent text-on-surface-variant/75 hover:border-outline-variant hover:bg-surface-highest/70 hover:text-primary",
+          )}
+          key={item.id}
+          aria-label={item.label}
+          title={item.label}
+        >
+          <MenuIcon name={item.icon} />
+        </button>
+      ))}
+    </nav>
+  );
+}
