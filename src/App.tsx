@@ -299,9 +299,8 @@ export function App() {
                       >
                         {displayPath(asset)}
                       </button>
-                      <div className="mt-4 grid grid-cols-[minmax(220px,2fr)_minmax(120px,1fr)_minmax(120px,1fr)] gap-5 max-[980px]:grid-cols-1">
+                      <div className="mt-4 grid grid-cols-[minmax(220px,2fr)_minmax(120px,1fr)] gap-5 max-[980px]:grid-cols-1">
                         <InlineMeta label="Description" value={asset.description ?? "No description"} />
-                        <InlineMeta label="Type" value={`${kindLabel[asset.kind]} / ${asset.format}`} />
                         <InlineMeta label="Source" value={asset.source_id} mono />
                       </div>
                     </div>
