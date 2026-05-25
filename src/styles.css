@@ -1,0 +1,53 @@
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    min-width: 1024px;
+    min-height: 100vh;
+    margin: 0;
+    color: theme("colors.on-surface");
+    font-family: theme("fontFamily.sans");
+    background:
+      radial-gradient(circle at 52% 28%, rgba(14, 165, 233, 0.11) 0%, transparent 48%),
+      linear-gradient(135deg, rgba(173, 198, 255, 0.04), transparent 38%),
+      theme("colors.background");
+  }
+}
+
+@layer utilities {
+  .grid-texture {
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  .glass-card {
+    background: rgba(30, 41, 59, 0.62);
+    backdrop-filter: blur(12px);
+  }
+
+  .asset-description {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+  }
+
+  .group:hover .asset-description,
+  .asset-expanded .asset-description {
+    -webkit-line-clamp: 2;
+  }
+}

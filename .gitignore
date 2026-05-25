@@ -1,0 +1,11 @@
+**/.DS_Store
+.specstory/
+
+node_modules/
+dist/
+target/
+
+*.log
+*.tmp
+
+src-tauri/target/
