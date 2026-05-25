@@ -87,6 +87,45 @@ const fallbackAssets: Asset[] = [
   },
 ];
 
+const fallbackProfiles: TargetProfile[] = [
+  {
+    id: "codex",
+    name: "Codex",
+    app_kind: "codex",
+    target_paths: ["~/.codex/assetiweave"],
+    supported_kinds: ["skill", "prompt", "rule", "custom"],
+    deployment_strategy: "symlink",
+    enabled: true,
+  },
+  {
+    id: "claude",
+    name: "Claude",
+    app_kind: "claude",
+    target_paths: ["~/.claude/assetiweave"],
+    supported_kinds: ["skill", "prompt", "rule", "custom"],
+    deployment_strategy: "symlink",
+    enabled: true,
+  },
+  {
+    id: "cursor",
+    name: "Cursor",
+    app_kind: "cursor",
+    target_paths: ["~/Library/Application Support/Cursor/assetiweave"],
+    supported_kinds: ["skill", "prompt", "rule", "custom"],
+    deployment_strategy: "symlink",
+    enabled: true,
+  },
+  {
+    id: "gemini",
+    name: "Gemini",
+    app_kind: "gemini",
+    target_paths: ["~/.gemini/assetiweave"],
+    supported_kinds: ["skill", "prompt", "rule", "custom"],
+    deployment_strategy: "symlink",
+    enabled: true,
+  },
+];
+
 export async function getOverview(): Promise<AppOverview> {
   try {
     return await invoke<AppOverview>("get_app_overview");
@@ -120,7 +159,7 @@ export async function listProfiles(): Promise<TargetProfile[]> {
   try {
     return await invoke<TargetProfile[]>("list_profiles");
   } catch {
-    return [];
+    return fallbackProfiles;
   }
 }
 

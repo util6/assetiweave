@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import {
   Archive,
+  Check,
   Download,
   Eye,
   Filter,
@@ -24,8 +25,17 @@ import { SideRail } from "./components/navigation/SideRail";
 import { SubNavigation } from "./components/navigation/SubNavigation";
 import { navigationModel as fallbackNavigationModel } from "./navigation/menu";
 import type { NavigationModel } from "./navigation/types";
-import { createPlan, executePlan, getNavigationModel, getOverview, listAssets, revealPath, scanSources } from "./services/catalog";
-import type { AppOverview, Asset, AssetKind, DeploymentPlan, ExecutionResult } from "./types";
+import {
+  createPlan,
+  executePlan,
+  getNavigationModel,
+  getOverview,
+  listAssets,
+  listProfiles,
+  revealPath,
+  scanSources,
+} from "./services/catalog";
+import type { AppOverview, Asset, AssetKind, DeploymentPlan, ExecutionResult, TargetProfile } from "./types";
 
 const kindLabel: Record<AssetKind, string> = {
   prompt: "Prompt",
@@ -44,20 +54,25 @@ const kindLabel: Record<AssetKind, string> = {
 export function App() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [overview, setOverview] = useState<AppOverview | null>(null);
+  const [profiles, setProfiles] = useState<TargetProfile[]>([]);
   const [plan, setPlan] = useState<DeploymentPlan | null>(null);
   const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
   const [navigationModel, setNavigationModel] = useState<NavigationModel>(fallbackNavigationModel);
   const [busy, setBusy] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [selectedMounts, setSelectedMounts] = useState<Record<string, string[]>>({});
   const [query, setQuery] = useState("");
   const activeSubNavItems = navigationModel.subNavItems[navigationModel.activeHeaderTabId] ?? [];
 
   useEffect(() => {
-    void Promise.all([listAssets(), getOverview(), getNavigationModel()]).then(([assetList, appOverview, appNavigationModel]) => {
-      setAssets(assetList);
-      setOverview(appOverview);
-      setNavigationModel(appNavigationModel);
-    });
+    void Promise.all([listAssets(), getOverview(), getNavigationModel(), listProfiles()]).then(
+      ([assetList, appOverview, appNavigationModel, profileList]) => {
+        setAssets(assetList);
+        setOverview(appOverview);
+        setNavigationModel(appNavigationModel);
+        setProfiles(profileList);
+      },
+    );
   }, []);
 
   const filteredAssets = useMemo(() => {
@@ -81,6 +96,21 @@ export function App() {
         next.add(id);
       }
       return next;
+    });
+  }
+
+  function toggleMountProfile(assetId: string, profileId: string) {
+    setSelectedMounts((current) => {
+      const selected = new Set(current[assetId] ?? []);
+      if (selected.has(profileId)) {
+        selected.delete(profileId);
+      } else {
+        selected.add(profileId);
+      }
+      return {
+        ...current,
+        [assetId]: [...selected],
+      };
     });
   }
 
@@ -250,7 +280,7 @@ export function App() {
                   key={asset.id}
                   onClick={() => toggleAsset(asset.id)}
                 >
-                  <div className="flex min-h-20 items-start justify-between gap-4 px-4 py-3.5">
+                  <div className="flex min-h-32 items-start justify-between gap-4 px-4 py-3.5">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-code-md text-on-surface">{asset.name}</span>
@@ -269,6 +299,11 @@ export function App() {
                       >
                         {displayPath(asset)}
                       </button>
+                      <div className="mt-4 grid grid-cols-[minmax(220px,2fr)_minmax(120px,1fr)_minmax(120px,1fr)] gap-5 max-[980px]:grid-cols-1">
+                        <InlineMeta label="Description" value={asset.description ?? "No description"} />
+                        <InlineMeta label="Type" value={`${kindLabel[asset.kind]} / ${asset.format}`} />
+                        <InlineMeta label="Source" value={asset.source_id} mono />
+                      </div>
                     </div>
                     <div className="flex gap-2 opacity-0 transition-opacity group-hover:opacity-100" onClick={(event) => event.stopPropagation()}>
                       <button className="grid size-8 place-items-center rounded-lg text-on-surface-variant hover:bg-surface-highest hover:text-primary" aria-label="编辑资产">
@@ -281,12 +316,12 @@ export function App() {
                   </div>
 
                   {isExpanded && (
-                    <div className="grid grid-cols-4 gap-4 border-t border-border/60 bg-surface/60 px-4 pb-4 pt-3">
-                      <PathDetail label="Path" value={asset.absolute_path} />
-                      <Detail label="Description" value={asset.description ?? "No description"} />
-                      <Detail label="Type" value={`${kindLabel[asset.kind]} / ${asset.format}`} />
-                      <Detail label="Source" value={asset.source_id} />
-                    </div>
+                    <MountSelector
+                      asset={asset}
+                      profiles={profiles}
+                      selectedProfileIds={selectedMounts[asset.id] ?? []}
+                      onToggle={(profileId) => toggleMountProfile(asset.id, profileId)}
+                    />
                   )}
                 </article>
               );
@@ -294,6 +329,99 @@ export function App() {
           </div>
         </section>
       </main>
+    </div>
+  );
+}
+
+function InlineMeta({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <span className="block text-label-caps uppercase text-outline">{label}</span>
+      <span
+        className={clsx(
+          "mt-1 block overflow-hidden text-ellipsis whitespace-nowrap text-body-sm font-semibold text-on-surface",
+          mono && "font-mono text-primary",
+        )}
+        title={value}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function MountSelector({
+  asset,
+  profiles,
+  selectedProfileIds,
+  onToggle,
+}: {
+  asset: Asset;
+  profiles: TargetProfile[];
+  selectedProfileIds: string[];
+  onToggle: (profileId: string) => void;
+}) {
+  const enabledProfiles = profiles.filter((profile) => profile.enabled);
+
+  return (
+    <div className="border-t border-border/60 bg-surface/60 px-4 pb-4 pt-3" onClick={(event) => event.stopPropagation()}>
+      <div className="mb-3 flex items-center justify-between gap-4">
+        <div>
+          <span className="text-label-caps uppercase text-outline">Mount Targets</span>
+          <p className="mt-1 text-body-sm text-on-surface-variant">选择这个资产要挂载到哪些 App/Profile。</p>
+        </div>
+        <span className="rounded-md border border-border bg-surface-high px-2.5 py-1 font-mono text-body-sm text-primary">
+          {selectedProfileIds.length} selected
+        </span>
+      </div>
+
+      {enabledProfiles.length === 0 ? (
+        <div className="rounded-lg border border-border bg-surface-high px-3 py-3 text-body-sm text-on-surface-variant">
+          暂无可用 Profile。先在 Profile 管理中添加目标 App。
+        </div>
+      ) : (
+        <div className="grid grid-cols-4 gap-3 max-[1280px]:grid-cols-3 max-[980px]:grid-cols-2 max-[720px]:grid-cols-1">
+          {enabledProfiles.map((profile) => {
+            const selected = selectedProfileIds.includes(profile.id);
+            const supported = profile.supported_kinds.includes(asset.kind);
+            return (
+              <button
+                className={clsx(
+                  "min-h-24 rounded-xl border bg-surface-high px-3 py-3 text-left transition-colors",
+                  selected
+                    ? "border-primary-strong/60 bg-primary-strong/10"
+                    : "border-border hover:border-outline-variant hover:bg-surface-highest",
+                  !supported && "opacity-60",
+                )}
+                key={profile.id}
+                onClick={() => onToggle(profile.id)}
+                type="button"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="overflow-hidden text-ellipsis whitespace-nowrap text-body-sm font-bold text-on-surface">{profile.name}</p>
+                    <p className="mt-1 font-mono text-code-sm uppercase text-outline">{profile.app_kind}</p>
+                  </div>
+                  <span
+                    className={clsx(
+                      "grid size-6 shrink-0 place-items-center rounded-md border",
+                      selected ? "border-primary bg-primary text-on-primary" : "border-border text-transparent",
+                    )}
+                  >
+                    <Check size={15} />
+                  </span>
+                </div>
+                <p className="mt-3 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-sm text-on-surface-variant">
+                  {abbreviateHomePath(profile.target_paths[0] ?? "")}
+                </p>
+                <p className={clsx("mt-2 text-body-sm", supported ? "text-status-create" : "text-status-conflict")}>
+                  {supported ? "支持此资产类型" : "当前类型未声明支持"}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -340,35 +468,6 @@ function Metric({ label, value }: { label: string; value: string | number }) {
     <div className="flex min-h-14 items-center justify-between rounded-xl border border-border bg-surface-card/60 px-3.5 py-3">
       <span className="text-label-caps uppercase text-outline">{label}</span>
       <strong className="text-h2 font-bold text-primary">{value}</strong>
-    </div>
-  );
-}
-
-function Detail({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="min-w-0">
-      <span className="block text-label-caps uppercase text-outline">{label}</span>
-      <strong className={clsx("mt-1 block overflow-hidden text-ellipsis whitespace-nowrap text-body-sm font-medium text-on-surface", mono && "font-mono text-primary")}>
-        {value}
-      </strong>
-    </div>
-  );
-}
-
-function PathDetail({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <span className="block text-label-caps uppercase text-outline">{label}</span>
-      <button
-        className="mt-1 block max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm font-medium text-primary transition-colors hover:text-status-update"
-        onClick={(event) => {
-          event.stopPropagation();
-          void revealPath(value);
-        }}
-        title="在文件管理器中显示"
-      >
-        {abbreviateHomePath(value)}
-      </button>
     </div>
   );
 }
