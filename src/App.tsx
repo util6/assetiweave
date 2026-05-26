@@ -280,8 +280,8 @@ export function App() {
                   key={asset.id}
                   onClick={() => toggleAsset(asset.id)}
                 >
-                  <div className="flex min-h-32 items-start justify-between gap-4 px-4 py-3.5">
-                    <div className="min-w-0 flex-1">
+                  <div className="relative flex min-h-28 items-start justify-between gap-4 px-4 py-3.5">
+                    <div className="min-w-0 flex-1 pr-28">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-code-md text-on-surface">{asset.name}</span>
                         <span className={kindBadgeClass(asset.kind)}>{kindLabel[asset.kind] ?? asset.kind}</span>
@@ -299,12 +299,15 @@ export function App() {
                       >
                         {displayPath(asset)}
                       </button>
-                      <div className="mt-4 grid grid-cols-[minmax(220px,2fr)_minmax(120px,1fr)] gap-5 max-[980px]:grid-cols-1">
+                      <div className="mt-3 flex min-w-0 items-start gap-4 max-[980px]:flex-col max-[980px]:gap-2">
                         <InlineMeta label="Description" value={asset.description ?? "No description"} />
                         <InlineMeta label="Source" value={asset.source_id} mono />
                       </div>
                     </div>
-                    <div className="flex gap-2 opacity-0 transition-opacity group-hover:opacity-100" onClick={(event) => event.stopPropagation()}>
+                    <div
+                      className="absolute right-4 top-3.5 flex min-w-20 justify-end gap-2 opacity-0 transition-opacity group-hover:opacity-100"
+                      onClick={(event) => event.stopPropagation()}
+                    >
                       <button className="grid size-8 place-items-center rounded-lg text-on-surface-variant hover:bg-surface-highest hover:text-primary" aria-label="编辑资产">
                         <Pencil size={17} />
                       </button>
@@ -334,11 +337,11 @@ export function App() {
 
 function InlineMeta({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="min-w-0">
-      <span className="block text-label-caps uppercase text-outline">{label}</span>
+    <div className={clsx("flex min-w-0 items-baseline gap-2", mono ? "max-w-56 shrink-0" : "max-w-[520px] flex-1")}>
+      <span className="shrink-0 text-label-caps uppercase text-outline">{label}</span>
       <span
         className={clsx(
-          "mt-1 block overflow-hidden text-ellipsis whitespace-nowrap text-body-sm font-semibold text-on-surface",
+          "block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm font-semibold text-on-surface",
           mono && "font-mono text-primary",
         )}
         title={value}

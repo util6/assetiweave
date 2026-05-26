@@ -48,6 +48,6 @@
 
   .group:hover .asset-description,
   .asset-expanded .asset-description {
-    -webkit-line-clamp: 2;
+    color: theme("colors.primary");
   }
 }
