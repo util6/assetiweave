@@ -85,7 +85,13 @@ export function AssetRow({
       </div>
 
       {expanded && (
-        <AssetMountPanel asset={asset} profiles={profiles} selectedProfileIds={selectedProfileIds} onToggle={onToggleMount} />
+        <AssetMountPanel
+          appShortcuts={appShortcuts}
+          asset={asset}
+          profiles={profiles}
+          selectedProfileIds={selectedProfileIds}
+          onToggle={onToggleMount}
+        />
       )}
     </article>
   );

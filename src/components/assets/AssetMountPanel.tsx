@@ -1,13 +1,15 @@
 import { useI18n } from "../../i18n/I18nProvider";
-import type { Asset, TargetProfile } from "../../types";
+import type { AppShortcut, Asset, TargetProfile } from "../../types";
 import { AssetMountCard } from "./AssetMountCard";
 
 export function AssetMountPanel({
+  appShortcuts,
   asset,
   profiles,
   selectedProfileIds,
   onToggle,
 }: {
+  appShortcuts: AppShortcut[];
   asset: Asset;
   profiles: TargetProfile[];
   selectedProfileIds: string[];
@@ -39,6 +41,7 @@ export function AssetMountPanel({
               onToggle={onToggle}
               profile={profile}
               selected={selectedProfileIds.includes(profile.id)}
+              shortcut={appShortcuts.find((shortcut) => shortcut.profileId === profile.id)}
             />
           ))}
         </div>
