@@ -142,7 +142,7 @@ export async function getOverview(): Promise<AppOverview> {
       source_count: 2,
       asset_count: fallbackAssets.length,
       profile_count: 4,
-      last_scan_status: "浏览器预览模式：使用内置示例数据",
+      last_scan_status: "preview",
     };
   }
 }
