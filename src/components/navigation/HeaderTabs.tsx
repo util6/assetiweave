@@ -1,12 +1,16 @@
 import clsx from "clsx";
+import { useI18n } from "../../i18n/I18nProvider";
+import { headerTabLabel } from "../../i18n/navigation";
 import type { HeaderTabItem } from "../../navigation/types";
 
 export function HeaderTabs({ activeId, tabs }: { activeId: string; tabs: HeaderTabItem[] }) {
+  const { t } = useI18n();
+
   return (
     <div
-      className="absolute left-1/2 flex -translate-x-1/2 gap-0.5 rounded-full border border-border bg-surface-low/90 p-1"
+      className="flex gap-0.5 rounded-full border border-border bg-surface-low/90 p-1"
       role="tablist"
-      aria-label="资产类型"
+      aria-label={t("nav.aria.assetTypes")}
     >
       {tabs
         .filter((tab) => tab.enabled)
@@ -20,7 +24,7 @@ export function HeaderTabs({ activeId, tabs }: { activeId: string; tabs: HeaderT
             role="tab"
             aria-selected={tab.id === activeId}
           >
-            {tab.label}
+            {headerTabLabel(tab, t)}
           </button>
         ))}
     </div>

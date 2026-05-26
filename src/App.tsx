@@ -8,6 +8,7 @@ import {
   Filter,
   Folder,
   Grid3X3,
+  Languages,
   List,
   Menu,
   Pencil,
@@ -24,6 +25,8 @@ import { HeaderTabs } from "./components/navigation/HeaderTabs";
 import { SideRail } from "./components/navigation/SideRail";
 import { SubNavigation } from "./components/navigation/SubNavigation";
 import { NotificationBanner, type NotificationMessage } from "./components/notifications/NotificationBanner";
+import { assetKindLabel, deploymentActionLabel, translatePlanReason, translateScanStatus } from "./i18n/domain";
+import { useI18n } from "./i18n/I18nProvider";
 import { navigationModel as fallbackNavigationModel } from "./navigation/menu";
 import type { NavigationModel } from "./navigation/types";
 import {
@@ -39,21 +42,8 @@ import {
 } from "./services/catalog";
 import type { AppOverview, AppShortcut, Asset, AssetKind, DeploymentPlan, ExecutionResult, TargetProfile } from "./types";
 
-const kindLabel: Record<AssetKind, string> = {
-  prompt: "Prompt",
-  rule: "Rule",
-  memory: "Memory",
-  skill: "Skill",
-  mcp: "MCP",
-  agent: "Agent",
-  command: "Command",
-  workflow: "Workflow",
-  profile: "Profile",
-  custom: "Custom",
-  unclassified: "Unclassified",
-};
-
 export function App() {
+  const { t } = useI18n();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [overview, setOverview] = useState<AppOverview | null>(null);
   const [profiles, setProfiles] = useState<TargetProfile[]>([]);
@@ -64,7 +54,7 @@ export function App() {
   const [notification, setNotification] = useState<NotificationMessage | null>({
     id: "mvp-notification-outlet",
     tone: "success",
-    message: "通知消息出口已就绪，后续账号切换、扫描完成、部署结果都可以在这里展示。",
+    messageKey: "notification.ready",
   });
   const [busy, setBusy] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -174,14 +164,17 @@ export function App() {
       <SideRail activeId={navigationModel.activeRailId} items={navigationModel.railItems} />
 
       <main className="ml-sidebar-width flex min-h-screen w-[calc(100%-64px)] flex-1 flex-col">
-        <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center px-8 backdrop-blur">
+        <header className="sticky top-0 z-20 grid h-16 shrink-0 grid-cols-[minmax(180px,1fr)_auto_minmax(360px,1fr)] items-center gap-4 px-8 backdrop-blur">
           <div className="flex items-center gap-2.5 text-h2 font-bold text-status-update">
             <Archive size={22} />
-            <span>资产目录</span>
+            <span>{t("app.title")}</span>
           </div>
           <HeaderTabs activeId={navigationModel.activeHeaderTabId} tabs={navigationModel.headerTabs} />
-          <div className="ml-auto max-w-[300px] overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">
-            {overview?.last_scan_status ?? "加载中..."}
+          <div className="flex min-w-0 items-center justify-end gap-3">
+            <div className="min-w-0 max-w-[360px] overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">
+              {translateScanStatus(overview?.last_scan_status, t)}
+            </div>
+            <LanguageSwitcher />
           </div>
         </header>
 
@@ -191,91 +184,90 @@ export function App() {
 
         <section
           className="sticky top-[113px] z-10 flex justify-between gap-4 border-y border-border bg-surface-low/50 px-8 py-4 backdrop-blur max-[1160px]:flex-col"
-          aria-label="资产操作栏"
+          aria-label={t("toolbar.aria.assetActions")}
         >
           <div className="flex items-center gap-3 max-[1160px]:flex-wrap">
             <label className="flex h-9 w-56 items-center gap-2 rounded-xl border border-border bg-surface-high px-3 text-outline focus-within:border-primary/50">
               <Search size={17} />
               <input
                 className="min-w-0 flex-1 border-0 bg-transparent text-body-sm text-on-surface outline-none placeholder:text-outline"
-                placeholder="搜索资产..."
+                placeholder={t("toolbar.searchPlaceholder")}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
             </label>
             <div className="flex h-9 items-center gap-1 rounded-xl border border-border bg-surface-high p-1">
-              <IconButton label="紧凑视图" icon={<Menu size={17} />} compact />
-              <button className="grid size-7 place-items-center rounded-lg bg-status-update text-white" aria-label="列表视图">
+              <IconButton label={t("toolbar.view.compact")} icon={<Menu size={17} />} compact />
+              <button className="grid size-7 place-items-center rounded-lg bg-status-update text-white" aria-label={t("toolbar.view.list")}>
                 <List size={17} />
               </button>
-              <IconButton label="网格视图" icon={<Grid3X3 size={17} />} compact />
+              <IconButton label={t("toolbar.view.grid")} icon={<Grid3X3 size={17} />} compact />
             </div>
-            <ToolbarButton icon={<Filter size={17} />} label={`全部 (${overview?.asset_count ?? assets.length})`} />
-            <ToolbarButton icon={<Tag size={17} />} label="标签筛选" />
-            <ToolbarButton icon={<SlidersHorizontal size={17} />} label="按创建时间" />
-            <IconButton label="导出" icon={<Download size={17} />} />
+            <ToolbarButton icon={<Filter size={17} />} label={t("toolbar.filter.all", { count: overview?.asset_count ?? assets.length })} />
+            <ToolbarButton icon={<Tag size={17} />} label={t("toolbar.filter.tag")} />
+            <ToolbarButton icon={<SlidersHorizontal size={17} />} label={t("toolbar.sort.createdAt")} />
+            <IconButton label={t("toolbar.export")} icon={<Download size={17} />} />
           </div>
 
           <div className="flex items-center gap-2 max-[1160px]:flex-wrap">
             <button
               className="grid size-10 place-items-center rounded-xl bg-gradient-to-br from-status-update to-status-create/70 text-white shadow-glow transition-transform hover:-translate-y-0.5 active:scale-95"
-              aria-label="生成部署计划"
+              aria-label={t("toolbar.createDeploymentPlan")}
               onClick={handleCreatePlan}
               disabled={busy}
             >
               <Plus size={22} />
             </button>
             <span className="mx-1 h-6 w-px bg-border" />
-            <IconButton label="扫描资产源" icon={<RefreshCw size={17} />} onClick={handleScan} disabled={busy} />
-            <IconButton label="生成计划" icon={<Eye size={17} />} onClick={handleCreatePlan} disabled={busy} />
-            <IconButton label="执行当前计划" icon={<Upload size={17} />} onClick={handleExecutePlan} disabled={busy || !plan} />
-            {[Folder, Settings].map((Icon) => (
-              <IconButton label={Icon.displayName ?? Icon.name} icon={<Icon size={17} />} key={Icon.name} />
-            ))}
+            <IconButton label={t("toolbar.scanSources")} icon={<RefreshCw size={17} />} onClick={handleScan} disabled={busy} />
+            <IconButton label={t("toolbar.generatePlan")} icon={<Eye size={17} />} onClick={handleCreatePlan} disabled={busy} />
+            <IconButton label={t("toolbar.executePlan")} icon={<Upload size={17} />} onClick={handleExecutePlan} disabled={busy || !plan} />
+            <IconButton label={t("toolbar.openFolder")} icon={<Folder size={17} />} />
+            <IconButton label={t("toolbar.settings")} icon={<Settings size={17} />} />
           </div>
         </section>
 
         <section className="flex flex-1 flex-col gap-4 px-8 py-6">
           <div className="grid grid-cols-4 gap-3">
-            <Metric label="Sources" value={overview?.source_count ?? 0} />
-            <Metric label="Assets" value={overview?.asset_count ?? assets.length} />
-            <Metric label="Profiles" value={overview?.profile_count ?? 0} />
-            <Metric label="Plan" value={plan ? `${plan.summary.create_count} create` : "Not generated"} />
+            <Metric label={t("metric.sources")} value={overview?.source_count ?? 0} />
+            <Metric label={t("metric.assets")} value={overview?.asset_count ?? assets.length} />
+            <Metric label={t("metric.profiles")} value={overview?.profile_count ?? 0} />
+            <Metric label={t("metric.plan")} value={plan ? t("plan.createSummary", { count: plan.summary.create_count }) : t("plan.notGenerated")} />
           </div>
 
           {plan && (
             <div className="grid grid-cols-5 gap-3">
-              <Metric label="Create" value={plan.summary.create_count} />
-              <Metric label="Update" value={plan.summary.update_count} />
-              <Metric label="Remove" value={plan.summary.remove_count} />
-              <Metric label="Skip" value={plan.summary.skip_count} />
-              <Metric label="Conflict" value={plan.summary.conflict_count} />
+              <Metric label={t("metric.create")} value={plan.summary.create_count} />
+              <Metric label={t("metric.update")} value={plan.summary.update_count} />
+              <Metric label={t("metric.remove")} value={plan.summary.remove_count} />
+              <Metric label={t("metric.skip")} value={plan.summary.skip_count} />
+              <Metric label={t("metric.conflict")} value={plan.summary.conflict_count} />
             </div>
           )}
 
           {executionResult && (
             <div className="grid grid-cols-4 gap-3">
-              <Metric label="Executed" value={executionResult.executed_count} />
-              <Metric label="Exec Skip" value={executionResult.skipped_count} />
-              <Metric label="Exec Conflict" value={executionResult.conflict_count} />
-              <Metric label="Errors" value={executionResult.errors.length} />
+              <Metric label={t("metric.executed")} value={executionResult.executed_count} />
+              <Metric label={t("metric.execSkip")} value={executionResult.skipped_count} />
+              <Metric label={t("metric.execConflict")} value={executionResult.conflict_count} />
+              <Metric label={t("metric.errors")} value={executionResult.errors.length} />
             </div>
           )}
 
           {plan && (
             <div className="glass-card overflow-hidden rounded-xl border border-border">
               <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                <span className="text-label-caps uppercase text-outline">Deployment Plan</span>
-                <span className="font-mono text-body-sm text-primary">{plan.actions.length} actions</span>
+                <span className="text-label-caps uppercase text-outline">{t("plan.title")}</span>
+                <span className="font-mono text-body-sm text-primary">{t("plan.actions", { count: plan.actions.length })}</span>
               </div>
               <div className="max-h-56 overflow-y-auto">
                 {plan.actions.slice(0, 16).map((action) => (
                   <div className="grid grid-cols-[96px_120px_1fr] gap-3 border-b border-border px-4 py-2.5 last:border-b-0" key={action.id}>
-                    <span className={planActionClass(action.action_type)}>{action.action_type}</span>
+                    <span className={planActionClass(action.action_type)}>{deploymentActionLabel(action.action_type, t)}</span>
                     <span className="font-mono text-body-sm text-on-surface-variant">{action.profile_id}</span>
                     <div className="min-w-0">
                       <p className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface">{action.target_path}</p>
-                      <p className="mt-1 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">{action.reason}</p>
+                      <p className="mt-1 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">{translatePlanReason(action.reason, t)}</p>
                     </div>
                   </div>
                 ))}
@@ -283,7 +275,7 @@ export function App() {
             </div>
           )}
 
-          <div className="glass-card overflow-hidden rounded-xl border border-border" aria-label="资产列表">
+          <div className="glass-card overflow-hidden rounded-xl border border-border" aria-label={t("asset.list.aria")}>
             {filteredAssets.map((asset) => {
               const isExpanded = expandedIds.has(asset.id);
               return (
@@ -299,9 +291,9 @@ export function App() {
                     <div className="min-w-0 flex-1 pr-80">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-code-md text-on-surface">{asset.name}</span>
-                        <span className={kindBadgeClass(asset.kind)}>{kindLabel[asset.kind] ?? asset.kind}</span>
+                        <span className={kindBadgeClass(asset.kind)}>{assetKindLabel(asset.kind, t)}</span>
                         <span className="rounded-md bg-surface-highest px-2 py-0.5 text-[10px] font-bold text-on-surface-variant">
-                          本地 Local
+                          {t("asset.origin.local")}
                         </span>
                       </div>
                       <button
@@ -310,13 +302,13 @@ export function App() {
                           event.stopPropagation();
                           void revealPath(asset.absolute_path);
                         }}
-                        title="在文件管理器中显示"
+                        title={t("asset.revealPath")}
                       >
                         {displayPath(asset)}
                       </button>
                       <div className="mt-3 flex min-w-0 items-start gap-4 max-[980px]:flex-col max-[980px]:gap-2">
-                        <InlineMeta label="Description" value={asset.description ?? "No description"} />
-                        <InlineMeta label="Source" value={asset.source_id} mono />
+                        <InlineMeta label={t("asset.description")} value={asset.description ?? t("asset.noDescription")} />
+                        <InlineMeta label={t("asset.source")} value={asset.source_id} mono />
                       </div>
                     </div>
                     <div className="absolute right-4 top-3.5 flex w-72 justify-end gap-3" onClick={(event) => event.stopPropagation()}>
@@ -327,10 +319,10 @@ export function App() {
                         selectedProfileIds={selectedMounts[asset.id] ?? []}
                         onToggle={(profileId) => toggleMountProfile(asset.id, profileId)}
                       />
-                      <button className="grid size-8 place-items-center rounded-lg text-on-surface-variant hover:bg-surface-highest hover:text-primary" aria-label="编辑资产">
+                      <button className="grid size-8 place-items-center rounded-lg text-on-surface-variant hover:bg-surface-highest hover:text-primary" aria-label={t("asset.edit")}>
                         <Pencil size={17} />
                       </button>
-                      <button className="grid size-8 place-items-center rounded-lg text-on-surface-variant hover:bg-surface-highest hover:text-status-remove" aria-label="删除资产">
+                      <button className="grid size-8 place-items-center rounded-lg text-on-surface-variant hover:bg-surface-highest hover:text-status-remove" aria-label={t("asset.delete")}>
                         <Trash2 size={17} />
                       </button>
                     </div>
@@ -371,6 +363,33 @@ function InlineMeta({ label, value, mono = false }: { label: string; value: stri
   );
 }
 
+function LanguageSwitcher() {
+  const { locale, setLocale, t } = useI18n();
+
+  return (
+    <div
+      className="flex h-9 shrink-0 items-center gap-1 rounded-xl border border-border bg-surface-high p-1 text-body-sm"
+      aria-label={t("language.label")}
+      role="group"
+    >
+      <Languages size={16} className="mx-1 text-outline" aria-hidden="true" />
+      {(["zh", "en"] as const).map((nextLocale) => (
+        <button
+          className={clsx(
+            "h-7 rounded-lg px-2.5 font-semibold transition-colors",
+            locale === nextLocale ? "bg-surface-highest text-primary" : "text-on-surface-variant hover:text-on-surface",
+          )}
+          key={nextLocale}
+          onClick={() => setLocale(nextLocale)}
+          type="button"
+        >
+          {t(nextLocale === "zh" ? "language.zh" : "language.en")}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function QuickMountButtons({
   asset,
   profiles,
@@ -384,6 +403,8 @@ function QuickMountButtons({
   selectedProfileIds: string[];
   onToggle: (profileId: string) => void;
 }) {
+  const { t } = useI18n();
+
   return (
     <div className="flex min-w-0 items-center justify-end gap-1.5">
       {shortcuts
@@ -406,7 +427,7 @@ function QuickMountButtons({
                 backgroundColor: selected ? `${shortcut.accentColor}24` : "transparent",
                 color: shortcut.accentColor,
               }}
-              title={`${selected ? "取消挂载" : "挂载到"} ${shortcut.profileName}`}
+              title={t(selected ? "mount.unmount" : "mount.mountTo", { profile: shortcut.profileName })}
               type="button"
             >
               {shortcut.displayIcon}
@@ -428,25 +449,26 @@ function MountSelector({
   selectedProfileIds: string[];
   onToggle: (profileId: string) => void;
 }) {
+  const { t } = useI18n();
   const enabledProfiles = profiles.filter((profile) => profile.enabled);
 
   return (
     <div className="border-t border-border/60 bg-surface/60 px-4 pb-4 pt-3" onClick={(event) => event.stopPropagation()}>
       <div className="mb-3 flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <span className="text-label-caps uppercase text-outline">Mount Targets</span>
+          <span className="text-label-caps uppercase text-outline">{t("mount.title")}</span>
           <p className="mt-1 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-on-surface-variant">
-            选择这个资产要挂载到哪些 App/Profile。
+            {t("mount.description")}
           </p>
         </div>
         <span className="rounded-md border border-border bg-surface-high px-2.5 py-1 font-mono text-body-sm text-primary">
-          {selectedProfileIds.length} selected
+          {t("mount.selected", { count: selectedProfileIds.length })}
         </span>
       </div>
 
       {enabledProfiles.length === 0 ? (
         <div className="rounded-lg border border-border bg-surface-high px-3 py-3 text-body-sm text-on-surface-variant">
-          暂无可用 Profile。先在 Profile 管理中添加目标 App。
+          {t("mount.empty")}
         </div>
       ) : (
         <div className="grid grid-cols-4 gap-2.5 max-[980px]:grid-cols-2 max-[720px]:grid-cols-1">
@@ -483,7 +505,7 @@ function MountSelector({
                   </span>
                 </div>
                 <p className={clsx("mt-2 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm", supported ? "text-status-create" : "text-status-conflict")}>
-                  {supported ? "支持此资产类型" : "当前类型未声明支持"}
+                  {t(supported ? "mount.supported" : "mount.unsupported")}
                 </p>
               </button>
             );
