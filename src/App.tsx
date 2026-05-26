@@ -449,7 +449,7 @@ function MountSelector({
           暂无可用 Profile。先在 Profile 管理中添加目标 App。
         </div>
       ) : (
-        <div className="grid grid-cols-4 gap-2.5 max-[1280px]:grid-cols-3 max-[980px]:grid-cols-2 max-[720px]:grid-cols-1">
+        <div className="grid grid-cols-4 gap-2.5 max-[980px]:grid-cols-2 max-[720px]:grid-cols-1">
           {enabledProfiles.map((profile) => {
             const selected = selectedProfileIds.includes(profile.id);
             const supported = profile.supported_kinds.includes(asset.kind);
