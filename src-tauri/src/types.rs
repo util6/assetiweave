@@ -38,6 +38,17 @@ pub(crate) struct ExecutionResult {
     pub(crate) errors: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AppShortcut {
+    pub(crate) profile_id: String,
+    pub(crate) profile_name: String,
+    pub(crate) app_kind: String,
+    pub(crate) display_icon: String,
+    pub(crate) accent_color: String,
+    pub(crate) enabled: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NavigationModel {

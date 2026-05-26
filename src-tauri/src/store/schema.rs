@@ -4,7 +4,7 @@ use std::path::Path;
 
 use super::{
     codec::db_error, menu_repo::seed_navigation_model, profile_repo::upsert_profile,
-    source_repo::upsert_source, sql,
+    shortcut_repo::seed_app_shortcuts, source_repo::upsert_source, sql,
 };
 
 pub(crate) fn open_initialized(db_path: &Path) -> AppResult<Connection> {
@@ -35,6 +35,10 @@ fn seed_defaults(conn: &Connection) -> AppResult<()> {
         seed_navigation_model(conn, &defaults::default_navigation_model())?;
     }
 
+    if count_rows(conn, "app_shortcut_items")? == 0 {
+        seed_app_shortcuts(conn, &defaults::default_app_shortcuts())?;
+    }
+
     Ok(())
 }
 
@@ -53,6 +57,7 @@ pub(crate) fn count_rows(conn: &Connection, table: &str) -> AppResult<usize> {
         "assets" => sql::COUNT_ASSETS,
         "profiles" => sql::COUNT_PROFILES,
         "navigation_state" => sql::COUNT_NAVIGATION_STATE,
+        "app_shortcut_items" => sql::COUNT_APP_SHORTCUTS,
         other => return Err(format!("unsupported count table: {other}")),
     };
     let count: i64 = conn

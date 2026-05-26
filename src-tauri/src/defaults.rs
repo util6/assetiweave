@@ -200,6 +200,19 @@ pub(crate) fn default_navigation_model() -> NavigationModel {
     }
 }
 
+pub(crate) fn default_app_shortcuts() -> Vec<(&'static str, &'static str, &'static str, bool)> {
+    vec![
+        ("claude", "C", "#f59e0b", true),
+        ("codex", "◎", "#10b981", true),
+        ("gemini", "✦", "#0ea5e9", true),
+        ("opencode", "□", "#6366f1", true),
+        ("cursor", "⌘", "#94a3b8", true),
+        ("antigravity", "A", "#a78bfa", false),
+        ("openclaw", "O", "#f43f5e", false),
+        ("custom", "+", "#8c909f", false),
+    ]
+}
+
 fn rail_item(id: &str, label: &str, icon: &str, scope: &str, position: &str) -> RailMenuItem {
     RailMenuItem {
         id: id.to_string(),

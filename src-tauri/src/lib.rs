@@ -11,8 +11,8 @@ mod types;
 use crate::{
     commands::{
         create_plan, create_source, delete_source, execute_plan, get_app_overview,
-        get_navigation_model, list_assets, list_profiles, list_sources, reveal_path, scan_sources,
-        update_source,
+        get_navigation_model, list_app_shortcuts, list_assets, list_profiles, list_sources,
+        reveal_path, scan_sources, update_source,
     },
     path_utils::app_db_path,
     store::open_initialized,
@@ -40,6 +40,7 @@ pub fn run() {
             delete_source,
             list_profiles,
             get_navigation_model,
+            list_app_shortcuts,
             scan_sources,
             create_plan,
             execute_plan,

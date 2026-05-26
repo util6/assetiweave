@@ -31,11 +31,12 @@ import {
   getNavigationModel,
   getOverview,
   listAssets,
+  listAppShortcuts,
   listProfiles,
   revealPath,
   scanSources,
 } from "./services/catalog";
-import type { AppOverview, Asset, AssetKind, DeploymentPlan, ExecutionResult, TargetProfile } from "./types";
+import type { AppOverview, AppShortcut, Asset, AssetKind, DeploymentPlan, ExecutionResult, TargetProfile } from "./types";
 
 const kindLabel: Record<AssetKind, string> = {
   prompt: "Prompt",
@@ -55,6 +56,7 @@ export function App() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [overview, setOverview] = useState<AppOverview | null>(null);
   const [profiles, setProfiles] = useState<TargetProfile[]>([]);
+  const [appShortcuts, setAppShortcuts] = useState<AppShortcut[]>([]);
   const [plan, setPlan] = useState<DeploymentPlan | null>(null);
   const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
   const [navigationModel, setNavigationModel] = useState<NavigationModel>(fallbackNavigationModel);
@@ -65,12 +67,13 @@ export function App() {
   const activeSubNavItems = navigationModel.subNavItems[navigationModel.activeHeaderTabId] ?? [];
 
   useEffect(() => {
-    void Promise.all([listAssets(), getOverview(), getNavigationModel(), listProfiles()]).then(
-      ([assetList, appOverview, appNavigationModel, profileList]) => {
+    void Promise.all([listAssets(), getOverview(), getNavigationModel(), listProfiles(), listAppShortcuts()]).then(
+      ([assetList, appOverview, appNavigationModel, profileList, shortcutList]) => {
         setAssets(assetList);
         setOverview(appOverview);
         setNavigationModel(appNavigationModel);
         setProfiles(profileList);
+        setAppShortcuts(shortcutList);
       },
     );
   }, []);
@@ -281,7 +284,7 @@ export function App() {
                   onClick={() => toggleAsset(asset.id)}
                 >
                   <div className="relative flex min-h-28 items-start justify-between gap-4 px-4 py-3.5">
-                    <div className="min-w-0 flex-1 pr-28">
+                    <div className="min-w-0 flex-1 pr-80">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-code-md text-on-surface">{asset.name}</span>
                         <span className={kindBadgeClass(asset.kind)}>{kindLabel[asset.kind] ?? asset.kind}</span>
@@ -304,10 +307,14 @@ export function App() {
                         <InlineMeta label="Source" value={asset.source_id} mono />
                       </div>
                     </div>
-                    <div
-                      className="absolute right-4 top-3.5 flex min-w-20 justify-end gap-2 opacity-0 transition-opacity group-hover:opacity-100"
-                      onClick={(event) => event.stopPropagation()}
-                    >
+                    <div className="absolute right-4 top-3.5 flex w-72 justify-end gap-3" onClick={(event) => event.stopPropagation()}>
+                      <QuickMountButtons
+                        asset={asset}
+                        profiles={profiles}
+                        shortcuts={appShortcuts}
+                        selectedProfileIds={selectedMounts[asset.id] ?? []}
+                        onToggle={(profileId) => toggleMountProfile(asset.id, profileId)}
+                      />
                       <button className="grid size-8 place-items-center rounded-lg text-on-surface-variant hover:bg-surface-highest hover:text-primary" aria-label="编辑资产">
                         <Pencil size={17} />
                       </button>
@@ -348,6 +355,52 @@ function InlineMeta({ label, value, mono = false }: { label: string; value: stri
       >
         {value}
       </span>
+    </div>
+  );
+}
+
+function QuickMountButtons({
+  asset,
+  profiles,
+  shortcuts,
+  selectedProfileIds,
+  onToggle,
+}: {
+  asset: Asset;
+  profiles: TargetProfile[];
+  shortcuts: AppShortcut[];
+  selectedProfileIds: string[];
+  onToggle: (profileId: string) => void;
+}) {
+  return (
+    <div className="flex min-w-0 items-center justify-end gap-1.5">
+      {shortcuts
+        .filter((shortcut) => shortcut.enabled)
+        .map((shortcut) => {
+          const profile = profiles.find((candidate) => candidate.id === shortcut.profileId);
+          const selected = selectedProfileIds.includes(shortcut.profileId);
+          const supported = profile?.supported_kinds.includes(asset.kind) ?? true;
+          return (
+            <button
+              className={clsx(
+                "grid size-8 place-items-center rounded-full border text-[13px] font-bold transition-all",
+                selected ? "shadow-glow" : "opacity-55 hover:opacity-100",
+                !supported && "grayscale",
+              )}
+              key={shortcut.profileId}
+              onClick={() => onToggle(shortcut.profileId)}
+              style={{
+                borderColor: selected ? shortcut.accentColor : `${shortcut.accentColor}55`,
+                backgroundColor: selected ? `${shortcut.accentColor}24` : "transparent",
+                color: shortcut.accentColor,
+              }}
+              title={`${selected ? "取消挂载" : "挂载到"} ${shortcut.profileName}`}
+              type="button"
+            >
+              {shortcut.displayIcon}
+            </button>
+          );
+        })}
     </div>
   );
 }

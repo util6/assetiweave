@@ -1,6 +1,9 @@
 use crate::{
     executor, planner, platform, scanner, store,
-    types::{AppOverview, AppResult, AppState, ExecutionResult, NavigationModel, SourceInput},
+    types::{
+        AppOverview, AppResult, AppShortcut, AppState, ExecutionResult, NavigationModel,
+        SourceInput,
+    },
 };
 use assetiweave_core::{Asset, DeploymentPlan, Source, TargetProfile};
 use chrono::Utc;
@@ -81,6 +84,13 @@ pub(crate) fn get_navigation_model(state: State<'_, AppState>) -> AppResult<Navi
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
     let conn = store::open_initialized(&state.db_path)?;
     store::load_navigation_model(&conn)
+}
+
+#[tauri::command]
+pub(crate) fn list_app_shortcuts(state: State<'_, AppState>) -> AppResult<Vec<AppShortcut>> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    let conn = store::open_initialized(&state.db_path)?;
+    store::load_app_shortcuts(&conn)
 }
 
 #[tauri::command]

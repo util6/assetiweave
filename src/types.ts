@@ -81,6 +81,15 @@ export interface TargetProfile {
   enabled: boolean;
 }
 
+export interface AppShortcut {
+  profileId: string;
+  profileName: string;
+  appKind: AppKind;
+  displayIcon: string;
+  accentColor: string;
+  enabled: boolean;
+}
+
 export type DeploymentActionType = "create" | "update" | "remove" | "skip" | "conflict";
 export type RiskLevel = "low" | "medium" | "high";
 

@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { navigationModel } from "../navigation/menu";
 import type { NavigationModel } from "../navigation/types";
-import type { AppOverview, Asset, DeploymentPlan, ExecutionResult, Source, TargetProfile } from "../types";
+import type { AppOverview, AppShortcut, Asset, DeploymentPlan, ExecutionResult, Source, TargetProfile } from "../types";
 
 const fallbackAssets: Asset[] = [
   {
@@ -126,6 +126,14 @@ const fallbackProfiles: TargetProfile[] = [
   },
 ];
 
+const fallbackAppShortcuts: AppShortcut[] = [
+  { profileId: "claude", profileName: "Claude", appKind: "claude", displayIcon: "C", accentColor: "#f59e0b", enabled: true },
+  { profileId: "codex", profileName: "Codex", appKind: "codex", displayIcon: "◎", accentColor: "#10b981", enabled: true },
+  { profileId: "gemini", profileName: "Gemini", appKind: "gemini", displayIcon: "✦", accentColor: "#0ea5e9", enabled: true },
+  { profileId: "opencode", profileName: "OpenCode", appKind: "opencode", displayIcon: "□", accentColor: "#6366f1", enabled: true },
+  { profileId: "cursor", profileName: "Cursor", appKind: "cursor", displayIcon: "⌘", accentColor: "#94a3b8", enabled: true },
+];
+
 export async function getOverview(): Promise<AppOverview> {
   try {
     return await invoke<AppOverview>("get_app_overview");
@@ -168,6 +176,14 @@ export async function getNavigationModel(): Promise<NavigationModel> {
     return await invoke<NavigationModel>("get_navigation_model");
   } catch {
     return navigationModel;
+  }
+}
+
+export async function listAppShortcuts(): Promise<AppShortcut[]> {
+  try {
+    return await invoke<AppShortcut[]>("list_app_shortcuts");
+  } catch {
+    return fallbackAppShortcuts;
   }
 }
 

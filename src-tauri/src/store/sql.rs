@@ -78,6 +78,14 @@ CREATE TABLE IF NOT EXISTS sub_nav_items (
     sort_order INTEGER NOT NULL,
     PRIMARY KEY (parent_tab_id, id)
 );
+
+CREATE TABLE IF NOT EXISTS app_shortcut_items (
+    profile_id TEXT PRIMARY KEY,
+    display_icon TEXT NOT NULL,
+    accent_color TEXT NOT NULL,
+    enabled INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL
+);
 "#;
 
 pub(crate) const LATEST_SCAN_STATUS: &str =
@@ -103,6 +111,7 @@ pub(crate) const COUNT_SOURCES: &str = "SELECT COUNT(*) FROM sources";
 pub(crate) const COUNT_ASSETS: &str = "SELECT COUNT(*) FROM assets";
 pub(crate) const COUNT_PROFILES: &str = "SELECT COUNT(*) FROM profiles";
 pub(crate) const COUNT_NAVIGATION_STATE: &str = "SELECT COUNT(*) FROM navigation_state";
+pub(crate) const COUNT_APP_SHORTCUTS: &str = "SELECT COUNT(*) FROM app_shortcut_items";
 
 pub(crate) const GET_NAVIGATION_STATE: &str = r#"
 SELECT active_rail_id, active_header_tab_id, active_sub_nav_id
@@ -165,6 +174,25 @@ VALUES (?1, ?2, ?3, ?4, ?5, ?6)
 ON CONFLICT(parent_tab_id, id) DO UPDATE SET
     label = excluded.label,
     route_key = excluded.route_key,
+    enabled = excluded.enabled,
+    sort_order = excluded.sort_order
+"#;
+
+pub(crate) const LIST_APP_SHORTCUTS: &str = r#"
+SELECT shortcut.profile_id, shortcut.display_icon, shortcut.accent_color,
+       shortcut.enabled, profile.payload
+FROM app_shortcut_items shortcut
+JOIN profiles profile ON profile.id = shortcut.profile_id
+WHERE shortcut.enabled = 1
+ORDER BY shortcut.sort_order ASC, shortcut.profile_id ASC
+"#;
+
+pub(crate) const UPSERT_APP_SHORTCUT: &str = r#"
+INSERT INTO app_shortcut_items (profile_id, display_icon, accent_color, enabled, sort_order)
+VALUES (?1, ?2, ?3, ?4, ?5)
+ON CONFLICT(profile_id) DO UPDATE SET
+    display_icon = excluded.display_icon,
+    accent_color = excluded.accent_color,
     enabled = excluded.enabled,
     sort_order = excluded.sort_order
 "#;
