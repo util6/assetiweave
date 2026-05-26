@@ -433,9 +433,11 @@ function MountSelector({
   return (
     <div className="border-t border-border/60 bg-surface/60 px-4 pb-4 pt-3" onClick={(event) => event.stopPropagation()}>
       <div className="mb-3 flex items-center justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <span className="text-label-caps uppercase text-outline">Mount Targets</span>
-          <p className="mt-1 text-body-sm text-on-surface-variant">选择这个资产要挂载到哪些 App/Profile。</p>
+          <p className="mt-1 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-on-surface-variant">
+            选择这个资产要挂载到哪些 App/Profile。
+          </p>
         </div>
         <span className="rounded-md border border-border bg-surface-high px-2.5 py-1 font-mono text-body-sm text-primary">
           {selectedProfileIds.length} selected
@@ -447,16 +449,16 @@ function MountSelector({
           暂无可用 Profile。先在 Profile 管理中添加目标 App。
         </div>
       ) : (
-        <div className="grid grid-cols-4 gap-3 max-[1280px]:grid-cols-3 max-[980px]:grid-cols-2 max-[720px]:grid-cols-1">
+        <div className="grid grid-cols-4 gap-2.5 max-[1280px]:grid-cols-3 max-[980px]:grid-cols-2 max-[720px]:grid-cols-1">
           {enabledProfiles.map((profile) => {
             const selected = selectedProfileIds.includes(profile.id);
             const supported = profile.supported_kinds.includes(asset.kind);
             return (
               <button
                 className={clsx(
-                  "min-h-24 rounded-xl border bg-surface-high px-3 py-3 text-left transition-colors",
+                  "min-h-16 rounded-lg border bg-surface-high px-3 py-2.5 text-left transition-all",
                   selected
-                    ? "border-primary-strong/60 bg-primary-strong/10"
+                    ? "border-status-create/70 bg-status-create/12 shadow-glow"
                     : "border-border hover:border-outline-variant hover:bg-surface-highest",
                   !supported && "opacity-60",
                 )}
@@ -464,24 +466,23 @@ function MountSelector({
                 onClick={() => onToggle(profile.id)}
                 type="button"
               >
-                <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
                     <p className="overflow-hidden text-ellipsis whitespace-nowrap text-body-sm font-bold text-on-surface">{profile.name}</p>
-                    <p className="mt-1 font-mono text-code-sm uppercase text-outline">{profile.app_kind}</p>
+                    <p className="mt-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-sm text-on-surface-variant">
+                      {abbreviateHomePath(profile.target_paths[0] ?? "")}
+                    </p>
                   </div>
                   <span
                     className={clsx(
-                      "grid size-6 shrink-0 place-items-center rounded-md border",
-                      selected ? "border-primary bg-primary text-on-primary" : "border-border text-transparent",
+                      "grid size-6 shrink-0 place-items-center rounded-full border transition-colors",
+                      selected ? "border-status-create bg-status-create text-background" : "border-border text-transparent",
                     )}
                   >
                     <Check size={15} />
                   </span>
                 </div>
-                <p className="mt-3 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-sm text-on-surface-variant">
-                  {abbreviateHomePath(profile.target_paths[0] ?? "")}
-                </p>
-                <p className={clsx("mt-2 text-body-sm", supported ? "text-status-create" : "text-status-conflict")}>
+                <p className={clsx("mt-2 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm", supported ? "text-status-create" : "text-status-conflict")}>
                   {supported ? "支持此资产类型" : "当前类型未声明支持"}
                 </p>
               </button>
