@@ -23,6 +23,7 @@ import {
 import { HeaderTabs } from "./components/navigation/HeaderTabs";
 import { SideRail } from "./components/navigation/SideRail";
 import { SubNavigation } from "./components/navigation/SubNavigation";
+import { NotificationBanner, type NotificationMessage } from "./components/notifications/NotificationBanner";
 import { navigationModel as fallbackNavigationModel } from "./navigation/menu";
 import type { NavigationModel } from "./navigation/types";
 import {
@@ -60,6 +61,11 @@ export function App() {
   const [plan, setPlan] = useState<DeploymentPlan | null>(null);
   const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
   const [navigationModel, setNavigationModel] = useState<NavigationModel>(fallbackNavigationModel);
+  const [notification, setNotification] = useState<NotificationMessage | null>({
+    id: "mvp-notification-outlet",
+    tone: "success",
+    message: "通知消息出口已就绪，后续账号切换、扫描完成、部署结果都可以在这里展示。",
+  });
   const [busy, setBusy] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [selectedMounts, setSelectedMounts] = useState<Record<string, string[]>>({});
@@ -115,6 +121,10 @@ export function App() {
         [assetId]: [...selected],
       };
     });
+  }
+
+  function dismissNotification(id: string) {
+    setNotification((current) => (current?.id === id ? null : current));
   }
 
   async function refreshOverview(nextAssets?: Asset[]) {
@@ -177,8 +187,10 @@ export function App() {
 
         <SubNavigation activeId={navigationModel.activeSubNavId} items={activeSubNavItems} />
 
+        <NotificationBanner notification={notification} onDismiss={dismissNotification} />
+
         <section
-          className="sticky top-[113px] z-10 flex justify-between gap-4 border-b border-border bg-surface-low/50 px-8 py-4 backdrop-blur max-[1160px]:flex-col"
+          className="sticky top-[113px] z-10 flex justify-between gap-4 border-y border-border bg-surface-low/50 px-8 py-4 backdrop-blur max-[1160px]:flex-col"
           aria-label="资产操作栏"
         >
           <div className="flex items-center gap-3 max-[1160px]:flex-wrap">
