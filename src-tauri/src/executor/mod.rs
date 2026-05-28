@@ -1,6 +1,6 @@
 use crate::{
     path_utils::expand_path,
-    store,
+    store, targeting,
     types::{AppResult, ExecutionResult},
 };
 use assetiweave_core::{
@@ -120,11 +120,11 @@ fn execute_deployment_action(
     let source_path = expand_path(&asset.absolute_path).map_err(DeploymentError::Failure)?;
 
     match action.strategy {
-        DeploymentStrategy::Symlink => create_symlink(&source_path, &target_path)?,
-        DeploymentStrategy::Copy => copy_asset(&source_path, &target_path)?,
+        DeploymentStrategy::SymlinkToSource => create_symlink(&source_path, &target_path)?,
+        DeploymentStrategy::CopyToTarget => copy_asset(&source_path, &target_path)?,
         other => {
             return Err(DeploymentError::Failure(format!(
-                "MVP 暂不支持 {:?} 部署策略",
+                "当前版本暂不支持 {:?} 部署策略",
                 other
             )))
         }
@@ -147,15 +147,7 @@ fn ensure_target_within_profile(
     profile: &TargetProfile,
     target_path: &Path,
 ) -> Result<(), DeploymentError> {
-    let Some(target_root) = profile.target_paths.first() else {
-        return Err(DeploymentError::Failure(format!(
-            "Profile {} 未配置目标路径",
-            profile.name
-        )));
-    };
-    let allowed_root = expand_path(target_root)
-        .map_err(DeploymentError::Failure)?
-        .join(&profile.id);
+    let allowed_root = targeting::target_dir(profile).map_err(DeploymentError::Failure)?;
     if !target_path.starts_with(&allowed_root) {
         return Err(DeploymentError::Failure(format!(
             "拒绝写入 Profile 目标目录外部: {}",

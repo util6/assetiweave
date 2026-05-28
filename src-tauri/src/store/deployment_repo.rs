@@ -39,3 +39,9 @@ pub(crate) fn is_managed_deployment(
     .map(|managed_by| managed_by.as_deref() == Some("assetiweave"))
     .map_err(db_error)
 }
+
+pub(crate) fn delete_orphan_deployment_state(conn: &Connection) -> AppResult<()> {
+    conn.execute(sql::DELETE_ORPHAN_DEPLOYMENT_STATE, [])
+        .map_err(db_error)?;
+    Ok(())
+}

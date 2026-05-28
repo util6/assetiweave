@@ -41,6 +41,28 @@ pub enum SourceKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum SourceScannerKind {
+    Skill,
+    Mcp,
+    Prompt,
+    Rule,
+    Mixed,
+    Custom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceOrigin {
+    GitRepo,
+    LocalFolder,
+    AppTarget,
+    AppLocal,
+    AssetiweaveLibrary,
+    Custom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AppKind {
     Codex,
     Claude,
@@ -55,8 +77,10 @@ pub enum AppKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeploymentStrategy {
-    Symlink,
-    Copy,
+    #[serde(alias = "symlink")]
+    SymlinkToSource,
+    #[serde(alias = "copy")]
+    CopyToTarget,
     Render,
     Append,
     ConfigMerge,
@@ -86,6 +110,11 @@ pub struct Source {
     pub name: String,
     pub kind: SourceKind,
     pub root_path: String,
+    pub scanner_kind: SourceScannerKind,
+    pub source_origin: SourceOrigin,
+    pub repo_root: Option<String>,
+    pub scan_root: String,
+    pub origin_app_kind: Option<AppKind>,
     pub include_globs: Vec<String>,
     pub exclude_globs: Vec<String>,
     pub default_kind: Option<AssetKind>,
@@ -194,6 +223,16 @@ pub struct DeploymentState {
     pub source_hash: String,
     pub deployed_at: String,
     pub managed_by: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetMount {
+    pub asset_id: String,
+    pub profile_id: String,
+    pub enabled: bool,
+    pub strategy: DeploymentStrategy,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 pub fn stable_asset_id(source_id: &str, relative_path: &str) -> String {

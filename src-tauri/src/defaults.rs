@@ -1,7 +1,7 @@
 use crate::types::{HeaderTabItem, NavigationModel, RailMenuItem, SubNavItem};
 use assetiweave_core::{
     AppKind, AssetKind, DeploymentStrategy, ProfileSafety, RuleSet, Source, SourceKind,
-    TargetProfile,
+    SourceOrigin, SourceScannerKind, TargetProfile,
 };
 use std::collections::BTreeMap;
 
@@ -9,11 +9,20 @@ pub(crate) fn default_sources() -> Vec<Source> {
     let mut sources = Vec::new();
     let candidates = [
         (
+            "assetiweave-library-skills",
+            "AssetIWeave Library Skills",
+            "~/.assetiweave/library/skills",
+            vec!["**/SKILL.md"],
+            Some(AssetKind::Skill),
+            SourceOrigin::AssetiweaveLibrary,
+        ),
+        (
             "codex-skills",
             "Codex Skills",
             "~/.codex/skills",
             vec!["**/SKILL.md"],
             Some(AssetKind::Skill),
+            SourceOrigin::AppTarget,
         ),
         (
             "agents-skills",
@@ -21,6 +30,7 @@ pub(crate) fn default_sources() -> Vec<Source> {
             "~/.agents/skills",
             vec!["**/SKILL.md"],
             Some(AssetKind::Skill),
+            SourceOrigin::GitRepo,
         ),
         (
             "project-specs",
@@ -28,15 +38,27 @@ pub(crate) fn default_sources() -> Vec<Source> {
             "specs",
             vec!["**/*.md"],
             Some(AssetKind::Rule),
+            SourceOrigin::LocalFolder,
         ),
     ];
 
-    for (priority, (id, name, path, includes, default_kind)) in candidates.into_iter().enumerate() {
+    for (priority, (id, name, path, includes, default_kind, source_origin)) in
+        candidates.into_iter().enumerate()
+    {
         sources.push(Source {
             id: id.to_string(),
             name: name.to_string(),
             kind: SourceKind::Local,
             root_path: path.to_string(),
+            scanner_kind: if default_kind == Some(AssetKind::Skill) {
+                SourceScannerKind::Skill
+            } else {
+                SourceScannerKind::Rule
+            },
+            source_origin,
+            repo_root: None,
+            scan_root: String::new(),
+            origin_app_kind: None,
             include_globs: includes.into_iter().map(str::to_string).collect(),
             exclude_globs: vec![
                 "**/.git/**".to_string(),
@@ -57,34 +79,39 @@ pub(crate) fn default_sources() -> Vec<Source> {
 
 pub(crate) fn default_profiles() -> Vec<TargetProfile> {
     [
-        ("codex", "Codex", AppKind::Codex, "~/.codex/assetiweave"),
-        ("claude", "Claude", AppKind::Claude, "~/.claude/assetiweave"),
+        ("codex", "Codex", AppKind::Codex, "~/.codex/skills"),
+        ("claude", "Claude", AppKind::Claude, "~/.claude/skills"),
         (
             "cursor",
             "Cursor",
             AppKind::Cursor,
-            "~/Library/Application Support/Cursor/assetiweave",
+            "~/Library/Application Support/Cursor/skills",
         ),
         (
             "opencode",
             "OpenCode",
             AppKind::OpenCode,
-            "~/.opencode/assetiweave",
+            "~/.opencode/skills",
         ),
-        ("gemini", "Gemini", AppKind::Gemini, "~/.gemini/assetiweave"),
+        ("gemini", "Gemini", AppKind::Gemini, "~/.gemini/skills"),
         (
             "antigravity",
             "Antigravity",
             AppKind::Antigravity,
-            "~/.antigravity/assetiweave",
+            "~/.antigravity/skills",
         ),
         (
             "openclaw",
             "OpenClaw",
             AppKind::OpenClaw,
-            "~/.openclaw/assetiweave",
+            "~/.openclaw/skills",
         ),
-        ("custom", "Custom", AppKind::Custom, "~/assetiweave-target"),
+        (
+            "custom",
+            "Custom",
+            AppKind::Custom,
+            "~/assetiweave-target/skills",
+        ),
     ]
     .into_iter()
     .map(|(id, name, app_kind, target)| TargetProfile {
@@ -98,7 +125,7 @@ pub(crate) fn default_profiles() -> Vec<TargetProfile> {
             AssetKind::Rule,
             AssetKind::Custom,
         ],
-        deployment_strategy: DeploymentStrategy::Symlink,
+        deployment_strategy: DeploymentStrategy::SymlinkToSource,
         enabled: true,
         include: RuleSet {
             kinds: vec![AssetKind::Skill, AssetKind::Prompt, AssetKind::Rule],

@@ -8,6 +8,13 @@ pub(crate) fn seed_navigation_model(
     conn: &Connection,
     model: &NavigationModel,
 ) -> Result<(), String> {
+    save_navigation_model(conn, model)
+}
+
+pub(crate) fn save_navigation_model(
+    conn: &Connection,
+    model: &NavigationModel,
+) -> Result<(), String> {
     conn.execute(
         sql::UPSERT_NAVIGATION_STATE,
         params![

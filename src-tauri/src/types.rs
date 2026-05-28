@@ -1,4 +1,5 @@
-use assetiweave_core::{AssetKind, SourceKind};
+use crate::targeting::PhysicalMountState;
+use assetiweave_core::{AppKind, AssetKind, SourceKind, SourceOrigin, SourceScannerKind};
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Mutex};
 
@@ -23,6 +24,11 @@ pub(crate) struct SourceInput {
     pub(crate) name: String,
     pub(crate) kind: SourceKind,
     pub(crate) root_path: String,
+    pub(crate) scanner_kind: Option<SourceScannerKind>,
+    pub(crate) source_origin: Option<SourceOrigin>,
+    pub(crate) repo_root: Option<String>,
+    pub(crate) scan_root: Option<String>,
+    pub(crate) origin_app_kind: Option<AppKind>,
     pub(crate) include_globs: Vec<String>,
     pub(crate) exclude_globs: Vec<String>,
     pub(crate) default_kind: Option<AssetKind>,
@@ -38,7 +44,37 @@ pub(crate) struct ExecutionResult {
     pub(crate) errors: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PhysicalMountStateDto {
+    Mounted,
+    NotMounted,
+    Conflict,
+    Broken,
+}
+
 #[derive(Debug, Clone, Serialize)]
+pub(crate) struct AssetMountStatus {
+    pub(crate) asset_id: String,
+    pub(crate) profile_id: String,
+    pub(crate) target_dir: String,
+    pub(crate) target_path: String,
+    pub(crate) state: PhysicalMountStateDto,
+    pub(crate) linked_source: Option<String>,
+}
+
+impl From<PhysicalMountState> for PhysicalMountStateDto {
+    fn from(value: PhysicalMountState) -> Self {
+        match value {
+            PhysicalMountState::Mounted => Self::Mounted,
+            PhysicalMountState::NotMounted => Self::NotMounted,
+            PhysicalMountState::Conflict => Self::Conflict,
+            PhysicalMountState::Broken => Self::Broken,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppShortcut {
     pub(crate) profile_id: String,

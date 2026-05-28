@@ -1,10 +1,14 @@
-use crate::{defaults, types::AppResult};
+use crate::{defaults, path_utils::ensure_app_library_dirs, types::AppResult};
 use rusqlite::{Connection, OptionalExtension};
 use std::path::Path;
 
 use super::{
-    codec::db_error, menu_repo::seed_navigation_model, profile_repo::upsert_profile,
-    shortcut_repo::seed_app_shortcuts, source_repo::upsert_source, sql,
+    codec::db_error,
+    menu_repo::seed_navigation_model,
+    profile_repo::{load_profiles, upsert_profile},
+    shortcut_repo::seed_app_shortcuts,
+    source_repo::{load_sources, upsert_source},
+    sql,
 };
 
 pub(crate) fn open_initialized(db_path: &Path) -> AppResult<Connection> {
@@ -15,7 +19,59 @@ pub(crate) fn open_initialized(db_path: &Path) -> AppResult<Connection> {
 }
 
 fn init_schema(conn: &Connection) -> AppResult<()> {
-    conn.execute_batch(sql::INIT_SCHEMA).map_err(db_error)
+    conn.execute_batch(sql::INIT_SCHEMA).map_err(db_error)?;
+    migrate_schema(conn)?;
+    ensure_app_library_dirs()?;
+    Ok(())
+}
+
+fn migrate_schema(conn: &Connection) -> AppResult<()> {
+    ensure_column(
+        conn,
+        "sources",
+        "scanner_kind",
+        sql::ADD_SOURCE_SCANNER_KIND,
+    )?;
+    ensure_column(conn, "sources", "source_origin", sql::ADD_SOURCE_ORIGIN)?;
+    ensure_column(conn, "sources", "repo_root", sql::ADD_SOURCE_REPO_ROOT)?;
+    ensure_column(conn, "sources", "scan_root", sql::ADD_SOURCE_SCAN_ROOT)?;
+    ensure_column(
+        conn,
+        "sources",
+        "origin_app_kind",
+        sql::ADD_SOURCE_ORIGIN_APP_KIND,
+    )?;
+    conn.execute_batch(sql::MIGRATE_DEPLOYMENT_STATE_STRATEGY_NAMES)
+        .map_err(db_error)?;
+    conn.execute_batch(sql::MIGRATE_ASSET_MOUNT_STRATEGY_NAMES)
+        .map_err(db_error)?;
+    Ok(())
+}
+
+fn ensure_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    alter_statement: &str,
+) -> AppResult<()> {
+    if table_columns(conn, table)?
+        .iter()
+        .any(|name| name == column)
+    {
+        return Ok(());
+    }
+    conn.execute(alter_statement, []).map_err(db_error)?;
+    Ok(())
+}
+
+fn table_columns(conn: &Connection, table: &str) -> AppResult<Vec<String>> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(db_error)?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(db_error)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
 }
 
 fn seed_defaults(conn: &Connection) -> AppResult<()> {
@@ -24,12 +80,15 @@ fn seed_defaults(conn: &Connection) -> AppResult<()> {
             upsert_source(conn, &source)?;
         }
     }
+    ensure_library_source(conn)?;
+    normalize_existing_sources(conn)?;
 
     if count_rows(conn, "profiles")? == 0 {
         for profile in defaults::default_profiles() {
             upsert_profile(conn, &profile)?;
         }
     }
+    normalize_default_profiles(conn)?;
 
     if count_rows(conn, "navigation_state")? == 0 {
         seed_navigation_model(conn, &defaults::default_navigation_model())?;
@@ -40,6 +99,63 @@ fn seed_defaults(conn: &Connection) -> AppResult<()> {
     }
 
     Ok(())
+}
+
+fn ensure_library_source(conn: &Connection) -> AppResult<()> {
+    let exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sources WHERE id = 'assetiweave-library-skills')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(db_error)?
+        == 1;
+    if !exists {
+        if let Some(source) = defaults::default_sources()
+            .into_iter()
+            .find(|source| source.id == "assetiweave-library-skills")
+        {
+            upsert_source(conn, &source)?;
+        }
+    }
+    Ok(())
+}
+
+fn normalize_existing_sources(conn: &Connection) -> AppResult<()> {
+    for source in load_sources(conn)? {
+        upsert_source(conn, &source)?;
+    }
+    Ok(())
+}
+
+fn normalize_default_profiles(conn: &Connection) -> AppResult<()> {
+    let defaults = defaults::default_profiles();
+    for mut profile in load_profiles(conn)? {
+        let Some(default_profile) = defaults.iter().find(|candidate| candidate.id == profile.id)
+        else {
+            continue;
+        };
+        if profile.target_paths == legacy_profile_target_paths(&profile.id) {
+            profile.target_paths = default_profile.target_paths.clone();
+            upsert_profile(conn, &profile)?;
+        }
+    }
+    Ok(())
+}
+
+fn legacy_profile_target_paths(profile_id: &str) -> Vec<String> {
+    let legacy_path = match profile_id {
+        "codex" => "~/.codex/assetiweave",
+        "claude" => "~/.claude/assetiweave",
+        "cursor" => "~/Library/Application Support/Cursor/assetiweave",
+        "opencode" => "~/.opencode/assetiweave",
+        "gemini" => "~/.gemini/assetiweave",
+        "antigravity" => "~/.antigravity/assetiweave",
+        "openclaw" => "~/.openclaw/assetiweave",
+        "custom" => "~/assetiweave-target",
+        _ => return Vec::new(),
+    };
+    vec![legacy_path.to_string()]
 }
 
 pub(crate) fn latest_scan_status(conn: &Connection) -> AppResult<String> {
