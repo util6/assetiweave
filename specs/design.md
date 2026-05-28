@@ -2,9 +2,11 @@
 
 ## 1. 概览
 
-AssetIWeave 是一个独立的 Tauri 桌面应用，用于集中管理本机 AI 文件资产。它不把 skill 当成唯一对象，而是把 prompt、rules、memory、skills、MCP 配置、agent 定义、command、workflow 等都抽象为 `Asset`。
+AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件资产的发现、编目、挂载、部署和导出。它不把 skill 当成唯一对象，而是把 prompt、rules、memory、skills、MCP 配置、agent 定义、command、workflow 等都抽象为 `Asset`。
 
-系统采用“源目录只读 + 元数据覆盖层 + Profile 投影 + 部署计划”的架构。源资产保持原样；用户对资产的分类、标签、分组、启用策略保存在 App 数据目录；不同 AI 工具的目标目录只是根据 Profile 生成的 materialized view。
+当前产品已经进入具体开发阶段。核心定位是**资产挂载管理器**：源仓库保持只读；AssetIWeave 负责扫描索引、分类、记录挂载关系、生成部署计划，并把源仓库中的真实资产通过软链接直接挂载到多个目标 App。资产集中整理不作为默认存储路径，而作为后续 `Export Assets` 功能，把用户选择的真实文件复制到指定目录。
+
+系统采用“源目录只读 + SQLite Catalog + 挂载关系 + Profile 投影 + 部署计划 + 可选导出”的架构。默认不复制源资产，不创建中间集中池，也不采用两跳软链接；目标 App 目录中的部署结果直接指向源仓库中的真实资产。
 
 ## 2. 架构原则
 
@@ -15,6 +17,8 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于集中管理本机 AI 
 5. **决策可解释**：每个部署或跳过都能说明原因。
 6. **类型可扩展**：新资产形态通过分类器和 adapter 扩展。
 7. **工具可扩展**：新 CLI/App 通过 Profile 模板或自定义 Profile 扩展。
+8. **直接挂载优先**：默认部署策略是目标 App 目录直接 symlink 到源资产，不通过中间 symlink 池。
+9. **集中复制是显式导出**：只有用户触发导出时，才把真实资产复制到指定目录，并生成 manifest。
 
 ## 3. 总体架构
 
@@ -36,11 +40,34 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于集中管理本机 AI 
 - `store/`：SQLite repository 模块目录。`mod.rs` 只导出门面；`schema.rs` 负责建表和 seed；`sql.rs` 集中 SQL 常量；`source_repo.rs`、`asset_repo.rs`、`profile_repo.rs`、`deployment_repo.rs` 分别承载对应聚合的读写；`codec.rs` 负责 JSON/enum 编解码和 SQLite 错误转换。
 - `scanner/`：资产扫描与分类模块目录，负责 Source 目录遍历、include/exclude glob、`SKILL.md` 目录识别和资产描述提取。后续按规模继续拆分为 walker、classifier、extractor。
 - `planner/`：部署计划生成模块目录，负责 create/skip/conflict 决策和解释文本。后续按 Profile 匹配、目标路径解析、冲突判断继续拆分。
-- `executor/`：部署执行模块目录，负责 symlink/copy、安全边界、非托管文件冲突和 deployment state 记录。后续按 filesystem、strategy、state recorder 继续拆分。
+- `executor/`：部署执行模块目录，负责 `symlink_to_source`、`copy_to_target`、安全边界、非托管文件冲突和 deployment state 记录。后续按 filesystem、strategy、state recorder 继续拆分。
 - `defaults.rs`：默认 Source/Profile 模板。
 - `path_utils.rs`：路径展开、相对路径归一化、hash 等跨模块工具。
 - `platform.rs`：平台集成，例如在文件管理器中显示路径。
 - `types.rs`：Tauri 层 DTO 和共享 AppState。
+
+### 3.3 当前开发状态
+
+当前已经完成的产品开发基础：
+
+- Tauri 2 + React + TypeScript + Vite + Tailwind CSS + shadcn/ui  应用框架。
+- Rust workspace 与 `assetiweave-core` 领域模型 crate。
+- 前端采用组件化思想，页面元素首先考虑组件化。
+- SQLite 主存储，包含 Source、Asset、Profile、DeploymentState、Navigation、App Shortcut 等基础表。
+- Source seed、Profile seed、Navigation seed、App Shortcut seed 和 `asset_mounts` 持久化。
+- 真实目录扫描、`SKILL.md` 目录识别、基础资产分类、描述提取。
+- Catalog 页面：搜索、指标、部署计划预览、资产行默认展示路径/描述/来源。
+- 资产行右侧可配置 App 快捷挂载图标，配置来自 SQLite。
+- 展开态 Mount Targets 面板和可选中挂载卡片 UI。
+- 快捷挂载图标和 Mount Target 卡片已写入同一份 `asset_mounts` 关系。
+- 路径展示 home 缩写，点击路径在文件管理器中显示。
+- 部署计划生成和执行基础链路，计划输入已收敛到启用的挂载关系。
+- 部署执行默认将目标 App 目录直接 symlink 到源资产真实路径。
+- 通知消息渲染出口。
+- 中英文 i18n 基础。
+- 前端架构已组件化：`app`、`pages`、`components`、`hooks`、`services`、`fixtures`、`utils` 分层。
+
+下一阶段重点不是继续搭框架，而是补齐挂载闭环的验证和产品边界：更多存储/扫描测试、Profile 规则细化、执行确认与结果展示、导出复制。
 
 ```mermaid
 flowchart TB
@@ -56,9 +83,10 @@ flowchart TB
         C1["Source Scanner"]
         C2["Classifier"]
         C3["Catalog Store"]
-        C4["Profile Engine"]
+        C4["Mount Engine"]
         C5["Planner"]
         C6["Deployment Executor"]
+        C7["Export Service"]
     end
 
     subgraph Data["本机数据目录"]
@@ -92,6 +120,7 @@ flowchart TB
     C4 --> C5
     C5 --> C6
     C6 --> Targets
+    C7 --> D4["export directory"]
 ```
 
 ## 4. 应用信息架构
@@ -117,7 +146,9 @@ flowchart TB
 - 表格展示所有资产。
 - 搜索和筛选 kind、source、tag、group、enabled。
 - 批量设置标签和分组。
-- 单个资产详情面板。
+- 资产行默认展示名称、类型 badge、源路径、Description、Source。
+- 资产行右侧展示用户配置的 App 快捷挂载图标，支持排序和启停。
+- 展开资产行后展示 Mount Targets，一行四个 Profile 卡片，用于选择挂载目标。
 - 查看原始路径和解析出的 frontmatter/description。
 
 ### 4.3 Profiles
@@ -144,6 +175,34 @@ flowchart TB
 - 执行选中的动作。
 - 查看执行结果。
 
+### 4.4.1 Mount Management
+
+挂载管理是当前阶段的后端核心功能。用户在 Catalog 行右侧快捷图标或展开卡片中选择某个 App/Profile，本质上是创建或更新 `asset_mounts` 记录。
+
+默认挂载语义：
+
+```text
+source repo asset
+  -> target app directory symlink
+```
+
+不采用：
+
+```text
+source repo asset
+  -> AssetIWeave intermediate symlink pool
+  -> target app directory symlink
+```
+
+原因：
+
+- 单跳 symlink 更容易排查断链。
+- 目标 App 的 realpath、文件监听和目录扫描行为更稳定。
+- Windows/macOS/Linux 的兼容复杂度更低。
+- SQLite Catalog 已经提供集中视图，不需要通过中间目录表达“集中管理”。
+
+`asset_mounts` 是部署计划的主要输入。计划生成不再默认尝试所有 Profile，而是只对已启用的挂载关系生成 create/update/remove/skip/conflict 动作。
+
 ### 4.5 Settings
 
 用于管理 App 级设置。
@@ -156,11 +215,25 @@ flowchart TB
 - 后台同步设置。
 - cc-switch 迁移入口。
 
+### 4.5.1 Export Assets
+
+集中整理资产作为显式导出功能提供，不参与默认挂载路径。
+
+导出能力：
+
+- 导出全部资产。
+- 按资产类型、Source、Profile、挂载状态筛选导出。
+- 复制真实文件或目录到用户指定目录。
+- 可选择保持源目录结构或按 AssetKind 分组。
+- 生成 `manifest.json`，记录 asset_id、source_id、原始路径、hash、kind、format、description、导出时间。
+
+导出不会改变源目录，也不会改变目标 App 的挂载目录。
+
 ### 4.6 Menu Management
 
 菜单管理是独立模块，而不是页面里的静态 JSX。AssetIWeave 的核心目标之一是支持更多 AI App、更多资产形态和更多 Profile，因此导航体系必须可以扩展、排序、启停和配置。
 
-MVP 阶段先采用前端静态 `NavigationModel`：
+早期先采用前端静态 `NavigationModel`：
 
 - `railItems`：侧边主导航，按 `primary`、`secondary` 分组，承载 Catalog、Profiles、App 管理、Settings 等入口。
 - `headerTabs`：页面上方的资产类型导航，映射 Skill、MCP、Prompt、Rule、Profile 等资产域。
@@ -205,7 +278,7 @@ Source
 
 说明：
 
-- MVP 只实现 `local` 和 `git_checkout` 作为本地目录扫描。
+- 当前实现先支持 `local` 和 `git_checkout` 作为本地目录扫描。
 - `git_checkout` 不负责 clone/pull，只表示这是一个 Git 工作区目录。
 
 ### 5.2 Asset
@@ -261,7 +334,7 @@ TargetProfile
 - app_kind: codex | claude | cursor | opencode | gemini | openclaw | antigravity | custom
 - target_paths: string[]
 - supported_kinds: AssetKind[]
-- deployment_strategy: symlink | copy | render | append | config_merge
+- deployment_strategy: symlink_to_source | copy_to_target | render | append | config_merge
 - enabled: boolean
 - include:
   - kinds: AssetKind[]
@@ -280,7 +353,7 @@ TargetProfile
   - allow_overwrite: boolean
 ```
 
-MVP 只实现 `symlink` 和 `copy`。
+当前默认策略收敛为 `symlink_to_source`：目标 App 目录直接软链接到源仓库中的真实资产。`copy_to_target` 保留为兼容策略，`render`、`append`、`config_merge` 用于后续复杂资产。
 
 ### 5.5 DeploymentPlan
 
@@ -308,7 +381,7 @@ DeploymentAction
 - profile_id: string
 - source_path?: string
 - target_path: string
-- strategy: symlink | copy | render | append | config_merge
+- strategy: symlink_to_source | copy_to_target | render | append | config_merge
 - reason: string
 - risk: low | medium | high
 - selectable: boolean
@@ -328,6 +401,42 @@ DeploymentState
 ```
 
 该表用于判断哪些目标文件是本应用管理的，避免误删用户文件。
+
+### 5.8 AssetMount
+
+```text
+AssetMount
+- asset_id: string
+- profile_id: string
+- enabled: boolean
+- strategy: symlink_to_source | copy_to_target
+- created_at: datetime
+- updated_at: datetime
+```
+
+说明：
+
+- 表达“某个资产是否挂载到某个 App/Profile”。
+- Catalog 右侧快捷图标和展开卡片都读写这张表。
+- `create_plan` 以启用的 `asset_mounts` 为主输入。
+- 删除或禁用挂载关系不删除源资产，只影响后续部署计划。
+
+### 5.9 AppShortcut
+
+```text
+AppShortcut
+- profile_id: string
+- display_icon: string
+- accent_color: string
+- enabled: boolean
+- sort_order: number
+```
+
+说明：
+
+- 控制资产行右侧默认展示哪些 App 快捷挂载按钮。
+- 用户后续可以在设置中自定义启用/隐藏和排序。
+- 当前已接入 SQLite 的 `app_shortcut_items` 表。
 
 ## 6. 资产分类策略
 
@@ -351,7 +460,7 @@ mcp.json / mcpServers 字段 -> mcp
 AGENTS.md / CLAUDE.md / codex instructions -> memory 或 rule
 ```
 
-MVP 只需要可靠支持：
+当前阶段已支持并继续完善：
 
 - 包含 `SKILL.md` 的目录。
 - Markdown prompt/rule 文件。
@@ -361,13 +470,13 @@ MVP 只需要可靠支持：
 
 部署决策优先级：
 
-1. Profile 未启用：跳过。
-2. Asset 未启用：跳过。
-3. Asset 显式排除某 Profile：跳过。
-4. Asset 显式包含某 Profile：部署。
-5. Profile 不支持该 kind：跳过。
-6. Profile exclude 命中：跳过。
-7. Profile include 命中：部署。
+1. `asset_mounts` 未启用该 asset/profile：跳过。
+2. Profile 未启用：跳过。
+3. Asset 未启用：跳过。
+4. Profile 不支持该 kind：跳过。
+5. Profile exclude 命中：跳过。
+6. 目标目录已有非 AssetIWeave 管理文件：conflict。
+7. 目标路径缺失或 stale：create/update。
 8. 默认策略：跳过。
 
 每次评估生成 `EvaluationResult`：
@@ -398,9 +507,14 @@ sequenceDiagram
     Core->>Core: 分类并更新 catalog
     Core-->>UI: 返回资产列表
 
+    U->>UI: 点击 App 快捷挂载图标
+    UI->>Core: toggle_asset_mount(asset_id, profile_id)
+    Core->>Core: 写入 asset_mounts
+    Core-->>UI: 返回最新挂载状态
+
     U->>UI: 点击生成计划
     UI->>Core: create_plan(profile?)
-    Core->>Core: 应用 metadata 和 profile 规则
+    Core->>Core: 读取 asset_mounts 和 profile 规则
     Core->>FS: 检查目标目录状态
     Core-->>UI: 返回 DeploymentPlan
 
@@ -412,7 +526,7 @@ sequenceDiagram
 
 ## 9. Tauri 后端命令
 
-MVP 命令：
+当前命令与目标命令：
 
 ```text
 list_sources() -> Source[]
@@ -430,10 +544,18 @@ create_profile(input) -> TargetProfile
 update_profile(id, input) -> TargetProfile
 delete_profile(id) -> void
 
+get_navigation_model() -> NavigationModel
+list_app_shortcuts() -> AppShortcut[]
+
+list_asset_mounts(asset_id?) -> AssetMount[]
+toggle_asset_mount(asset_id, profile_id) -> AssetMount
+set_asset_mount(asset_id, profile_id, enabled, strategy?) -> AssetMount
+
 create_plan(profile_id?) -> DeploymentPlan
 execute_plan(action_ids) -> ExecutionResult
 explain_asset(asset_id, profile_id) -> EvaluationResult
 
+export_assets(input) -> ExportResult
 export_config(path) -> void
 import_config(path) -> ImportResult
 ```
@@ -449,7 +571,7 @@ manage_login_item()
 
 ## 10. 存储设计
 
-MVP 推荐使用 SQLite 作为主存储，原因是：
+当前使用 SQLite 作为主存储，原因是：
 
 - 桌面 App 查询和过滤更方便。
 - 部署状态需要可靠记录。
@@ -474,14 +596,33 @@ logs/
 backups/
 ```
 
+当前/规划核心表：
+
+```text
+sources
+assets
+profiles
+deployment_state
+navigation_state
+rail_menu_items
+header_tab_items
+sub_nav_items
+app_shortcut_items
+asset_mounts
+export_jobs
+operation_logs
+```
+
 ## 11. 部署安全策略
 
 - 默认不覆盖真实文件。
 - 默认不删除非本应用管理的文件。
-- symlink 目标必须指向已登记的源资产。
+- symlink 目标必须直接指向已登记的源资产。
+- 默认不创建中间 symlink 池，不做两跳软链接。
 - 删除动作必须匹配 `DeploymentState`。
 - 高风险动作在 UI 中明确标记。
 - 失败动作不应导致后续高风险动作继续执行。
+- 导出功能只复制文件到用户指定目录，不改变源目录或目标 App 目录。
 
 ## 12. UI 设计方向
 
@@ -504,7 +645,7 @@ backups/
 
 cc-switch：
 
-- MVP 只把 `~/.cc-switch/skills` 当作普通本地源模板。
+- 当前只把 `~/.cc-switch/skills` 当作普通本地源模板。
 - 后续可只读解析 `~/.cc-switch/cc-switch.db`，生成一次性迁移建议。
 
 现有脚本：
@@ -520,16 +661,18 @@ cc-switch：
 
 ## 14. 测试策略
 
-MVP 测试重点：
+当前阶段测试重点：
 
 - 数据模型序列化和校验。
 - 源扫描和分类。
 - 元数据覆盖层合并。
 - Profile 决策解释。
 - 部署计划生成。
-- symlink/copy 执行和安全边界。
+- symlink_to_source/copy_to_target 执行和安全边界。
+- asset_mounts 持久化、计划生成和执行闭环。
+- 导出复制不污染源目录和目标目录。
 
-不在 MVP 强制：
+暂不强制：
 
 - property based testing。
 - 大规模 benchmark。
