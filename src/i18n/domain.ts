@@ -1,4 +1,4 @@
-import type { AssetKind, DeploymentActionType, DeploymentStrategy } from "../types";
+import type { AssetKind, DeploymentActionType, DeploymentStrategy, SourceKind, SourceOrigin } from "../types";
 import type { Translator } from "./I18nProvider";
 import type { TranslationKey } from "./messages";
 
@@ -12,6 +12,14 @@ export function deploymentActionLabel(actionType: DeploymentActionType, t: Trans
 
 export function deploymentStrategyLabel(strategy: DeploymentStrategy, t: Translator) {
   return t(`deploymentStrategy.${strategy}` as TranslationKey);
+}
+
+export function sourceKindLabel(kind: SourceKind, t: Translator) {
+  return t(`source.kind.${kind}` as TranslationKey);
+}
+
+export function sourceOriginLabel(origin: SourceOrigin, t: Translator) {
+  return t(`source.origin.${origin}` as TranslationKey);
 }
 
 export function translateScanStatus(status: string | null | undefined, t: Translator) {
@@ -35,6 +43,15 @@ export function translateScanStatus(status: string | null | undefined, t: Transl
     return t("status.scanOk", { count: okMatch[1] });
   }
 
+  const validatedMatch = normalized.match(/^validated: (\d+) assets, (\d+) removed, (\d+) updated$/);
+  if (validatedMatch) {
+    return t("status.validatedAssets", {
+      count: validatedMatch[1],
+      removed: validatedMatch[2],
+      updated: validatedMatch[3],
+    });
+  }
+
   const errorMatch = normalized.match(/^error: (.+)$/);
   if (errorMatch) {
     return t("status.scanError", { message: errorMatch[1] });
@@ -44,7 +61,10 @@ export function translateScanStatus(status: string | null | undefined, t: Transl
 }
 
 export function translatePlanReason(reason: string, t: Translator) {
-  if (reason === "目标路径已存在，MVP 默认不覆盖非本应用管理的文件") {
+  if (
+    reason === "目标路径已存在，MVP 默认不覆盖非本应用管理的文件" ||
+    reason === "目标路径已存在，当前版本默认不覆盖非本应用管理的文件"
+  ) {
     return t("plan.reason.conflictExisting");
   }
 
@@ -110,5 +130,5 @@ function isAssetKind(value: string): value is AssetKind {
 }
 
 function isDeploymentStrategy(value: string): value is DeploymentStrategy {
-  return ["symlink", "copy", "render", "append", "config_merge"].includes(value);
+  return ["symlink_to_source", "copy_to_target", "render", "append", "config_merge"].includes(value);
 }

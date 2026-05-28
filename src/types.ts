@@ -44,12 +44,19 @@ export interface AppOverview {
 }
 
 export type SourceKind = "local" | "git_checkout" | "import" | "custom";
+export type SourceScannerKind = "skill" | "mcp" | "prompt" | "rule" | "mixed" | "custom";
+export type SourceOrigin = "git_repo" | "local_folder" | "app_target" | "app_local" | "assetiweave_library" | "custom";
 
 export interface Source {
   id: string;
   name: string;
   kind: SourceKind;
   root_path: string;
+  scanner_kind: SourceScannerKind;
+  source_origin: SourceOrigin;
+  repo_root?: string | null;
+  scan_root: string;
+  origin_app_kind?: AppKind | null;
   include_globs: string[];
   exclude_globs: string[];
   default_kind?: AssetKind | null;
@@ -57,6 +64,23 @@ export interface Source {
   priority: number;
   last_scanned_at?: string | null;
   last_scan_status?: string | null;
+}
+
+export interface SourceInput {
+  id?: string;
+  name: string;
+  kind: SourceKind;
+  root_path: string;
+  scanner_kind?: SourceScannerKind;
+  source_origin?: SourceOrigin;
+  repo_root?: string | null;
+  scan_root?: string;
+  origin_app_kind?: AppKind | null;
+  include_globs: string[];
+  exclude_globs: string[];
+  default_kind?: AssetKind | null;
+  enabled: boolean;
+  priority: number;
 }
 
 export type AppKind =
@@ -69,7 +93,12 @@ export type AppKind =
   | "openclaw"
   | "custom";
 
-export type DeploymentStrategy = "symlink" | "copy" | "render" | "append" | "config_merge";
+export type DeploymentStrategy =
+  | "symlink_to_source"
+  | "copy_to_target"
+  | "render"
+  | "append"
+  | "config_merge";
 
 export interface TargetProfile {
   id: string;
@@ -88,6 +117,26 @@ export interface AppShortcut {
   displayIcon: string;
   accentColor: string;
   enabled: boolean;
+}
+
+export interface AssetMount {
+  asset_id: string;
+  profile_id: string;
+  enabled: boolean;
+  strategy: DeploymentStrategy;
+  created_at: string;
+  updated_at: string;
+}
+
+export type PhysicalMountState = "mounted" | "not_mounted" | "conflict" | "broken";
+
+export interface AssetMountStatus {
+  asset_id: string;
+  profile_id: string;
+  target_dir: string;
+  target_path: string;
+  state: PhysicalMountState;
+  linked_source?: string | null;
 }
 
 export type DeploymentActionType = "create" | "update" | "remove" | "skip" | "conflict";

@@ -16,7 +16,7 @@ export function AppHeader({
   const { t } = useI18n();
 
   return (
-    <header className="sticky top-0 z-20 grid h-16 shrink-0 grid-cols-[minmax(180px,1fr)_auto_minmax(360px,1fr)] items-center gap-4 px-8 backdrop-blur">
+    <header className="sticky top-0 z-20 grid h-[var(--app-header-height)] shrink-0 grid-cols-[minmax(180px,1fr)_auto_minmax(360px,1fr)] items-center gap-4 px-[var(--app-page-x)] backdrop-blur">
       <div className="flex items-center gap-2.5 text-h2 font-bold text-status-update">
         <Archive size={22} />
         <span>{t("app.title")}</span>

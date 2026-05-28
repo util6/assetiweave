@@ -40,8 +40,14 @@ export function useCatalogOperations(refreshOverview: (nextAssets?: Asset[]) => 
     }
   }
 
+  function clearDeploymentPlan() {
+    setPlan(null);
+    setExecutionResult(null);
+  }
+
   return {
     busy,
+    clearDeploymentPlan,
     createDeploymentPlan,
     executeDeploymentPlan,
     executionResult,

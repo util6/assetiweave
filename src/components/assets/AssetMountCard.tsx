@@ -1,17 +1,22 @@
 import clsx from "clsx";
 import { Check } from "lucide-react";
 import { useI18n } from "../../i18n/I18nProvider";
-import type { AppShortcut, Asset, TargetProfile } from "../../types";
+import type { TranslationKey } from "../../i18n/messages";
+import type { AppShortcut, Asset, AssetMountStatus, PhysicalMountState, TargetProfile } from "../../types";
 import { abbreviateHomePath } from "../../utils/path";
 
 export function AssetMountCard({
   asset,
+  mountBlockedReason,
+  mountStatus,
   profile,
   selected,
   shortcut,
   onToggle,
 }: {
   asset: Asset;
+  mountBlockedReason?: string;
+  mountStatus?: AssetMountStatus;
   profile: TargetProfile;
   selected: boolean;
   shortcut?: AppShortcut;
@@ -21,6 +26,10 @@ export function AssetMountCard({
   const supported = profile.supported_kinds.includes(asset.kind);
   const accentColor = shortcut?.accentColor ?? "#8c909f";
   const displayIcon = shortcut?.displayIcon ?? profile.name.slice(0, 1).toUpperCase();
+  const disabled = Boolean(mountBlockedReason);
+  const status = mountStatus?.state ?? "not_mounted";
+  const statusTone = mountStatusTone(status);
+  const targetDir = mountStatus?.target_dir ?? profile.target_paths[0] ?? "";
 
   return (
     <button
@@ -32,8 +41,11 @@ export function AssetMountCard({
           ? "border-status-create/70 bg-status-create/12 shadow-[0_0_0_1px_rgba(16,185,129,0.25),0_16px_34px_rgba(16,185,129,0.16)]"
           : "border-border hover:border-outline-variant",
         !supported && "opacity-60",
+        disabled && "cursor-not-allowed opacity-55 hover:translate-y-0 hover:border-border hover:bg-surface-high/80",
       )}
+      disabled={disabled}
       onClick={() => onToggle(profile.id)}
+      title={mountBlockedReason}
       type="button"
     >
       {selected && <span className="absolute inset-x-3 top-0 h-px bg-status-create/80" aria-hidden="true" />}
@@ -67,22 +79,49 @@ export function AssetMountCard({
             </span>
           </div>
           <p className="mt-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-sm text-on-surface-variant">
-            {abbreviateHomePath(profile.target_paths[0] ?? "")}
+            {abbreviateHomePath(targetDir)}
           </p>
-          <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
+          <div className="mt-2 flex min-w-0 items-center gap-2">
             <span
               className={clsx(
                 "inline-flex min-w-0 items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm",
-                supported ? "text-status-create" : "text-status-conflict",
+                disabled || !supported
+                  ? "text-status-conflict"
+                  : statusTone === "create"
+                    ? "text-status-create"
+                    : statusTone === "conflict"
+                      ? "text-status-conflict"
+                      : "text-on-surface-variant",
               )}
             >
-              <span className={clsx("size-1.5 shrink-0 rounded-full", supported ? "bg-status-create" : "bg-status-conflict")} aria-hidden="true" />
-              {t(supported ? "mount.supported" : "mount.unsupported")}
+              <span
+                className={clsx(
+                  "size-1.5 shrink-0 rounded-full",
+                  disabled || !supported
+                    ? "bg-status-conflict"
+                    : statusTone === "create"
+                      ? "bg-status-create"
+                      : statusTone === "conflict"
+                        ? "bg-status-conflict"
+                        : "bg-outline",
+                )}
+                aria-hidden="true"
+              />
+              {disabled ? t("mount.blocked") : supported ? t(`mount.status.${status}` as TranslationKey) : t("mount.unsupported")}
             </span>
-            <span className="shrink-0 font-mono text-code-sm uppercase text-outline">{profile.app_kind}</span>
           </div>
         </div>
       </div>
     </button>
   );
+}
+
+function mountStatusTone(status: PhysicalMountState) {
+  if (status === "mounted") {
+    return "create";
+  }
+  if (status === "conflict" || status === "broken") {
+    return "conflict";
+  }
+  return "idle";
 }

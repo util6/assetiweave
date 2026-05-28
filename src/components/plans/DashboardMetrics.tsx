@@ -17,7 +17,7 @@ export function DashboardMetrics({
 
   return (
     <>
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-4 gap-3 max-[1180px]:grid-cols-2">
         <Metric label={t("metric.sources")} value={overview?.source_count ?? 0} />
         <Metric label={t("metric.assets")} value={overview?.asset_count ?? assets.length} />
         <Metric label={t("metric.profiles")} value={overview?.profile_count ?? 0} />
@@ -25,7 +25,7 @@ export function DashboardMetrics({
       </div>
 
       {plan && (
-        <div className="grid grid-cols-5 gap-3">
+        <div className="grid grid-cols-5 gap-3 max-[1180px]:grid-cols-3">
           <Metric label={t("metric.create")} value={plan.summary.create_count} />
           <Metric label={t("metric.update")} value={plan.summary.update_count} />
           <Metric label={t("metric.remove")} value={plan.summary.remove_count} />
@@ -35,7 +35,7 @@ export function DashboardMetrics({
       )}
 
       {executionResult && (
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-4 gap-3 max-[1180px]:grid-cols-2">
           <Metric label={t("metric.executed")} value={executionResult.executed_count} />
           <Metric label={t("metric.execSkip")} value={executionResult.skipped_count} />
           <Metric label={t("metric.execConflict")} value={executionResult.conflict_count} />

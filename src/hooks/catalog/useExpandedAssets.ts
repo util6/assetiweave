@@ -5,13 +5,10 @@ export function useExpandedAssets() {
 
   function toggleAsset(id: string) {
     setExpandedIds((current) => {
-      const next = new Set(current);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
+      if (current.has(id)) {
+        return new Set();
       }
-      return next;
+      return new Set([id]);
     });
   }
 

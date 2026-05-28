@@ -4,9 +4,22 @@ import {
   fallbackAssets,
   fallbackNavigationModel,
   fallbackProfiles,
+  fallbackSources,
 } from "../fixtures/catalog";
 import type { NavigationModel } from "../navigation/types";
-import type { AppOverview, AppShortcut, Asset, DeploymentPlan, ExecutionResult, Source, TargetProfile } from "../types";
+import type {
+  AppOverview,
+  AppShortcut,
+  Asset,
+  AssetMount,
+  AssetMountStatus,
+  DeploymentPlan,
+  DeploymentStrategy,
+  ExecutionResult,
+  Source,
+  SourceInput,
+  TargetProfile,
+} from "../types";
 
 export async function getOverview(): Promise<AppOverview> {
   try {
@@ -33,7 +46,49 @@ export async function listSources(): Promise<Source[]> {
   try {
     return await invoke<Source[]>("list_sources");
   } catch {
-    return [];
+    return fallbackSources;
+  }
+}
+
+export async function listSkillSources(): Promise<Source[]> {
+  try {
+    return await invoke<Source[]>("list_skill_sources");
+  } catch {
+    return fallbackSources.filter((source) => source.scanner_kind === "skill");
+  }
+}
+
+export async function createSource(source: SourceInput): Promise<Source> {
+  try {
+    return await invoke<Source>("create_source", { source });
+  } catch {
+    return {
+      ...source,
+      id: source.id ?? crypto.randomUUID(),
+      scanner_kind: source.scanner_kind ?? "mixed",
+      source_origin: source.source_origin ?? "local_folder",
+      repo_root: source.repo_root ?? null,
+      scan_root: source.scan_root ?? "",
+      origin_app_kind: source.origin_app_kind ?? null,
+      last_scanned_at: null,
+      last_scan_status: "preview",
+    };
+  }
+}
+
+export async function updateSource(source: Source): Promise<Source> {
+  try {
+    return await invoke<Source>("update_source", { source });
+  } catch {
+    return source;
+  }
+}
+
+export async function deleteSource(id: string): Promise<void> {
+  try {
+    await invoke<void>("delete_source", { id });
+  } catch {
+    return;
   }
 }
 
@@ -49,7 +104,16 @@ export async function getNavigationModel(): Promise<NavigationModel> {
   try {
     return await invoke<NavigationModel>("get_navigation_model");
   } catch {
-    return fallbackNavigationModel;
+    return getStoredFallbackNavigationModel();
+  }
+}
+
+export async function updateNavigationModel(model: NavigationModel): Promise<NavigationModel> {
+  try {
+    return await invoke<NavigationModel>("update_navigation_model", { model });
+  } catch {
+    localStorage.setItem(FALLBACK_NAVIGATION_STORAGE_KEY, JSON.stringify(model));
+    return model;
   }
 }
 
@@ -57,8 +121,68 @@ export async function listAppShortcuts(): Promise<AppShortcut[]> {
   try {
     return await invoke<AppShortcut[]>("list_app_shortcuts");
   } catch {
-    return fallbackAppShortcuts;
+    return getStoredFallbackAppShortcuts().filter((shortcut) => shortcut.enabled);
   }
+}
+
+export async function listAppShortcutSettings(): Promise<AppShortcut[]> {
+  try {
+    return await invoke<AppShortcut[]>("list_app_shortcut_settings");
+  } catch {
+    return getStoredFallbackAppShortcuts();
+  }
+}
+
+export async function updateAppShortcuts(shortcuts: AppShortcut[]): Promise<AppShortcut[]> {
+  try {
+    return await invoke<AppShortcut[]>("update_app_shortcuts", { shortcuts });
+  } catch {
+    localStorage.setItem(FALLBACK_APP_SHORTCUTS_STORAGE_KEY, JSON.stringify(shortcuts));
+    return shortcuts;
+  }
+}
+
+export async function listAssetMounts(assetId?: string): Promise<AssetMount[]> {
+  try {
+    return await invoke<AssetMount[]>("list_asset_mounts", { assetId });
+  } catch {
+    return [];
+  }
+}
+
+export async function listAssetMountStatuses(assetId?: string): Promise<AssetMountStatus[]> {
+  try {
+    return await invoke<AssetMountStatus[]>("list_asset_mount_statuses", { assetId });
+  } catch {
+    return fallbackAssets.flatMap((asset) =>
+      fallbackProfiles.map((profile) => ({
+        asset_id: asset.id,
+        profile_id: profile.id,
+        target_dir: profile.target_paths[0] ?? "",
+        target_path: [profile.target_paths[0] ?? "", asset.name].filter(Boolean).join("/"),
+        state: "not_mounted" as const,
+        linked_source: null,
+      })),
+    );
+  }
+}
+
+export async function toggleAssetMount(assetId: string, profileId: string): Promise<AssetMount> {
+  return await invoke<AssetMount>("toggle_asset_mount", { assetId, profileId });
+}
+
+export async function setAssetMount(
+  assetId: string,
+  profileId: string,
+  enabled: boolean,
+  strategy?: DeploymentStrategy,
+): Promise<AssetMount> {
+  return await invoke<AssetMount>("set_asset_mount", {
+    assetId,
+    profileId,
+    enabled,
+    strategy,
+  });
 }
 
 export async function scanSources(): Promise<Asset[]> {
@@ -67,6 +191,18 @@ export async function scanSources(): Promise<Asset[]> {
   } catch {
     return fallbackAssets;
   }
+}
+
+export async function scanSkillSources(): Promise<Asset[]> {
+  try {
+    return await invoke<Asset[]>("scan_skill_sources");
+  } catch {
+    return fallbackAssets;
+  }
+}
+
+export async function adoptAppLocalSkill(assetId: string): Promise<Asset> {
+  return await invoke<Asset>("adopt_app_local_skill", { assetId });
 }
 
 export async function createPlan(profileId?: string): Promise<DeploymentPlan> {
@@ -82,4 +218,25 @@ export async function executePlan(plan: DeploymentPlan, actionIds?: string[]): P
 
 export async function revealPath(path: string): Promise<void> {
   return await invoke<void>("reveal_path", { path });
+}
+
+const FALLBACK_NAVIGATION_STORAGE_KEY = "assetiweave.preview.navigation";
+const FALLBACK_APP_SHORTCUTS_STORAGE_KEY = "assetiweave.preview.appShortcuts";
+
+function getStoredFallbackNavigationModel(): NavigationModel {
+  try {
+    const stored = localStorage.getItem(FALLBACK_NAVIGATION_STORAGE_KEY);
+    return stored ? JSON.parse(stored) : fallbackNavigationModel;
+  } catch {
+    return fallbackNavigationModel;
+  }
+}
+
+function getStoredFallbackAppShortcuts(): AppShortcut[] {
+  try {
+    const stored = localStorage.getItem(FALLBACK_APP_SHORTCUTS_STORAGE_KEY);
+    return stored ? JSON.parse(stored) : fallbackAppShortcuts;
+  } catch {
+    return fallbackAppShortcuts;
+  }
 }

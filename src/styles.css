@@ -7,6 +7,32 @@
 @layer base {
   :root {
     color-scheme: dark;
+    --app-header-height: 4rem;
+    --app-page-x: 2rem;
+    --app-page-y: 1.5rem;
+    --app-section-gap: 1rem;
+    --app-subnav-y: 0.75rem;
+    --app-toolbar-top: 113px;
+    --app-toolbar-y: 1rem;
+  }
+
+  :root[data-density="compact"] {
+    --app-header-height: 3.5rem;
+    --app-page-x: 1.5rem;
+    --app-page-y: 1rem;
+    --app-section-gap: 0.75rem;
+    --app-subnav-y: 0.5rem;
+    --app-toolbar-top: 105px;
+    --app-toolbar-y: 0.75rem;
+  }
+
+  :root[data-motion="reduced"] *,
+  :root[data-motion="reduced"] *::before,
+  :root[data-motion="reduced"] *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
   }
 
   * {
@@ -39,6 +65,13 @@
     backdrop-filter: blur(12px);
   }
 
+  .asset-list-surface {
+    background:
+      linear-gradient(180deg, rgba(30, 41, 59, 0.76), rgba(19, 27, 46, 0.78)),
+      rgba(17, 24, 39, 0.72);
+    backdrop-filter: blur(12px);
+  }
+
   .asset-description {
     display: -webkit-box;
     overflow: hidden;
@@ -49,5 +82,25 @@
   .group:hover .asset-description,
   .asset-expanded .asset-description {
     color: theme("colors.primary");
+  }
+
+  .source-input {
+    width: 100%;
+    border-radius: theme("borderRadius.xl");
+    border: 1px solid theme("colors.border");
+    background: theme("colors.surface-high");
+    padding: 0.625rem 0.75rem;
+    color: theme("colors.on-surface");
+    font-size: 12px;
+    line-height: 16px;
+    outline: none;
+  }
+
+  .source-input:focus {
+    border-color: rgb(77 142 255 / 0.55);
+  }
+
+  .source-input::placeholder {
+    color: theme("colors.outline");
   }
 }

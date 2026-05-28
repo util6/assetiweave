@@ -4,7 +4,15 @@ import { railLabel } from "../../i18n/navigation";
 import { MenuIcon } from "../../navigation/icons";
 import type { RailMenuItem } from "../../navigation/types";
 
-export function SideRail({ activeId, items }: { activeId: string; items: RailMenuItem[] }) {
+export function SideRail({
+  activeId,
+  items,
+  onItemSelect,
+}: {
+  activeId: string;
+  items: RailMenuItem[];
+  onItemSelect?: (item: RailMenuItem) => void;
+}) {
   const { t } = useI18n();
   const primaryItems = items.filter((item) => item.enabled && item.position === "primary");
   const secondaryItems = items.filter((item) => item.enabled && item.position === "secondary");
@@ -21,15 +29,23 @@ export function SideRail({ activeId, items }: { activeId: string; items: RailMen
         >
           <MenuIcon name="rocket" size={22} />
         </button>
-        <RailGroup activeId={activeId} items={primaryItems} />
+        <RailGroup activeId={activeId} items={primaryItems} onItemSelect={onItemSelect} />
       </div>
 
-      <RailGroup activeId={activeId} items={secondaryItems} />
+      <RailGroup activeId={activeId} items={secondaryItems} onItemSelect={onItemSelect} />
     </aside>
   );
 }
 
-function RailGroup({ activeId, items }: { activeId: string; items: RailMenuItem[] }) {
+function RailGroup({
+  activeId,
+  items,
+  onItemSelect,
+}: {
+  activeId: string;
+  items: RailMenuItem[];
+  onItemSelect?: (item: RailMenuItem) => void;
+}) {
   const { t } = useI18n();
 
   return (
@@ -47,7 +63,10 @@ function RailGroup({ activeId, items }: { activeId: string; items: RailMenuItem[
             )}
             key={item.id}
             aria-label={label}
+            aria-current={item.id === activeId ? "page" : undefined}
+            onClick={() => onItemSelect?.(item)}
             title={label}
+            type="button"
           >
             <MenuIcon name={item.icon} />
           </button>

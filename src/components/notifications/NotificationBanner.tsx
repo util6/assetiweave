@@ -13,10 +13,10 @@ export interface NotificationMessage {
 }
 
 const toneClass: Record<NotificationTone, string> = {
-  success: "border-status-create/50 bg-status-create/12 text-status-create",
-  info: "border-status-update/50 bg-status-update/12 text-status-update",
-  warning: "border-status-conflict/50 bg-status-conflict/12 text-status-conflict",
-  error: "border-status-remove/50 bg-status-remove/12 text-status-remove",
+  success: "border-status-create/50 bg-status-create/15 text-status-create",
+  info: "border-status-update/50 bg-status-update/15 text-status-update",
+  warning: "border-status-conflict/50 bg-status-conflict/15 text-status-conflict",
+  error: "border-status-remove/50 bg-status-remove/15 text-status-remove",
 };
 
 export function NotificationBanner({
@@ -35,8 +35,10 @@ export function NotificationBanner({
   const message = notification.messageKey ? t(notification.messageKey, notification.messageParams) : (notification.message ?? "");
 
   return (
-    <section className="shrink-0 px-8 py-3" aria-live="polite" aria-label={t("notification.aria")}>
-      <div className={`flex min-h-12 items-center justify-between rounded-xl border px-4 py-2.5 ${toneClass[notification.tone]}`}>
+    <section className="shrink-0 px-[var(--app-page-x)] py-3" aria-live="polite" aria-label={t("notification.aria")}>
+      <div
+        className={`flex min-h-12 items-center justify-between rounded-xl border px-4 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${toneClass[notification.tone]}`}
+      >
         <p className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-medium">{message}</p>
         <button
           className="ml-4 grid size-8 shrink-0 place-items-center rounded-lg transition-colors hover:bg-white/10"

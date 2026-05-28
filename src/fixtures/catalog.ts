@@ -1,11 +1,11 @@
 import { navigationModel } from "../navigation/menu";
 import type { NavigationModel } from "../navigation/types";
-import type { AppShortcut, Asset, TargetProfile } from "../types";
+import type { AppShortcut, Asset, Source, TargetProfile } from "../types";
 
 export const fallbackAssets: Asset[] = [
   {
     id: "demo-algorithmic-art",
-    source_id: "local-skills",
+    source_id: "codex-skills",
     name: "algorithmic-art",
     kind: "skill",
     format: "directory",
@@ -18,7 +18,7 @@ export const fallbackAssets: Asset[] = [
   },
   {
     id: "demo-android-native-dev",
-    source_id: "local-skills",
+    source_id: "agents-skills",
     name: "android-native-dev",
     kind: "skill",
     format: "directory",
@@ -31,7 +31,7 @@ export const fallbackAssets: Asset[] = [
   },
   {
     id: "demo-brand-guidelines",
-    source_id: "local-skills",
+    source_id: "project-specs",
     name: "brand-guidelines",
     kind: "rule",
     format: "markdown",
@@ -43,7 +43,7 @@ export const fallbackAssets: Asset[] = [
   },
   {
     id: "demo-browser-harness",
-    source_id: "local-skills",
+    source_id: "agents-skills",
     name: "browser-harness",
     kind: "agent",
     format: "script",
@@ -55,7 +55,7 @@ export const fallbackAssets: Asset[] = [
   },
   {
     id: "demo-canvas-design",
-    source_id: "local-skills",
+    source_id: "codex-skills",
     name: "canvas-design",
     kind: "skill",
     format: "directory",
@@ -68,7 +68,7 @@ export const fallbackAssets: Asset[] = [
   },
   {
     id: "demo-claude-api",
-    source_id: "local-skills",
+    source_id: "project-specs",
     name: "claude-api",
     kind: "rule",
     format: "markdown",
@@ -80,41 +80,98 @@ export const fallbackAssets: Asset[] = [
   },
 ];
 
+export const fallbackSources: Source[] = [
+  {
+    id: "codex-skills",
+    name: "Codex Skills",
+    kind: "local",
+    root_path: "~/.codex/skills",
+    scanner_kind: "skill",
+    source_origin: "app_target",
+    repo_root: null,
+    scan_root: "",
+    origin_app_kind: "codex",
+    include_globs: ["**/SKILL.md"],
+    exclude_globs: ["**/.git/**", "**/node_modules/**", "**/target/**", "**/dist/**"],
+    default_kind: "skill",
+    enabled: true,
+    priority: 0,
+    last_scanned_at: new Date().toISOString(),
+    last_scan_status: "ok: 3 assets",
+  },
+  {
+    id: "agents-skills",
+    name: "Agents Skills",
+    kind: "local",
+    root_path: "~/.agents/skills",
+    scanner_kind: "skill",
+    source_origin: "git_repo",
+    repo_root: "~/.agents",
+    scan_root: "skills",
+    origin_app_kind: null,
+    include_globs: ["**/SKILL.md"],
+    exclude_globs: ["**/.git/**", "**/node_modules/**", "**/target/**", "**/dist/**"],
+    default_kind: "skill",
+    enabled: true,
+    priority: 10,
+    last_scanned_at: new Date().toISOString(),
+    last_scan_status: "ok: 2 assets",
+  },
+  {
+    id: "project-specs",
+    name: "当前项目 Specs",
+    kind: "local",
+    root_path: "specs",
+    scanner_kind: "rule",
+    source_origin: "local_folder",
+    repo_root: null,
+    scan_root: "",
+    origin_app_kind: null,
+    include_globs: ["**/*.md"],
+    exclude_globs: ["**/.git/**", "**/node_modules/**", "**/target/**", "**/dist/**"],
+    default_kind: "rule",
+    enabled: true,
+    priority: 20,
+    last_scanned_at: null,
+    last_scan_status: "pending",
+  },
+];
+
 export const fallbackProfiles: TargetProfile[] = [
   {
     id: "codex",
     name: "Codex",
     app_kind: "codex",
-    target_paths: ["~/.codex/assetiweave"],
+    target_paths: ["~/.codex/skills"],
     supported_kinds: ["skill", "prompt", "rule", "custom"],
-    deployment_strategy: "symlink",
+    deployment_strategy: "symlink_to_source",
     enabled: true,
   },
   {
     id: "claude",
     name: "Claude",
     app_kind: "claude",
-    target_paths: ["~/.claude/assetiweave"],
+    target_paths: ["~/.claude/skills"],
     supported_kinds: ["skill", "prompt", "rule", "custom"],
-    deployment_strategy: "symlink",
+    deployment_strategy: "symlink_to_source",
     enabled: true,
   },
   {
     id: "cursor",
     name: "Cursor",
     app_kind: "cursor",
-    target_paths: ["~/Library/Application Support/Cursor/assetiweave"],
+    target_paths: ["~/Library/Application Support/Cursor/skills"],
     supported_kinds: ["skill", "prompt", "rule", "custom"],
-    deployment_strategy: "symlink",
+    deployment_strategy: "symlink_to_source",
     enabled: true,
   },
   {
     id: "gemini",
     name: "Gemini",
     app_kind: "gemini",
-    target_paths: ["~/.gemini/assetiweave"],
+    target_paths: ["~/.gemini/skills"],
     supported_kinds: ["skill", "prompt", "rule", "custom"],
-    deployment_strategy: "symlink",
+    deployment_strategy: "symlink_to_source",
     enabled: true,
   },
 ];
