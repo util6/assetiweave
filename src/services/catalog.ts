@@ -7,6 +7,9 @@ import {
   fallbackSources,
 } from "../fixtures/catalog";
 import type { NavigationModel } from "../navigation/types";
+import { appShortcutListSchema, navigationModelSchema } from "../schemas/navigation";
+import { sourceInputSchema } from "../schemas/source";
+import { parseSchemaOrFallback, parseSchemaOrThrow } from "../schemas/validation";
 import type {
   AppOverview,
   AppShortcut,
@@ -59,17 +62,14 @@ export async function listSkillSources(): Promise<Source[]> {
 }
 
 export async function createSource(source: SourceInput): Promise<Source> {
+  const parsedSource = parseSchemaOrThrow(sourceInputSchema, source, "Invalid source input");
+
   try {
-    return await invoke<Source>("create_source", { source });
+    return await invoke<Source>("create_source", { source: parsedSource });
   } catch {
     return {
-      ...source,
-      id: source.id ?? crypto.randomUUID(),
-      scanner_kind: source.scanner_kind ?? "mixed",
-      source_origin: source.source_origin ?? "local_folder",
-      repo_root: source.repo_root ?? null,
-      scan_root: source.scan_root ?? "",
-      origin_app_kind: source.origin_app_kind ?? null,
+      ...parsedSource,
+      id: parsedSource.id ?? crypto.randomUUID(),
       last_scanned_at: null,
       last_scan_status: "preview",
     };
@@ -226,7 +226,9 @@ const FALLBACK_APP_SHORTCUTS_STORAGE_KEY = "assetiweave.preview.appShortcuts";
 function getStoredFallbackNavigationModel(): NavigationModel {
   try {
     const stored = localStorage.getItem(FALLBACK_NAVIGATION_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : fallbackNavigationModel;
+    return stored
+      ? parseSchemaOrFallback(navigationModelSchema, JSON.parse(stored), fallbackNavigationModel)
+      : fallbackNavigationModel;
   } catch {
     return fallbackNavigationModel;
   }
@@ -235,7 +237,9 @@ function getStoredFallbackNavigationModel(): NavigationModel {
 function getStoredFallbackAppShortcuts(): AppShortcut[] {
   try {
     const stored = localStorage.getItem(FALLBACK_APP_SHORTCUTS_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : fallbackAppShortcuts;
+    return stored
+      ? parseSchemaOrFallback(appShortcutListSchema, JSON.parse(stored), fallbackAppShortcuts)
+      : fallbackAppShortcuts;
   } catch {
     return fallbackAppShortcuts;
   }
