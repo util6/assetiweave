@@ -18,8 +18,6 @@ import { CSS } from "@dnd-kit/utilities";
 import clsx from "clsx";
 import {
   Activity,
-  ArrowDown,
-  ArrowUp,
   Bell,
   Code2,
   Gauge,
@@ -57,7 +55,6 @@ import { useAppSettings, type InterfaceDensity } from "../../store/settings/AppS
 import type { AppShortcut, AppShortcutIconSvg } from "../../types";
 
 type SettingsSection = "appearance" | "menu" | "shortcuts" | "deployment" | "notifications";
-type MoveDirection = -1 | 1;
 
 interface SettingsSectionConfig {
   id: SettingsSection;
@@ -232,6 +229,16 @@ export function GlobalSettingsDialog({
     commitAppShortcuts(appShortcuts.map((shortcut) => (shortcut.profileId === profileId ? { ...shortcut, ...patch } : shortcut)));
   }
 
+  function reorderAppShortcuts(orderedIds: string[]) {
+    const shortcutById = new Map(appShortcuts.map((shortcut) => [shortcut.profileId, shortcut]));
+    commitAppShortcuts(
+      orderedIds.flatMap((id) => {
+        const shortcut = shortcutById.get(id);
+        return shortcut ? [shortcut] : [];
+      }),
+    );
+  }
+
   function openShortcutIconEditor(shortcut: AppShortcut) {
     setEditingShortcutIconId(shortcut.profileId);
     setIconSvgDraft(shortcut.iconSvg ? stringifyIconSvg(shortcut.iconSvg) : "");
@@ -266,14 +273,6 @@ export function GlobalSettingsDialog({
 
     updateAppShortcut(editingShortcutIconId, { iconSvg: null });
     closeShortcutIconEditor();
-  }
-
-  function moveAppShortcut(profileId: string, direction: MoveDirection) {
-    const index = appShortcuts.findIndex((shortcut) => shortcut.profileId === profileId);
-    const targetIndex = index + direction;
-    if (index < 0 || targetIndex < 0 || targetIndex >= appShortcuts.length) return;
-
-    commitAppShortcuts(swapItems(appShortcuts, index, targetIndex));
   }
 
   const editingShortcutIcon = appShortcuts.find((shortcut) => shortcut.profileId === editingShortcutIconId) ?? null;
@@ -470,21 +469,20 @@ export function GlobalSettingsDialog({
 
             {activeSection === "shortcuts" && (
               <MenuSection icon={<MousePointerClick size={18} />} title={t("settings.shortcuts.title")}>
-                {appShortcuts.map((shortcut, index) => (
-                  <ShortcutEditRow
-                    key={shortcut.profileId}
-                    moveDownDisabled={index === appShortcuts.length - 1}
-                    moveUpDisabled={index === 0}
-                    onAccentColorChange={(accentColor) => updateAppShortcut(shortcut.profileId, { accentColor })}
-                    onDisplayIconChange={(displayIcon) => updateAppShortcut(shortcut.profileId, { displayIcon })}
-                    onEnabledChange={(enabled) => updateAppShortcut(shortcut.profileId, { enabled })}
-                    onIconSvgEdit={() => openShortcutIconEditor(shortcut)}
-                    onMoveDown={() => moveAppShortcut(shortcut.profileId, 1)}
-                    onMoveUp={() => moveAppShortcut(shortcut.profileId, -1)}
-                    shortcut={shortcut}
-                    t={t}
-                  />
-                ))}
+                <SortableMenuList itemIds={appShortcuts.map((shortcut) => shortcut.profileId)} onReorder={reorderAppShortcuts}>
+                  {appShortcuts.map((shortcut) => (
+                    <SortableShortcutEditRow
+                      id={shortcut.profileId}
+                      key={shortcut.profileId}
+                      onAccentColorChange={(accentColor) => updateAppShortcut(shortcut.profileId, { accentColor })}
+                      onDisplayIconChange={(displayIcon) => updateAppShortcut(shortcut.profileId, { displayIcon })}
+                      onEnabledChange={(enabled) => updateAppShortcut(shortcut.profileId, { enabled })}
+                      onIconSvgEdit={() => openShortcutIconEditor(shortcut)}
+                      shortcut={shortcut}
+                      t={t}
+                    />
+                  ))}
+                </SortableMenuList>
               </MenuSection>
             )}
 
@@ -686,33 +684,32 @@ function SortableMenuEditRow({
   );
 }
 
-function ShortcutEditRow({
-  moveDownDisabled,
-  moveUpDisabled,
+function SortableShortcutEditRow({
+  id,
   onAccentColorChange,
   onDisplayIconChange,
   onEnabledChange,
   onIconSvgEdit,
-  onMoveDown,
-  onMoveUp,
   shortcut,
   t,
 }: {
-  moveDownDisabled: boolean;
-  moveUpDisabled: boolean;
+  id: string;
   onAccentColorChange: (accentColor: string) => void;
   onDisplayIconChange: (displayIcon: string) => void;
   onEnabledChange: (enabled: boolean) => void;
   onIconSvgEdit: () => void;
-  onMoveDown: () => void;
-  onMoveUp: () => void;
   shortcut: AppShortcut;
   t: Translator;
 }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   const [draftIcon, setDraftIcon] = useState(shortcutCustomIconText(shortcut));
   const [draftColor, setDraftColor] = useState(shortcut.accentColor);
   const usesAppIcon = shortcutUsesAppIcon(shortcut);
   const canUseAppIcon = supportsAppIcon(shortcut.appKind);
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
 
   useEffect(() => {
     setDraftIcon(shortcutCustomIconText(shortcut));
@@ -751,7 +748,26 @@ function ShortcutEditRow({
   }
 
   return (
-    <div className="grid min-h-16 grid-cols-[minmax(200px,1fr)_300px_170px_auto_auto] items-center gap-4 border-b border-border px-4 py-3 last:border-b-0">
+    <div
+      className={clsx(
+        "grid min-h-16 grid-cols-[32px_minmax(200px,1fr)_300px_170px_auto] items-center gap-4 border-b border-border px-4 py-3 last:border-b-0",
+        isDragging && "relative z-10 border-outline-variant bg-surface-highest shadow-[0_18px_44px_rgba(0,0,0,0.34)]",
+      )}
+      ref={setNodeRef}
+      style={style}
+    >
+      <Button
+        aria-label={t("settings.menu.dragHandle")}
+        className="cursor-grab text-outline hover:text-primary active:cursor-grabbing"
+        size="icon-sm"
+        title={t("settings.menu.dragHandle")}
+        type="button"
+        variant="ghost"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical size={16} />
+      </Button>
       <div className="flex min-w-0 items-center gap-3">
         <span
           className="grid size-9 shrink-0 place-items-center rounded-lg border text-[13px] font-bold"
@@ -856,33 +872,6 @@ function ShortcutEditRow({
         </span>
         <SwitchControl checked={shortcut.enabled} label={t("settings.menu.visible")} onChange={onEnabledChange} />
       </div>
-
-      <div className="flex items-center gap-1">
-        <Button
-          aria-label={t("settings.menu.moveUp")}
-          className="text-on-surface-variant hover:text-on-surface"
-          disabled={moveUpDisabled}
-          onClick={onMoveUp}
-          size="icon-sm"
-          title={t("settings.menu.moveUp")}
-          type="button"
-          variant="ghost"
-        >
-          <ArrowUp size={16} />
-        </Button>
-        <Button
-          aria-label={t("settings.menu.moveDown")}
-          className="text-on-surface-variant hover:text-on-surface"
-          disabled={moveDownDisabled}
-          onClick={onMoveDown}
-          size="icon-sm"
-          title={t("settings.menu.moveDown")}
-          type="button"
-          variant="ghost"
-        >
-          <ArrowDown size={16} />
-        </Button>
-      </div>
     </div>
   );
 }
@@ -983,12 +972,6 @@ function SettingRow({ children, icon, label }: { children: ReactNode; icon: Reac
       <div className="shrink-0">{children}</div>
     </div>
   );
-}
-
-function swapItems<Item>(items: Item[], firstIndex: number, secondIndex: number) {
-  const nextItems = [...items];
-  [nextItems[firstIndex], nextItems[secondIndex]] = [nextItems[secondIndex], nextItems[firstIndex]];
-  return nextItems;
 }
 
 function setLocalizedNavigationLabel(labels: LocalizedNavigationLabels | undefined, locale: Locale, label: string): LocalizedNavigationLabels {
