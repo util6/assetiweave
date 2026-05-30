@@ -57,9 +57,14 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - Source seed、Profile seed、Navigation seed、App Shortcut seed 和 `asset_mounts` 持久化。
 - 真实目录扫描、`SKILL.md` 目录识别、基础资产分类、描述提取。
 - Catalog 页面：搜索、指标、部署计划预览、资产行默认展示路径/描述/来源。
+- Catalog 页面当前支持列表视图和卡片视图；卡片视图用于资产总览，不表达文件树或来源层级。
 - 资产行右侧可配置 App 快捷挂载图标，配置来自 SQLite。
 - 展开态 Mount Targets 面板和可选中挂载卡片 UI。
 - 快捷挂载图标和 Mount Target 卡片已写入同一份 `asset_mounts` 关系。
+- Sources/技能源管理页面当前支持列表视图和分栏视图；分栏视图按来源、Skill 列表、源级批量挂载区域组织。
+- 技能源管理页面支持把某个来源下全部 Skill 批量挂载到指定 App/Profile，底层复用 `asset_mounts`。
+- 统一数据 Toolbar 组件已抽取，页面只传入自己合法的视图选项。
+- 技能源导入弹窗和目录选择入口已接入前端。
 - 路径展示 home 缩写，点击路径在文件管理器中显示。
 - 部署计划生成和执行基础链路，计划输入已收敛到启用的挂载关系。
 - 部署执行默认将目标 App 目录直接 symlink 到源资产真实路径。
@@ -132,10 +137,13 @@ flowchart TB
 主要能力：
 
 - 添加本地目录源。
+- 通过导入源弹窗选择本地目录源。
 - 配置 include/exclude glob。
 - 启用/禁用源。
 - 扫描源并显示发现统计。
 - 查看源内资产列表。
+- 在列表视图中查看来源摘要、规则和来源下 Skill。
+- 在分栏视图中按来源浏览 Skill，并对该来源下全部 Skill 执行 Profile 级批量挂载。
 
 ### 4.2 Catalog
 
@@ -143,10 +151,11 @@ flowchart TB
 
 主要能力：
 
-- 表格展示所有资产。
+- 列表或卡片展示所有资产。
 - 搜索和筛选 kind、source、tag、group、enabled。
 - 批量设置标签和分组。
 - 资产行默认展示名称、类型 badge、源路径、Description、Source。
+- 卡片视图默认展示名称、类型、来源、描述、路径和 App 快捷挂载入口。
 - 资产行右侧展示用户配置的 App 快捷挂载图标，支持排序和启停。
 - 展开资产行后展示 Mount Targets，一行四个 Profile 卡片，用于选择挂载目标。
 - 查看原始路径和解析出的 frontmatter/description。
@@ -228,6 +237,21 @@ source repo asset
 - 生成 `manifest.json`，记录 asset_id、source_id、原始路径、hash、kind、format、description、导出时间。
 
 导出不会改变源目录，也不会改变目标 App 的挂载目录。
+
+### 4.5.2 Data Toolbar 和视图模式
+
+当前前端抽取了统一 `DataToolbar` 组件族，目标是统一工具栏的结构、按钮尺寸、搜索框、图标按钮、分隔线、指标块和视图切换控件。统一的是组件语言和交互形态，不是强制所有页面拥有同一组视图模式。
+
+当前页面视图约束：
+
+- 资产总览目录：`list`、`grid`。这里的 `grid` 是卡片视图，用于资产工作台式浏览。
+- 技能源管理：`list`、`columns`。这里的 `columns` 是 Finder-like 分栏，用于按来源逐级浏览 Skill 和批量挂载。
+
+设计原因：
+
+- 资产总览目录不是文件树或来源层级视图，使用分栏会制造错误的信息结构。
+- 技能源管理天然有 Source -> Skill -> Mount Targets 的层级关系，分栏能减少展开/折叠成本。
+- Toolbar 保持组件统一，但视图选项由页面按业务语义声明。
 
 ### 4.6 Menu Management
 
@@ -512,6 +536,13 @@ sequenceDiagram
     Core->>Core: 写入 asset_mounts
     Core-->>UI: 返回最新挂载状态
 
+    U->>UI: 在技能源管理页点击来源级全选挂载
+    loop 该来源下每个可挂载 Skill
+        UI->>Core: set_asset_mount(asset_id, profile_id, enabled)
+        Core->>Core: 写入 asset_mounts
+    end
+    Core-->>UI: 返回最新挂载关系
+
     U->>UI: 点击生成计划
     UI->>Core: create_plan(profile?)
     Core->>Core: 读取 asset_mounts 和 profile 规则
@@ -519,7 +550,7 @@ sequenceDiagram
     Core-->>UI: 返回 DeploymentPlan
 
     U->>UI: 确认执行
-    UI->>Core: execute_plan(selected_actions)
+    UI->>Core: execute_plan(plan, selected_actions)
     Core->>FS: 创建/更新/删除受管部署结果
     Core-->>UI: 返回执行结果
 ```
@@ -530,12 +561,14 @@ sequenceDiagram
 
 ```text
 list_sources() -> Source[]
+list_skill_sources() -> Source[]
 create_source(input) -> Source
-update_source(id, input) -> Source
+update_source(source) -> Source
 delete_source(id) -> void
-scan_sources() -> ScanResult
+scan_sources(kind?) -> Asset[]
+scan_skill_sources() -> Asset[]
 
-list_assets(filter) -> AssetWithMetadata[]
+list_assets(kind?) -> Asset[]
 update_asset_metadata(asset_id, patch) -> MetadataOverlay
 bulk_update_assets(asset_ids, patch) -> BulkResult
 
@@ -545,15 +578,23 @@ update_profile(id, input) -> TargetProfile
 delete_profile(id) -> void
 
 get_navigation_model() -> NavigationModel
+update_navigation_model(model) -> NavigationModel
 list_app_shortcuts() -> AppShortcut[]
+list_app_shortcut_settings() -> AppShortcut[]
+update_app_shortcuts(shortcuts) -> AppShortcut[]
 
 list_asset_mounts(asset_id?) -> AssetMount[]
+list_asset_mount_statuses(asset_id?) -> AssetMountStatus[]
 toggle_asset_mount(asset_id, profile_id) -> AssetMount
 set_asset_mount(asset_id, profile_id, enabled, strategy?) -> AssetMount
+unmount_asset_mount(asset_id, profile_id) -> AssetMountUpdateResult
 
 create_plan(profile_id?) -> DeploymentPlan
-execute_plan(action_ids) -> ExecutionResult
+execute_plan(plan, action_ids?) -> ExecutionResult
 explain_asset(asset_id, profile_id) -> EvaluationResult
+
+adopt_app_local_skill(asset_id) -> Asset
+reveal_path(path) -> void
 
 export_assets(input) -> ExportResult
 export_config(path) -> void
