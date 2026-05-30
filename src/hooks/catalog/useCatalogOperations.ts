@@ -1,8 +1,11 @@
 import { useState } from "react";
 import { createPlan, executePlan, scanSources } from "../../services/catalog";
-import type { Asset, DeploymentPlan, ExecutionResult } from "../../types";
+import type { Asset, AssetKind, DeploymentPlan, ExecutionResult } from "../../types";
 
-export function useCatalogOperations(refreshOverview: (nextAssets?: Asset[]) => Promise<void>) {
+export function useCatalogOperations(
+  refreshOverview: (nextAssets?: Asset[]) => Promise<void>,
+  activeAssetKind?: AssetKind,
+) {
   const [plan, setPlan] = useState<DeploymentPlan | null>(null);
   const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -10,7 +13,7 @@ export function useCatalogOperations(refreshOverview: (nextAssets?: Asset[]) => 
   async function scan() {
     setBusy(true);
     try {
-      const scannedAssets = await scanSources();
+      const scannedAssets = await scanSources(activeAssetKind);
       await refreshOverview(scannedAssets);
       setPlan(null);
       setExecutionResult(null);

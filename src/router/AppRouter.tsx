@@ -39,6 +39,8 @@ export function AppRouter() {
           expandedAssetIds={catalog.expandedIds}
           onAssetReveal={(path) => void catalog.revealPath(path)}
           onCatalogRefresh={catalog.refreshOverview}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onSetSourceMountProfile={catalog.setMountProfiles}
           onToggleAsset={catalog.toggleAsset}
           onToggleMount={catalog.toggleMountProfile}
           profiles={catalog.profiles}

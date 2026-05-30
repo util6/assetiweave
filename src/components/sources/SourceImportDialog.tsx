@@ -1,0 +1,285 @@
+import { AlertTriangle, FolderOpen, FolderPlus, X } from "lucide-react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useI18n } from "../../i18n/I18nProvider";
+import type { SourceInput } from "../../types";
+import {
+  buildImportSourceInput,
+  DEFAULT_SKILL_EXCLUDE_GLOBS,
+  DEFAULT_SKILL_INCLUDE_GLOBS,
+  hasSourceImportFormErrors,
+  type SourceImportFormErrors,
+  type SourceImportFormValues,
+  validateSourceImportForm,
+} from "../../utils/sourceImport";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
+import { Switch } from "../ui/switch";
+
+export function SourceImportDialog({
+  busy,
+  onClose,
+  onPickRootPath,
+  onSubmit,
+  open,
+  suggestedPriority,
+}: {
+  busy: boolean;
+  onClose: () => void;
+  onPickRootPath: () => Promise<string | null>;
+  onSubmit: (source: SourceInput) => Promise<void>;
+  open: boolean;
+  suggestedPriority: number;
+}) {
+  const { t } = useI18n();
+  const titleId = useId();
+  const rootPathErrorId = useId();
+  const priorityErrorId = useId();
+  const submitErrorId = useId();
+  const rootPathInputRef = useRef<HTMLInputElement>(null);
+  const [values, setValues] = useState<SourceImportFormValues>(() => createInitialValues(suggestedPriority));
+  const [fieldErrors, setFieldErrors] = useState<SourceImportFormErrors>({});
+  const [pickingRootPath, setPickingRootPath] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    setValues(createInitialValues(suggestedPriority));
+    setFieldErrors({});
+    setPickingRootPath(false);
+    setSubmitError(null);
+    window.setTimeout(() => rootPathInputRef.current?.focus(), 0);
+  }, [open, suggestedPriority]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !busy) {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [busy, onClose, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  function updateValue<Key extends keyof SourceImportFormValues>(key: Key, value: SourceImportFormValues[Key]) {
+    setValues((currentValues) => ({ ...currentValues, [key]: value }));
+    if (key === "rootPath" || key === "priority") {
+      setFieldErrors((currentErrors) => ({ ...currentErrors, [key]: undefined }));
+    }
+    setSubmitError(null);
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const errors = validateSourceImportForm(values);
+    setFieldErrors(errors);
+    if (hasSourceImportFormErrors(errors)) {
+      return;
+    }
+
+    try {
+      await onSubmit(buildImportSourceInput(values));
+      onClose();
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : t("source.import.error.submit"));
+    }
+  }
+
+  async function handlePickRootPath() {
+    setPickingRootPath(true);
+    setSubmitError(null);
+    try {
+      const selectedPath = await onPickRootPath();
+      if (selectedPath) {
+        updateValue("rootPath", selectedPath);
+      }
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : t("source.import.error.pickDirectory"));
+    } finally {
+      setPickingRootPath(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 grid place-items-center bg-background/72 px-6 py-8 backdrop-blur-sm">
+      <section
+        aria-labelledby={titleId}
+        aria-modal="true"
+        className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-surface-low shadow-[0_24px_72px_rgba(0,0,0,0.42)]"
+        role="dialog"
+      >
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-border px-5">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid size-9 place-items-center rounded-xl border border-status-update/25 bg-status-update/15 text-status-update">
+              <FolderPlus size={18} />
+            </span>
+            <h2 className="truncate text-h2 text-on-surface" id={titleId}>
+              {t("source.import.title")}
+            </h2>
+          </div>
+          <Button
+            aria-label={t("source.import.close")}
+            className="text-on-surface-variant hover:text-on-surface"
+            disabled={busy}
+            onClick={onClose}
+            size="icon"
+            type="button"
+            variant="ghost"
+          >
+            <X size={18} />
+          </Button>
+        </header>
+
+        <form className="min-h-0 overflow-y-auto px-5 py-5" onSubmit={(event) => void handleSubmit(event)}>
+          <div className="grid gap-4">
+            <Field label={t("source.field.rootPath")} required>
+              <div className="flex gap-2">
+                <Input
+                  aria-describedby={fieldErrors.rootPath ? rootPathErrorId : undefined}
+                  aria-invalid={Boolean(fieldErrors.rootPath)}
+                  className="min-w-0 flex-1"
+                  disabled={busy || pickingRootPath}
+                  onChange={(event) => updateValue("rootPath", event.target.value)}
+                  placeholder={t("source.import.rootPathPlaceholder")}
+                  ref={rootPathInputRef}
+                  value={values.rootPath}
+                />
+                <Button
+                  aria-label={t("source.import.pickDirectory")}
+                  disabled={busy || pickingRootPath}
+                  onClick={() => void handlePickRootPath()}
+                  title={t("source.import.pickDirectory")}
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                >
+                  <FolderOpen size={17} />
+                </Button>
+              </div>
+              {fieldErrors.rootPath && (
+                <FieldError id={rootPathErrorId}>{t("source.import.error.rootPathRequired")}</FieldError>
+              )}
+            </Field>
+
+            <div className="grid grid-cols-[minmax(0,1fr)_8rem] gap-3 max-[720px]:grid-cols-1">
+              <Field label={t("source.field.name")}>
+                <Input
+                  disabled={busy}
+                  onChange={(event) => updateValue("name", event.target.value)}
+                  placeholder={t("source.import.namePlaceholder")}
+                  value={values.name}
+                />
+              </Field>
+              <Field label={t("source.field.priority")}>
+                <Input
+                  aria-describedby={fieldErrors.priority ? priorityErrorId : undefined}
+                  aria-invalid={Boolean(fieldErrors.priority)}
+                  disabled={busy}
+                  inputMode="numeric"
+                  onChange={(event) => updateValue("priority", event.target.value)}
+                  value={values.priority}
+                />
+                {fieldErrors.priority && (
+                  <FieldError id={priorityErrorId}>{t("source.import.error.priorityInvalid")}</FieldError>
+                )}
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 max-[720px]:grid-cols-1">
+              <Field label={t("source.field.includeGlobs")}>
+                <textarea
+                  className="min-h-28 w-full resize-y rounded-lg border border-border bg-surface-high px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={busy}
+                  onChange={(event) => updateValue("includeGlobsText", event.target.value)}
+                  placeholder={t("source.form.includePlaceholder")}
+                  value={values.includeGlobsText}
+                />
+              </Field>
+              <Field label={t("source.field.excludeGlobs")}>
+                <textarea
+                  className="min-h-28 w-full resize-y rounded-lg border border-border bg-surface-high px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={busy}
+                  onChange={(event) => updateValue("excludeGlobsText", event.target.value)}
+                  placeholder={t("source.form.excludePlaceholder")}
+                  value={values.excludeGlobsText}
+                />
+              </Field>
+            </div>
+
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-surface-high/60 px-3 py-3">
+              <span className="text-body-sm text-on-surface">{t("source.field.enabled")}</span>
+              <Switch
+                aria-label={t("source.field.enabled")}
+                checked={values.enabled}
+                disabled={busy}
+                onCheckedChange={(checked) => updateValue("enabled", checked)}
+              />
+            </div>
+
+            {submitError && (
+              <div
+                className="flex items-start gap-2 rounded-xl border border-status-remove/35 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove"
+                id={submitErrorId}
+                role="alert"
+              >
+                <AlertTriangle className="mt-0.5 shrink-0" size={16} />
+                <span>{submitError}</span>
+              </div>
+            )}
+          </div>
+
+          <footer className="mt-5 flex justify-end gap-2 border-t border-border pt-4">
+            <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+              {t("source.import.cancel")}
+            </Button>
+            <Button aria-describedby={submitError ? submitErrorId : undefined} disabled={busy} type="submit">
+              {busy ? t("source.import.submitting") : t("source.import.submit")}
+            </Button>
+          </footer>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function Field({ children, label, required = false }: { children: ReactNode; label: string; required?: boolean }) {
+  return (
+    <label className="grid gap-1.5">
+      <span className="text-body-sm font-medium text-on-surface-variant">
+        {label}
+        {required && <span className="text-status-remove"> *</span>}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function FieldError({ children, id }: { children: ReactNode; id: string }) {
+  return (
+    <span className="text-body-sm text-status-remove" id={id}>
+      {children}
+    </span>
+  );
+}
+
+function createInitialValues(suggestedPriority: number): SourceImportFormValues {
+  return {
+    enabled: true,
+    excludeGlobsText: DEFAULT_SKILL_EXCLUDE_GLOBS.join("\n"),
+    includeGlobsText: DEFAULT_SKILL_INCLUDE_GLOBS.join("\n"),
+    name: "",
+    priority: String(suggestedPriority),
+    rootPath: "",
+  };
+}

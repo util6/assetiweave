@@ -12,11 +12,13 @@ import { useMountSelection } from "./useMountSelection";
 export function useCatalogController() {
   const { settings } = useAppSettings();
   const catalogData = useCatalogData();
-  const operations = useCatalogOperations(catalogData.refreshOverview);
+  const operations = useCatalogOperations(catalogData.refreshOverview, catalogData.activeAssetKind);
   const { expandedIds, toggleAsset } = useExpandedAssets();
-  const { selectedMounts, toggleMountProfile } = useMountSelection(
+  const { selectedMounts, setMountProfiles, toggleMountProfile } = useMountSelection(
     catalogData.assetMounts,
+    catalogData.assetMountStatuses,
     catalogData.applyAssetMount,
+    catalogData.applyAssetMountStatus,
   );
   const [query, setQuery] = useState("");
   const [notification, setNotification] = useState<NotificationMessage | null>(() =>
@@ -52,6 +54,19 @@ export function useCatalogController() {
     operations.clearDeploymentPlan();
   }
 
+  async function setMountProfilesAndClearPlan(assetIds: string[], profileId: string, enabled: boolean) {
+    const mountableAssetIds = assetIds.filter((assetId) => {
+      const asset = assetById.get(assetId);
+      return asset && !isDirectMountBlockedSource(sourceById.get(asset.source_id));
+    });
+    if (mountableAssetIds.length === 0) {
+      return;
+    }
+
+    await setMountProfiles(mountableAssetIds, profileId, enabled);
+    operations.clearDeploymentPlan();
+  }
+
   return {
     ...catalogData,
     ...operations,
@@ -62,6 +77,7 @@ export function useCatalogController() {
     query,
     revealPath,
     selectedMounts,
+    setMountProfiles: setMountProfilesAndClearPlan,
     setQuery,
     toggleAsset,
     toggleMountProfile: toggleMountAndClearPlan,

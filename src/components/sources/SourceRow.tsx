@@ -5,6 +5,7 @@ import { sourceKindLabel, sourceOriginLabel, translateScanStatus } from "../../i
 import { useI18n } from "../../i18n/I18nProvider";
 import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
 import { abbreviateHomePath } from "../../utils/path";
+import { SourceBulkMountControls } from "./SourceBulkMountControls";
 
 export function SourceRow({
   appShortcuts,
@@ -16,6 +17,7 @@ export function SourceRow({
   onDelete,
   onAssetReveal,
   onReveal,
+  onSetSourceMountProfile,
   onToggleAsset,
   onToggleExpanded,
   onToggleMount,
@@ -33,6 +35,7 @@ export function SourceRow({
   onDelete: () => void;
   onAssetReveal: (path: string) => void;
   onReveal: () => void;
+  onSetSourceMountProfile: (assetIds: string[], profileId: string, enabled: boolean) => void;
   onToggleAsset: (assetId: string) => void;
   onToggleExpanded: () => void;
   onToggleMount: (assetId: string, profileId: string) => void;
@@ -96,23 +99,34 @@ export function SourceRow({
           </button>
         </div>
 
-        <div className="flex items-start gap-1.5">
-          <SourceIconButton
-            disabled={busy}
-            label={t(source.enabled ? "source.action.disable" : "source.action.enable")}
-            onClick={onToggle}
-          >
-            <Power size={16} />
-          </SourceIconButton>
-          <SourceIconButton label={t("source.action.reveal")} onClick={onReveal}>
-            <FolderOpen size={16} />
-          </SourceIconButton>
-          <SourceIconButton disabled={busy} label={t("source.action.delete")} onClick={onDelete} danger>
-            <Trash2 size={16} />
-          </SourceIconButton>
-          <SourceIconButton label={t(expanded ? "source.action.collapse" : "source.action.expand")} onClick={onToggleExpanded}>
-            {expanded ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
-          </SourceIconButton>
+        <div className="flex items-start gap-3 max-[1180px]:flex-col max-[1180px]:items-end">
+          <SourceBulkMountControls
+            appShortcuts={appShortcuts}
+            assets={assets}
+            busy={busy}
+            onSetSourceMountProfile={onSetSourceMountProfile}
+            profiles={profiles}
+            selectedMounts={selectedMounts}
+            source={source}
+          />
+          <div className="flex items-start gap-1.5">
+            <SourceIconButton
+              disabled={busy}
+              label={t(source.enabled ? "source.action.disable" : "source.action.enable")}
+              onClick={onToggle}
+            >
+              <Power size={16} />
+            </SourceIconButton>
+            <SourceIconButton label={t("source.action.reveal")} onClick={onReveal}>
+              <FolderOpen size={16} />
+            </SourceIconButton>
+            <SourceIconButton disabled={busy} label={t("source.action.delete")} onClick={onDelete} danger>
+              <Trash2 size={16} />
+            </SourceIconButton>
+            <SourceIconButton label={t(expanded ? "source.action.collapse" : "source.action.expand")} onClick={onToggleExpanded}>
+              {expanded ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
+            </SourceIconButton>
+          </div>
         </div>
       </div>
 

@@ -1,42 +1,73 @@
-import { RefreshCw, Search } from "lucide-react";
+import { Columns3, FolderPlus, LayoutList, RefreshCw, Settings } from "lucide-react";
 import { useI18n } from "../../i18n/I18nProvider";
+import {
+  DataToolbar,
+  ToolbarActionButton,
+  ToolbarSearch,
+  ToolbarSeparator,
+  ToolbarViewToggle,
+  type ToolbarViewMode,
+} from "../common/DataToolbar";
+
+export type SourceViewMode = Extract<ToolbarViewMode, "list" | "columns">;
 
 export function SourceToolbar({
   busy,
+  viewMode,
   query,
+  onImport,
+  onOpenSettings,
   onQueryChange,
   onScan,
+  onViewModeChange,
 }: {
   busy: boolean;
+  viewMode: SourceViewMode;
   query: string;
+  onImport: () => void;
+  onOpenSettings: () => void;
   onQueryChange: (query: string) => void;
   onScan: () => void;
+  onViewModeChange: (viewMode: SourceViewMode) => void;
 }) {
   const { t } = useI18n();
 
   return (
-    <div className="flex items-center justify-between gap-3 max-[920px]:flex-col max-[920px]:items-stretch">
-      <label className="flex h-10 min-w-72 flex-1 items-center gap-2 rounded-xl border border-border bg-surface-high px-3 text-outline focus-within:border-primary/50">
-        <Search size={17} />
-        <input
-          className="min-w-0 flex-1 border-0 bg-transparent text-body-sm text-on-surface outline-none placeholder:text-outline"
-          onChange={(event) => onQueryChange(event.target.value)}
+    <DataToolbar
+      actions={
+        <>
+          <ToolbarViewToggle
+            ariaLabel={t("toolbar.view.aria")}
+            onChange={onViewModeChange}
+            options={[
+              { icon: <LayoutList size={17} />, label: t("toolbar.view.list"), value: "list" },
+              { icon: <Columns3 size={17} />, label: t("toolbar.view.columns"), value: "columns" },
+            ]}
+            value={viewMode}
+          />
+          <ToolbarSeparator />
+          <ToolbarActionButton
+            disabled={busy}
+            icon={<FolderPlus size={17} />}
+            label={t("source.toolbar.add")}
+            onClick={onImport}
+            primary
+            text={t("source.toolbar.add")}
+          />
+          <ToolbarSeparator />
+          <ToolbarActionButton disabled={busy} icon={<RefreshCw size={17} />} label={t("source.toolbar.scanAll")} onClick={onScan} />
+          <ToolbarActionButton icon={<Settings size={17} />} label={t("toolbar.settings")} onClick={onOpenSettings} />
+        </>
+      }
+      ariaLabel={t("source.page.title")}
+      leading={
+        <ToolbarSearch
+          className="flex-1"
+          onChange={onQueryChange}
           placeholder={t("source.toolbar.searchPlaceholder")}
           value={query}
         />
-      </label>
-
-      <div className="flex items-center justify-end gap-2">
-        <button
-          className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-border bg-surface-high px-3 text-body-sm text-on-surface-variant transition-colors hover:bg-surface-highest hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={busy}
-          onClick={onScan}
-          type="button"
-        >
-          <RefreshCw size={17} />
-          <span>{t("source.toolbar.scanAll")}</span>
-        </button>
-      </div>
-    </div>
+      }
+    />
   );
 }

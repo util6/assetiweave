@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { deleteSource as deleteSourceById, listSkillSources, revealPath, scanSkillSources, updateSource } from "../../services/catalog";
-import type { Asset, Source } from "../../types";
+import {
+  createSource,
+  deleteSource as deleteSourceById,
+  listSkillSources,
+  revealPath,
+  scanSkillSources,
+  updateSource,
+} from "../../services/catalog";
+import type { Asset, Source, SourceInput } from "../../types";
 
 export function useSourcesController(assets: Asset[], onCatalogRefresh?: (assets?: Asset[]) => Promise<void>) {
   const [sources, setSources] = useState<Source[]>([]);
@@ -48,6 +55,7 @@ export function useSourcesController(assets: Asset[], onCatalogRefresh?: (assets
       issues: sources.filter((source) => source.last_scan_status?.startsWith("error:")).length,
     };
   }, [assetCounts, sources]);
+  const nextPriority = useMemo(() => sources.reduce((highest, source) => Math.max(highest, source.priority), -10) + 10, [sources]);
 
   async function refreshSources() {
     setSources(await listSkillSources());
@@ -78,6 +86,23 @@ export function useSourcesController(assets: Asset[], onCatalogRefresh?: (assets
     }
   }
 
+  async function importSource(sourceInput: SourceInput) {
+    setBusy(true);
+    try {
+      const saved = await createSource(sourceInput);
+      setSources((currentSources) => upsertAndSortSources(currentSources, saved));
+      if (saved.enabled && saved.last_scan_status !== "preview") {
+        const scannedAssets = await scanSkillSources();
+        await onCatalogRefresh?.(scannedAssets);
+        await refreshSources();
+      } else {
+        await onCatalogRefresh?.();
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function scanAllSources() {
     setBusy(true);
     try {
@@ -93,6 +118,8 @@ export function useSourcesController(assets: Asset[], onCatalogRefresh?: (assets
     assetCounts,
     busy,
     filteredSources,
+    importSource,
+    nextPriority,
     query,
     revealPath,
     removeSource,
@@ -102,4 +129,11 @@ export function useSourcesController(assets: Asset[], onCatalogRefresh?: (assets
     summary,
     toggleSource,
   };
+}
+
+function upsertAndSortSources(sources: Source[], source: Source) {
+  return [...sources.filter((candidate) => candidate.id !== source.id), source].sort((left, right) => {
+    const priorityOrder = left.priority - right.priority;
+    return priorityOrder === 0 ? left.name.localeCompare(right.name) : priorityOrder;
+  });
 }

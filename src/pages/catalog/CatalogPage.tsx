@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { AssetList } from "../../components/assets/AssetList";
-import { AssetToolbar } from "../../components/assets/AssetToolbar";
+import { AssetToolbar, type AssetViewMode } from "../../components/assets/AssetToolbar";
 import { DeploymentPlanPanel } from "../../components/plans/DeploymentPlanPanel";
 import type { CatalogController } from "../../hooks/catalog/useCatalogController";
 
@@ -10,18 +11,22 @@ export function CatalogPage({
   catalog: CatalogController;
   onOpenSettings: () => void;
 }) {
+  const [assetViewMode, setAssetViewMode] = useState<AssetViewMode>("list");
+
   return (
     <>
       <AssetToolbar
-        assetCount={catalog.overview?.asset_count ?? catalog.assets.length}
+        assetCount={catalog.assets.length}
         busy={catalog.busy}
         onCreatePlan={catalog.createDeploymentPlan}
         onOpenSettings={onOpenSettings}
         onQueryChange={catalog.setQuery}
         onScan={catalog.scan}
+        onViewModeChange={setAssetViewMode}
         query={catalog.query}
         sourceCount={catalog.sources.length > 0 ? catalog.sources.length : (catalog.overview?.source_count ?? 0)}
         supportAppCount={catalog.profiles.length > 0 ? catalog.profiles.length : (catalog.overview?.profile_count ?? 0)}
+        viewMode={assetViewMode}
       />
 
       <section className="flex flex-1 flex-col gap-[var(--app-section-gap)] px-[var(--app-page-x)] py-[var(--app-page-y)]">
@@ -37,6 +42,7 @@ export function CatalogPage({
           profiles={catalog.profiles}
           selectedMounts={catalog.selectedMounts}
           sources={catalog.sources}
+          viewMode={assetViewMode}
         />
       </section>
     </>
