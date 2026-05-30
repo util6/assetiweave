@@ -21,11 +21,19 @@ export const navigationIconSchema = z.enum([
 
 export const menuScopeSchema = z.enum(["global", "asset-catalog", "profile", "settings"]);
 
+const localizedNavigationLabelsSchema = z
+  .strictObject({
+    en: z.string().trim().min(1).optional(),
+    zh: z.string().trim().min(1).optional(),
+  })
+  .optional();
+
 export const railMenuItemSchema = z.strictObject({
   enabled: z.boolean(),
   icon: navigationIconSchema,
   id: z.string().trim().min(1),
   label: z.string().trim().min(1),
+  labels: localizedNavigationLabelsSchema,
   position: z.enum(["primary", "secondary"]),
   scope: menuScopeSchema,
 });
@@ -35,12 +43,14 @@ export const headerTabItemSchema = z.strictObject({
   enabled: z.boolean(),
   id: z.string().trim().min(1),
   label: z.string().trim().min(1),
+  labels: localizedNavigationLabelsSchema,
 });
 
 export const subNavItemSchema = z.strictObject({
   enabled: z.boolean(),
   id: z.string().trim().min(1),
   label: z.string().trim().min(1),
+  labels: localizedNavigationLabelsSchema,
   routeKey: z.string().trim().min(1),
 });
 
@@ -56,8 +66,23 @@ export const navigationModelSchema = z.strictObject({
 export const appShortcutSchema = z.strictObject({
   accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   appKind: appKindSchema,
-  displayIcon: z.string().trim().min(1).max(4),
+  displayIcon: z.string().trim().min(1).max(48),
   enabled: z.boolean(),
+  iconSvg: z
+    .strictObject({
+      paths: z
+        .array(
+          z.strictObject({
+            clipRule: z.enum(["evenodd", "nonzero"]).optional(),
+            d: z.string().trim().min(1),
+            fillRule: z.enum(["evenodd", "nonzero"]).optional(),
+          }),
+        )
+        .min(1),
+      viewBox: z.string().trim().min(1).optional(),
+    })
+    .nullable()
+    .optional(),
   profileId: z.string().trim().min(1),
   profileName: z.string().trim().min(1),
 }) satisfies z.ZodType<AppShortcut>;

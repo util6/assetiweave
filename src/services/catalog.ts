@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   fallbackAppShortcuts,
   fallbackAssets,
@@ -14,7 +15,9 @@ import type {
   AppOverview,
   AppShortcut,
   Asset,
+  AssetKind,
   AssetMount,
+  AssetMountUpdateResult,
   AssetMountStatus,
   DeploymentPlan,
   DeploymentStrategy,
@@ -37,11 +40,11 @@ export async function getOverview(): Promise<AppOverview> {
   }
 }
 
-export async function listAssets(): Promise<Asset[]> {
+export async function listAssets(kind?: AssetKind): Promise<Asset[]> {
   try {
-    return await invoke<Asset[]>("list_assets");
+    return await invoke<Asset[]>("list_assets", { kind: kind ?? null });
   } catch {
-    return fallbackAssets;
+    return kind ? fallbackAssets.filter((asset) => asset.kind === kind) : fallbackAssets;
   }
 }
 
@@ -171,6 +174,10 @@ export async function toggleAssetMount(assetId: string, profileId: string): Prom
   return await invoke<AssetMount>("toggle_asset_mount", { assetId, profileId });
 }
 
+export async function unmountAssetMount(assetId: string, profileId: string): Promise<AssetMountUpdateResult> {
+  return await invoke<AssetMountUpdateResult>("unmount_asset_mount", { assetId, profileId });
+}
+
 export async function setAssetMount(
   assetId: string,
   profileId: string,
@@ -185,11 +192,11 @@ export async function setAssetMount(
   });
 }
 
-export async function scanSources(): Promise<Asset[]> {
+export async function scanSources(kind?: AssetKind): Promise<Asset[]> {
   try {
-    return await invoke<Asset[]>("scan_sources");
+    return await invoke<Asset[]>("scan_sources", { kind: kind ?? null });
   } catch {
-    return fallbackAssets;
+    return kind ? fallbackAssets.filter((asset) => asset.kind === kind) : fallbackAssets;
   }
 }
 
@@ -197,7 +204,7 @@ export async function scanSkillSources(): Promise<Asset[]> {
   try {
     return await invoke<Asset[]>("scan_skill_sources");
   } catch {
-    return fallbackAssets;
+    return fallbackAssets.filter((asset) => asset.kind === "skill");
   }
 }
 
@@ -218,6 +225,19 @@ export async function executePlan(plan: DeploymentPlan, actionIds?: string[]): P
 
 export async function revealPath(path: string): Promise<void> {
   return await invoke<void>("reveal_path", { path });
+}
+
+export async function selectSourceDirectory(title: string): Promise<string | null> {
+  try {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title,
+    });
+    return Array.isArray(selected) ? (selected[0] ?? null) : selected;
+  } catch {
+    return null;
+  }
 }
 
 const FALLBACK_NAVIGATION_STORAGE_KEY = "assetiweave.preview.navigation";

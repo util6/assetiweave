@@ -1,3 +1,5 @@
+import type { AssetKind } from "../types";
+
 export type NavigationIcon =
   | "archive"
   | "boxes"
@@ -14,10 +16,13 @@ export type NavigationIcon =
   | "sparkles";
 
 export type MenuScope = "global" | "asset-catalog" | "profile" | "settings";
+export type NavigationLocale = "zh" | "en";
+export type LocalizedNavigationLabels = Partial<Record<NavigationLocale, string>>;
 
 export interface RailMenuItem {
   id: string;
   label: string;
+  labels?: LocalizedNavigationLabels;
   icon: NavigationIcon;
   scope: MenuScope;
   enabled: boolean;
@@ -27,13 +32,15 @@ export interface RailMenuItem {
 export interface HeaderTabItem {
   id: string;
   label: string;
-  assetKind?: string;
+  labels?: LocalizedNavigationLabels;
+  assetKind?: AssetKind;
   enabled: boolean;
 }
 
 export interface SubNavItem {
   id: string;
   label: string;
+  labels?: LocalizedNavigationLabels;
   routeKey: string;
   enabled: boolean;
 }

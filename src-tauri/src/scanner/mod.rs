@@ -444,6 +444,29 @@ mod tests {
         assert_ne!(refreshed.content_hash, Some("stale".to_string()));
     }
 
+    #[test]
+    fn scan_skill_source_finds_nested_skill_directories() {
+        let root = unique_temp_dir("assetiweave-scan-nested-skills");
+        fs::create_dir_all(root.join("office-utils").join("kitchen")).expect("create nested skill");
+        fs::create_dir_all(root.join("codex-token-usage")).expect("create top skill");
+        fs::write(
+            root.join("office-utils").join("kitchen").join("SKILL.md"),
+            "description: kitchen",
+        )
+        .expect("write nested skill");
+        fs::write(
+            root.join("codex-token-usage").join("SKILL.md"),
+            "description: token usage",
+        )
+        .expect("write top skill");
+
+        let assets = scan_skill_source(&test_source(&root)).expect("scan skills");
+
+        fs::remove_dir_all(&root).ok();
+        let asset_names: Vec<_> = assets.iter().map(|asset| asset.name.as_str()).collect();
+        assert_eq!(asset_names, vec!["codex-token-usage", "kitchen"]);
+    }
+
     fn test_source(root: &Path) -> Source {
         Source {
             id: "source-a".to_string(),

@@ -15,8 +15,8 @@ use crate::{
         get_app_overview, get_navigation_model, list_app_shortcut_settings, list_app_shortcuts,
         list_asset_mount_statuses, list_asset_mounts, list_assets, list_profiles,
         list_skill_sources, list_sources, reveal_path, scan_skill_sources, scan_sources,
-        set_asset_mount, toggle_asset_mount, update_app_shortcuts, update_navigation_model,
-        update_source,
+        set_asset_mount, toggle_asset_mount, unmount_asset_mount, update_app_shortcuts,
+        update_navigation_model, update_source,
     },
     path_utils::app_db_path,
     store::open_initialized,
@@ -35,6 +35,7 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState {
             db_path,
@@ -57,6 +58,7 @@ pub fn run() {
             list_asset_mounts,
             list_asset_mount_statuses,
             toggle_asset_mount,
+            unmount_asset_mount,
             set_asset_mount,
             scan_sources,
             scan_skill_sources,

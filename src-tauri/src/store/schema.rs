@@ -41,6 +41,48 @@ fn migrate_schema(conn: &Connection) -> AppResult<()> {
         "origin_app_kind",
         sql::ADD_SOURCE_ORIGIN_APP_KIND,
     )?;
+    ensure_column(
+        conn,
+        "rail_menu_items",
+        "label_zh",
+        sql::ADD_RAIL_MENU_LABEL_ZH,
+    )?;
+    ensure_column(
+        conn,
+        "rail_menu_items",
+        "label_en",
+        sql::ADD_RAIL_MENU_LABEL_EN,
+    )?;
+    ensure_column(
+        conn,
+        "header_tab_items",
+        "label_zh",
+        sql::ADD_HEADER_TAB_LABEL_ZH,
+    )?;
+    ensure_column(
+        conn,
+        "header_tab_items",
+        "label_en",
+        sql::ADD_HEADER_TAB_LABEL_EN,
+    )?;
+    ensure_column(
+        conn,
+        "sub_nav_items",
+        "label_zh",
+        sql::ADD_SUB_NAV_LABEL_ZH,
+    )?;
+    ensure_column(
+        conn,
+        "sub_nav_items",
+        "label_en",
+        sql::ADD_SUB_NAV_LABEL_EN,
+    )?;
+    ensure_column(
+        conn,
+        "app_shortcut_items",
+        "icon_svg",
+        sql::ADD_APP_SHORTCUT_ICON_SVG,
+    )?;
     conn.execute_batch(sql::MIGRATE_DEPLOYMENT_STATE_STRATEGY_NAMES)
         .map_err(db_error)?;
     conn.execute_batch(sql::MIGRATE_ASSET_MOUNT_STRATEGY_NAMES)

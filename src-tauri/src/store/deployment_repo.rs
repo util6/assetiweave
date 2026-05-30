@@ -40,6 +40,20 @@ pub(crate) fn is_managed_deployment(
     .map_err(db_error)
 }
 
+pub(crate) fn delete_deployment_state(
+    conn: &Connection,
+    profile_id: &str,
+    asset_id: &str,
+    target_path: &str,
+) -> AppResult<()> {
+    conn.execute(
+        sql::DELETE_DEPLOYMENT_STATE,
+        params![profile_id, asset_id, target_path],
+    )
+    .map_err(db_error)?;
+    Ok(())
+}
+
 pub(crate) fn delete_orphan_deployment_state(conn: &Connection) -> AppResult<()> {
     conn.execute(sql::DELETE_ORPHAN_DEPLOYMENT_STATE, [])
         .map_err(db_error)?;

@@ -1,5 +1,7 @@
 use crate::targeting::PhysicalMountState;
-use assetiweave_core::{AppKind, AssetKind, SourceKind, SourceOrigin, SourceScannerKind};
+use assetiweave_core::{
+    AppKind, AssetKind, AssetMount, SourceKind, SourceOrigin, SourceScannerKind,
+};
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Mutex};
 
@@ -44,7 +46,7 @@ pub(crate) struct ExecutionResult {
     pub(crate) errors: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PhysicalMountStateDto {
     Mounted,
@@ -61,6 +63,12 @@ pub(crate) struct AssetMountStatus {
     pub(crate) target_path: String,
     pub(crate) state: PhysicalMountStateDto,
     pub(crate) linked_source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct AssetMountUpdateResult {
+    pub(crate) mount: AssetMount,
+    pub(crate) status: AssetMountStatus,
 }
 
 impl From<PhysicalMountState> for PhysicalMountStateDto {
@@ -81,8 +89,28 @@ pub(crate) struct AppShortcut {
     pub(crate) profile_name: String,
     pub(crate) app_kind: String,
     pub(crate) display_icon: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) icon_svg: Option<AppShortcutIconSvg>,
     pub(crate) accent_color: String,
     pub(crate) enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AppShortcutIconSvg {
+    pub(crate) paths: Vec<AppShortcutIconPath>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) view_box: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AppShortcutIconPath {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) clip_rule: Option<String>,
+    pub(crate) d: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) fill_rule: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +129,8 @@ pub(crate) struct NavigationModel {
 pub(crate) struct RailMenuItem {
     pub(crate) id: String,
     pub(crate) label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) labels: Option<LocalizedNavigationLabels>,
     pub(crate) icon: String,
     pub(crate) scope: String,
     pub(crate) enabled: bool,
@@ -112,6 +142,8 @@ pub(crate) struct RailMenuItem {
 pub(crate) struct HeaderTabItem {
     pub(crate) id: String,
     pub(crate) label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) labels: Option<LocalizedNavigationLabels>,
     pub(crate) asset_kind: Option<String>,
     pub(crate) enabled: bool,
 }
@@ -121,6 +153,17 @@ pub(crate) struct HeaderTabItem {
 pub(crate) struct SubNavItem {
     pub(crate) id: String,
     pub(crate) label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) labels: Option<LocalizedNavigationLabels>,
     pub(crate) route_key: String,
     pub(crate) enabled: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LocalizedNavigationLabels {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) zh: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) en: Option<String>,
 }

@@ -1,4 +1,6 @@
-use crate::types::{HeaderTabItem, NavigationModel, RailMenuItem, SubNavItem};
+use crate::types::{
+    HeaderTabItem, LocalizedNavigationLabels, NavigationModel, RailMenuItem, SubNavItem,
+};
 use rusqlite::{params, Connection};
 use std::collections::BTreeMap;
 
@@ -31,6 +33,8 @@ pub(crate) fn save_navigation_model(
             params![
                 item.id,
                 item.label,
+                localized_label(&item.labels, "zh"),
+                localized_label(&item.labels, "en"),
                 item.icon,
                 item.scope,
                 enabled_value(item.enabled),
@@ -47,6 +51,8 @@ pub(crate) fn save_navigation_model(
             params![
                 tab.id,
                 tab.label,
+                localized_label(&tab.labels, "zh"),
+                localized_label(&tab.labels, "en"),
                 tab.asset_kind,
                 enabled_value(tab.enabled),
                 sort_order as i32
@@ -63,6 +69,8 @@ pub(crate) fn save_navigation_model(
                     parent_tab_id,
                     item.id,
                     item.label,
+                    localized_label(&item.labels, "zh"),
+                    localized_label(&item.labels, "en"),
                     item.route_key,
                     enabled_value(item.enabled),
                     sort_order as i32
@@ -103,10 +111,11 @@ fn load_rail_items(conn: &Connection) -> Result<Vec<RailMenuItem>, String> {
             Ok(RailMenuItem {
                 id: row.get(0)?,
                 label: row.get(1)?,
-                icon: row.get(2)?,
-                scope: row.get(3)?,
-                enabled: row.get::<_, i64>(4)? == 1,
-                position: row.get(5)?,
+                labels: localized_labels(row.get(2)?, row.get(3)?),
+                icon: row.get(4)?,
+                scope: row.get(5)?,
+                enabled: row.get::<_, i64>(6)? == 1,
+                position: row.get(7)?,
             })
         })
         .map_err(db_error)?;
@@ -121,8 +130,9 @@ fn load_header_tabs(conn: &Connection) -> Result<Vec<HeaderTabItem>, String> {
             Ok(HeaderTabItem {
                 id: row.get(0)?,
                 label: row.get(1)?,
-                asset_kind: row.get(2)?,
-                enabled: row.get::<_, i64>(3)? == 1,
+                labels: localized_labels(row.get(2)?, row.get(3)?),
+                asset_kind: row.get(4)?,
+                enabled: row.get::<_, i64>(5)? == 1,
             })
         })
         .map_err(db_error)?;
@@ -139,8 +149,9 @@ fn load_sub_nav_items(conn: &Connection) -> Result<BTreeMap<String, Vec<SubNavIt
                 SubNavItem {
                     id: row.get(1)?,
                     label: row.get(2)?,
-                    route_key: row.get(3)?,
-                    enabled: row.get::<_, i64>(4)? == 1,
+                    labels: localized_labels(row.get(3)?, row.get(4)?),
+                    route_key: row.get(5)?,
+                    enabled: row.get::<_, i64>(6)? == 1,
                 },
             ))
         })
@@ -162,5 +173,47 @@ fn enabled_value(enabled: bool) -> i64 {
         1
     } else {
         0
+    }
+}
+
+fn localized_label<'a>(
+    labels: &'a Option<LocalizedNavigationLabels>,
+    locale: &str,
+) -> Option<&'a str> {
+    let value = match (labels, locale) {
+        (Some(labels), "zh") => labels.zh.as_deref(),
+        (Some(labels), "en") => labels.en.as_deref(),
+        _ => None,
+    };
+    value.and_then(non_empty_label)
+}
+
+fn localized_labels(zh: Option<String>, en: Option<String>) -> Option<LocalizedNavigationLabels> {
+    let labels = LocalizedNavigationLabels {
+        zh: zh.and_then(non_empty_label_string),
+        en: en.and_then(non_empty_label_string),
+    };
+    if labels.zh.is_none() && labels.en.is_none() {
+        None
+    } else {
+        Some(labels)
+    }
+}
+
+fn non_empty_label(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn non_empty_label_string(value: String) -> Option<String> {
+    let trimmed = value.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
     }
 }

@@ -3,8 +3,8 @@ use crate::{
     path_utils::{app_library_skill_root, expand_path},
     planner, platform, scanner, store, targeting,
     types::{
-        AppOverview, AppResult, AppShortcut, AppState, AssetMountStatus, ExecutionResult,
-        NavigationModel, PhysicalMountStateDto, SourceInput,
+        AppOverview, AppResult, AppShortcut, AppState, AssetMountStatus, AssetMountUpdateResult,
+        ExecutionResult, NavigationModel, PhysicalMountStateDto, SourceInput,
     },
 };
 use assetiweave_core::{
@@ -30,10 +30,13 @@ pub(crate) fn get_app_overview(state: State<'_, AppState>) -> AppResult<AppOverv
 }
 
 #[tauri::command]
-pub(crate) fn list_assets(state: State<'_, AppState>) -> AppResult<Vec<Asset>> {
+pub(crate) fn list_assets(
+    state: State<'_, AppState>,
+    kind: Option<AssetKind>,
+) -> AppResult<Vec<Asset>> {
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
     let conn = store::open_initialized(&state.db_path)?;
-    store::load_assets(&conn)
+    store::load_assets_by_kind(&conn, kind)
 }
 
 #[tauri::command]
@@ -201,6 +204,17 @@ pub(crate) fn toggle_asset_mount(
 }
 
 #[tauri::command]
+pub(crate) fn unmount_asset_mount(
+    state: State<'_, AppState>,
+    asset_id: String,
+    profile_id: String,
+) -> AppResult<AssetMountUpdateResult> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    let conn = store::open_initialized(&state.db_path)?;
+    unmount_asset_mount_record(&conn, &asset_id, &profile_id)
+}
+
+#[tauri::command]
 pub(crate) fn set_asset_mount(
     state: State<'_, AppState>,
     asset_id: String,
@@ -221,10 +235,14 @@ pub(crate) fn set_asset_mount(
 }
 
 #[tauri::command]
-pub(crate) fn scan_sources(state: State<'_, AppState>) -> AppResult<Vec<Asset>> {
+pub(crate) fn scan_sources(
+    state: State<'_, AppState>,
+    kind: Option<AssetKind>,
+) -> AppResult<Vec<Asset>> {
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
     let conn = store::open_initialized(&state.db_path)?;
-    refresh_all_sources(&conn)
+    refresh_all_sources(&conn)?;
+    store::load_assets_by_kind(&conn, kind)
 }
 
 #[tauri::command]
@@ -232,7 +250,8 @@ pub(crate) fn scan_skill_sources(state: State<'_, AppState>) -> AppResult<Vec<As
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
     let conn = store::open_initialized(&state.db_path)?;
     let sources = store::load_skill_sources(&conn)?;
-    scan_selected_sources(&conn, sources, scanner::scan_skill_source)
+    scan_selected_sources(&conn, sources, scanner::scan_skill_source)?;
+    store::load_assets_by_kind(&conn, Some(AssetKind::Skill))
 }
 
 #[tauri::command]
@@ -494,6 +513,71 @@ fn validate_mount_target(
     Ok(profile.deployment_strategy)
 }
 
+fn unmount_asset_mount_record(
+    conn: &rusqlite::Connection,
+    asset_id: &str,
+    profile_id: &str,
+) -> AppResult<AssetMountUpdateResult> {
+    let asset = store::load_assets(conn)?
+        .into_iter()
+        .find(|asset| asset.id == asset_id)
+        .ok_or_else(|| format!("asset not found: {asset_id}"))?;
+    let profile = store::load_profiles(conn)?
+        .into_iter()
+        .find(|profile| profile.id == profile_id)
+        .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+    let inspection = targeting::inspect_mount(&profile, &asset)?;
+
+    match inspection.state {
+        targeting::PhysicalMountState::Mounted => remove_mounted_symlink(&inspection.target_path)?,
+        targeting::PhysicalMountState::NotMounted => {}
+        targeting::PhysicalMountState::Conflict | targeting::PhysicalMountState::Broken => {
+            return Err(format!(
+                "target is not a symlink to this asset: {}",
+                inspection.target_path
+            ));
+        }
+    }
+
+    store::delete_deployment_state(conn, profile_id, asset_id, &inspection.target_path)?;
+    let mount = store::set_asset_mount(
+        conn,
+        asset_id,
+        profile_id,
+        false,
+        profile.deployment_strategy,
+    )?;
+    let inspection = targeting::inspect_mount(&profile, &asset)?;
+    Ok(AssetMountUpdateResult {
+        mount,
+        status: asset_mount_status(&asset.id, &profile.id, inspection),
+    })
+}
+
+fn remove_mounted_symlink(target_path: &str) -> AppResult<()> {
+    let path = Path::new(target_path);
+    let metadata = fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+    if !metadata.file_type().is_symlink() {
+        return Err(format!("target is not a symlink: {}", path.display()));
+    }
+    fs::remove_file(path).map_err(|error| error.to_string())
+}
+
+fn asset_mount_status(
+    asset_id: &str,
+    profile_id: &str,
+    inspection: targeting::MountInspection,
+) -> AssetMountStatus {
+    AssetMountStatus {
+        asset_id: asset_id.to_string(),
+        profile_id: profile_id.to_string(),
+        target_dir: inspection.target_dir,
+        target_path: inspection.target_path,
+        state: PhysicalMountStateDto::from(inspection.state),
+        linked_source: inspection.linked_source,
+    }
+}
+
 fn assetiweave_library_source() -> Source {
     Source {
         id: "assetiweave-library-skills".to_string(),
@@ -542,7 +626,9 @@ fn copy_dir(source: &Path, target: &Path) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assetiweave_core::{AssetFormat, AssetKind, DeploymentStrategy, SourceKind};
+    use assetiweave_core::{
+        AppKind, AssetFormat, AssetKind, DeploymentStrategy, ProfileSafety, RuleSet, SourceKind,
+    };
     use std::path::PathBuf;
 
     #[test]
@@ -611,6 +697,50 @@ mod tests {
         std::fs::remove_file(db_path).ok();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn unmount_asset_mount_removes_matching_symlink_and_disables_mount() {
+        let db_path = unique_temp_path("assetiweave-unmount-db");
+        let source_root = unique_temp_path("assetiweave-unmount-source");
+        let target_root = unique_temp_path("assetiweave-unmount-target");
+        let asset_path = source_root.join("skill-a");
+        let target_path = target_root.join("skill-a");
+        std::fs::create_dir_all(&asset_path).expect("create asset dir");
+        std::fs::create_dir_all(&target_root).expect("create target dir");
+        std::os::unix::fs::symlink(&asset_path, &target_path).expect("create mounted symlink");
+
+        let conn = store::open_initialized(&db_path).expect("open initialized db");
+        let source = test_source("source-with-mounted-asset", source_root.clone());
+        let profile = test_profile("codex", target_root.clone());
+        let asset = test_asset(&source, "skill-a", asset_path);
+        store::replace_source_assets(&conn, &source.id, std::slice::from_ref(&asset))
+            .expect("insert asset");
+        store::upsert_profile(&conn, &profile).expect("insert profile");
+        store::set_asset_mount(
+            &conn,
+            &asset.id,
+            &profile.id,
+            true,
+            DeploymentStrategy::SymlinkToSource,
+        )
+        .expect("enable mount");
+
+        let result = unmount_asset_mount_record(&conn, &asset.id, &profile.id).expect("unmount");
+
+        assert!(!target_path.exists());
+        assert!(!std::fs::symlink_metadata(&target_path).is_ok());
+        assert!(!result.mount.enabled);
+        assert_eq!(result.status.state, PhysicalMountStateDto::NotMounted);
+        assert!(store::load_asset_mounts(&conn, Some(&asset.id))
+            .expect("load mounts")
+            .iter()
+            .all(|mount| !mount.enabled));
+
+        std::fs::remove_dir_all(source_root).ok();
+        std::fs::remove_dir_all(target_root).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
     fn test_missing_source(id: &str) -> Source {
         let root_path = unique_temp_path(id);
         test_source(id, root_path)
@@ -634,6 +764,36 @@ mod tests {
             priority: 0,
             last_scanned_at: None,
             last_scan_status: None,
+        }
+    }
+
+    fn test_profile(id: &str, target_root: PathBuf) -> TargetProfile {
+        TargetProfile {
+            id: id.to_string(),
+            name: id.to_string(),
+            app_kind: AppKind::Custom,
+            target_paths: vec![target_root.to_string_lossy().to_string()],
+            supported_kinds: vec![AssetKind::Skill],
+            deployment_strategy: DeploymentStrategy::SymlinkToSource,
+            enabled: true,
+            include: RuleSet {
+                kinds: vec![AssetKind::Skill],
+                tags: vec![],
+                groups: vec![],
+                sources: vec![],
+                path_patterns: vec![],
+            },
+            exclude: RuleSet {
+                kinds: vec![],
+                tags: vec![],
+                groups: vec![],
+                sources: vec![],
+                path_patterns: vec![],
+            },
+            safety: ProfileSafety {
+                allow_remove: false,
+                allow_overwrite: false,
+            },
         }
     }
 

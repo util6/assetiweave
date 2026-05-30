@@ -110,11 +110,23 @@ export interface TargetProfile {
   enabled: boolean;
 }
 
+export interface AppShortcutIconPath {
+  clipRule?: "evenodd" | "nonzero";
+  d: string;
+  fillRule?: "evenodd" | "nonzero";
+}
+
+export interface AppShortcutIconSvg {
+  paths: AppShortcutIconPath[];
+  viewBox?: string;
+}
+
 export interface AppShortcut {
   profileId: string;
   profileName: string;
   appKind: AppKind;
   displayIcon: string;
+  iconSvg?: AppShortcutIconSvg | null;
   accentColor: string;
   enabled: boolean;
 }
@@ -137,6 +149,11 @@ export interface AssetMountStatus {
   target_path: string;
   state: PhysicalMountState;
   linked_source?: string | null;
+}
+
+export interface AssetMountUpdateResult {
+  mount: AssetMount;
+  status: AssetMountStatus;
 }
 
 export type DeploymentActionType = "create" | "update" | "remove" | "skip" | "conflict";

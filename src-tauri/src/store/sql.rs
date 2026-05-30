@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS navigation_state (
 CREATE TABLE IF NOT EXISTS rail_menu_items (
     id TEXT PRIMARY KEY,
     label TEXT NOT NULL,
+    label_zh TEXT,
+    label_en TEXT,
     icon TEXT NOT NULL,
     scope TEXT NOT NULL,
     enabled INTEGER NOT NULL,
@@ -69,6 +71,8 @@ CREATE TABLE IF NOT EXISTS rail_menu_items (
 CREATE TABLE IF NOT EXISTS header_tab_items (
     id TEXT PRIMARY KEY,
     label TEXT NOT NULL,
+    label_zh TEXT,
+    label_en TEXT,
     asset_kind TEXT,
     enabled INTEGER NOT NULL,
     sort_order INTEGER NOT NULL
@@ -78,6 +82,8 @@ CREATE TABLE IF NOT EXISTS sub_nav_items (
     parent_tab_id TEXT NOT NULL,
     id TEXT NOT NULL,
     label TEXT NOT NULL,
+    label_zh TEXT,
+    label_en TEXT,
     route_key TEXT NOT NULL,
     enabled INTEGER NOT NULL,
     sort_order INTEGER NOT NULL,
@@ -87,6 +93,7 @@ CREATE TABLE IF NOT EXISTS sub_nav_items (
 CREATE TABLE IF NOT EXISTS app_shortcut_items (
     profile_id TEXT PRIMARY KEY,
     display_icon TEXT NOT NULL,
+    icon_svg TEXT,
     accent_color TEXT NOT NULL,
     enabled INTEGER NOT NULL,
     sort_order INTEGER NOT NULL
@@ -112,6 +119,20 @@ pub(crate) const ADD_SOURCE_SCAN_ROOT: &str =
     "ALTER TABLE sources ADD COLUMN scan_root TEXT NOT NULL DEFAULT ''";
 pub(crate) const ADD_SOURCE_ORIGIN_APP_KIND: &str =
     "ALTER TABLE sources ADD COLUMN origin_app_kind TEXT";
+pub(crate) const ADD_RAIL_MENU_LABEL_ZH: &str =
+    "ALTER TABLE rail_menu_items ADD COLUMN label_zh TEXT";
+pub(crate) const ADD_RAIL_MENU_LABEL_EN: &str =
+    "ALTER TABLE rail_menu_items ADD COLUMN label_en TEXT";
+pub(crate) const ADD_HEADER_TAB_LABEL_ZH: &str =
+    "ALTER TABLE header_tab_items ADD COLUMN label_zh TEXT";
+pub(crate) const ADD_HEADER_TAB_LABEL_EN: &str =
+    "ALTER TABLE header_tab_items ADD COLUMN label_en TEXT";
+pub(crate) const ADD_SUB_NAV_LABEL_ZH: &str =
+    "ALTER TABLE sub_nav_items ADD COLUMN label_zh TEXT";
+pub(crate) const ADD_SUB_NAV_LABEL_EN: &str =
+    "ALTER TABLE sub_nav_items ADD COLUMN label_en TEXT";
+pub(crate) const ADD_APP_SHORTCUT_ICON_SVG: &str =
+    "ALTER TABLE app_shortcut_items ADD COLUMN icon_svg TEXT";
 
 pub(crate) const MIGRATE_DEPLOYMENT_STATE_STRATEGY_NAMES: &str = r#"
 UPDATE deployment_state
@@ -160,6 +181,14 @@ FROM assets
 ORDER BY name ASC
 "#;
 
+pub(crate) const LIST_ASSETS_BY_KIND: &str = r#"
+SELECT id, source_id, name, kind, format, relative_path, absolute_path,
+       entry_file, description, content_hash, discovered_at, updated_at
+FROM assets
+WHERE kind = ?1
+ORDER BY name ASC
+"#;
+
 pub(crate) const LIST_PROFILES: &str = "SELECT payload FROM profiles ORDER BY id ASC";
 
 pub(crate) const COUNT_SOURCES: &str = "SELECT COUNT(*) FROM sources";
@@ -175,19 +204,19 @@ WHERE id = 'default'
 "#;
 
 pub(crate) const LIST_RAIL_MENU_ITEMS: &str = r#"
-SELECT id, label, icon, scope, enabled, position
+SELECT id, label, label_zh, label_en, icon, scope, enabled, position
 FROM rail_menu_items
 ORDER BY sort_order ASC, id ASC
 "#;
 
 pub(crate) const LIST_HEADER_TAB_ITEMS: &str = r#"
-SELECT id, label, asset_kind, enabled
+SELECT id, label, label_zh, label_en, asset_kind, enabled
 FROM header_tab_items
 ORDER BY sort_order ASC, id ASC
 "#;
 
 pub(crate) const LIST_SUB_NAV_ITEMS: &str = r#"
-SELECT parent_tab_id, id, label, route_key, enabled
+SELECT parent_tab_id, id, label, label_zh, label_en, route_key, enabled
 FROM sub_nav_items
 ORDER BY parent_tab_id ASC, sort_order ASC, id ASC
 "#;
@@ -202,10 +231,12 @@ ON CONFLICT(id) DO UPDATE SET
 "#;
 
 pub(crate) const UPSERT_RAIL_MENU_ITEM: &str = r#"
-INSERT INTO rail_menu_items (id, label, icon, scope, enabled, position, sort_order)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+INSERT INTO rail_menu_items (id, label, label_zh, label_en, icon, scope, enabled, position, sort_order)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
 ON CONFLICT(id) DO UPDATE SET
     label = excluded.label,
+    label_zh = excluded.label_zh,
+    label_en = excluded.label_en,
     icon = excluded.icon,
     scope = excluded.scope,
     enabled = excluded.enabled,
@@ -214,27 +245,31 @@ ON CONFLICT(id) DO UPDATE SET
 "#;
 
 pub(crate) const UPSERT_HEADER_TAB_ITEM: &str = r#"
-INSERT INTO header_tab_items (id, label, asset_kind, enabled, sort_order)
-VALUES (?1, ?2, ?3, ?4, ?5)
+INSERT INTO header_tab_items (id, label, label_zh, label_en, asset_kind, enabled, sort_order)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
 ON CONFLICT(id) DO UPDATE SET
     label = excluded.label,
+    label_zh = excluded.label_zh,
+    label_en = excluded.label_en,
     asset_kind = excluded.asset_kind,
     enabled = excluded.enabled,
     sort_order = excluded.sort_order
 "#;
 
 pub(crate) const UPSERT_SUB_NAV_ITEM: &str = r#"
-INSERT INTO sub_nav_items (parent_tab_id, id, label, route_key, enabled, sort_order)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+INSERT INTO sub_nav_items (parent_tab_id, id, label, label_zh, label_en, route_key, enabled, sort_order)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
 ON CONFLICT(parent_tab_id, id) DO UPDATE SET
     label = excluded.label,
+    label_zh = excluded.label_zh,
+    label_en = excluded.label_en,
     route_key = excluded.route_key,
     enabled = excluded.enabled,
     sort_order = excluded.sort_order
 "#;
 
 pub(crate) const LIST_APP_SHORTCUTS: &str = r#"
-SELECT shortcut.profile_id, shortcut.display_icon, shortcut.accent_color,
+SELECT shortcut.profile_id, shortcut.display_icon, shortcut.icon_svg, shortcut.accent_color,
        shortcut.enabled, profile.payload
 FROM app_shortcut_items shortcut
 JOIN profiles profile ON profile.id = shortcut.profile_id
@@ -243,7 +278,7 @@ ORDER BY shortcut.sort_order ASC, shortcut.profile_id ASC
 "#;
 
 pub(crate) const LIST_APP_SHORTCUT_SETTINGS: &str = r#"
-SELECT profile.id, profile.payload, shortcut.display_icon, shortcut.accent_color,
+SELECT profile.id, profile.payload, shortcut.display_icon, shortcut.icon_svg, shortcut.accent_color,
        COALESCE(shortcut.enabled, 1) AS enabled,
        COALESCE(shortcut.sort_order, 9999) AS sort_order
 FROM profiles profile
@@ -252,10 +287,11 @@ ORDER BY sort_order ASC, profile.id ASC
 "#;
 
 pub(crate) const UPSERT_APP_SHORTCUT: &str = r#"
-INSERT INTO app_shortcut_items (profile_id, display_icon, accent_color, enabled, sort_order)
-VALUES (?1, ?2, ?3, ?4, ?5)
+INSERT INTO app_shortcut_items (profile_id, display_icon, icon_svg, accent_color, enabled, sort_order)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6)
 ON CONFLICT(profile_id) DO UPDATE SET
     display_icon = excluded.display_icon,
+    icon_svg = excluded.icon_svg,
     accent_color = excluded.accent_color,
     enabled = excluded.enabled,
     sort_order = excluded.sort_order
@@ -349,6 +385,9 @@ ON CONFLICT(profile_id, asset_id, target_path) DO UPDATE SET
 
 pub(crate) const GET_MANAGED_DEPLOYMENT: &str =
     "SELECT managed_by FROM deployment_state WHERE profile_id = ?1 AND asset_id = ?2 AND target_path = ?3";
+
+pub(crate) const DELETE_DEPLOYMENT_STATE: &str =
+    "DELETE FROM deployment_state WHERE profile_id = ?1 AND asset_id = ?2 AND target_path = ?3";
 
 pub(crate) const DELETE_ORPHAN_DEPLOYMENT_STATE: &str = r#"
 DELETE FROM deployment_state

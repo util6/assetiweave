@@ -229,13 +229,13 @@ pub(crate) fn default_navigation_model() -> NavigationModel {
 
 pub(crate) fn default_app_shortcuts() -> Vec<(&'static str, &'static str, &'static str, bool)> {
     vec![
-        ("claude", "C", "#f59e0b", true),
-        ("codex", "◎", "#10b981", true),
-        ("gemini", "✦", "#0ea5e9", true),
-        ("opencode", "□", "#6366f1", true),
-        ("cursor", "⌘", "#94a3b8", true),
-        ("antigravity", "A", "#a78bfa", false),
-        ("openclaw", "O", "#f43f5e", false),
+        ("claude", "app:claude", "#d97757", true),
+        ("codex", "app:codex", "#10b981", true),
+        ("gemini", "app:gemini", "#8e75b2", true),
+        ("opencode", "app:opencode", "#6366f1", true),
+        ("cursor", "app:cursor", "#94a3b8", true),
+        ("antigravity", "app:antigravity", "#a78bfa", false),
+        ("openclaw", "app:openclaw", "#f43f5e", false),
         ("custom", "+", "#8c909f", false),
     ]
 }
@@ -244,6 +244,7 @@ fn rail_item(id: &str, label: &str, icon: &str, scope: &str, position: &str) -> 
     RailMenuItem {
         id: id.to_string(),
         label: label.to_string(),
+        labels: None,
         icon: icon.to_string(),
         scope: scope.to_string(),
         enabled: true,
@@ -255,6 +256,7 @@ fn header_tab(id: &str, label: &str, asset_kind: Option<&str>) -> HeaderTabItem 
     HeaderTabItem {
         id: id.to_string(),
         label: label.to_string(),
+        labels: None,
         asset_kind: asset_kind.map(str::to_string),
         enabled: true,
     }
@@ -264,6 +266,7 @@ fn sub_nav(id: &str, label: &str, route_key: &str) -> SubNavItem {
     SubNavItem {
         id: id.to_string(),
         label: label.to_string(),
+        labels: None,
         route_key: route_key.to_string(),
         enabled: true,
     }
