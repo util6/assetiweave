@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { type NotificationMessage } from "../../components/notifications/NotificationBanner";
 import { revealPath } from "../../services/catalog";
-import { useAppSettings } from "../../settings/AppSettingsProvider";
+import { useAppSettings } from "../../store/settings/AppSettingsProvider";
 import { isDirectMountBlockedSource } from "../../utils/mountPolicy";
 import { useAssetFilter } from "./useAssetFilter";
 import { useCatalogData } from "./useCatalogData";
@@ -67,3 +67,5 @@ export function useCatalogController() {
     toggleMountProfile: toggleMountAndClearPlan,
   };
 }
+
+export type CatalogController = ReturnType<typeof useCatalogController>;

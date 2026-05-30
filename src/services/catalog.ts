@@ -5,8 +5,8 @@ import {
   fallbackNavigationModel,
   fallbackProfiles,
   fallbackSources,
-} from "../fixtures/catalog";
-import type { NavigationModel } from "../navigation/types";
+} from "../mock/catalog";
+import type { NavigationModel } from "../router/types";
 import { appShortcutListSchema, navigationModelSchema } from "../schemas/navigation";
 import { sourceInputSchema } from "../schemas/source";
 import { parseSchemaOrFallback, parseSchemaOrThrow } from "../schemas/validation";

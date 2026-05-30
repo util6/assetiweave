@@ -1,5 +1,5 @@
-import { CatalogPage } from "../pages/catalog/CatalogPage";
+import { AppRouter } from "../router/AppRouter";
 
 export function App() {
-  return <CatalogPage />;
+  return <AppRouter />;
 }

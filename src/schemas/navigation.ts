@@ -1,6 +1,6 @@
 import * as z from "zod";
 import type { AppShortcut } from "../types";
-import type { NavigationModel } from "../navigation/types";
+import type { NavigationModel } from "../router/types";
 import { appKindSchema, assetKindSchema } from "./domain";
 
 export const navigationIconSchema = z.enum([

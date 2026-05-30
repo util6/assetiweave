@@ -1,7 +1,7 @@
 import clsx from "clsx";
-import { useI18n } from "../../i18n/I18nProvider";
-import { subNavLabel } from "../../i18n/navigation";
-import type { SubNavItem } from "../../navigation/types";
+import { useI18n } from "../../../i18n/I18nProvider";
+import { subNavLabel } from "../../../i18n/navigation";
+import type { SubNavItem } from "../../../router/types";
 
 export function SubNavigation({
   activeId,

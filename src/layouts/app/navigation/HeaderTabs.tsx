@@ -1,7 +1,7 @@
 import clsx from "clsx";
-import { useI18n } from "../../i18n/I18nProvider";
-import { headerTabLabel } from "../../i18n/navigation";
-import type { HeaderTabItem } from "../../navigation/types";
+import { useI18n } from "../../../i18n/I18nProvider";
+import { headerTabLabel } from "../../../i18n/navigation";
+import type { HeaderTabItem } from "../../../router/types";
 
 export function HeaderTabs({ activeId, tabs }: { activeId: string; tabs: HeaderTabItem[] }) {
   const { t } = useI18n();

@@ -1,4 +1,4 @@
-import type { HeaderTabItem, RailMenuItem, SubNavItem } from "../navigation/types";
+import type { HeaderTabItem, RailMenuItem, SubNavItem } from "../router/types";
 import type { Translator } from "./I18nProvider";
 import type { TranslationKey } from "./messages";
 

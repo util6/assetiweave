@@ -1,5 +1,5 @@
-import { navigationModel } from "../navigation/menu";
-import type { NavigationModel } from "../navigation/types";
+import { navigationModel } from "../router/menu";
+import type { NavigationModel } from "../router/types";
 import type { AppShortcut, Asset, Source, TargetProfile } from "../types";
 
 export const fallbackAssets: Asset[] = [

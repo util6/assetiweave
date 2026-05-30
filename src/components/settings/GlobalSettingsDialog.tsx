@@ -43,8 +43,8 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
 import type { Locale } from "../../i18n/messages";
-import type { HeaderTabItem, NavigationModel, RailMenuItem, SubNavItem } from "../../navigation/types";
-import { useAppSettings, type InterfaceDensity } from "../../settings/AppSettingsProvider";
+import type { HeaderTabItem, NavigationModel, RailMenuItem, SubNavItem } from "../../router/types";
+import { useAppSettings, type InterfaceDensity } from "../../store/settings/AppSettingsProvider";
 import type { AppShortcut } from "../../types";
 
 type SettingsSection = "appearance" | "menu" | "shortcuts" | "deployment" | "notifications";

@@ -1,16 +1,13 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./app/App";
-import { I18nProvider } from "./i18n/I18nProvider";
-import { AppSettingsProvider } from "./settings/AppSettingsProvider";
-import "./styles.css";
+import { AppProviders } from "./app/AppProviders";
+import "./styles/index.css";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <I18nProvider>
-      <AppSettingsProvider>
-        <App />
-      </AppSettingsProvider>
-    </I18nProvider>
+    <AppProviders>
+      <App />
+    </AppProviders>
   </React.StrictMode>,
 );

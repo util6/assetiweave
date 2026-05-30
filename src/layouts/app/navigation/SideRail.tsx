@@ -1,8 +1,8 @@
 import clsx from "clsx";
-import { useI18n } from "../../i18n/I18nProvider";
-import { railLabel } from "../../i18n/navigation";
-import { MenuIcon } from "../../navigation/icons";
-import type { RailMenuItem } from "../../navigation/types";
+import { useI18n } from "../../../i18n/I18nProvider";
+import { railLabel } from "../../../i18n/navigation";
+import { MenuIcon } from "../../../router/icons";
+import type { RailMenuItem } from "../../../router/types";
 
 export function SideRail({
   activeId,

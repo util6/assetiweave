@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { fallbackNavigationModel } from "../../fixtures/catalog";
-import type { NavigationModel } from "../../navigation/types";
+import { fallbackNavigationModel } from "../../mock/catalog";
+import type { NavigationModel } from "../../router/types";
 import { getNavigationModel, getOverview, listAppShortcutSettings, listAssetMounts, listAssetMountStatuses, listAssets, listProfiles, listSources, updateAppShortcuts, updateNavigationModel } from "../../services/catalog";
 import type { AppOverview, AppShortcut, Asset, AssetMount, AssetMountStatus, Source, TargetProfile } from "../../types";
 
