@@ -4,6 +4,7 @@ import { useI18n } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
 import type { AppShortcut, Asset, AssetMountStatus, PhysicalMountState, TargetProfile } from "../../types";
 import { abbreviateHomePath } from "../../utils/path";
+import { AppShortcutIcon } from "../apps/AppShortcutIcon";
 
 export function AssetMountCard({
   asset,
@@ -62,7 +63,7 @@ export function AssetMountCard({
           }}
           aria-hidden="true"
         >
-          {displayIcon}
+          <AppShortcutIcon appKind={profile.app_kind} className="size-4" displayIcon={displayIcon} iconSvg={shortcut?.iconSvg} />
         </span>
 
         <div className="min-w-0 flex-1">

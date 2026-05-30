@@ -3,8 +3,8 @@ import { translateScanStatus } from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { NavigationModel } from "../../router/types";
 import type { AppOverview } from "../../types";
-import { HeaderTabs } from "./navigation/HeaderTabs";
 import { LanguageSwitcher } from "./LanguageSwitcher";
+import { HeaderTabs } from "./navigation/HeaderTabs";
 
 export function AppHeader({
   navigationModel,

@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { AppShortcut, Asset, TargetProfile } from "../../types";
+import { AppShortcutIconForShortcut } from "../apps/AppShortcutIcon";
 
 export function QuickMountButtons({
   asset,
@@ -48,7 +49,7 @@ export function QuickMountButtons({
               title={label}
               type="button"
             >
-              {shortcut.displayIcon}
+              <AppShortcutIconForShortcut className="size-4" shortcut={shortcut} />
             </button>
           );
 

@@ -4,7 +4,7 @@ import { headerTabLabel } from "../../../i18n/navigation";
 import type { HeaderTabItem } from "../../../router/types";
 
 export function HeaderTabs({ activeId, tabs }: { activeId: string; tabs: HeaderTabItem[] }) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
 
   return (
     <div
@@ -24,7 +24,7 @@ export function HeaderTabs({ activeId, tabs }: { activeId: string; tabs: HeaderT
             role="tab"
             aria-selected={tab.id === activeId}
           >
-            {headerTabLabel(tab, t)}
+            {headerTabLabel(tab, t, locale)}
           </button>
         ))}
     </div>

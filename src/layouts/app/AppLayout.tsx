@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { NotificationBanner, type NotificationMessage } from "../../components/notifications/NotificationBanner";
 import { GlobalSettingsDialog } from "../../components/settings/GlobalSettingsDialog";
+import { NotificationBanner, type NotificationMessage } from "../../components/notifications/NotificationBanner";
 import type { NavigationModel, RailMenuItem } from "../../router/types";
 import type { AppOverview, AppShortcut } from "../../types";
 import { AppHeader } from "./AppHeader";

@@ -46,12 +46,12 @@ function RailGroup({
   items: RailMenuItem[];
   onItemSelect?: (item: RailMenuItem) => void;
 }) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
 
   return (
     <nav className="flex w-full flex-col items-center gap-2">
       {items.map((item) => {
-        const label = railLabel(item, t);
+        const label = railLabel(item, t, locale);
 
         return (
           <button

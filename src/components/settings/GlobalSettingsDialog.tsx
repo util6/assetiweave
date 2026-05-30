@@ -21,6 +21,7 @@ import {
   ArrowDown,
   ArrowUp,
   Bell,
+  Code2,
   Gauge,
   GripVertical,
   Languages,
@@ -41,11 +42,19 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import {
+  AppShortcutIconForShortcut,
+  appIconToken,
+  shortcutCustomIconText,
+  shortcutUsesAppIcon,
+  supportsAppIcon,
+} from "../apps/AppShortcutIcon";
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
+import { headerTabLabel, railLabel, subNavLabel } from "../../i18n/navigation";
 import type { Locale } from "../../i18n/messages";
-import type { HeaderTabItem, NavigationModel, RailMenuItem, SubNavItem } from "../../router/types";
+import type { HeaderTabItem, LocalizedNavigationLabels, NavigationModel, RailMenuItem, SubNavItem } from "../../router/types";
 import { useAppSettings, type InterfaceDensity } from "../../store/settings/AppSettingsProvider";
-import type { AppShortcut } from "../../types";
+import type { AppShortcut, AppShortcutIconSvg } from "../../types";
 
 type SettingsSection = "appearance" | "menu" | "shortcuts" | "deployment" | "notifications";
 type MoveDirection = -1 | 1;
@@ -74,9 +83,13 @@ export function GlobalSettingsDialog({
   const { locale, setLocale, t } = useI18n();
   const { resetSettings, settings, updateSetting } = useAppSettings();
   const [activeSection, setActiveSection] = useState<SettingsSection>("appearance");
+  const [editingShortcutIconId, setEditingShortcutIconId] = useState<string | null>(null);
+  const [iconSvgDraft, setIconSvgDraft] = useState("");
+  const [iconSvgError, setIconSvgError] = useState("");
 
   useEffect(() => {
     if (!open) {
+      closeShortcutIconEditor();
       return;
     }
 
@@ -135,6 +148,36 @@ export function GlobalSettingsDialog({
     });
   }
 
+  function updateRailItemLabel(id: string, label: string) {
+    commitNavigationModel({
+      ...navigationModel,
+      railItems: navigationModel.railItems.map((item) =>
+        item.id === id ? { ...item, labels: setLocalizedNavigationLabel(item.labels, locale, label) } : item,
+      ),
+    });
+  }
+
+  function updateHeaderTabLabel(id: string, label: string) {
+    commitNavigationModel({
+      ...navigationModel,
+      headerTabs: navigationModel.headerTabs.map((item) =>
+        item.id === id ? { ...item, labels: setLocalizedNavigationLabel(item.labels, locale, label) } : item,
+      ),
+    });
+  }
+
+  function updateSubNavItemLabel(parentTabId: string, id: string, label: string) {
+    commitNavigationModel({
+      ...navigationModel,
+      subNavItems: {
+        ...navigationModel.subNavItems,
+        [parentTabId]: (navigationModel.subNavItems[parentTabId] ?? []).map((item) =>
+          item.id === id ? { ...item, labels: setLocalizedNavigationLabel(item.labels, locale, label) } : item,
+        ),
+      },
+    });
+  }
+
   function reorderRailItems(position: RailMenuItem["position"], orderedIds: string[]) {
     const itemById = new Map(navigationModel.railItems.map((item) => [item.id, item]));
     const orderedItems = orderedIds.flatMap((id) => {
@@ -189,6 +232,42 @@ export function GlobalSettingsDialog({
     commitAppShortcuts(appShortcuts.map((shortcut) => (shortcut.profileId === profileId ? { ...shortcut, ...patch } : shortcut)));
   }
 
+  function openShortcutIconEditor(shortcut: AppShortcut) {
+    setEditingShortcutIconId(shortcut.profileId);
+    setIconSvgDraft(shortcut.iconSvg ? stringifyIconSvg(shortcut.iconSvg) : "");
+    setIconSvgError("");
+  }
+
+  function closeShortcutIconEditor() {
+    setEditingShortcutIconId(null);
+    setIconSvgDraft("");
+    setIconSvgError("");
+  }
+
+  function saveShortcutIconSvg() {
+    if (!editingShortcutIconId) {
+      return;
+    }
+
+    const result = parseIconSvgInput(iconSvgDraft);
+    if (!result.iconSvg) {
+      setIconSvgError(t("settings.shortcuts.svgError"));
+      return;
+    }
+
+    updateAppShortcut(editingShortcutIconId, { iconSvg: result.iconSvg });
+    closeShortcutIconEditor();
+  }
+
+  function clearShortcutIconSvg() {
+    if (!editingShortcutIconId) {
+      return;
+    }
+
+    updateAppShortcut(editingShortcutIconId, { iconSvg: null });
+    closeShortcutIconEditor();
+  }
+
   function moveAppShortcut(profileId: string, direction: MoveDirection) {
     const index = appShortcuts.findIndex((shortcut) => shortcut.profileId === profileId);
     const targetIndex = index + direction;
@@ -196,6 +275,8 @@ export function GlobalSettingsDialog({
 
     commitAppShortcuts(swapItems(appShortcuts, index, targetIndex));
   }
+
+  const editingShortcutIcon = appShortcuts.find((shortcut) => shortcut.profileId === editingShortcutIconId) ?? null;
 
   return (
     <div className="fixed inset-0 z-50 bg-background text-on-surface">
@@ -327,9 +408,9 @@ export function GlobalSettingsDialog({
                               enabled={item.enabled}
                               id={item.id}
                               key={item.id}
-                              label={item.label}
+                              label={railLabel(item, t, locale)}
                               onEnabledChange={(enabled) => updateRailItem(item.id, { enabled })}
-                              onLabelChange={(label) => updateRailItem(item.id, { label })}
+                              onLabelChange={(label) => updateRailItemLabel(item.id, label)}
                               t={t}
                             />
                           ))}
@@ -346,9 +427,9 @@ export function GlobalSettingsDialog({
                         enabled={item.enabled}
                         id={item.id}
                         key={item.id}
-                        label={item.label}
+                        label={headerTabLabel(item, t, locale)}
                         onEnabledChange={(enabled) => updateHeaderTab(item.id, { enabled })}
-                        onLabelChange={(label) => updateHeaderTab(item.id, { label })}
+                        onLabelChange={(label) => updateHeaderTabLabel(item.id, label)}
                         t={t}
                       />
                     ))}
@@ -365,7 +446,7 @@ export function GlobalSettingsDialog({
                     return (
                       <div className="border-b border-border last:border-b-0" key={tab.id}>
                         <div className="border-b border-border/70 bg-surface-lowest/40 px-4 py-2 text-label-caps uppercase text-outline">
-                          {tab.label}
+                          {headerTabLabel(tab, t, locale)}
                         </div>
                         <SortableMenuList itemIds={items.map((item) => item.id)} onReorder={(orderedIds) => reorderSubNavItems(tab.id, orderedIds)}>
                           {items.map((item) => (
@@ -373,9 +454,9 @@ export function GlobalSettingsDialog({
                               enabled={item.enabled}
                               id={item.id}
                               key={item.id}
-                              label={item.label}
+                              label={subNavLabel(item, t, locale)}
                               onEnabledChange={(enabled) => updateSubNavItem(tab.id, item.id, { enabled })}
-                              onLabelChange={(label) => updateSubNavItem(tab.id, item.id, { label })}
+                              onLabelChange={(label) => updateSubNavItemLabel(tab.id, item.id, label)}
                               t={t}
                             />
                           ))}
@@ -397,6 +478,7 @@ export function GlobalSettingsDialog({
                     onAccentColorChange={(accentColor) => updateAppShortcut(shortcut.profileId, { accentColor })}
                     onDisplayIconChange={(displayIcon) => updateAppShortcut(shortcut.profileId, { displayIcon })}
                     onEnabledChange={(enabled) => updateAppShortcut(shortcut.profileId, { enabled })}
+                    onIconSvgEdit={() => openShortcutIconEditor(shortcut)}
                     onMoveDown={() => moveAppShortcut(shortcut.profileId, 1)}
                     onMoveUp={() => moveAppShortcut(shortcut.profileId, -1)}
                     shortcut={shortcut}
@@ -432,6 +514,21 @@ export function GlobalSettingsDialog({
           </div>
         </div>
       </section>
+      {editingShortcutIcon && (
+        <ShortcutIconSvgDialog
+          draft={iconSvgDraft}
+          error={iconSvgError}
+          onCancel={closeShortcutIconEditor}
+          onChange={(value) => {
+            setIconSvgDraft(value);
+            setIconSvgError("");
+          }}
+          onClear={clearShortcutIconSvg}
+          onSave={saveShortcutIconSvg}
+          shortcut={editingShortcutIcon}
+          t={t}
+        />
+      )}
     </div>
   );
 }
@@ -595,6 +692,7 @@ function ShortcutEditRow({
   onAccentColorChange,
   onDisplayIconChange,
   onEnabledChange,
+  onIconSvgEdit,
   onMoveDown,
   onMoveUp,
   shortcut,
@@ -605,17 +703,20 @@ function ShortcutEditRow({
   onAccentColorChange: (accentColor: string) => void;
   onDisplayIconChange: (displayIcon: string) => void;
   onEnabledChange: (enabled: boolean) => void;
+  onIconSvgEdit: () => void;
   onMoveDown: () => void;
   onMoveUp: () => void;
   shortcut: AppShortcut;
   t: Translator;
 }) {
-  const [draftIcon, setDraftIcon] = useState(shortcut.displayIcon);
+  const [draftIcon, setDraftIcon] = useState(shortcutCustomIconText(shortcut));
   const [draftColor, setDraftColor] = useState(shortcut.accentColor);
+  const usesAppIcon = shortcutUsesAppIcon(shortcut);
+  const canUseAppIcon = supportsAppIcon(shortcut.appKind);
 
   useEffect(() => {
-    setDraftIcon(shortcut.displayIcon);
-  }, [shortcut.displayIcon]);
+    setDraftIcon(shortcutCustomIconText(shortcut));
+  }, [shortcut]);
 
   useEffect(() => {
     setDraftColor(shortcut.accentColor);
@@ -624,7 +725,12 @@ function ShortcutEditRow({
   function commitIcon(value: string) {
     const nextIcon = value.trim().slice(0, 4);
     if (!nextIcon) {
-      setDraftIcon(shortcut.displayIcon);
+      if (canUseAppIcon) {
+        onDisplayIconChange(appIconToken(shortcut.appKind));
+        setDraftIcon("");
+      } else {
+        setDraftIcon(shortcut.displayIcon);
+      }
       return;
     }
 
@@ -645,7 +751,7 @@ function ShortcutEditRow({
   }
 
   return (
-    <div className="grid min-h-16 grid-cols-[minmax(200px,1fr)_120px_170px_auto_auto] items-center gap-4 border-b border-border px-4 py-3 last:border-b-0">
+    <div className="grid min-h-16 grid-cols-[minmax(200px,1fr)_300px_170px_auto_auto] items-center gap-4 border-b border-border px-4 py-3 last:border-b-0">
       <div className="flex min-w-0 items-center gap-3">
         <span
           className="grid size-9 shrink-0 place-items-center rounded-lg border text-[13px] font-bold"
@@ -656,7 +762,7 @@ function ShortcutEditRow({
           }}
           aria-hidden="true"
         >
-          {shortcut.displayIcon}
+          <AppShortcutIconForShortcut className="size-5" shortcut={shortcut} />
         </span>
         <div className="min-w-0">
           <p className="truncate text-body-md font-bold text-on-surface">{shortcut.profileName}</p>
@@ -664,26 +770,52 @@ function ShortcutEditRow({
         </div>
       </div>
 
-      <label className="flex min-w-0 flex-col gap-1">
+      <div className="flex min-w-0 flex-col gap-1">
         <span className="text-label-caps uppercase text-outline">{t("settings.shortcuts.icon")}</span>
-        <Input
-          aria-label={t("settings.shortcuts.icon")}
-          className="font-semibold"
-          onBlur={(event) => commitIcon(event.currentTarget.value)}
-          onChange={(event) => setDraftIcon(event.target.value.slice(0, 4))}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              commitIcon(event.currentTarget.value);
-              event.currentTarget.blur();
-            }
-            if (event.key === "Escape") {
-              setDraftIcon(shortcut.displayIcon);
-              event.currentTarget.blur();
-            }
-          }}
-          value={draftIcon}
-        />
-      </label>
+        <div className="flex h-9 min-w-0 items-center gap-2">
+          <Button
+            aria-pressed={usesAppIcon}
+            className={clsx("h-9 shrink-0 px-3", usesAppIcon && "border-primary-strong/50 bg-surface-highest text-primary")}
+            disabled={!canUseAppIcon}
+            onClick={() => onDisplayIconChange(appIconToken(shortcut.appKind))}
+            title={t("settings.shortcuts.useAppIcon")}
+            type="button"
+            variant="outline"
+          >
+            <AppShortcutIconForShortcut className="size-4" shortcut={{ ...shortcut, displayIcon: appIconToken(shortcut.appKind) || shortcut.displayIcon }} />
+            <span>{t("settings.shortcuts.appIcon")}</span>
+          </Button>
+          <Button
+            aria-label={t("settings.shortcuts.editSvg")}
+            aria-pressed={Boolean(shortcut.iconSvg)}
+            className={clsx("h-9 shrink-0", shortcut.iconSvg && "border-primary-strong/50 bg-surface-highest text-primary")}
+            onClick={onIconSvgEdit}
+            title={t("settings.shortcuts.editSvg")}
+            type="button"
+            variant="outline"
+          >
+            <Code2 size={15} />
+          </Button>
+          <Input
+            aria-label={t("settings.shortcuts.customIcon")}
+            className="min-w-0 flex-1 font-semibold"
+            onBlur={(event) => commitIcon(event.currentTarget.value)}
+            onChange={(event) => setDraftIcon(event.target.value.slice(0, 4))}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                commitIcon(event.currentTarget.value);
+                event.currentTarget.blur();
+              }
+              if (event.key === "Escape") {
+                setDraftIcon(shortcutCustomIconText(shortcut));
+                event.currentTarget.blur();
+              }
+            }}
+            placeholder={t("settings.shortcuts.customIcon")}
+            value={draftIcon}
+          />
+        </div>
+      </div>
 
       <label className="flex min-w-0 flex-col gap-1">
         <span className="text-label-caps uppercase text-outline">{t("settings.shortcuts.color")}</span>
@@ -755,6 +887,92 @@ function ShortcutEditRow({
   );
 }
 
+function ShortcutIconSvgDialog({
+  draft,
+  error,
+  onCancel,
+  onChange,
+  onClear,
+  onSave,
+  shortcut,
+  t,
+}: {
+  draft: string;
+  error: string;
+  onCancel: () => void;
+  onChange: (value: string) => void;
+  onClear: () => void;
+  onSave: () => void;
+  shortcut: AppShortcut;
+  t: Translator;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/45 px-6">
+      <section
+        aria-labelledby="shortcut-svg-title"
+        aria-modal="true"
+        className="flex max-h-[calc(100vh-72px)] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-[0_24px_80px_rgba(0,0,0,0.42)]"
+        role="dialog"
+      >
+        <header className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-5 py-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <span
+              className="grid size-10 shrink-0 place-items-center rounded-lg border text-[13px] font-bold"
+              style={{
+                borderColor: `${shortcut.accentColor}66`,
+                backgroundColor: `${shortcut.accentColor}1f`,
+                color: shortcut.accentColor,
+              }}
+              aria-hidden="true"
+            >
+              <AppShortcutIconForShortcut className="size-5" shortcut={shortcut} />
+            </span>
+            <div className="min-w-0">
+              <h4 className="truncate text-h3 text-on-surface" id="shortcut-svg-title">
+                {t("settings.shortcuts.svgEditorTitle")}
+              </h4>
+              <p className="truncate text-body-sm text-on-surface-variant">{shortcut.profileName}</p>
+            </div>
+          </div>
+          <Button aria-label={t("settings.shortcuts.closeSvg")} onClick={onCancel} size="icon" type="button" variant="ghost">
+            <X size={18} />
+          </Button>
+        </header>
+
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
+          <p className="text-body-sm text-on-surface-variant">{t("settings.shortcuts.svgEditorDescription")}</p>
+          <label className="flex min-h-0 flex-1 flex-col gap-2">
+            <span className="text-label-caps uppercase text-outline">{t("settings.shortcuts.svgInput")}</span>
+            <textarea
+              aria-label={t("settings.shortcuts.svgInput")}
+              className="min-h-80 resize-y rounded-lg border border-border bg-surface-high px-3 py-3 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60"
+              onChange={(event) => onChange(event.target.value)}
+              placeholder={t("settings.shortcuts.svgPlaceholder")}
+              spellCheck={false}
+              value={draft}
+            />
+          </label>
+          {error && <p className="text-body-sm text-status-remove">{error}</p>}
+        </div>
+
+        <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-5 py-4">
+          <Button onClick={onClear} type="button" variant="ghost">
+            {t("settings.shortcuts.clearSvg")}
+          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={onCancel} type="button" variant="outline">
+              {t("settings.shortcuts.cancelSvg")}
+            </Button>
+            <Button onClick={onSave} type="button">
+              {t("settings.shortcuts.saveSvg")}
+            </Button>
+          </div>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 function SettingRow({ children, icon, label }: { children: ReactNode; icon: ReactNode; label: string }) {
   return (
     <div className="flex min-h-16 items-center justify-between gap-5 border-b border-border px-4 py-3 last:border-b-0">
@@ -773,8 +991,124 @@ function swapItems<Item>(items: Item[], firstIndex: number, secondIndex: number)
   return nextItems;
 }
 
+function setLocalizedNavigationLabel(labels: LocalizedNavigationLabels | undefined, locale: Locale, label: string): LocalizedNavigationLabels {
+  return {
+    ...labels,
+    [locale]: label,
+  };
+}
+
 function isHexColor(value: string) {
   return /^#[0-9a-fA-F]{6}$/.test(value);
+}
+
+function stringifyIconSvg(iconSvg: AppShortcutIconSvg) {
+  return JSON.stringify(iconSvg, null, 2);
+}
+
+function parseIconSvgInput(value: string) {
+  const input = value.trim();
+  if (!input) {
+    return { iconSvg: null };
+  }
+
+  try {
+    const iconSvg = normalizeIconSvgCandidate(JSON.parse(input));
+    if (iconSvg) {
+      return { iconSvg };
+    }
+  } catch {
+    // Fall through and try parsing SVG markup.
+  }
+
+  return { iconSvg: parseSvgMarkup(input) };
+}
+
+function parseSvgMarkup(value: string): AppShortcutIconSvg | null {
+  if (!value.includes("<svg") || typeof DOMParser === "undefined") {
+    return null;
+  }
+
+  const document = new DOMParser().parseFromString(value, "image/svg+xml");
+  if (document.querySelector("parsererror")) {
+    return null;
+  }
+
+  const svg = document.querySelector("svg");
+  if (!svg) {
+    return null;
+  }
+
+  const paths = Array.from(svg.querySelectorAll("path")).flatMap((path) => {
+    const d = path.getAttribute("d")?.trim();
+    if (!d) {
+      return [];
+    }
+
+    const fillRule = normalizeSvgRule(path.getAttribute("fill-rule") ?? path.getAttribute("fillRule"));
+    const clipRule = normalizeSvgRule(path.getAttribute("clip-rule") ?? path.getAttribute("clipRule"));
+    return [
+      {
+        d,
+        ...(clipRule ? { clipRule } : {}),
+        ...(fillRule ? { fillRule } : {}),
+      },
+    ];
+  });
+
+  if (paths.length === 0) {
+    return null;
+  }
+
+  const viewBox = svg.getAttribute("viewBox")?.trim();
+  return {
+    paths,
+    ...(viewBox ? { viewBox } : {}),
+  };
+}
+
+function normalizeIconSvgCandidate(value: unknown): AppShortcutIconSvg | null {
+  if (!isRecord(value) || !Array.isArray(value.paths)) {
+    return null;
+  }
+
+  const paths = value.paths.flatMap((path) => {
+    if (!isRecord(path) || typeof path.d !== "string") {
+      return [];
+    }
+
+    const d = path.d.trim();
+    if (!d) {
+      return [];
+    }
+
+    const fillRule = normalizeSvgRule(path.fillRule);
+    const clipRule = normalizeSvgRule(path.clipRule);
+    return [
+      {
+        d,
+        ...(clipRule ? { clipRule } : {}),
+        ...(fillRule ? { fillRule } : {}),
+      },
+    ];
+  });
+
+  if (paths.length === 0) {
+    return null;
+  }
+
+  return {
+    paths,
+    ...(typeof value.viewBox === "string" && value.viewBox.trim() ? { viewBox: value.viewBox.trim() } : {}),
+  };
+}
+
+function normalizeSvgRule(value: unknown): "evenodd" | "nonzero" | null {
+  return value === "evenodd" || value === "nonzero" ? value : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function SegmentedControl({

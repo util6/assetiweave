@@ -1,6 +1,6 @@
-import type { HeaderTabItem, RailMenuItem, SubNavItem } from "../router/types";
+import type { HeaderTabItem, LocalizedNavigationLabels, RailMenuItem, SubNavItem } from "../router/types";
 import type { Translator } from "./I18nProvider";
-import type { TranslationKey } from "./messages";
+import type { Locale, TranslationKey } from "./messages";
 
 const railLabelKeys: Partial<Record<string, TranslationKey>> = {
   home: "nav.rail.home",
@@ -88,19 +88,31 @@ const subNavDefaultLabels: Partial<Record<string, string[]>> = {
   "profiles.plans": ["Deployment Plans", "部署计划"],
 };
 
-export function railLabel(item: RailMenuItem, t: Translator) {
-  return translateByKey(railLabelKeys[item.id], item.label, t, railDefaultLabels[item.id]);
+export function railLabel(item: RailMenuItem, t: Translator, locale: Locale) {
+  return translateByKey(railLabelKeys[item.id], item.label, item.labels, t, locale, railDefaultLabels[item.id]);
 }
 
-export function headerTabLabel(item: HeaderTabItem, t: Translator) {
-  return translateByKey(headerLabelKeys[item.id], item.label, t, headerDefaultLabels[item.id]);
+export function headerTabLabel(item: HeaderTabItem, t: Translator, locale: Locale) {
+  return translateByKey(headerLabelKeys[item.id], item.label, item.labels, t, locale, headerDefaultLabels[item.id]);
 }
 
-export function subNavLabel(item: SubNavItem, t: Translator) {
-  return translateByKey(subNavLabelKeys[item.routeKey], item.label, t, subNavDefaultLabels[item.routeKey]);
+export function subNavLabel(item: SubNavItem, t: Translator, locale: Locale) {
+  return translateByKey(subNavLabelKeys[item.routeKey], item.label, item.labels, t, locale, subNavDefaultLabels[item.routeKey]);
 }
 
-function translateByKey(key: TranslationKey | undefined, fallback: string, t: Translator, defaultLabels: string[] = []) {
+function translateByKey(
+  key: TranslationKey | undefined,
+  fallback: string,
+  labels: LocalizedNavigationLabels | undefined,
+  t: Translator,
+  locale: Locale,
+  defaultLabels: string[] = [],
+) {
+  const localizedLabel = labels?.[locale]?.trim();
+  if (localizedLabel) {
+    return localizedLabel;
+  }
+
   if (!key) {
     return fallback;
   }

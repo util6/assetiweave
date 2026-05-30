@@ -12,7 +12,7 @@ export function SubNavigation({
   items: SubNavItem[];
   onSelect?: (item: SubNavItem) => void;
 }) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
 
   return (
     <section
@@ -31,7 +31,7 @@ export function SubNavigation({
             onClick={() => onSelect?.(item)}
             type="button"
           >
-            {subNavLabel(item, t)}
+            {subNavLabel(item, t, locale)}
           </button>
         ))}
     </section>

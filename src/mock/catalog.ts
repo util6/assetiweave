@@ -177,11 +177,11 @@ export const fallbackProfiles: TargetProfile[] = [
 ];
 
 export const fallbackAppShortcuts: AppShortcut[] = [
-  { profileId: "claude", profileName: "Claude", appKind: "claude", displayIcon: "C", accentColor: "#f59e0b", enabled: true },
-  { profileId: "codex", profileName: "Codex", appKind: "codex", displayIcon: "◎", accentColor: "#10b981", enabled: true },
-  { profileId: "gemini", profileName: "Gemini", appKind: "gemini", displayIcon: "✦", accentColor: "#0ea5e9", enabled: true },
-  { profileId: "opencode", profileName: "OpenCode", appKind: "opencode", displayIcon: "□", accentColor: "#6366f1", enabled: true },
-  { profileId: "cursor", profileName: "Cursor", appKind: "cursor", displayIcon: "⌘", accentColor: "#94a3b8", enabled: true },
+  { profileId: "claude", profileName: "Claude", appKind: "claude", displayIcon: "app:claude", accentColor: "#d97757", enabled: true },
+  { profileId: "codex", profileName: "Codex", appKind: "codex", displayIcon: "app:codex", accentColor: "#10b981", enabled: true },
+  { profileId: "gemini", profileName: "Gemini", appKind: "gemini", displayIcon: "app:gemini", accentColor: "#8e75b2", enabled: true },
+  { profileId: "opencode", profileName: "OpenCode", appKind: "opencode", displayIcon: "app:opencode", accentColor: "#6366f1", enabled: true },
+  { profileId: "cursor", profileName: "Cursor", appKind: "cursor", displayIcon: "app:cursor", accentColor: "#94a3b8", enabled: true },
 ];
 
 export const fallbackNavigationModel: NavigationModel = navigationModel;
