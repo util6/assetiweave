@@ -23,7 +23,6 @@ export function SourceRow({
   onToggleMount,
   onToggle,
   profiles,
-  selectedMounts,
   source,
 }: {
   appShortcuts: AppShortcut[];
@@ -41,7 +40,6 @@ export function SourceRow({
   onToggleMount: (assetId: string, profileId: string) => void;
   onToggle: () => void;
   profiles: TargetProfile[];
-  selectedMounts: Record<string, string[]>;
   source: Source;
 }) {
   const { t } = useI18n();
@@ -104,9 +102,9 @@ export function SourceRow({
             appShortcuts={appShortcuts}
             assets={assets}
             busy={busy}
+            mountStatusesByAssetId={mountStatusesByAssetId}
             onSetSourceMountProfile={onSetSourceMountProfile}
             profiles={profiles}
-            selectedMounts={selectedMounts}
             source={source}
           />
           <div className="flex items-start gap-1.5">
@@ -137,21 +135,23 @@ export function SourceRow({
               <div className="px-4 py-4 text-body-sm text-on-surface-variant">{t("source.emptySkills")}</div>
             ) : (
               <div className="overflow-hidden rounded-xl border border-border bg-surface-card/35">
-                {assets.map((asset) => (
-                  <AssetRow
-                    appShortcuts={appShortcuts}
-                    asset={asset}
-                    expanded={expandedAssetIds.has(asset.id)}
-                    key={asset.id}
-                    onRevealPath={onAssetReveal}
-                    onToggleExpanded={() => onToggleAsset(asset.id)}
-                    onToggleMount={(profileId) => onToggleMount(asset.id, profileId)}
-                    profiles={profiles}
-                    selectedProfileIds={selectedMounts[asset.id] ?? []}
-                    source={source}
-                    mountStatuses={mountStatusesByAssetId.get(asset.id) ?? []}
-                  />
-                ))}
+                {assets.map((asset) => {
+                  const mountStatuses = mountStatusesByAssetId.get(asset.id) ?? [];
+                  return (
+                    <AssetRow
+                      appShortcuts={appShortcuts}
+                      asset={asset}
+                      expanded={expandedAssetIds.has(asset.id)}
+                      key={asset.id}
+                      onRevealPath={onAssetReveal}
+                      onToggleExpanded={() => onToggleAsset(asset.id)}
+                      onToggleMount={(profileId) => onToggleMount(asset.id, profileId)}
+                      profiles={profiles}
+                      source={source}
+                      mountStatuses={mountStatuses}
+                    />
+                  );
+                })}
               </div>
             )}
           </div>

@@ -3,9 +3,11 @@ import { FolderOpen, Pencil, Trash2 } from "lucide-react";
 import { assetKindLabel } from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
+import { getAssetMountSummaryState, getMountedProfileIds } from "../../utils/mountState";
 import { isDirectMountBlockedSource } from "../../utils/mountPolicy";
 import { displayAssetPath } from "../../utils/path";
 import { kindBadgeClass } from "../../utils/styles";
+import { MountStatePill } from "./MountStatePill";
 import { QuickMountButtons } from "./QuickMountButtons";
 
 export function AssetGridView({
@@ -15,7 +17,6 @@ export function AssetGridView({
   onRevealPath,
   onToggleMount,
   profiles,
-  selectedMounts,
   sourceById,
 }: {
   appShortcuts: AppShortcut[];
@@ -24,7 +25,6 @@ export function AssetGridView({
   onRevealPath: (path: string) => void;
   onToggleMount: (assetId: string, profileId: string) => void;
   profiles: TargetProfile[];
-  selectedMounts: Record<string, string[]>;
   sourceById: Map<string, Source>;
 }) {
   const { t } = useI18n();
@@ -42,10 +42,8 @@ export function AssetGridView({
       {assets.map((asset) => {
         const source = sourceById.get(asset.source_id);
         const mountStatuses = mountStatusesByAssetId.get(asset.id) ?? [];
-        const selectedProfileIds = mergeProfileIds(
-          selectedMounts[asset.id] ?? [],
-          mountStatuses.filter((status) => status.state === "mounted").map((status) => status.profile_id),
-        );
+        const mountedProfileIds = getMountedProfileIds(mountStatuses);
+        const mountSummaryState = getAssetMountSummaryState(mountStatuses);
         const mountBlockedReason = isDirectMountBlockedSource(source) ? t("mount.blocked") : undefined;
 
         return (
@@ -60,6 +58,7 @@ export function AssetGridView({
                     {asset.name}
                   </span>
                   <span className={kindBadgeClass(asset.kind)}>{assetKindLabel(asset.kind, t)}</span>
+                  <MountStatePill compact state={mountSummaryState} />
                 </div>
                 <p className="mt-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-outline">
                   {source?.name ?? asset.source_id}
@@ -96,25 +95,25 @@ export function AssetGridView({
               <span
                 className={clsx(
                   "inline-flex min-w-0 items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm",
-                  mountBlockedReason ? "text-status-conflict" : selectedProfileIds.length > 0 ? "text-status-create" : "text-on-surface-variant",
+                  mountBlockedReason ? "text-status-conflict" : mountSummaryTextClass(mountSummaryState),
                 )}
               >
                 <span
                   className={clsx(
                     "size-1.5 shrink-0 rounded-full",
-                    mountBlockedReason ? "bg-status-conflict" : selectedProfileIds.length > 0 ? "bg-status-create" : "bg-outline",
+                    mountBlockedReason ? "bg-status-conflict" : mountSummaryDotClass(mountSummaryState),
                   )}
                   aria-hidden="true"
                 />
-                {mountBlockedReason ?? t("mount.selected", { count: selectedProfileIds.length })}
+                {mountBlockedReason ?? t("mount.selected", { count: mountedProfileIds.length })}
               </span>
               <div className="shrink-0 rounded-xl border border-border/70 bg-surface-lowest/35 p-1.5">
                 <QuickMountButtons
                   asset={asset}
                   mountBlockedReason={mountBlockedReason}
+                  mountStatuses={mountStatuses}
                   profiles={profiles}
                   shortcuts={appShortcuts}
-                  selectedProfileIds={selectedProfileIds}
                   onToggle={(profileId) => onToggleMount(asset.id, profileId)}
                 />
               </div>
@@ -153,6 +152,14 @@ function GridIconButton({
   );
 }
 
-function mergeProfileIds(...groups: string[][]) {
-  return [...new Set(groups.flat())];
+function mountSummaryTextClass(state: ReturnType<typeof getAssetMountSummaryState>) {
+  if (state === "mounted") return "text-status-create";
+  if (state === "conflict" || state === "broken") return "text-status-remove";
+  return "text-on-surface-variant";
+}
+
+function mountSummaryDotClass(state: ReturnType<typeof getAssetMountSummaryState>) {
+  if (state === "mounted") return "bg-status-create";
+  if (state === "conflict" || state === "broken") return "bg-status-remove";
+  return "bg-outline";
 }

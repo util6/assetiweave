@@ -1,6 +1,7 @@
 use crate::targeting::PhysicalMountState;
 use assetiweave_core::{
-    AppKind, AssetKind, AssetMount, SourceKind, SourceOrigin, SourceScannerKind,
+    AppKind, AssetGroupRules, AssetKind, AssetMount, DeploymentStrategy, ProfileSafety, RuleSet,
+    SourceKind, SourceOrigin, SourceScannerKind,
 };
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Mutex};
@@ -38,6 +39,20 @@ pub(crate) struct SourceInput {
     pub(crate) priority: i32,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct TargetProfileInput {
+    pub(crate) id: Option<String>,
+    pub(crate) name: String,
+    pub(crate) app_kind: Option<AppKind>,
+    pub(crate) target_paths: Option<Vec<String>>,
+    pub(crate) supported_kinds: Option<Vec<AssetKind>>,
+    pub(crate) deployment_strategy: Option<DeploymentStrategy>,
+    pub(crate) enabled: Option<bool>,
+    pub(crate) include: Option<RuleSet>,
+    pub(crate) exclude: Option<RuleSet>,
+    pub(crate) safety: Option<ProfileSafety>,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct ExecutionResult {
     pub(crate) executed_count: usize,
@@ -46,7 +61,7 @@ pub(crate) struct ExecutionResult {
     pub(crate) errors: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PhysicalMountStateDto {
     Mounted,
@@ -65,10 +80,102 @@ pub(crate) struct AssetMountStatus {
     pub(crate) linked_source: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct AssetMountObservation {
+    pub(crate) asset_id: String,
+    pub(crate) profile_id: String,
+    pub(crate) target_dir: String,
+    pub(crate) target_path: String,
+    pub(crate) state: PhysicalMountStateDto,
+    pub(crate) linked_source: Option<String>,
+    pub(crate) observed_at: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct AssetMountUpdateResult {
     pub(crate) mount: AssetMount,
     pub(crate) status: AssetMountStatus,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AssetGroupInput {
+    pub(crate) id: Option<String>,
+    pub(crate) name: String,
+    pub(crate) description: Option<String>,
+    pub(crate) color: Option<String>,
+    pub(crate) enabled: Option<bool>,
+    pub(crate) sort_order: Option<i32>,
+    pub(crate) rules: Option<AssetGroupRules>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct AssetGroupMountError {
+    pub(crate) asset_id: String,
+    pub(crate) message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ApplyAssetGroupMountResult {
+    pub(crate) group_id: String,
+    pub(crate) profile_id: String,
+    pub(crate) enabled: bool,
+    pub(crate) requested_count: usize,
+    pub(crate) updated_count: usize,
+    pub(crate) error_count: usize,
+    pub(crate) mounts: Vec<AssetMount>,
+    pub(crate) statuses: Vec<AssetMountStatus>,
+    pub(crate) errors: Vec<AssetGroupMountError>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct SkillGroupExclusiveMountInput {
+    pub(crate) group_ids: Vec<String>,
+    pub(crate) profile_id: String,
+    pub(crate) mount_selected: bool,
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct SkillGroupExclusiveMountItem {
+    pub(crate) asset_id: String,
+    pub(crate) name: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct SkillGroupExclusiveMountSkippedItem {
+    pub(crate) asset_id: String,
+    pub(crate) name: String,
+    pub(crate) reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct SkillGroupExclusiveMountError {
+    pub(crate) asset_id: String,
+    pub(crate) name: String,
+    pub(crate) message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SkillGroupExclusiveMountPreview {
+    pub(crate) profile_id: String,
+    pub(crate) group_ids: Vec<String>,
+    pub(crate) selected_skill_ids: Vec<String>,
+    pub(crate) keep: Vec<SkillGroupExclusiveMountItem>,
+    pub(crate) mount: Vec<SkillGroupExclusiveMountItem>,
+    pub(crate) unmount: Vec<SkillGroupExclusiveMountItem>,
+    pub(crate) skipped: Vec<SkillGroupExclusiveMountSkippedItem>,
+    pub(crate) keep_count: usize,
+    pub(crate) mount_count: usize,
+    pub(crate) unmount_count: usize,
+    pub(crate) skipped_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ApplySkillGroupExclusiveMountResult {
+    #[serde(flatten)]
+    pub(crate) preview: SkillGroupExclusiveMountPreview,
+    pub(crate) statuses: Vec<AssetMountStatus>,
+    pub(crate) errors: Vec<SkillGroupExclusiveMountError>,
 }
 
 impl From<PhysicalMountState> for PhysicalMountStateDto {

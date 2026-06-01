@@ -3,16 +3,26 @@ use crate::{
     path_utils::{app_library_skill_root, expand_path},
     planner, platform, scanner, store, targeting,
     types::{
-        AppOverview, AppResult, AppShortcut, AppState, AssetMountStatus, AssetMountUpdateResult,
-        ExecutionResult, NavigationModel, PhysicalMountStateDto, SourceInput,
+        AppOverview, AppResult, AppShortcut, AppState, ApplyAssetGroupMountResult,
+        ApplySkillGroupExclusiveMountResult, AssetGroupInput, AssetGroupMountError,
+        AssetMountObservation, AssetMountStatus, AssetMountUpdateResult, ExecutionResult,
+        NavigationModel, PhysicalMountStateDto, SkillGroupExclusiveMountError,
+        SkillGroupExclusiveMountInput, SkillGroupExclusiveMountItem,
+        SkillGroupExclusiveMountPreview, SkillGroupExclusiveMountSkippedItem, SourceInput,
+        TargetProfileInput,
     },
 };
 use assetiweave_core::{
-    Asset, AssetKind, AssetMount, DeploymentPlan, DeploymentStrategy, Source, SourceKind,
+    AppKind, Asset, AssetGroup, AssetGroupDetail, AssetGroupRules, AssetKind, AssetMount,
+    DeploymentPlan, DeploymentState, DeploymentStrategy, ProfileSafety, RuleSet, Source, SourceKind,
     SourceOrigin, SourceScannerKind, TargetProfile,
 };
 use chrono::Utc;
-use std::{collections::HashMap, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    fs,
+    path::{Path, PathBuf},
+};
 use tauri::State;
 use uuid::Uuid;
 use walkdir::WalkDir;
@@ -105,6 +115,53 @@ pub(crate) fn list_profiles(state: State<'_, AppState>) -> AppResult<Vec<TargetP
 }
 
 #[tauri::command]
+pub(crate) fn create_profile(
+    state: State<'_, AppState>,
+    input: TargetProfileInput,
+) -> AppResult<TargetProfile> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    let conn = store::open_initialized(&state.db_path)?;
+    let profiles = store::load_profiles(&conn)?;
+    let profile = target_profile_from_input(input)?;
+    if profiles.iter().any(|candidate| candidate.id == profile.id) {
+        return Err(format!("profile already exists: {}", profile.id));
+    }
+    store::upsert_profile(&conn, &profile)?;
+    Ok(profile)
+}
+
+#[tauri::command]
+pub(crate) fn update_profile(
+    state: State<'_, AppState>,
+    profile: TargetProfile,
+) -> AppResult<TargetProfile> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    let conn = store::open_initialized(&state.db_path)?;
+    validate_target_profile(&profile)?;
+    if !store::load_profiles(&conn)?
+        .iter()
+        .any(|candidate| candidate.id == profile.id)
+    {
+        return Err(format!("profile not found: {}", profile.id));
+    }
+    store::upsert_profile(&conn, &profile)?;
+    Ok(profile)
+}
+
+#[tauri::command]
+pub(crate) fn delete_profile(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    let conn = store::open_initialized(&state.db_path)?;
+    let profiles = store::load_profiles(&conn)?;
+    if !profiles.iter().any(|profile| profile.id == id) {
+        return Err(format!("profile not found: {id}"));
+    }
+
+    ensure_profile_can_be_deleted(&conn, &id)?;
+    store::delete_profile(&conn, &id)
+}
+
+#[tauri::command]
 pub(crate) fn get_navigation_model(state: State<'_, AppState>) -> AppResult<NavigationModel> {
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
     let conn = store::open_initialized(&state.db_path)?;
@@ -166,16 +223,517 @@ pub(crate) fn list_asset_mount_statuses(
 ) -> AppResult<Vec<AssetMountStatus>> {
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
     let conn = store::open_initialized(&state.db_path)?;
-    let assets = store::load_assets(&conn)?;
-    let profiles = store::load_profiles(&conn)?;
+    scan_asset_mount_statuses(&conn, asset_id.as_deref())
+}
+
+#[tauri::command]
+pub(crate) fn refresh_asset_mount_statuses(
+    state: State<'_, AppState>,
+    asset_id: Option<String>,
+) -> AppResult<Vec<AssetMountStatus>> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    let conn = store::open_initialized(&state.db_path)?;
+    sync_asset_mount_observations(&conn, asset_id.as_deref())
+}
+
+#[tauri::command]
+pub(crate) fn list_skill_groups(state: State<'_, AppState>) -> AppResult<Vec<AssetGroupDetail>> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    let conn = store::open_initialized(&state.db_path)?;
+    cleanup_orphan_asset_records(&conn)?;
+    let assets = store::load_assets_by_kind(&conn, Some(AssetKind::Skill))?;
+    store::load_skill_group_details(&conn, &assets)
+}
+
+#[tauri::command]
+pub(crate) fn create_skill_group(
+    state: State<'_, AppState>,
+    input: AssetGroupInput,
+) -> AppResult<AssetGroupDetail> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    let conn = store::open_initialized(&state.db_path)?;
+    let assets = store::load_assets_by_kind(&conn, Some(AssetKind::Skill))?;
+    let now = Utc::now().to_rfc3339();
+    let group = asset_group_from_input(input, now.clone(), now);
+    store::upsert_asset_group(&conn, &group)?;
+    store::load_skill_group_detail(&conn, &group.id, &assets)
+}
+
+#[tauri::command]
+pub(crate) fn update_skill_group(
+    state: State<'_, AppState>,
+    group: AssetGroup,
+) -> AppResult<AssetGroupDetail> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    let conn = store::open_initialized(&state.db_path)?;
+    let assets = store::load_assets_by_kind(&conn, Some(AssetKind::Skill))?;
+    let mut group = group;
+    group.updated_at = Utc::now().to_rfc3339();
+    store::upsert_asset_group(&conn, &group)?;
+    store::load_skill_group_detail(&conn, &group.id, &assets)
+}
+
+#[tauri::command]
+pub(crate) fn delete_skill_group(state: State<'_, AppState>, group_id: String) -> AppResult<()> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    let conn = store::open_initialized(&state.db_path)?;
+    store::delete_asset_group(&conn, &group_id)
+}
+
+#[tauri::command]
+pub(crate) fn set_skill_group_manual_members(
+    state: State<'_, AppState>,
+    group_id: String,
+    asset_ids: Vec<String>,
+) -> AppResult<AssetGroupDetail> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    let conn = store::open_initialized(&state.db_path)?;
+    let assets = store::load_assets_by_kind(&conn, Some(AssetKind::Skill))?;
+    store::replace_asset_group_members(&conn, &group_id, &asset_ids, &assets)?;
+    store::load_skill_group_detail(&conn, &group_id, &assets)
+}
+
+#[tauri::command]
+pub(crate) fn apply_skill_group_mount(
+    state: State<'_, AppState>,
+    group_id: String,
+    profile_id: String,
+    enabled: bool,
+) -> AppResult<ApplyAssetGroupMountResult> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    let conn = store::open_initialized(&state.db_path)?;
+    apply_skill_group_mount_record(&conn, &group_id, &profile_id, enabled)
+}
+
+fn apply_skill_group_mount_record(
+    conn: &rusqlite::Connection,
+    group_id: &str,
+    profile_id: &str,
+    enabled: bool,
+) -> AppResult<ApplyAssetGroupMountResult> {
+    let assets = store::load_assets_by_kind(&conn, Some(AssetKind::Skill))?;
+    let detail = store::load_skill_group_detail(conn, group_id, &assets)?;
+    if !detail.group.enabled {
+        return Err(format!("asset group is disabled: {}", detail.group.name));
+    }
+
+    let mut mounts = Vec::new();
+    let mut statuses = Vec::new();
+    let mut errors = Vec::new();
+    for member in &detail.members {
+        let result = if enabled {
+            mount_asset_mount_record(conn, &member.asset_id, profile_id)
+        } else {
+            unmount_asset_mount_record(conn, &member.asset_id, profile_id)
+        };
+
+        match result {
+            Ok(update) => {
+                mounts.push(update.mount);
+                statuses.push(update.status);
+            }
+            Err(message) => errors.push(AssetGroupMountError {
+                asset_id: member.asset_id.clone(),
+                message,
+            }),
+        }
+    }
+
+    Ok(ApplyAssetGroupMountResult {
+        group_id: group_id.to_string(),
+        profile_id: profile_id.to_string(),
+        enabled,
+        requested_count: detail.members.len(),
+        updated_count: mounts.len(),
+        error_count: errors.len(),
+        mounts,
+        statuses,
+        errors,
+    })
+}
+
+#[tauri::command]
+pub(crate) fn preview_skill_group_exclusive_mount(
+    state: State<'_, AppState>,
+    input: SkillGroupExclusiveMountInput,
+) -> AppResult<SkillGroupExclusiveMountPreview> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    let conn = store::open_initialized(&state.db_path)?;
+    build_skill_group_exclusive_mount_preview(&conn, &input)
+}
+
+#[tauri::command]
+pub(crate) fn apply_skill_group_exclusive_mount(
+    state: State<'_, AppState>,
+    input: SkillGroupExclusiveMountInput,
+) -> AppResult<ApplySkillGroupExclusiveMountResult> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    let conn = store::open_initialized(&state.db_path)?;
+    apply_skill_group_exclusive_mount_record(&conn, &input)
+}
+
+fn apply_skill_group_exclusive_mount_record(
+    conn: &rusqlite::Connection,
+    input: &SkillGroupExclusiveMountInput,
+) -> AppResult<ApplySkillGroupExclusiveMountResult> {
+    let preview = build_skill_group_exclusive_mount_preview(conn, input)?;
+    let assets = store::load_assets(conn)?;
+    let asset_by_id = assets
+        .iter()
+        .map(|asset| (asset.id.as_str(), asset))
+        .collect::<HashMap<_, _>>();
+    let profiles = store::load_profiles(conn)?;
+    let profile = profiles
+        .iter()
+        .find(|profile| profile.id == preview.profile_id)
+        .ok_or_else(|| format!("profile not found: {}", preview.profile_id))?;
+    let mut statuses = Vec::new();
+    let mut errors = Vec::new();
+
+    for item in &preview.keep {
+        if let Some(asset) = asset_by_id.get(item.asset_id.as_str()) {
+            let inspection = targeting::inspect_mount(profile, asset)?;
+            statuses.push(asset_mount_status(&asset.id, &profile.id, inspection));
+        }
+    }
+
+    for item in &preview.mount {
+        match mount_asset_mount_record(conn, &item.asset_id, &preview.profile_id) {
+            Ok(update) => statuses.push(update.status),
+            Err(message) => errors.push(SkillGroupExclusiveMountError {
+                asset_id: item.asset_id.clone(),
+                name: item.name.clone(),
+                message,
+            }),
+        }
+    }
+
+    for item in &preview.unmount {
+        match unmount_exclusive_skill_mount_record(conn, &item.asset_id, &preview.profile_id) {
+            Ok(update) => statuses.push(update.status),
+            Err(message) => errors.push(SkillGroupExclusiveMountError {
+                asset_id: item.asset_id.clone(),
+                name: item.name.clone(),
+                message,
+            }),
+        }
+    }
+
+    Ok(ApplySkillGroupExclusiveMountResult {
+        preview,
+        statuses,
+        errors,
+    })
+}
+
+fn build_skill_group_exclusive_mount_preview(
+    conn: &rusqlite::Connection,
+    input: &SkillGroupExclusiveMountInput,
+) -> AppResult<SkillGroupExclusiveMountPreview> {
+    if !input.mount_selected {
+        return Err("exclusive skill group mount requires mount_selected=true".to_string());
+    }
+    let _dry_run_requested = input.dry_run;
+
+    let profiles = store::load_profiles(conn)?;
+    let profile = profiles
+        .iter()
+        .find(|profile| profile.id == input.profile_id)
+        .ok_or_else(|| format!("profile not found: {}", input.profile_id))?;
+    validate_exclusive_skill_profile(profile)?;
+
+    let assets = store::load_assets(conn)?;
+    let skill_assets = assets
+        .iter()
+        .filter(|asset| asset.kind == AssetKind::Skill)
+        .cloned()
+        .collect::<Vec<_>>();
+    let skill_asset_by_id = skill_assets
+        .iter()
+        .map(|asset| (asset.id.clone(), asset.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let source_by_id = store::load_sources(conn)?
+        .into_iter()
+        .map(|source| (source.id.clone(), source))
+        .collect::<HashMap<_, _>>();
+    let enabled_mount_asset_ids = store::load_asset_mounts(conn, None)?
+        .into_iter()
+        .filter(|mount| mount.profile_id == profile.id && mount.enabled)
+        .map(|mount| mount.asset_id)
+        .collect::<BTreeSet<_>>();
+
+    let mut group_ids = Vec::new();
+    let mut selected_skill_ids = BTreeSet::new();
+    let mut seen_group_ids = BTreeSet::new();
+    for group_id in input
+        .group_ids
+        .iter()
+        .map(|group_id| group_id.trim())
+        .filter(|group_id| !group_id.is_empty())
+    {
+        if !seen_group_ids.insert(group_id.to_string()) {
+            continue;
+        }
+
+        let detail = store::load_skill_group_detail(conn, group_id, &skill_assets)?;
+        if !detail.group.enabled {
+            continue;
+        }
+
+        group_ids.push(detail.group.id.clone());
+        for member in detail.members {
+            if skill_asset_by_id.contains_key(&member.asset_id) {
+                selected_skill_ids.insert(member.asset_id);
+            }
+        }
+    }
+
+    let mut keep = Vec::new();
+    let mut mount = Vec::new();
+    let mut unmount = Vec::new();
+    let mut skipped = Vec::new();
+
+    for asset_id in &selected_skill_ids {
+        let Some(asset) = skill_asset_by_id.get(asset_id) else {
+            continue;
+        };
+        let inspection = targeting::inspect_mount(profile, asset)?;
+        match inspection.state {
+            targeting::PhysicalMountState::Mounted => keep.push(exclusive_item(asset)),
+            targeting::PhysicalMountState::NotMounted => {
+                match validate_exclusive_mount_candidate(asset, profile, &source_by_id) {
+                    Ok(()) => mount.push(exclusive_item(asset)),
+                    Err(reason) => skipped.push(exclusive_skipped_item(asset, reason)),
+                }
+            }
+            targeting::PhysicalMountState::Conflict => skipped.push(exclusive_skipped_item(
+                asset,
+                format!("target path is occupied: {}", inspection.target_path),
+            )),
+            targeting::PhysicalMountState::Broken => skipped.push(exclusive_skipped_item(
+                asset,
+                format!("target symlink is broken: {}", inspection.target_path),
+            )),
+        }
+    }
+
+    for asset in &skill_assets {
+        if selected_skill_ids.contains(&asset.id) {
+            continue;
+        }
+
+        let inspection = targeting::inspect_mount(profile, asset)?;
+        match inspection.state {
+            targeting::PhysicalMountState::Mounted => {
+                if store::is_managed_deployment(
+                    conn,
+                    &profile.id,
+                    &asset.id,
+                    &inspection.target_path,
+                )? {
+                    unmount.push(exclusive_item(asset));
+                } else {
+                    skipped.push(exclusive_skipped_item(
+                        asset,
+                        format!(
+                            "target is mounted but not managed by AssetIWeave: {}",
+                            inspection.target_path
+                        ),
+                    ));
+                }
+            }
+            targeting::PhysicalMountState::NotMounted => {
+                if enabled_mount_asset_ids.contains(&asset.id) {
+                    unmount.push(exclusive_item(asset));
+                }
+            }
+            targeting::PhysicalMountState::Conflict => skipped.push(exclusive_skipped_item(
+                asset,
+                format!("target path is occupied: {}", inspection.target_path),
+            )),
+            targeting::PhysicalMountState::Broken => skipped.push(exclusive_skipped_item(
+                asset,
+                format!("target symlink is broken: {}", inspection.target_path),
+            )),
+        }
+    }
+
+    let selected_skill_ids = selected_skill_ids.into_iter().collect::<Vec<_>>();
+    let keep_count = keep.len();
+    let mount_count = mount.len();
+    let unmount_count = unmount.len();
+    let skipped_count = skipped.len();
+
+    Ok(SkillGroupExclusiveMountPreview {
+        profile_id: profile.id.clone(),
+        group_ids,
+        selected_skill_ids,
+        keep,
+        mount,
+        unmount,
+        skipped,
+        keep_count,
+        mount_count,
+        unmount_count,
+        skipped_count,
+    })
+}
+
+fn validate_exclusive_skill_profile(profile: &TargetProfile) -> AppResult<()> {
+    if !profile.enabled {
+        return Err(format!("profile is disabled: {}", profile.name));
+    }
+    if !profile.supported_kinds.contains(&AssetKind::Skill)
+        || !profile.include.kinds.contains(&AssetKind::Skill)
+    {
+        return Err(format!(
+            "profile {} does not support skill assets",
+            profile.name
+        ));
+    }
+    if !matches!(
+        profile.deployment_strategy,
+        DeploymentStrategy::SymlinkToSource
+    ) {
+        return Err(
+            "exclusive skill group mount only supports symlink_to_source profiles".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_exclusive_mount_candidate(
+    asset: &Asset,
+    _profile: &TargetProfile,
+    source_by_id: &HashMap<String, Source>,
+) -> Result<(), String> {
+    let source = source_by_id
+        .get(&asset.source_id)
+        .ok_or_else(|| format!("source not found: {}", asset.source_id))?;
+    if matches!(
+        source.source_origin,
+        SourceOrigin::AppTarget | SourceOrigin::AppLocal
+    ) {
+        return Err(
+            "app-local skills must be adopted into the AssetIWeave library before mounting"
+                .to_string(),
+        );
+    }
+
+    let source_path = expand_path(&asset.absolute_path)?;
+    if !source_path.exists() {
+        return Err(format!(
+            "source asset path does not exist: {}",
+            source_path.display()
+        ));
+    }
+
+    Ok(())
+}
+
+fn unmount_exclusive_skill_mount_record(
+    conn: &rusqlite::Connection,
+    asset_id: &str,
+    profile_id: &str,
+) -> AppResult<AssetMountUpdateResult> {
+    let (asset, profile) = load_mount_asset_and_profile(conn, asset_id, profile_id)?;
+    let inspection = targeting::inspect_mount(&profile, &asset)?;
+    match inspection.state {
+        targeting::PhysicalMountState::Mounted => {
+            if !store::is_managed_deployment(conn, &profile.id, &asset.id, &inspection.target_path)?
+            {
+                return Err(format!(
+                    "target is mounted but not managed by AssetIWeave: {}",
+                    inspection.target_path
+                ));
+            }
+        }
+        targeting::PhysicalMountState::NotMounted => {}
+        targeting::PhysicalMountState::Conflict | targeting::PhysicalMountState::Broken => {
+            return Err(format!(
+                "target is not a managed mount for this asset: {}",
+                inspection.target_path
+            ));
+        }
+    }
+
+    unmount_asset_mount_record(conn, asset_id, profile_id)
+}
+
+fn exclusive_item(asset: &Asset) -> SkillGroupExclusiveMountItem {
+    SkillGroupExclusiveMountItem {
+        asset_id: asset.id.clone(),
+        name: asset.name.clone(),
+    }
+}
+
+fn exclusive_skipped_item(asset: &Asset, reason: String) -> SkillGroupExclusiveMountSkippedItem {
+    SkillGroupExclusiveMountSkippedItem {
+        asset_id: asset.id.clone(),
+        name: asset.name.clone(),
+        reason,
+    }
+}
+
+pub(crate) fn sync_asset_mount_observations(
+    conn: &rusqlite::Connection,
+    asset_id: Option<&str>,
+) -> AppResult<Vec<AssetMountStatus>> {
+    let statuses = scan_asset_mount_statuses(conn, asset_id)?;
+    persist_asset_mount_observation_snapshot(conn, &statuses)?;
+    Ok(statuses)
+}
+
+fn scan_asset_mount_statuses(
+    conn: &rusqlite::Connection,
+    asset_id: Option<&str>,
+) -> AppResult<Vec<AssetMountStatus>> {
+    let assets = store::load_assets(conn)?;
+    let profiles = store::load_profiles(conn)?;
+    inspect_asset_mount_statuses(&assets, &profiles, asset_id)
+}
+
+fn persist_asset_mount_observation_snapshot(
+    conn: &rusqlite::Connection,
+    statuses: &[AssetMountStatus],
+) -> AppResult<()> {
+    let assets = store::load_assets(conn)?;
+    let profiles = store::load_profiles(conn)?;
+    let observed_at = Utc::now().to_rfc3339();
+    let observations = statuses
+        .iter()
+        .map(|status| AssetMountObservation {
+            asset_id: status.asset_id.clone(),
+            profile_id: status.profile_id.clone(),
+            target_dir: status.target_dir.clone(),
+            target_path: status.target_path.clone(),
+            state: status.state,
+            linked_source: status.linked_source.clone(),
+            observed_at: observed_at.clone(),
+        })
+        .collect::<Vec<_>>();
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    store::upsert_asset_mount_observations(&tx, &observations)?;
+    sync_asset_mount_snapshot_records(&tx, &assets, &profiles, &statuses)?;
+    store::delete_orphan_asset_mount_observations(&tx)?;
+    tx.commit().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn inspect_asset_mount_statuses(
+    assets: &[Asset],
+    profiles: &[TargetProfile],
+    asset_id: Option<&str>,
+) -> AppResult<Vec<AssetMountStatus>> {
     let mut statuses = Vec::new();
 
-    for asset in assets.iter().filter(|asset| {
-        asset_id
-            .as_ref()
-            .map_or(true, |requested| requested == &asset.id)
-    }) {
-        for profile in &profiles {
+    for asset in assets
+        .iter()
+        .filter(|asset| asset_id.map_or(true, |requested| requested == asset.id))
+    {
+        for profile in profiles {
             let inspection = targeting::inspect_mount(profile, asset)?;
             statuses.push(AssetMountStatus {
                 asset_id: asset.id.clone(),
@@ -191,6 +749,85 @@ pub(crate) fn list_asset_mount_statuses(
     Ok(statuses)
 }
 
+fn sync_asset_mount_snapshot_records(
+    conn: &rusqlite::Connection,
+    assets: &[Asset],
+    profiles: &[TargetProfile],
+    statuses: &[AssetMountStatus],
+) -> AppResult<()> {
+    let asset_by_id = assets
+        .iter()
+        .map(|asset| (asset.id.as_str(), asset))
+        .collect::<HashMap<_, _>>();
+    let profile_by_id = profiles
+        .iter()
+        .map(|profile| (profile.id.as_str(), profile))
+        .collect::<HashMap<_, _>>();
+
+    for status in statuses {
+        let asset = asset_by_id
+            .get(status.asset_id.as_str())
+            .ok_or_else(|| format!("asset not found: {}", status.asset_id))?;
+        let profile = profile_by_id
+            .get(status.profile_id.as_str())
+            .ok_or_else(|| format!("profile not found: {}", status.profile_id))?;
+
+        if matches!(status.state, PhysicalMountStateDto::Mounted) {
+            let state = DeploymentState {
+                profile_id: profile.id.clone(),
+                asset_id: asset.id.clone(),
+                target_path: status.target_path.clone(),
+                strategy: profile.deployment_strategy,
+                source_hash: asset.content_hash.clone().unwrap_or_default(),
+                deployed_at: Utc::now().to_rfc3339(),
+                managed_by: "assetiweave".to_string(),
+            };
+            store::upsert_deployment_state(conn, &state)?;
+            store::set_asset_mount(
+                conn,
+                &asset.id,
+                &profile.id,
+                true,
+                profile.deployment_strategy,
+            )?;
+        } else {
+            store::delete_deployment_state(conn, &profile.id, &asset.id, &status.target_path)?;
+            store::set_asset_mount(
+                conn,
+                &asset.id,
+                &profile.id,
+                false,
+                profile.deployment_strategy,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn asset_group_from_input(
+    input: AssetGroupInput,
+    created_at: String,
+    updated_at: String,
+) -> AssetGroup {
+    AssetGroup {
+        id: input.id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+        name: input.name,
+        description: input.description,
+        color: input.color.unwrap_or_else(|| "#10b981".to_string()),
+        asset_kind: AssetKind::Skill,
+        enabled: input.enabled.unwrap_or(true),
+        sort_order: input.sort_order.unwrap_or(0),
+        rules: input.rules.unwrap_or(AssetGroupRules {
+            source_ids: vec![],
+            relative_path_globs: vec![],
+            name_contains: None,
+        }),
+        created_at,
+        updated_at,
+    }
+}
+
 #[tauri::command]
 pub(crate) fn toggle_asset_mount(
     state: State<'_, AppState>,
@@ -199,8 +836,15 @@ pub(crate) fn toggle_asset_mount(
 ) -> AppResult<AssetMount> {
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
     let conn = store::open_initialized(&state.db_path)?;
-    let default_strategy = validate_mount_target(&conn, &asset_id, &profile_id)?;
-    store::toggle_asset_mount(&conn, &asset_id, &profile_id, default_strategy)
+    let (asset, profile) = load_mount_asset_and_profile(&conn, &asset_id, &profile_id)?;
+    let inspection = targeting::inspect_mount(&profile, &asset)?;
+    set_asset_mount_record(
+        &conn,
+        &asset_id,
+        &profile_id,
+        !matches!(inspection.state, targeting::PhysicalMountState::Mounted),
+        None,
+    )
 }
 
 #[tauri::command]
@@ -215,6 +859,17 @@ pub(crate) fn unmount_asset_mount(
 }
 
 #[tauri::command]
+pub(crate) fn mount_asset_mount(
+    state: State<'_, AppState>,
+    asset_id: String,
+    profile_id: String,
+) -> AppResult<AssetMountUpdateResult> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    let conn = store::open_initialized(&state.db_path)?;
+    mount_asset_mount_record(&conn, &asset_id, &profile_id)
+}
+
+#[tauri::command]
 pub(crate) fn set_asset_mount(
     state: State<'_, AppState>,
     asset_id: String,
@@ -224,11 +879,31 @@ pub(crate) fn set_asset_mount(
 ) -> AppResult<AssetMount> {
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
     let conn = store::open_initialized(&state.db_path)?;
-    let default_strategy = validate_mount_target(&conn, &asset_id, &profile_id)?;
+    set_asset_mount_record(&conn, &asset_id, &profile_id, enabled, strategy)
+}
+
+fn set_asset_mount_record(
+    conn: &rusqlite::Connection,
+    asset_id: &str,
+    profile_id: &str,
+    enabled: bool,
+    strategy: Option<DeploymentStrategy>,
+) -> AppResult<AssetMount> {
+    let default_strategy = validate_mount_target(conn, asset_id, profile_id)?;
+    if enabled {
+        return mount_asset_mount_record(conn, asset_id, profile_id).map(|result| result.mount);
+    }
+
+    let (asset, profile) = load_mount_asset_and_profile(conn, asset_id, profile_id)?;
+    let inspection = targeting::inspect_mount(&profile, &asset)?;
+    if matches!(inspection.state, targeting::PhysicalMountState::Mounted) {
+        return unmount_asset_mount_record(conn, asset_id, profile_id).map(|result| result.mount);
+    }
+
     store::set_asset_mount(
-        &conn,
-        &asset_id,
-        &profile_id,
+        conn,
+        asset_id,
+        profile_id,
         enabled,
         strategy.unwrap_or(default_strategy),
     )
@@ -416,6 +1091,7 @@ pub(crate) fn refresh_recorded_assets(conn: &rusqlite::Connection) -> AppResult<
 
 fn cleanup_orphan_asset_records(conn: &rusqlite::Connection) -> AppResult<()> {
     store::delete_orphan_asset_mounts(conn)?;
+    store::delete_orphan_asset_group_members(conn)?;
     store::delete_orphan_deployment_state(conn)?;
     Ok(())
 }
@@ -513,20 +1189,71 @@ fn validate_mount_target(
     Ok(profile.deployment_strategy)
 }
 
+fn mount_asset_mount_record(
+    conn: &rusqlite::Connection,
+    asset_id: &str,
+    profile_id: &str,
+) -> AppResult<AssetMountUpdateResult> {
+    let strategy = validate_mount_target(conn, asset_id, profile_id)?;
+    if !matches!(strategy, DeploymentStrategy::SymlinkToSource) {
+        return Err("immediate mount only supports symlink_to_source profiles".to_string());
+    }
+    let (asset, profile) = load_mount_asset_and_profile(conn, asset_id, profile_id)?;
+    validate_immediate_mount_support(&asset, &profile)?;
+
+    let inspection = targeting::inspect_mount(&profile, &asset)?;
+    match inspection.state {
+        targeting::PhysicalMountState::Mounted => {
+            let mount =
+                persist_verified_mount(conn, &asset, &profile, &inspection.target_path, strategy)?;
+            return Ok(AssetMountUpdateResult {
+                mount,
+                status: asset_mount_status(&asset.id, &profile.id, inspection),
+            });
+        }
+        targeting::PhysicalMountState::NotMounted => {}
+        targeting::PhysicalMountState::Conflict | targeting::PhysicalMountState::Broken => {
+            return Err(format!(
+                "target is not available for mounting: {}",
+                inspection.target_path
+            ));
+        }
+    }
+
+    let target_path = PathBuf::from(&inspection.target_path);
+    create_mount_symlink(&asset, &profile, &target_path)?;
+    let inspection = targeting::inspect_mount(&profile, &asset)?;
+    if !matches!(inspection.state, targeting::PhysicalMountState::Mounted) {
+        remove_created_mount_symlink(&target_path).ok();
+        return Err(format!(
+            "mount verification failed for {asset_id} on {profile_id}: {}",
+            inspection.target_path
+        ));
+    }
+
+    let mount =
+        match persist_verified_mount(conn, &asset, &profile, &inspection.target_path, strategy) {
+            Ok(mount) => mount,
+            Err(error) => {
+                remove_created_mount_symlink(&target_path).ok();
+                return Err(error);
+            }
+        };
+    Ok(AssetMountUpdateResult {
+        mount,
+        status: asset_mount_status(&asset.id, &profile.id, inspection),
+    })
+}
+
 fn unmount_asset_mount_record(
     conn: &rusqlite::Connection,
     asset_id: &str,
     profile_id: &str,
 ) -> AppResult<AssetMountUpdateResult> {
-    let asset = store::load_assets(conn)?
-        .into_iter()
-        .find(|asset| asset.id == asset_id)
-        .ok_or_else(|| format!("asset not found: {asset_id}"))?;
-    let profile = store::load_profiles(conn)?
-        .into_iter()
-        .find(|profile| profile.id == profile_id)
-        .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+    let (asset, profile) = load_mount_asset_and_profile(conn, asset_id, profile_id)?;
     let inspection = targeting::inspect_mount(&profile, &asset)?;
+    let target_path = PathBuf::from(&inspection.target_path);
+    let removed_link = matches!(inspection.state, targeting::PhysicalMountState::Mounted);
 
     match inspection.state {
         targeting::PhysicalMountState::Mounted => remove_mounted_symlink(&inspection.target_path)?,
@@ -539,19 +1266,164 @@ fn unmount_asset_mount_record(
         }
     }
 
-    store::delete_deployment_state(conn, profile_id, asset_id, &inspection.target_path)?;
+    let inspection = targeting::inspect_mount(&profile, &asset)?;
+    if !matches!(inspection.state, targeting::PhysicalMountState::NotMounted) {
+        return Err(format!(
+            "unmount verification failed for {asset_id} on {profile_id}: {}",
+            inspection.target_path
+        ));
+    }
+
+    match persist_verified_unmount(conn, &asset, &profile, &inspection.target_path) {
+        Ok(mount) => Ok(AssetMountUpdateResult {
+            mount,
+            status: asset_mount_status(&asset.id, &profile.id, inspection),
+        }),
+        Err(error) => {
+            if removed_link {
+                create_mount_symlink(&asset, &profile, &target_path).ok();
+            }
+            Err(error)
+        }
+    }
+}
+
+fn load_mount_asset_and_profile(
+    conn: &rusqlite::Connection,
+    asset_id: &str,
+    profile_id: &str,
+) -> AppResult<(Asset, TargetProfile)> {
+    let asset = store::load_assets(conn)?
+        .into_iter()
+        .find(|asset| asset.id == asset_id)
+        .ok_or_else(|| format!("asset not found: {asset_id}"))?;
+    let profile = store::load_profiles(conn)?
+        .into_iter()
+        .find(|profile| profile.id == profile_id)
+        .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+
+    Ok((asset, profile))
+}
+
+fn validate_immediate_mount_support(asset: &Asset, profile: &TargetProfile) -> AppResult<()> {
+    if !profile.enabled {
+        return Err(format!("profile is disabled: {}", profile.name));
+    }
+    if matches!(asset.kind, AssetKind::Unclassified)
+        || !profile.supported_kinds.contains(&asset.kind)
+        || !profile.include.kinds.contains(&asset.kind)
+    {
+        return Err(format!(
+            "profile {} does not support {:?}",
+            profile.name, asset.kind
+        ));
+    }
+
+    Ok(())
+}
+
+fn create_mount_symlink(
+    asset: &Asset,
+    profile: &TargetProfile,
+    target_path: &Path,
+) -> AppResult<()> {
+    ensure_target_within_profile(profile, target_path)?;
+    let source_path = expand_path(&asset.absolute_path)?;
+    if !source_path.exists() {
+        return Err(format!(
+            "source asset path does not exist: {}",
+            source_path.display()
+        ));
+    }
+
+    let parent = target_path.parent().ok_or_else(|| {
+        format!(
+            "target path is missing parent directory: {}",
+            target_path.display()
+        )
+    })?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    create_symlink(&source_path, target_path)
+}
+
+fn persist_verified_mount(
+    conn: &rusqlite::Connection,
+    asset: &Asset,
+    profile: &TargetProfile,
+    target_path: &str,
+    strategy: DeploymentStrategy,
+) -> AppResult<AssetMount> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    let state = DeploymentState {
+        profile_id: profile.id.clone(),
+        asset_id: asset.id.clone(),
+        target_path: target_path.to_string(),
+        strategy,
+        source_hash: asset.content_hash.clone().unwrap_or_default(),
+        deployed_at: Utc::now().to_rfc3339(),
+        managed_by: "assetiweave".to_string(),
+    };
+    store::upsert_deployment_state(&tx, &state)?;
+    let mount = store::set_asset_mount(&tx, &asset.id, &profile.id, true, strategy)?;
+    tx.commit().map_err(|error| error.to_string())?;
+    Ok(mount)
+}
+
+fn persist_verified_unmount(
+    conn: &rusqlite::Connection,
+    asset: &Asset,
+    profile: &TargetProfile,
+    target_path: &str,
+) -> AppResult<AssetMount> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    store::delete_deployment_state(&tx, &profile.id, &asset.id, target_path)?;
     let mount = store::set_asset_mount(
-        conn,
-        asset_id,
-        profile_id,
+        &tx,
+        &asset.id,
+        &profile.id,
         false,
         profile.deployment_strategy,
     )?;
-    let inspection = targeting::inspect_mount(&profile, &asset)?;
-    Ok(AssetMountUpdateResult {
-        mount,
-        status: asset_mount_status(&asset.id, &profile.id, inspection),
-    })
+    tx.commit().map_err(|error| error.to_string())?;
+    Ok(mount)
+}
+
+fn ensure_target_within_profile(profile: &TargetProfile, target_path: &Path) -> AppResult<()> {
+    let target_dir = targeting::target_dir(profile)?;
+    if !target_path.starts_with(&target_dir) {
+        return Err(format!(
+            "refusing to write outside profile target directory: {}",
+            target_path.display()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn create_symlink(source: &Path, target: &Path) -> AppResult<()> {
+    std::os::unix::fs::symlink(source, target).map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn create_symlink(source: &Path, target: &Path) -> AppResult<()> {
+    if source.is_dir() {
+        std::os::windows::fs::symlink_dir(source, target)
+    } else {
+        std::os::windows::fs::symlink_file(source, target)
+    }
+    .map_err(|error| error.to_string())
+}
+
+fn remove_created_mount_symlink(target_path: &Path) -> AppResult<()> {
+    let metadata = fs::symlink_metadata(target_path).map_err(|error| error.to_string())?;
+    if !metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    fs::remove_file(target_path).map_err(|error| error.to_string())
 }
 
 fn remove_mounted_symlink(target_path: &str) -> AppResult<()> {
@@ -604,6 +1476,121 @@ fn assetiweave_library_source() -> Source {
     }
 }
 
+fn target_profile_from_input(input: TargetProfileInput) -> AppResult<TargetProfile> {
+    let name = input.name.trim().to_string();
+    if name.is_empty() {
+        return Err("profile name is required".to_string());
+    }
+
+    let id = input
+        .id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| slug_profile_id(&name));
+    if id.is_empty() {
+        return Err("profile id is required".to_string());
+    }
+
+    let target_paths = input
+        .target_paths
+        .unwrap_or_default()
+        .into_iter()
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .collect::<Vec<_>>();
+    if target_paths.is_empty() {
+        return Err("profile target path is required".to_string());
+    }
+
+    let profile = TargetProfile {
+        id,
+        name,
+        app_kind: input.app_kind.unwrap_or(AppKind::Custom),
+        target_paths,
+        supported_kinds: input.supported_kinds.unwrap_or_else(|| vec![AssetKind::Skill]),
+        deployment_strategy: input
+            .deployment_strategy
+            .unwrap_or(DeploymentStrategy::SymlinkToSource),
+        enabled: input.enabled.unwrap_or(true),
+        include: input.include.unwrap_or_else(default_profile_include),
+        exclude: input.exclude.unwrap_or_else(default_profile_exclude),
+        safety: input.safety.unwrap_or(ProfileSafety {
+            allow_remove: false,
+            allow_overwrite: false,
+        }),
+    };
+    validate_target_profile(&profile)?;
+    Ok(profile)
+}
+
+fn ensure_profile_can_be_deleted(conn: &rusqlite::Connection, profile_id: &str) -> AppResult<()> {
+    if store::count_deployment_state_by_profile(conn, profile_id)? > 0 {
+        return Err(format!("profile has managed deployments: {profile_id}"));
+    }
+
+    if scan_asset_mount_statuses(conn, None)?
+        .iter()
+        .any(|status| status.profile_id == profile_id && status.state == PhysicalMountStateDto::Mounted)
+    {
+        return Err(format!("profile has mounted assets: {profile_id}"));
+    }
+
+    Ok(())
+}
+
+fn validate_target_profile(profile: &TargetProfile) -> AppResult<()> {
+    if profile.id.trim().is_empty() {
+        return Err("profile id is required".to_string());
+    }
+    if profile.name.trim().is_empty() {
+        return Err("profile name is required".to_string());
+    }
+    if profile
+        .target_paths
+        .iter()
+        .map(|path| path.trim())
+        .all(str::is_empty)
+    {
+        return Err("profile target path is required".to_string());
+    }
+    Ok(())
+}
+
+fn default_profile_include() -> RuleSet {
+    RuleSet {
+        kinds: vec![AssetKind::Skill],
+        tags: vec![],
+        groups: vec![],
+        sources: vec![],
+        path_patterns: vec![],
+    }
+}
+
+fn default_profile_exclude() -> RuleSet {
+    RuleSet {
+        kinds: vec![AssetKind::Unclassified],
+        tags: vec![],
+        groups: vec![],
+        sources: vec![],
+        path_patterns: vec![],
+    }
+}
+
+fn slug_profile_id(name: &str) -> String {
+    let mut id = String::new();
+    let mut last_was_separator = false;
+    for character in name.trim().chars().flat_map(char::to_lowercase) {
+        if character.is_ascii_alphanumeric() {
+            id.push(character);
+            last_was_separator = false;
+        } else if !last_was_separator && !id.is_empty() {
+            id.push('-');
+            last_was_separator = true;
+        }
+    }
+    id.trim_matches('-').to_string()
+}
+
 fn copy_dir(source: &Path, target: &Path) -> AppResult<()> {
     for entry in WalkDir::new(source).into_iter().filter_map(Result::ok) {
         let relative = entry
@@ -627,7 +1614,8 @@ fn copy_dir(source: &Path, target: &Path) -> AppResult<()> {
 mod tests {
     use super::*;
     use assetiweave_core::{
-        AppKind, AssetFormat, AssetKind, DeploymentStrategy, ProfileSafety, RuleSet, SourceKind,
+        AppKind, AssetFormat, AssetGroup, AssetGroupRules, AssetKind, DeploymentStrategy,
+        ProfileSafety, RuleSet, SourceKind,
     };
     use std::path::PathBuf;
 
@@ -665,6 +1653,97 @@ mod tests {
     }
 
     #[test]
+    fn target_profile_input_uses_skill_mount_defaults() {
+        let profile = target_profile_from_input(TargetProfileInput {
+            id: None,
+            name: "  Team App  ".to_string(),
+            app_kind: None,
+            target_paths: Some(vec!["  ~/team-app/skills  ".to_string()]),
+            supported_kinds: None,
+            deployment_strategy: None,
+            enabled: None,
+            include: None,
+            exclude: None,
+            safety: None,
+        })
+        .expect("build profile");
+
+        assert_eq!(profile.id, "team-app");
+        assert_eq!(profile.name, "Team App");
+        assert_eq!(profile.app_kind, AppKind::Custom);
+        assert_eq!(profile.target_paths, vec!["~/team-app/skills"]);
+        assert_eq!(profile.supported_kinds, vec![AssetKind::Skill]);
+        assert_eq!(profile.include.kinds, vec![AssetKind::Skill]);
+        assert_eq!(profile.exclude.kinds, vec![AssetKind::Unclassified]);
+        assert!(!profile.safety.allow_remove);
+        assert!(!profile.safety.allow_overwrite);
+    }
+
+    #[test]
+    fn target_profile_can_be_persisted_updated_and_deleted() {
+        let db_path = unique_temp_path("assetiweave-profile-crud-db");
+        let conn = store::open_initialized(&db_path).expect("open initialized db");
+        let mut profile = target_profile_from_input(TargetProfileInput {
+            id: Some("team-app".to_string()),
+            name: "Team App".to_string(),
+            app_kind: Some(AppKind::Custom),
+            target_paths: Some(vec!["~/team-app/skills".to_string()]),
+            supported_kinds: None,
+            deployment_strategy: None,
+            enabled: Some(true),
+            include: None,
+            exclude: None,
+            safety: None,
+        })
+        .expect("build profile");
+
+        store::upsert_profile(&conn, &profile).expect("insert profile");
+        profile.name = "Team App Edited".to_string();
+        store::upsert_profile(&conn, &profile).expect("update profile");
+
+        assert!(store::load_profiles(&conn)
+            .expect("load profiles")
+            .iter()
+            .any(|candidate| candidate.id == profile.id && candidate.name == "Team App Edited"));
+
+        ensure_profile_can_be_deleted(&conn, &profile.id).expect("profile delete guard");
+        store::delete_profile(&conn, &profile.id).expect("delete profile");
+        assert!(!store::load_profiles(&conn)
+            .expect("load profiles")
+            .iter()
+            .any(|candidate| candidate.id == profile.id));
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn target_profile_delete_is_blocked_when_mount_exists() {
+        let db_path = unique_temp_path("assetiweave-profile-delete-block-db");
+        let source_root = unique_temp_path("assetiweave-profile-delete-block-source");
+        let target_root = unique_temp_path("assetiweave-profile-delete-block-target");
+        let asset_path = source_root.join("skill-a");
+        std::fs::create_dir_all(&asset_path).expect("create asset dir");
+        std::fs::create_dir_all(&target_root).expect("create target dir");
+
+        let conn = store::open_initialized(&db_path).expect("open initialized db");
+        let source = test_source("profile-delete-source", source_root.clone());
+        let profile = test_profile("team-app", target_root.clone());
+        let asset = test_asset(&source, "skill-a", asset_path);
+        store::upsert_source(&conn, &source).expect("insert source");
+        store::replace_source_assets(&conn, &source.id, std::slice::from_ref(&asset))
+            .expect("insert asset");
+        store::upsert_profile(&conn, &profile).expect("insert profile");
+        mount_asset_mount_record(&conn, &asset.id, &profile.id).expect("mount asset");
+
+        let error = ensure_profile_can_be_deleted(&conn, &profile.id).expect_err("delete blocked");
+
+        assert!(error.contains("managed deployments") || error.contains("mounted assets"));
+        std::fs::remove_dir_all(source_root).ok();
+        std::fs::remove_dir_all(target_root).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
     fn refresh_recorded_assets_removes_mounts_for_deleted_assets() {
         let db_path = unique_temp_path("assetiweave-refresh-deleted-mount");
         let source_root = unique_temp_path("assetiweave-existing-source");
@@ -694,6 +1773,595 @@ mod tests {
             .expect("load mounts")
             .is_empty());
         std::fs::remove_dir_all(source_root).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mount_asset_mount_creates_symlink_and_enables_mount() {
+        let db_path = unique_temp_path("assetiweave-mount-db");
+        let source_root = unique_temp_path("assetiweave-mount-source");
+        let target_root = unique_temp_path("assetiweave-mount-target");
+        let asset_path = source_root.join("skill-a");
+        let target_path = target_root.join("skill-a");
+        std::fs::create_dir_all(&asset_path).expect("create asset dir");
+        std::fs::create_dir_all(&target_root).expect("create target dir");
+
+        let conn = store::open_initialized(&db_path).expect("open initialized db");
+        let source = test_source("source-with-unmounted-asset", source_root.clone());
+        let profile = test_profile("codex", target_root.clone());
+        let asset = test_asset(&source, "skill-a", asset_path.clone());
+        store::upsert_source(&conn, &source).expect("insert source");
+        store::replace_source_assets(&conn, &source.id, std::slice::from_ref(&asset))
+            .expect("insert asset");
+        store::upsert_profile(&conn, &profile).expect("insert profile");
+
+        let result = mount_asset_mount_record(&conn, &asset.id, &profile.id).expect("mount");
+
+        let metadata = std::fs::symlink_metadata(&target_path).expect("target metadata");
+        assert!(metadata.file_type().is_symlink());
+        assert_eq!(
+            std::fs::read_link(&target_path).expect("read symlink"),
+            asset_path
+        );
+        assert!(result.mount.enabled);
+        assert_eq!(result.status.state, PhysicalMountStateDto::Mounted);
+        assert!(store::is_managed_deployment(
+            &conn,
+            &profile.id,
+            &asset.id,
+            &target_path.to_string_lossy()
+        )
+        .expect("deployment state"));
+
+        std::fs::remove_dir_all(source_root).ok();
+        std::fs::remove_dir_all(target_root).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn set_asset_mount_creates_symlink_before_enabling_mount() {
+        let db_path = unique_temp_path("assetiweave-set-mount-db");
+        let source_root = unique_temp_path("assetiweave-set-mount-source");
+        let target_root = unique_temp_path("assetiweave-set-mount-target");
+        let asset_path = source_root.join("skill-a");
+        let target_path = target_root.join("skill-a");
+        std::fs::create_dir_all(&asset_path).expect("create asset dir");
+        std::fs::create_dir_all(&target_root).expect("create target dir");
+
+        let conn = store::open_initialized(&db_path).expect("open initialized db");
+        let source = test_source("source-with-set-mounted-asset", source_root.clone());
+        let profile = test_profile("codex", target_root.clone());
+        let asset = test_asset(&source, "skill-a", asset_path);
+        store::upsert_source(&conn, &source).expect("insert source");
+        store::replace_source_assets(&conn, &source.id, std::slice::from_ref(&asset))
+            .expect("insert asset");
+        store::upsert_profile(&conn, &profile).expect("insert profile");
+
+        let mount = set_asset_mount_record(&conn, &asset.id, &profile.id, true, None)
+            .expect("set mount enabled");
+
+        assert!(mount.enabled);
+        assert!(std::fs::symlink_metadata(&target_path)
+            .expect("target metadata")
+            .file_type()
+            .is_symlink());
+
+        std::fs::remove_dir_all(source_root).ok();
+        std::fs::remove_dir_all(target_root).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_skill_group_mount_only_mounts_group_members() {
+        let db_path = unique_temp_path("assetiweave-group-mount-db");
+        let source_root = unique_temp_path("assetiweave-group-mount-source");
+        let target_root = unique_temp_path("assetiweave-group-mount-target");
+        let asset_path_a = source_root.join("skill-a");
+        let asset_path_b = source_root.join("skill-b");
+        let target_path_a = target_root.join("skill-a");
+        let target_path_b = target_root.join("skill-b");
+        std::fs::create_dir_all(&asset_path_a).expect("create asset dir a");
+        std::fs::create_dir_all(&asset_path_b).expect("create asset dir b");
+        std::fs::create_dir_all(&target_root).expect("create target dir");
+
+        let conn = store::open_initialized(&db_path).expect("open initialized db");
+        let source = test_source("source-with-group-assets", source_root.clone());
+        let profile = test_profile("codex", target_root.clone());
+        let asset_a = test_asset(&source, "skill-a", asset_path_a.clone());
+        let asset_b = test_asset(&source, "skill-b", asset_path_b);
+        let assets = vec![asset_a.clone(), asset_b.clone()];
+        let group = test_group("frontend");
+        store::upsert_source(&conn, &source).expect("insert source");
+        store::replace_source_assets(&conn, &source.id, &assets).expect("insert assets");
+        store::upsert_profile(&conn, &profile).expect("insert profile");
+        store::upsert_asset_group(&conn, &group).expect("insert group");
+        store::replace_asset_group_members(&conn, &group.id, &[asset_a.id.clone()], &assets)
+            .expect("insert group members");
+
+        let result = apply_skill_group_mount_record(&conn, &group.id, &profile.id, true)
+            .expect("apply group");
+
+        assert_eq!(result.requested_count, 1);
+        assert_eq!(result.updated_count, 1);
+        assert_eq!(result.error_count, 0);
+        assert!(std::fs::symlink_metadata(&target_path_a)
+            .expect("target a metadata")
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            std::fs::read_link(&target_path_a).expect("read symlink"),
+            asset_path_a
+        );
+        assert!(!target_path_b.exists());
+        assert!(store::load_asset_mounts(&conn, Some(&asset_b.id))
+            .expect("load unrelated mounts")
+            .is_empty());
+
+        std::fs::remove_dir_all(source_root).ok();
+        std::fs::remove_dir_all(target_root).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preview_exclusive_group_mount_uses_enabled_group_union_without_mutation() {
+        let db_path = unique_temp_path("assetiweave-exclusive-preview-db");
+        let source_root = unique_temp_path("assetiweave-exclusive-preview-source");
+        let codex_target = unique_temp_path("assetiweave-exclusive-preview-codex");
+        let cursor_target = unique_temp_path("assetiweave-exclusive-preview-cursor");
+        let asset_path_a = source_root.join("skill-a");
+        let asset_path_b = source_root.join("skill-b");
+        let asset_path_c = source_root.join("skill-c");
+        std::fs::create_dir_all(&asset_path_a).expect("create asset dir a");
+        std::fs::create_dir_all(&asset_path_b).expect("create asset dir b");
+        std::fs::create_dir_all(&asset_path_c).expect("create asset dir c");
+        std::fs::create_dir_all(&codex_target).expect("create codex target");
+        std::fs::create_dir_all(&cursor_target).expect("create cursor target");
+
+        let conn = store::open_initialized(&db_path).expect("open initialized db");
+        let source = test_source("source-with-exclusive-preview-assets", source_root.clone());
+        let codex = test_profile("codex", codex_target.clone());
+        let cursor = test_profile("cursor", cursor_target.clone());
+        let asset_a = test_asset(&source, "skill-a", asset_path_a);
+        let asset_b = test_asset(&source, "skill-b", asset_path_b);
+        let asset_c = test_asset(&source, "skill-c", asset_path_c);
+        let skill_assets = vec![asset_a.clone(), asset_b.clone(), asset_c.clone()];
+        let group_a = test_group("frontend");
+        let group_b = test_group("automation");
+        let mut disabled_group = test_group("disabled");
+        disabled_group.enabled = false;
+        store::upsert_source(&conn, &source).expect("insert source");
+        store::replace_source_assets(&conn, &source.id, &skill_assets).expect("insert assets");
+        store::upsert_profile(&conn, &codex).expect("insert codex profile");
+        store::upsert_profile(&conn, &cursor).expect("insert cursor profile");
+        for group in [&group_a, &group_b, &disabled_group] {
+            store::upsert_asset_group(&conn, group).expect("insert group");
+        }
+        store::replace_asset_group_members(
+            &conn,
+            &group_a.id,
+            &[asset_a.id.clone(), asset_b.id.clone()],
+            &skill_assets,
+        )
+        .expect("insert group a members");
+        store::replace_asset_group_members(
+            &conn,
+            &group_b.id,
+            &[asset_b.id.clone()],
+            &skill_assets,
+        )
+        .expect("insert group b members");
+        store::replace_asset_group_members(
+            &conn,
+            &disabled_group.id,
+            &[asset_c.id.clone()],
+            &skill_assets,
+        )
+        .expect("insert disabled group members");
+        mount_asset_mount_record(&conn, &asset_a.id, &codex.id).expect("mount skill a");
+        mount_asset_mount_record(&conn, &asset_c.id, &codex.id).expect("mount skill c");
+        mount_asset_mount_record(&conn, &asset_c.id, &cursor.id).expect("mount skill c cursor");
+
+        let preview = build_skill_group_exclusive_mount_preview(
+            &conn,
+            &SkillGroupExclusiveMountInput {
+                group_ids: vec![
+                    group_a.id.clone(),
+                    group_b.id.clone(),
+                    disabled_group.id.clone(),
+                    group_a.id.clone(),
+                ],
+                profile_id: codex.id.clone(),
+                mount_selected: true,
+                dry_run: true,
+            },
+        )
+        .expect("preview exclusive mount");
+
+        assert_eq!(
+            preview.group_ids,
+            vec![group_a.id.clone(), group_b.id.clone()]
+        );
+        assert_eq!(
+            preview.selected_skill_ids,
+            vec![asset_a.id.clone(), asset_b.id.clone()]
+        );
+        assert_eq!(preview.keep, vec![exclusive_item(&asset_a)]);
+        assert_eq!(preview.mount, vec![exclusive_item(&asset_b)]);
+        assert_eq!(preview.unmount, vec![exclusive_item(&asset_c)]);
+        assert_eq!(preview.skipped_count, 0);
+        assert!(codex_target.join("skill-c").exists());
+        assert!(cursor_target.join("skill-c").exists());
+        assert!(store::load_asset_mounts(&conn, Some(&asset_c.id))
+            .expect("load skill c mounts")
+            .iter()
+            .any(|mount| mount.profile_id == codex.id && mount.enabled));
+
+        std::fs::remove_dir_all(source_root).ok();
+        std::fs::remove_dir_all(codex_target).ok();
+        std::fs::remove_dir_all(cursor_target).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_exclusive_group_mount_only_changes_target_profile_skill_mounts() {
+        let db_path = unique_temp_path("assetiweave-exclusive-apply-db");
+        let source_root = unique_temp_path("assetiweave-exclusive-apply-source");
+        let codex_target = unique_temp_path("assetiweave-exclusive-apply-codex");
+        let cursor_target = unique_temp_path("assetiweave-exclusive-apply-cursor");
+        let asset_path_a = source_root.join("skill-a");
+        let asset_path_b = source_root.join("skill-b");
+        let asset_path_c = source_root.join("skill-c");
+        let prompt_path = source_root.join("prompt-a");
+        let prompt_target = codex_target.join("prompt-a");
+        std::fs::create_dir_all(&asset_path_a).expect("create asset dir a");
+        std::fs::create_dir_all(&asset_path_b).expect("create asset dir b");
+        std::fs::create_dir_all(&asset_path_c).expect("create asset dir c");
+        std::fs::create_dir_all(&prompt_path).expect("create prompt dir");
+        std::fs::create_dir_all(&codex_target).expect("create codex target");
+        std::fs::create_dir_all(&cursor_target).expect("create cursor target");
+
+        let conn = store::open_initialized(&db_path).expect("open initialized db");
+        let source = test_source("source-with-exclusive-apply-assets", source_root.clone());
+        let codex = test_profile("codex", codex_target.clone());
+        let cursor = test_profile("cursor", cursor_target.clone());
+        let asset_a = test_asset(&source, "skill-a", asset_path_a);
+        let asset_b = test_asset(&source, "skill-b", asset_path_b);
+        let asset_c = test_asset(&source, "skill-c", asset_path_c);
+        let prompt =
+            test_asset_with_kind(&source, "prompt-a", prompt_path.clone(), AssetKind::Prompt);
+        let all_assets = vec![
+            asset_a.clone(),
+            asset_b.clone(),
+            asset_c.clone(),
+            prompt.clone(),
+        ];
+        let skill_assets = vec![asset_a.clone(), asset_b.clone(), asset_c.clone()];
+        let group_a = test_group("frontend");
+        let group_b = test_group("automation");
+        let mut disabled_group = test_group("disabled");
+        disabled_group.enabled = false;
+        store::upsert_source(&conn, &source).expect("insert source");
+        store::replace_source_assets(&conn, &source.id, &all_assets).expect("insert assets");
+        store::upsert_profile(&conn, &codex).expect("insert codex profile");
+        store::upsert_profile(&conn, &cursor).expect("insert cursor profile");
+        for group in [&group_a, &group_b, &disabled_group] {
+            store::upsert_asset_group(&conn, group).expect("insert group");
+        }
+        store::replace_asset_group_members(
+            &conn,
+            &group_a.id,
+            &[asset_a.id.clone(), asset_b.id.clone()],
+            &skill_assets,
+        )
+        .expect("insert group a members");
+        store::replace_asset_group_members(
+            &conn,
+            &group_b.id,
+            &[asset_b.id.clone()],
+            &skill_assets,
+        )
+        .expect("insert group b members");
+        store::replace_asset_group_members(
+            &conn,
+            &disabled_group.id,
+            &[asset_c.id.clone()],
+            &skill_assets,
+        )
+        .expect("insert disabled group members");
+        mount_asset_mount_record(&conn, &asset_a.id, &codex.id).expect("mount skill a");
+        mount_asset_mount_record(&conn, &asset_c.id, &codex.id).expect("mount skill c");
+        mount_asset_mount_record(&conn, &asset_c.id, &cursor.id).expect("mount skill c cursor");
+        std::os::unix::fs::symlink(&prompt_path, &prompt_target).expect("create prompt symlink");
+        store::set_asset_mount(
+            &conn,
+            &prompt.id,
+            &codex.id,
+            true,
+            DeploymentStrategy::SymlinkToSource,
+        )
+        .expect("store prompt mount");
+
+        let result = apply_skill_group_exclusive_mount_record(
+            &conn,
+            &SkillGroupExclusiveMountInput {
+                group_ids: vec![
+                    group_a.id.clone(),
+                    group_b.id.clone(),
+                    disabled_group.id.clone(),
+                ],
+                profile_id: codex.id.clone(),
+                mount_selected: true,
+                dry_run: false,
+            },
+        )
+        .expect("apply exclusive mount");
+
+        assert_eq!(result.preview.keep_count, 1);
+        assert_eq!(result.preview.mount_count, 1);
+        assert_eq!(result.preview.unmount_count, 1);
+        assert_eq!(result.preview.skipped_count, 0);
+        assert!(result.errors.is_empty());
+        assert!(codex_target.join("skill-a").exists());
+        assert!(codex_target.join("skill-b").exists());
+        assert!(!codex_target.join("skill-c").exists());
+        assert!(cursor_target.join("skill-c").exists());
+        assert!(prompt_target.exists());
+        let skill_c_mounts =
+            store::load_asset_mounts(&conn, Some(&asset_c.id)).expect("load skill c mounts");
+        assert!(skill_c_mounts
+            .iter()
+            .any(|mount| mount.profile_id == codex.id && !mount.enabled));
+        assert!(skill_c_mounts
+            .iter()
+            .any(|mount| mount.profile_id == cursor.id && mount.enabled));
+        assert!(store::load_asset_mounts(&conn, Some(&prompt.id))
+            .expect("load prompt mounts")
+            .iter()
+            .any(|mount| mount.profile_id == codex.id && mount.enabled));
+
+        std::fs::remove_dir_all(source_root).ok();
+        std::fs::remove_dir_all(codex_target).ok();
+        std::fs::remove_dir_all(cursor_target).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preview_exclusive_group_mount_reports_risks_without_forcing_repairs() {
+        let db_path = unique_temp_path("assetiweave-exclusive-risk-db");
+        let external_root = unique_temp_path("assetiweave-exclusive-risk-external");
+        let app_local_root = unique_temp_path("assetiweave-exclusive-risk-local");
+        let target_root = unique_temp_path("assetiweave-exclusive-risk-target");
+        let external_asset_path = external_root.join("external-skill");
+        let app_local_asset_path = app_local_root.join("app-local-skill");
+        let external_target = target_root.join("external-skill");
+        std::fs::create_dir_all(&external_asset_path).expect("create external asset dir");
+        std::fs::create_dir_all(&app_local_asset_path).expect("create app local asset dir");
+        std::fs::create_dir_all(&target_root).expect("create target dir");
+        std::os::unix::fs::symlink(&external_asset_path, &external_target)
+            .expect("create unmanaged external symlink");
+
+        let conn = store::open_initialized(&db_path).expect("open initialized db");
+        let external_source = test_source("external-source", external_root.clone());
+        let app_local_source = test_source_with_origin(
+            "app-local-source",
+            app_local_root.clone(),
+            SourceOrigin::AppLocal,
+        );
+        let profile = test_profile("codex", target_root.clone());
+        let external_asset = test_asset(&external_source, "external-skill", external_asset_path);
+        let app_local_asset =
+            test_asset(&app_local_source, "app-local-skill", app_local_asset_path);
+        let assets = vec![external_asset.clone(), app_local_asset.clone()];
+        let group = test_group("selected-app-local");
+        store::upsert_source(&conn, &external_source).expect("insert external source");
+        store::upsert_source(&conn, &app_local_source).expect("insert app local source");
+        store::replace_source_assets(&conn, &external_source.id, &[external_asset.clone()])
+            .expect("insert external asset");
+        store::replace_source_assets(&conn, &app_local_source.id, &[app_local_asset.clone()])
+            .expect("insert app local asset");
+        store::upsert_profile(&conn, &profile).expect("insert profile");
+        store::upsert_asset_group(&conn, &group).expect("insert group");
+        store::replace_asset_group_members(
+            &conn,
+            &group.id,
+            &[app_local_asset.id.clone()],
+            &assets,
+        )
+        .expect("insert group members");
+
+        let result = apply_skill_group_exclusive_mount_record(
+            &conn,
+            &SkillGroupExclusiveMountInput {
+                group_ids: vec![group.id.clone()],
+                profile_id: profile.id.clone(),
+                mount_selected: true,
+                dry_run: false,
+            },
+        )
+        .expect("apply exclusive mount");
+
+        assert_eq!(result.preview.mount_count, 0);
+        assert_eq!(result.preview.unmount_count, 0);
+        assert_eq!(result.preview.skipped_count, 2);
+        assert!(result
+            .preview
+            .skipped
+            .iter()
+            .any(|item| item.asset_id == app_local_asset.id
+                && item.reason.contains("must be adopted")));
+        assert!(result
+            .preview
+            .skipped
+            .iter()
+            .any(|item| item.asset_id == external_asset.id
+                && item.reason.contains("not managed by AssetIWeave")));
+        assert!(result.errors.is_empty());
+        assert!(external_target.exists());
+
+        std::fs::remove_dir_all(external_root).ok();
+        std::fs::remove_dir_all(app_local_root).ok();
+        std::fs::remove_dir_all(target_root).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_asset_mount_statuses_does_not_mutate_snapshot() {
+        let db_path = unique_temp_path("assetiweave-status-scan-db");
+        let source_root = unique_temp_path("assetiweave-status-scan-source");
+        let target_root = unique_temp_path("assetiweave-status-scan-target");
+        let asset_path = source_root.join("skill-a");
+        let target_path = target_root.join("skill-a");
+        std::fs::create_dir_all(&asset_path).expect("create asset dir");
+        std::fs::create_dir_all(&target_root).expect("create target dir");
+        std::os::unix::fs::symlink(&asset_path, &target_path).expect("create physical symlink");
+
+        let conn = store::open_initialized(&db_path).expect("open initialized db");
+        let source = test_source("source-with-scanned-asset", source_root.clone());
+        let profile = test_profile("codex", target_root.clone());
+        let asset = test_asset(&source, "skill-a", asset_path);
+        store::upsert_source(&conn, &source).expect("insert source");
+        store::replace_source_assets(&conn, &source.id, std::slice::from_ref(&asset))
+            .expect("insert asset");
+        store::upsert_profile(&conn, &profile).expect("insert profile");
+        store::set_asset_mount(
+            &conn,
+            &asset.id,
+            &profile.id,
+            false,
+            DeploymentStrategy::SymlinkToSource,
+        )
+        .expect("store disabled snapshot");
+
+        let statuses = scan_asset_mount_statuses(&conn, None).expect("scan statuses");
+
+        assert!(statuses.iter().any(|status| {
+            status.asset_id == asset.id
+                && status.profile_id == profile.id
+                && status.state == PhysicalMountStateDto::Mounted
+        }));
+        assert!(store::load_asset_mounts(&conn, Some(&asset.id))
+            .expect("load mounts")
+            .iter()
+            .all(|mount| !mount.enabled));
+        assert!(!store::is_managed_deployment(
+            &conn,
+            &profile.id,
+            &asset.id,
+            &target_path.to_string_lossy()
+        )
+        .expect("deployment state"));
+
+        std::fs::remove_dir_all(source_root).ok();
+        std::fs::remove_dir_all(target_root).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sync_asset_mount_observations_adopts_physical_mount_snapshot() {
+        let db_path = unique_temp_path("assetiweave-observation-db");
+        let source_root = unique_temp_path("assetiweave-observation-source");
+        let target_root = unique_temp_path("assetiweave-observation-target");
+        let asset_path = source_root.join("skill-a");
+        let target_path = target_root.join("skill-a");
+        std::fs::create_dir_all(&asset_path).expect("create asset dir");
+        std::fs::create_dir_all(&target_root).expect("create target dir");
+        std::os::unix::fs::symlink(&asset_path, &target_path).expect("create physical symlink");
+
+        let conn = store::open_initialized(&db_path).expect("open initialized db");
+        let source = test_source("source-with-observed-asset", source_root.clone());
+        let profile = test_profile("codex", target_root.clone());
+        let asset = test_asset(&source, "skill-a", asset_path);
+        store::upsert_source(&conn, &source).expect("insert source");
+        store::replace_source_assets(&conn, &source.id, std::slice::from_ref(&asset))
+            .expect("insert asset");
+        store::upsert_profile(&conn, &profile).expect("insert profile");
+        store::set_asset_mount(
+            &conn,
+            &asset.id,
+            &profile.id,
+            false,
+            DeploymentStrategy::SymlinkToSource,
+        )
+        .expect("store disabled intent");
+
+        sync_asset_mount_observations(&conn, None).expect("sync observations");
+
+        let observations = store::load_asset_mount_observations(&conn).expect("load observations");
+        let observation = observations
+            .iter()
+            .find(|candidate| candidate.asset_id == asset.id && candidate.profile_id == profile.id)
+            .expect("asset/profile observation");
+        assert_eq!(observation.state, PhysicalMountStateDto::Mounted);
+        assert!(!observation.observed_at.is_empty());
+        let mounts = store::load_asset_mounts(&conn, Some(&asset.id)).expect("load mounts");
+        assert!(mounts
+            .iter()
+            .any(|mount| mount.profile_id == profile.id && mount.enabled));
+        assert!(store::is_managed_deployment(
+            &conn,
+            &profile.id,
+            &asset.id,
+            &target_path.to_string_lossy()
+        )
+        .expect("deployment state"));
+
+        std::fs::remove_dir_all(source_root).ok();
+        std::fs::remove_dir_all(target_root).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sync_asset_mount_observations_clears_snapshot_when_link_is_missing() {
+        let db_path = unique_temp_path("assetiweave-observation-missing-db");
+        let source_root = unique_temp_path("assetiweave-observation-missing-source");
+        let target_root = unique_temp_path("assetiweave-observation-missing-target");
+        let asset_path = source_root.join("skill-a");
+        let target_path = target_root.join("skill-a");
+        std::fs::create_dir_all(&asset_path).expect("create asset dir");
+        std::fs::create_dir_all(&target_root).expect("create target dir");
+
+        let conn = store::open_initialized(&db_path).expect("open initialized db");
+        let source = test_source("source-with-missing-observed-asset", source_root.clone());
+        let profile = test_profile("codex", target_root.clone());
+        let asset = test_asset(&source, "skill-a", asset_path);
+        store::upsert_source(&conn, &source).expect("insert source");
+        store::replace_source_assets(&conn, &source.id, std::slice::from_ref(&asset))
+            .expect("insert asset");
+        store::upsert_profile(&conn, &profile).expect("insert profile");
+        store::set_asset_mount(
+            &conn,
+            &asset.id,
+            &profile.id,
+            true,
+            DeploymentStrategy::SymlinkToSource,
+        )
+        .expect("store stale enabled snapshot");
+
+        sync_asset_mount_observations(&conn, None).expect("sync observations");
+
+        assert!(store::load_asset_mounts(&conn, Some(&asset.id))
+            .expect("load mounts")
+            .iter()
+            .all(|mount| !mount.enabled));
+        assert!(!store::is_managed_deployment(
+            &conn,
+            &profile.id,
+            &asset.id,
+            &target_path.to_string_lossy()
+        )
+        .expect("deployment state"));
+
+        std::fs::remove_dir_all(source_root).ok();
+        std::fs::remove_dir_all(target_root).ok();
         std::fs::remove_file(db_path).ok();
     }
 
@@ -747,13 +2415,21 @@ mod tests {
     }
 
     fn test_source(id: &str, root_path: PathBuf) -> Source {
+        test_source_with_origin(id, root_path, SourceOrigin::GitRepo)
+    }
+
+    fn test_source_with_origin(
+        id: &str,
+        root_path: PathBuf,
+        source_origin: SourceOrigin,
+    ) -> Source {
         Source {
             id: id.to_string(),
             name: id.to_string(),
             kind: SourceKind::Local,
             root_path: root_path.to_string_lossy().to_string(),
             scanner_kind: SourceScannerKind::Skill,
-            source_origin: SourceOrigin::GitRepo,
+            source_origin,
             repo_root: None,
             scan_root: String::new(),
             origin_app_kind: None,
@@ -798,11 +2474,20 @@ mod tests {
     }
 
     fn test_asset(source: &Source, id: &str, absolute_path: PathBuf) -> Asset {
+        test_asset_with_kind(source, id, absolute_path, AssetKind::Skill)
+    }
+
+    fn test_asset_with_kind(
+        source: &Source,
+        id: &str,
+        absolute_path: PathBuf,
+        kind: AssetKind,
+    ) -> Asset {
         Asset {
             id: id.to_string(),
             source_id: source.id.clone(),
             name: id.to_string(),
-            kind: AssetKind::Skill,
+            kind,
             format: AssetFormat::Directory,
             relative_path: id.to_string(),
             absolute_path: absolute_path.to_string_lossy().to_string(),
@@ -810,6 +2495,25 @@ mod tests {
             description: None,
             content_hash: None,
             discovered_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn test_group(id: &str) -> AssetGroup {
+        AssetGroup {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: None,
+            color: "#10b981".to_string(),
+            asset_kind: AssetKind::Skill,
+            enabled: true,
+            sort_order: 0,
+            rules: AssetGroupRules {
+                source_ids: vec![],
+                relative_path_globs: vec![],
+                name_contains: None,
+            },
+            created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         }
     }

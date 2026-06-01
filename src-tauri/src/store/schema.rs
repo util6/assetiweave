@@ -65,18 +65,8 @@ fn migrate_schema(conn: &Connection) -> AppResult<()> {
         "label_en",
         sql::ADD_HEADER_TAB_LABEL_EN,
     )?;
-    ensure_column(
-        conn,
-        "sub_nav_items",
-        "label_zh",
-        sql::ADD_SUB_NAV_LABEL_ZH,
-    )?;
-    ensure_column(
-        conn,
-        "sub_nav_items",
-        "label_en",
-        sql::ADD_SUB_NAV_LABEL_EN,
-    )?;
+    ensure_column(conn, "sub_nav_items", "label_zh", sql::ADD_SUB_NAV_LABEL_ZH)?;
+    ensure_column(conn, "sub_nav_items", "label_en", sql::ADD_SUB_NAV_LABEL_EN)?;
     ensure_column(
         conn,
         "app_shortcut_items",

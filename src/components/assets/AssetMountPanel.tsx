@@ -8,7 +8,6 @@ export function AssetMountPanel({
   mountBlockedReason,
   mountStatuses,
   profiles,
-  selectedProfileIds,
   onToggle,
 }: {
   appShortcuts: AppShortcut[];
@@ -16,12 +15,12 @@ export function AssetMountPanel({
   mountBlockedReason?: string;
   mountStatuses: AssetMountStatus[];
   profiles: TargetProfile[];
-  selectedProfileIds: string[];
   onToggle: (profileId: string) => void;
 }) {
   const { t } = useI18n();
   const enabledProfiles = profiles.filter((profile) => profile.enabled);
   const statusByProfileId = new Map(mountStatuses.map((status) => [status.profile_id, status]));
+  const mountedCount = mountStatuses.filter((status) => status.state === "mounted").length;
 
   return (
     <div className="border-t border-border/60 bg-surface/60 px-4 pb-4 pt-3" onClick={(event) => event.stopPropagation()}>
@@ -33,7 +32,7 @@ export function AssetMountPanel({
           </p>
         </div>
         <span className="rounded-md border border-border bg-surface-high px-2.5 py-1 font-mono text-body-sm text-primary">
-          {t("mount.selected", { count: selectedProfileIds.length })}
+          {t("mount.selected", { count: mountedCount })}
         </span>
       </div>
 
@@ -49,7 +48,6 @@ export function AssetMountPanel({
               mountStatus={statusByProfileId.get(profile.id)}
               onToggle={onToggle}
               profile={profile}
-              selected={selectedProfileIds.includes(profile.id)}
               shortcut={appShortcuts.find((shortcut) => shortcut.profileId === profile.id)}
             />
           ))}

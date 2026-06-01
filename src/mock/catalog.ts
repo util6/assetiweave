@@ -1,6 +1,6 @@
 import { navigationModel } from "../router/menu";
 import type { NavigationModel } from "../router/types";
-import type { AppShortcut, Asset, Source, TargetProfile } from "../types";
+import type { AppShortcut, Asset, AssetGroupDetail, Source, TargetProfile } from "../types";
 
 export const fallbackAssets: Asset[] = [
   {
@@ -137,6 +137,55 @@ export const fallbackSources: Source[] = [
   },
 ];
 
+const demoGroupTimestamp = new Date().toISOString();
+
+export const fallbackSkillGroups: AssetGroupDetail[] = [
+  {
+    group: {
+      id: "demo-frontend-group",
+      name: "Frontend",
+      description: "React, browser testing, UI design, and web delivery skills.",
+      color: "#10b981",
+      asset_kind: "skill",
+      enabled: true,
+      sort_order: 0,
+      rules: {
+        source_ids: [],
+        relative_path_globs: ["*frontend*", "*browser*"],
+        name_contains: "",
+      },
+      created_at: demoGroupTimestamp,
+      updated_at: demoGroupTimestamp,
+    },
+    members: [
+      { asset_id: "demo-algorithmic-art", origin: "manual" },
+      { asset_id: "demo-android-native-dev", origin: "manual" },
+      { asset_id: "demo-canvas-design", origin: "manual" },
+    ],
+    manual_asset_ids: ["demo-algorithmic-art", "demo-android-native-dev", "demo-canvas-design"],
+  },
+  {
+    group: {
+      id: "demo-script-group",
+      name: "Script Automation",
+      description: "Skills used when building scripts, browser automation, and local workflows.",
+      color: "#f59e0b",
+      asset_kind: "skill",
+      enabled: true,
+      sort_order: 10,
+      rules: {
+        source_ids: ["agents-skills"],
+        relative_path_globs: [],
+        name_contains: "browser",
+      },
+      created_at: demoGroupTimestamp,
+      updated_at: demoGroupTimestamp,
+    },
+    members: [],
+    manual_asset_ids: [],
+  },
+];
+
 export const fallbackProfiles: TargetProfile[] = [
   {
     id: "codex",
@@ -146,6 +195,9 @@ export const fallbackProfiles: TargetProfile[] = [
     supported_kinds: ["skill", "prompt", "rule", "custom"],
     deployment_strategy: "symlink_to_source",
     enabled: true,
+    include: { groups: [], kinds: ["skill", "prompt", "rule"], path_patterns: [], sources: [], tags: [] },
+    exclude: { groups: [], kinds: ["unclassified"], path_patterns: [], sources: [], tags: [] },
+    safety: { allow_overwrite: false, allow_remove: false },
   },
   {
     id: "claude",
@@ -155,6 +207,9 @@ export const fallbackProfiles: TargetProfile[] = [
     supported_kinds: ["skill", "prompt", "rule", "custom"],
     deployment_strategy: "symlink_to_source",
     enabled: true,
+    include: { groups: [], kinds: ["skill", "prompt", "rule"], path_patterns: [], sources: [], tags: [] },
+    exclude: { groups: [], kinds: ["unclassified"], path_patterns: [], sources: [], tags: [] },
+    safety: { allow_overwrite: false, allow_remove: false },
   },
   {
     id: "cursor",
@@ -164,6 +219,9 @@ export const fallbackProfiles: TargetProfile[] = [
     supported_kinds: ["skill", "prompt", "rule", "custom"],
     deployment_strategy: "symlink_to_source",
     enabled: true,
+    include: { groups: [], kinds: ["skill", "prompt", "rule"], path_patterns: [], sources: [], tags: [] },
+    exclude: { groups: [], kinds: ["unclassified"], path_patterns: [], sources: [], tags: [] },
+    safety: { allow_overwrite: false, allow_remove: false },
   },
   {
     id: "gemini",
@@ -173,6 +231,9 @@ export const fallbackProfiles: TargetProfile[] = [
     supported_kinds: ["skill", "prompt", "rule", "custom"],
     deployment_strategy: "symlink_to_source",
     enabled: true,
+    include: { groups: [], kinds: ["skill", "prompt", "rule"], path_patterns: [], sources: [], tags: [] },
+    exclude: { groups: [], kinds: ["unclassified"], path_patterns: [], sources: [], tags: [] },
+    safety: { allow_overwrite: false, allow_remove: false },
   },
 ];
 

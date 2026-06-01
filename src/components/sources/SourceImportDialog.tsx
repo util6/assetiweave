@@ -1,4 +1,4 @@
-import { AlertTriangle, FolderOpen, FolderPlus, X } from "lucide-react";
+import { FolderOpen, FolderPlus, X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { SourceInput } from "../../types";
@@ -18,6 +18,7 @@ import { Switch } from "../ui/switch";
 export function SourceImportDialog({
   busy,
   onClose,
+  onNotifyError,
   onPickRootPath,
   onSubmit,
   open,
@@ -25,6 +26,7 @@ export function SourceImportDialog({
 }: {
   busy: boolean;
   onClose: () => void;
+  onNotifyError: (message: string) => void;
   onPickRootPath: () => Promise<string | null>;
   onSubmit: (source: SourceInput) => Promise<void>;
   open: boolean;
@@ -34,12 +36,10 @@ export function SourceImportDialog({
   const titleId = useId();
   const rootPathErrorId = useId();
   const priorityErrorId = useId();
-  const submitErrorId = useId();
   const rootPathInputRef = useRef<HTMLInputElement>(null);
   const [values, setValues] = useState<SourceImportFormValues>(() => createInitialValues(suggestedPriority));
   const [fieldErrors, setFieldErrors] = useState<SourceImportFormErrors>({});
   const [pickingRootPath, setPickingRootPath] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -49,7 +49,6 @@ export function SourceImportDialog({
     setValues(createInitialValues(suggestedPriority));
     setFieldErrors({});
     setPickingRootPath(false);
-    setSubmitError(null);
     window.setTimeout(() => rootPathInputRef.current?.focus(), 0);
   }, [open, suggestedPriority]);
 
@@ -77,7 +76,6 @@ export function SourceImportDialog({
     if (key === "rootPath" || key === "priority") {
       setFieldErrors((currentErrors) => ({ ...currentErrors, [key]: undefined }));
     }
-    setSubmitError(null);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -92,20 +90,19 @@ export function SourceImportDialog({
       await onSubmit(buildImportSourceInput(values));
       onClose();
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : t("source.import.error.submit"));
+      onNotifyError(error instanceof Error ? error.message : t("source.import.error.submit"));
     }
   }
 
   async function handlePickRootPath() {
     setPickingRootPath(true);
-    setSubmitError(null);
     try {
       const selectedPath = await onPickRootPath();
       if (selectedPath) {
         updateValue("rootPath", selectedPath);
       }
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : t("source.import.error.pickDirectory"));
+      onNotifyError(error instanceof Error ? error.message : t("source.import.error.pickDirectory"));
     } finally {
       setPickingRootPath(false);
     }
@@ -227,23 +224,13 @@ export function SourceImportDialog({
               />
             </div>
 
-            {submitError && (
-              <div
-                className="flex items-start gap-2 rounded-xl border border-status-remove/35 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove"
-                id={submitErrorId}
-                role="alert"
-              >
-                <AlertTriangle className="mt-0.5 shrink-0" size={16} />
-                <span>{submitError}</span>
-              </div>
-            )}
           </div>
 
           <footer className="mt-5 flex justify-end gap-2 border-t border-border pt-4">
             <Button disabled={busy} onClick={onClose} type="button" variant="outline">
               {t("source.import.cancel")}
             </Button>
-            <Button aria-describedby={submitError ? submitErrorId : undefined} disabled={busy} type="submit">
+            <Button disabled={busy} type="submit">
               {busy ? t("source.import.submitting") : t("source.import.submit")}
             </Button>
           </footer>

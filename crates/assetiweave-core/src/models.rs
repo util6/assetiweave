@@ -235,6 +235,48 @@ pub struct AssetMount {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetGroupRules {
+    pub source_ids: Vec<String>,
+    pub relative_path_globs: Vec<String>,
+    pub name_contains: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetGroup {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub color: String,
+    pub asset_kind: AssetKind,
+    pub enabled: bool,
+    pub sort_order: i32,
+    pub rules: AssetGroupRules,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetGroupMemberOrigin {
+    Manual,
+    Rule,
+    ManualAndRule,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetGroupResolvedMember {
+    pub asset_id: String,
+    pub origin: AssetGroupMemberOrigin,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetGroupDetail {
+    pub group: AssetGroup,
+    pub members: Vec<AssetGroupResolvedMember>,
+    pub manual_asset_ids: Vec<String>,
+}
+
 pub fn stable_asset_id(source_id: &str, relative_path: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(source_id.as_bytes());

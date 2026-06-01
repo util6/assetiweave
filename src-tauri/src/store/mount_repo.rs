@@ -63,22 +63,6 @@ pub(crate) fn set_asset_mount(
     Ok(mount)
 }
 
-pub(crate) fn toggle_asset_mount(
-    conn: &Connection,
-    asset_id: &str,
-    profile_id: &str,
-    default_strategy: DeploymentStrategy,
-) -> AppResult<AssetMount> {
-    let current = load_asset_mount(conn, asset_id, profile_id)?;
-    let enabled = current.as_ref().map(|mount| !mount.enabled).unwrap_or(true);
-    let strategy = current
-        .as_ref()
-        .map(|mount| mount.strategy)
-        .unwrap_or(default_strategy);
-
-    set_asset_mount(conn, asset_id, profile_id, enabled, strategy)
-}
-
 fn load_asset_mount(
     conn: &Connection,
     asset_id: &str,

@@ -1,12 +1,22 @@
 import { useEffect, useState } from "react";
 import { fallbackNavigationModel } from "../../mock/catalog";
 import type { NavigationModel } from "../../router/types";
-import { getNavigationModel, getOverview, listAppShortcutSettings, listAssetMounts, listAssetMountStatuses, listAssets, listProfiles, listSources, updateAppShortcuts, updateNavigationModel } from "../../services/catalog";
-import type { AppOverview, AppShortcut, Asset, AssetKind, AssetMount, AssetMountStatus, Source, TargetProfile } from "../../types";
+import {
+  getNavigationModel,
+  getOverview,
+  listAppShortcutSettings,
+  listAssetMountStatuses,
+  listAssets,
+  listProfiles,
+  listSources,
+  refreshAssetMountStatuses,
+  updateAppShortcuts,
+  updateNavigationModel,
+} from "../../services/catalog";
+import type { AppOverview, AppShortcut, Asset, AssetKind, AssetMountStatus, Source, TargetProfile } from "../../types";
 
 export function useCatalogData() {
   const [assets, setAssets] = useState<Asset[]>([]);
-  const [assetMounts, setAssetMounts] = useState<AssetMount[]>([]);
   const [assetMountStatuses, setAssetMountStatuses] = useState<AssetMountStatus[]>([]);
   const [overview, setOverview] = useState<AppOverview | null>(null);
   const [sources, setSources] = useState<Source[]>([]);
@@ -22,19 +32,17 @@ export function useCatalogData() {
   async function loadCatalogData() {
     const appNavigationModel = await getNavigationModel();
     const activeKind = getActiveAssetKind(appNavigationModel);
-    const [assetList, sourceList, appOverview, profileList, shortcutList, mountList, mountStatusList] =
+    const [assetList, sourceList, appOverview, profileList, shortcutList, mountStatusList] =
       await Promise.all([
         listAssets(activeKind),
         listSources(),
         getOverview(),
         listProfiles(),
         listAppShortcutSettings(),
-        listAssetMounts(),
         listAssetMountStatuses(),
       ]);
     setAssets(assetList);
     setSources(sourceList);
-    setAssetMounts(mountList);
     setAssetMountStatuses(mountStatusList);
     setOverview(appOverview);
     setNavigationModel(appNavigationModel);
@@ -43,27 +51,35 @@ export function useCatalogData() {
   }
 
   async function refreshOverview(nextAssets?: Asset[]) {
-    const [assetList, sourceList, appOverview, mountList, mountStatusList] = await Promise.all([
+    const [assetList, sourceList, appOverview, mountStatusList] = await Promise.all([
       nextAssets ? Promise.resolve(nextAssets) : listAssets(activeAssetKind),
       listSources(),
       getOverview(),
-      listAssetMounts(),
       listAssetMountStatuses(),
     ]);
     setAssets(assetList);
     setSources(sourceList);
-    setAssetMounts(mountList);
     setAssetMountStatuses(mountStatusList);
     setOverview(appOverview);
   }
 
-  function applyAssetMount(nextMount: AssetMount) {
-    setAssetMounts((current) => [
-      ...current.filter(
-        (mount) => mount.asset_id !== nextMount.asset_id || mount.profile_id !== nextMount.profile_id,
-      ),
-      nextMount,
+  async function refreshMountState() {
+    const mountStatusList = await refreshAssetMountStatuses();
+    setAssetMountStatuses(mountStatusList);
+    return mountStatusList;
+  }
+
+  async function refreshProfiles() {
+    const [profileList, shortcutList, appOverview, mountStatusList] = await Promise.all([
+      listProfiles(),
+      listAppShortcutSettings(),
+      getOverview(),
+      listAssetMountStatuses(),
     ]);
+    setProfiles(profileList);
+    setAppShortcuts(shortcutList);
+    setAssetMountStatuses(mountStatusList);
+    setOverview(appOverview);
   }
 
   function applyAssetMountStatus(nextStatus: AssetMountStatus) {
@@ -92,15 +108,15 @@ export function useCatalogData() {
   return {
     activeAssetKind,
     appShortcuts,
-    applyAssetMount,
     applyAssetMountStatus,
-    assetMounts,
     assetMountStatuses,
     assets,
     navigationModel,
     overview,
     profiles,
+    refreshMountState,
     refreshOverview,
+    refreshProfiles,
     saveAppShortcuts,
     saveNavigationModel,
     sources,

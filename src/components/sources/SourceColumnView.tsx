@@ -2,10 +2,12 @@ import clsx from "clsx";
 import { FolderOpen } from "lucide-react";
 import { sourceKindLabel, sourceOriginLabel, translateScanStatus } from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
-import type { AppShortcut, Asset, Source, TargetProfile } from "../../types";
+import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
+import { getAssetMountSummaryState } from "../../utils/mountState";
 import { isDirectMountBlockedSource } from "../../utils/mountPolicy";
 import { abbreviateHomePath, displayAssetPath } from "../../utils/path";
 import { kindBadgeClass } from "../../utils/styles";
+import { MountStatePill } from "../assets/MountStatePill";
 import { QuickMountButtons } from "../assets/QuickMountButtons";
 import { SourceBulkMountControls } from "./SourceBulkMountControls";
 
@@ -13,26 +15,26 @@ export function SourceColumnView({
   appShortcuts,
   assetsBySourceId,
   busy,
+  mountStatusesByAssetId,
   onAssetReveal,
   onReveal,
   onSelectSource,
   onSetSourceMountProfile,
   onToggleMount,
   profiles,
-  selectedMounts,
   selectedSource,
   sources,
 }: {
   appShortcuts: AppShortcut[];
   assetsBySourceId: Map<string, Asset[]>;
   busy: boolean;
+  mountStatusesByAssetId: Map<string, AssetMountStatus[]>;
   onAssetReveal: (path: string) => void;
   onReveal: (path: string) => void;
   onSelectSource: (sourceId: string) => void;
   onSetSourceMountProfile: (assetIds: string[], profileId: string, enabled: boolean) => void;
   onToggleMount: (assetId: string, profileId: string) => void;
   profiles: TargetProfile[];
-  selectedMounts: Record<string, string[]>;
   selectedSource: Source;
   sources: Source[];
 }) {
@@ -93,37 +95,41 @@ export function SourceColumnView({
           {selectedAssets.length === 0 ? (
             <div className="px-4 py-5 text-body-sm text-on-surface-variant">{t("source.emptySkills")}</div>
           ) : (
-            selectedAssets.map((asset) => (
-              <article
-                className="grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/70 px-4 py-3 last:border-b-0 hover:bg-surface-low/70"
-                key={asset.id}
-              >
-                <div className="min-w-0">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold text-on-surface">
-                      {asset.name}
-                    </span>
-                    <span className={kindBadgeClass(asset.kind)}>{t("assetKind.skill")}</span>
+            selectedAssets.map((asset) => {
+              const mountStatuses = mountStatusesByAssetId.get(asset.id) ?? [];
+              return (
+                <article
+                  className="grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/70 px-4 py-3 last:border-b-0 hover:bg-surface-low/70"
+                  key={asset.id}
+                >
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold text-on-surface">
+                        {asset.name}
+                      </span>
+                      <span className={kindBadgeClass(asset.kind)}>{t("assetKind.skill")}</span>
+                      <MountStatePill compact state={getAssetMountSummaryState(mountStatuses)} />
+                    </div>
+                    <button
+                      className="mt-1 block max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface-variant transition-colors hover:text-primary"
+                      onClick={() => onAssetReveal(asset.absolute_path)}
+                      title={t("asset.revealPath")}
+                      type="button"
+                    >
+                      {displayAssetPath(asset)}
+                    </button>
                   </div>
-                  <button
-                    className="mt-1 block max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface-variant transition-colors hover:text-primary"
-                    onClick={() => onAssetReveal(asset.absolute_path)}
-                    title={t("asset.revealPath")}
-                    type="button"
-                  >
-                    {displayAssetPath(asset)}
-                  </button>
-                </div>
-                <QuickMountButtons
-                  asset={asset}
-                  mountBlockedReason={mountBlockedReason}
-                  profiles={profiles}
-                  shortcuts={appShortcuts}
-                  selectedProfileIds={selectedMounts[asset.id] ?? []}
-                  onToggle={(profileId) => onToggleMount(asset.id, profileId)}
-                />
-              </article>
-            ))
+                  <QuickMountButtons
+                    asset={asset}
+                    mountBlockedReason={mountBlockedReason}
+                    mountStatuses={mountStatuses}
+                    profiles={profiles}
+                    shortcuts={appShortcuts}
+                    onToggle={(profileId) => onToggleMount(asset.id, profileId)}
+                  />
+                </article>
+              );
+            })
           )}
         </div>
       </section>
@@ -135,9 +141,9 @@ export function SourceColumnView({
             appShortcuts={appShortcuts}
             assets={selectedAssets}
             busy={busy}
+            mountStatusesByAssetId={mountStatusesByAssetId}
             onSetSourceMountProfile={onSetSourceMountProfile}
             profiles={profiles}
-            selectedMounts={selectedMounts}
             source={selectedSource}
             variant="panel"
           />

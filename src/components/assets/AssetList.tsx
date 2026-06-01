@@ -1,5 +1,6 @@
 import { useI18n } from "../../i18n/I18nProvider";
 import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
+import { groupMountStatusesByAssetId } from "../../utils/mountState";
 import type { AssetViewMode } from "./AssetToolbar";
 import { AssetGridView } from "./AssetGridView";
 import { AssetRow } from "./AssetRow";
@@ -11,7 +12,6 @@ export function AssetList({
   profiles,
   appShortcuts,
   expandedIds,
-  selectedMounts,
   viewMode,
   onToggleAsset,
   onToggleMount,
@@ -23,7 +23,6 @@ export function AssetList({
   profiles: TargetProfile[];
   appShortcuts: AppShortcut[];
   expandedIds: Set<string>;
-  selectedMounts: Record<string, string[]>;
   viewMode: AssetViewMode;
   onToggleAsset: (assetId: string) => void;
   onToggleMount: (assetId: string, profileId: string) => void;
@@ -31,10 +30,7 @@ export function AssetList({
 }) {
   const { t } = useI18n();
   const sourceById = new Map(sources.map((source) => [source.id, source]));
-  const mountStatusesByAssetId = assetMountStatuses.reduce<Map<string, AssetMountStatus[]>>((grouped, status) => {
-    grouped.set(status.asset_id, [...(grouped.get(status.asset_id) ?? []), status]);
-    return grouped;
-  }, new Map());
+  const mountStatusesByAssetId = groupMountStatusesByAssetId(assetMountStatuses);
 
   if (viewMode === "grid") {
     return (
@@ -45,7 +41,6 @@ export function AssetList({
         onRevealPath={onRevealPath}
         onToggleMount={onToggleMount}
         profiles={profiles}
-        selectedMounts={selectedMounts}
         sourceById={sourceById}
       />
     );
@@ -58,9 +53,6 @@ export function AssetList({
     >
       {assets.map((asset) => {
         const mountStatuses = mountStatusesByAssetId.get(asset.id) ?? [];
-        const physicallyMountedProfileIds = mountStatuses
-          .filter((status) => status.state === "mounted")
-          .map((status) => status.profile_id);
 
         return (
           <AssetRow
@@ -72,7 +64,6 @@ export function AssetList({
             onToggleExpanded={() => onToggleAsset(asset.id)}
             onToggleMount={(profileId) => onToggleMount(asset.id, profileId)}
             profiles={profiles}
-            selectedProfileIds={mergeProfileIds(selectedMounts[asset.id] ?? [], physicallyMountedProfileIds)}
             source={sourceById.get(asset.source_id)}
             mountStatuses={mountStatuses}
           />
@@ -80,8 +71,4 @@ export function AssetList({
       })}
     </div>
   );
-}
-
-function mergeProfileIds(...groups: string[][]) {
-  return [...new Set(groups.flat())];
 }

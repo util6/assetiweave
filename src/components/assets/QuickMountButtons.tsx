@@ -1,24 +1,28 @@
 import clsx from "clsx";
 import { useI18n } from "../../i18n/I18nProvider";
-import type { AppShortcut, Asset, TargetProfile } from "../../types";
+import type { TranslationKey } from "../../i18n/messages";
+import type { AppShortcut, Asset, AssetMountStatus, TargetProfile } from "../../types";
+import { getMountDisplayState, type MountDisplayState } from "../../utils/mountState";
 import { AppShortcutIconForShortcut } from "../apps/AppShortcutIcon";
 
-export function QuickMountButtons({
+export function QuickMountButtons(
+  {
   asset,
   mountBlockedReason,
+  mountStatuses,
   profiles,
   shortcuts,
-  selectedProfileIds,
   onToggle,
 }: {
   asset: Asset;
   mountBlockedReason?: string;
+  mountStatuses: AssetMountStatus[];
   profiles: TargetProfile[];
   shortcuts: AppShortcut[];
-  selectedProfileIds: string[];
   onToggle: (profileId: string) => void;
 }) {
   const { t } = useI18n();
+  const statusByProfileId = new Map(mountStatuses.map((status) => [status.profile_id, status]));
 
   return (
     <div className="flex min-w-0 items-center justify-end gap-1">
@@ -26,15 +30,18 @@ export function QuickMountButtons({
         .filter((shortcut) => shortcut.enabled)
         .map((shortcut) => {
           const profile = profiles.find((candidate) => candidate.id === shortcut.profileId);
-          const selected = selectedProfileIds.includes(shortcut.profileId);
+          const mountState = getMountDisplayState(statusByProfileId.get(shortcut.profileId));
+          const mounted = mountState === "mounted";
           const supported = profile?.supported_kinds.includes(asset.kind) ?? true;
           const disabled = Boolean(mountBlockedReason);
-          const label = mountBlockedReason ?? t(selected ? "mount.unmount" : "mount.mountTo", { profile: shortcut.profileName });
+          const label = mountBlockedReason ?? mountActionLabel(mountState, shortcut.profileName, t);
+          const ringColor = mountStateRingColor(mountState, shortcut.accentColor);
           const button = (
             <button
               className={clsx(
-                "grid size-8 place-items-center rounded-lg border text-[13px] font-bold transition-all",
-                selected ? "shadow-glow ring-1 ring-white/10" : "opacity-60 hover:opacity-100",
+                "relative grid size-8 place-items-center overflow-hidden rounded-lg border text-[13px] font-bold transition-all",
+                mounted ? "shadow-glow ring-1 ring-white/10" : "opacity-60 hover:opacity-100",
+                (mountState === "conflict" || mountState === "broken") && "opacity-90",
                 disabled && "pointer-events-none cursor-not-allowed opacity-40 hover:opacity-40",
                 !supported && "grayscale",
               )}
@@ -42,13 +49,14 @@ export function QuickMountButtons({
               disabled={disabled}
               onClick={() => onToggle(shortcut.profileId)}
               style={{
-                borderColor: selected ? shortcut.accentColor : `${shortcut.accentColor}55`,
-                backgroundColor: selected ? `${shortcut.accentColor}24` : "transparent",
+                borderColor: mounted ? shortcut.accentColor : `${ringColor}88`,
+                backgroundColor: mounted ? `${shortcut.accentColor}24` : mountStateBackgroundColor(mountState, ringColor),
                 color: shortcut.accentColor,
               }}
               title={label}
               type="button"
             >
+              <MountButtonStateRing color={ringColor} state={mountState} />
               <AppShortcutIconForShortcut className="size-4" shortcut={shortcut} />
             </button>
           );
@@ -65,4 +73,40 @@ export function QuickMountButtons({
         })}
     </div>
   );
+}
+
+function mountActionLabel(
+  state: MountDisplayState,
+  profileName: string,
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string,
+) {
+  if (state === "mounted") return t("mount.unmount", { profile: profileName });
+  if (state === "broken" || state === "conflict") {
+    return t("mount.action.repair", { profile: profileName });
+  }
+  return t("mount.mountTo", { profile: profileName });
+}
+
+function MountButtonStateRing({ color, state }: { color: string; state: MountDisplayState }) {
+  if (state === "mounted" || state === "not_mounted") return null;
+
+  return (
+    <span
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-[4px] rounded-md border border-t-transparent opacity-90 animate-spin motion-reduce:animate-none"
+      style={{ borderBottomColor: color, borderLeftColor: color, borderRightColor: color }}
+    />
+  );
+}
+
+function mountStateRingColor(state: MountDisplayState, accentColor: string) {
+  if (state === "conflict" || state === "broken") return "#f43f5e";
+  return accentColor;
+}
+
+function mountStateBackgroundColor(state: MountDisplayState, ringColor: string) {
+  if (state === "conflict" || state === "broken") {
+    return `${ringColor}12`;
+  }
+  return "transparent";
 }

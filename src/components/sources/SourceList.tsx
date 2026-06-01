@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
+import { groupMountStatusesByAssetId } from "../../utils/mountState";
 import { SourceColumnView } from "./SourceColumnView";
 import { SourceRow } from "./SourceRow";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -18,7 +19,6 @@ export function SourceList({
   onToggleMount,
   onToggle,
   profiles,
-  selectedMounts,
   sources,
   viewMode,
 }: {
@@ -35,17 +35,13 @@ export function SourceList({
   onToggleMount: (assetId: string, profileId: string) => void;
   onToggle: (source: Source) => void;
   profiles: TargetProfile[];
-  selectedMounts: Record<string, string[]>;
   sources: Source[];
   viewMode: "list" | "columns";
 }) {
   const { t } = useI18n();
   const [expandedSourceIds, setExpandedSourceIds] = useState<Set<string>>(new Set());
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
-  const mountStatusesByAssetId = assetMountStatuses.reduce<Map<string, AssetMountStatus[]>>((grouped, status) => {
-    grouped.set(status.asset_id, [...(grouped.get(status.asset_id) ?? []), status]);
-    return grouped;
-  }, new Map());
+  const mountStatusesByAssetId = groupMountStatusesByAssetId(assetMountStatuses);
   const assetsBySourceId = useMemo(() => {
     return assets.reduce<Map<string, Asset[]>>((grouped, asset) => {
       if (asset.kind !== "skill") {
@@ -85,13 +81,13 @@ export function SourceList({
         appShortcuts={appShortcuts}
         assetsBySourceId={assetsBySourceId}
         busy={busy}
+        mountStatusesByAssetId={mountStatusesByAssetId}
         onAssetReveal={onAssetReveal}
         onReveal={onReveal}
         onSelectSource={setSelectedSourceId}
         onSetSourceMountProfile={onSetSourceMountProfile}
         onToggleMount={onToggleMount}
         profiles={profiles}
-        selectedMounts={selectedMounts}
         selectedSource={selectedSource}
         sources={sources}
       />
@@ -118,7 +114,6 @@ export function SourceList({
           onToggleMount={onToggleMount}
           onToggle={() => onToggle(source)}
           profiles={profiles}
-          selectedMounts={selectedMounts}
           source={source}
         />
       ))}

@@ -1,63 +1,46 @@
-import { useMemo } from "react";
-import { setAssetMount, unmountAssetMount } from "../../services/catalog";
-import type { AssetMount, AssetMountStatus } from "../../types";
+import { mountAssetMount, unmountAssetMount } from "../../services/catalog";
+import type { AssetMountStatus } from "../../types";
+import { getMountDisplayState } from "../../utils/mountState";
 
 export function useMountSelection(
-  assetMounts: AssetMount[],
   assetMountStatuses: AssetMountStatus[],
-  applyAssetMount: (mount: AssetMount) => void,
   applyAssetMountStatus: (status: AssetMountStatus) => void,
 ) {
-  const selectedMounts = useMemo(() => {
-    return assetMounts.reduce<Record<string, string[]>>((selected, mount) => {
-      if (!mount.enabled) {
-        return selected;
-      }
-      selected[mount.asset_id] = [...(selected[mount.asset_id] ?? []), mount.profile_id];
-      return selected;
-    }, {});
-  }, [assetMounts]);
-
   async function toggleMountProfile(assetId: string, profileId: string) {
     const physicalStatus = assetMountStatuses.find(
       (status) => status.asset_id === assetId && status.profile_id === profileId,
     );
-    if (physicalStatus?.state === "mounted") {
+    const displayState = getMountDisplayState(physicalStatus);
+    if (displayState === "mounted") {
       await setMountProfile(assetId, profileId, false);
       return;
     }
 
-    const selected = (selectedMounts[assetId] ?? []).includes(profileId);
-    await setMountProfile(assetId, profileId, !selected);
+    await setMountProfile(assetId, profileId, true);
   }
 
   async function setMountProfile(assetId: string, profileId: string, enabled: boolean) {
+    const physicalStatus = assetMountStatuses.find(
+      (status) => status.asset_id === assetId && status.profile_id === profileId,
+    );
+
     try {
-      const physicalStatus = assetMountStatuses.find(
-        (status) => status.asset_id === assetId && status.profile_id === profileId,
-      );
-      if (!enabled && physicalStatus?.state === "mounted") {
-        const result = await unmountAssetMount(assetId, profileId);
-        applyAssetMount(result.mount);
+      if (enabled) {
+        const result = await mountAssetMount(assetId, profileId);
         applyAssetMountStatus(result.status);
         return;
       }
 
-      applyAssetMount(await setAssetMount(assetId, profileId, enabled));
+      if (!enabled && physicalStatus?.state === "mounted") {
+        const result = await unmountAssetMount(assetId, profileId);
+        applyAssetMountStatus(result.status);
+        return;
+      }
     } catch (error) {
       if (isTauriRuntime()) {
         throw error;
       }
-
-      const now = new Date().toISOString();
-      applyAssetMount({
-        asset_id: assetId,
-        profile_id: profileId,
-        enabled,
-        strategy: "symlink_to_source",
-        created_at: now,
-        updated_at: now,
-      });
+      applyAssetMountStatus(fallbackMountStatus(assetId, profileId, enabled, physicalStatus));
     }
   }
 
@@ -67,9 +50,25 @@ export function useMountSelection(
     }
   }
 
-  return { selectedMounts, setMountProfiles, toggleMountProfile };
+  return { setMountProfiles, toggleMountProfile };
 }
 
 function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function fallbackMountStatus(
+  assetId: string,
+  profileId: string,
+  enabled: boolean,
+  physicalStatus?: AssetMountStatus,
+): AssetMountStatus {
+  return {
+    asset_id: assetId,
+    profile_id: profileId,
+    target_dir: physicalStatus?.target_dir ?? "",
+    target_path: physicalStatus?.target_path ?? "",
+    state: enabled ? "mounted" : "not_mounted",
+    linked_source: physicalStatus?.linked_source ?? null,
+  };
 }

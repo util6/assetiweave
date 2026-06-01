@@ -1,13 +1,15 @@
 import { useState } from "react";
-import { DatabaseZap } from "lucide-react";
+import { Columns3, DatabaseZap, FolderPlus, LayoutList, RefreshCw, Settings } from "lucide-react";
+import { AssetToolbar, type AssetToolbarViewMode } from "../../components/assets/AssetToolbar";
 import { SourceList } from "../../components/sources/SourceList";
 import { SourceImportDialog } from "../../components/sources/SourceImportDialog";
 import { SourceSummary } from "../../components/sources/SourceSummary";
-import { SourceToolbar } from "../../components/sources/SourceToolbar";
 import { useSourcesController } from "../../hooks/sources/useSourcesController";
 import { useI18n } from "../../i18n/I18nProvider";
 import { selectSourceDirectory } from "../../services/catalog";
 import type { AppShortcut, Asset, AssetMountStatus, TargetProfile } from "../../types";
+
+type SourceViewMode = Extract<AssetToolbarViewMode, "list" | "columns">;
 
 export function SourcesPage({
   appShortcuts,
@@ -16,12 +18,14 @@ export function SourcesPage({
   expandedAssetIds,
   onAssetReveal,
   onCatalogRefresh,
+  onNotifyError,
   onOpenSettings,
+  onRefreshMountStatus,
   onSetSourceMountProfile,
   onToggleAsset,
   onToggleMount,
   profiles,
-  selectedMounts,
+  refreshingMountStatus,
 }: {
   appShortcuts: AppShortcut[];
   assetMountStatuses: AssetMountStatus[];
@@ -29,17 +33,19 @@ export function SourcesPage({
   expandedAssetIds: Set<string>;
   onAssetReveal: (path: string) => void;
   onCatalogRefresh: (assets?: Asset[]) => Promise<void>;
+  onNotifyError: (message: string) => void;
   onOpenSettings: () => void;
+  onRefreshMountStatus: () => Promise<void>;
   onSetSourceMountProfile: (assetIds: string[], profileId: string, enabled: boolean) => Promise<void>;
   onToggleAsset: (assetId: string) => void;
   onToggleMount: (assetId: string, profileId: string) => void;
   profiles: TargetProfile[];
-  selectedMounts: Record<string, string[]>;
+  refreshingMountStatus: boolean;
 }) {
   const { t } = useI18n();
   const sources = useSourcesController(assets, onCatalogRefresh);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<"list" | "columns">("list");
+  const [viewMode, setViewMode] = useState<SourceViewMode>("list");
 
   return (
     <section className="flex flex-1 flex-col gap-[var(--app-section-gap)] px-[var(--app-page-x)] py-[var(--app-page-y)]">
@@ -61,15 +67,40 @@ export function SourcesPage({
         </div>
       </div>
 
-      <SourceToolbar
-        busy={sources.busy}
-        onImport={() => setImportDialogOpen(true)}
-        onOpenSettings={onOpenSettings}
+      <AssetToolbar
+        actionGroups={[
+          [
+            {
+              disabled: sources.busy,
+              icon: <FolderPlus size={17} />,
+              label: t("source.toolbar.add"),
+              onClick: () => setImportDialogOpen(true),
+              primary: true,
+              text: t("source.toolbar.add"),
+            },
+          ],
+          [
+            {
+              disabled: sources.busy || refreshingMountStatus,
+              icon: <RefreshCw size={17} />,
+              label: t("toolbar.refreshMountStatus"),
+              onClick: () => void onRefreshMountStatus(),
+            },
+            { icon: <Settings size={17} />, label: t("toolbar.settings"), onClick: onOpenSettings },
+          ],
+        ]}
+        ariaLabel={t("source.page.title")}
         onQueryChange={sources.setQuery}
-        onScan={sources.scanAllSources}
         onViewModeChange={setViewMode}
         query={sources.query}
+        searchClassName="flex-1"
+        searchPlaceholder={t("source.toolbar.searchPlaceholder")}
+        viewAriaLabel={t("toolbar.view.aria")}
         viewMode={viewMode}
+        viewOptions={[
+          { icon: <LayoutList size={17} />, label: t("toolbar.view.list"), value: "list" },
+          { icon: <Columns3 size={17} />, label: t("toolbar.view.columns"), value: "columns" },
+        ]}
       />
 
       <SourceList
@@ -88,7 +119,6 @@ export function SourcesPage({
         onToggleMount={onToggleMount}
         onToggle={(source) => void sources.toggleSource(source)}
         profiles={profiles}
-        selectedMounts={selectedMounts}
         sources={sources.filteredSources}
         viewMode={viewMode}
       />
@@ -96,6 +126,7 @@ export function SourcesPage({
       <SourceImportDialog
         busy={sources.busy}
         onClose={() => setImportDialogOpen(false)}
+        onNotifyError={onNotifyError}
         onPickRootPath={() => selectSourceDirectory(t("source.import.dialogTitle"))}
         onSubmit={sources.importSource}
         open={importDialogOpen}

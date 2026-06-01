@@ -108,6 +108,37 @@ CREATE TABLE IF NOT EXISTS asset_mounts (
     updated_at TEXT NOT NULL,
     PRIMARY KEY (asset_id, profile_id)
 );
+
+CREATE TABLE IF NOT EXISTS asset_mount_observations (
+    asset_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    target_dir TEXT NOT NULL,
+    target_path TEXT NOT NULL,
+    state TEXT NOT NULL,
+    linked_source TEXT,
+    observed_at TEXT NOT NULL,
+    PRIMARY KEY (asset_id, profile_id)
+);
+
+CREATE TABLE IF NOT EXISTS asset_groups (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    color TEXT NOT NULL,
+    asset_kind TEXT NOT NULL,
+    enabled INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL,
+    rules_payload TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS asset_group_members (
+    group_id TEXT NOT NULL,
+    asset_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (group_id, asset_id)
+);
 "#;
 
 pub(crate) const ADD_SOURCE_SCANNER_KIND: &str =
@@ -127,10 +158,8 @@ pub(crate) const ADD_HEADER_TAB_LABEL_ZH: &str =
     "ALTER TABLE header_tab_items ADD COLUMN label_zh TEXT";
 pub(crate) const ADD_HEADER_TAB_LABEL_EN: &str =
     "ALTER TABLE header_tab_items ADD COLUMN label_en TEXT";
-pub(crate) const ADD_SUB_NAV_LABEL_ZH: &str =
-    "ALTER TABLE sub_nav_items ADD COLUMN label_zh TEXT";
-pub(crate) const ADD_SUB_NAV_LABEL_EN: &str =
-    "ALTER TABLE sub_nav_items ADD COLUMN label_en TEXT";
+pub(crate) const ADD_SUB_NAV_LABEL_ZH: &str = "ALTER TABLE sub_nav_items ADD COLUMN label_zh TEXT";
+pub(crate) const ADD_SUB_NAV_LABEL_EN: &str = "ALTER TABLE sub_nav_items ADD COLUMN label_en TEXT";
 pub(crate) const ADD_APP_SHORTCUT_ICON_SVG: &str =
     "ALTER TABLE app_shortcut_items ADD COLUMN icon_svg TEXT";
 
@@ -334,6 +363,89 @@ ON CONFLICT(asset_id, profile_id) DO UPDATE SET
     updated_at = excluded.updated_at
 "#;
 
+pub(crate) const UPSERT_ASSET_MOUNT_OBSERVATION: &str = r#"
+INSERT INTO asset_mount_observations (
+    asset_id, profile_id, target_dir, target_path, state, linked_source, observed_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+ON CONFLICT(asset_id, profile_id) DO UPDATE SET
+    target_dir = excluded.target_dir,
+    target_path = excluded.target_path,
+    state = excluded.state,
+    linked_source = excluded.linked_source,
+    observed_at = excluded.observed_at
+"#;
+
+#[cfg(test)]
+pub(crate) const LIST_ASSET_MOUNT_OBSERVATIONS: &str = r#"
+SELECT asset_id, profile_id, target_dir, target_path, state, linked_source, observed_at
+FROM asset_mount_observations
+ORDER BY asset_id ASC, profile_id ASC
+"#;
+
+pub(crate) const DELETE_ORPHAN_ASSET_MOUNT_OBSERVATIONS: &str = r#"
+DELETE FROM asset_mount_observations
+WHERE NOT EXISTS (
+    SELECT 1 FROM assets WHERE assets.id = asset_mount_observations.asset_id
+)
+"#;
+
+pub(crate) const LIST_ASSET_GROUPS_BY_KIND: &str = r#"
+SELECT id, name, description, color, asset_kind, enabled, sort_order, rules_payload,
+       created_at, updated_at
+FROM asset_groups
+WHERE asset_kind = ?1
+ORDER BY sort_order ASC, name ASC
+"#;
+
+pub(crate) const GET_ASSET_GROUP: &str = r#"
+SELECT id, name, description, color, asset_kind, enabled, sort_order, rules_payload,
+       created_at, updated_at
+FROM asset_groups
+WHERE id = ?1
+"#;
+
+pub(crate) const UPSERT_ASSET_GROUP: &str = r#"
+INSERT INTO asset_groups (
+    id, name, description, color, asset_kind, enabled, sort_order, rules_payload,
+    created_at, updated_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+ON CONFLICT(id) DO UPDATE SET
+    name = excluded.name,
+    description = excluded.description,
+    color = excluded.color,
+    asset_kind = excluded.asset_kind,
+    enabled = excluded.enabled,
+    sort_order = excluded.sort_order,
+    rules_payload = excluded.rules_payload,
+    updated_at = excluded.updated_at
+"#;
+
+pub(crate) const DELETE_ASSET_GROUP: &str = "DELETE FROM asset_groups WHERE id = ?1";
+
+pub(crate) const DELETE_ASSET_GROUP_MEMBERS: &str =
+    "DELETE FROM asset_group_members WHERE group_id = ?1";
+
+pub(crate) const INSERT_ASSET_GROUP_MEMBER: &str = r#"
+INSERT INTO asset_group_members (group_id, asset_id, created_at)
+VALUES (?1, ?2, ?3)
+ON CONFLICT(group_id, asset_id) DO NOTHING
+"#;
+
+pub(crate) const LIST_ASSET_GROUP_MEMBERS: &str = r#"
+SELECT group_id, asset_id
+FROM asset_group_members
+ORDER BY group_id ASC, asset_id ASC
+"#;
+
+pub(crate) const DELETE_ORPHAN_ASSET_GROUP_MEMBERS: &str = r#"
+DELETE FROM asset_group_members
+WHERE NOT EXISTS (
+    SELECT 1 FROM asset_groups WHERE asset_groups.id = asset_group_members.group_id
+) OR NOT EXISTS (
+    SELECT 1 FROM assets WHERE assets.id = asset_group_members.asset_id
+)
+"#;
+
 pub(crate) const UPSERT_SOURCE: &str = r#"
 INSERT INTO sources (
     id, name, kind, root_path, scanner_kind, source_origin, repo_root, scan_root,
@@ -362,6 +474,20 @@ pub(crate) const DELETE_SOURCE: &str = "DELETE FROM sources WHERE id = ?1";
 
 pub(crate) const UPSERT_PROFILE: &str =
     "INSERT INTO profiles (id, payload) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET payload = excluded.payload";
+
+pub(crate) const DELETE_PROFILE: &str = "DELETE FROM profiles WHERE id = ?1";
+
+pub(crate) const DELETE_APP_SHORTCUT_BY_PROFILE: &str =
+    "DELETE FROM app_shortcut_items WHERE profile_id = ?1";
+
+pub(crate) const DELETE_ASSET_MOUNTS_BY_PROFILE: &str =
+    "DELETE FROM asset_mounts WHERE profile_id = ?1";
+
+pub(crate) const DELETE_ASSET_MOUNT_OBSERVATIONS_BY_PROFILE: &str =
+    "DELETE FROM asset_mount_observations WHERE profile_id = ?1";
+
+pub(crate) const COUNT_DEPLOYMENT_STATE_BY_PROFILE: &str =
+    "SELECT COUNT(*) FROM deployment_state WHERE profile_id = ?1";
 
 pub(crate) const DELETE_ASSETS_BY_SOURCE: &str = "DELETE FROM assets WHERE source_id = ?1";
 

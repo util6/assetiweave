@@ -110,8 +110,5 @@ pub(crate) fn save_app_shortcuts(conn: &Connection, shortcuts: &[AppShortcut]) -
 }
 
 fn decode_icon_svg(value: Option<String>) -> Result<Option<AppShortcutIconSvg>, rusqlite::Error> {
-    value
-        .map(decode_json)
-        .transpose()
-        .map_err(to_sql_error)
+    value.map(decode_json).transpose().map_err(to_sql_error)
 }

@@ -3,11 +3,13 @@ import { Pencil, Trash2 } from "lucide-react";
 import { assetKindLabel } from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
+import { getAssetMountSummaryState } from "../../utils/mountState";
 import { isDirectMountBlockedSource } from "../../utils/mountPolicy";
 import { displayAssetPath } from "../../utils/path";
 import { kindBadgeClass } from "../../utils/styles";
 import { AssetMountPanel } from "./AssetMountPanel";
 import { InlineMeta } from "./InlineMeta";
+import { MountStatePill } from "./MountStatePill";
 import { QuickMountButtons } from "./QuickMountButtons";
 
 export function AssetRow({
@@ -17,7 +19,6 @@ export function AssetRow({
   profiles,
   appShortcuts,
   expanded,
-  selectedProfileIds,
   onToggleExpanded,
   onToggleMount,
   onRevealPath,
@@ -28,13 +29,13 @@ export function AssetRow({
   profiles: TargetProfile[];
   appShortcuts: AppShortcut[];
   expanded: boolean;
-  selectedProfileIds: string[];
   onToggleExpanded: () => void;
   onToggleMount: (profileId: string) => void;
   onRevealPath: (path: string) => void;
 }) {
   const { t } = useI18n();
   const mountBlockedReason = isDirectMountBlockedSource(source) ? t("mount.blocked") : undefined;
+  const mountSummaryState = getAssetMountSummaryState(mountStatuses);
 
   return (
     <article
@@ -51,6 +52,7 @@ export function AssetRow({
               {asset.name}
             </span>
             <span className={kindBadgeClass(asset.kind)}>{assetKindLabel(asset.kind, t)}</span>
+            <MountStatePill state={mountSummaryState} />
             <span className="rounded-md border border-border/70 bg-surface-highest/70 px-2 py-0.5 text-[10px] font-bold text-on-surface-variant">
               {t("asset.origin.local")}
             </span>
@@ -78,9 +80,9 @@ export function AssetRow({
           <QuickMountButtons
             asset={asset}
             mountBlockedReason={mountBlockedReason}
+            mountStatuses={mountStatuses}
             profiles={profiles}
             shortcuts={appShortcuts}
-            selectedProfileIds={selectedProfileIds}
             onToggle={onToggleMount}
           />
           <span className="h-6 w-px bg-border/80" aria-hidden="true" />
@@ -108,7 +110,6 @@ export function AssetRow({
           mountBlockedReason={mountBlockedReason}
           mountStatuses={mountStatuses}
           profiles={profiles}
-          selectedProfileIds={selectedProfileIds}
           onToggle={onToggleMount}
         />
       )}

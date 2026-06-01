@@ -1,14 +1,4 @@
-import {
-  Filter,
-  Grid3X3,
-  LayoutList,
-  Plus,
-  RefreshCw,
-  Settings,
-  SlidersHorizontal,
-  Tag,
-} from "lucide-react";
-import { useI18n } from "../../i18n/I18nProvider";
+import type { ReactNode } from "react";
 import {
   DataToolbar,
   ToolbarActionButton,
@@ -17,80 +7,128 @@ import {
   ToolbarSeparator,
   ToolbarTextButton,
   ToolbarViewToggle,
+  type ToolbarViewOption,
   type ToolbarViewMode,
 } from "../common/DataToolbar";
 
-export type AssetViewMode = Extract<ToolbarViewMode, "list" | "grid">;
+export type AssetToolbarViewMode = ToolbarViewMode;
+export type AssetViewMode = Extract<AssetToolbarViewMode, "list" | "grid">;
 
-export function AssetToolbar({
-  query,
-  assetCount,
-  sourceCount,
-  supportAppCount,
-  busy,
+export interface AssetToolbarAction {
+  disabled?: boolean;
+  icon: ReactNode;
+  label: string;
+  onClick?: () => void;
+  primary?: boolean;
+  text?: string;
+}
+
+export interface AssetToolbarFilter {
+  icon: ReactNode;
+  label: string;
+  onClick?: () => void;
+}
+
+export interface AssetToolbarMetric {
+  label: string;
+  value: number;
+}
+
+export function AssetToolbar<Value extends AssetToolbarViewMode = AssetToolbarViewMode>({
+  actionGroups = [],
+  ariaLabel,
+  filters = [],
+  metrics = [],
   onQueryChange,
-  onScan,
-  onCreatePlan,
-  onOpenSettings,
   onViewModeChange,
+  query,
+  searchClassName = "w-64 max-[1160px]:w-72",
+  searchPlaceholder,
+  sticky = false,
+  viewAriaLabel,
   viewMode,
+  viewOptions = [],
 }: {
-  query: string;
-  assetCount: number;
-  sourceCount: number;
-  supportAppCount: number;
-  busy: boolean;
+  actionGroups?: AssetToolbarAction[][];
+  ariaLabel: string;
+  filters?: AssetToolbarFilter[];
+  metrics?: AssetToolbarMetric[];
   onQueryChange: (query: string) => void;
-  onScan: () => void;
-  onCreatePlan: () => void;
-  onOpenSettings?: () => void;
-  onViewModeChange: (viewMode: AssetViewMode) => void;
-  viewMode: AssetViewMode;
+  onViewModeChange?: (viewMode: Value) => void;
+  query: string;
+  searchClassName?: string;
+  searchPlaceholder: string;
+  sticky?: boolean;
+  viewAriaLabel?: string;
+  viewMode?: Value;
+  viewOptions?: ToolbarViewOption<Value>[];
 }) {
-  const { t } = useI18n();
+  const showViewToggle = viewMode !== undefined && onViewModeChange && viewOptions.length > 0;
 
   return (
     <DataToolbar
       actions={
         <>
-          <ToolbarActionButton
-            disabled={busy}
-            icon={<Plus size={22} />}
-            label={t("toolbar.createDeploymentPlan")}
-            onClick={onCreatePlan}
-            primary
-          />
-          <ToolbarSeparator />
-          <ToolbarActionButton disabled={busy} icon={<RefreshCw size={17} />} label={t("toolbar.scanSources")} onClick={onScan} />
-          <ToolbarActionButton icon={<Settings size={17} />} label={t("toolbar.settings")} onClick={onOpenSettings} />
+          {actionGroups.map((group, groupIndex) => (
+            <ToolbarActionGroup group={group} key={groupIndex} showSeparator={groupIndex > 0} />
+          ))}
         </>
       }
-      ariaLabel={t("toolbar.aria.assetActions")}
+      ariaLabel={ariaLabel}
       leading={
         <>
           <ToolbarSearch
-            className="w-64 max-[1160px]:w-72"
+            className={searchClassName}
             onChange={onQueryChange}
-            placeholder={t("toolbar.searchPlaceholder")}
+            placeholder={searchPlaceholder}
             value={query}
           />
-          <ToolbarViewToggle
-            ariaLabel={t("toolbar.view.aria")}
-            onChange={onViewModeChange}
-            options={[
-              { icon: <LayoutList size={17} />, label: t("toolbar.view.list"), value: "list" },
-              { icon: <Grid3X3 size={17} />, label: t("toolbar.view.grid"), value: "grid" },
-            ]}
-            value={viewMode}
-          />
-          <ToolbarTextButton icon={<Filter size={17} />} label={t("toolbar.filter.all", { count: assetCount })} />
-          <ToolbarTextButton icon={<Tag size={17} />} label={t("toolbar.filter.tag")} />
-          <ToolbarTextButton icon={<SlidersHorizontal size={17} />} label={t("toolbar.sort.createdAt")} />
-          <ToolbarMetric label={t("metric.sources")} value={sourceCount} />
-          <ToolbarMetric label={t("metric.supportedApps")} value={supportAppCount} />
+          {showViewToggle && (
+            <ToolbarViewToggle
+              ariaLabel={viewAriaLabel ?? ariaLabel}
+              onChange={onViewModeChange}
+              options={viewOptions}
+              value={viewMode}
+            />
+          )}
+          {filters.map((filter) => (
+            <ToolbarTextButton icon={filter.icon} key={filter.label} label={filter.label} onClick={filter.onClick} />
+          ))}
+          {metrics.map((metric) => (
+            <ToolbarMetric key={metric.label} label={metric.label} value={metric.value} />
+          ))}
         </>
       }
-      sticky
+      sticky={sticky}
     />
+  );
+}
+
+function ToolbarActionGroup({
+  group,
+  showSeparator,
+}: {
+  group: AssetToolbarAction[];
+  showSeparator: boolean;
+}) {
+  if (group.length === 0) {
+    return null;
+  }
+
+  return (
+    <>
+      {showSeparator && <ToolbarSeparator />}
+      {group.map((action) => (
+        <ToolbarActionButton
+          disabled={action.disabled}
+          icon={action.icon}
+          key={action.label}
+          label={action.label}
+          onClick={action.onClick}
+          primary={action.primary}
+          text={action.text}
+        />
+      ))}
+    </>
   );
 }

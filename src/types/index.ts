@@ -100,6 +100,19 @@ export type DeploymentStrategy =
   | "append"
   | "config_merge";
 
+export interface TargetProfileRuleSet {
+  kinds: AssetKind[];
+  tags: string[];
+  groups: string[];
+  sources: string[];
+  path_patterns: string[];
+}
+
+export interface ProfileSafety {
+  allow_remove: boolean;
+  allow_overwrite: boolean;
+}
+
 export interface TargetProfile {
   id: string;
   name: string;
@@ -108,6 +121,22 @@ export interface TargetProfile {
   supported_kinds: AssetKind[];
   deployment_strategy: DeploymentStrategy;
   enabled: boolean;
+  include: TargetProfileRuleSet;
+  exclude: TargetProfileRuleSet;
+  safety: ProfileSafety;
+}
+
+export interface TargetProfileInput {
+  id?: string;
+  name: string;
+  app_kind?: AppKind;
+  target_paths?: string[];
+  supported_kinds?: AssetKind[];
+  deployment_strategy?: DeploymentStrategy;
+  enabled?: boolean;
+  include?: TargetProfileRuleSet;
+  exclude?: TargetProfileRuleSet;
+  safety?: ProfileSafety;
 }
 
 export interface AppShortcutIconPath {
@@ -154,6 +183,104 @@ export interface AssetMountStatus {
 export interface AssetMountUpdateResult {
   mount: AssetMount;
   status: AssetMountStatus;
+}
+
+export interface AssetGroupRules {
+  source_ids: string[];
+  relative_path_globs: string[];
+  name_contains: string | null;
+}
+
+export interface AssetGroup {
+  id: string;
+  name: string;
+  description: string | null;
+  color: string;
+  asset_kind: AssetKind;
+  enabled: boolean;
+  sort_order: number;
+  rules: AssetGroupRules;
+  created_at: string;
+  updated_at: string;
+}
+
+export type AssetGroupMemberOrigin = "manual" | "rule" | "manual_and_rule";
+
+export interface AssetGroupResolvedMember {
+  asset_id: string;
+  origin: AssetGroupMemberOrigin;
+}
+
+export interface AssetGroupDetail {
+  group: AssetGroup;
+  members: AssetGroupResolvedMember[];
+  manual_asset_ids: string[];
+}
+
+export interface AssetGroupInput {
+  id?: string;
+  name: string;
+  description?: string | null;
+  color?: string | null;
+  enabled?: boolean;
+  sort_order?: number;
+  rules?: AssetGroupRules;
+}
+
+export interface AssetGroupMountError {
+  asset_id: string;
+  message: string;
+}
+
+export interface ApplyAssetGroupMountResult {
+  group_id: string;
+  profile_id: string;
+  enabled: boolean;
+  requested_count: number;
+  updated_count: number;
+  error_count: number;
+  mounts: AssetMount[];
+  statuses: AssetMountStatus[];
+  errors: AssetGroupMountError[];
+}
+
+export interface SkillGroupExclusiveMountInput {
+  group_ids: string[];
+  profile_id: string;
+  mount_selected: true;
+  dry_run: boolean;
+}
+
+export interface SkillGroupExclusiveMountItem {
+  asset_id: string;
+  name: string;
+}
+
+export interface SkillGroupExclusiveMountSkippedItem extends SkillGroupExclusiveMountItem {
+  reason: string;
+}
+
+export interface SkillGroupExclusiveMountPreview {
+  profile_id: string;
+  group_ids: string[];
+  selected_skill_ids: string[];
+  keep: SkillGroupExclusiveMountItem[];
+  mount: SkillGroupExclusiveMountItem[];
+  unmount: SkillGroupExclusiveMountItem[];
+  skipped: SkillGroupExclusiveMountSkippedItem[];
+  keep_count: number;
+  mount_count: number;
+  unmount_count: number;
+  skipped_count: number;
+}
+
+export interface SkillGroupExclusiveMountError extends SkillGroupExclusiveMountItem {
+  message: string;
+}
+
+export interface ApplySkillGroupExclusiveMountResult extends SkillGroupExclusiveMountPreview {
+  statuses: AssetMountStatus[];
+  errors: SkillGroupExclusiveMountError[];
 }
 
 export type DeploymentActionType = "create" | "update" | "remove" | "skip" | "conflict";
