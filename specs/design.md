@@ -65,14 +65,38 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - 技能源管理页面支持把某个来源下全部 Skill 批量挂载到指定 App/Profile，底层复用 `asset_mounts`。
 - 统一数据 Toolbar 组件已抽取，页面只传入自己合法的视图选项。
 - 技能源导入弹窗和目录选择入口已接入前端。
+- App 快捷入口支持真实应用图标 token 和自定义 SVG path 资源；快捷图标配置已持久化到 SQLite。
+- NavigationModel 支持中英文本地化 label 覆盖；设置页可以按当前语言编辑菜单文案。
+- Tauri 后端契约已扩展：资产可按 kind 查询/扫描，支持取消真实挂载并返回最新挂载状态，目录选择使用 Tauri dialog plugin。
 - 路径展示 home 缩写，点击路径在文件管理器中显示。
 - 部署计划生成和执行基础链路，计划输入已收敛到启用的挂载关系。
 - 部署执行默认将目标 App 目录直接 symlink 到源资产真实路径。
 - 通知消息渲染出口。
 - 中英文 i18n 基础。
-- 前端架构已组件化：`app`、`pages`、`components`、`hooks`、`services`、`fixtures`、`utils` 分层。
+- 前端目录架构已收敛：保留 `services` 和 `pages` 作为项目约定，新增/明确 `layouts`、`router`、`mock`、`store`、`styles`、`types` 等顶层边界。
+- 当前验证基线：`pnpm typecheck`、`pnpm test`、`cargo test`、`pnpm build` 通过；Vite 单 chunk 超过 500 kB 的提示保留为后续性能优化项。
 
 下一阶段重点不是继续搭框架，而是补齐挂载闭环的验证和产品边界：更多存储/扫描测试、Profile 规则细化、执行确认与结果展示、导出复制。
+
+### 3.4 前端目录边界
+
+当前前端采用以下顶层目录约定：
+
+- `app/`：React 应用入口、Provider 装配和顶层 App。
+- `components/`：可复用 UI 和业务组件；页面级布局壳不放在这里。
+- `config/`：静态配置，例如 App 快捷图标资源。
+- `hooks/`：React 业务状态与控制器 hooks。
+- `i18n/`：运行时国际化 Provider、消息表和领域翻译函数。
+- `layouts/`：应用布局壳、侧栏、顶部导航、子导航等长期布局结构。
+- `mock/`：Tauri 后端不可用时的演示/兜底数据。
+- `pages/`：页面级组件，保留 React 项目常用命名。
+- `router/`：页面选择、路由解析、菜单模型、导航图标和导航类型。
+- `schemas/`：前后端边界数据校验 schema。
+- `services/`：前端调用 Tauri/Rust command 的接口层，保留当前项目命名。
+- `store/`：前端全局状态 Provider。
+- `styles/`：全局样式入口和设计 token 相关样式。
+- `types/`：前端共享领域类型。
+- `utils/`：纯工具函数。
 
 ```mermaid
 flowchart TB
@@ -159,6 +183,19 @@ flowchart TB
 - 资产行右侧展示用户配置的 App 快捷挂载图标，支持排序和启停。
 - 展开资产行后展示 Mount Targets，一行四个 Profile 卡片，用于选择挂载目标。
 - 查看原始路径和解析出的 frontmatter/description。
+
+### 4.2.1 Skill Groups
+
+用于在已有 Skills > Groups 标签页下管理 Skill 场景分组。
+
+主要能力：
+
+- 创建、编辑、删除 Skill 场景分组。
+- 通过手动成员和实时规则匹配共同解析分组成员。
+- 第一版规则支持 Source、relative path glob、名称包含。
+- 在分组页按 App Shortcut/Profile 批量挂载或卸载当前分组。
+- 批量动作只影响当前分组成员，不替换同一 Profile 中其他已挂载 Skill。
+- 批量动作复用即时挂载/卸载链路，成功后回写 `asset_mounts` 和物理挂载状态。
 
 ### 4.3 Profiles
 
@@ -445,7 +482,42 @@ AssetMount
 - `create_plan` 以启用的 `asset_mounts` 为主输入。
 - 删除或禁用挂载关系不删除源资产，只影响后续部署计划。
 
-### 5.9 AppShortcut
+### 5.9 AssetGroup
+
+```text
+AssetGroup
+- id: string
+- name: string
+- description?: string
+- color: string
+- asset_kind: skill
+- enabled: boolean
+- sort_order: number
+- rules:
+  - source_ids: string[]
+  - relative_path_globs: string[]
+  - name_contains?: string
+- created_at: datetime
+- updated_at: datetime
+
+AssetGroupMember
+- group_id: string
+- asset_id: string
+- created_at: datetime
+
+AssetGroupResolvedMember
+- asset_id: string
+- origin: manual | rule | manual_and_rule
+```
+
+说明：
+
+- 第一版只支持 Skill 场景分组。
+- 固定成员写入 `asset_group_members`，规则成员每次基于当前扫描资产实时解析。
+- 空规则不会匹配全部 Skill。
+- 批量挂载/卸载使用分组解析后的成员集合，并复用 `asset_mounts` 作为唯一挂载意图存储。
+
+### 5.10 AppShortcut
 
 ```text
 AppShortcut

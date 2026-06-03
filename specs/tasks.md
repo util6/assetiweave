@@ -1,6 +1,6 @@
 # 任务清单：AssetIWeave
 
-## Milestone：2026-05-30 视图语义分流与源级批量挂载
+## Milestone：2026-05-30 前端工程分层与视图工作流
 
 - [x] M1.1 将当前代码状态确认为“资产总览列表/卡片 + 技能源管理列表/分栏”的视图语义里程碑
 - [x] M1.2 统一 Catalog 和 Sources 的 Toolbar 组件语言
@@ -9,9 +9,14 @@
 - [x] M1.5 技能源管理分栏视图按来源、Skill、批量挂载区域组织
 - [x] M1.6 支持按来源把全部 Skill 批量挂载到某个 App/Profile
 - [x] M1.7 源级批量挂载复用 `asset_mounts`，不引入第二套挂载状态
-- [x] M1.8 通过 `pnpm typecheck`、`pnpm test`、`pnpm build`
-- [x] M1.9 通过 in-app browser 手工验收两个页面的视图切换和控制台 error 检查
-- [ ] M1.10 处理 Vite 单 chunk 超过 500 kB 的构建体积提示
+- [x] M1.8 前端目录边界收敛为 `app/components/config/hooks/i18n/layouts/mock/pages/router/schemas/services/store/styles/types/utils`
+- [x] M1.9 保留 `services` 和 `pages` 命名作为当前项目约定
+- [x] M1.10 App 快捷入口支持真实应用图标 token 和自定义 SVG path 资源
+- [x] M1.11 导航菜单支持中英文本地化 label 覆盖
+- [x] M1.12 后端契约支持按 kind 查询/扫描、取消挂载状态回写和 dialog 目录选择
+- [x] M1.13 通过 `pnpm typecheck`、`pnpm test`、`cargo test`、`pnpm build`
+- [ ] M1.14 补充真实桌面窗口手工验收两个页面的视图切换和控制台 error 检查
+- [ ] M1.15 处理 Vite 单 chunk 超过 500 kB 的构建体积提示
 
 ## Phase 0：Spec 和项目边界
 
@@ -202,12 +207,15 @@
 - [x] 13.4 实现 SQLite 驱动的 App 快捷挂载入口配置
 - [x] 13.5 实现通知消息渲染出口
 - [x] 13.6 实现中英文 i18n 基础
-- [x] 13.7 完成前端组件化重构：app/pages/components/hooks/services/fixtures/utils
+- [x] 13.7 完成前端组件化重构：app/pages/components/hooks/services/mock/utils
 - [x] 13.8 优化 Mount Target 卡片视觉和选中态
 - [x] 13.9 抽取统一 DataToolbar 组件族
 - [x] 13.10 为资产总览实现卡片视图
 - [x] 13.11 为技能源管理实现 Finder-like 分栏视图
 - [x] 13.12 统一 Toolbar 组件但保留页面级视图模式声明
+- [x] 13.13 完成前端工程分层重构：layouts/router/store/styles/types 顶层边界
+- [x] 13.14 保留 services 和 pages 命名作为当前 React/Tauri 项目约定
+- [x] 13.15 支持 App 快捷入口真实应用图标和自定义 SVG 图标资源
 
 ## Phase 14：后端挂载功能（当前核心开发方向）
 
@@ -226,6 +234,8 @@
 - [x] 14.13 为挂载关系和计划生成补充基础测试
 - [x] 14.14 前端实现来源级批量设置 `asset_mounts`
 - [x] 14.15 批量挂载时过滤 App 专属/App 本地来源的直接跨 App 挂载入口
+- [x] 14.16 后端实现取消真实挂载并回写最新 `AssetMountStatus`
+- [x] 14.17 后端支持按 AssetKind 查询和扫描资产
 
 ## Phase 15：导出和长期方向
 
@@ -243,3 +253,15 @@
 - [ ] 15.12 轻量 CLI
 - [ ] 15.13 插件化分类器和部署 adapter
 - [ ] 15.14 多机器配置同步
+
+## Phase 16：Skill 场景分组管理
+
+- [x] 16.1 在现有 `skills.groups` 子导航下接入分组业务页面
+- [x] 16.2 定义 `AssetGroup`、`AssetGroupRules`、`AssetGroupDetail`、`AssetGroupResolvedMember`
+- [x] 16.3 创建 `asset_groups` 和 `asset_group_members` SQLite schema
+- [x] 16.4 实现 Skill 分组 repository 和规则实时解析
+- [x] 16.5 实现分组 CRUD、手动成员维护和批量挂载 Tauri commands
+- [x] 16.6 分组批量挂载/卸载只影响本组成员，不清空 Profile 其他挂载
+- [x] 16.7 前端实现三栏分组工作台：分组、成员 Skill、规则与批量挂载
+- [x] 16.8 前端 services/schema/mock/i18n 接入分组能力
+- [x] 16.9 补充分组规则、路由、schema、批量挂载测试
