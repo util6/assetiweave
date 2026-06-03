@@ -130,6 +130,13 @@ jobs:
           mkdir -p dist/release
           ditto -c -k --sequesterRsrc --keepParent target/${{ matrix.target }}/release/bundle/macos/AssetIWeave.app dist/release/AssetIWeave-${RELEASE_TAG}-${{ matrix.label }}.app.zip
 
+      - name: Upload macOS app archive
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          prerelease: true
+          files: dist/release/*.app.zip
+
       - name: Build DMG
         id: build_dmg
         continue-on-error: true
@@ -137,14 +144,9 @@ jobs:
 
       - name: Copy DMG
         if: steps.build_dmg.outcome == 'success'
-        run: cp target/${{ matrix.target }}/release/bundle/dmg/*.dmg dist/release/
-
-      - name: Upload macOS app archive
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          prerelease: true
-          files: dist/release/*.app.zip
+        run: |
+          mkdir -p dist/release
+          cp target/${{ matrix.target }}/release/bundle/dmg/*.dmg dist/release/
 
       - name: Upload macOS DMG
         if: steps.build_dmg.outcome == 'success'
