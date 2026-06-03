@@ -81,6 +81,19 @@ pub(crate) fn replace_source_assets(
     Ok(())
 }
 
+pub(crate) fn update_asset_description(conn: &Connection, asset: &Asset) -> AppResult<()> {
+    let updated = conn
+        .execute(
+            sql::UPDATE_ASSET_DESCRIPTION,
+            params![asset.description, asset.updated_at, asset.id],
+        )
+        .map_err(db_error)?;
+    if updated == 0 {
+        return Err(format!("asset not found: {}", asset.id));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

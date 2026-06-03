@@ -5,6 +5,20 @@ use assetiweave_core::{
 };
 use std::collections::BTreeMap;
 
+pub(crate) const DEFAULT_APP_PROFILE_IDS: &[&str] = &[
+    "claude",
+    "codex",
+    "gemini",
+    "opencode",
+    "cursor",
+    "antigravity",
+    "openclaw",
+];
+
+pub(crate) fn is_default_app_profile_id(profile_id: &str) -> bool {
+    DEFAULT_APP_PROFILE_IDS.contains(&profile_id)
+}
+
 pub(crate) fn default_sources() -> Vec<Source> {
     let mut sources = Vec::new();
     let candidates = [
@@ -91,7 +105,7 @@ pub(crate) fn default_profiles() -> Vec<TargetProfile> {
             "opencode",
             "OpenCode",
             AppKind::OpenCode,
-            "~/.opencode/skills",
+            "~/.config/opencode/skills",
         ),
         ("gemini", "Gemini", AppKind::Gemini, "~/.gemini/skills"),
         (
@@ -172,6 +186,7 @@ pub(crate) fn default_navigation_model() -> NavigationModel {
             rail_item("apps", "App 管理", "grid", "profile", "primary"),
             rail_item("security", "安全策略", "shield", "settings", "secondary"),
             rail_item("docs", "文档", "file-code", "global", "secondary"),
+            rail_item("logs", "日志", "file-text", "global", "secondary"),
             rail_item("settings", "设置", "settings", "settings", "secondary"),
         ],
         header_tabs: vec![
@@ -269,5 +284,20 @@ fn sub_nav(id: &str, label: &str, route_key: &str) -> SubNavItem {
         labels: None,
         route_key: route_key.to_string(),
         enabled: true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_profiles;
+
+    #[test]
+    fn opencode_default_profile_uses_config_skills_path() {
+        let profile = default_profiles()
+            .into_iter()
+            .find(|profile| profile.id == "opencode")
+            .expect("opencode profile");
+
+        assert_eq!(profile.target_paths, vec!["~/.config/opencode/skills"]);
     }
 }

@@ -86,7 +86,7 @@ fn scan_skill_assets(source: &Source) -> AppResult<Vec<Asset>> {
 
     let include_set = build_glob_set(&source.include_globs, &["**/SKILL.md"])?;
     let exclude_set = build_glob_set(&source.exclude_globs, &[])?;
-    let mut assets_by_id = HashMap::new();
+    let mut assets_by_name = HashMap::new();
     let mut seen_skill_dirs = HashSet::new();
     let now = Utc::now().to_rfc3339();
 
@@ -127,11 +127,11 @@ fn scan_skill_assets(source: &Source) -> AppResult<Vec<Asset>> {
                 AssetFormat::Directory,
                 &now,
             )?;
-            assets_by_id.insert(asset.id.clone(), asset);
+            insert_canonical_skill_asset(&mut assets_by_name, asset);
         }
     }
 
-    let mut assets: Vec<_> = assets_by_id.into_values().collect();
+    let mut assets: Vec<_> = assets_by_name.into_values().collect();
     assets.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(assets)
 }
@@ -361,6 +361,33 @@ fn detect_format(path: &Path) -> AssetFormat {
     }
 }
 
+fn insert_canonical_skill_asset(assets_by_name: &mut HashMap<String, Asset>, asset: Asset) {
+    match assets_by_name.get(&asset.name) {
+        Some(existing) if skill_asset_rank(existing) <= skill_asset_rank(&asset) => {}
+        _ => {
+            assets_by_name.insert(asset.name.clone(), asset);
+        }
+    }
+}
+
+fn skill_asset_rank(asset: &Asset) -> (usize, usize, String) {
+    let parts: Vec<_> = asset.relative_path.split('/').collect();
+    (
+        locale_rank(&parts),
+        parts.len(),
+        asset.relative_path.clone(),
+    )
+}
+
+fn locale_rank(parts: &[&str]) -> usize {
+    for locale in ["zh-cn", "en-us"] {
+        if parts.iter().any(|part| part.eq_ignore_ascii_case(locale)) {
+            return if locale == "zh-cn" { 0 } else { 1 };
+        }
+    }
+    2
+}
+
 fn extract_description(path: &Path) -> Option<String> {
     let text = fs::read_to_string(path).ok()?;
     for line in text.lines().map(str::trim) {
@@ -465,6 +492,43 @@ mod tests {
         fs::remove_dir_all(&root).ok();
         let asset_names: Vec<_> = assets.iter().map(|asset| asset.name.as_str()).collect();
         assert_eq!(asset_names, vec!["codex-token-usage", "kitchen"]);
+    }
+
+    #[test]
+    fn scan_skill_source_keeps_canonical_locale_for_duplicate_skill_names() {
+        let root = unique_temp_dir("assetiweave-scan-canonical-skill");
+        fs::create_dir_all(root.join("zh-cn").join("learn-project"))
+            .expect("create zh skill");
+        fs::create_dir_all(root.join("en-us").join("learn-project"))
+            .expect("create en skill");
+        fs::create_dir_all(root.join("en-us").join("office-utils").join("learn-project"))
+            .expect("create nested en skill");
+        fs::write(
+            root.join("zh-cn").join("learn-project").join("SKILL.md"),
+            "description: zh",
+        )
+        .expect("write zh skill");
+        fs::write(
+            root.join("en-us").join("learn-project").join("SKILL.md"),
+            "description: en",
+        )
+        .expect("write en skill");
+        fs::write(
+            root.join("en-us")
+                .join("office-utils")
+                .join("learn-project")
+                .join("SKILL.md"),
+            "description: nested en",
+        )
+        .expect("write nested en skill");
+
+        let assets = scan_skill_source(&test_source(&root)).expect("scan skills");
+
+        fs::remove_dir_all(&root).ok();
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].name, "learn-project");
+        assert_eq!(assets[0].relative_path, "zh-cn/learn-project");
+        assert_eq!(assets[0].description.as_deref(), Some("zh"));
     }
 
     fn test_source(root: &Path) -> Source {

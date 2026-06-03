@@ -43,7 +43,7 @@ pub(crate) fn inspect_mount(profile: &TargetProfile, asset: &Asset) -> AppResult
         .cloned()
         .unwrap_or_else(|| target_dir_path.to_string_lossy().to_string());
 
-    let source_path = expand_path(&asset.absolute_path)?;
+    let source_path = canonical_source_path(asset)?;
     let metadata = match fs::symlink_metadata(&target_path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == ErrorKind::NotFound => {
@@ -113,4 +113,10 @@ fn same_path(left: &Path, right: &Path) -> bool {
 
 fn normalize_path(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+pub(crate) fn canonical_source_path(asset: &Asset) -> AppResult<PathBuf> {
+    expand_path(&asset.absolute_path)?
+        .canonicalize()
+        .map_err(|error| error.to_string())
 }

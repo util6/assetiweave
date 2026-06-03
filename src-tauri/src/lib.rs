@@ -1,10 +1,13 @@
 mod commands;
 mod defaults;
+mod engine;
 mod executor;
+mod logs;
 mod path_utils;
 mod planner;
 mod platform;
 mod scanner;
+mod service;
 mod store;
 mod targeting;
 mod types;
@@ -12,16 +15,17 @@ mod types;
 use crate::{
     commands::{
         adopt_app_local_skill, apply_skill_group_exclusive_mount, apply_skill_group_mount,
-        create_plan, create_profile, create_skill_group, create_source, delete_profile,
-        delete_skill_group, delete_source, execute_plan, get_app_overview, get_navigation_model,
-        list_app_shortcut_settings,
-        list_app_shortcuts, list_asset_mount_statuses, list_asset_mounts, list_assets,
-        list_profiles, list_skill_groups, list_skill_sources, list_sources, mount_asset_mount,
+        create_plan, create_profile, create_skill_group, create_source, delete_asset,
+        delete_profile, delete_skill_group, delete_source, execute_plan, get_app_overview,
+        get_navigation_model, list_app_shortcut_settings, list_app_shortcuts,
+        list_asset_mount_statuses, list_asset_mounts, list_assets, list_profiles,
+        list_skill_groups, list_skill_sources, list_sources, mount_asset_mount,
         preview_skill_group_exclusive_mount, refresh_asset_mount_statuses, reveal_path,
         scan_skill_sources, scan_sources, set_asset_mount, set_skill_group_manual_members,
-        toggle_asset_mount, unmount_asset_mount, update_app_shortcuts, update_navigation_model,
-        update_profile, update_skill_group, update_source,
+        toggle_asset_mount, unmount_asset_mount, update_app_shortcuts, update_asset_description,
+        update_navigation_model, update_profile, update_skill_group, update_source,
     },
+    logs::{logs_get_snapshot, logs_open_log_directory, logs_write_operation},
     path_utils::app_db_path,
     store::open_initialized,
     types::AppState,
@@ -39,6 +43,9 @@ pub fn run() {
         if let Err(error) = commands::sync_asset_mount_observations(&conn, None) {
             eprintln!("failed to sync AssetIWeave mount observations on startup: {error}");
         }
+    }
+    if let Err(error) = logs::write_startup_log() {
+        eprintln!("failed to write AssetIWeave startup log: {error}");
     }
     let shutdown_db_path = db_path.clone();
 
@@ -71,6 +78,8 @@ pub fn run() {
             create_source,
             update_source,
             delete_source,
+            update_asset_description,
+            delete_asset,
             list_profiles,
             create_profile,
             update_profile,
@@ -100,8 +109,18 @@ pub fn run() {
             adopt_app_local_skill,
             create_plan,
             execute_plan,
+            logs_get_snapshot,
+            logs_open_log_directory,
+            logs_write_operation,
             reveal_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running AssetIWeave");
+}
+
+pub fn run_engine_stdio() {
+    if let Err(error) = engine::run_stdio() {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
 }

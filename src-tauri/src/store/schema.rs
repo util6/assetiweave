@@ -167,7 +167,7 @@ fn normalize_default_profiles(conn: &Connection) -> AppResult<()> {
         else {
             continue;
         };
-        if profile.target_paths == legacy_profile_target_paths(&profile.id) {
+        if legacy_profile_target_paths(&profile.id).contains(&profile.target_paths) {
             profile.target_paths = default_profile.target_paths.clone();
             upsert_profile(conn, &profile)?;
         }
@@ -175,7 +175,7 @@ fn normalize_default_profiles(conn: &Connection) -> AppResult<()> {
     Ok(())
 }
 
-fn legacy_profile_target_paths(profile_id: &str) -> Vec<String> {
+fn legacy_profile_target_paths(profile_id: &str) -> Vec<Vec<String>> {
     let legacy_path = match profile_id {
         "codex" => "~/.codex/assetiweave",
         "claude" => "~/.claude/assetiweave",
@@ -187,7 +187,11 @@ fn legacy_profile_target_paths(profile_id: &str) -> Vec<String> {
         "custom" => "~/assetiweave-target",
         _ => return Vec::new(),
     };
-    vec![legacy_path.to_string()]
+    let mut paths = vec![vec![legacy_path.to_string()]];
+    if profile_id == "opencode" {
+        paths.push(vec!["~/.opencode/skills".to_string()]);
+    }
+    paths
 }
 
 pub(crate) fn latest_scan_status(conn: &Connection) -> AppResult<String> {

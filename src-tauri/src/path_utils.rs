@@ -80,7 +80,10 @@ pub(crate) fn detect_app_target(path: &Path) -> Option<AppKind> {
     let candidates = [
         (home.join(".codex").join("skills"), AppKind::Codex),
         (home.join(".claude").join("skills"), AppKind::Claude),
-        (home.join(".opencode").join("skills"), AppKind::OpenCode),
+        (
+            home.join(".config").join("opencode").join("skills"),
+            AppKind::OpenCode,
+        ),
         (home.join(".gemini").join("skills"), AppKind::Gemini),
         (
             home.join(".antigravity").join("skills"),

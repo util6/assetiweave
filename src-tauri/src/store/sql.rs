@@ -491,6 +491,12 @@ pub(crate) const COUNT_DEPLOYMENT_STATE_BY_PROFILE: &str =
 
 pub(crate) const DELETE_ASSETS_BY_SOURCE: &str = "DELETE FROM assets WHERE source_id = ?1";
 
+pub(crate) const UPDATE_ASSET_DESCRIPTION: &str = r#"
+UPDATE assets
+SET description = ?1, updated_at = ?2
+WHERE id = ?3
+"#;
+
 pub(crate) const INSERT_ASSET: &str = r#"
 INSERT INTO assets (
     id, source_id, name, kind, format, relative_path, absolute_path,

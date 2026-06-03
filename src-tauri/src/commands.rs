@@ -1,7 +1,9 @@
 use crate::{
-    executor,
+    defaults, executor, logs,
     path_utils::{app_library_skill_root, expand_path},
-    planner, platform, scanner, store, targeting,
+    planner, platform, scanner,
+    service::{AppService, ListAssetsParams, SourceRemoveParams, SourceScanParams},
+    store, targeting,
     types::{
         AppOverview, AppResult, AppShortcut, AppState, ApplyAssetGroupMountResult,
         ApplySkillGroupExclusiveMountResult, AssetGroupInput, AssetGroupMountError,
@@ -14,8 +16,8 @@ use crate::{
 };
 use assetiweave_core::{
     AppKind, Asset, AssetGroup, AssetGroupDetail, AssetGroupRules, AssetKind, AssetMount,
-    DeploymentPlan, DeploymentState, DeploymentStrategy, ProfileSafety, RuleSet, Source, SourceKind,
-    SourceOrigin, SourceScannerKind, TargetProfile,
+    DeploymentPlan, DeploymentState, DeploymentStrategy, ProfileSafety, RuleSet, Source,
+    SourceKind, SourceOrigin, SourceScannerKind, TargetProfile,
 };
 use chrono::Utc;
 use std::{
@@ -27,16 +29,145 @@ use tauri::State;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
+type LogField = (&'static str, String);
+
+fn log_info(operation: &str, message: &str, fields: &[LogField]) {
+    logs::record_info(operation, message, fields);
+}
+
+fn log_warn(operation: &str, message: &str, fields: &[LogField]) {
+    logs::record_warn(operation, message, fields);
+}
+
+fn log_error<E: std::fmt::Display + ?Sized>(
+    operation: &str,
+    message: &str,
+    error: &E,
+    fields: &[LogField],
+) {
+    let mut fields = fields.to_vec();
+    fields.push(("error", error.to_string()));
+    logs::record_error(operation, message, &fields);
+}
+
+fn source_input_log_fields(source: &SourceInput) -> Vec<LogField> {
+    let mut fields = vec![
+        ("name", source.name.clone()),
+        ("root_path", source.root_path.clone()),
+        ("kind", format!("{:?}", source.kind)),
+        (
+            "scanner_kind",
+            source
+                .scanner_kind
+                .map(|kind| format!("{kind:?}"))
+                .unwrap_or_else(|| "Mixed".to_string()),
+        ),
+        (
+            "source_origin",
+            source
+                .source_origin
+                .map(|origin| format!("{origin:?}"))
+                .unwrap_or_else(|| "LocalFolder".to_string()),
+        ),
+        ("enabled", source.enabled.to_string()),
+        ("priority", source.priority.to_string()),
+    ];
+    if let Some(id) = &source.id {
+        fields.push(("source_id", id.clone()));
+    }
+    if let Some(origin_app_kind) = source.origin_app_kind {
+        fields.push(("origin_app_kind", format!("{origin_app_kind:?}")));
+    }
+    fields
+}
+
+fn source_log_fields(source: &Source) -> Vec<LogField> {
+    let mut fields = vec![
+        ("source_id", source.id.clone()),
+        ("name", source.name.clone()),
+        ("root_path", source.root_path.clone()),
+        ("scanner_kind", format!("{:?}", source.scanner_kind)),
+        ("source_origin", format!("{:?}", source.source_origin)),
+        ("enabled", source.enabled.to_string()),
+        ("priority", source.priority.to_string()),
+    ];
+    if let Some(origin_app_kind) = source.origin_app_kind {
+        fields.push(("origin_app_kind", format!("{origin_app_kind:?}")));
+    }
+    if let Some(status) = &source.last_scan_status {
+        fields.push(("last_scan_status", status.clone()));
+    }
+    fields
+}
+
+fn asset_log_fields(asset: &Asset) -> Vec<LogField> {
+    vec![
+        ("asset_id", asset.id.clone()),
+        ("skill_name", asset.name.clone()),
+        ("source_id", asset.source_id.clone()),
+        ("asset_kind", format!("{:?}", asset.kind)),
+        ("relative_path", asset.relative_path.clone()),
+        ("absolute_path", asset.absolute_path.clone()),
+    ]
+}
+
+fn profile_log_fields(profile: &TargetProfile) -> Vec<LogField> {
+    vec![
+        ("profile_id", profile.id.clone()),
+        ("profile_name", profile.name.clone()),
+        ("app_kind", format!("{:?}", profile.app_kind)),
+        ("enabled", profile.enabled.to_string()),
+        (
+            "deployment_strategy",
+            format!("{:?}", profile.deployment_strategy),
+        ),
+        ("target_paths", profile.target_paths.join(",")),
+    ]
+}
+
+fn mount_log_fields(
+    conn: &rusqlite::Connection,
+    asset_id: &str,
+    profile_id: &str,
+) -> Vec<LogField> {
+    if let Ok((asset, profile)) = load_mount_asset_and_profile(conn, asset_id, profile_id) {
+        let mut fields = asset_log_fields(&asset);
+        fields.extend(profile_log_fields(&profile));
+        return fields;
+    }
+
+    vec![
+        ("asset_id", asset_id.to_string()),
+        ("profile_id", profile_id.to_string()),
+    ]
+}
+
+fn status_summary_fields(statuses: &[AssetMountStatus]) -> Vec<LogField> {
+    let mounted = statuses
+        .iter()
+        .filter(|status| status.state == PhysicalMountStateDto::Mounted)
+        .count();
+    let issues = statuses
+        .iter()
+        .filter(|status| {
+            matches!(
+                status.state,
+                PhysicalMountStateDto::Conflict | PhysicalMountStateDto::Broken
+            )
+        })
+        .count();
+
+    vec![
+        ("count", statuses.len().to_string()),
+        ("mounted", mounted.to_string()),
+        ("issues", issues.to_string()),
+    ]
+}
+
 #[tauri::command]
 pub(crate) fn get_app_overview(state: State<'_, AppState>) -> AppResult<AppOverview> {
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    Ok(AppOverview {
-        source_count: store::count_rows(&conn, "sources")?,
-        asset_count: store::count_rows(&conn, "assets")?,
-        profile_count: store::count_rows(&conn, "profiles")?,
-        last_scan_status: store::latest_scan_status(&conn)?,
-    })
+    AppService::open_with_db_path(state.db_path.clone())?.overview()
 }
 
 #[tauri::command]
@@ -45,15 +176,62 @@ pub(crate) fn list_assets(
     kind: Option<AssetKind>,
 ) -> AppResult<Vec<Asset>> {
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    store::load_assets_by_kind(&conn, kind)
+    AppService::open_with_db_path(state.db_path.clone())?.list_assets(ListAssetsParams { kind })
+}
+
+#[tauri::command]
+pub(crate) fn update_asset_description(
+    state: State<'_, AppState>,
+    asset_id: String,
+    description: Option<String>,
+) -> AppResult<Asset> {
+    let fields = vec![("asset_id", asset_id.clone())];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?
+            .update_asset_description(asset_id, description)
+    })();
+
+    match &result {
+        Ok(asset) => log_info(
+            "asset.update_description",
+            "更新资产说明成功",
+            &asset_log_fields(asset),
+        ),
+        Err(error) => log_error(
+            "asset.update_description",
+            "更新资产说明失败",
+            error,
+            &fields,
+        ),
+    }
+    result
+}
+
+#[tauri::command]
+pub(crate) fn delete_asset(
+    state: State<'_, AppState>,
+    asset_id: String,
+    unmount: Option<bool>,
+) -> AppResult<Asset> {
+    let fields = vec![("asset_id", asset_id.clone())];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?
+            .delete_asset(asset_id, unmount.unwrap_or(false))
+    })();
+
+    match &result {
+        Ok(asset) => log_info("asset.delete", "删除资产成功", &asset_log_fields(asset)),
+        Err(error) => log_error("asset.delete", "删除资产失败", error, &fields),
+    }
+    result
 }
 
 #[tauri::command]
 pub(crate) fn list_sources(state: State<'_, AppState>) -> AppResult<Vec<Source>> {
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    store::load_sources(&conn)
+    AppService::open_with_db_path(state.db_path.clone())?.list_sources()
 }
 
 #[tauri::command]
@@ -65,53 +243,67 @@ pub(crate) fn list_skill_sources(state: State<'_, AppState>) -> AppResult<Vec<So
 
 #[tauri::command]
 pub(crate) fn create_source(state: State<'_, AppState>, source: SourceInput) -> AppResult<Source> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    let source = Source {
-        id: source.id.unwrap_or_else(|| Uuid::new_v4().to_string()),
-        name: source.name,
-        kind: source.kind,
-        root_path: source.root_path,
-        scanner_kind: source.scanner_kind.unwrap_or(SourceScannerKind::Mixed),
-        source_origin: source.source_origin.unwrap_or(SourceOrigin::LocalFolder),
-        repo_root: source.repo_root,
-        scan_root: source.scan_root.unwrap_or_default(),
-        origin_app_kind: source.origin_app_kind,
-        include_globs: source.include_globs,
-        exclude_globs: source.exclude_globs,
-        default_kind: source.default_kind,
-        enabled: source.enabled,
-        priority: source.priority,
-        last_scanned_at: None,
-        last_scan_status: Some("pending".to_string()),
-    };
-    let source = store::normalize_source(&source);
-    store::upsert_source(&conn, &source)?;
-    Ok(source)
+    let input_fields = source_input_log_fields(&source);
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.add_source(source)
+    })();
+
+    match &result {
+        Ok(source) => log_info(
+            "source.create",
+            "添加数据来源成功",
+            &source_log_fields(source),
+        ),
+        Err(error) => log_error("source.create", "添加数据来源失败", error, &input_fields),
+    }
+    result
 }
 
 #[tauri::command]
 pub(crate) fn update_source(state: State<'_, AppState>, source: Source) -> AppResult<Source> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    let source = store::normalize_source(&source);
-    store::upsert_source(&conn, &source)?;
-    Ok(source)
+    let input_fields = source_log_fields(&source);
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.update_source(source)
+    })();
+
+    match &result {
+        Ok(source) => log_info(
+            "source.update",
+            "更新数据来源成功",
+            &source_log_fields(source),
+        ),
+        Err(error) => log_error("source.update", "更新数据来源失败", error, &input_fields),
+    }
+    result
 }
 
 #[tauri::command]
 pub(crate) fn delete_source(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    store::delete_source(&conn, &id)?;
-    cleanup_orphan_asset_records(&conn)
+    let fields = vec![("source_id", id.clone())];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?
+            .remove_source(SourceRemoveParams {
+                id: id.clone(),
+                dry_run: false,
+                yes: true,
+            })
+            .map(|_| ())
+    })();
+
+    match &result {
+        Ok(()) => log_info("source.delete", "删除数据来源成功", &fields),
+        Err(error) => log_error("source.delete", "删除数据来源失败", error, &fields),
+    }
+    result
 }
 
 #[tauri::command]
 pub(crate) fn list_profiles(state: State<'_, AppState>) -> AppResult<Vec<TargetProfile>> {
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    store::load_profiles(&conn)
+    AppService::open_with_db_path(state.db_path.clone())?.list_profiles()
 }
 
 #[tauri::command]
@@ -119,15 +311,39 @@ pub(crate) fn create_profile(
     state: State<'_, AppState>,
     input: TargetProfileInput,
 ) -> AppResult<TargetProfile> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    let profiles = store::load_profiles(&conn)?;
-    let profile = target_profile_from_input(input)?;
-    if profiles.iter().any(|candidate| candidate.id == profile.id) {
-        return Err(format!("profile already exists: {}", profile.id));
+    let mut input_fields = vec![("profile_name", input.name.clone())];
+    if let Some(target_paths) = &input.target_paths {
+        input_fields.push(("target_paths", target_paths.join(",")));
     }
-    store::upsert_profile(&conn, &profile)?;
-    Ok(profile)
+    if let Some(app_kind) = input.app_kind {
+        input_fields.push(("app_kind", format!("{app_kind:?}")));
+    }
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        let profiles = store::load_profiles(&conn)?;
+        let profile = target_profile_from_input(input)?;
+        if profiles.iter().any(|candidate| candidate.id == profile.id) {
+            return Err(format!("profile already exists: {}", profile.id));
+        }
+        store::upsert_profile(&conn, &profile)?;
+        Ok(profile)
+    })();
+
+    match &result {
+        Ok(profile) => log_info(
+            "profile.create",
+            "添加目标 APP 配置成功",
+            &profile_log_fields(profile),
+        ),
+        Err(error) => log_error(
+            "profile.create",
+            "添加目标 APP 配置失败",
+            error,
+            &input_fields,
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -135,30 +351,58 @@ pub(crate) fn update_profile(
     state: State<'_, AppState>,
     profile: TargetProfile,
 ) -> AppResult<TargetProfile> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    validate_target_profile(&profile)?;
-    if !store::load_profiles(&conn)?
-        .iter()
-        .any(|candidate| candidate.id == profile.id)
-    {
-        return Err(format!("profile not found: {}", profile.id));
+    let input_fields = profile_log_fields(&profile);
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        validate_target_profile(&profile)?;
+        let existing_profile = store::load_profiles(&conn)?
+            .into_iter()
+            .find(|candidate| candidate.id == profile.id);
+        let Some(existing_profile) = existing_profile else {
+            return Err(format!("profile not found: {}", profile.id));
+        };
+        ensure_default_profile_update_is_allowed(&existing_profile, &profile)?;
+        store::upsert_profile(&conn, &profile)?;
+        Ok(profile)
+    })();
+
+    match &result {
+        Ok(profile) => log_info(
+            "profile.update",
+            "更新目标 APP 配置成功",
+            &profile_log_fields(profile),
+        ),
+        Err(error) => log_error(
+            "profile.update",
+            "更新目标 APP 配置失败",
+            error,
+            &input_fields,
+        ),
     }
-    store::upsert_profile(&conn, &profile)?;
-    Ok(profile)
+    result
 }
 
 #[tauri::command]
 pub(crate) fn delete_profile(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    let profiles = store::load_profiles(&conn)?;
-    if !profiles.iter().any(|profile| profile.id == id) {
-        return Err(format!("profile not found: {id}"));
-    }
+    let fields = vec![("profile_id", id.clone())];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        let profiles = store::load_profiles(&conn)?;
+        if !profiles.iter().any(|profile| profile.id == id) {
+            return Err(format!("profile not found: {id}"));
+        }
 
-    ensure_profile_can_be_deleted(&conn, &id)?;
-    store::delete_profile(&conn, &id)
+        ensure_profile_can_be_deleted(&conn, &id)?;
+        store::delete_profile(&conn, &id)
+    })();
+
+    match &result {
+        Ok(()) => log_info("profile.delete", "删除目标 APP 配置成功", &fields),
+        Err(error) => log_error("profile.delete", "删除目标 APP 配置失败", error, &fields),
+    }
+    result
 }
 
 #[tauri::command]
@@ -173,10 +417,24 @@ pub(crate) fn update_navigation_model(
     state: State<'_, AppState>,
     model: NavigationModel,
 ) -> AppResult<NavigationModel> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    store::save_navigation_model(&conn, &model)?;
-    store::load_navigation_model(&conn)
+    let fields = vec![
+        ("active_rail_id", model.active_rail_id.clone()),
+        ("active_header_tab_id", model.active_header_tab_id.clone()),
+        ("active_sub_nav_id", model.active_sub_nav_id.clone()),
+        ("rail_count", model.rail_items.len().to_string()),
+    ];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        store::save_navigation_model(&conn, &model)?;
+        store::load_navigation_model(&conn)
+    })();
+
+    match &result {
+        Ok(_) => log_info("navigation.update", "更新导航配置成功", &fields),
+        Err(error) => log_error("navigation.update", "更新导航配置失败", error, &fields),
+    }
+    result
 }
 
 #[tauri::command]
@@ -200,10 +458,28 @@ pub(crate) fn update_app_shortcuts(
     state: State<'_, AppState>,
     shortcuts: Vec<AppShortcut>,
 ) -> AppResult<Vec<AppShortcut>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    store::save_app_shortcuts(&conn, &shortcuts)?;
-    store::load_app_shortcut_settings(&conn)
+    let fields = vec![("shortcut_count", shortcuts.len().to_string())];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        store::save_app_shortcuts(&conn, &shortcuts)?;
+        store::load_app_shortcut_settings(&conn)
+    })();
+
+    match &result {
+        Ok(shortcuts) => log_info(
+            "settings.app_shortcuts.update",
+            "更新 APP 快捷入口配置成功",
+            &[("shortcut_count", shortcuts.len().to_string())],
+        ),
+        Err(error) => log_error(
+            "settings.app_shortcuts.update",
+            "更新 APP 快捷入口配置失败",
+            error,
+            &fields,
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -231,18 +507,31 @@ pub(crate) fn refresh_asset_mount_statuses(
     state: State<'_, AppState>,
     asset_id: Option<String>,
 ) -> AppResult<Vec<AssetMountStatus>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    sync_asset_mount_observations(&conn, asset_id.as_deref())
+    let fields = asset_id
+        .as_ref()
+        .map(|asset_id| vec![("asset_id", asset_id.clone())])
+        .unwrap_or_default();
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        sync_asset_mount_observations(&conn, asset_id.as_deref())
+    })();
+
+    match &result {
+        Ok(statuses) => {
+            let mut fields = fields.clone();
+            fields.extend(status_summary_fields(statuses));
+            log_info("mount_status.refresh", "刷新挂载状态成功", &fields);
+        }
+        Err(error) => log_error("mount_status.refresh", "刷新挂载状态失败", error, &fields),
+    }
+    result
 }
 
 #[tauri::command]
 pub(crate) fn list_skill_groups(state: State<'_, AppState>) -> AppResult<Vec<AssetGroupDetail>> {
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    cleanup_orphan_asset_records(&conn)?;
-    let assets = store::load_assets_by_kind(&conn, Some(AssetKind::Skill))?;
-    store::load_skill_group_details(&conn, &assets)
+    AppService::open_with_db_path(state.db_path.clone())?.list_skill_groups()
 }
 
 #[tauri::command]
@@ -250,13 +539,35 @@ pub(crate) fn create_skill_group(
     state: State<'_, AppState>,
     input: AssetGroupInput,
 ) -> AppResult<AssetGroupDetail> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    let assets = store::load_assets_by_kind(&conn, Some(AssetKind::Skill))?;
-    let now = Utc::now().to_rfc3339();
-    let group = asset_group_from_input(input, now.clone(), now);
-    store::upsert_asset_group(&conn, &group)?;
-    store::load_skill_group_detail(&conn, &group.id, &assets)
+    let input_fields = vec![("group_name", input.name.clone())];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        let assets = store::load_assets_by_kind(&conn, Some(AssetKind::Skill))?;
+        let now = Utc::now().to_rfc3339();
+        let group = asset_group_from_input(input, now.clone(), now);
+        store::upsert_asset_group(&conn, &group)?;
+        store::load_skill_group_detail(&conn, &group.id, &assets)
+    })();
+
+    match &result {
+        Ok(detail) => log_info(
+            "skill_group.create",
+            "添加 skill 分组成功",
+            &[
+                ("group_id", detail.group.id.clone()),
+                ("group_name", detail.group.name.clone()),
+                ("member_count", detail.members.len().to_string()),
+            ],
+        ),
+        Err(error) => log_error(
+            "skill_group.create",
+            "添加 skill 分组失败",
+            error,
+            &input_fields,
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -264,20 +575,53 @@ pub(crate) fn update_skill_group(
     state: State<'_, AppState>,
     group: AssetGroup,
 ) -> AppResult<AssetGroupDetail> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    let assets = store::load_assets_by_kind(&conn, Some(AssetKind::Skill))?;
-    let mut group = group;
-    group.updated_at = Utc::now().to_rfc3339();
-    store::upsert_asset_group(&conn, &group)?;
-    store::load_skill_group_detail(&conn, &group.id, &assets)
+    let input_fields = vec![
+        ("group_id", group.id.clone()),
+        ("group_name", group.name.clone()),
+    ];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        let assets = store::load_assets_by_kind(&conn, Some(AssetKind::Skill))?;
+        let mut group = group;
+        group.updated_at = Utc::now().to_rfc3339();
+        store::upsert_asset_group(&conn, &group)?;
+        store::load_skill_group_detail(&conn, &group.id, &assets)
+    })();
+
+    match &result {
+        Ok(detail) => log_info(
+            "skill_group.update",
+            "更新 skill 分组成功",
+            &[
+                ("group_id", detail.group.id.clone()),
+                ("group_name", detail.group.name.clone()),
+                ("member_count", detail.members.len().to_string()),
+            ],
+        ),
+        Err(error) => log_error(
+            "skill_group.update",
+            "更新 skill 分组失败",
+            error,
+            &input_fields,
+        ),
+    }
+    result
 }
 
 #[tauri::command]
 pub(crate) fn delete_skill_group(state: State<'_, AppState>, group_id: String) -> AppResult<()> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    store::delete_asset_group(&conn, &group_id)
+    let fields = vec![("group_id", group_id.clone())];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.delete_skill_group(group_id)
+    })();
+
+    match &result {
+        Ok(()) => log_info("skill_group.delete", "删除 skill 分组成功", &fields),
+        Err(error) => log_error("skill_group.delete", "删除 skill 分组失败", error, &fields),
+    }
+    result
 }
 
 #[tauri::command]
@@ -286,11 +630,36 @@ pub(crate) fn set_skill_group_manual_members(
     group_id: String,
     asset_ids: Vec<String>,
 ) -> AppResult<AssetGroupDetail> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    let assets = store::load_assets_by_kind(&conn, Some(AssetKind::Skill))?;
-    store::replace_asset_group_members(&conn, &group_id, &asset_ids, &assets)?;
-    store::load_skill_group_detail(&conn, &group_id, &assets)
+    let fields = vec![
+        ("group_id", group_id.clone()),
+        ("asset_count", asset_ids.len().to_string()),
+    ];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        let assets = store::load_assets_by_kind(&conn, Some(AssetKind::Skill))?;
+        store::replace_asset_group_members(&conn, &group_id, &asset_ids, &assets)?;
+        store::load_skill_group_detail(&conn, &group_id, &assets)
+    })();
+
+    match &result {
+        Ok(detail) => log_info(
+            "skill_group.members.update",
+            "更新 skill 分组成员成功",
+            &[
+                ("group_id", detail.group.id.clone()),
+                ("group_name", detail.group.name.clone()),
+                ("member_count", detail.members.len().to_string()),
+            ],
+        ),
+        Err(error) => log_error(
+            "skill_group.members.update",
+            "更新 skill 分组成员失败",
+            error,
+            &fields,
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -300,12 +669,65 @@ pub(crate) fn apply_skill_group_mount(
     profile_id: String,
     enabled: bool,
 ) -> AppResult<ApplyAssetGroupMountResult> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    apply_skill_group_mount_record(&conn, &group_id, &profile_id, enabled)
+    let fields = vec![
+        ("group_id", group_id.clone()),
+        ("profile_id", profile_id.clone()),
+        ("enabled", enabled.to_string()),
+    ];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.apply_skill_group_mount(
+            &group_id,
+            &profile_id,
+            enabled,
+        )
+    })();
+
+    match &result {
+        Ok(result) => {
+            let mut fields = fields.clone();
+            fields.extend([
+                ("requested_count", result.requested_count.to_string()),
+                ("updated_count", result.updated_count.to_string()),
+                ("error_count", result.error_count.to_string()),
+            ]);
+            let level_message = if result.error_count > 0 {
+                (
+                    "skill_group.mount.apply",
+                    "应用 skill 分组挂载完成但存在失败",
+                )
+            } else {
+                ("skill_group.mount.apply", "应用 skill 分组挂载成功")
+            };
+            if result.error_count > 0 {
+                log_warn(level_message.0, level_message.1, &fields);
+            } else {
+                log_info(level_message.0, level_message.1, &fields);
+            }
+            for item in &result.errors {
+                log_error(
+                    "skill_group.mount.error",
+                    "skill 分组挂载成员失败",
+                    &item.message,
+                    &[
+                        ("group_id", result.group_id.clone()),
+                        ("profile_id", result.profile_id.clone()),
+                        ("asset_id", item.asset_id.clone()),
+                    ],
+                );
+            }
+        }
+        Err(error) => log_error(
+            "skill_group.mount.apply",
+            "应用 skill 分组挂载失败",
+            error,
+            &fields,
+        ),
+    }
+    result
 }
 
-fn apply_skill_group_mount_record(
+pub(crate) fn apply_skill_group_mount_record(
     conn: &rusqlite::Connection,
     group_id: &str,
     profile_id: &str,
@@ -357,9 +779,55 @@ pub(crate) fn preview_skill_group_exclusive_mount(
     state: State<'_, AppState>,
     input: SkillGroupExclusiveMountInput,
 ) -> AppResult<SkillGroupExclusiveMountPreview> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    build_skill_group_exclusive_mount_preview(&conn, &input)
+    let fields = vec![
+        ("profile_id", input.profile_id.clone()),
+        ("group_count", input.group_ids.len().to_string()),
+    ];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        build_skill_group_exclusive_mount_preview(&conn, &input)
+    })();
+
+    match &result {
+        Ok(preview) => {
+            log_info(
+                "skill_group.exclusive.preview",
+                "预览 skill 分组独占挂载成功",
+                &[
+                    ("profile_id", preview.profile_id.clone()),
+                    ("group_count", preview.group_ids.len().to_string()),
+                    (
+                        "selected_count",
+                        preview.selected_skill_ids.len().to_string(),
+                    ),
+                    ("keep_count", preview.keep_count.to_string()),
+                    ("mount_count", preview.mount_count.to_string()),
+                    ("unmount_count", preview.unmount_count.to_string()),
+                    ("skipped_count", preview.skipped_count.to_string()),
+                ],
+            );
+            for item in &preview.skipped {
+                log_warn(
+                    "skill_group.exclusive.skipped",
+                    "skill 独占挂载预览跳过",
+                    &[
+                        ("profile_id", preview.profile_id.clone()),
+                        ("asset_id", item.asset_id.clone()),
+                        ("skill_name", item.name.clone()),
+                        ("reason", item.reason.clone()),
+                    ],
+                );
+            }
+        }
+        Err(error) => log_error(
+            "skill_group.exclusive.preview",
+            "预览 skill 分组独占挂载失败",
+            error,
+            &fields,
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -367,12 +835,76 @@ pub(crate) fn apply_skill_group_exclusive_mount(
     state: State<'_, AppState>,
     input: SkillGroupExclusiveMountInput,
 ) -> AppResult<ApplySkillGroupExclusiveMountResult> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    apply_skill_group_exclusive_mount_record(&conn, &input)
+    let fields = vec![
+        ("profile_id", input.profile_id.clone()),
+        ("group_count", input.group_ids.len().to_string()),
+    ];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        apply_skill_group_exclusive_mount_record(&conn, &input)
+    })();
+
+    match &result {
+        Ok(result) => {
+            let fields = vec![
+                ("profile_id", result.preview.profile_id.clone()),
+                ("group_count", result.preview.group_ids.len().to_string()),
+                ("keep_count", result.preview.keep_count.to_string()),
+                ("mount_count", result.preview.mount_count.to_string()),
+                ("unmount_count", result.preview.unmount_count.to_string()),
+                ("skipped_count", result.preview.skipped_count.to_string()),
+                ("error_count", result.errors.len().to_string()),
+            ];
+            if result.errors.is_empty() && result.preview.skipped_count == 0 {
+                log_info(
+                    "skill_group.exclusive.apply",
+                    "应用 skill 分组独占挂载成功",
+                    &fields,
+                );
+            } else {
+                log_warn(
+                    "skill_group.exclusive.apply",
+                    "应用 skill 分组独占挂载完成但存在跳过或失败",
+                    &fields,
+                );
+            }
+            for item in &result.preview.skipped {
+                log_warn(
+                    "skill_group.exclusive.skipped",
+                    "skill 独占挂载应用跳过",
+                    &[
+                        ("profile_id", result.preview.profile_id.clone()),
+                        ("asset_id", item.asset_id.clone()),
+                        ("skill_name", item.name.clone()),
+                        ("reason", item.reason.clone()),
+                    ],
+                );
+            }
+            for item in &result.errors {
+                log_error(
+                    "skill_group.exclusive.error",
+                    "skill 独占挂载应用失败",
+                    &item.message,
+                    &[
+                        ("profile_id", result.preview.profile_id.clone()),
+                        ("asset_id", item.asset_id.clone()),
+                        ("skill_name", item.name.clone()),
+                    ],
+                );
+            }
+        }
+        Err(error) => log_error(
+            "skill_group.exclusive.apply",
+            "应用 skill 分组独占挂载失败",
+            error,
+            &fields,
+        ),
+    }
+    result
 }
 
-fn apply_skill_group_exclusive_mount_record(
+pub(crate) fn apply_skill_group_exclusive_mount_record(
     conn: &rusqlite::Connection,
     input: &SkillGroupExclusiveMountInput,
 ) -> AppResult<ApplySkillGroupExclusiveMountResult> {
@@ -426,7 +958,7 @@ fn apply_skill_group_exclusive_mount_record(
     })
 }
 
-fn build_skill_group_exclusive_mount_preview(
+pub(crate) fn build_skill_group_exclusive_mount_preview(
     conn: &rusqlite::Connection,
     input: &SkillGroupExclusiveMountInput,
 ) -> AppResult<SkillGroupExclusiveMountPreview> {
@@ -679,12 +1211,13 @@ pub(crate) fn sync_asset_mount_observations(
     conn: &rusqlite::Connection,
     asset_id: Option<&str>,
 ) -> AppResult<Vec<AssetMountStatus>> {
+    repair_ghost_mount_symlinks(conn, asset_id)?;
     let statuses = scan_asset_mount_statuses(conn, asset_id)?;
     persist_asset_mount_observation_snapshot(conn, &statuses)?;
     Ok(statuses)
 }
 
-fn scan_asset_mount_statuses(
+pub(crate) fn scan_asset_mount_statuses(
     conn: &rusqlite::Connection,
     asset_id: Option<&str>,
 ) -> AppResult<Vec<AssetMountStatus>> {
@@ -805,7 +1338,7 @@ fn sync_asset_mount_snapshot_records(
     Ok(())
 }
 
-fn asset_group_from_input(
+pub(crate) fn asset_group_from_input(
     input: AssetGroupInput,
     created_at: String,
     updated_at: String,
@@ -834,17 +1367,29 @@ pub(crate) fn toggle_asset_mount(
     asset_id: String,
     profile_id: String,
 ) -> AppResult<AssetMount> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    let (asset, profile) = load_mount_asset_and_profile(&conn, &asset_id, &profile_id)?;
-    let inspection = targeting::inspect_mount(&profile, &asset)?;
-    set_asset_mount_record(
-        &conn,
-        &asset_id,
-        &profile_id,
-        !matches!(inspection.state, targeting::PhysicalMountState::Mounted),
-        None,
-    )
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        let (asset, profile) = load_mount_asset_and_profile(&conn, &asset_id, &profile_id)?;
+        let inspection = targeting::inspect_mount(&profile, &asset)?;
+        set_asset_mount_record(
+            &conn,
+            &asset_id,
+            &profile_id,
+            !matches!(inspection.state, targeting::PhysicalMountState::Mounted),
+            None,
+        )
+    })();
+
+    if let Err(error) = &result {
+        log_error(
+            "skill.mount.toggle",
+            "切换 skill 挂载失败",
+            error,
+            &[("asset_id", asset_id), ("profile_id", profile_id)],
+        );
+    }
+    result
 }
 
 #[tauri::command]
@@ -853,9 +1398,21 @@ pub(crate) fn unmount_asset_mount(
     asset_id: String,
     profile_id: String,
 ) -> AppResult<AssetMountUpdateResult> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    unmount_asset_mount_record(&conn, &asset_id, &profile_id)
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?
+            .unmount_asset_by_id(&asset_id, &profile_id)
+    })();
+
+    if let Err(error) = &result {
+        log_error(
+            "skill.unmount.command",
+            "卸载 skill 命令失败",
+            error,
+            &[("asset_id", asset_id), ("profile_id", profile_id)],
+        );
+    }
+    result
 }
 
 #[tauri::command]
@@ -864,9 +1421,21 @@ pub(crate) fn mount_asset_mount(
     asset_id: String,
     profile_id: String,
 ) -> AppResult<AssetMountUpdateResult> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    mount_asset_mount_record(&conn, &asset_id, &profile_id)
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?
+            .mount_asset_by_id(&asset_id, &profile_id)
+    })();
+
+    if let Err(error) = &result {
+        log_error(
+            "skill.mount.command",
+            "挂载 skill 命令失败",
+            error,
+            &[("asset_id", asset_id), ("profile_id", profile_id)],
+        );
+    }
+    result
 }
 
 #[tauri::command]
@@ -877,12 +1446,28 @@ pub(crate) fn set_asset_mount(
     enabled: bool,
     strategy: Option<DeploymentStrategy>,
 ) -> AppResult<AssetMount> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    set_asset_mount_record(&conn, &asset_id, &profile_id, enabled, strategy)
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        set_asset_mount_record(&conn, &asset_id, &profile_id, enabled, strategy)
+    })();
+
+    if let Err(error) = &result {
+        log_error(
+            "skill.mount.set",
+            "设置 skill 挂载关系失败",
+            error,
+            &[
+                ("asset_id", asset_id),
+                ("profile_id", profile_id),
+                ("enabled", enabled.to_string()),
+            ],
+        );
+    }
+    result
 }
 
-fn set_asset_mount_record(
+pub(crate) fn set_asset_mount_record(
     conn: &rusqlite::Connection,
     asset_id: &str,
     profile_id: &str,
@@ -900,13 +1485,27 @@ fn set_asset_mount_record(
         return unmount_asset_mount_record(conn, asset_id, profile_id).map(|result| result.mount);
     }
 
-    store::set_asset_mount(
+    let result = store::set_asset_mount(
         conn,
         asset_id,
         profile_id,
         enabled,
         strategy.unwrap_or(default_strategy),
-    )
+    );
+    match &result {
+        Ok(_) => {
+            let mut fields = mount_log_fields(conn, asset_id, profile_id);
+            fields.push(("enabled", enabled.to_string()));
+            log_info("skill.mount.preference", "更新 skill 挂载关系成功", &fields);
+        }
+        Err(error) => log_error(
+            "skill.mount.preference",
+            "更新 skill 挂载关系失败",
+            error,
+            &mount_log_fields(conn, asset_id, profile_id),
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -914,19 +1513,47 @@ pub(crate) fn scan_sources(
     state: State<'_, AppState>,
     kind: Option<AssetKind>,
 ) -> AppResult<Vec<Asset>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    refresh_all_sources(&conn)?;
-    store::load_assets_by_kind(&conn, kind)
+    let fields = kind
+        .map(|kind| vec![("asset_kind", format!("{kind:?}"))])
+        .unwrap_or_default();
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.scan_sources(SourceScanParams {
+            kind,
+            dry_run: false,
+        })
+    })();
+
+    match &result {
+        Ok(assets) => {
+            let mut fields = fields.clone();
+            fields.push(("asset_count", assets.len().to_string()));
+            log_info("source.scan.all", "扫描全部来源成功", &fields);
+        }
+        Err(error) => log_error("source.scan.all", "扫描全部来源失败", error, &fields),
+    }
+    result
 }
 
 #[tauri::command]
 pub(crate) fn scan_skill_sources(state: State<'_, AppState>) -> AppResult<Vec<Asset>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    let sources = store::load_skill_sources(&conn)?;
-    scan_selected_sources(&conn, sources, scanner::scan_skill_source)?;
-    store::load_assets_by_kind(&conn, Some(AssetKind::Skill))
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        let sources = store::load_skill_sources(&conn)?;
+        scan_selected_sources(&conn, sources, scanner::scan_skill_source)?;
+        store::load_assets_by_kind(&conn, Some(AssetKind::Skill))
+    })();
+
+    match &result {
+        Ok(assets) => log_info(
+            "source.scan.skills",
+            "扫描 skill 来源成功",
+            &[("skill_count", assets.len().to_string())],
+        ),
+        Err(error) => log_error("source.scan.skills", "扫描 skill 来源失败", error, &[]),
+    }
+    result
 }
 
 #[tauri::command]
@@ -934,62 +1561,90 @@ pub(crate) fn adopt_app_local_skill(
     state: State<'_, AppState>,
     asset_id: String,
 ) -> AppResult<Asset> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    let assets = store::load_assets(&conn)?;
-    let asset = assets
-        .iter()
-        .find(|candidate| candidate.id == asset_id)
-        .ok_or_else(|| format!("asset not found: {asset_id}"))?;
-    if !matches!(asset.kind, AssetKind::Skill) {
-        return Err("only skill assets can be adopted".to_string());
-    }
+    let fields = vec![("asset_id", asset_id.clone())];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        let assets = store::load_assets(&conn)?;
+        let asset = assets
+            .iter()
+            .find(|candidate| candidate.id == asset_id)
+            .ok_or_else(|| format!("asset not found: {asset_id}"))?;
+        if !matches!(asset.kind, AssetKind::Skill) {
+            return Err("only skill assets can be adopted".to_string());
+        }
 
-    let source = store::load_sources(&conn)?
-        .into_iter()
-        .find(|candidate| candidate.id == asset.source_id)
-        .ok_or_else(|| format!("source not found: {}", asset.source_id))?;
-    if !matches!(
-        source.source_origin,
-        SourceOrigin::AppTarget | SourceOrigin::AppLocal
-    ) {
-        return Err("only app-local skill assets need adoption".to_string());
-    }
+        let source = store::load_sources(&conn)?
+            .into_iter()
+            .find(|candidate| candidate.id == asset.source_id)
+            .ok_or_else(|| format!("source not found: {}", asset.source_id))?;
+        if !matches!(
+            source.source_origin,
+            SourceOrigin::AppTarget | SourceOrigin::AppLocal
+        ) {
+            return Err("only app-local skill assets need adoption".to_string());
+        }
 
-    let origin_bucket = source
-        .origin_app_kind
-        .map(|kind| format!("{kind:?}").to_ascii_lowercase())
-        .unwrap_or_else(|| source.id.clone());
-    let library_root = app_library_skill_root()?;
-    let target_dir = library_root.join(origin_bucket).join(&asset.name);
-    if target_dir.exists() {
-        return Err(format!(
-            "adopted skill already exists: {}",
-            target_dir.display()
-        ));
-    }
-    copy_dir(Path::new(&asset.absolute_path), &target_dir)?;
+        let origin_bucket = source
+            .origin_app_kind
+            .map(|kind| format!("{kind:?}").to_ascii_lowercase())
+            .unwrap_or_else(|| source.id.clone());
+        let library_root = app_library_skill_root()?;
+        let target_dir = library_root.join(origin_bucket).join(&asset.name);
+        if target_dir.exists() {
+            return Err(format!(
+                "adopted skill already exists: {}",
+                target_dir.display()
+            ));
+        }
+        copy_dir(Path::new(&asset.absolute_path), &target_dir)?;
 
-    let library_source = assetiweave_library_source();
-    store::upsert_source(&conn, &library_source)?;
-    let library_assets = scanner::scan_skill_source(&library_source)?;
-    store::replace_source_assets(&conn, &library_source.id, &library_assets)?;
-    library_assets
-        .into_iter()
-        .find(|candidate| candidate.absolute_path == target_dir.to_string_lossy())
-        .ok_or_else(|| "adopted skill was copied but not found during rescan".to_string())
+        let library_source = assetiweave_library_source();
+        store::upsert_source(&conn, &library_source)?;
+        let library_assets = scanner::scan_skill_source(&library_source)?;
+        store::replace_source_assets(&conn, &library_source.id, &library_assets)?;
+        library_assets
+            .into_iter()
+            .find(|candidate| candidate.absolute_path == target_dir.to_string_lossy())
+            .ok_or_else(|| "adopted skill was copied but not found during rescan".to_string())
+    })();
+
+    match &result {
+        Ok(asset) => log_info(
+            "skill.adopt_app_local",
+            "导入 APP 本地 skill 成功",
+            &asset_log_fields(asset),
+        ),
+        Err(error) => log_error(
+            "skill.adopt_app_local",
+            "导入 APP 本地 skill 失败",
+            error,
+            &fields,
+        ),
+    }
+    result
 }
 
-fn scan_selected_sources(
+pub(crate) fn scan_selected_sources(
     conn: &rusqlite::Connection,
     sources: Vec<Source>,
     scan: fn(&Source) -> AppResult<Vec<Asset>>,
 ) -> AppResult<Vec<Asset>> {
     for mut source in prune_missing_sources(conn, sources)? {
         if !source.enabled {
+            log_info(
+                "source.scan.skip",
+                "跳过已禁用来源",
+                &source_log_fields(&source),
+            );
             continue;
         }
 
+        log_info(
+            "source.scan.start",
+            "开始扫描来源",
+            &source_log_fields(&source),
+        );
         let now = Utc::now().to_rfc3339();
         match scan(&source) {
             Ok(assets) => {
@@ -997,15 +1652,36 @@ fn scan_selected_sources(
                 source.last_scanned_at = Some(now);
                 source.last_scan_status = Some(format!("ok: {} assets", assets.len()));
                 store::upsert_source(&conn, &source)?;
+                let mut fields = source_log_fields(&source);
+                fields.push(("asset_count", assets.len().to_string()));
+                log_info("source.scan.success", "扫描来源成功", &fields);
+                for asset in &assets {
+                    if matches!(asset.kind, AssetKind::Skill) {
+                        log_info(
+                            "skill.scan.success",
+                            "扫描到 skill",
+                            &asset_log_fields(asset),
+                        );
+                    }
+                }
             }
             Err(error) => {
                 if should_remove_source_on_scan_error(&error) {
+                    let mut fields = source_log_fields(&source);
+                    fields.push(("error", error.clone()));
+                    log_warn("source.scan.removed", "来源路径不存在，已移除", &fields);
                     store::delete_source(conn, &source.id)?;
                     continue;
                 }
                 source.last_scanned_at = Some(now);
                 source.last_scan_status = Some(format!("error: {error}"));
                 store::upsert_source(&conn, &source)?;
+                log_error(
+                    "source.scan.error",
+                    "扫描来源失败",
+                    &error,
+                    &source_log_fields(&source),
+                );
             }
         }
     }
@@ -1089,7 +1765,7 @@ pub(crate) fn refresh_recorded_assets(conn: &rusqlite::Connection) -> AppResult<
     store::load_assets(conn)
 }
 
-fn cleanup_orphan_asset_records(conn: &rusqlite::Connection) -> AppResult<()> {
+pub(crate) fn cleanup_orphan_asset_records(conn: &rusqlite::Connection) -> AppResult<()> {
     store::delete_orphan_asset_mounts(conn)?;
     store::delete_orphan_asset_group_members(conn)?;
     store::delete_orphan_deployment_state(conn)?;
@@ -1103,6 +1779,11 @@ fn prune_missing_sources(
     let mut retained_sources = Vec::new();
     for source in sources {
         if source_root_is_missing(&source) {
+            log_warn(
+                "source.prune_missing",
+                "来源路径不存在，已从索引移除",
+                &source_log_fields(&source),
+            );
             store::delete_source(conn, &source.id)?;
         } else {
             retained_sources.push(source);
@@ -1126,17 +1807,39 @@ pub(crate) fn create_plan(
     state: State<'_, AppState>,
     profile_id: Option<String>,
 ) -> AppResult<DeploymentPlan> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    let assets = store::load_assets(&conn)?;
-    let profiles = store::load_profiles(&conn)?;
-    let mounts = store::load_enabled_asset_mounts(&conn, profile_id.as_deref())?;
-    Ok(planner::build_plan(
-        &assets,
-        &profiles,
-        &mounts,
-        profile_id.as_deref(),
-    ))
+    let fields = profile_id
+        .as_ref()
+        .map(|profile_id| vec![("profile_id", profile_id.clone())])
+        .unwrap_or_default();
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        let assets = store::load_assets(&conn)?;
+        let profiles = store::load_profiles(&conn)?;
+        let mounts = store::load_enabled_asset_mounts(&conn, profile_id.as_deref())?;
+        Ok(planner::build_plan(
+            &assets,
+            &profiles,
+            &mounts,
+            profile_id.as_deref(),
+        ))
+    })();
+
+    match &result {
+        Ok(plan) => {
+            let mut fields = fields.clone();
+            fields.extend([
+                ("plan_id", plan.id.clone()),
+                ("action_count", plan.actions.len().to_string()),
+                ("create_count", plan.summary.create_count.to_string()),
+                ("skip_count", plan.summary.skip_count.to_string()),
+                ("conflict_count", plan.summary.conflict_count.to_string()),
+            ]);
+            log_info("deployment_plan.create", "创建部署计划成功", &fields);
+        }
+        Err(error) => log_error("deployment_plan.create", "创建部署计划失败", error, &fields),
+    }
+    result
 }
 
 #[tauri::command]
@@ -1145,16 +1848,60 @@ pub(crate) fn execute_plan(
     plan: DeploymentPlan,
     action_ids: Option<Vec<String>>,
 ) -> AppResult<ExecutionResult> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    let conn = store::open_initialized(&state.db_path)?;
-    let profiles = store::load_profiles(&conn)?;
-    let assets = store::load_assets(&conn)?;
-    executor::execute_deployment_plan(&conn, &profiles, &assets, &plan, action_ids.as_deref())
+    let fields = vec![
+        ("plan_id", plan.id.clone()),
+        ("action_count", plan.actions.len().to_string()),
+        (
+            "requested_action_count",
+            action_ids.as_ref().map(Vec::len).unwrap_or(0).to_string(),
+        ),
+    ];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        let conn = store::open_initialized(&state.db_path)?;
+        let profiles = store::load_profiles(&conn)?;
+        let assets = store::load_assets(&conn)?;
+        executor::execute_deployment_plan(&conn, &profiles, &assets, &plan, action_ids.as_deref())
+    })();
+
+    match &result {
+        Ok(result) => {
+            let mut fields = fields.clone();
+            fields.extend([
+                ("executed_count", result.executed_count.to_string()),
+                ("skipped_count", result.skipped_count.to_string()),
+                ("conflict_count", result.conflict_count.to_string()),
+                ("error_count", result.errors.len().to_string()),
+            ]);
+            if result.conflict_count > 0 || !result.errors.is_empty() {
+                log_warn(
+                    "deployment_plan.execute",
+                    "执行部署计划完成但存在冲突或失败",
+                    &fields,
+                );
+            } else {
+                log_info("deployment_plan.execute", "执行部署计划成功", &fields);
+            }
+        }
+        Err(error) => log_error(
+            "deployment_plan.execute",
+            "执行部署计划失败",
+            error,
+            &fields,
+        ),
+    }
+    result
 }
 
 #[tauri::command]
 pub(crate) fn reveal_path(path: String) -> AppResult<()> {
-    platform::reveal_path(path)
+    let fields = vec![("path", path.clone())];
+    let result = platform::reveal_path(path);
+    match &result {
+        Ok(()) => log_info("path.reveal", "打开路径成功", &fields),
+        Err(error) => log_error("path.reveal", "打开路径失败", error, &fields),
+    }
+    result
 }
 
 fn validate_mount_target(
@@ -1189,103 +1936,149 @@ fn validate_mount_target(
     Ok(profile.deployment_strategy)
 }
 
-fn mount_asset_mount_record(
+pub(crate) fn mount_asset_mount_record(
     conn: &rusqlite::Connection,
     asset_id: &str,
     profile_id: &str,
 ) -> AppResult<AssetMountUpdateResult> {
-    let strategy = validate_mount_target(conn, asset_id, profile_id)?;
-    if !matches!(strategy, DeploymentStrategy::SymlinkToSource) {
-        return Err("immediate mount only supports symlink_to_source profiles".to_string());
-    }
-    let (asset, profile) = load_mount_asset_and_profile(conn, asset_id, profile_id)?;
-    validate_immediate_mount_support(&asset, &profile)?;
-
-    let inspection = targeting::inspect_mount(&profile, &asset)?;
-    match inspection.state {
-        targeting::PhysicalMountState::Mounted => {
-            let mount =
-                persist_verified_mount(conn, &asset, &profile, &inspection.target_path, strategy)?;
-            return Ok(AssetMountUpdateResult {
-                mount,
-                status: asset_mount_status(&asset.id, &profile.id, inspection),
-            });
+    let result = (|| {
+        let strategy = validate_mount_target(conn, asset_id, profile_id)?;
+        if !matches!(strategy, DeploymentStrategy::SymlinkToSource) {
+            return Err("immediate mount only supports symlink_to_source profiles".to_string());
         }
-        targeting::PhysicalMountState::NotMounted => {}
-        targeting::PhysicalMountState::Conflict | targeting::PhysicalMountState::Broken => {
-            return Err(format!(
-                "target is not available for mounting: {}",
-                inspection.target_path
-            ));
-        }
-    }
+        let (asset, profile) = load_mount_asset_and_profile(conn, asset_id, profile_id)?;
+        validate_immediate_mount_support(&asset, &profile)?;
 
-    let target_path = PathBuf::from(&inspection.target_path);
-    create_mount_symlink(&asset, &profile, &target_path)?;
-    let inspection = targeting::inspect_mount(&profile, &asset)?;
-    if !matches!(inspection.state, targeting::PhysicalMountState::Mounted) {
-        remove_created_mount_symlink(&target_path).ok();
-        return Err(format!(
-            "mount verification failed for {asset_id} on {profile_id}: {}",
-            inspection.target_path
-        ));
-    }
-
-    let mount =
-        match persist_verified_mount(conn, &asset, &profile, &inspection.target_path, strategy) {
-            Ok(mount) => mount,
-            Err(error) => {
-                remove_created_mount_symlink(&target_path).ok();
-                return Err(error);
+        let inspection = targeting::inspect_mount(&profile, &asset)?;
+        match inspection.state {
+            targeting::PhysicalMountState::Mounted => {
+                let inspection =
+                    repair_mounted_symlink_to_real_source(&asset, &profile, inspection)?;
+                let mount = persist_verified_mount(
+                    conn,
+                    &asset,
+                    &profile,
+                    &inspection.target_path,
+                    strategy,
+                )?;
+                return Ok(AssetMountUpdateResult {
+                    mount,
+                    status: asset_mount_status(&asset.id, &profile.id, inspection),
+                });
             }
-        };
-    Ok(AssetMountUpdateResult {
-        mount,
-        status: asset_mount_status(&asset.id, &profile.id, inspection),
-    })
-}
+            targeting::PhysicalMountState::NotMounted => {}
+            targeting::PhysicalMountState::Conflict | targeting::PhysicalMountState::Broken => {
+                return Err(format!(
+                    "target is not available for mounting: {}",
+                    inspection.target_path
+                ));
+            }
+        }
 
-fn unmount_asset_mount_record(
-    conn: &rusqlite::Connection,
-    asset_id: &str,
-    profile_id: &str,
-) -> AppResult<AssetMountUpdateResult> {
-    let (asset, profile) = load_mount_asset_and_profile(conn, asset_id, profile_id)?;
-    let inspection = targeting::inspect_mount(&profile, &asset)?;
-    let target_path = PathBuf::from(&inspection.target_path);
-    let removed_link = matches!(inspection.state, targeting::PhysicalMountState::Mounted);
-
-    match inspection.state {
-        targeting::PhysicalMountState::Mounted => remove_mounted_symlink(&inspection.target_path)?,
-        targeting::PhysicalMountState::NotMounted => {}
-        targeting::PhysicalMountState::Conflict | targeting::PhysicalMountState::Broken => {
+        let target_path = PathBuf::from(&inspection.target_path);
+        create_mount_symlink(&asset, &profile, &target_path)?;
+        let inspection = targeting::inspect_mount(&profile, &asset)?;
+        if !matches!(inspection.state, targeting::PhysicalMountState::Mounted) {
+            remove_created_mount_symlink(&target_path).ok();
             return Err(format!(
-                "target is not a symlink to this asset: {}",
+                "mount verification failed for {asset_id} on {profile_id}: {}",
                 inspection.target_path
             ));
         }
-    }
 
-    let inspection = targeting::inspect_mount(&profile, &asset)?;
-    if !matches!(inspection.state, targeting::PhysicalMountState::NotMounted) {
-        return Err(format!(
-            "unmount verification failed for {asset_id} on {profile_id}: {}",
-            inspection.target_path
-        ));
-    }
-
-    match persist_verified_unmount(conn, &asset, &profile, &inspection.target_path) {
-        Ok(mount) => Ok(AssetMountUpdateResult {
+        let mount =
+            match persist_verified_mount(conn, &asset, &profile, &inspection.target_path, strategy)
+            {
+                Ok(mount) => mount,
+                Err(error) => {
+                    remove_created_mount_symlink(&target_path).ok();
+                    return Err(error);
+                }
+            };
+        Ok(AssetMountUpdateResult {
             mount,
             status: asset_mount_status(&asset.id, &profile.id, inspection),
-        }),
-        Err(error) => {
-            if removed_link {
-                create_mount_symlink(&asset, &profile, &target_path).ok();
-            }
-            Err(error)
+        })
+    })();
+
+    match &result {
+        Ok(update) => {
+            let mut fields = mount_log_fields(conn, asset_id, profile_id);
+            fields.push(("target_path", update.status.target_path.clone()));
+            fields.push(("state", format!("{:?}", update.status.state)));
+            log_info("skill.mount.success", "skill 挂载成功", &fields);
         }
+        Err(error) => log_error(
+            "skill.mount.error",
+            "skill 挂载失败",
+            error,
+            &mount_log_fields(conn, asset_id, profile_id),
+        ),
     }
+    result
+}
+
+pub(crate) fn unmount_asset_mount_record(
+    conn: &rusqlite::Connection,
+    asset_id: &str,
+    profile_id: &str,
+) -> AppResult<AssetMountUpdateResult> {
+    let result = (|| {
+        let (asset, profile) = load_mount_asset_and_profile(conn, asset_id, profile_id)?;
+        let inspection = targeting::inspect_mount(&profile, &asset)?;
+        let target_path = PathBuf::from(&inspection.target_path);
+        let removed_link = matches!(inspection.state, targeting::PhysicalMountState::Mounted);
+
+        match inspection.state {
+            targeting::PhysicalMountState::Mounted => {
+                remove_mounted_symlink(&inspection.target_path)?
+            }
+            targeting::PhysicalMountState::NotMounted => {}
+            targeting::PhysicalMountState::Conflict | targeting::PhysicalMountState::Broken => {
+                return Err(format!(
+                    "target is not a symlink to this asset: {}",
+                    inspection.target_path
+                ));
+            }
+        }
+
+        let inspection = targeting::inspect_mount(&profile, &asset)?;
+        if !matches!(inspection.state, targeting::PhysicalMountState::NotMounted) {
+            return Err(format!(
+                "unmount verification failed for {asset_id} on {profile_id}: {}",
+                inspection.target_path
+            ));
+        }
+
+        match persist_verified_unmount(conn, &asset, &profile, &inspection.target_path) {
+            Ok(mount) => Ok(AssetMountUpdateResult {
+                mount,
+                status: asset_mount_status(&asset.id, &profile.id, inspection),
+            }),
+            Err(error) => {
+                if removed_link {
+                    create_mount_symlink(&asset, &profile, &target_path).ok();
+                }
+                Err(error)
+            }
+        }
+    })();
+
+    match &result {
+        Ok(update) => {
+            let mut fields = mount_log_fields(conn, asset_id, profile_id);
+            fields.push(("target_path", update.status.target_path.clone()));
+            fields.push(("state", format!("{:?}", update.status.state)));
+            log_info("skill.unmount.success", "skill 卸载成功", &fields);
+        }
+        Err(error) => log_error(
+            "skill.unmount.error",
+            "skill 卸载失败",
+            error,
+            &mount_log_fields(conn, asset_id, profile_id),
+        ),
+    }
+    result
 }
 
 fn load_mount_asset_and_profile(
@@ -1328,13 +2121,7 @@ fn create_mount_symlink(
     target_path: &Path,
 ) -> AppResult<()> {
     ensure_target_within_profile(profile, target_path)?;
-    let source_path = expand_path(&asset.absolute_path)?;
-    if !source_path.exists() {
-        return Err(format!(
-            "source asset path does not exist: {}",
-            source_path.display()
-        ));
-    }
+    let source_path = targeting::canonical_source_path(asset)?;
 
     let parent = target_path.parent().ok_or_else(|| {
         format!(
@@ -1344,6 +2131,68 @@ fn create_mount_symlink(
     })?;
     fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     create_symlink(&source_path, target_path)
+}
+
+fn repair_ghost_mount_symlinks(
+    conn: &rusqlite::Connection,
+    asset_id: Option<&str>,
+) -> AppResult<()> {
+    let assets = store::load_assets(conn)?;
+    let profiles = store::load_profiles(conn)?;
+    for asset in assets
+        .iter()
+        .filter(|asset| asset_id.map(|id| asset.id == id).unwrap_or(true))
+    {
+        for profile in profiles.iter().filter(|profile| profile.enabled) {
+            let inspection = targeting::inspect_mount(profile, asset)?;
+            repair_mounted_symlink_to_real_source(asset, profile, inspection)?;
+        }
+    }
+    Ok(())
+}
+
+fn repair_mounted_symlink_to_real_source(
+    asset: &Asset,
+    profile: &TargetProfile,
+    inspection: targeting::MountInspection,
+) -> AppResult<targeting::MountInspection> {
+    if !matches!(inspection.state, targeting::PhysicalMountState::Mounted) {
+        return Ok(inspection);
+    }
+
+    let target_path = PathBuf::from(&inspection.target_path);
+    let expected_source_path = targeting::canonical_source_path(asset)?;
+    let linked_source = inspection
+        .linked_source
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    if linked_source == expected_source_path {
+        return Ok(inspection);
+    }
+
+    let metadata = fs::symlink_metadata(&target_path).map_err(|error| error.to_string())?;
+    if !metadata.file_type().is_symlink() {
+        return Ok(inspection);
+    }
+
+    let previous_link = fs::read_link(&target_path).map_err(|error| error.to_string())?;
+    fs::remove_file(&target_path).map_err(|error| error.to_string())?;
+    if let Err(error) = create_symlink(&expected_source_path, &target_path) {
+        create_symlink(&previous_link, &target_path).ok();
+        return Err(error);
+    }
+
+    let repaired = targeting::inspect_mount(profile, asset)?;
+    if !matches!(repaired.state, targeting::PhysicalMountState::Mounted) {
+        fs::remove_file(&target_path).ok();
+        create_symlink(&previous_link, &target_path).ok();
+        return Err(format!(
+            "ghost symlink repair verification failed: {}",
+            repaired.target_path
+        ));
+    }
+    Ok(repaired)
 }
 
 fn persist_verified_mount(
@@ -1450,7 +2299,7 @@ fn asset_mount_status(
     }
 }
 
-fn assetiweave_library_source() -> Source {
+pub(crate) fn assetiweave_library_source() -> Source {
     Source {
         id: "assetiweave-library-skills".to_string(),
         name: "AssetIWeave Library Skills".to_string(),
@@ -1476,7 +2325,7 @@ fn assetiweave_library_source() -> Source {
     }
 }
 
-fn target_profile_from_input(input: TargetProfileInput) -> AppResult<TargetProfile> {
+pub(crate) fn target_profile_from_input(input: TargetProfileInput) -> AppResult<TargetProfile> {
     let name = input.name.trim().to_string();
     if name.is_empty() {
         return Err("profile name is required".to_string());
@@ -1507,7 +2356,9 @@ fn target_profile_from_input(input: TargetProfileInput) -> AppResult<TargetProfi
         name,
         app_kind: input.app_kind.unwrap_or(AppKind::Custom),
         target_paths,
-        supported_kinds: input.supported_kinds.unwrap_or_else(|| vec![AssetKind::Skill]),
+        supported_kinds: input
+            .supported_kinds
+            .unwrap_or_else(|| vec![AssetKind::Skill]),
         deployment_strategy: input
             .deployment_strategy
             .unwrap_or(DeploymentStrategy::SymlinkToSource),
@@ -1523,22 +2374,41 @@ fn target_profile_from_input(input: TargetProfileInput) -> AppResult<TargetProfi
     Ok(profile)
 }
 
-fn ensure_profile_can_be_deleted(conn: &rusqlite::Connection, profile_id: &str) -> AppResult<()> {
+pub(crate) fn ensure_profile_can_be_deleted(
+    conn: &rusqlite::Connection,
+    profile_id: &str,
+) -> AppResult<()> {
+    if defaults::is_default_app_profile_id(profile_id) {
+        return Err(format!("default app cannot be deleted: {profile_id}"));
+    }
+
     if store::count_deployment_state_by_profile(conn, profile_id)? > 0 {
         return Err(format!("profile has managed deployments: {profile_id}"));
     }
 
-    if scan_asset_mount_statuses(conn, None)?
-        .iter()
-        .any(|status| status.profile_id == profile_id && status.state == PhysicalMountStateDto::Mounted)
-    {
+    if scan_asset_mount_statuses(conn, None)?.iter().any(|status| {
+        status.profile_id == profile_id && status.state == PhysicalMountStateDto::Mounted
+    }) {
         return Err(format!("profile has mounted assets: {profile_id}"));
     }
 
     Ok(())
 }
 
-fn validate_target_profile(profile: &TargetProfile) -> AppResult<()> {
+pub(crate) fn ensure_default_profile_update_is_allowed(
+    existing: &TargetProfile,
+    next: &TargetProfile,
+) -> AppResult<()> {
+    if defaults::is_default_app_profile_id(&existing.id) && existing.id != next.id {
+        return Err(format!(
+            "default app profile id cannot be changed: {}",
+            existing.id
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_target_profile(profile: &TargetProfile) -> AppResult<()> {
     if profile.id.trim().is_empty() {
         return Err("profile id is required".to_string());
     }
@@ -1591,7 +2461,7 @@ fn slug_profile_id(name: &str) -> String {
     id.trim_matches('-').to_string()
 }
 
-fn copy_dir(source: &Path, target: &Path) -> AppResult<()> {
+pub(crate) fn copy_dir(source: &Path, target: &Path) -> AppResult<()> {
     for entry in WalkDir::new(source).into_iter().filter_map(Result::ok) {
         let relative = entry
             .path()
@@ -1715,6 +2585,17 @@ mod tests {
         std::fs::remove_file(db_path).ok();
     }
 
+    #[test]
+    fn default_app_profile_delete_is_blocked() {
+        let db_path = unique_temp_path("assetiweave-default-profile-delete-db");
+        let conn = store::open_initialized(&db_path).expect("open initialized db");
+
+        let error = ensure_profile_can_be_deleted(&conn, "codex").expect_err("delete blocked");
+
+        assert!(error.contains("default app cannot be deleted"));
+        std::fs::remove_file(db_path).ok();
+    }
+
     #[cfg(unix)]
     #[test]
     fn target_profile_delete_is_blocked_when_mount_exists() {
@@ -1802,7 +2683,7 @@ mod tests {
         assert!(metadata.file_type().is_symlink());
         assert_eq!(
             std::fs::read_link(&target_path).expect("read symlink"),
-            asset_path
+            asset_path.canonicalize().expect("canonical asset path")
         );
         assert!(result.mount.enabled);
         assert_eq!(result.status.state, PhysicalMountStateDto::Mounted);
@@ -1815,6 +2696,56 @@ mod tests {
         .expect("deployment state"));
 
         std::fs::remove_dir_all(source_root).ok();
+        std::fs::remove_dir_all(target_root).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mount_asset_mount_links_to_real_source_directory() {
+        let db_path = unique_temp_path("assetiweave-mount-real-source-db");
+        let real_root = unique_temp_path("assetiweave-mount-real-source-real");
+        let alias_root = unique_temp_path("assetiweave-mount-real-source-alias");
+        let target_root = unique_temp_path("assetiweave-mount-real-source-target");
+        let real_asset_path = real_root.join("skill-a");
+        let alias_asset_path = alias_root.join("skill-a");
+        let target_path = target_root.join("skill-a");
+        std::fs::create_dir_all(&real_asset_path).expect("create real asset dir");
+        std::fs::create_dir_all(&alias_root).expect("create alias root");
+        std::fs::create_dir_all(&target_root).expect("create target dir");
+        std::os::unix::fs::symlink(&real_asset_path, &alias_asset_path)
+            .expect("create alias asset symlink");
+
+        let conn = store::open_initialized(&db_path).expect("open initialized db");
+        let source = test_source("source-with-aliased-asset", alias_root.clone());
+        let profile = test_profile("codex", target_root.clone());
+        let asset = test_asset(&source, "skill-a", alias_asset_path.clone());
+        store::upsert_source(&conn, &source).expect("insert source");
+        store::replace_source_assets(&conn, &source.id, std::slice::from_ref(&asset))
+            .expect("insert asset");
+        store::upsert_profile(&conn, &profile).expect("insert profile");
+
+        let result = mount_asset_mount_record(&conn, &asset.id, &profile.id).expect("mount");
+
+        assert_eq!(
+            std::fs::read_link(&target_path).expect("read target symlink"),
+            real_asset_path
+                .canonicalize()
+                .expect("canonical real asset")
+        );
+        let expected_source = real_asset_path
+            .canonicalize()
+            .expect("canonical real asset")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            result.status.linked_source.as_deref(),
+            Some(expected_source.as_str())
+        );
+        assert_eq!(result.status.state, PhysicalMountStateDto::Mounted);
+
+        std::fs::remove_dir_all(real_root).ok();
+        std::fs::remove_dir_all(alias_root).ok();
         std::fs::remove_dir_all(target_root).ok();
         std::fs::remove_file(db_path).ok();
     }
@@ -1893,7 +2824,7 @@ mod tests {
             .is_symlink());
         assert_eq!(
             std::fs::read_link(&target_path_a).expect("read symlink"),
-            asset_path_a
+            asset_path_a.canonicalize().expect("canonical asset path a")
         );
         assert!(!target_path_b.exists());
         assert!(store::load_asset_mounts(&conn, Some(&asset_b.id))
@@ -2314,6 +3245,63 @@ mod tests {
         .expect("deployment state"));
 
         std::fs::remove_dir_all(source_root).ok();
+        std::fs::remove_dir_all(target_root).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sync_asset_mount_observations_repairs_ghost_alias_symlink() {
+        let db_path = unique_temp_path("assetiweave-observation-ghost-db");
+        let real_root = unique_temp_path("assetiweave-observation-ghost-real");
+        let alias_root = unique_temp_path("assetiweave-observation-ghost-alias");
+        let target_root = unique_temp_path("assetiweave-observation-ghost-target");
+        let real_asset_path = real_root.join("skill-a");
+        let alias_asset_path = alias_root.join("skill-a");
+        let target_path = target_root.join("skill-a");
+        std::fs::create_dir_all(&real_asset_path).expect("create real asset dir");
+        std::fs::create_dir_all(&alias_root).expect("create alias root");
+        std::fs::create_dir_all(&target_root).expect("create target dir");
+        std::os::unix::fs::symlink(&real_asset_path, &alias_asset_path)
+            .expect("create alias asset symlink");
+        std::os::unix::fs::symlink(&alias_asset_path, &target_path)
+            .expect("create ghost target symlink");
+
+        let conn = store::open_initialized(&db_path).expect("open initialized db");
+        let source = test_source("source-with-ghost-asset", alias_root.clone());
+        let profile = test_profile("codex", target_root.clone());
+        let asset = test_asset(&source, "skill-a", alias_asset_path);
+        store::upsert_source(&conn, &source).expect("insert source");
+        store::replace_source_assets(&conn, &source.id, std::slice::from_ref(&asset))
+            .expect("insert asset");
+        store::upsert_profile(&conn, &profile).expect("insert profile");
+
+        sync_asset_mount_observations(&conn, None).expect("sync observations");
+
+        assert_eq!(
+            std::fs::read_link(&target_path).expect("read repaired target symlink"),
+            real_asset_path
+                .canonicalize()
+                .expect("canonical real asset")
+        );
+        let observations = store::load_asset_mount_observations(&conn).expect("load observations");
+        let observation = observations
+            .iter()
+            .find(|candidate| candidate.asset_id == asset.id && candidate.profile_id == profile.id)
+            .expect("asset/profile observation");
+        assert_eq!(observation.state, PhysicalMountStateDto::Mounted);
+        let expected_source = real_asset_path
+            .canonicalize()
+            .expect("canonical real asset")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            observation.linked_source.as_deref(),
+            Some(expected_source.as_str())
+        );
+
+        std::fs::remove_dir_all(real_root).ok();
+        std::fs::remove_dir_all(alias_root).ok();
         std::fs::remove_dir_all(target_root).ok();
         std::fs::remove_file(db_path).ok();
     }

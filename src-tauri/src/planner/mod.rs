@@ -177,6 +177,11 @@ mod tests {
     }
 
     fn test_asset(id: &str) -> Asset {
+        let absolute_path = std::env::temp_dir().join(format!(
+            "assetiweave-plan-source-{id}-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&absolute_path).expect("create test asset source");
         Asset {
             id: id.to_string(),
             source_id: "source-a".to_string(),
@@ -184,7 +189,7 @@ mod tests {
             kind: AssetKind::Skill,
             format: AssetFormat::Directory,
             relative_path: id.to_string(),
-            absolute_path: format!("/tmp/{id}"),
+            absolute_path: absolute_path.to_string_lossy().to_string(),
             entry_file: None,
             description: None,
             content_hash: None,

@@ -67,9 +67,11 @@ pub enum AppKind {
     Codex,
     Claude,
     Cursor,
+    #[serde(rename = "opencode", alias = "open_code")]
     OpenCode,
     Gemini,
     Antigravity,
+    #[serde(rename = "openclaw", alias = "open_claw")]
     OpenClaw,
     Custom,
 }
@@ -288,6 +290,20 @@ pub fn stable_asset_id(source_id: &str, relative_path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_kind_uses_frontend_compatible_names() {
+        assert_eq!(serde_json::to_string(&AppKind::OpenCode).unwrap(), "\"opencode\"");
+        assert_eq!(serde_json::to_string(&AppKind::OpenClaw).unwrap(), "\"openclaw\"");
+        assert_eq!(
+            serde_json::from_str::<AppKind>("\"open_code\"").unwrap(),
+            AppKind::OpenCode
+        );
+        assert_eq!(
+            serde_json::from_str::<AppKind>("\"open_claw\"").unwrap(),
+            AppKind::OpenClaw
+        );
+    }
 
     #[test]
     fn stable_asset_id_is_repeatable() {

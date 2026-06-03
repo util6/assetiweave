@@ -11,7 +11,9 @@ mod shortcut_repo;
 mod source_repo;
 mod sql;
 
-pub(crate) use asset_repo::{load_assets, load_assets_by_kind, replace_source_assets};
+pub(crate) use asset_repo::{
+    load_assets, load_assets_by_kind, replace_source_assets, update_asset_description,
+};
 pub(crate) use deployment_repo::{
     delete_deployment_state, delete_orphan_deployment_state, is_managed_deployment,
     upsert_deployment_state,

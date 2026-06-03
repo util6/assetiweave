@@ -34,8 +34,11 @@ pub(crate) fn delete_profile(conn: &Connection, profile_id: &str) -> AppResult<(
         .map_err(|error| error.to_string())?;
     tx.execute(sql::DELETE_APP_SHORTCUT_BY_PROFILE, params![profile_id])
         .map_err(db_error)?;
-    tx.execute(sql::DELETE_ASSET_MOUNT_OBSERVATIONS_BY_PROFILE, params![profile_id])
-        .map_err(db_error)?;
+    tx.execute(
+        sql::DELETE_ASSET_MOUNT_OBSERVATIONS_BY_PROFILE,
+        params![profile_id],
+    )
+    .map_err(db_error)?;
     tx.execute(sql::DELETE_ASSET_MOUNTS_BY_PROFILE, params![profile_id])
         .map_err(db_error)?;
     tx.execute(sql::DELETE_PROFILE, params![profile_id])

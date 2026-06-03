@@ -5,6 +5,7 @@ description = "Local-first AI file asset management desktop app"
 authors = ["AssetIWeave"]
 license = "MIT"
 edition = "2021"
+default-run = "assetiweave"
 
 [lib]
 name = "assetiweave_lib"
