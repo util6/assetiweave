@@ -53,7 +53,7 @@ export function mountStatePillClass(state: MountDisplayState) {
   if (state === "mounted") return "border-status-create/35 bg-status-create/15 text-status-create";
   if (state === "conflict") return "border-status-remove/45 bg-status-remove/12 text-status-remove";
   if (state === "broken") return "border-status-remove/45 bg-status-remove/12 text-status-remove";
-  return "border-border bg-surface-highest text-on-surface-variant";
+  return "border-theme-control-border bg-theme-control-hover text-on-surface-variant";
 }
 
 function mountStateDotClass(state: MountDisplayState) {
@@ -107,11 +107,11 @@ function MountStateHelpDialog({
       <section
         aria-labelledby={titleId}
         aria-modal="true"
-        className="flex max-h-[calc(100vh-64px)] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-surface-low shadow-[0_24px_72px_rgba(0,0,0,0.42)]"
+        className="flex max-h-[calc(100vh-64px)] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-theme-card-border bg-theme-card shadow-[0_24px_72px_rgb(var(--theme-panel-shadow)/0.34)]"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
       >
-        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-4">
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-theme-card-border bg-theme-card-header/70 px-5 py-4">
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               <Info className="size-5 shrink-0 text-primary" aria-hidden="true" />
@@ -123,7 +123,7 @@ function MountStateHelpDialog({
           </div>
           <button
             aria-label={t("mount.stateHelp.close")}
-            className="grid size-8 shrink-0 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-highest hover:text-on-surface"
+            className="grid size-8 shrink-0 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-on-surface"
             onClick={onClose}
             ref={closeButtonRef}
             title={t("mount.stateHelp.close")}
@@ -140,8 +140,8 @@ function MountStateHelpDialog({
               return (
                 <article
                   className={clsx(
-                    "rounded-xl border bg-surface-high/65 p-3 transition-colors",
-                    active ? "border-primary/60 ring-1 ring-primary/20" : "border-border",
+                    "rounded-xl border bg-theme-control/65 p-3 transition-colors",
+                    active ? "border-primary/60 ring-1 ring-primary/20" : "border-theme-control-border",
                   )}
                   key={state}
                 >

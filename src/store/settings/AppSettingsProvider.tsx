@@ -1,4 +1,8 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
+
+import { applyThemeToElement } from "../../theme/cssVars";
+import type { ThemeId } from "../../theme/schema";
+import { normalizeThemeId } from "../../theme/themes";
 
 const STORAGE_KEY = "assetiweave.settings";
 
@@ -9,6 +13,7 @@ export interface AppSettings {
   density: InterfaceDensity;
   reduceMotion: boolean;
   showStartupNotification: boolean;
+  theme: ThemeId;
 }
 
 interface AppSettingsContextValue {
@@ -22,6 +27,7 @@ const defaultSettings: AppSettings = {
   density: "comfortable",
   reduceMotion: false,
   showStartupNotification: true,
+  theme: "midnight",
 };
 
 const AppSettingsContext = createContext<AppSettingsContextValue | null>(null);
@@ -33,10 +39,11 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
   }, [settings]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.dataset.density = settings.density;
     document.documentElement.dataset.motion = settings.reduceMotion ? "reduced" : "full";
-  }, [settings.density, settings.reduceMotion]);
+    applyThemeToElement(document.documentElement, settings.theme);
+  }, [settings.density, settings.reduceMotion, settings.theme]);
 
   const value = useMemo<AppSettingsContextValue>(() => {
     function updateSetting<Key extends keyof AppSettings>(key: Key, settingValue: AppSettings[Key]) {
@@ -90,5 +97,6 @@ function normalizeStoredSettings(value: unknown): AppSettings {
     reduceMotion: typeof stored.reduceMotion === "boolean" ? stored.reduceMotion : defaultSettings.reduceMotion,
     showStartupNotification:
       typeof stored.showStartupNotification === "boolean" ? stored.showStartupNotification : defaultSettings.showStartupNotification,
+    theme: normalizeThemeId(stored.theme),
   };
 }

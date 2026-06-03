@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { assetKindLabel } from "../../i18n/domain";
 import { AssetRow } from "../../components/assets/AssetRow";
 import { AssetToolbar } from "../../components/assets/AssetToolbar";
+import { ConfirmDialog } from "../../components/common/ConfirmDialog";
 import { MountStatePill } from "../../components/assets/MountStatePill";
 import { QuickMountButtons } from "../../components/assets/QuickMountButtons";
 import { GroupBulkMountControls } from "../../components/groups/GroupBulkMountControls";
@@ -98,6 +99,7 @@ export function SkillGroupsPage({
   const [viewMode, setViewMode] = useState<GroupViewMode>("list");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<AssetGroupDetail | null>(null);
+  const [deletingGroup, setDeletingGroup] = useState<AssetGroupDetail | null>(null);
   const [mountingGroupId, setMountingGroupId] = useState<string | null>(null);
   const [exclusivePreview, setExclusivePreview] = useState<SkillGroupExclusiveMountPreview | null>(null);
   const [exclusiveShortcut, setExclusiveShortcut] = useState<AppShortcut | null>(null);
@@ -234,10 +236,6 @@ export function SkillGroupsPage({
   }
 
   async function handleDeleteGroup(detail: AssetGroupDetail) {
-    if (!window.confirm(t("group.confirmDelete", { name: detail.group.name }))) {
-      return;
-    }
-
     setBusy(true);
     try {
       await deleteSkillGroup(detail.group.id);
@@ -248,6 +246,7 @@ export function SkillGroupsPage({
         next.delete(detail.group.id);
         return next;
       });
+      setDeletingGroup(null);
     } catch (deleteError) {
       onNotifyError(errorMessage(deleteError));
     } finally {
@@ -466,11 +465,11 @@ export function SkillGroupsPage({
       )}
 
       {busy && groups.length === 0 ? (
-        <div className="rounded-xl border border-border bg-surface-card/60 px-4 py-10 text-center text-body-md text-on-surface-variant">
+        <div className="rounded-xl border border-theme-card-border bg-theme-card/70 px-4 py-10 text-center text-body-md text-on-surface-variant shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.16)]">
           {t("status.loading")}
         </div>
       ) : filteredGroups.length === 0 ? (
-        <div className="rounded-xl border border-border bg-surface-card/60 px-4 py-10 text-center text-body-md text-on-surface-variant">
+        <div className="rounded-xl border border-theme-card-border bg-theme-card/70 px-4 py-10 text-center text-body-md text-on-surface-variant shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.16)]">
           {t("group.empty")}
         </div>
       ) : viewMode === "columns" && selectedColumnGroup ? (
@@ -480,7 +479,7 @@ export function SkillGroupsPage({
           groups={filteredGroups}
           mountStatusesByAssetId={mountStatusesByAssetId}
           onAssetReveal={onRevealPath}
-          onDelete={(detail) => void handleDeleteGroup(detail)}
+          onDelete={setDeletingGroup}
           onEdit={setEditingGroup}
           onSelectGroup={setSelectedGroupId}
           onToggleGroupSelected={toggleGroupSelected}
@@ -497,7 +496,7 @@ export function SkillGroupsPage({
       ) : (
         <div
           aria-label={t("group.page.title")}
-          className="overflow-hidden rounded-xl border border-border bg-surface-card/60"
+          className="overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
         >
           {filteredGroups.map((detail) => {
             const groupAssets = resolveGroupAssets(detail, skillAssetsById);
@@ -511,7 +510,7 @@ export function SkillGroupsPage({
                 key={detail.group.id}
                 mountStatusesByAssetId={mountStatusesByAssetId}
                 onAssetReveal={onRevealPath}
-                onDelete={() => void handleDeleteGroup(detail)}
+                onDelete={() => setDeletingGroup(detail)}
                 onEdit={() => setEditingGroup(detail)}
                 onToggleSelected={() => toggleGroupSelected(detail)}
                 onSetGroupMountProfile={(profileId, enabled) =>
@@ -558,6 +557,20 @@ export function SkillGroupsPage({
         preview={exclusivePreview}
         shortcut={exclusiveShortcut}
       />
+      <ConfirmDialog
+        busy={busy}
+        confirmLabel={t("common.delete")}
+        message={deletingGroup ? t("group.deleteDialog.message", { name: deletingGroup.group.name }) : ""}
+        onClose={() => setDeletingGroup(null)}
+        onConfirm={() => deletingGroup && void handleDeleteGroup(deletingGroup)}
+        open={Boolean(deletingGroup)}
+        title={t("group.deleteDialog.title")}
+        tone="danger"
+      >
+        <div className="rounded-xl border border-theme-card-border bg-theme-card/65 p-3 text-body-sm text-on-surface-variant">
+          {t("group.deleteDialog.detail")}
+        </div>
+      </ConfirmDialog>
     </section>
   );
 }
@@ -605,8 +618,8 @@ function GroupColumnView({
   ).length;
 
   return (
-    <div className="grid min-h-[560px] overflow-hidden rounded-xl border border-border bg-surface-card/60 grid-cols-[minmax(240px,0.72fr)_minmax(360px,1.14fr)_minmax(320px,0.9fr)] max-[1120px]:grid-cols-[minmax(240px,0.8fr)_minmax(0,1.2fr)]">
-      <section className="flex min-h-0 flex-col border-r border-border bg-surface-lowest/20">
+    <div className="grid min-h-[560px] overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)] grid-cols-[minmax(240px,0.72fr)_minmax(360px,1.14fr)_minmax(320px,0.9fr)] max-[1120px]:grid-cols-[minmax(240px,0.8fr)_minmax(0,1.2fr)]">
+      <section className="flex min-h-0 flex-col border-r border-theme-card-border bg-theme-card-header/35">
         <GroupColumnHeader title={t("group.column.groups")} meta={t("group.metric.groupsWithCount", { count: groups.length })} />
         <div className="min-h-0 overflow-y-auto py-1" role="listbox" aria-label={t("group.column.groups")}>
           {groups.map((detail) => {
@@ -620,7 +633,7 @@ function GroupColumnView({
                   "grid min-h-[72px] w-full grid-cols-[auto_minmax(0,1fr)] items-start gap-3 border-l-2 px-3 py-3 text-left transition-colors",
                   active
                     ? "border-primary bg-primary/10 text-on-surface"
-                    : "border-transparent text-on-surface-variant hover:bg-surface-low/80 hover:text-on-surface",
+                    : "border-transparent text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
                 )}
                 key={detail.group.id}
                 role="option"
@@ -628,7 +641,7 @@ function GroupColumnView({
                 <input
                   aria-label={t("group.exclusive.selectGroup", { name: detail.group.name })}
                   checked={selected}
-                  className="mt-1.5 size-4 rounded border-border accent-primary disabled:cursor-not-allowed disabled:opacity-40"
+                  className="mt-1.5 size-4 rounded border-theme-control-border accent-primary disabled:cursor-not-allowed disabled:opacity-40"
                   disabled={!detail.group.enabled}
                   onChange={() => onToggleGroupSelected(detail)}
                   type="checkbox"
@@ -656,7 +669,7 @@ function GroupColumnView({
         </div>
       </section>
 
-      <section className="flex min-h-0 flex-col border-r border-border max-[1120px]:border-r-0">
+      <section className="flex min-h-0 flex-col border-r border-theme-card-border max-[1120px]:border-r-0">
         <GroupColumnHeader
           title={selectedGroup.group.name}
           meta={t("group.memberCount", { count: selectedGroupAssets.length })}
@@ -671,7 +684,7 @@ function GroupColumnView({
               const mountBlockedReason = isDirectMountBlockedSource(source) ? t("mount.blocked") : undefined;
               return (
                 <article
-                  className="grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/70 px-4 py-3 last:border-b-0 hover:bg-surface-low/70 max-[760px]:grid-cols-1"
+                  className="grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-theme-card-border px-4 py-3 last:border-b-0 hover:bg-theme-card-header/70 max-[760px]:grid-cols-1"
                   key={asset.id}
                 >
                   <div className="min-w-0">
@@ -706,7 +719,7 @@ function GroupColumnView({
         </div>
       </section>
 
-      <section className="flex min-h-0 flex-col bg-surface-lowest/20 max-[1120px]:col-span-2 max-[1120px]:border-t max-[1120px]:border-border">
+      <section className="flex min-h-0 flex-col bg-theme-card-header/35 max-[1120px]:col-span-2 max-[1120px]:border-t max-[1120px]:border-theme-card-border">
         <GroupColumnHeader
           title={t("group.column.details")}
           meta={selectedGroup.group.enabled ? t("group.status.enabled") : t("group.status.disabled")}
@@ -714,7 +727,7 @@ function GroupColumnView({
         <div className="min-h-0 overflow-y-auto p-4">
           <div className="flex flex-wrap items-center gap-2">
             <button
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border bg-surface-high px-3 text-body-sm font-semibold text-on-surface-variant transition-colors hover:bg-surface-highest hover:text-primary"
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm font-semibold text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-primary"
               onClick={() => onEdit(selectedGroup)}
               type="button"
             >
@@ -746,7 +759,7 @@ function GroupColumnView({
             />
           </div>
 
-          <div className="mt-4 space-y-3 rounded-xl border border-border bg-surface-lowest/35 p-3">
+          <div className="mt-4 space-y-3 rounded-xl border border-theme-card-border bg-theme-card/65 p-3">
             <GroupDetailRow label={t("group.field.description")} value={selectedGroup.group.description ?? t("group.noDescription")} />
             <GroupDetailRow label={t("group.metric.members")} value={String(selectedMemberIds.length)} mono />
             <GroupDetailRow label={t("group.detail.manualMembers")} value={String(manualMemberCount)} mono />
@@ -776,7 +789,7 @@ function GroupColumnHeader({
   title: string;
 }) {
   return (
-    <header className="flex min-h-14 items-center justify-between gap-3 border-b border-border bg-surface-high/55 px-4 py-3">
+    <header className="flex min-h-14 items-center justify-between gap-3 border-b border-theme-card-border bg-theme-card-header/70 px-4 py-3">
       <div className="min-w-0">
         <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">{title}</h3>
         <p className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">{meta}</p>
@@ -808,7 +821,7 @@ function GroupRuleList({ label, rules }: { label: string; rules: string[] }) {
         <div className="mt-1 flex flex-wrap gap-1.5">
           {rules.map((rule) => (
             <span
-              className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-md border border-border bg-surface-high px-2 py-0.5 font-mono text-body-sm text-on-surface-variant"
+              className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 font-mono text-body-sm text-on-surface-variant"
               key={rule}
             >
               {rule}
@@ -832,7 +845,7 @@ function GroupAvatar({
   return (
     <span
       className={clsx(
-        "relative grid shrink-0 place-items-center rounded-lg border shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]",
+        "relative grid shrink-0 place-items-center rounded-lg border shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.28)]",
         compact ? "mt-0.5 size-8" : "size-10",
         !enabled && "grayscale",
       )}
@@ -900,16 +913,16 @@ function GroupRow({
   return (
     <article
       className={clsx(
-        "border-border transition-colors",
+        "border-theme-card-border transition-colors",
         "border-b last:border-b-0",
-        expanded && "bg-surface-low/35",
+        expanded && "bg-theme-card-header/45",
       )}
     >
-      <div className="grid min-h-20 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5 hover:bg-surface-low/70 max-[760px]:grid-cols-[auto_minmax(0,1fr)]">
+      <div className="grid min-h-20 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5 hover:bg-theme-card-header/70 max-[760px]:grid-cols-[auto_minmax(0,1fr)]">
         <input
           aria-label={t("group.exclusive.selectGroup", { name: detail.group.name })}
           checked={selected}
-          className="size-4 rounded border-border accent-primary disabled:cursor-not-allowed disabled:opacity-40"
+          className="size-4 rounded border-theme-control-border accent-primary disabled:cursor-not-allowed disabled:opacity-40"
           disabled={busy || !detail.group.enabled}
           onChange={onToggleSelected}
           type="checkbox"
@@ -921,11 +934,11 @@ function GroupRow({
               <h3 className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md text-on-surface">
                 {detail.group.name}
               </h3>
-              <span className="rounded-md border border-border bg-surface-high px-2 py-0.5 text-label-caps uppercase text-on-surface-variant">
+              <span className="rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 text-label-caps uppercase text-on-surface-variant">
                 {t("group.memberCount", { count: assets.length })}
               </span>
               {!detail.group.enabled && (
-                <span className="rounded-md border border-border bg-surface-high px-2 py-0.5 text-label-caps uppercase text-outline">
+                <span className="rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 text-label-caps uppercase text-outline">
                   {t("group.disabled")}
                 </span>
               )}
@@ -961,12 +974,12 @@ function GroupRow({
       </div>
 
       {expanded && (
-        <div className="border-t border-border bg-surface-lowest/20 py-2 pl-8 pr-3">
+        <div className="border-t border-theme-card-border bg-theme-card-header/35 py-2 pl-8 pr-3">
           <div className="border-l border-outline-variant/70 pl-3">
             {assets.length === 0 ? (
               <div className="px-4 py-4 text-body-sm text-on-surface-variant">{t("group.emptyMembers")}</div>
             ) : (
-              <div className="overflow-hidden rounded-xl border border-border bg-surface-card/35">
+              <div className="overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/45">
                 {assets.map((asset) => (
                   <AssetRow
                     appShortcuts={appShortcuts}
@@ -1007,7 +1020,7 @@ function GroupIconButton({
     <button
       aria-label={label}
       className={clsx(
-        "grid size-8 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-highest hover:text-primary disabled:cursor-not-allowed disabled:opacity-45",
+        "grid size-8 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-primary disabled:cursor-not-allowed disabled:opacity-45",
         danger && "hover:text-status-remove",
       )}
       disabled={disabled}

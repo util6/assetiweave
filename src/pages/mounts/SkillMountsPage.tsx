@@ -18,12 +18,17 @@ import { AssetToolbar, type AssetToolbarViewMode } from "../../components/assets
 import { MountStatePill } from "../../components/assets/MountStatePill";
 import { QuickMountButtons } from "../../components/assets/QuickMountButtons";
 import { AppShortcutIconForShortcut } from "../../components/apps/AppShortcutIcon";
+import { ConfirmDialog } from "../../components/common/ConfirmDialog";
+import { DialogFrame as FoundationDialogFrame } from "../../components/foundation/DialogFrame";
+import { EmptyState as FoundationEmptyState } from "../../components/foundation/EmptyState";
+import { Panel as FoundationPanel } from "../../components/foundation/Panel";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Switch } from "../../components/ui/switch";
 import { assetKindLabel, sourceOriginLabel } from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
+import { DEFAULT_ENTITY_ACCENT_HEX } from "../../theme/themes";
 import {
   createProfile,
   deleteProfile,
@@ -43,6 +48,7 @@ import type {
 import { getAssetMountSummaryState, groupMountStatusesByAssetId } from "../../utils/mountState";
 import { isDirectMountBlockedSource } from "../../utils/mountPolicy";
 import { displayAssetPath } from "../../utils/path";
+import { isDefaultAppProfileId } from "../../utils/defaultApps";
 import { buildTargetProfileInput, defaultAppShortcut, hasProfileIdConflict, targetProfileFromInput } from "../../utils/profile";
 import { groupMemberAssetIds } from "../../utils/skillGroups";
 import { kindBadgeClass } from "../../utils/styles";
@@ -78,6 +84,11 @@ interface SkillMountsPageProps {
 
 const appKinds: AppKind[] = ["custom", "codex", "claude", "cursor", "opencode", "gemini", "antigravity", "openclaw"];
 
+interface PendingDefaultPathChange {
+  editingProfile: TargetProfile;
+  values: AppProfileDialogValues;
+}
+
 export function SkillMountsPage({
   appShortcuts,
   assetMountStatuses,
@@ -103,6 +114,8 @@ export function SkillMountsPage({
   const [selectedScopeId, setSelectedScopeId] = useState<string | null>(null);
   const [dialogProfile, setDialogProfile] = useState<TargetProfile | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [deletingProfile, setDeletingProfile] = useState<TargetProfile | null>(null);
+  const [pendingDefaultPathChange, setPendingDefaultPathChange] = useState<PendingDefaultPathChange | null>(null);
   const [busy, setBusy] = useState(false);
 
   const skillAssets = useMemo(() => assets.filter((asset) => asset.kind === "skill"), [assets]);
@@ -150,7 +163,21 @@ export function SkillMountsPage({
     }
   }
 
-  async function handleSaveProfile(values: AppProfileDialogValues, editingProfile: TargetProfile | null) {
+  async function handleSaveProfile(
+    values: AppProfileDialogValues,
+    editingProfile: TargetProfile | null,
+    options: { confirmedDefaultPathChange?: boolean } = {},
+  ) {
+    if (
+      editingProfile &&
+      isDefaultAppProfileId(editingProfile.id) &&
+      !options.confirmedDefaultPathChange &&
+      hasTargetPathChanged(editingProfile, values.targetPath)
+    ) {
+      setPendingDefaultPathChange({ editingProfile, values });
+      return;
+    }
+
     setBusy(true);
     try {
       const input = buildTargetProfileInput(values, editingProfile);
@@ -187,7 +214,9 @@ export function SkillMountsPage({
   }
 
   async function handleDeleteProfile(profile: TargetProfile) {
-    if (!window.confirm(t("appMount.confirmDelete", { name: profile.name }))) {
+    if (isDefaultAppProfileId(profile.id)) {
+      onNotifyError(t("appMount.deleteDialog.defaultBlocked", { name: profile.name }));
+      setDeletingProfile(null);
       return;
     }
 
@@ -197,6 +226,7 @@ export function SkillMountsPage({
       await onSaveAppShortcuts(appShortcuts.filter((shortcut) => shortcut.profileId !== profile.id));
       await onRefreshProfiles();
       setSelectedProfileId((current) => (current === profile.id ? null : current));
+      setDeletingProfile(null);
     } catch (error) {
       onNotifyError(errorMessage(error));
     } finally {
@@ -282,6 +312,7 @@ export function SkillMountsPage({
             setDialogProfile(profile);
             setDialogOpen(true);
           }}
+          onDeleteProfile={setDeletingProfile}
           onRevealPath={onRevealPath}
           onSelectProfile={setSelectedProfileId}
           onSelectScope={setSelectedScopeId}
@@ -295,7 +326,11 @@ export function SkillMountsPage({
           sourceById={sourceById}
         />
       ) : (
-        <div className="overflow-hidden rounded-xl border border-border bg-surface-card/60" aria-label={t("appMount.page.title")}>
+        <FoundationPanel
+          className="overflow-hidden"
+          padding="none"
+          aria-label={t("appMount.page.title")}
+        >
           {filteredProfiles.map((profile) => (
             <AppMountRow
               appShortcuts={appShortcuts}
@@ -303,7 +338,7 @@ export function SkillMountsPage({
               expanded={expandedProfileIds.has(profile.id)}
               key={profile.id}
               mountStatusesByAssetId={mountStatusesByAssetId}
-              onDelete={() => void handleDeleteProfile(profile)}
+              onDelete={() => setDeletingProfile(profile)}
               onEdit={() => {
                 setDialogProfile(profile);
                 setDialogOpen(true);
@@ -318,7 +353,7 @@ export function SkillMountsPage({
               sourceById={sourceById}
             />
           ))}
-        </div>
+        </FoundationPanel>
       )}
 
       <AppProfileDialog
@@ -333,6 +368,52 @@ export function SkillMountsPage({
         open={dialogOpen}
         profile={dialogProfile}
       />
+      <ConfirmDialog
+        busy={busy}
+        confirmLabel={t("common.delete")}
+        message={deletingProfile ? t("appMount.deleteDialog.message", { name: deletingProfile.name }) : ""}
+        onClose={() => setDeletingProfile(null)}
+        onConfirm={() => deletingProfile && void handleDeleteProfile(deletingProfile)}
+        open={Boolean(deletingProfile)}
+        title={t("appMount.deleteDialog.title")}
+        tone="danger"
+      >
+        <FoundationPanel className="text-body-sm text-on-surface-variant" padding="sm" variant="muted">
+          {deletingProfile && isDefaultAppProfileId(deletingProfile.id)
+            ? t("appMount.deleteDialog.defaultDetail")
+            : t("appMount.deleteDialog.detail")}
+        </FoundationPanel>
+      </ConfirmDialog>
+      <ConfirmDialog
+        busy={busy}
+        confirmLabel={t("common.save")}
+        message={
+          pendingDefaultPathChange
+            ? t("appMount.pathChangeDialog.message", { name: pendingDefaultPathChange.editingProfile.name })
+            : ""
+        }
+        onClose={() => setPendingDefaultPathChange(null)}
+        onConfirm={() => {
+          if (!pendingDefaultPathChange) {
+            return;
+          }
+          void handleSaveProfile(pendingDefaultPathChange.values, pendingDefaultPathChange.editingProfile, {
+            confirmedDefaultPathChange: true,
+          });
+          setPendingDefaultPathChange(null);
+        }}
+        open={Boolean(pendingDefaultPathChange)}
+        title={t("appMount.pathChangeDialog.title")}
+      >
+        <FoundationPanel className="text-body-sm text-on-surface-variant" padding="sm" variant="muted">
+          {pendingDefaultPathChange
+            ? t("appMount.pathChangeDialog.detail", {
+                nextPath: pendingDefaultPathChange.values.targetPath.trim(),
+                previousPath: pendingDefaultPathChange.editingProfile.target_paths[0] ?? "",
+              })
+            : ""}
+        </FoundationPanel>
+      </ConfirmDialog>
     </section>
   );
 }
@@ -373,10 +454,11 @@ function AppMountRow({
   const counts = getProfileMountCounts(profile.id, skillAssets, mountStatusesByAssetId);
   const shortcut = shortcutForProfile(profile, appShortcuts);
   const summaryState = counts.conflict > 0 ? "conflict" : counts.broken > 0 ? "broken" : counts.mounted > 0 ? "mounted" : "not_mounted";
+  const defaultApp = isDefaultAppProfileId(profile.id);
 
   return (
-    <article className={clsx("border-b border-border last:border-b-0", expanded && "bg-surface-low/35")}>
-      <div className="grid min-h-20 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5 hover:bg-surface-low/70 max-[860px]:grid-cols-1">
+    <article className={clsx("border-b border-theme-card-border last:border-b-0", expanded && "bg-theme-card-header/45")}>
+      <div className="grid min-h-20 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5 hover:bg-theme-card-header/70 max-[860px]:grid-cols-1">
         <div className="flex min-w-0 items-start gap-3">
           <span
             className="grid size-10 shrink-0 place-items-center rounded-xl border text-[13px] font-bold"
@@ -393,13 +475,13 @@ function AppMountRow({
               <h3 className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold text-on-surface">
                 {profile.name}
               </h3>
-              <span className="rounded-md border border-border bg-surface-high px-2 py-0.5 text-label-caps uppercase text-on-surface-variant">
+              <span className="rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 text-label-caps uppercase text-on-surface-variant">
                 {profile.app_kind}
               </span>
               <span
                 className={clsx(
                   "rounded-md px-2 py-0.5 text-label-caps uppercase",
-                  profile.enabled ? "bg-status-create/15 text-status-create" : "bg-surface-highest text-outline",
+                  profile.enabled ? "bg-status-create/15 text-status-create" : "bg-theme-control-hover text-outline",
                 )}
               >
                 {profile.enabled ? t("appMount.status.enabled") : t("appMount.status.disabled")}
@@ -426,7 +508,7 @@ function AppMountRow({
           <IconAction label={t("appMount.action.reveal")} onClick={onReveal}>
             <FolderOpen size={16} />
           </IconAction>
-          <IconAction danger disabled={busy} label={t("appMount.action.delete")} onClick={onDelete}>
+          <IconAction danger disabled={busy || defaultApp} label={t("appMount.action.delete")} onClick={onDelete}>
             <Trash2 size={16} />
           </IconAction>
           <IconAction label={t(expanded ? "appMount.action.collapse" : "appMount.action.expand")} onClick={onToggleExpanded}>
@@ -436,7 +518,7 @@ function AppMountRow({
       </div>
 
       {expanded && (
-        <div className="border-t border-border bg-surface-lowest/20 p-4">
+        <div className="border-t border-theme-card-border bg-theme-card-header/35 p-4">
           <AppMountWorkbench
             appShortcuts={appShortcuts}
             busy={busy}
@@ -459,6 +541,7 @@ function AppMountColumnView({
   busy,
   mountStatusesByAssetId,
   onEditProfile,
+  onDeleteProfile,
   onRevealPath,
   onSelectProfile,
   onSelectScope,
@@ -475,6 +558,7 @@ function AppMountColumnView({
   busy: boolean;
   mountStatusesByAssetId: Map<string, AssetMountStatus[]>;
   onEditProfile: (profile: TargetProfile) => void;
+  onDeleteProfile: (profile: TargetProfile) => void;
   onRevealPath: (path: string) => void;
   onSelectProfile: (profileId: string) => void;
   onSelectScope: (scopeId: string) => void;
@@ -493,10 +577,11 @@ function AppMountColumnView({
     return asset ? [asset] : [];
   });
   const shortcut = shortcutForProfile(selectedProfile, appShortcuts);
+  const defaultSelectedApp = isDefaultAppProfileId(selectedProfile.id);
 
   return (
-    <div className="grid min-h-[560px] overflow-hidden rounded-xl border border-border bg-surface-card/60 grid-cols-[minmax(240px,0.72fr)_minmax(320px,0.9fr)_minmax(360px,1.15fr)] max-[1120px]:grid-cols-[minmax(240px,0.8fr)_minmax(0,1.2fr)]">
-      <section className="flex min-h-0 flex-col border-r border-border bg-surface-lowest/20">
+    <FoundationPanel className="grid min-h-[560px] overflow-hidden grid-cols-[minmax(240px,0.72fr)_minmax(320px,0.9fr)_minmax(360px,1.15fr)] max-[1120px]:grid-cols-[minmax(240px,0.8fr)_minmax(0,1.2fr)]" padding="none">
+      <section className="flex min-h-0 flex-col border-r border-theme-card-border bg-theme-card-header/35">
         <ColumnHeader meta={t("appMount.metric.appsWithCount", { count: profiles.length })} title={t("appMount.column.apps")} />
         <div className="min-h-0 overflow-y-auto py-1" role="listbox" aria-label={t("appMount.column.apps")}>
           {profiles.map((profile) => {
@@ -510,7 +595,7 @@ function AppMountColumnView({
                   "flex min-h-[72px] w-full items-start gap-3 border-l-2 px-3 py-3 text-left transition-colors",
                   active
                     ? "border-primary bg-primary/10 text-on-surface"
-                    : "border-transparent text-on-surface-variant hover:bg-surface-low/80 hover:text-on-surface",
+                    : "border-transparent text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
                 )}
                 key={profile.id}
                 onClick={() => onSelectProfile(profile.id)}
@@ -541,11 +626,16 @@ function AppMountColumnView({
         </div>
       </section>
 
-      <section className="flex min-h-0 flex-col border-r border-border max-[1120px]:border-r-0">
+      <section className="flex min-h-0 flex-col border-r border-theme-card-border max-[1120px]:border-r-0">
         <ColumnHeader
+          actionIcon={<Pencil size={16} />}
           actionLabel={t("appMount.action.edit")}
+          dangerActionIcon={<Trash2 size={16} />}
+          dangerActionLabel={t("appMount.action.delete")}
+          dangerActionDisabled={defaultSelectedApp}
           meta={selectedProfile.target_paths[0] ?? ""}
           onAction={() => onEditProfile(selectedProfile)}
+          onDangerAction={() => onDeleteProfile(selectedProfile)}
           title={selectedProfile.name}
         />
         <ScopeList
@@ -558,7 +648,7 @@ function AppMountColumnView({
         />
       </section>
 
-      <section className="flex min-h-0 flex-col bg-surface-lowest/20 max-[1120px]:col-span-2 max-[1120px]:border-t max-[1120px]:border-border">
+      <section className="flex min-h-0 flex-col bg-theme-card-header/35 max-[1120px]:col-span-2 max-[1120px]:border-t max-[1120px]:border-theme-card-border">
         <ColumnHeader
           actionLabel={t("appMount.action.reveal")}
           actionIcon={<FolderOpen size={16} />}
@@ -566,7 +656,7 @@ function AppMountColumnView({
           onAction={() => onRevealPath(selectedProfile.target_paths[0] ?? "")}
           title={selectedScope.name}
         />
-        <div className="border-b border-border p-3">
+        <div className="border-b border-theme-card-border p-3">
           <ScopeBatchActions
             busy={busy}
             mountStatusesByAssetId={mountStatusesByAssetId}
@@ -585,7 +675,7 @@ function AppMountColumnView({
           sourceById={sourceById}
         />
       </section>
-    </div>
+    </FoundationPanel>
   );
 }
 
@@ -625,8 +715,8 @@ function AppMountWorkbench({
   }
 
   return (
-    <div className="grid min-h-[420px] overflow-hidden rounded-xl border border-border bg-surface-card/45 grid-cols-[minmax(280px,0.85fr)_minmax(360px,1.15fr)] max-[960px]:grid-cols-1">
-      <section className="flex min-h-0 flex-col border-r border-border max-[960px]:border-r-0 max-[960px]:border-b">
+    <FoundationPanel className="grid min-h-[420px] overflow-hidden grid-cols-[minmax(280px,0.85fr)_minmax(360px,1.15fr)] max-[960px]:grid-cols-1" padding="none" variant="muted">
+      <section className="flex min-h-0 flex-col border-r border-theme-card-border max-[960px]:border-r-0 max-[960px]:border-b">
         <ColumnHeader meta={t("appMount.scope.count", { count: scopes.length })} title={t("appMount.column.scopes")} />
         <ScopeList
           mountStatusesByAssetId={mountStatusesByAssetId}
@@ -639,7 +729,7 @@ function AppMountWorkbench({
       </section>
       <section className="flex min-h-0 flex-col">
         <ColumnHeader meta={t("appMount.scope.assetCount", { count: scopeAssets.length })} title={selectedScope.name} />
-        <div className="border-b border-border p-3">
+        <div className="border-b border-theme-card-border p-3">
           <ScopeBatchActions
             busy={busy}
             mountStatusesByAssetId={mountStatusesByAssetId}
@@ -658,7 +748,7 @@ function AppMountWorkbench({
           sourceById={sourceById}
         />
       </section>
-    </div>
+    </FoundationPanel>
   );
 }
 
@@ -696,7 +786,7 @@ function ScopeList({
               "flex min-h-[76px] w-full items-start justify-between gap-3 border-l-2 px-3 py-3 text-left transition-colors",
               active
                 ? "border-primary bg-primary/10 text-on-surface"
-                : "border-transparent text-on-surface-variant hover:bg-surface-low/80 hover:text-on-surface",
+                : "border-transparent text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
             )}
             key={scope.id}
             onClick={() => onSelectScope(scope.id)}
@@ -714,7 +804,7 @@ function ScopeList({
                 {t("appMount.scope.mountProgress", { selected: counts.mounted, total: counts.total })}
               </span>
             </span>
-            <span className="mt-1 rounded-md border border-border bg-surface-high px-2 py-0.5 text-label-caps uppercase text-on-surface-variant">
+            <span className="mt-1 rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 text-label-caps uppercase text-on-surface-variant">
               {t(`appMount.scope.${scope.kind}` as TranslationKey)}
             </span>
           </button>
@@ -799,7 +889,7 @@ function SkillScopeAssetList({
         const mountBlockedReason = isDirectMountBlockedSource(source) ? t("mount.blocked") : undefined;
         return (
           <article
-            className="grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/70 px-4 py-3 last:border-b-0 hover:bg-surface-low/70 max-[760px]:grid-cols-1"
+            className="grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-theme-card-border px-4 py-3 last:border-b-0 hover:bg-theme-card-header/70 max-[760px]:grid-cols-1"
             key={asset.id}
           >
             <div className="min-w-0">
@@ -815,7 +905,7 @@ function SkillScopeAssetList({
                   {displayAssetPath(asset)}
                 </span>
                 {source && (
-                  <span className="shrink-0 rounded-md border border-border bg-surface-high px-2 py-0.5 text-label-caps uppercase text-on-surface-variant">
+                  <span className="shrink-0 rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 text-label-caps uppercase text-on-surface-variant">
                     {sourceOriginLabel(source.source_origin, t)}
                   </span>
                 )}
@@ -901,27 +991,22 @@ function AppProfileDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-background/72 px-6 py-8 backdrop-blur-sm">
-      <section
-        aria-modal="true"
-        className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-surface-low shadow-[0_24px_72px_rgba(0,0,0,0.42)]"
-        role="dialog"
-      >
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-border px-5">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="grid size-9 place-items-center rounded-xl border border-status-update/25 bg-status-update/15 text-status-update">
-              <Boxes size={18} />
-            </span>
-            <h2 className="truncate text-h2 text-on-surface">
-              {profile ? t("appMount.dialog.editTitle") : t("appMount.dialog.importTitle")}
-            </h2>
-          </div>
-          <Button aria-label={t("appMount.dialog.close")} disabled={busy} onClick={onClose} size="icon" type="button" variant="ghost">
-            <X size={18} />
-          </Button>
-        </header>
-
-        <form className="min-h-0 overflow-y-auto px-5 py-5" onSubmit={(event) => void handleSubmit(event)}>
+    <FoundationDialogFrame
+      className="flex max-h-full max-w-2xl flex-col"
+      contentClassName="min-h-0 overflow-y-auto p-0"
+      headerActions={
+        <Button aria-label={t("appMount.dialog.close")} disabled={busy} onClick={onClose} size="icon" title={t("appMount.dialog.close")} type="button" variant="ghost">
+          <X size={18} />
+        </Button>
+      }
+      headerClassName="h-16 shrink-0 items-center"
+      icon={<Boxes size={18} />}
+      iconClassName="border-status-update/25 bg-status-update/15 text-status-update"
+      onBackdropClick={busy ? undefined : onClose}
+      overlayClassName="z-40 px-6 py-8"
+      title={profile ? t("appMount.dialog.editTitle") : t("appMount.dialog.importTitle")}
+    >
+        <form className="px-5 py-5" onSubmit={(event) => void handleSubmit(event)}>
           <div className="grid gap-4">
             <div className="grid grid-cols-[minmax(0,1fr)_12rem] gap-3 max-[720px]:grid-cols-1">
               <Field label={t("appMount.field.name")} required>
@@ -934,7 +1019,7 @@ function AppProfileDialog({
               </Field>
               <Field label={t("appMount.field.appKind")}>
                 <select
-                  className="h-9 rounded-lg border border-border bg-surface-high px-3 text-body-sm text-on-surface outline-none focus:border-primary-strong/60 disabled:opacity-50"
+                  className="h-9 rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm text-on-surface outline-none focus:border-primary-strong/60 disabled:opacity-50"
                   disabled={busy}
                   onChange={(event) => updateValue("appKind", event.target.value as AppKind)}
                   value={values.appKind}
@@ -1015,7 +1100,7 @@ function AppProfileDialog({
             />
           </div>
 
-          <footer className="mt-5 flex justify-end gap-2 border-t border-border pt-4">
+          <footer className="mt-5 flex justify-end gap-2 border-t border-theme-card-border pt-4">
             <Button disabled={busy} onClick={onClose} type="button" variant="outline">
               {t("appMount.dialog.cancel")}
             </Button>
@@ -1024,15 +1109,14 @@ function AppProfileDialog({
             </Button>
           </footer>
         </form>
-      </section>
-    </div>
+    </FoundationDialogFrame>
   );
 }
 
 function initialDialogValues(profile: TargetProfile | null, shortcut: AppShortcut | null): AppProfileDialogValues {
   const defaultShortcut = profile ? defaultAppShortcut(profile) : null;
   return {
-    accentColor: shortcut?.accentColor ?? defaultShortcut?.accentColor ?? "#8c909f",
+    accentColor: shortcut?.accentColor ?? defaultShortcut?.accentColor ?? DEFAULT_ENTITY_ACCENT_HEX,
     appKind: profile?.app_kind ?? "custom",
     displayIcon: shortcut?.displayIcon ?? defaultShortcut?.displayIcon ?? "",
     enabled: profile?.enabled ?? true,
@@ -1040,6 +1124,10 @@ function initialDialogValues(profile: TargetProfile | null, shortcut: AppShortcu
     shortcutEnabled: shortcut?.enabled ?? true,
     targetPath: profile?.target_paths[0] ?? "",
   };
+}
+
+function hasTargetPathChanged(profile: TargetProfile, nextTargetPath: string) {
+  return (profile.target_paths[0] ?? "").trim() !== nextTargetPath.trim();
 }
 
 function buildMountScopes({
@@ -1102,7 +1190,7 @@ function shortcutForProfile(profile: TargetProfile, shortcuts: AppShortcut[]) {
 
 function MountCountBadge({ count, label, total }: { count: number; label: string; total: number }) {
   return (
-    <span className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-surface-high px-3 text-body-sm text-on-surface-variant">
+    <span className="inline-flex h-9 items-center gap-2 rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm text-on-surface-variant">
       <span>{label}</span>
       <strong className="font-mono text-code-md text-primary">
         {count}/{total}
@@ -1114,32 +1202,54 @@ function MountCountBadge({ count, label, total }: { count: number; label: string
 function ColumnHeader({
   actionIcon,
   actionLabel,
+  dangerActionIcon,
+  dangerActionDisabled = false,
+  dangerActionLabel,
   meta,
   onAction,
+  onDangerAction,
   title,
 }: {
   actionIcon?: ReactNode;
   actionLabel?: string;
+  dangerActionIcon?: ReactNode;
+  dangerActionDisabled?: boolean;
+  dangerActionLabel?: string;
   meta: string;
   onAction?: () => void;
+  onDangerAction?: () => void;
   title: string;
 }) {
   return (
-    <header className="flex min-h-14 items-center justify-between gap-3 border-b border-border bg-surface-high/55 px-4 py-3">
+    <header className="flex min-h-14 items-center justify-between gap-3 border-b border-theme-card-border bg-theme-card-header/70 px-4 py-3">
       <div className="min-w-0">
         <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">{title}</h3>
         <p className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">{meta}</p>
       </div>
       {onAction && actionLabel && (
-        <button
-          aria-label={actionLabel}
-          className="grid size-8 shrink-0 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-highest hover:text-primary"
-          onClick={onAction}
-          title={actionLabel}
-          type="button"
-        >
-          {actionIcon ?? <Pencil size={16} />}
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            aria-label={actionLabel}
+            className="grid size-8 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-primary"
+            onClick={onAction}
+            title={actionLabel}
+            type="button"
+          >
+            {actionIcon ?? <Pencil size={16} />}
+          </button>
+          {onDangerAction && dangerActionLabel && (
+            <button
+              aria-label={dangerActionLabel}
+              className="grid size-8 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-status-remove disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={dangerActionDisabled}
+              onClick={onDangerAction}
+              title={dangerActionLabel}
+              type="button"
+            >
+              {dangerActionIcon ?? <Trash2 size={16} />}
+            </button>
+          )}
+        </div>
       )}
     </header>
   );
@@ -1162,7 +1272,7 @@ function IconAction({
     <button
       aria-label={label}
       className={clsx(
-        "grid size-8 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-highest hover:text-primary disabled:cursor-not-allowed disabled:opacity-45",
+        "grid size-8 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-primary disabled:cursor-not-allowed disabled:opacity-45",
         danger && "hover:text-status-remove",
       )}
       disabled={disabled}
@@ -1187,7 +1297,7 @@ function ToggleRow({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-surface-high/60 px-3 py-3">
+    <div className="flex items-center justify-between gap-4 rounded-xl border border-theme-control-border bg-theme-control/70 px-3 py-3">
       <span className="text-body-sm text-on-surface">{label}</span>
       <Switch aria-label={label} checked={checked} disabled={disabled} onCheckedChange={onChange} />
     </div>
@@ -1208,9 +1318,7 @@ function Field({ children, label, required = false }: { children: ReactNode; lab
 
 function EmptyState({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-border bg-surface-card/60 px-4 py-10 text-center text-body-md text-on-surface-variant">
-      {children}
-    </div>
+    <FoundationEmptyState className="min-h-0 px-4 py-10 text-body-md" title={children} />
   );
 }
 

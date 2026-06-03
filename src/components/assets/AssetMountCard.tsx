@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { Check } from "lucide-react";
 import { useI18n } from "../../i18n/I18nProvider";
+import { DEFAULT_ENTITY_ACCENT_HEX } from "../../theme/themes";
 import type { TranslationKey } from "../../i18n/messages";
 import type { AppShortcut, Asset, AssetMountStatus, TargetProfile } from "../../types";
 import { getMountDisplayState, type MountDisplayState } from "../../utils/mountState";
@@ -24,7 +25,7 @@ export function AssetMountCard({
 }) {
   const { t } = useI18n();
   const supported = profile.supported_kinds.includes(asset.kind);
-  const accentColor = shortcut?.accentColor ?? "#8c909f";
+  const accentColor = shortcut?.accentColor ?? DEFAULT_ENTITY_ACCENT_HEX;
   const displayIcon = shortcut?.displayIcon ?? profile.name.slice(0, 1).toUpperCase();
   const disabled = Boolean(mountBlockedReason);
   const displayState = getMountDisplayState(mountStatus);
@@ -36,12 +37,12 @@ export function AssetMountCard({
       aria-pressed={mounted}
       className={clsx(
         "group relative min-h-[76px] overflow-hidden rounded-xl border px-3 py-2.5 text-left transition-all",
-        "bg-surface-high/80 hover:-translate-y-px hover:bg-surface-highest/80",
+        "bg-theme-control/80 hover:-translate-y-px hover:bg-theme-control-hover/80",
         mounted
-          ? "border-status-create/70 bg-status-create/12 shadow-[0_0_0_1px_rgba(16,185,129,0.25),0_16px_34px_rgba(16,185,129,0.16)]"
+          ? "border-status-create/70 bg-status-create/12 shadow-[0_0_0_1px_rgb(var(--color-status-create)/0.25),0_16px_34px_rgb(var(--color-status-create)/0.16)]"
           : mountCardStateClass(displayState),
         !supported && "opacity-60",
-        disabled && "cursor-not-allowed opacity-55 hover:translate-y-0 hover:border-border hover:bg-surface-high/80",
+        disabled && "cursor-not-allowed opacity-55 hover:translate-y-0 hover:border-theme-control-border hover:bg-theme-control/80",
       )}
       disabled={disabled}
       onClick={() => onToggle(profile.id)}
@@ -53,12 +54,12 @@ export function AssetMountCard({
         <span
           className={clsx(
             "relative grid size-9 shrink-0 place-items-center overflow-hidden rounded-full border text-[13px] font-bold transition-transform group-hover:scale-105",
-            mounted && "shadow-[0_0_18px_rgba(16,185,129,0.2)]",
+            mounted && "shadow-[0_0_18px_rgb(var(--color-status-create)/0.2)]",
           )}
           style={{
-            borderColor: mounted ? "#10b981" : mountCardRingColor(displayState, accentColor),
-            backgroundColor: mounted ? "rgba(16,185,129,0.16)" : `${accentColor}18`,
-            color: mounted ? "#10b981" : accentColor,
+            borderColor: mounted ? "rgb(var(--color-status-create))" : mountCardRingColor(displayState, accentColor),
+            backgroundColor: mounted ? "rgb(var(--color-status-create) / 0.16)" : `${accentColor}18`,
+            color: mounted ? "rgb(var(--color-status-create))" : accentColor,
           }}
           aria-hidden="true"
         >
@@ -72,7 +73,7 @@ export function AssetMountCard({
             <span
               className={clsx(
                 "grid size-5 shrink-0 place-items-center rounded-full border transition-colors",
-                mounted ? "border-status-create bg-status-create text-background" : "border-border bg-surface-high text-transparent",
+                mounted ? "border-status-create bg-status-create text-background" : "border-theme-control-border bg-theme-control text-transparent",
               )}
               aria-hidden="true"
             >
@@ -118,7 +119,7 @@ function MountCardStateRing({ color, state }: { color: string; state: MountDispl
 
 function mountCardStateClass(state: MountDisplayState) {
   if (state === "conflict" || state === "broken") return "border-status-remove/50 bg-status-remove/10 hover:border-status-remove/65";
-  return "border-border hover:border-outline-variant";
+  return "border-theme-control-border hover:border-theme-nav-active-border";
 }
 
 function mountCardStateTextClass(state: MountDisplayState) {
@@ -134,6 +135,6 @@ function mountCardStateDotClass(state: MountDisplayState) {
 }
 
 function mountCardRingColor(state: MountDisplayState, accentColor: string) {
-  if (state === "conflict" || state === "broken") return "#f43f5e";
+  if (state === "conflict" || state === "broken") return "rgb(var(--color-status-remove))";
   return accentColor;
 }

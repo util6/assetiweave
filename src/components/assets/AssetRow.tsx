@@ -22,6 +22,8 @@ export function AssetRow({
   onToggleExpanded,
   onToggleMount,
   onRevealPath,
+  onEdit,
+  onDelete,
 }: {
   asset: Asset;
   source?: Source;
@@ -32,6 +34,8 @@ export function AssetRow({
   onToggleExpanded: () => void;
   onToggleMount: (profileId: string) => void;
   onRevealPath: (path: string) => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
 }) {
   const { t } = useI18n();
   const mountBlockedReason = isDirectMountBlockedSource(source) ? t("mount.blocked") : undefined;
@@ -40,8 +44,8 @@ export function AssetRow({
   return (
     <article
       className={clsx(
-        "group cursor-pointer border-b border-border/80 transition-all last:border-b-0 hover:bg-surface-low/80",
-        expanded && "asset-expanded bg-surface-low/90 shadow-[inset_3px_0_0_rgba(173,198,255,0.58)]",
+        "group cursor-pointer border-b border-theme-card-border/80 transition-all last:border-b-0 hover:bg-theme-card-header/70",
+        expanded && "asset-expanded bg-theme-card-header shadow-[inset_3px_0_0_rgb(var(--theme-nav-indicator)/0.62)]",
       )}
       onClick={onToggleExpanded}
     >
@@ -53,7 +57,7 @@ export function AssetRow({
             </span>
             <span className={kindBadgeClass(asset.kind)}>{assetKindLabel(asset.kind, t)}</span>
             <MountStatePill state={mountSummaryState} />
-            <span className="rounded-md border border-border/70 bg-surface-highest/70 px-2 py-0.5 text-[10px] font-bold text-on-surface-variant">
+            <span className="rounded-md border border-theme-control-border bg-theme-control-hover/70 px-2 py-0.5 text-[10px] font-bold text-on-surface-variant">
               {t("asset.origin.local")}
             </span>
           </div>
@@ -74,7 +78,7 @@ export function AssetRow({
           </div>
         </div>
         <div
-          className="flex w-[292px] shrink-0 items-center justify-end gap-2 rounded-xl border border-border/70 bg-surface-lowest/35 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)] max-[980px]:w-full max-[980px]:justify-start"
+          className="flex w-[292px] shrink-0 items-center justify-end gap-2 rounded-xl border border-theme-control-border bg-theme-control/55 p-1.5 shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.38)] max-[980px]:w-full max-[980px]:justify-start"
           onClick={(event) => event.stopPropagation()}
         >
           <QuickMountButtons
@@ -85,21 +89,27 @@ export function AssetRow({
             shortcuts={appShortcuts}
             onToggle={onToggleMount}
           />
-          <span className="h-6 w-px bg-border/80" aria-hidden="true" />
-          <button
-            className="grid size-8 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-highest hover:text-primary"
-            aria-label={t("asset.edit")}
-            type="button"
-          >
-            <Pencil size={17} />
-          </button>
-          <button
-            className="grid size-8 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-highest hover:text-status-remove"
-            aria-label={t("asset.delete")}
-            type="button"
-          >
-            <Trash2 size={17} />
-          </button>
+          {(onEdit || onDelete) && <span className="h-6 w-px bg-theme-control-border/80" aria-hidden="true" />}
+          {onEdit && (
+            <button
+              className="grid size-8 place-items-center rounded-lg text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-primary"
+              aria-label={t("asset.edit")}
+              onClick={onEdit}
+              type="button"
+            >
+              <Pencil size={17} />
+            </button>
+          )}
+          {onDelete && (
+            <button
+              className="grid size-8 place-items-center rounded-lg text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-status-remove"
+              aria-label={t("asset.delete")}
+              onClick={onDelete}
+              type="button"
+            >
+              <Trash2 size={17} />
+            </button>
+          )}
         </div>
       </div>
 

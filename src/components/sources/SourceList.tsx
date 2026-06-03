@@ -12,6 +12,7 @@ export function SourceList({
   busy,
   expandedAssetIds,
   onDelete,
+  onEdit,
   onAssetReveal,
   onReveal,
   onSetSourceMountProfile,
@@ -28,6 +29,7 @@ export function SourceList({
   busy: boolean;
   expandedAssetIds: Set<string>;
   onDelete: (source: Source) => void;
+  onEdit: (source: Source) => void;
   onAssetReveal: (path: string) => void;
   onReveal: (path: string) => void;
   onSetSourceMountProfile: (assetIds: string[], profileId: string, enabled: boolean) => void;
@@ -67,7 +69,7 @@ export function SourceList({
 
   if (sources.length === 0) {
     return (
-      <div className="rounded-xl border border-border bg-surface-card/60 px-4 py-10 text-center text-body-md text-on-surface-variant">
+      <div className="rounded-xl border border-theme-card-border bg-theme-card/70 px-4 py-10 text-center text-body-md text-on-surface-variant shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.16)]">
         {t("source.empty")}
       </div>
     );
@@ -83,6 +85,8 @@ export function SourceList({
         busy={busy}
         mountStatusesByAssetId={mountStatusesByAssetId}
         onAssetReveal={onAssetReveal}
+        onDelete={onDelete}
+        onEdit={onEdit}
         onReveal={onReveal}
         onSelectSource={setSelectedSourceId}
         onSetSourceMountProfile={onSetSourceMountProfile}
@@ -95,7 +99,10 @@ export function SourceList({
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-surface-card/60" aria-label={t("source.page.title")}>
+    <div
+      className="overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
+      aria-label={t("source.page.title")}
+    >
       {sources.map((source) => (
         <SourceRow
           appShortcuts={appShortcuts}
@@ -106,6 +113,7 @@ export function SourceList({
           expandedAssetIds={expandedAssetIds}
           key={source.id}
           onDelete={() => onDelete(source)}
+          onEdit={() => onEdit(source)}
           onAssetReveal={onAssetReveal}
           onReveal={() => onReveal(source.root_path)}
           onSetSourceMountProfile={onSetSourceMountProfile}

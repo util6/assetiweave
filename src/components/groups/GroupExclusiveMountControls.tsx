@@ -46,7 +46,7 @@ export function GroupExclusiveMountControls({
     );
 
   return (
-    <section className="rounded-xl border border-primary/30 bg-primary/10 px-3 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+    <section className="rounded-xl border border-theme-nav-active-border/40 bg-theme-card/70 px-3 py-3 shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.34)]">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           <button
@@ -56,7 +56,7 @@ export function GroupExclusiveMountControls({
               "grid size-9 place-items-center rounded-lg border text-primary transition-colors disabled:cursor-not-allowed disabled:opacity-45",
               allSelected || partiallySelected
                 ? "border-primary/55 bg-primary/15"
-                : "border-border bg-surface-high hover:border-primary/45 hover:bg-surface-highest",
+                : "border-theme-control-border bg-theme-control hover:border-theme-nav-active-border hover:bg-theme-control-hover",
             )}
             disabled={busy || selectableGroupCount === 0}
             onClick={onToggleAll}
@@ -68,10 +68,10 @@ export function GroupExclusiveMountControls({
           <span className="text-body-sm font-semibold text-on-surface">
             {t("group.exclusive.selectedGroups", { count: selectedGroupCount })}
           </span>
-          <span className="rounded-md border border-border bg-surface-high px-2 py-0.5 font-mono text-body-sm text-primary">
+          <span className="rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 font-mono text-body-sm text-primary">
             {t("group.exclusive.selectedSkills", { count: selectedSkillCount })}
           </span>
-          <div className="flex items-center gap-1 rounded-lg border border-border/80 bg-surface-high p-1">
+          <div className="flex items-center gap-1 rounded-lg border border-theme-control-border bg-theme-control p-1">
             <ModeChoice
               checked={mode === "exclusive"}
               disabled={busy}
@@ -137,7 +137,7 @@ function ModeChoice({
     <label
       className={clsx(
         "inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-body-sm font-semibold transition-colors",
-        checked ? "bg-primary/15 text-primary" : "text-on-surface-variant hover:bg-surface-highest hover:text-on-surface",
+        checked ? "bg-primary/15 text-primary" : "text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
         disabled && "cursor-not-allowed opacity-45",
       )}
     >

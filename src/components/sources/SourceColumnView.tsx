@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, Pencil, Trash2 } from "lucide-react";
 import { sourceKindLabel, sourceOriginLabel, translateScanStatus } from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
@@ -17,6 +17,8 @@ export function SourceColumnView({
   busy,
   mountStatusesByAssetId,
   onAssetReveal,
+  onDelete,
+  onEdit,
   onReveal,
   onSelectSource,
   onSetSourceMountProfile,
@@ -30,6 +32,8 @@ export function SourceColumnView({
   busy: boolean;
   mountStatusesByAssetId: Map<string, AssetMountStatus[]>;
   onAssetReveal: (path: string) => void;
+  onDelete: (source: Source) => void;
+  onEdit: (source: Source) => void;
   onReveal: (path: string) => void;
   onSelectSource: (sourceId: string) => void;
   onSetSourceMountProfile: (assetIds: string[], profileId: string, enabled: boolean) => void;
@@ -43,8 +47,8 @@ export function SourceColumnView({
   const mountBlockedReason = isDirectMountBlockedSource(selectedSource) ? t("mount.blocked") : undefined;
 
   return (
-    <div className="grid min-h-[560px] overflow-hidden rounded-xl border border-border bg-surface-card/60 grid-cols-[minmax(240px,0.72fr)_minmax(360px,1.14fr)_minmax(320px,0.9fr)] max-[1120px]:grid-cols-[minmax(240px,0.8fr)_minmax(0,1.2fr)]">
-      <section className="flex min-h-0 flex-col border-r border-border bg-surface-lowest/20">
+    <div className="grid min-h-[560px] overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)] grid-cols-[minmax(240px,0.72fr)_minmax(360px,1.14fr)_minmax(320px,0.9fr)] max-[1120px]:grid-cols-[minmax(240px,0.8fr)_minmax(0,1.2fr)]">
+      <section className="flex min-h-0 flex-col border-r border-theme-card-border bg-theme-card-header/35">
         <ColumnHeader title={t("source.column.sources")} meta={t("source.column.sourceCount", { count: sources.length })} />
         <div className="min-h-0 overflow-y-auto py-1" role="listbox" aria-label={t("source.column.sources")}>
           {sources.map((source) => {
@@ -57,8 +61,8 @@ export function SourceColumnView({
                 className={clsx(
                   "flex min-h-[68px] w-full items-start gap-3 border-l-2 px-3 py-3 text-left transition-colors",
                   active
-                    ? "border-primary bg-primary/10 text-on-surface"
-                    : "border-transparent text-on-surface-variant hover:bg-surface-low/80 hover:text-on-surface",
+                    ? "border-theme-nav-active-border bg-theme-nav-active/55 text-on-surface"
+                    : "border-transparent text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
                 )}
                 key={source.id}
                 onClick={() => onSelectSource(source.id)}
@@ -84,7 +88,7 @@ export function SourceColumnView({
         </div>
       </section>
 
-      <section className="flex min-h-0 flex-col border-r border-border max-[1120px]:border-r-0">
+      <section className="flex min-h-0 flex-col border-r border-theme-card-border max-[1120px]:border-r-0">
         <ColumnHeader
           title={selectedSource.name}
           meta={t("source.assetCount", { count: selectedAssets.length })}
@@ -99,7 +103,7 @@ export function SourceColumnView({
               const mountStatuses = mountStatusesByAssetId.get(asset.id) ?? [];
               return (
                 <article
-                  className="grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/70 px-4 py-3 last:border-b-0 hover:bg-surface-low/70"
+                  className="grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-theme-card-border px-4 py-3 last:border-b-0 hover:bg-theme-card-header/70"
                   key={asset.id}
                 >
                   <div className="min-w-0">
@@ -134,9 +138,30 @@ export function SourceColumnView({
         </div>
       </section>
 
-      <section className="flex min-h-0 flex-col bg-surface-lowest/20 max-[1120px]:col-span-2 max-[1120px]:border-t max-[1120px]:border-border">
+      <section className="flex min-h-0 flex-col bg-theme-card-header/35 max-[1120px]:col-span-2 max-[1120px]:border-t max-[1120px]:border-theme-card-border">
         <ColumnHeader title={t("source.column.mountTargets")} meta={translateScanStatus(selectedSource.last_scan_status, t)} />
         <div className="min-h-0 overflow-y-auto p-4">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <button
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm font-semibold text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={busy}
+              onClick={() => onEdit(selectedSource)}
+              type="button"
+            >
+              <Pencil size={15} />
+              {t("source.action.edit")}
+            </button>
+            <button
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-status-remove/45 bg-status-remove/10 px-3 text-body-sm font-semibold text-status-remove transition-colors hover:bg-status-remove/15 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={busy || isProtectedSource(selectedSource)}
+              onClick={() => onDelete(selectedSource)}
+              type="button"
+              title={isProtectedSource(selectedSource) ? t("source.delete.protected") : t("source.action.delete")}
+            >
+              <Trash2 size={15} />
+              {isProtectedSource(selectedSource) ? t("source.delete.protected") : t("source.action.delete")}
+            </button>
+          </div>
           <SourceBulkMountControls
             appShortcuts={appShortcuts}
             assets={selectedAssets}
@@ -148,7 +173,7 @@ export function SourceColumnView({
             variant="panel"
           />
 
-          <div className="mt-4 space-y-3 rounded-xl border border-border bg-surface-lowest/35 p-3">
+          <div className="mt-4 space-y-3 rounded-xl border border-theme-card-border bg-theme-card/65 p-3">
             <SourceDetailRow label={t("source.field.kind")} value={sourceKindLabel(selectedSource.kind, t)} />
             <SourceDetailRow label={t("source.field.rootPath")} value={abbreviateHomePath(selectedSource.root_path)} mono />
             <SourceDetailRow label={t("source.field.origin")} value={sourceOriginLabel(selectedSource.source_origin, t)} />
@@ -159,6 +184,10 @@ export function SourceColumnView({
       </section>
     </div>
   );
+}
+
+function isProtectedSource(source: Source) {
+  return source.id === "assetiweave-library-skills" || source.source_origin === "assetiweave_library";
 }
 
 function ColumnHeader({
@@ -173,7 +202,7 @@ function ColumnHeader({
   title: string;
 }) {
   return (
-    <header className="flex min-h-14 items-center justify-between gap-3 border-b border-border bg-surface-high/55 px-4 py-3">
+    <header className="flex min-h-14 items-center justify-between gap-3 border-b border-theme-card-border bg-theme-card-header/70 px-4 py-3">
       <div className="min-w-0">
         <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">{title}</h3>
         <p className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">{meta}</p>
@@ -181,7 +210,7 @@ function ColumnHeader({
       {onAction && actionLabel && (
         <button
           aria-label={actionLabel}
-          className="grid size-8 shrink-0 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-highest hover:text-primary"
+          className="grid size-8 shrink-0 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-primary"
           onClick={onAction}
           title={actionLabel}
           type="button"
@@ -216,7 +245,7 @@ function RuleList({ label, rules }: { label: string; rules: string[] }) {
         <div className="mt-1 flex flex-wrap gap-1.5">
           {rules.map((rule) => (
             <span
-              className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-md border border-border bg-surface-high px-2 py-0.5 font-mono text-body-sm text-on-surface-variant"
+              className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 font-mono text-body-sm text-on-surface-variant"
               key={rule}
             >
               {rule}

@@ -1,17 +1,18 @@
 import * as React from "react";
 
 import { cn } from "@/lib/utils";
+import { panelRecipe } from "../../theme/recipes";
 
 const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
-    <div className={cn("rounded-xl border border-border bg-surface-low text-on-surface", className)} ref={ref} {...props} />
+    <div className={cn(panelRecipe({ padding: "none", variant: "default" }), className)} ref={ref} {...props} />
   ),
 );
 Card.displayName = "Card";
 
 const CardHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
-    <div className={cn("flex flex-col gap-1.5 border-b border-border px-4 py-3", className)} ref={ref} {...props} />
+    <div className={cn("flex flex-col gap-1.5 border-b border-theme-card-border bg-theme-card-header/70 px-4 py-3", className)} ref={ref} {...props} />
   ),
 );
 CardHeader.displayName = "CardHeader";

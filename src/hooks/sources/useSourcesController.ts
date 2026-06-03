@@ -71,16 +71,29 @@ export function useSourcesController(assets: Asset[], onCatalogRefresh?: (assets
     }
   }
 
-  async function removeSource(source: Source, confirmMessage: string) {
-    if (!window.confirm(confirmMessage)) {
-      return;
-    }
-
+  async function removeSource(source: Source) {
     setBusy(true);
     try {
       await deleteSourceById(source.id);
       setSources((currentSources) => currentSources.filter((candidate) => candidate.id !== source.id));
       await onCatalogRefresh?.();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveSource(source: Source) {
+    setBusy(true);
+    try {
+      const saved = await updateSource(source);
+      setSources((currentSources) => upsertAndSortSources(currentSources, saved));
+      if (saved.enabled && saved.last_scan_status !== "preview") {
+        const scannedAssets = await scanSkillSources();
+        await onCatalogRefresh?.(scannedAssets);
+        await refreshSources();
+      } else {
+        await onCatalogRefresh?.();
+      }
     } finally {
       setBusy(false);
     }
@@ -123,6 +136,7 @@ export function useSourcesController(assets: Asset[], onCatalogRefresh?: (assets
     query,
     revealPath,
     removeSource,
+    saveSource,
     scanAllSources,
     setQuery,
     sources,

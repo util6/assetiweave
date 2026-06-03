@@ -11,6 +11,7 @@ import {
   type SourceImportFormValues,
   validateSourceImportForm,
 } from "../../utils/sourceImport";
+import { DialogFrame as FoundationDialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
@@ -33,7 +34,6 @@ export function SourceImportDialog({
   suggestedPriority: number;
 }) {
   const { t } = useI18n();
-  const titleId = useId();
   const rootPathErrorId = useId();
   const priorityErrorId = useId();
   const rootPathInputRef = useRef<HTMLInputElement>(null);
@@ -109,36 +109,31 @@ export function SourceImportDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-background/72 px-6 py-8 backdrop-blur-sm">
-      <section
-        aria-labelledby={titleId}
-        aria-modal="true"
-        className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-surface-low shadow-[0_24px_72px_rgba(0,0,0,0.42)]"
-        role="dialog"
-      >
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-border px-5">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="grid size-9 place-items-center rounded-xl border border-status-update/25 bg-status-update/15 text-status-update">
-              <FolderPlus size={18} />
-            </span>
-            <h2 className="truncate text-h2 text-on-surface" id={titleId}>
-              {t("source.import.title")}
-            </h2>
-          </div>
-          <Button
-            aria-label={t("source.import.close")}
-            className="text-on-surface-variant hover:text-on-surface"
-            disabled={busy}
-            onClick={onClose}
-            size="icon"
-            type="button"
-            variant="ghost"
-          >
-            <X size={18} />
-          </Button>
-        </header>
-
-        <form className="min-h-0 overflow-y-auto px-5 py-5" onSubmit={(event) => void handleSubmit(event)}>
+    <FoundationDialogFrame
+      className="flex max-h-full max-w-2xl flex-col"
+      contentClassName="min-h-0 overflow-y-auto p-0"
+      headerActions={
+        <Button
+          aria-label={t("source.import.close")}
+          className="text-on-surface-variant hover:text-on-surface"
+          disabled={busy}
+          onClick={onClose}
+          size="icon"
+          title={t("source.import.close")}
+          type="button"
+          variant="ghost"
+        >
+          <X size={18} />
+        </Button>
+      }
+      headerClassName="h-16 shrink-0 items-center"
+      icon={<FolderPlus size={18} />}
+      iconClassName="border-status-update/25 bg-status-update/15 text-status-update"
+      onBackdropClick={busy ? undefined : onClose}
+      overlayClassName="z-40 px-6 py-8"
+      title={t("source.import.title")}
+    >
+        <form className="px-5 py-5" onSubmit={(event) => void handleSubmit(event)}>
           <div className="grid gap-4">
             <Field label={t("source.field.rootPath")} required>
               <div className="flex gap-2">
@@ -196,7 +191,7 @@ export function SourceImportDialog({
             <div className="grid grid-cols-2 gap-3 max-[720px]:grid-cols-1">
               <Field label={t("source.field.includeGlobs")}>
                 <textarea
-                  className="min-h-28 w-full resize-y rounded-lg border border-border bg-surface-high px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="min-h-28 w-full resize-y rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={busy}
                   onChange={(event) => updateValue("includeGlobsText", event.target.value)}
                   placeholder={t("source.form.includePlaceholder")}
@@ -205,7 +200,7 @@ export function SourceImportDialog({
               </Field>
               <Field label={t("source.field.excludeGlobs")}>
                 <textarea
-                  className="min-h-28 w-full resize-y rounded-lg border border-border bg-surface-high px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="min-h-28 w-full resize-y rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={busy}
                   onChange={(event) => updateValue("excludeGlobsText", event.target.value)}
                   placeholder={t("source.form.excludePlaceholder")}
@@ -214,7 +209,7 @@ export function SourceImportDialog({
               </Field>
             </div>
 
-            <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-surface-high/60 px-3 py-3">
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-theme-control-border bg-theme-control/70 px-3 py-3">
               <span className="text-body-sm text-on-surface">{t("source.field.enabled")}</span>
               <Switch
                 aria-label={t("source.field.enabled")}
@@ -226,7 +221,7 @@ export function SourceImportDialog({
 
           </div>
 
-          <footer className="mt-5 flex justify-end gap-2 border-t border-border pt-4">
+          <footer className="mt-5 flex justify-end gap-2 border-t border-theme-card-border pt-4">
             <Button disabled={busy} onClick={onClose} type="button" variant="outline">
               {t("source.import.cancel")}
             </Button>
@@ -235,8 +230,7 @@ export function SourceImportDialog({
             </Button>
           </footer>
         </form>
-      </section>
-    </div>
+    </FoundationDialogFrame>
   );
 }
 

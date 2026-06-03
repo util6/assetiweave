@@ -14,6 +14,8 @@ export function AssetGridView({
   appShortcuts,
   assets,
   mountStatusesByAssetId,
+  onDeleteAsset,
+  onEditAsset,
   onRevealPath,
   onToggleMount,
   profiles,
@@ -22,6 +24,8 @@ export function AssetGridView({
   appShortcuts: AppShortcut[];
   assets: Asset[];
   mountStatusesByAssetId: Map<string, AssetMountStatus[]>;
+  onDeleteAsset: (asset: Asset) => void;
+  onEditAsset: (asset: Asset) => void;
   onRevealPath: (path: string) => void;
   onToggleMount: (assetId: string, profileId: string) => void;
   profiles: TargetProfile[];
@@ -31,7 +35,7 @@ export function AssetGridView({
 
   if (assets.length === 0) {
     return (
-      <div className="rounded-xl border border-border bg-surface-card/60 px-4 py-10 text-center text-body-md text-on-surface-variant">
+      <div className="rounded-xl border border-theme-card-border bg-theme-card/70 px-4 py-10 text-center text-body-md text-on-surface-variant">
         {t("asset.empty")}
       </div>
     );
@@ -48,7 +52,7 @@ export function AssetGridView({
 
         return (
           <article
-            className="group flex min-h-[236px] flex-col rounded-xl border border-border bg-surface-card/70 p-4 shadow-[0_18px_42px_rgba(2,8,23,0.2)] transition-colors hover:border-outline-variant hover:bg-surface-card/90"
+            className="group flex min-h-[236px] flex-col rounded-xl border border-theme-card-border bg-theme-card/78 p-4 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.16)] transition-colors hover:border-theme-nav-active-border hover:bg-theme-card"
             key={asset.id}
           >
             <div className="flex min-w-0 items-start justify-between gap-3">
@@ -69,10 +73,10 @@ export function AssetGridView({
                 <GridIconButton label={t("asset.revealPath")} onClick={() => onRevealPath(asset.absolute_path)}>
                   <FolderOpen size={16} />
                 </GridIconButton>
-                <GridIconButton label={t("asset.edit")}>
+                <GridIconButton label={t("asset.edit")} onClick={() => onEditAsset(asset)}>
                   <Pencil size={16} />
                 </GridIconButton>
-                <GridIconButton danger label={t("asset.delete")}>
+                <GridIconButton danger label={t("asset.delete")} onClick={() => onDeleteAsset(asset)}>
                   <Trash2 size={16} />
                 </GridIconButton>
               </div>
@@ -83,7 +87,7 @@ export function AssetGridView({
             </p>
 
             <button
-              className="mt-3 block max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-lg border border-border/70 bg-surface-lowest/35 px-3 py-2 text-left font-mono text-body-sm text-on-surface-variant transition-colors hover:border-outline-variant hover:text-primary"
+              className="mt-3 block max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-lg border border-theme-control-border bg-theme-control/55 px-3 py-2 text-left font-mono text-body-sm text-on-surface-variant transition-colors hover:border-theme-nav-active-border hover:text-primary"
               onClick={() => onRevealPath(asset.absolute_path)}
               title={t("asset.revealPath")}
               type="button"
@@ -107,7 +111,7 @@ export function AssetGridView({
                 />
                 {mountBlockedReason ?? t("mount.selected", { count: mountedProfileIds.length })}
               </span>
-              <div className="shrink-0 rounded-xl border border-border/70 bg-surface-lowest/35 p-1.5">
+              <div className="shrink-0 rounded-xl border border-theme-control-border bg-theme-control/55 p-1.5">
                 <QuickMountButtons
                   asset={asset}
                   mountBlockedReason={mountBlockedReason}
@@ -140,7 +144,7 @@ function GridIconButton({
     <button
       aria-label={label}
       className={clsx(
-        "grid size-8 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-highest hover:text-primary",
+        "grid size-8 place-items-center rounded-lg text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-primary",
         danger && "hover:text-status-remove",
       )}
       onClick={onClick}

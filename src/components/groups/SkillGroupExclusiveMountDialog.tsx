@@ -35,7 +35,7 @@ export function SkillGroupExclusiveMountDialog({
       title={t(mode === "exclusive" ? "group.exclusive.dialogTitle" : "group.exclusive.additiveDialogTitle")}
     >
       <div className="grid gap-4">
-        <section className="grid gap-3 rounded-xl border border-border bg-surface-lowest/35 p-3">
+        <section className="grid gap-3 rounded-xl border border-theme-card-border bg-theme-card/65 p-3">
           <div className="flex items-center gap-2 text-label-caps uppercase text-outline">
             <CheckCheck size={15} />
             <span>{t("group.exclusive.summaryTitle")}</span>
@@ -62,7 +62,7 @@ export function SkillGroupExclusiveMountDialog({
           </div>
         </section>
 
-        <section className="grid gap-2 rounded-xl border border-border bg-surface-lowest/35 p-3">
+        <section className="grid gap-2 rounded-xl border border-theme-card-border bg-theme-card/65 p-3">
           <div className="flex items-center gap-2 text-label-caps uppercase text-outline">
             <AlertTriangle size={15} />
             <span>{t("group.exclusive.detailsTitle")}</span>
@@ -113,7 +113,7 @@ function SummaryItem({
             : "text-on-surface";
 
   return (
-    <div className="min-w-0 rounded-lg border border-border bg-surface-high px-3 py-2">
+    <div className="min-w-0 rounded-lg border border-theme-control-border bg-theme-control px-3 py-2">
       <div className="text-label-caps uppercase text-outline">{label}</div>
       <div className={`mt-1 min-w-0 font-mono text-body-sm font-semibold ${valueClass}`}>{value}</div>
     </div>
@@ -134,20 +134,20 @@ function ExclusiveDetailSection({
   const { t } = useI18n();
 
   return (
-    <details className="group rounded-lg border border-border bg-surface-high/80">
+    <details className="group rounded-lg border border-theme-control-border bg-theme-control/80">
       <summary className="flex min-h-10 cursor-pointer items-center justify-between gap-3 px-3 py-2 text-body-sm font-semibold text-on-surface-variant marker:text-outline hover:text-on-surface">
         <span>{title}</span>
-        <span className="rounded-md border border-border bg-surface-card px-2 py-0.5 font-mono text-body-sm text-primary">
+        <span className="rounded-md border border-theme-card-border bg-theme-card px-2 py-0.5 font-mono text-body-sm text-primary">
           {count}
         </span>
       </summary>
-      <div className="border-t border-border px-3 py-2">
+      <div className="border-t border-theme-control-border px-3 py-2">
         {items.length === 0 ? (
           <div className="text-body-sm text-on-surface-variant">{t("group.exclusive.emptySection")}</div>
         ) : (
           <ul className="grid gap-1.5">
             {items.map((item) => (
-              <li className="min-w-0 rounded-md bg-surface-lowest/45 px-2 py-1.5" key={item.asset_id}>
+              <li className="min-w-0 rounded-md bg-theme-card-header/50 px-2 py-1.5" key={item.asset_id}>
                 <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface">
                   {item.name}
                 </div>

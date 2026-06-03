@@ -9,6 +9,7 @@ export const navigationIconSchema = z.enum([
   "brain",
   "command",
   "file-code",
+  "file-text",
   "gauge",
   "grid",
   "layers",

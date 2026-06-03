@@ -1,10 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Filter, Grid3X3, LayoutList, Plus, RefreshCw, Settings, SlidersHorizontal, Tag } from "lucide-react";
+import { AssetDeleteDialog } from "../../components/assets/AssetDeleteDialog";
+import { AssetEditDialog } from "../../components/assets/AssetEditDialog";
 import { AssetList } from "../../components/assets/AssetList";
 import { AssetToolbar, type AssetViewMode } from "../../components/assets/AssetToolbar";
 import { DeploymentPlanPanel } from "../../components/plans/DeploymentPlanPanel";
 import type { CatalogController } from "../../hooks/catalog/useCatalogController";
 import { useI18n } from "../../i18n/I18nProvider";
+import { deleteAsset, listSkillGroups, setSkillGroupManualMembers, updateAssetDescription } from "../../services/catalog";
+import type { Asset, AssetGroupDetail } from "../../types";
 
 export function CatalogPage({
   catalog,
@@ -15,6 +19,115 @@ export function CatalogPage({
 }) {
   const { t } = useI18n();
   const [assetViewMode, setAssetViewMode] = useState<AssetViewMode>("list");
+  const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
+  const [deletingAsset, setDeletingAsset] = useState<Asset | null>(null);
+  const [assetGroups, setAssetGroups] = useState<AssetGroupDetail[]>([]);
+  const [assetActionBusy, setAssetActionBusy] = useState(false);
+
+  useEffect(() => {
+    if (!editingAsset) {
+      return;
+    }
+
+    void refreshAssetGroups();
+  }, [editingAsset]);
+
+  async function refreshAssetGroups() {
+    try {
+      setAssetGroups(await listSkillGroups());
+    } catch (error) {
+      catalog.showNotification({ tone: "error", message: errorMessage(error) });
+    }
+  }
+
+  async function handleSaveAssetDescription(description: string | null) {
+    if (!editingAsset) {
+      return;
+    }
+
+    setAssetActionBusy(true);
+    try {
+      const savedAsset = await updateAssetDescription(editingAsset.id, description);
+      catalog.applyAssetUpdate(savedAsset);
+      catalog.clearDeploymentPlan();
+      catalog.showNotification({
+        tone: "success",
+        messageKey: "asset.notification.updated",
+        messageParams: { name: savedAsset.name },
+      });
+      setEditingAsset(null);
+    } catch (error) {
+      catalog.showNotification({ tone: "error", message: errorMessage(error) });
+    } finally {
+      setAssetActionBusy(false);
+    }
+  }
+
+  async function handleDeleteAsset(unmount: boolean) {
+    if (!deletingAsset) {
+      return;
+    }
+
+    setAssetActionBusy(true);
+    try {
+      const deletedAsset = await deleteAsset(deletingAsset.id, unmount);
+      catalog.removeAsset(deletedAsset.id);
+      catalog.clearDeploymentPlan();
+      catalog.showNotification({
+        tone: "success",
+        messageKey: "asset.notification.deleted",
+        messageParams: { name: deletedAsset.name },
+      });
+      setDeletingAsset(null);
+    } catch (error) {
+      catalog.showNotification({ tone: "error", message: errorMessage(error) });
+    } finally {
+      setAssetActionBusy(false);
+    }
+  }
+
+  async function handleSetAssetGroupMembership(group: AssetGroupDetail, enabled: boolean) {
+    if (!editingAsset) {
+      return;
+    }
+
+    const manualAssetIds = new Set(group.manual_asset_ids);
+    if (enabled) {
+      manualAssetIds.add(editingAsset.id);
+    } else {
+      manualAssetIds.delete(editingAsset.id);
+    }
+
+    setAssetActionBusy(true);
+    try {
+      const savedGroup = await setSkillGroupManualMembers(group.group.id, [...manualAssetIds]);
+      setAssetGroups((current) =>
+        current.map((candidate) => (candidate.group.id === savedGroup.group.id ? savedGroup : candidate)),
+      );
+      catalog.showNotification({
+        tone: "success",
+        messageKey: "asset.notification.groupUpdated",
+        messageParams: { name: editingAsset.name },
+      });
+    } catch (error) {
+      catalog.showNotification({ tone: "error", message: errorMessage(error) });
+    } finally {
+      setAssetActionBusy(false);
+    }
+  }
+
+  async function handleToggleAssetMount(profileId: string) {
+    if (!editingAsset) {
+      return;
+    }
+
+    setAssetActionBusy(true);
+    try {
+      await catalog.toggleMountProfile(editingAsset.id, profileId);
+    } finally {
+      setAssetActionBusy(false);
+    }
+  }
 
   return (
     <>
@@ -69,6 +182,8 @@ export function CatalogPage({
           assetMountStatuses={catalog.assetMountStatuses}
           assets={catalog.filteredAssets}
           expandedIds={catalog.expandedIds}
+          onDeleteAsset={setDeletingAsset}
+          onEditAsset={setEditingAsset}
           onRevealPath={(path) => void catalog.revealPath(path)}
           onToggleAsset={catalog.toggleAsset}
           onToggleMount={catalog.toggleMountProfile}
@@ -77,6 +192,28 @@ export function CatalogPage({
           viewMode={assetViewMode}
         />
       </section>
+      <AssetEditDialog
+        asset={editingAsset}
+        busy={assetActionBusy}
+        groups={assetGroups}
+        mountStatuses={catalog.assetMountStatuses}
+        onClose={() => setEditingAsset(null)}
+        onSetGroupMembership={handleSetAssetGroupMembership}
+        onSubmit={handleSaveAssetDescription}
+        onToggleMount={handleToggleAssetMount}
+        profiles={catalog.profiles}
+      />
+      <AssetDeleteDialog
+        asset={deletingAsset}
+        busy={assetActionBusy}
+        mountStatuses={catalog.assetMountStatuses}
+        onClose={() => setDeletingAsset(null)}
+        onConfirm={handleDeleteAsset}
+      />
     </>
   );
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }

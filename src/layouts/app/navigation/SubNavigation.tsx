@@ -16,7 +16,7 @@ export function SubNavigation({
 
   return (
     <section
-      className="sticky top-[var(--app-header-height)] z-10 flex shrink-0 gap-1.5 border-y border-border bg-surface-lowest/80 px-[var(--app-page-x)] py-[var(--app-subnav-y)] backdrop-blur"
+      className="sticky top-[var(--app-header-height)] z-10 flex shrink-0 gap-1.5 border-y border-theme-card-border bg-theme-subnav/88 px-[var(--app-page-x)] py-[var(--app-subnav-y)] backdrop-blur"
       aria-label={t("nav.aria.subNav")}
     >
       {items
@@ -24,8 +24,9 @@ export function SubNavigation({
         .map((item) => (
           <button
             className={clsx(
-              "relative h-8 whitespace-nowrap rounded-lg border border-transparent px-4 text-body-sm font-medium text-on-surface-variant transition-colors hover:bg-surface-high/70 hover:text-on-surface",
-              item.id === activeId && "border-primary-strong/25 bg-surface-high text-primary shadow-[inset_0_-2px_0_rgba(173,198,255,0.48)]",
+              "relative h-8 whitespace-nowrap rounded-lg border border-transparent px-4 text-body-sm font-medium text-on-surface-variant transition-colors hover:bg-theme-nav-hover/70 hover:text-on-surface",
+              item.id === activeId &&
+                "border-theme-nav-active-border/35 bg-theme-nav-active text-theme-nav-active-fg shadow-[inset_0_-2px_0_rgb(var(--theme-nav-indicator)/0.52)]",
             )}
             key={item.id}
             onClick={() => onSelect?.(item)}

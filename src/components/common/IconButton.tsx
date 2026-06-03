@@ -16,8 +16,8 @@ export function IconButton({
   return (
     <button
       className={clsx(
-        "grid place-items-center text-on-surface-variant transition-colors hover:bg-surface-highest hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-50",
-        compact ? "size-7 rounded-lg" : "size-9 rounded-xl border border-border bg-surface-high/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]",
+        "grid place-items-center text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-50",
+        compact ? "size-7 rounded-lg" : "size-9 rounded-xl border border-theme-control-border bg-theme-control/95 shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)]",
       )}
       aria-label={label}
       onClick={onClick}

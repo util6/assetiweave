@@ -15,6 +15,7 @@ const railLabelKeys: Partial<Record<string, TranslationKey>> = {
   apps: "nav.rail.apps",
   security: "nav.rail.security",
   docs: "nav.rail.docs",
+  logs: "nav.rail.logs",
   settings: "nav.rail.settings",
 };
 
@@ -31,6 +32,7 @@ const railDefaultLabels: Partial<Record<string, string[]>> = {
   apps: ["App Management", "应用管理", "App 管理"],
   security: ["Security Policies", "安全策略"],
   docs: ["Docs", "文档"],
+  logs: ["Logs", "日志"],
   settings: ["Settings", "设置"],
 };
 

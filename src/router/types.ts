@@ -6,6 +6,7 @@ export type NavigationIcon =
   | "brain"
   | "command"
   | "file-code"
+  | "file-text"
   | "gauge"
   | "grid"
   | "layers"

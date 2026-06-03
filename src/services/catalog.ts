@@ -68,6 +68,42 @@ export async function listAssets(kind?: AssetKind): Promise<Asset[]> {
   }
 }
 
+export async function updateAssetDescription(assetId: string, description: string | null): Promise<Asset> {
+  try {
+    return await invoke<Asset>("update_asset_description", { assetId, description });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    const asset = fallbackAssets.find((candidate) => candidate.id === assetId);
+    if (!asset) {
+      throw new Error(`asset not found: ${assetId}`);
+    }
+    return {
+      ...asset,
+      description,
+      updated_at: new Date().toISOString(),
+    };
+  }
+}
+
+export async function deleteAsset(assetId: string, unmount = false): Promise<Asset> {
+  try {
+    return await invoke<Asset>("delete_asset", { assetId, unmount });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    const asset = fallbackAssets.find((candidate) => candidate.id === assetId);
+    if (!asset) {
+      throw new Error(`asset not found: ${assetId}`);
+    }
+    return asset;
+  }
+}
+
 export async function listSources(): Promise<Source[]> {
   try {
     return await invoke<Source[]>("list_sources");

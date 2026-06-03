@@ -35,13 +35,17 @@ export function NotificationBanner({
   const message = notification.messageKey ? t(notification.messageKey, notification.messageParams) : (notification.message ?? "");
 
   return (
-    <section className="shrink-0 px-[var(--app-page-x)] py-3" aria-live="polite" aria-label={t("notification.aria")}>
+    <section
+      className="sticky top-[var(--app-toolbar-top)] z-20 shrink-0 px-[var(--app-page-x)] py-3 backdrop-blur"
+      aria-live="polite"
+      aria-label={t("notification.aria")}
+    >
       <div
-        className={`flex min-h-12 items-center justify-between rounded-xl border px-4 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${toneClass[notification.tone]}`}
+        className={`flex min-h-12 items-center justify-between rounded-xl border px-4 py-2.5 shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] ${toneClass[notification.tone]}`}
       >
         <p className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-medium">{message}</p>
         <button
-          className="ml-4 grid size-8 shrink-0 place-items-center rounded-lg transition-colors hover:bg-white/10"
+          className="ml-4 grid size-8 shrink-0 place-items-center rounded-lg transition-colors hover:bg-theme-control-hover/70"
           onClick={() => onDismiss(notification.id)}
           aria-label={t("notification.close")}
           type="button"

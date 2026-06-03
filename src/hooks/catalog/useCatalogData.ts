@@ -91,6 +91,18 @@ export function useCatalogData() {
     ]);
   }
 
+  function applyAssetUpdate(nextAsset: Asset) {
+    setAssets((current) => current.map((asset) => (asset.id === nextAsset.id ? nextAsset : asset)));
+  }
+
+  function removeAsset(assetId: string) {
+    setAssets((current) => current.filter((asset) => asset.id !== assetId));
+    setAssetMountStatuses((current) => current.filter((status) => status.asset_id !== assetId));
+    setOverview((current) =>
+      current ? { ...current, asset_count: Math.max(0, current.asset_count - 1) } : current,
+    );
+  }
+
   async function saveNavigationModel(nextNavigationModel: NavigationModel) {
     setNavigationModel(nextNavigationModel);
     const savedNavigationModel = await updateNavigationModel(nextNavigationModel);
@@ -109,6 +121,7 @@ export function useCatalogData() {
     activeAssetKind,
     appShortcuts,
     applyAssetMountStatus,
+    applyAssetUpdate,
     assetMountStatuses,
     assets,
     navigationModel,
@@ -117,6 +130,7 @@ export function useCatalogData() {
     refreshMountState,
     refreshOverview,
     refreshProfiles,
+    removeAsset,
     saveAppShortcuts,
     saveNavigationModel,
     sources,

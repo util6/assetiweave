@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TargetProfile } from "../types";
+import { isDefaultAppProfileId } from "./defaultApps";
 import { buildTargetProfileInput, deriveProfileId, hasProfileIdConflict, targetProfileFromInput } from "./profile";
 
 describe("profile helpers", () => {
@@ -36,6 +37,12 @@ describe("profile helpers", () => {
       supported_kinds: ["skill"],
       target_paths: ["~/team-app/skills"],
     });
+  });
+
+  it("identifies protected default app profiles", () => {
+    expect(isDefaultAppProfileId("codex")).toBe(true);
+    expect(isDefaultAppProfileId("openclaw")).toBe(true);
+    expect(isDefaultAppProfileId("team-app")).toBe(false);
   });
 });
 

@@ -42,7 +42,7 @@ export function GroupBulkMountControls({
 
   if (variant === "panel" && (skillAssets.length === 0 || availableShortcuts.length === 0 || !detail.group.enabled)) {
     return (
-      <div className="rounded-xl border border-border bg-surface-lowest/35 px-3 py-3">
+      <div className="rounded-xl border border-theme-card-border bg-theme-card/65 px-3 py-3 shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.34)]">
         <div className="flex items-center gap-2 text-label-caps uppercase text-outline">
           <CheckCheck size={15} />
           <span>{t("group.mount.title")}</span>
@@ -62,8 +62,8 @@ export function GroupBulkMountControls({
     <div
       className={clsx(
         variant === "panel"
-          ? "rounded-xl border border-border bg-surface-lowest/35 p-3"
-          : "flex min-w-0 items-center gap-1.5 rounded-xl border border-border/70 bg-surface-lowest/35 p-1.5",
+          ? "rounded-xl border border-theme-card-border bg-theme-card/65 p-3 shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.34)]"
+          : "flex min-w-0 items-center gap-1.5 rounded-xl border border-theme-control-border bg-theme-control/60 p-1.5 shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.3)]",
       )}
     >
       {variant === "panel" && (
@@ -72,7 +72,7 @@ export function GroupBulkMountControls({
             <CheckCheck size={15} />
             <span>{t("group.mount.title")}</span>
           </div>
-          <span className="shrink-0 rounded-md border border-border bg-surface-high px-2 py-0.5 font-mono text-body-sm text-primary">
+          <span className="shrink-0 rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 font-mono text-body-sm text-primary">
             {t("group.mount.summary", { count: skillAssets.length })}
           </span>
         </div>
@@ -100,10 +100,10 @@ export function GroupBulkMountControls({
                 "inline-flex min-w-0 items-center rounded-lg border text-left transition-all disabled:cursor-not-allowed disabled:opacity-45",
                 variant === "panel" ? "h-12 gap-2 px-2.5" : "h-8 gap-1.5 px-2",
                 allMounted
-                  ? "border-status-create/70 bg-status-create/12 text-status-create shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                  ? "border-status-create/70 bg-status-create/12 text-status-create shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.28)]"
                   : hasPartialMounts
                     ? "border-primary/55 bg-primary/10 text-primary hover:bg-primary/15"
-                    : "border-border bg-surface-high/70 text-on-surface-variant hover:border-outline-variant hover:text-on-surface",
+                    : "border-theme-control-border bg-theme-control/70 text-on-surface-variant hover:border-theme-nav-active-border hover:bg-theme-control-hover hover:text-on-surface",
               )}
               disabled={busy || !detail.group.enabled || skillAssets.length === 0}
               key={shortcut.profileId}

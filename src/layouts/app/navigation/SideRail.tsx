@@ -19,12 +19,12 @@ export function SideRail({
 
   return (
     <aside
-      className="fixed inset-y-0 left-0 z-30 flex w-sidebar-width flex-col items-center justify-between border-r border-outline-variant bg-surface-low/95 px-2 py-4 backdrop-blur"
+      className="fixed inset-y-0 left-0 z-30 flex w-sidebar-width flex-col items-center justify-between border-r border-theme-nav-active-border bg-theme-nav/95 px-2 py-4 backdrop-blur"
       aria-label={t("nav.aria.main")}
     >
       <div className="flex w-full flex-col items-center gap-2">
         <button
-          className="mb-4 grid size-10 place-items-center rounded-xl border border-status-update/20 bg-status-update/15 text-status-update transition-transform active:scale-95"
+          className="mb-4 grid size-10 place-items-center rounded-xl border border-theme-nav-active-border bg-theme-nav-active text-theme-nav-active-fg transition-transform active:scale-95"
           aria-label="AssetIWeave"
         >
           <MenuIcon name="rocket" size={22} />
@@ -58,8 +58,8 @@ function RailGroup({
             className={clsx(
               "grid size-10 place-items-center rounded-xl border transition-all active:scale-95",
               item.id === activeId
-                ? "border-outline-variant bg-surface-highest/70 text-primary"
-                : "border-transparent text-on-surface-variant/75 hover:border-outline-variant hover:bg-surface-highest/70 hover:text-primary",
+                ? "border-theme-nav-active-border bg-theme-nav-active text-theme-nav-active-fg"
+                : "border-transparent text-on-surface-variant/75 hover:border-theme-nav-active-border hover:bg-theme-nav-hover hover:text-theme-nav-active-fg",
             )}
             key={item.id}
             aria-label={label}

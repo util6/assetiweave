@@ -40,7 +40,7 @@ export function QuickMountButtons(
             <button
               className={clsx(
                 "relative grid size-8 place-items-center overflow-hidden rounded-lg border text-[13px] font-bold transition-all",
-                mounted ? "shadow-glow ring-1 ring-white/10" : "opacity-60 hover:opacity-100",
+                mounted ? "shadow-glow ring-1 ring-theme-nav-active-border/30" : "opacity-60 hover:opacity-100",
                 (mountState === "conflict" || mountState === "broken") && "opacity-90",
                 disabled && "pointer-events-none cursor-not-allowed opacity-40 hover:opacity-40",
                 !supported && "grayscale",
@@ -100,13 +100,13 @@ function MountButtonStateRing({ color, state }: { color: string; state: MountDis
 }
 
 function mountStateRingColor(state: MountDisplayState, accentColor: string) {
-  if (state === "conflict" || state === "broken") return "#f43f5e";
+  if (state === "conflict" || state === "broken") return "rgb(var(--color-status-remove))";
   return accentColor;
 }
 
 function mountStateBackgroundColor(state: MountDisplayState, ringColor: string) {
   if (state === "conflict" || state === "broken") {
-    return `${ringColor}12`;
+    return "rgb(var(--color-status-remove) / 0.12)";
   }
   return "transparent";
 }

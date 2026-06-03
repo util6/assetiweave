@@ -98,7 +98,11 @@ export const assetFormatSchema = z.enum(assetFormatValues);
 export const sourceKindSchema = z.enum(sourceKindValues);
 export const sourceScannerKindSchema = z.enum(sourceScannerKindValues);
 export const sourceOriginSchema = z.enum(sourceOriginValues);
-export const appKindSchema = z.enum(appKindValues);
+export const appKindSchema = z.preprocess((value) => {
+  if (value === "open_code") return "opencode";
+  if (value === "open_claw") return "openclaw";
+  return value;
+}, z.enum(appKindValues));
 export const deploymentStrategySchema = z.enum(deploymentStrategyValues);
 export const physicalMountStateSchema = z.enum(physicalMountStateValues);
 export const deploymentActionTypeSchema = z.enum(deploymentActionTypeValues);

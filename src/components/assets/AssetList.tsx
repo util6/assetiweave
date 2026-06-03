@@ -16,6 +16,8 @@ export function AssetList({
   onToggleAsset,
   onToggleMount,
   onRevealPath,
+  onEditAsset,
+  onDeleteAsset,
 }: {
   assets: Asset[];
   assetMountStatuses: AssetMountStatus[];
@@ -27,6 +29,8 @@ export function AssetList({
   onToggleAsset: (assetId: string) => void;
   onToggleMount: (assetId: string, profileId: string) => void;
   onRevealPath: (path: string) => void;
+  onEditAsset: (asset: Asset) => void;
+  onDeleteAsset: (asset: Asset) => void;
 }) {
   const { t } = useI18n();
   const sourceById = new Map(sources.map((source) => [source.id, source]));
@@ -39,6 +43,8 @@ export function AssetList({
         assets={assets}
         mountStatusesByAssetId={mountStatusesByAssetId}
         onRevealPath={onRevealPath}
+        onDeleteAsset={onDeleteAsset}
+        onEditAsset={onEditAsset}
         onToggleMount={onToggleMount}
         profiles={profiles}
         sourceById={sourceById}
@@ -48,7 +54,7 @@ export function AssetList({
 
   return (
     <div
-      className="asset-list-surface overflow-hidden rounded-xl border border-border shadow-[0_18px_42px_rgba(2,8,23,0.26)]"
+      className="asset-list-surface overflow-hidden rounded-xl border border-theme-card-border shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.22)]"
       aria-label={t("asset.list.aria")}
     >
       {assets.map((asset) => {
@@ -61,6 +67,8 @@ export function AssetList({
             expanded={expandedIds.has(asset.id)}
             key={asset.id}
             onRevealPath={onRevealPath}
+            onDelete={() => onDeleteAsset(asset)}
+            onEdit={() => onEditAsset(asset)}
             onToggleExpanded={() => onToggleAsset(asset.id)}
             onToggleMount={(profileId) => onToggleMount(asset.id, profileId)}
             profiles={profiles}

@@ -51,6 +51,9 @@ import { useI18n, type Translator } from "../../i18n/I18nProvider";
 import { headerTabLabel, railLabel, subNavLabel } from "../../i18n/navigation";
 import type { Locale } from "../../i18n/messages";
 import type { HeaderTabItem, LocalizedNavigationLabels, NavigationModel, RailMenuItem, SubNavItem } from "../../router/types";
+import type { ThemeId } from "../../theme/schema";
+import { isHexColor } from "../../theme/colorValidation";
+import { themeOptions } from "../../theme/themes";
 import { useAppSettings, type InterfaceDensity } from "../../store/settings/AppSettingsProvider";
 import type { AppShortcut, AppShortcutIconSvg } from "../../types";
 
@@ -282,13 +285,13 @@ export function GlobalSettingsDialog({
       <section
         aria-labelledby="global-settings-title"
         aria-modal="true"
-        className="grid h-screen w-screen grid-cols-[288px_minmax(0,1fr)] overflow-hidden bg-surface-low"
+        className="grid h-screen w-screen grid-cols-[288px_minmax(0,1fr)] overflow-hidden bg-theme-card-header"
         role="dialog"
       >
-        <aside className="flex min-h-0 flex-col border-r border-border bg-surface-lowest/90">
-          <div className="border-b border-border px-6 py-6">
+        <aside className="flex min-h-0 flex-col border-r border-theme-card-border bg-theme-nav/95">
+          <div className="border-b border-theme-card-border px-6 py-6">
             <div className="flex items-center gap-3">
-              <span className="grid size-10 place-items-center rounded-xl border border-status-update/25 bg-status-update/15 text-status-update">
+              <span className="grid size-10 place-items-center rounded-xl border border-theme-nav-active-border bg-theme-nav-active text-theme-nav-active-fg">
                 <Settings size={20} />
               </span>
               <div className="min-w-0">
@@ -310,8 +313,8 @@ export function GlobalSettingsDialog({
                   className={clsx(
                     "h-10 justify-start px-3",
                     activeSection === section.id
-                      ? "bg-surface-highest text-primary"
-                      : "text-on-surface-variant hover:bg-surface-high hover:text-on-surface",
+                      ? "bg-theme-nav-active text-theme-nav-active-fg"
+                      : "text-on-surface-variant hover:bg-theme-nav-hover hover:text-theme-nav-active-fg",
                   )}
                   key={section.id}
                   onClick={() => setActiveSection(section.id)}
@@ -324,7 +327,7 @@ export function GlobalSettingsDialog({
             })}
           </nav>
 
-          <div className="border-t border-border p-4">
+          <div className="border-t border-theme-card-border p-4">
             <Button
               className="w-full"
               onClick={resetSettings}
@@ -338,7 +341,7 @@ export function GlobalSettingsDialog({
         </aside>
 
         <div className="flex min-h-0 min-w-0 flex-col bg-surface">
-          <header className="flex h-20 shrink-0 items-center justify-between border-b border-border px-8">
+          <header className="flex h-20 shrink-0 items-center justify-between border-b border-theme-card-border bg-theme-toolbar/72 px-8">
             <div className="min-w-0">
               <p className="text-label-caps uppercase text-outline">{t("settings.scope")}</p>
               <h3 className="truncate text-h2 text-on-surface">{activeSectionLabel}</h3>
@@ -369,6 +372,9 @@ export function GlobalSettingsDialog({
                     value={locale}
                   />
                 </SettingRow>
+                <SettingRow icon={<Palette size={18} />} label={t("settings.theme")}>
+                  <ThemePaletteControl onChange={(value) => updateSetting("theme", value)} t={t} value={settings.theme} />
+                </SettingRow>
                 <SettingRow icon={<Gauge size={18} />} label={t("settings.density")}>
                   <SegmentedControl
                     label={t("settings.density")}
@@ -397,8 +403,8 @@ export function GlobalSettingsDialog({
                     const items = navigationModel.railItems.filter((item) => item.position === position);
 
                     return (
-                      <div className="border-b border-border last:border-b-0" key={position}>
-                        <div className="border-b border-border/70 bg-surface-lowest/40 px-4 py-2 text-label-caps uppercase text-outline">
+                      <div className="border-b border-theme-card-border last:border-b-0" key={position}>
+                        <div className="border-b border-theme-card-border/70 bg-theme-card-header/65 px-4 py-2 text-label-caps uppercase text-outline">
                           {position === "primary" ? t("settings.menu.primary") : t("settings.menu.secondary")}
                         </div>
                         <SortableMenuList itemIds={items.map((item) => item.id)} onReorder={(orderedIds) => reorderRailItems(position, orderedIds)}>
@@ -443,8 +449,8 @@ export function GlobalSettingsDialog({
                     }
 
                     return (
-                      <div className="border-b border-border last:border-b-0" key={tab.id}>
-                        <div className="border-b border-border/70 bg-surface-lowest/40 px-4 py-2 text-label-caps uppercase text-outline">
+                      <div className="border-b border-theme-card-border last:border-b-0" key={tab.id}>
+                        <div className="border-b border-theme-card-border/70 bg-theme-card-header/65 px-4 py-2 text-label-caps uppercase text-outline">
                           {headerTabLabel(tab, t, locale)}
                         </div>
                         <SortableMenuList itemIds={items.map((item) => item.id)} onReorder={(orderedIds) => reorderSubNavItems(tab.id, orderedIds)}>
@@ -542,8 +548,8 @@ function SettingsGroup({ children }: { children: ReactNode }) {
 function MenuSection({ children, icon, title }: { children: ReactNode; icon: ReactNode; title: string }) {
   return (
     <Card aria-label={title} className="overflow-hidden" role="region">
-      <CardHeader className="flex h-12 flex-row items-center gap-3 bg-surface-lowest/35 px-4 py-0">
-        <span className="grid size-8 place-items-center rounded-lg border border-border bg-surface-high text-primary">{icon}</span>
+      <CardHeader className="flex h-12 flex-row items-center gap-3 bg-theme-card-header px-4 py-0">
+        <span className="grid size-8 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-primary">{icon}</span>
         <CardTitle className="text-body-md">{title}</CardTitle>
       </CardHeader>
       <CardContent className="p-0">{children}</CardContent>
@@ -636,8 +642,8 @@ function SortableMenuEditRow({
   return (
     <div
       className={clsx(
-        "grid min-h-14 grid-cols-[32px_minmax(220px,1fr)_auto] items-center gap-4 border-b border-border px-4 py-2.5 last:border-b-0",
-        isDragging && "relative z-10 border-outline-variant bg-surface-highest shadow-[0_18px_44px_rgba(0,0,0,0.34)]",
+        "grid min-h-14 grid-cols-[32px_minmax(220px,1fr)_auto] items-center gap-4 border-b border-theme-card-border px-4 py-2.5 last:border-b-0",
+        isDragging && "relative z-10 border-theme-nav-active-border bg-theme-control-hover shadow-[0_18px_44px_rgb(var(--theme-panel-shadow)/0.28)]",
       )}
       ref={setNodeRef}
       style={style}
@@ -750,8 +756,8 @@ function SortableShortcutEditRow({
   return (
     <div
       className={clsx(
-        "grid min-h-16 grid-cols-[32px_minmax(200px,1fr)_300px_170px_auto] items-center gap-4 border-b border-border px-4 py-3 last:border-b-0",
-        isDragging && "relative z-10 border-outline-variant bg-surface-highest shadow-[0_18px_44px_rgba(0,0,0,0.34)]",
+        "grid min-h-16 grid-cols-[32px_minmax(200px,1fr)_300px_170px_auto] items-center gap-4 border-b border-theme-card-border px-4 py-3 last:border-b-0",
+        isDragging && "relative z-10 border-theme-nav-active-border bg-theme-control-hover shadow-[0_18px_44px_rgb(var(--theme-panel-shadow)/0.28)]",
       )}
       ref={setNodeRef}
       style={style}
@@ -791,7 +797,7 @@ function SortableShortcutEditRow({
         <div className="flex h-9 min-w-0 items-center gap-2">
           <Button
             aria-pressed={usesAppIcon}
-            className={clsx("h-9 shrink-0 px-3", usesAppIcon && "border-primary-strong/50 bg-surface-highest text-primary")}
+            className={clsx("h-9 shrink-0 px-3", usesAppIcon && "border-primary-strong/50 bg-theme-control-hover text-primary")}
             disabled={!canUseAppIcon}
             onClick={() => onDisplayIconChange(appIconToken(shortcut.appKind))}
             title={t("settings.shortcuts.useAppIcon")}
@@ -804,7 +810,7 @@ function SortableShortcutEditRow({
           <Button
             aria-label={t("settings.shortcuts.editSvg")}
             aria-pressed={Boolean(shortcut.iconSvg)}
-            className={clsx("h-9 shrink-0", shortcut.iconSvg && "border-primary-strong/50 bg-surface-highest text-primary")}
+            className={clsx("h-9 shrink-0", shortcut.iconSvg && "border-primary-strong/50 bg-theme-control-hover text-primary")}
             onClick={onIconSvgEdit}
             title={t("settings.shortcuts.editSvg")}
             type="button"
@@ -835,7 +841,7 @@ function SortableShortcutEditRow({
 
       <label className="flex min-w-0 flex-col gap-1">
         <span className="text-label-caps uppercase text-outline">{t("settings.shortcuts.color")}</span>
-        <div className="flex h-9 items-center gap-2 rounded-lg border border-border bg-surface-high px-2 transition-colors focus-within:border-primary-strong/60">
+        <div className="flex h-9 items-center gap-2 rounded-lg border border-theme-control-border bg-theme-control px-2 transition-colors focus-within:border-primary-strong/60">
           <input
             aria-label={t("settings.shortcuts.color")}
             className="size-5 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
@@ -896,14 +902,14 @@ function ShortcutIconSvgDialog({
   t: Translator;
 }) {
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/45 px-6">
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-background/72 px-6 backdrop-blur-sm">
       <section
         aria-labelledby="shortcut-svg-title"
         aria-modal="true"
-        className="flex max-h-[calc(100vh-72px)] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-[0_24px_80px_rgba(0,0,0,0.42)]"
+        className="flex max-h-[calc(100vh-72px)] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-theme-card-border bg-theme-card shadow-[0_24px_80px_rgb(var(--theme-panel-shadow)/0.34)]"
         role="dialog"
       >
-        <header className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-5 py-4">
+        <header className="flex shrink-0 items-center justify-between gap-4 border-b border-theme-card-border bg-theme-card-header px-5 py-4">
           <div className="flex min-w-0 items-center gap-3">
             <span
               className="grid size-10 shrink-0 place-items-center rounded-lg border text-[13px] font-bold"
@@ -934,7 +940,7 @@ function ShortcutIconSvgDialog({
             <span className="text-label-caps uppercase text-outline">{t("settings.shortcuts.svgInput")}</span>
             <textarea
               aria-label={t("settings.shortcuts.svgInput")}
-              className="min-h-80 resize-y rounded-lg border border-border bg-surface-high px-3 py-3 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60"
+              className="min-h-80 resize-y rounded-lg border border-theme-control-border bg-theme-control px-3 py-3 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60"
               onChange={(event) => onChange(event.target.value)}
               placeholder={t("settings.shortcuts.svgPlaceholder")}
               spellCheck={false}
@@ -944,7 +950,7 @@ function ShortcutIconSvgDialog({
           {error && <p className="text-body-sm text-status-remove">{error}</p>}
         </div>
 
-        <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-5 py-4">
+        <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-theme-card-border px-5 py-4">
           <Button onClick={onClear} type="button" variant="ghost">
             {t("settings.shortcuts.clearSvg")}
           </Button>
@@ -964,12 +970,53 @@ function ShortcutIconSvgDialog({
 
 function SettingRow({ children, icon, label }: { children: ReactNode; icon: ReactNode; label: string }) {
   return (
-    <div className="flex min-h-16 items-center justify-between gap-5 border-b border-border px-4 py-3 last:border-b-0">
+    <div className="flex min-h-16 items-center justify-between gap-5 border-b border-theme-card-border px-4 py-3 last:border-b-0">
       <div className="flex min-w-0 items-center gap-3">
-        <span className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-surface-high text-primary">{icon}</span>
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl border border-theme-control-border bg-theme-control text-primary">{icon}</span>
         <span className="min-w-0 truncate text-body-md font-semibold text-on-surface">{label}</span>
       </div>
       <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+function ThemePaletteControl({
+  onChange,
+  t,
+  value,
+}: {
+  onChange: (value: ThemeId) => void;
+  t: Translator;
+  value: ThemeId;
+}) {
+  return (
+    <div className="grid w-[420px] grid-cols-2 gap-2" role="radiogroup" aria-label={t("settings.theme")}>
+      {themeOptions.map((option) => {
+        const selected = value === option.id;
+
+        return (
+          <button
+            aria-checked={selected}
+            className={clsx(
+              "flex h-14 items-center gap-3 rounded-xl border bg-theme-control px-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/55",
+              selected
+                ? "border-theme-nav-active-border bg-theme-nav-active text-theme-nav-active-fg"
+                : "border-theme-control-border text-theme-control-fg hover:border-theme-nav-active-border hover:bg-theme-control-hover hover:text-on-surface",
+            )}
+            key={option.id}
+            onClick={() => onChange(option.id)}
+            role="radio"
+            type="button"
+          >
+            <span className="grid h-8 w-14 shrink-0 grid-cols-4 overflow-hidden rounded-lg border border-theme-control-border" aria-hidden="true">
+              {option.swatches.map((color) => (
+                <span key={color} style={{ backgroundColor: color }} />
+              ))}
+            </span>
+            <span className="min-w-0 truncate text-body-sm font-semibold">{t(option.labelKey)}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -981,9 +1028,6 @@ function setLocalizedNavigationLabel(labels: LocalizedNavigationLabels | undefin
   };
 }
 
-function isHexColor(value: string) {
-  return /^#[0-9a-fA-F]{6}$/.test(value);
-}
 
 function stringifyIconSvg(iconSvg: AppShortcutIconSvg) {
   return JSON.stringify(iconSvg, null, 2);
@@ -1106,14 +1150,14 @@ function SegmentedControl({
   value: string;
 }) {
   return (
-    <div className="flex h-9 items-center gap-1 rounded-xl border border-border bg-surface-high p-1" aria-label={label} role="group">
+    <div className="flex h-9 items-center gap-1 rounded-xl border border-theme-control-border bg-theme-control p-1" aria-label={label} role="group">
       {options.map((option) => (
         <Button
           className={clsx(
             "h-7 rounded-lg px-3",
             value === option.value
-              ? "bg-surface-highest text-primary hover:bg-surface-highest hover:text-primary"
-              : "text-on-surface-variant hover:bg-transparent hover:text-on-surface",
+              ? "bg-theme-control-hover text-primary hover:bg-theme-control-hover hover:text-primary"
+              : "text-theme-control-fg hover:bg-transparent hover:text-on-surface",
           )}
           key={option.value}
           onClick={() => onChange(option.value)}

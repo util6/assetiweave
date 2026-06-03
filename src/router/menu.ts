@@ -17,6 +17,7 @@ export const navigationModel: NavigationModel = {
     { id: "apps", label: "App Management", icon: "grid", scope: "profile", enabled: true, position: "primary" },
     { id: "security", label: "Security Policies", icon: "shield", scope: "settings", enabled: true, position: "secondary" },
     { id: "docs", label: "Docs", icon: "file-code", scope: "global", enabled: true, position: "secondary" },
+    { id: "logs", label: "Logs", icon: "file-text", scope: "global", enabled: true, position: "secondary" },
     { id: "settings", label: "Settings", icon: "settings", scope: "settings", enabled: true, position: "secondary" },
   ],
   headerTabs: [

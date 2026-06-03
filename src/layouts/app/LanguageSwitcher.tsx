@@ -7,7 +7,7 @@ export function LanguageSwitcher() {
 
   return (
     <div
-      className="flex h-9 shrink-0 items-center gap-1 rounded-xl border border-border bg-surface-high p-1 text-body-sm"
+      className="flex h-9 shrink-0 items-center gap-1 rounded-xl border border-theme-control-border bg-theme-control p-1 text-body-sm"
       aria-label={t("language.label")}
       role="group"
     >
@@ -16,7 +16,7 @@ export function LanguageSwitcher() {
         <button
           className={clsx(
             "h-7 rounded-lg px-2.5 font-semibold transition-colors",
-            locale === nextLocale ? "bg-surface-highest text-primary" : "text-on-surface-variant hover:text-on-surface",
+            locale === nextLocale ? "bg-theme-control-hover text-primary" : "text-theme-control-fg hover:text-on-surface",
           )}
           key={nextLocale}
           onClick={() => setLocale(nextLocale)}
