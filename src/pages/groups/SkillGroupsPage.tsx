@@ -47,7 +47,12 @@ import type {
 import { getAssetMountSummaryState, groupMountStatusesByAssetId } from "../../utils/mountState";
 import { isDirectMountBlockedSource } from "../../utils/mountPolicy";
 import { displayAssetPath } from "../../utils/path";
-import { enabledGroupIds, groupMemberAssetIds, toggleEnabledGroupSelection } from "../../utils/skillGroups";
+import {
+  enabledGroupIds,
+  groupMemberAssetIds,
+  shouldShowGroupExclusiveMountControls,
+  toggleEnabledGroupSelection,
+} from "../../utils/skillGroups";
 import { kindBadgeClass } from "../../utils/styles";
 
 interface SkillGroupsPageProps {
@@ -447,7 +452,7 @@ export function SkillGroupsPage({
         ]}
       />
 
-      {selectableFilteredGroupIds.length > 0 && (
+      {shouldShowGroupExclusiveMountControls(selectedGroupDetails.length) && (
         <GroupExclusiveMountControls
           allSelected={allFilteredGroupsSelected}
           appShortcuts={appShortcuts}

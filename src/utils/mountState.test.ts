@@ -5,6 +5,8 @@ import {
   getMountDisplayState,
   getMountDisplayStatesByProfileId,
   getMountedProfileIds,
+  countAssetsForProfileState,
+  countMountedAssetsForProfile,
   groupMountStatusesByAssetId,
   summarizeMountStatusRefresh,
 } from "./mountState";
@@ -54,6 +56,30 @@ describe("mount state helpers", () => {
         status("asset-a", "cursor", "not_mounted"),
       ]),
     ).toEqual(["codex"]);
+  });
+
+  it("counts currently mounted assets for a profile", () => {
+    expect(
+      countMountedAssetsForProfile([
+        status("asset-a", "codex", "mounted"),
+        status("asset-b", "codex", "not_mounted"),
+        status("asset-c", "codex", "mounted"),
+        status("asset-d", "cursor", "mounted"),
+      ], "codex"),
+    ).toBe(2);
+  });
+
+  it("counts requested assets by refreshed profile state", () => {
+    const statuses = [
+      status("asset-a", "codex", "mounted"),
+      status("asset-b", "codex", "not_mounted"),
+      status("asset-c", "codex", "conflict"),
+      status("asset-d", "cursor", "mounted"),
+    ];
+
+    expect(countAssetsForProfileState(["asset-a", "asset-a", "asset-b", "asset-missing"], statuses, "codex", "mounted")).toBe(1);
+    expect(countAssetsForProfileState(["asset-a", "asset-b", "asset-missing"], statuses, "codex", "not_mounted")).toBe(2);
+    expect(countAssetsForProfileState(["asset-c", "asset-d"], statuses, "codex", "conflict")).toBe(1);
   });
 
   it("summarizes physical refresh results for user feedback", () => {

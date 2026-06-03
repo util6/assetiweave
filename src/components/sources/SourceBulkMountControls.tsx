@@ -93,17 +93,14 @@ export function SourceBulkMountControls({
               aria-label={label}
               aria-pressed={allMounted}
               className={clsx(
-                "inline-flex min-w-0 items-center rounded-lg border text-left transition-all disabled:cursor-not-allowed disabled:opacity-45",
+                "inline-flex min-w-0 items-center rounded-lg border text-left transition-all hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45",
                 variant === "panel" ? "h-12 gap-2 px-2.5" : "h-8 gap-1.5 px-2",
-                allMounted
-                  ? "border-status-create/70 bg-status-create/12 text-status-create shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.28)]"
-                  : hasPartialMounts
-                    ? "border-primary/55 bg-primary/10 text-primary hover:bg-primary/15"
-                    : "border-theme-control-border bg-theme-control/70 text-on-surface-variant hover:border-theme-nav-active-border hover:bg-theme-control-hover hover:text-on-surface",
+                allMounted && "shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.28)]",
               )}
               disabled={busy || blocked || skillAssets.length === 0}
               key={shortcut.profileId}
               onClick={() => onSetSourceMountProfile(assetIds, shortcut.profileId, !allMounted)}
+              style={bulkMountButtonStyle(shortcut.accentColor, allMounted, hasPartialMounts)}
               title={blocked ? t("mount.blockedAppSource") : label}
               type="button"
             >
@@ -122,4 +119,12 @@ export function SourceBulkMountControls({
       </div>
     </div>
   );
+}
+
+function bulkMountButtonStyle(accentColor: string, allMounted: boolean, hasPartialMounts: boolean) {
+  return {
+    backgroundColor: allMounted ? `${accentColor}24` : hasPartialMounts ? `${accentColor}18` : `${accentColor}10`,
+    borderColor: allMounted ? accentColor : hasPartialMounts ? `${accentColor}99` : `${accentColor}66`,
+    color: accentColor,
+  };
 }

@@ -1,0 +1,232 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Git tag to release
+        required: true
+        default: v0.1.0
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+
+jobs:
+  desktop-installers:
+    name: Desktop installer (${{ matrix.label }})
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64
+            platform: ubuntu-22.04
+            args: ""
+          - label: Windows x64
+            platform: windows-latest
+            args: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libappindicator3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2 rpm
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            src-tauri -> target
+
+      - name: Build and upload desktop bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: AssetIWeave ${{ env.RELEASE_TAG }}
+          releaseBody: |
+            AssetIWeave v0.1 initial GitHub release.
+
+            Download the installer or app archive for your operating system from the assets below. This early release is unsigned; macOS and Windows may show an extra trust prompt.
+          releaseDraft: false
+          prerelease: true
+          args: ${{ matrix.args }}
+
+  macos-app:
+    name: macOS app archive (${{ matrix.target }})
+    needs: desktop-installers
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            label: macos-arm64
+            platform: macos-latest
+          - target: x86_64-apple-darwin
+            label: macos-x64
+            platform: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            src-tauri -> target
+
+      - name: Build app bundle
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles app
+
+      - name: Zip app bundle
+        run: |
+          mkdir -p dist/release
+          ditto -c -k --sequesterRsrc --keepParent target/${{ matrix.target }}/release/bundle/macos/AssetIWeave.app dist/release/AssetIWeave-${RELEASE_TAG}-${{ matrix.label }}.app.zip
+
+      - name: Build DMG
+        id: build_dmg
+        continue-on-error: true
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles dmg
+
+      - name: Copy DMG
+        if: steps.build_dmg.outcome == 'success'
+        run: cp target/${{ matrix.target }}/release/bundle/dmg/*.dmg dist/release/
+
+      - name: Upload macOS app archive
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          prerelease: true
+          files: dist/release/*.app.zip
+
+      - name: Upload macOS DMG
+        if: steps.build_dmg.outcome == 'success'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          prerelease: true
+          files: dist/release/*.dmg
+
+  cli-tools:
+    name: CLI tools (${{ matrix.target }})
+    needs:
+      - desktop-installers
+      - macos-app
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            platform: ubuntu-22.04
+          - target: macos-arm64
+            platform: macos-latest
+          - target: macos-x64
+            platform: macos-13
+          - target: windows-x64
+            platform: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            src-tauri -> target
+
+      - name: Build CLI and engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            exe=".exe"
+          else
+            exe=""
+          fi
+
+          cargo build --release -p assetiweave --bin assetiweave-engine
+          go build -o "target/release/assetiweave-cli${exe}" .
+
+          package_dir="dist/release/assetiweave-tools-${RELEASE_TAG}-${{ matrix.target }}"
+          mkdir -p "$package_dir"
+          cp "target/release/assetiweave-cli${exe}" "$package_dir/"
+          cp "target/release/assetiweave-engine${exe}" "$package_dir/"
+          cp docs/cli.md "$package_dir/CLI.md"
+
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            7z a "dist/release/assetiweave-tools-${RELEASE_TAG}-${{ matrix.target }}.zip" "$package_dir"
+          else
+            tar -czf "dist/release/assetiweave-tools-${RELEASE_TAG}-${{ matrix.target }}.tar.gz" -C dist/release "$(basename "$package_dir")"
+          fi
+
+      - name: Upload CLI tools
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          prerelease: true
+          files: |
+            dist/release/*.tar.gz
+            dist/release/*.zip

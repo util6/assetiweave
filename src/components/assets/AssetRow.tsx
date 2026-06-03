@@ -40,6 +40,7 @@ export function AssetRow({
   const { t } = useI18n();
   const mountBlockedReason = isDirectMountBlockedSource(source) ? t("mount.blocked") : undefined;
   const mountSummaryState = getAssetMountSummaryState(mountStatuses);
+  const hasVisibleMountShortcuts = appShortcuts.some((shortcut) => shortcut.enabled);
 
   return (
     <article
@@ -78,7 +79,7 @@ export function AssetRow({
           </div>
         </div>
         <div
-          className="flex w-[292px] shrink-0 items-center justify-end gap-2 rounded-xl border border-theme-control-border bg-theme-control/55 p-1.5 shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.38)] max-[980px]:w-full max-[980px]:justify-start"
+          className="inline-flex w-fit max-w-full shrink-0 flex-wrap items-center justify-end gap-2 rounded-xl border border-theme-control-border bg-theme-control/55 p-1.5 shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.38)] max-[980px]:justify-start"
           onClick={(event) => event.stopPropagation()}
         >
           <QuickMountButtons
@@ -89,7 +90,7 @@ export function AssetRow({
             shortcuts={appShortcuts}
             onToggle={onToggleMount}
           />
-          {(onEdit || onDelete) && <span className="h-6 w-px bg-theme-control-border/80" aria-hidden="true" />}
+          {hasVisibleMountShortcuts && (onEdit || onDelete) && <span className="h-6 w-px bg-theme-control-border/80" aria-hidden="true" />}
           {onEdit && (
             <button
               className="grid size-8 place-items-center rounded-lg text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-primary"

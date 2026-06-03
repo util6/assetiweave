@@ -43,6 +43,27 @@ export function getMountedProfileIds(mountStatuses: AssetMountStatus[]) {
     .map((status) => status.profile_id);
 }
 
+export function countMountedAssetsForProfile(statuses: AssetMountStatus[], profileId: string) {
+  return statuses.filter((status) => status.profile_id === profileId && status.state === "mounted").length;
+}
+
+export function countAssetsForProfileState(
+  assetIds: string[],
+  statuses: AssetMountStatus[],
+  profileId: string,
+  state: MountDisplayState,
+) {
+  const uniqueAssetIds = new Set(assetIds);
+  let count = 0;
+  for (const assetId of uniqueAssetIds) {
+    const status = statuses.find((candidate) => candidate.asset_id === assetId && candidate.profile_id === profileId);
+    if (getMountDisplayState(status) === state) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 export function summarizeMountStatusRefresh(statuses: AssetMountStatus[]): MountStatusRefreshSummary {
   const summary = statuses.reduce(
     (current, status) => {

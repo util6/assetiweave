@@ -34,6 +34,10 @@ export function toggleEnabledGroupSelection(currentIds: Iterable<string>, groups
   return current;
 }
 
+export function shouldShowGroupExclusiveMountControls(selectedGroupCount: number) {
+  return selectedGroupCount > 0;
+}
+
 export function getGroupProfileMountCounts(
   assetIds: string[],
   profileId: string,

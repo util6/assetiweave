@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { AssetGroupDetail, AssetMountStatus } from "../types";
-import { enabledGroupIds, getGroupProfileMountCounts, groupMemberAssetIds, toggleEnabledGroupSelection } from "./skillGroups";
+import {
+  enabledGroupIds,
+  getGroupProfileMountCounts,
+  groupMemberAssetIds,
+  shouldShowGroupExclusiveMountControls,
+  toggleEnabledGroupSelection,
+} from "./skillGroups";
 
 describe("skill group helpers", () => {
   it("returns resolved member asset ids in group order", () => {
@@ -44,6 +50,12 @@ describe("skill group helpers", () => {
       "group-b",
     ]);
     expect([...toggleEnabledGroupSelection(["group-a", "group-b"], [enabledA, enabledB, disabled])]).toEqual([]);
+  });
+
+  it("shows exclusive mount controls only after at least one group is selected", () => {
+    expect(shouldShowGroupExclusiveMountControls(0)).toBe(false);
+    expect(shouldShowGroupExclusiveMountControls(1)).toBe(true);
+    expect(shouldShowGroupExclusiveMountControls(3)).toBe(true);
   });
 });
 

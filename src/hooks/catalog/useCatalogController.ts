@@ -7,7 +7,12 @@ import {
   revealPath,
 } from "../../services/catalog";
 import { useAppSettings } from "../../store/settings/AppSettingsProvider";
-import { summarizeMountStatusRefresh } from "../../utils/mountState";
+import {
+  countAssetsForProfileState,
+  countMountedAssetsForProfile,
+  summarizeMountStatusRefresh,
+} from "../../utils/mountState";
+import { buildAssetMountNotification } from "../../utils/mountNotifications";
 import { isDirectMountBlockedSource } from "../../utils/mountPolicy";
 import { useAssetFilter } from "./useAssetFilter";
 import { useCatalogData } from "./useCatalogData";
@@ -102,13 +107,18 @@ export function useCatalogController() {
 
     try {
       await toggleMountProfile(assetId, profileId);
-      await catalogData.refreshMountState();
+      const refreshedStatuses = await catalogData.refreshMountState();
       operations.clearDeploymentPlan();
+      const mountNotification = buildAssetMountNotification({
+        assetId,
+        assetName: asset?.name ?? assetId,
+        profileId,
+        profileName: getProfileName(profileId, catalogData.profiles),
+        statuses: refreshedStatuses,
+      });
       setNotification({
         id: `mount-sync-${assetId}-${profileId}-${Date.now()}`,
-        tone: "success",
-        messageKey: "mount.notification.synced",
-        messageParams: { name: asset?.name ?? assetId },
+        ...mountNotification,
       });
     } catch (error) {
       await catalogData.refreshMountState().catch(() => undefined);
@@ -132,13 +142,22 @@ export function useCatalogController() {
 
     try {
       await setMountProfiles(mountableAssetIds, profileId, enabled);
-      await catalogData.refreshMountState();
+      const refreshedStatuses = await catalogData.refreshMountState();
       operations.clearDeploymentPlan();
       setNotification({
         id: `mount-batch-sync-${profileId}-${Date.now()}`,
         tone: "success",
-        messageKey: "mount.notification.batchSynced",
-        messageParams: { count: mountableAssetIds.length },
+        messageKey: enabled ? "mount.notification.batchMountedProfile" : "mount.notification.batchUnmountedProfile",
+        messageParams: {
+          count: countAssetsForProfileState(
+            mountableAssetIds,
+            refreshedStatuses,
+            profileId,
+            enabled ? "mounted" : "not_mounted",
+          ),
+          profile: getProfileName(profileId, catalogData.profiles),
+          mounted: countMountedAssetsForProfile(refreshedStatuses, profileId),
+        },
       });
     } catch (error) {
       await catalogData.refreshMountState().catch(() => undefined);
@@ -164,15 +183,21 @@ export function useCatalogController() {
     try {
       if (isTauriRuntime()) {
         const result = await applySkillGroupMount(groupId, profileId, enabled);
-        await catalogData.refreshMountState();
+        const refreshedStatuses = await catalogData.refreshMountState();
         operations.clearDeploymentPlan();
         setNotification({
           id: `mount-group-sync-${groupId}-${profileId}-${Date.now()}`,
           tone: result.error_count > 0 ? "warning" : "success",
-          messageKey: "group.mount.result",
+          messageKey: enabled ? "group.mount.resultMounted" : "group.mount.resultUnmounted",
           messageParams: {
-            updated: result.updated_count,
-            total: result.requested_count,
+            updated: countAssetsForProfileState(
+              assetIds,
+              refreshedStatuses,
+              profileId,
+              enabled ? "mounted" : "not_mounted",
+            ),
+            profile: getProfileName(profileId, catalogData.profiles),
+            mounted: countMountedAssetsForProfile(refreshedStatuses, profileId),
             errors: result.error_count,
           },
         });
@@ -188,15 +213,21 @@ export function useCatalogController() {
       }
 
       await setMountProfiles(mountableAssetIds, profileId, enabled);
-      await catalogData.refreshMountState();
+      const refreshedStatuses = await catalogData.refreshMountState();
       operations.clearDeploymentPlan();
       setNotification({
         id: `mount-group-preview-sync-${groupId}-${profileId}-${Date.now()}`,
         tone: "success",
-        messageKey: "group.mount.result",
+        messageKey: enabled ? "group.mount.resultMounted" : "group.mount.resultUnmounted",
         messageParams: {
-          updated: mountableAssetIds.length,
-          total: mountableAssetIds.length,
+          updated: countAssetsForProfileState(
+            mountableAssetIds,
+            refreshedStatuses,
+            profileId,
+            enabled ? "mounted" : "not_mounted",
+          ),
+          profile: getProfileName(profileId, catalogData.profiles),
+          mounted: countMountedAssetsForProfile(refreshedStatuses, profileId),
           errors: 0,
         },
       });
@@ -229,16 +260,18 @@ export function useCatalogController() {
         mount_selected: true,
         dry_run: false,
       });
-      await catalogData.refreshMountState();
+      const refreshedStatuses = await catalogData.refreshMountState();
       operations.clearDeploymentPlan();
       setNotification({
         id: `mount-group-exclusive-sync-${profileId}-${Date.now()}`,
         tone: result.errors.length > 0 || result.skipped_count > 0 ? "warning" : "success",
         messageKey: "group.exclusive.result",
         messageParams: {
+          profile: getProfileName(profileId, catalogData.profiles),
           keep: result.keep_count,
           mount: result.mount_count,
           unmount: result.unmount_count,
+          mounted: countMountedAssetsForProfile(refreshedStatuses, profileId),
           skipped: result.skipped_count + result.errors.length,
         },
       });
@@ -285,4 +318,8 @@ function errorMessage(error: unknown) {
 
 function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function getProfileName(profileId: string, profiles: { id: string; name: string }[]) {
+  return profiles.find((profile) => profile.id === profileId)?.name ?? profileId;
 }
