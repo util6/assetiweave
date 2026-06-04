@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AppUpdateDialog } from "../app/updates/AppUpdateDialog";
 import { LogViewerModal } from "../components/logs/LogViewerModal";
 import { useCatalogController } from "../hooks/catalog/useCatalogController";
 import { AppLayout } from "../layouts/app/AppLayout";
@@ -99,6 +100,7 @@ export function AppRouter() {
         )}
       </AppLayout>
       <LogViewerModal open={logViewerOpen} onClose={() => setLogViewerOpen(false)} />
+      <AppUpdateDialog />
     </>
   );
 }

@@ -13,7 +13,7 @@ The v0.1 release is distributed through GitHub Releases:
 
 Latest release: https://github.com/util6/assetiweave/releases/latest
 
-This v0.1 release is unsigned. macOS and Windows can show additional trust prompts until code signing is configured.
+This v0.1 release is not OS-code-signed. macOS and Windows can show additional trust prompts until platform signing is configured.
 
 ## Development
 
@@ -56,6 +56,13 @@ pnpm cli:run -- doctor
 
 The GitHub release workflow runs when a `v*` tag is pushed or when it is started manually from the Actions tab.
 
+Before publishing an app update, configure these repository secrets:
+
+- `TAURI_SIGNING_PRIVATE_KEY`: the contents of the Tauri updater private key.
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: optional; leave empty when the key has no password.
+
+The updater public key is stored in `src-tauri/tauri.conf.json`, and the app checks `https://github.com/util6/assetiweave/releases/latest/download/latest.json`.
+
 To publish v0.1.0:
 
 ```sh
@@ -63,4 +70,4 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The release workflow builds Windows and Linux installers, macOS app archives, optional macOS DMGs, and CLI tool archives, then uploads them to the same GitHub Release.
+The release workflow builds Windows and Linux installers, macOS updater archives, macOS app archives, optional macOS DMGs, CLI tool archives, updater signatures, and `latest.json`, then uploads them to the same GitHub Release.

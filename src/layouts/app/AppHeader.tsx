@@ -1,5 +1,5 @@
 import { Archive } from "lucide-react";
-import { translateScanStatus } from "../../i18n/domain";
+import { AppUpdateButton } from "../../app/updates/AppUpdateButton";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { NavigationModel } from "../../router/types";
 import type { AppOverview } from "../../types";
@@ -23,9 +23,7 @@ export function AppHeader({
       </div>
       <HeaderTabs activeId={navigationModel.activeHeaderTabId} tabs={navigationModel.headerTabs} />
       <div className="flex min-w-0 items-center justify-end gap-3">
-        <div className="min-w-0 max-w-[360px] overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">
-          {translateScanStatus(overview?.last_scan_status, t)}
-        </div>
+        <AppUpdateButton />
         <LanguageSwitcher />
       </div>
     </header>

@@ -27,10 +27,20 @@ jobs:
         include:
           - label: Linux x64
             platform: ubuntu-22.04
+            rust_target: ""
             args: ""
           - label: Windows x64
             platform: windows-latest
+            rust_target: ""
             args: ""
+          - label: macOS arm64 updater
+            platform: macos-latest
+            rust_target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin --bundles app"
+          - label: macOS x64 updater
+            platform: macos-13
+            rust_target: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin --bundles app"
 
     steps:
       - name: Checkout
@@ -55,7 +65,14 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Setup Rust
+        if: matrix.rust_target == ''
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust target
+        if: matrix.rust_target != ''
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
 
       - name: Cache Rust
         uses: swatinem/rust-cache@v2
@@ -68,6 +85,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: AssetIWeave ${{ env.RELEASE_TAG }}
@@ -77,6 +96,8 @@ jobs:
             Download the installer or app archive for your operating system from the assets below. This early release is unsigned; macOS and Windows may show an extra trust prompt.
           releaseDraft: false
           prerelease: true
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
           args: ${{ matrix.args }}
 
   macos-app:
@@ -123,6 +144,9 @@ jobs:
             src-tauri -> target
 
       - name: Build app bundle
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --target ${{ matrix.target }} --bundles app
 
       - name: Zip app bundle
@@ -140,6 +164,9 @@ jobs:
       - name: Build DMG
         id: build_dmg
         continue-on-error: true
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --target ${{ matrix.target }} --bundles dmg
 
       - name: Copy DMG
