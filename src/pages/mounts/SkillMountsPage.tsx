@@ -1,5 +1,6 @@
 import clsx from "clsx";
 import {
+  Archive,
   Boxes,
   ChevronDown,
   ChevronRight,
@@ -17,7 +18,9 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import { AssetToolbar, type AssetToolbarViewMode } from "../../components/assets/AssetToolbar";
 import { MountStatePill } from "../../components/assets/MountStatePill";
 import { QuickMountButtons } from "../../components/assets/QuickMountButtons";
+import { SkillBackupBadge } from "../../components/assets/SkillBackupBadge";
 import { AppShortcutIconForShortcut } from "../../components/apps/AppShortcutIcon";
+import { SkillBackupLibraryDialog } from "../../components/backup/SkillBackupLibraryDialog";
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
 import { DialogFrame as FoundationDialogFrame } from "../../components/foundation/DialogFrame";
 import { EmptyState as FoundationEmptyState } from "../../components/foundation/EmptyState";
@@ -31,6 +34,7 @@ import type { TranslationKey } from "../../i18n/messages";
 import { DEFAULT_ENTITY_ACCENT_HEX } from "../../theme/themes";
 import {
   createProfile,
+  backupSkill,
   deleteProfile,
   listSkillGroups,
   selectTargetDirectory,
@@ -70,6 +74,7 @@ interface SkillMountsPageProps {
   assetMountStatuses: AssetMountStatus[];
   assets: Asset[];
   onNotifyError: (message: string) => void;
+  onCatalogRefresh: () => Promise<void>;
   onOpenSettings: () => void;
   onRefreshMountStatus: () => Promise<void>;
   onRefreshProfiles: () => Promise<void>;
@@ -94,6 +99,7 @@ export function SkillMountsPage({
   assetMountStatuses,
   assets,
   onNotifyError,
+  onCatalogRefresh,
   onOpenSettings,
   onRefreshMountStatus,
   onRefreshProfiles,
@@ -114,6 +120,7 @@ export function SkillMountsPage({
   const [selectedScopeId, setSelectedScopeId] = useState<string | null>(null);
   const [dialogProfile, setDialogProfile] = useState<TargetProfile | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [backupDialogOpen, setBackupDialogOpen] = useState(false);
   const [deletingProfile, setDeletingProfile] = useState<TargetProfile | null>(null);
   const [pendingDefaultPathChange, setPendingDefaultPathChange] = useState<PendingDefaultPathChange | null>(null);
   const [busy, setBusy] = useState(false);
@@ -234,6 +241,19 @@ export function SkillMountsPage({
     }
   }
 
+  async function handleBackupSkill(asset: Asset) {
+    setBusy(true);
+    try {
+      await backupSkill(asset.id);
+      await onCatalogRefresh();
+      await onRefreshMountStatus();
+    } catch (error) {
+      onNotifyError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function toggleExpanded(profileId: string) {
     setExpandedProfileIds((current) => {
       const next = new Set(current);
@@ -261,6 +281,13 @@ export function SkillMountsPage({
       <AssetToolbar
         actionGroups={[
           [
+            {
+              disabled: busy,
+              icon: <Archive size={17} />,
+              label: t("backup.action.open"),
+              onClick: () => setBackupDialogOpen(true),
+              text: t("backup.action.open"),
+            },
             {
               disabled: busy,
               icon: <Plus size={17} />,
@@ -313,6 +340,7 @@ export function SkillMountsPage({
             setDialogOpen(true);
           }}
           onDeleteProfile={setDeletingProfile}
+          onBackupSkill={handleBackupSkill}
           onRevealPath={onRevealPath}
           onSelectProfile={setSelectedProfileId}
           onSelectScope={setSelectedScopeId}
@@ -339,6 +367,7 @@ export function SkillMountsPage({
               key={profile.id}
               mountStatusesByAssetId={mountStatusesByAssetId}
               onDelete={() => setDeletingProfile(profile)}
+              onBackupSkill={handleBackupSkill}
               onEdit={() => {
                 setDialogProfile(profile);
                 setDialogOpen(true);
@@ -367,6 +396,12 @@ export function SkillMountsPage({
         onSubmit={handleSaveProfile}
         open={dialogOpen}
         profile={dialogProfile}
+      />
+      <SkillBackupLibraryDialog
+        onClose={() => setBackupDialogOpen(false)}
+        onNotifyError={onNotifyError}
+        onSaved={onCatalogRefresh}
+        open={backupDialogOpen}
       />
       <ConfirmDialog
         busy={busy}
@@ -423,6 +458,7 @@ function AppMountRow({
   busy,
   expanded,
   mountStatusesByAssetId,
+  onBackupSkill,
   onDelete,
   onEdit,
   onReveal,
@@ -438,6 +474,7 @@ function AppMountRow({
   busy: boolean;
   expanded: boolean;
   mountStatusesByAssetId: Map<string, AssetMountStatus[]>;
+  onBackupSkill: (asset: Asset) => Promise<void>;
   onDelete: () => void;
   onEdit: () => void;
   onReveal: () => void;
@@ -523,6 +560,7 @@ function AppMountRow({
             appShortcuts={appShortcuts}
             busy={busy}
             mountStatusesByAssetId={mountStatusesByAssetId}
+            onBackupSkill={onBackupSkill}
             onSetSkillMountProfiles={onSetSkillMountProfiles}
             onToggleMount={onToggleMount}
             profile={profile}
@@ -540,6 +578,7 @@ function AppMountColumnView({
   appShortcuts,
   busy,
   mountStatusesByAssetId,
+  onBackupSkill,
   onEditProfile,
   onDeleteProfile,
   onRevealPath,
@@ -557,6 +596,7 @@ function AppMountColumnView({
   appShortcuts: AppShortcut[];
   busy: boolean;
   mountStatusesByAssetId: Map<string, AssetMountStatus[]>;
+  onBackupSkill: (asset: Asset) => Promise<void>;
   onEditProfile: (profile: TargetProfile) => void;
   onDeleteProfile: (profile: TargetProfile) => void;
   onRevealPath: (path: string) => void;
@@ -667,7 +707,9 @@ function AppMountColumnView({
           />
         </div>
         <SkillScopeAssetList
+          busy={busy}
           mountStatusesByAssetId={mountStatusesByAssetId}
+          onBackupSkill={onBackupSkill}
           onToggleMount={onToggleMount}
           profile={selectedProfile}
           shortcut={shortcut}
@@ -683,6 +725,7 @@ function AppMountWorkbench({
   appShortcuts,
   busy,
   mountStatusesByAssetId,
+  onBackupSkill,
   onSetSkillMountProfiles,
   onToggleMount,
   profile,
@@ -693,6 +736,7 @@ function AppMountWorkbench({
   appShortcuts: AppShortcut[];
   busy: boolean;
   mountStatusesByAssetId: Map<string, AssetMountStatus[]>;
+  onBackupSkill: (asset: Asset) => Promise<void>;
   onSetSkillMountProfiles: (assetIds: string[], profileId: string, enabled: boolean) => Promise<void>;
   onToggleMount: (assetId: string, profileId: string) => void | Promise<void>;
   profile: TargetProfile;
@@ -740,7 +784,9 @@ function AppMountWorkbench({
           />
         </div>
         <SkillScopeAssetList
+          busy={busy}
           mountStatusesByAssetId={mountStatusesByAssetId}
+          onBackupSkill={onBackupSkill}
           onToggleMount={onToggleMount}
           profile={profile}
           shortcut={shortcutForProfile(profile, appShortcuts)}
@@ -860,14 +906,18 @@ function ScopeBatchActions({
 }
 
 function SkillScopeAssetList({
+  busy,
   mountStatusesByAssetId,
+  onBackupSkill,
   onToggleMount,
   profile,
   shortcut,
   skillAssets,
   sourceById,
 }: {
+  busy: boolean;
   mountStatusesByAssetId: Map<string, AssetMountStatus[]>;
+  onBackupSkill: (asset: Asset) => Promise<void>;
   onToggleMount: (assetId: string, profileId: string) => void | Promise<void>;
   profile: TargetProfile;
   shortcut: AppShortcut;
@@ -886,7 +936,8 @@ function SkillScopeAssetList({
         const source = sourceById.get(asset.source_id);
         const mountStatuses = mountStatusesByAssetId.get(asset.id) ?? [];
         const profileMountStatuses = mountStatuses.filter((status) => status.profile_id === profile.id);
-        const mountBlockedReason = isDirectMountBlockedSource(source) ? t("mount.blocked") : undefined;
+        const mountBlocked = isDirectMountBlockedSource(source);
+        const mountBlockedReason = mountBlocked ? t("mount.blocked") : undefined;
         return (
           <article
             className="grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-theme-card-border px-4 py-3 last:border-b-0 hover:bg-theme-card-header/70 max-[760px]:grid-cols-1"
@@ -898,6 +949,7 @@ function SkillScopeAssetList({
                   {asset.name}
                 </span>
                 <span className={kindBadgeClass(asset.kind)}>{assetKindLabel(asset.kind, t)}</span>
+                <SkillBackupBadge asset={asset} />
                 <MountStatePill compact state={getAssetMountSummaryState(profileMountStatuses)} />
               </div>
               <div className="mt-1 flex min-w-0 items-center gap-2">
@@ -911,14 +963,27 @@ function SkillScopeAssetList({
                 )}
               </div>
             </div>
-            <QuickMountButtons
-              asset={asset}
-              mountBlockedReason={mountBlockedReason}
-              mountStatuses={profileMountStatuses}
-              onToggle={() => void onToggleMount(asset.id, profile.id)}
-              profiles={[profile]}
-              shortcuts={[{ ...shortcut, enabled: true }]}
-            />
+            <div className="flex items-center justify-end gap-2 max-[760px]:justify-start">
+              <QuickMountButtons
+                asset={asset}
+                mountBlockedReason={mountBlockedReason}
+                mountStatuses={profileMountStatuses}
+                onToggle={() => void onToggleMount(asset.id, profile.id)}
+                profiles={[profile]}
+                shortcuts={[{ ...shortcut, enabled: true }]}
+              />
+              {mountBlocked && (
+                <Button
+                  disabled={busy}
+                  onClick={() => void onBackupSkill(asset)}
+                  type="button"
+                  variant="outline"
+                >
+                  <Archive size={15} />
+                  {t("backup.action.backup")}
+                </Button>
+              )}
+            </div>
           </article>
         );
       })}

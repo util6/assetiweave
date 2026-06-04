@@ -12,10 +12,10 @@ pub(crate) fn app_db_path() -> AppResult<PathBuf> {
 }
 
 pub(crate) fn ensure_app_library_dirs() -> AppResult<()> {
-    fs::create_dir_all(app_library_skill_root()?).map_err(|error| error.to_string())
+    fs::create_dir_all(default_skill_backup_root()?).map_err(|error| error.to_string())
 }
 
-pub(crate) fn app_library_skill_root() -> AppResult<PathBuf> {
+pub(crate) fn default_skill_backup_root() -> AppResult<PathBuf> {
     let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
     Ok(home.join(".assetiweave").join("library").join("skills"))
 }
@@ -99,7 +99,7 @@ pub(crate) fn detect_app_target(path: &Path) -> Option<AppKind> {
 }
 
 pub(crate) fn is_app_library_path(path: &Path) -> bool {
-    let Ok(library_root) = app_library_skill_root() else {
+    let Ok(library_root) = default_skill_backup_root() else {
         return false;
     };
     normalize_absolute_path(path).starts_with(&normalize_absolute_path(&library_root))

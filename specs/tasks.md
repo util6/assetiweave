@@ -99,7 +99,7 @@
 - [x] 5.12 支持按 Git 仓库推断 `repo_root` 和 `scan_root`
 - [x] 5.13 实现 `list_skill_sources` 和 `scan_skill_sources`
 - [x] 5.14 标记 App 目标目录来源，默认禁止直接跨 App 挂载
-- [x] 5.15 实现 App 本地 Skill 收养复制到 `~/.assetiweave/library/skills`
+- [x] 5.15 实现 App 本地 Skill 备份复制到 `~/.assetiweave/library/skills`
 - [x] 5.16 启动时只校验已登记资产状态，不探索新资产，并移除已删除资产
 - [x] 5.17 目录资产 hash 覆盖整个目录内容而不是只看入口文件
 - [ ] 5.18 补齐 frontmatter/title 精细解析

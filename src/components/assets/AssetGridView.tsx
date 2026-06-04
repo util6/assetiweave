@@ -9,6 +9,7 @@ import { displayAssetPath } from "../../utils/path";
 import { kindBadgeClass } from "../../utils/styles";
 import { MountStatePill } from "./MountStatePill";
 import { QuickMountButtons } from "./QuickMountButtons";
+import { SkillBackupBadge } from "./SkillBackupBadge";
 
 export function AssetGridView({
   appShortcuts,
@@ -62,6 +63,7 @@ export function AssetGridView({
                     {asset.name}
                   </span>
                   <span className={kindBadgeClass(asset.kind)}>{assetKindLabel(asset.kind, t)}</span>
+                  <SkillBackupBadge asset={asset} />
                   <MountStatePill compact state={mountSummaryState} />
                 </div>
                 <p className="mt-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-outline">

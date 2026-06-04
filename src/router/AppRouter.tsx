@@ -32,6 +32,7 @@ export function AppRouter() {
         onDismissNotification={catalog.dismissNotification}
         onLogViewerOpen={() => setLogViewerOpen(true)}
         onNavigationModelChange={(navigationModel) => void catalog.saveNavigationModel(navigationModel)}
+        onSkillBackupLibraryChange={() => catalog.refreshOverview()}
         onSettingsClose={() => setSettingsOpen(false)}
         onSettingsOpen={() => setSettingsOpen(true)}
         onSubNavSelect={setActiveSubNavId}
@@ -43,6 +44,7 @@ export function AppRouter() {
             appShortcuts={catalog.appShortcuts}
             assetMountStatuses={catalog.assetMountStatuses}
             assets={catalog.assets}
+            onCatalogRefresh={catalog.refreshOverview}
             onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
             onOpenSettings={() => setSettingsOpen(true)}
             onRefreshMountStatus={catalog.refreshMountStatus}

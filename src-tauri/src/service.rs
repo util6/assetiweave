@@ -3,9 +3,9 @@ use crate::{
     types::{
         AppOverview, AppResult, AppShortcut, ApplyAssetGroupMountResult,
         ApplySkillGroupExclusiveMountResult, AssetGroupInput, AssetMountStatus,
-        AssetMountUpdateResult, ExecutionResult, NavigationModel, PhysicalMountStateDto,
-        SkillGroupExclusiveMountInput, SkillGroupExclusiveMountPreview, SourceInput,
-        TargetProfileInput,
+        AssetMountUpdateResult, CatalogAsset, ExecutionResult, NavigationModel,
+        PhysicalMountStateDto, SkillBackupSettings, SkillGroupExclusiveMountInput,
+        SkillGroupExclusiveMountPreview, SourceInput, TargetProfileInput,
     },
 };
 use assetiweave_core::{
@@ -201,6 +201,14 @@ pub(crate) struct ImportSkillParams {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct UpdateSkillBackupSettingsParams {
+    #[serde(alias = "rootPath")]
+    pub(crate) root_path: String,
+    #[serde(default)]
+    pub(crate) migrate: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct SourceRemoveParams {
     pub(crate) id: String,
     #[serde(default, alias = "dryRun")]
@@ -313,18 +321,18 @@ impl AppService {
         Ok(json!({ "removed": true, "source_id": source.id }))
     }
 
-    pub(crate) fn scan_sources(&self, params: SourceScanParams) -> AppResult<Vec<Asset>> {
+    pub(crate) fn scan_sources(&self, params: SourceScanParams) -> AppResult<Vec<CatalogAsset>> {
         if params.dry_run {
-            return store::load_assets_by_kind(&self.conn, params.kind);
+            return commands::catalog_assets(&self.conn, params.kind);
         }
         commands::refresh_all_sources(&self.conn)?;
-        store::load_assets_by_kind(&self.conn, params.kind)
+        commands::catalog_assets(&self.conn, params.kind)
     }
 
-    pub(crate) fn scan_skill_sources(&self) -> AppResult<Vec<Asset>> {
+    pub(crate) fn scan_skill_sources(&self) -> AppResult<Vec<CatalogAsset>> {
         let sources = store::load_skill_sources(&self.conn)?;
         commands::scan_selected_sources(&self.conn, sources, scanner::scan_skill_source)?;
-        store::load_assets_by_kind(&self.conn, Some(AssetKind::Skill))
+        commands::catalog_assets(&self.conn, Some(AssetKind::Skill))
     }
 
     pub(crate) fn list_profiles(&self) -> AppResult<Vec<TargetProfile>> {
@@ -395,8 +403,8 @@ impl AppService {
         store::load_app_shortcut_settings(&self.conn)
     }
 
-    pub(crate) fn list_assets(&self, params: ListAssetsParams) -> AppResult<Vec<Asset>> {
-        store::load_assets_by_kind(&self.conn, params.kind)
+    pub(crate) fn list_assets(&self, params: ListAssetsParams) -> AppResult<Vec<CatalogAsset>> {
+        commands::catalog_assets(&self.conn, params.kind)
     }
 
     pub(crate) fn update_asset_description(
@@ -474,8 +482,111 @@ impl AppService {
         Ok(planner::build_plan(&assets, &profiles, &mounts, profile_id))
     }
 
-    pub(crate) fn list_skills(&self) -> AppResult<Vec<Asset>> {
-        store::load_assets_by_kind(&self.conn, Some(AssetKind::Skill))
+    pub(crate) fn list_skills(&self) -> AppResult<Vec<CatalogAsset>> {
+        commands::catalog_assets(&self.conn, Some(AssetKind::Skill))
+    }
+
+    pub(crate) fn get_skill_backup_settings(&self) -> AppResult<SkillBackupSettings> {
+        commands::skill_backup_settings(&self.conn)
+    }
+
+    pub(crate) fn update_skill_backup_settings(
+        &self,
+        params: UpdateSkillBackupSettingsParams,
+    ) -> AppResult<SkillBackupSettings> {
+        let root_path = params.root_path.trim().to_string();
+        if root_path.is_empty() {
+            return Err("skill backup root path is required".to_string());
+        }
+
+        let current = commands::skill_backup_settings(&self.conn)?;
+        let current_root = PathBuf::from(&current.expanded_root_path);
+        let next_root = path_utils::expand_path(&root_path)?;
+        if commands::same_path_or_text(&current_root, &next_root) {
+            let source = commands::assetiweave_library_source_with_root(root_path);
+            store::upsert_source(&self.conn, &source)?;
+            return commands::skill_backup_settings(&self.conn);
+        }
+
+        if params.migrate {
+            if !current.is_default_root && path_contains(&current_root, &next_root) {
+                return Err(
+                    "custom backup migration target cannot be inside the old backup directory"
+                        .to_string(),
+                );
+            }
+            fs::create_dir_all(&next_root).map_err(|error| error.to_string())?;
+            commands::copy_dir_without_conflicts(&current_root, &next_root)?;
+        } else {
+            fs::create_dir_all(&next_root).map_err(|error| error.to_string())?;
+        }
+
+        let source = commands::assetiweave_library_source_with_root(root_path);
+        store::upsert_source(&self.conn, &source)?;
+        commands::refresh_all_sources(&self.conn)?;
+
+        if params.migrate && !current.is_default_root && current_root.exists() {
+            fs::remove_dir_all(&current_root).map_err(|error| error.to_string())?;
+        }
+
+        commands::skill_backup_settings(&self.conn)
+    }
+
+    pub(crate) fn backup_skill(&self, asset_id: String) -> AppResult<CatalogAsset> {
+        let assets = store::load_assets(&self.conn)?;
+        let asset = assets
+            .iter()
+            .find(|candidate| candidate.id == asset_id)
+            .ok_or_else(|| format!("asset not found: {asset_id}"))?;
+        if asset.kind != AssetKind::Skill {
+            return Err("only skill assets can be backed up".to_string());
+        }
+
+        let source = store::load_sources(&self.conn)?
+            .into_iter()
+            .find(|candidate| candidate.id == asset.source_id)
+            .ok_or_else(|| format!("source not found: {}", asset.source_id))?;
+        if source.source_origin == SourceOrigin::AssetiweaveLibrary {
+            return commands::catalog_asset_for_id(&self.conn, &asset.id);
+        }
+
+        let origin_bucket = source
+            .origin_app_kind
+            .map(|kind| format!("{kind:?}").to_ascii_lowercase())
+            .unwrap_or_else(|| slug_path_segment(&source.id));
+        let target_dir = commands::skill_backup_root(&self.conn)?
+            .join("backed-up")
+            .join(origin_bucket)
+            .join(&asset.name);
+        let source_path = Path::new(&asset.absolute_path);
+        if target_dir.exists() {
+            let source_hash = path_utils::hash_path(source_path)?;
+            let target_hash = path_utils::hash_path(&target_dir)?;
+            if source_hash != target_hash {
+                return Err(format!(
+                    "backup skill target already exists with different content: {}",
+                    target_dir.display()
+                ));
+            }
+        } else {
+            commands::copy_dir(source_path, &target_dir)?;
+        }
+
+        let library_source = commands::assetiweave_library_source_with_root(
+            commands::skill_backup_settings(&self.conn)?.root_path,
+        );
+        store::upsert_source(&self.conn, &library_source)?;
+        commands::refresh_all_sources(&self.conn)?;
+
+        commands::catalog_assets(&self.conn, Some(AssetKind::Skill))?
+            .into_iter()
+            .find(|candidate| {
+                candidate.asset.id == asset.id
+                    || candidate.asset.absolute_path == target_dir.to_string_lossy()
+                    || (asset.content_hash.is_some()
+                        && candidate.asset.content_hash.as_deref() == asset.content_hash.as_deref())
+            })
+            .ok_or_else(|| "backed up skill was copied but not found during rescan".to_string())
     }
 
     pub(crate) fn import_skill(&self, params: ImportSkillParams) -> AppResult<Value> {
@@ -507,12 +618,12 @@ impl AppService {
                     .map(str::to_string)
             })
             .ok_or_else(|| "skill import name could not be inferred".to_string())?;
-        let target_dir = path_utils::app_library_skill_root()?
-            .join("imported")
+        let target_dir = commands::skill_backup_root(&self.conn)?
+            .join("downloaded")
             .join(&name);
         if target_dir.exists() {
             return Err(format!(
-                "imported skill already exists: {}",
+                "downloaded skill already exists: {}",
                 target_dir.display()
             ));
         }
@@ -527,7 +638,9 @@ impl AppService {
         }
 
         commands::copy_dir(&source_dir, &target_dir)?;
-        let library_source = commands::assetiweave_library_source();
+        let library_source = commands::assetiweave_library_source_with_root(
+            commands::skill_backup_settings(&self.conn)?.root_path,
+        );
         store::upsert_source(&self.conn, &library_source)?;
         let library_assets = scanner::scan_skill_source(&library_source)?;
         store::replace_source_assets(&self.conn, &library_source.id, &library_assets)?;
@@ -549,7 +662,7 @@ impl AppService {
             .ok_or_else(|| format!("source not found: {}", asset.source_id))?;
         if source.source_origin != SourceOrigin::AssetiweaveLibrary {
             return Err(
-                "only AssetIWeave library skills can be deleted; remove the source or unmount the skill instead"
+                "only AssetIWeave backup library skills can be deleted; remove the source or unmount the skill instead"
                     .to_string(),
             );
         }
@@ -751,52 +864,6 @@ impl AppService {
         commands::set_asset_mount_record(&self.conn, asset_id, profile_id, enabled, strategy)
     }
 
-    pub(crate) fn adopt_app_local_skill(&self, asset_id: String) -> AppResult<Asset> {
-        let assets = store::load_assets(&self.conn)?;
-        let asset = assets
-            .iter()
-            .find(|candidate| candidate.id == asset_id)
-            .ok_or_else(|| format!("asset not found: {asset_id}"))?;
-        if !matches!(asset.kind, AssetKind::Skill) {
-            return Err("only skill assets can be adopted".to_string());
-        }
-
-        let source = store::load_sources(&self.conn)?
-            .into_iter()
-            .find(|candidate| candidate.id == asset.source_id)
-            .ok_or_else(|| format!("source not found: {}", asset.source_id))?;
-        if !matches!(
-            source.source_origin,
-            SourceOrigin::AppTarget | SourceOrigin::AppLocal
-        ) {
-            return Err("only app-local skill assets need adoption".to_string());
-        }
-
-        let origin_bucket = source
-            .origin_app_kind
-            .map(|kind| format!("{kind:?}").to_ascii_lowercase())
-            .unwrap_or_else(|| source.id.clone());
-        let target_dir = path_utils::app_library_skill_root()?
-            .join(origin_bucket)
-            .join(&asset.name);
-        if target_dir.exists() {
-            return Err(format!(
-                "adopted skill already exists: {}",
-                target_dir.display()
-            ));
-        }
-        commands::copy_dir(Path::new(&asset.absolute_path), &target_dir)?;
-
-        let library_source = commands::assetiweave_library_source();
-        store::upsert_source(&self.conn, &library_source)?;
-        let library_assets = scanner::scan_skill_source(&library_source)?;
-        store::replace_source_assets(&self.conn, &library_source.id, &library_assets)?;
-        library_assets
-            .into_iter()
-            .find(|candidate| candidate.absolute_path == target_dir.to_string_lossy())
-            .ok_or_else(|| "adopted skill was copied but not found during rescan".to_string())
-    }
-
     pub(crate) fn execute_plan(
         &self,
         plan: DeploymentPlan,
@@ -840,14 +907,14 @@ impl AppService {
     }
 
     pub(crate) fn run_doctor(&self) -> AppResult<Value> {
-        let library_root = path_utils::app_library_skill_root()?;
+        let backup_root = commands::skill_backup_root(&self.conn)?;
         Ok(json!({
             "checks": [
                 { "name": "database", "status": "pass", "message": self.db_path.to_string_lossy() },
                 {
-                    "name": "library_skills",
-                    "status": if library_root.exists() { "pass" } else { "fail" },
-                    "message": library_root.to_string_lossy()
+                    "name": "skill_backup_root",
+                    "status": if backup_root.exists() { "pass" } else { "fail" },
+                    "message": backup_root.to_string_lossy()
                 },
                 {
                     "name": "sources",
@@ -884,6 +951,34 @@ impl AppService {
 fn is_protected_source(source: &Source) -> bool {
     source.id == "assetiweave-library-skills"
         || matches!(source.source_origin, SourceOrigin::AssetiweaveLibrary)
+}
+
+fn path_contains(parent: &Path, child: &Path) -> bool {
+    let normalized_parent = parent
+        .canonicalize()
+        .unwrap_or_else(|_| parent.to_path_buf());
+    let normalized_child = child.canonicalize().unwrap_or_else(|_| child.to_path_buf());
+    normalized_child.starts_with(&normalized_parent)
+}
+
+fn slug_path_segment(value: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_separator = false;
+    for character in value.trim().chars().flat_map(char::to_lowercase) {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character);
+            last_was_separator = false;
+        } else if !last_was_separator && !slug.is_empty() {
+            slug.push('-');
+            last_was_separator = true;
+        }
+    }
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() {
+        "source".to_string()
+    } else {
+        slug
+    }
 }
 
 fn engine_db_path() -> AppResult<PathBuf> {
@@ -944,6 +1039,7 @@ pub(crate) const CLI_SERVICE_METHODS: &[&str] = &[
     "asset.list",
     "skill.list",
     "skill.import",
+    "skill.backup",
     "skill.delete",
     "skill.mount",
     "skill.unmount",
@@ -956,6 +1052,9 @@ pub(crate) const CLI_SERVICE_METHODS: &[&str] = &[
 pub(crate) const TAURI_COMMAND_METHODS: &[&str] = &[
     "get_app_overview",
     "list_assets",
+    "get_skill_backup_settings",
+    "update_skill_backup_settings",
+    "backup_skill",
     "list_sources",
     "list_skill_sources",
     "create_source",
@@ -989,7 +1088,6 @@ pub(crate) const TAURI_COMMAND_METHODS: &[&str] = &[
     "set_asset_mount",
     "scan_sources",
     "scan_skill_sources",
-    "adopt_app_local_skill",
     "create_plan",
     "execute_plan",
     "logs_get_snapshot",
@@ -1082,6 +1180,34 @@ pub(crate) fn schema_get(method: &str) -> Value {
         json!({
             "params": { "from": "string", "name": "string?", "dry_run": "bool?" },
             "cli": "assetiweave-cli skill import --from <dir> [--name <name>] [--dry-run]"
+        }),
+    );
+    schemas.insert(
+        "skill.backup",
+        json!({
+            "params": { "asset_id": "string" },
+            "cli": "assetiweave-cli skill backup <asset-id>"
+        }),
+    );
+    schemas.insert(
+        "get_skill_backup_settings",
+        json!({
+            "params": {},
+            "api": "get_skill_backup_settings"
+        }),
+    );
+    schemas.insert(
+        "update_skill_backup_settings",
+        json!({
+            "params": { "root_path": "string", "migrate": "bool?" },
+            "api": "update_skill_backup_settings"
+        }),
+    );
+    schemas.insert(
+        "backup_skill",
+        json!({
+            "params": { "asset_id": "string" },
+            "api": "backup_skill"
         }),
     );
     schemas.insert(

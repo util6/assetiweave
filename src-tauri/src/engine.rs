@@ -7,7 +7,8 @@ use crate::{
         RevealPathParams, SetAssetMountParams, SetSkillGroupManualMembersParams,
         SkillGroupExclusiveMountParams, SkillGroupMountParams, SourceAddParams, SourceRemoveParams,
         SourceScanParams, UpdateAppShortcutsParams, UpdateNavigationModelParams,
-        UpdateProfileParams, UpdateSkillGroupParams, UpdateSourceParams,
+        UpdateProfileParams, UpdateSkillBackupSettingsParams, UpdateSkillGroupParams,
+        UpdateSourceParams,
     },
     types::AppResult,
 };
@@ -180,6 +181,15 @@ fn dispatch_service(request: EngineRequest) -> EngineResult<Value> {
             let params = parse_params::<ListAssetsParams>(request.params)?;
             json_result(service.list_assets(params))
         }
+        "get_skill_backup_settings" => json_result(service.get_skill_backup_settings()),
+        "update_skill_backup_settings" => {
+            let params = parse_params::<UpdateSkillBackupSettingsParams>(request.params)?;
+            json_result(service.update_skill_backup_settings(params))
+        }
+        "backup_skill" => {
+            let params = parse_params::<RequiredAssetIdParams>(request.params)?;
+            json_result(service.backup_skill(params.asset_id))
+        }
         "update_asset_description" => {
             let params_value = request.params;
             let params = parse_params::<RequiredAssetIdParams>(params_value.clone())?;
@@ -214,6 +224,10 @@ fn dispatch_service(request: EngineRequest) -> EngineResult<Value> {
         "skill.import" => {
             let params = parse_params::<ImportSkillParams>(request.params)?;
             json_result(service.import_skill(params))
+        }
+        "skill.backup" => {
+            let params = parse_params::<RequiredAssetIdParams>(request.params)?;
+            json_result(service.backup_skill(params.asset_id))
         }
         "skill.delete" => {
             let params = parse_params::<AssetRefParams>(request.params)?;
@@ -288,10 +302,6 @@ fn dispatch_service(request: EngineRequest) -> EngineResult<Value> {
                 params.enabled,
                 params.strategy,
             ))
-        }
-        "adopt_app_local_skill" => {
-            let params = parse_params::<RequiredAssetIdParams>(request.params)?;
-            json_result(service.adopt_app_local_skill(params.asset_id))
         }
         "create_plan" => {
             let params = parse_params::<ProfileIdParams>(request.params)?;
@@ -448,12 +458,193 @@ mod tests {
             .join(".assetiweave")
             .join("library")
             .join("skills")
-            .join("imported")
+            .join("downloaded")
             .join("dry-run-skill");
         assert_eq!(value["dry_run"], json!(true));
         assert!(!target.exists());
         fs::remove_dir_all(home).ok();
         fs::remove_dir_all(source).ok();
+    }
+
+    #[test]
+    fn import_skill_uses_configured_backup_downloaded_directory() {
+        let _guard = env_lock().lock().expect("env lock");
+        let home = unique_temp_dir("assetiweave-engine-import-home");
+        let db_path = home.join("app.db");
+        let backup_root = unique_temp_dir("assetiweave-engine-backup-root");
+        let source = unique_temp_dir("assetiweave-engine-import-skill");
+        fs::create_dir_all(&home).expect("create temp home");
+        fs::create_dir_all(&source).expect("create skill source");
+        fs::write(source.join("SKILL.md"), "description: downloaded").expect("write skill");
+        env::set_var("HOME", &home);
+        env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
+
+        dispatch(EngineRequest {
+            id: Some("settings".to_string()),
+            method: "update_skill_backup_settings".to_string(),
+            params: json!({
+                "root_path": backup_root.to_string_lossy(),
+                "migrate": true
+            }),
+        })
+        .expect("update backup settings");
+        let value = dispatch(EngineRequest {
+            id: Some("import".to_string()),
+            method: "skill.import".to_string(),
+            params: json!({
+                "from": source.to_string_lossy(),
+                "name": "downloaded-skill",
+                "dry_run": false
+            }),
+        })
+        .expect("import skill");
+
+        env::remove_var("ASSETIWEAVE_DB_PATH");
+        env::remove_var("HOME");
+        let target = backup_root.join("downloaded").join("downloaded-skill");
+        assert!(target.join("SKILL.md").exists());
+        assert_eq!(
+            value["asset"]["relative_path"],
+            json!("downloaded/downloaded-skill")
+        );
+        fs::remove_dir_all(home).ok();
+        fs::remove_dir_all(backup_root).ok();
+        fs::remove_dir_all(source).ok();
+    }
+
+    #[test]
+    fn backup_settings_migrate_custom_root_and_delete_old_custom_root() {
+        let _guard = env_lock().lock().expect("env lock");
+        let home = unique_temp_dir("assetiweave-engine-migration-home");
+        let db_path = home.join("app.db");
+        let old_root = unique_temp_dir("assetiweave-engine-old-backup");
+        let new_root = unique_temp_dir("assetiweave-engine-new-backup");
+        fs::create_dir_all(&home).expect("create temp home");
+        env::set_var("HOME", &home);
+        env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
+
+        dispatch(EngineRequest {
+            id: Some("old".to_string()),
+            method: "update_skill_backup_settings".to_string(),
+            params: json!({
+                "root_path": old_root.to_string_lossy(),
+                "migrate": true
+            }),
+        })
+        .expect("move to old custom backup root");
+        let old_skill = old_root.join("downloaded").join("old-skill");
+        fs::create_dir_all(&old_skill).expect("create old downloaded skill");
+        fs::write(old_skill.join("SKILL.md"), "description: old").expect("write old skill");
+
+        let settings = dispatch(EngineRequest {
+            id: Some("new".to_string()),
+            method: "update_skill_backup_settings".to_string(),
+            params: json!({
+                "root_path": new_root.to_string_lossy(),
+                "migrate": true
+            }),
+        })
+        .expect("move to new custom backup root");
+
+        env::remove_var("ASSETIWEAVE_DB_PATH");
+        env::remove_var("HOME");
+        assert_eq!(settings["root_path"], json!(new_root.to_string_lossy()));
+        assert!(new_root
+            .join("downloaded")
+            .join("old-skill")
+            .join("SKILL.md")
+            .exists());
+        assert!(!old_root.exists());
+        fs::remove_dir_all(home).ok();
+        fs::remove_dir_all(new_root).ok();
+    }
+
+    #[test]
+    fn backup_skill_copies_app_target_skill_and_catalog_shows_backup_copy() {
+        let _guard = env_lock().lock().expect("env lock");
+        let home = unique_temp_dir("assetiweave-engine-backup-home");
+        let db_path = home.join("app.db");
+        let backup_root = unique_temp_dir("assetiweave-engine-backup-target");
+        let app_source_root = unique_temp_dir("assetiweave-engine-app-source");
+        let skill = app_source_root.join("app-skill");
+        fs::create_dir_all(&home).expect("create temp home");
+        fs::create_dir_all(&skill).expect("create app skill");
+        fs::write(skill.join("SKILL.md"), "description: app target").expect("write app skill");
+        env::set_var("HOME", &home);
+        env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
+
+        dispatch(EngineRequest {
+            id: Some("settings".to_string()),
+            method: "update_skill_backup_settings".to_string(),
+            params: json!({
+                "root_path": backup_root.to_string_lossy(),
+                "migrate": true
+            }),
+        })
+        .expect("update backup settings");
+        dispatch(EngineRequest {
+            id: Some("source".to_string()),
+            method: "source.add".to_string(),
+            params: json!({
+                "name": "App Target",
+                "kind": "local",
+                "root_path": app_source_root.to_string_lossy(),
+                "scanner_kind": "skill",
+                "source_origin": "app_target",
+                "include_globs": ["**/SKILL.md"],
+                "exclude_globs": [],
+                "default_kind": "skill",
+                "enabled": true,
+                "priority": 100,
+                "repo_root": null,
+                "scan_root": "",
+                "origin_app_kind": "codex"
+            }),
+        })
+        .expect("add app target source");
+        let scanned = dispatch(EngineRequest {
+            id: Some("scan".to_string()),
+            method: "source.scan".to_string(),
+            params: json!({ "kind": "skill" }),
+        })
+        .expect("scan source");
+        let app_asset_id = scanned
+            .as_array()
+            .expect("asset array")
+            .iter()
+            .find(|asset| asset["source_id"] != json!("assetiweave-library-skills"))
+            .and_then(|asset| asset["id"].as_str())
+            .expect("app asset id")
+            .to_string();
+
+        dispatch(EngineRequest {
+            id: Some("backup".to_string()),
+            method: "backup_skill".to_string(),
+            params: json!({ "asset_id": app_asset_id }),
+        })
+        .expect("backup skill");
+        let catalog = dispatch(EngineRequest {
+            id: Some("list".to_string()),
+            method: "asset.list".to_string(),
+            params: json!({ "kind": "skill" }),
+        })
+        .expect("list catalog");
+
+        env::remove_var("ASSETIWEAVE_DB_PATH");
+        env::remove_var("HOME");
+        let assets = catalog.as_array().expect("catalog array");
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0]["source_id"], json!("assetiweave-library-skills"));
+        assert_eq!(assets[0]["backup_status"]["state"], json!("backed_up"));
+        assert!(backup_root
+            .join("backed-up")
+            .join("codex")
+            .join("app-skill")
+            .join("SKILL.md")
+            .exists());
+        fs::remove_dir_all(home).ok();
+        fs::remove_dir_all(backup_root).ok();
+        fs::remove_dir_all(app_source_root).ok();
     }
 
     #[test]
@@ -696,7 +887,9 @@ mod tests {
         env::remove_var("ASSETIWEAVE_DB_PATH");
         env::remove_var("HOME");
         assert_eq!(error.kind, "operation_error");
-        assert!(error.message.contains("only AssetIWeave library skills"));
+        assert!(error
+            .message
+            .contains("only AssetIWeave backup library skills"));
         assert!(skill.exists());
         fs::remove_dir_all(home).ok();
         fs::remove_dir_all(source).ok();

@@ -58,10 +58,15 @@ pub(crate) fn inspect_mount(profile: &TargetProfile, asset: &Asset) -> AppResult
     };
 
     if !metadata.file_type().is_symlink() {
+        let state = if same_path(&target_path, &source_path) {
+            PhysicalMountState::NotMounted
+        } else {
+            PhysicalMountState::Conflict
+        };
         return Ok(MountInspection {
             target_dir: target_dir_label,
             target_path: target_path.to_string_lossy().to_string(),
-            state: PhysicalMountState::Conflict,
+            state,
             linked_source: None,
         });
     }
@@ -119,4 +124,95 @@ pub(crate) fn canonical_source_path(asset: &Asset) -> AppResult<PathBuf> {
     expand_path(&asset.absolute_path)?
         .canonicalize()
         .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use assetiweave_core::{AppKind, AssetKind, DeploymentStrategy, ProfileSafety, RuleSet};
+
+    #[test]
+    fn inspect_mount_treats_source_at_target_path_as_not_mounted() {
+        let target_root = unique_temp_dir("assetiweave-app-local-target");
+        let asset_path = target_root.join("code-review-and-quality");
+        fs::create_dir_all(&asset_path).expect("create app-local skill");
+        let asset = test_asset("code-review-and-quality", &asset_path);
+        let profile = test_profile(&target_root);
+
+        let inspection = inspect_mount(&profile, &asset).expect("inspect app-local skill");
+
+        fs::remove_dir_all(&target_root).ok();
+        assert_eq!(inspection.state, PhysicalMountState::NotMounted);
+        assert_eq!(inspection.linked_source, None);
+    }
+
+    #[test]
+    fn inspect_mount_treats_unrelated_existing_target_as_conflict() {
+        let source_root = unique_temp_dir("assetiweave-conflict-source");
+        let target_root = unique_temp_dir("assetiweave-conflict-target");
+        let asset_path = source_root.join("code-review-and-quality");
+        fs::create_dir_all(&asset_path).expect("create source skill");
+        fs::create_dir_all(target_root.join("code-review-and-quality"))
+            .expect("create conflicting target");
+        let asset = test_asset("code-review-and-quality", &asset_path);
+        let profile = test_profile(&target_root);
+
+        let inspection = inspect_mount(&profile, &asset).expect("inspect conflicting skill");
+
+        fs::remove_dir_all(&source_root).ok();
+        fs::remove_dir_all(&target_root).ok();
+        assert_eq!(inspection.state, PhysicalMountState::Conflict);
+        assert_eq!(inspection.linked_source, None);
+    }
+
+    fn test_asset(name: &str, absolute_path: &Path) -> Asset {
+        Asset {
+            id: format!("asset-{name}"),
+            source_id: "codex-skills".to_string(),
+            name: name.to_string(),
+            kind: AssetKind::Skill,
+            format: AssetFormat::Directory,
+            relative_path: name.to_string(),
+            absolute_path: absolute_path.to_string_lossy().to_string(),
+            entry_file: Some(format!("{name}/SKILL.md")),
+            description: None,
+            content_hash: None,
+            discovered_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn test_profile(target_root: &Path) -> TargetProfile {
+        TargetProfile {
+            id: "codex".to_string(),
+            name: "Codex".to_string(),
+            app_kind: AppKind::Codex,
+            target_paths: vec![target_root.to_string_lossy().to_string()],
+            supported_kinds: vec![AssetKind::Skill],
+            deployment_strategy: DeploymentStrategy::SymlinkToSource,
+            enabled: true,
+            include: RuleSet {
+                kinds: vec![AssetKind::Skill],
+                tags: vec![],
+                groups: vec![],
+                sources: vec![],
+                path_patterns: vec![],
+            },
+            exclude: RuleSet {
+                kinds: vec![],
+                tags: vec![],
+                groups: vec![],
+                sources: vec![],
+                path_patterns: vec![],
+            },
+            safety: ProfileSafety {
+                allow_remove: false,
+                allow_overwrite: false,
+            },
+        }
+    }
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()))
+    }
 }

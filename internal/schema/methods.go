@@ -10,6 +10,7 @@ const (
 	MethodAssetList         = "asset.list"
 	MethodSkillList         = "skill.list"
 	MethodSkillImport       = "skill.import"
+	MethodSkillBackup       = "skill.backup"
 	MethodSkillDelete       = "skill.delete"
 	MethodSkillMount        = "skill.mount"
 	MethodSkillUnmount      = "skill.unmount"

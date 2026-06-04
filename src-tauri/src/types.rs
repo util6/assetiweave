@@ -1,7 +1,7 @@
 use crate::targeting::PhysicalMountState;
 use assetiweave_core::{
-    AppKind, AssetGroupRules, AssetKind, AssetMount, DeploymentStrategy, ProfileSafety, RuleSet,
-    SourceKind, SourceOrigin, SourceScannerKind,
+    AppKind, Asset, AssetGroupRules, AssetKind, AssetMount, DeploymentStrategy, ProfileSafety,
+    RuleSet, SourceKind, SourceOrigin, SourceScannerKind,
 };
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Mutex};
@@ -19,6 +19,37 @@ pub(crate) struct AppOverview {
     pub(crate) asset_count: usize,
     pub(crate) profile_count: usize,
     pub(crate) last_scan_status: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CatalogAsset {
+    #[serde(flatten)]
+    pub(crate) asset: Asset,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) backup_status: Option<SkillBackupAssetStatus>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SkillBackupAssetStatus {
+    pub(crate) state: SkillBackupState,
+    pub(crate) backup_path: Option<String>,
+    pub(crate) hidden_asset_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SkillBackupState {
+    BackedUp,
+    Downloaded,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SkillBackupSettings {
+    pub(crate) root_path: String,
+    pub(crate) expanded_root_path: String,
+    pub(crate) default_root_path: String,
+    pub(crate) is_default_root: bool,
+    pub(crate) exists: bool,
 }
 
 #[derive(Debug, Deserialize)]

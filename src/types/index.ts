@@ -34,6 +34,23 @@ export interface Asset {
   content_hash?: string | null;
   discovered_at: string;
   updated_at: string;
+  backup_status?: SkillBackupAssetStatus | null;
+}
+
+export type SkillBackupState = "backed_up" | "downloaded";
+
+export interface SkillBackupAssetStatus {
+  state: SkillBackupState;
+  backup_path?: string | null;
+  hidden_asset_ids: string[];
+}
+
+export interface SkillBackupSettings {
+  root_path: string;
+  expanded_root_path: string;
+  default_root_path: string;
+  is_default_root: boolean;
+  exists: boolean;
 }
 
 export interface AppOverview {

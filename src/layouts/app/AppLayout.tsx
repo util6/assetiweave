@@ -17,6 +17,7 @@ export function AppLayout({
   onDismissNotification,
   onLogViewerOpen,
   onNavigationModelChange,
+  onSkillBackupLibraryChange,
   onSettingsClose,
   onSettingsOpen,
   onSubNavSelect,
@@ -34,6 +35,7 @@ export function AppLayout({
   onDismissNotification: (id: string) => void;
   onLogViewerOpen: () => void;
   onNavigationModelChange: (navigationModel: NavigationModel) => void;
+  onSkillBackupLibraryChange?: () => Promise<void> | void;
   onSettingsClose: () => void;
   onSettingsOpen: () => void;
   onSubNavSelect: (id: string) => void;
@@ -78,6 +80,7 @@ export function AppLayout({
         onAppShortcutsChange={onAppShortcutsChange}
         onClose={onSettingsClose}
         onNavigationModelChange={onNavigationModelChange}
+        onSkillBackupLibraryChange={onSkillBackupLibraryChange}
         open={settingsOpen}
       />
     </div>

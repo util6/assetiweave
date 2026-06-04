@@ -18,6 +18,7 @@ import { CSS } from "@dnd-kit/utilities";
 import clsx from "clsx";
 import {
   Activity,
+  Archive,
   Bell,
   Code2,
   Gauge,
@@ -47,6 +48,7 @@ import {
   shortcutUsesAppIcon,
   supportsAppIcon,
 } from "../apps/AppShortcutIcon";
+import { SkillBackupLibraryDialog } from "../backup/SkillBackupLibraryDialog";
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
 import { headerTabLabel, railLabel, subNavLabel } from "../../i18n/navigation";
 import type { Locale } from "../../i18n/messages";
@@ -71,6 +73,7 @@ export function GlobalSettingsDialog({
   onClose,
   onAppShortcutsChange,
   onNavigationModelChange,
+  onSkillBackupLibraryChange,
   open,
 }: {
   appShortcuts: AppShortcut[];
@@ -78,6 +81,7 @@ export function GlobalSettingsDialog({
   onClose: () => void;
   onAppShortcutsChange: (shortcuts: AppShortcut[]) => void;
   onNavigationModelChange: (model: NavigationModel) => void;
+  onSkillBackupLibraryChange?: () => Promise<void> | void;
   open: boolean;
 }) {
   const { locale, setLocale, t } = useI18n();
@@ -86,6 +90,8 @@ export function GlobalSettingsDialog({
   const [editingShortcutIconId, setEditingShortcutIconId] = useState<string | null>(null);
   const [iconSvgDraft, setIconSvgDraft] = useState("");
   const [iconSvgError, setIconSvgError] = useState("");
+  const [backupDialogOpen, setBackupDialogOpen] = useState(false);
+  const [backupError, setBackupError] = useState("");
 
   useEffect(() => {
     if (!open) {
@@ -501,6 +507,17 @@ export function GlobalSettingsDialog({
                     onChange={(checked) => updateSetting("confirmBeforeDeploy", checked)}
                   />
                 </SettingRow>
+                <SettingRow icon={<Archive size={18} />} label={t("backup.dialog.title")}>
+                  <Button onClick={() => setBackupDialogOpen(true)} type="button" variant="outline">
+                    <Archive size={16} />
+                    {t("backup.action.open")}
+                  </Button>
+                </SettingRow>
+                {backupError && (
+                  <div className="rounded-lg border border-status-remove/30 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove">
+                    {backupError}
+                  </div>
+                )}
               </SettingsGroup>
             )}
 
@@ -533,6 +550,15 @@ export function GlobalSettingsDialog({
           t={t}
         />
       )}
+      <SkillBackupLibraryDialog
+        onClose={() => setBackupDialogOpen(false)}
+        onNotifyError={setBackupError}
+        onSaved={async () => {
+          setBackupError("");
+          await onSkillBackupLibraryChange?.();
+        }}
+        open={backupDialogOpen}
+      />
     </div>
   );
 }

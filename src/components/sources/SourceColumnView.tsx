@@ -9,6 +9,7 @@ import { abbreviateHomePath, displayAssetPath } from "../../utils/path";
 import { kindBadgeClass } from "../../utils/styles";
 import { MountStatePill } from "../assets/MountStatePill";
 import { QuickMountButtons } from "../assets/QuickMountButtons";
+import { SkillBackupBadge } from "../assets/SkillBackupBadge";
 import { SourceBulkMountControls } from "./SourceBulkMountControls";
 
 export function SourceColumnView({
@@ -112,6 +113,7 @@ export function SourceColumnView({
                         {asset.name}
                       </span>
                       <span className={kindBadgeClass(asset.kind)}>{t("assetKind.skill")}</span>
+                      <SkillBackupBadge asset={asset} />
                       <MountStatePill compact state={getAssetMountSummaryState(mountStatuses)} />
                     </div>
                     <button

@@ -665,7 +665,7 @@ create_plan(profile_id?) -> DeploymentPlan
 execute_plan(plan, action_ids?) -> ExecutionResult
 explain_asset(asset_id, profile_id) -> EvaluationResult
 
-adopt_app_local_skill(asset_id) -> Asset
+backup_skill(asset_id) -> Asset
 reveal_path(path) -> void
 
 export_assets(input) -> ExportResult

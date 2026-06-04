@@ -87,6 +87,15 @@ pub(crate) fn normalize_source(source: &Source) -> Source {
         source.scanner_kind = SourceScannerKind::Skill;
     }
 
+    if source.id == "assetiweave-library-skills" {
+        source.source_origin = SourceOrigin::AssetiweaveLibrary;
+        source.scanner_kind = SourceScannerKind::Skill;
+        source.repo_root = None;
+        source.scan_root = String::new();
+        source.origin_app_kind = None;
+        return source;
+    }
+
     let Ok(root_path) = expand_path(&source.root_path) else {
         return source;
     };

@@ -11,6 +11,7 @@ import { AssetMountPanel } from "./AssetMountPanel";
 import { InlineMeta } from "./InlineMeta";
 import { MountStatePill } from "./MountStatePill";
 import { QuickMountButtons } from "./QuickMountButtons";
+import { SkillBackupBadge } from "./SkillBackupBadge";
 
 export function AssetRow({
   asset,
@@ -57,6 +58,7 @@ export function AssetRow({
               {asset.name}
             </span>
             <span className={kindBadgeClass(asset.kind)}>{assetKindLabel(asset.kind, t)}</span>
+            <SkillBackupBadge asset={asset} />
             <MountStatePill state={mountSummaryState} />
             <span className="rounded-md border border-theme-control-border bg-theme-control-hover/70 px-2 py-0.5 text-[10px] font-bold text-on-surface-variant">
               {t("asset.origin.local")}

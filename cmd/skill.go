@@ -10,6 +10,7 @@ func newCmdSkill(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{Use: "skill", Short: "Manage skills"}
 	cmd.AddCommand(newCmdSkillList(f))
 	cmd.AddCommand(newCmdSkillImport(f))
+	cmd.AddCommand(newCmdSkillBackup(f))
 	cmd.AddCommand(newCmdSkillMount(f))
 	cmd.AddCommand(newCmdSkillUnmount(f))
 	cmd.AddCommand(newCmdSkillDelete(f))
@@ -32,7 +33,7 @@ func newCmdSkillImport(f *cmdutil.Factory) *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "import",
-		Short: "Import an installed skill directory into the AssetIWeave library",
+		Short: "Import an installed skill directory into the AssetIWeave backup library",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			params := map[string]any{"from": from, "name": nil, "dry_run": dryRun}
 			if name != "" {
@@ -46,6 +47,17 @@ func newCmdSkillImport(f *cmdutil.Factory) *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without copying")
 	_ = cmd.MarkFlagRequired("from")
 	return cmd
+}
+
+func newCmdSkillBackup(f *cmdutil.Factory) *cobra.Command {
+	return &cobra.Command{
+		Use:   "backup <asset-id>",
+		Short: "Copy a skill into the AssetIWeave backup library",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodSkillBackup, map[string]any{"asset_id": args[0]})
+		},
+	}
 }
 
 func newCmdSkillMount(f *cmdutil.Factory) *cobra.Command {
@@ -86,7 +98,7 @@ func newCmdSkillDelete(f *cmdutil.Factory) *cobra.Command {
 	var dryRun, yes, unmount bool
 	cmd := &cobra.Command{
 		Use:   "delete <asset-ref>",
-		Short: "Delete an AssetIWeave-library skill",
+		Short: "Delete an AssetIWeave backup-library skill",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !dryRun {

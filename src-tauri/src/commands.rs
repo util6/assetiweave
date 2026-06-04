@@ -1,14 +1,16 @@
 use crate::{
     defaults, executor, logs,
-    path_utils::{app_library_skill_root, expand_path},
+    path_utils::{default_skill_backup_root, expand_path},
     planner, platform, scanner,
+    service::UpdateSkillBackupSettingsParams,
     service::{AppService, ListAssetsParams, SourceRemoveParams, SourceScanParams},
     store, targeting,
     types::{
         AppOverview, AppResult, AppShortcut, AppState, ApplyAssetGroupMountResult,
         ApplySkillGroupExclusiveMountResult, AssetGroupInput, AssetGroupMountError,
-        AssetMountObservation, AssetMountStatus, AssetMountUpdateResult, ExecutionResult,
-        NavigationModel, PhysicalMountStateDto, SkillGroupExclusiveMountError,
+        AssetMountObservation, AssetMountStatus, AssetMountUpdateResult, CatalogAsset,
+        ExecutionResult, NavigationModel, PhysicalMountStateDto, SkillBackupAssetStatus,
+        SkillBackupSettings, SkillBackupState, SkillGroupExclusiveMountError,
         SkillGroupExclusiveMountInput, SkillGroupExclusiveMountItem,
         SkillGroupExclusiveMountPreview, SkillGroupExclusiveMountSkippedItem, SourceInput,
         TargetProfileInput,
@@ -30,6 +32,8 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 type LogField = (&'static str, String);
+
+pub(crate) const SKILL_BACKUP_SOURCE_ID: &str = "assetiweave-library-skills";
 
 fn log_info(operation: &str, message: &str, fields: &[LogField]) {
     logs::record_info(operation, message, fields);
@@ -174,9 +178,78 @@ pub(crate) fn get_app_overview(state: State<'_, AppState>) -> AppResult<AppOverv
 pub(crate) fn list_assets(
     state: State<'_, AppState>,
     kind: Option<AssetKind>,
-) -> AppResult<Vec<Asset>> {
+) -> AppResult<Vec<CatalogAsset>> {
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
     AppService::open_with_db_path(state.db_path.clone())?.list_assets(ListAssetsParams { kind })
+}
+
+#[tauri::command]
+pub(crate) fn get_skill_backup_settings(
+    state: State<'_, AppState>,
+) -> AppResult<SkillBackupSettings> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.get_skill_backup_settings()
+}
+
+#[tauri::command]
+pub(crate) fn update_skill_backup_settings(
+    state: State<'_, AppState>,
+    root_path: String,
+    migrate: Option<bool>,
+) -> AppResult<SkillBackupSettings> {
+    let fields = vec![
+        ("root_path", root_path.clone()),
+        ("migrate", migrate.unwrap_or(true).to_string()),
+    ];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.update_skill_backup_settings(
+            UpdateSkillBackupSettingsParams {
+                root_path,
+                migrate: migrate.unwrap_or(true),
+            },
+        )
+    })();
+
+    match &result {
+        Ok(settings) => log_info(
+            "skill.backup.settings.update",
+            "更新 Skill 备份目录成功",
+            &[
+                ("root_path", settings.root_path.clone()),
+                ("expanded_root_path", settings.expanded_root_path.clone()),
+            ],
+        ),
+        Err(error) => log_error(
+            "skill.backup.settings.update",
+            "更新 Skill 备份目录失败",
+            error,
+            &fields,
+        ),
+    }
+    result
+}
+
+#[tauri::command]
+pub(crate) fn backup_skill(
+    state: State<'_, AppState>,
+    asset_id: String,
+) -> AppResult<CatalogAsset> {
+    let fields = vec![("asset_id", asset_id.clone())];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.backup_skill(asset_id)
+    })();
+
+    match &result {
+        Ok(asset) => log_info(
+            "skill.backup",
+            "备份 Skill 成功",
+            &asset_log_fields(&asset.asset),
+        ),
+        Err(error) => log_error("skill.backup", "备份 Skill 失败", error, &fields),
+    }
+    result
 }
 
 #[tauri::command]
@@ -1146,10 +1219,7 @@ fn validate_exclusive_mount_candidate(
         source.source_origin,
         SourceOrigin::AppTarget | SourceOrigin::AppLocal
     ) {
-        return Err(
-            "app-local skills must be adopted into the AssetIWeave library before mounting"
-                .to_string(),
-        );
+        return Err("app-local skills must be backed up before mounting".to_string());
     }
 
     let source_path = expand_path(&asset.absolute_path)?;
@@ -1512,7 +1582,7 @@ pub(crate) fn set_asset_mount_record(
 pub(crate) fn scan_sources(
     state: State<'_, AppState>,
     kind: Option<AssetKind>,
-) -> AppResult<Vec<Asset>> {
+) -> AppResult<Vec<CatalogAsset>> {
     let fields = kind
         .map(|kind| vec![("asset_kind", format!("{kind:?}"))])
         .unwrap_or_default();
@@ -1536,13 +1606,13 @@ pub(crate) fn scan_sources(
 }
 
 #[tauri::command]
-pub(crate) fn scan_skill_sources(state: State<'_, AppState>) -> AppResult<Vec<Asset>> {
+pub(crate) fn scan_skill_sources(state: State<'_, AppState>) -> AppResult<Vec<CatalogAsset>> {
     let result = (|| {
         let _guard = state.lock.lock().map_err(|error| error.to_string())?;
         let conn = store::open_initialized(&state.db_path)?;
         let sources = store::load_skill_sources(&conn)?;
         scan_selected_sources(&conn, sources, scanner::scan_skill_source)?;
-        store::load_assets_by_kind(&conn, Some(AssetKind::Skill))
+        catalog_assets(&conn, Some(AssetKind::Skill))
     })();
 
     match &result {
@@ -1552,75 +1622,6 @@ pub(crate) fn scan_skill_sources(state: State<'_, AppState>) -> AppResult<Vec<As
             &[("skill_count", assets.len().to_string())],
         ),
         Err(error) => log_error("source.scan.skills", "扫描 skill 来源失败", error, &[]),
-    }
-    result
-}
-
-#[tauri::command]
-pub(crate) fn adopt_app_local_skill(
-    state: State<'_, AppState>,
-    asset_id: String,
-) -> AppResult<Asset> {
-    let fields = vec![("asset_id", asset_id.clone())];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        let conn = store::open_initialized(&state.db_path)?;
-        let assets = store::load_assets(&conn)?;
-        let asset = assets
-            .iter()
-            .find(|candidate| candidate.id == asset_id)
-            .ok_or_else(|| format!("asset not found: {asset_id}"))?;
-        if !matches!(asset.kind, AssetKind::Skill) {
-            return Err("only skill assets can be adopted".to_string());
-        }
-
-        let source = store::load_sources(&conn)?
-            .into_iter()
-            .find(|candidate| candidate.id == asset.source_id)
-            .ok_or_else(|| format!("source not found: {}", asset.source_id))?;
-        if !matches!(
-            source.source_origin,
-            SourceOrigin::AppTarget | SourceOrigin::AppLocal
-        ) {
-            return Err("only app-local skill assets need adoption".to_string());
-        }
-
-        let origin_bucket = source
-            .origin_app_kind
-            .map(|kind| format!("{kind:?}").to_ascii_lowercase())
-            .unwrap_or_else(|| source.id.clone());
-        let library_root = app_library_skill_root()?;
-        let target_dir = library_root.join(origin_bucket).join(&asset.name);
-        if target_dir.exists() {
-            return Err(format!(
-                "adopted skill already exists: {}",
-                target_dir.display()
-            ));
-        }
-        copy_dir(Path::new(&asset.absolute_path), &target_dir)?;
-
-        let library_source = assetiweave_library_source();
-        store::upsert_source(&conn, &library_source)?;
-        let library_assets = scanner::scan_skill_source(&library_source)?;
-        store::replace_source_assets(&conn, &library_source.id, &library_assets)?;
-        library_assets
-            .into_iter()
-            .find(|candidate| candidate.absolute_path == target_dir.to_string_lossy())
-            .ok_or_else(|| "adopted skill was copied but not found during rescan".to_string())
-    })();
-
-    match &result {
-        Ok(asset) => log_info(
-            "skill.adopt_app_local",
-            "导入 APP 本地 skill 成功",
-            &asset_log_fields(asset),
-        ),
-        Err(error) => log_error(
-            "skill.adopt_app_local",
-            "导入 APP 本地 skill 失败",
-            error,
-            &fields,
-        ),
     }
     result
 }
@@ -1922,10 +1923,7 @@ fn validate_mount_target(
         source.source_origin,
         SourceOrigin::AppTarget | SourceOrigin::AppLocal
     ) {
-        return Err(
-            "app-local skills must be adopted into the AssetIWeave library before mounting"
-                .to_string(),
-        );
+        return Err("app-local skills must be backed up before mounting".to_string());
     }
 
     let profile = store::load_profiles(conn)?
@@ -2300,11 +2298,18 @@ fn asset_mount_status(
 }
 
 pub(crate) fn assetiweave_library_source() -> Source {
+    let root_path = default_skill_backup_root()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "~/.assetiweave/library/skills".to_string());
+    assetiweave_library_source_with_root(root_path)
+}
+
+pub(crate) fn assetiweave_library_source_with_root(root_path: String) -> Source {
     Source {
-        id: "assetiweave-library-skills".to_string(),
-        name: "AssetIWeave Library Skills".to_string(),
+        id: SKILL_BACKUP_SOURCE_ID.to_string(),
+        name: "AssetIWeave Skill Backup Library".to_string(),
         kind: SourceKind::Local,
-        root_path: "~/.assetiweave/library/skills".to_string(),
+        root_path,
         scanner_kind: SourceScannerKind::Skill,
         source_origin: SourceOrigin::AssetiweaveLibrary,
         repo_root: None,
@@ -2322,6 +2327,194 @@ pub(crate) fn assetiweave_library_source() -> Source {
         priority: -100,
         last_scanned_at: None,
         last_scan_status: Some("pending".to_string()),
+    }
+}
+
+pub(crate) fn skill_backup_root(conn: &rusqlite::Connection) -> AppResult<PathBuf> {
+    let root_path = store::load_sources(conn)?
+        .into_iter()
+        .find(|source| source.id == SKILL_BACKUP_SOURCE_ID)
+        .map(|source| source.root_path)
+        .unwrap_or_else(|| {
+            default_skill_backup_root()
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "~/.assetiweave/library/skills".to_string())
+        });
+    let root = expand_path(&root_path)?;
+    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    Ok(root)
+}
+
+pub(crate) fn skill_backup_settings(conn: &rusqlite::Connection) -> AppResult<SkillBackupSettings> {
+    let default_root = default_skill_backup_root()?;
+    let source = store::load_sources(conn)?
+        .into_iter()
+        .find(|source| source.id == SKILL_BACKUP_SOURCE_ID)
+        .unwrap_or_else(|| assetiweave_library_source());
+    let expanded_root = expand_path(&source.root_path)?;
+    Ok(SkillBackupSettings {
+        root_path: source.root_path,
+        expanded_root_path: expanded_root.to_string_lossy().to_string(),
+        default_root_path: default_root.to_string_lossy().to_string(),
+        is_default_root: same_path_or_text(&expanded_root, &default_root),
+        exists: expanded_root.exists(),
+    })
+}
+
+pub(crate) fn catalog_assets(
+    conn: &rusqlite::Connection,
+    kind: Option<AssetKind>,
+) -> AppResult<Vec<CatalogAsset>> {
+    let assets = store::load_assets_by_kind(conn, kind)?;
+    let sources = store::load_sources(conn)?;
+    Ok(build_catalog_assets(assets, &sources))
+}
+
+pub(crate) fn catalog_asset_for_id(
+    conn: &rusqlite::Connection,
+    asset_id: &str,
+) -> AppResult<CatalogAsset> {
+    catalog_assets(conn, None)?
+        .into_iter()
+        .find(|asset| asset.asset.id == asset_id)
+        .ok_or_else(|| format!("asset not found in catalog: {asset_id}"))
+}
+
+pub(crate) fn build_catalog_assets(assets: Vec<Asset>, sources: &[Source]) -> Vec<CatalogAsset> {
+    let source_by_id = sources
+        .iter()
+        .map(|source| (source.id.as_str(), source))
+        .collect::<HashMap<_, _>>();
+    let mut content_groups: BTreeMap<String, Vec<Asset>> = BTreeMap::new();
+    let mut without_identity = Vec::new();
+
+    for asset in assets {
+        if asset.kind == AssetKind::Skill {
+            if let Some(content_hash) = asset.content_hash.clone().filter(|hash| !hash.is_empty()) {
+                content_groups.entry(content_hash).or_default().push(asset);
+                continue;
+            }
+        }
+        without_identity.push(CatalogAsset {
+            backup_status: standalone_backup_status(
+                &asset,
+                source_by_id.get(asset.source_id.as_str()).copied(),
+            ),
+            asset,
+        });
+    }
+
+    let mut catalog_assets = without_identity;
+    for mut group in content_groups.into_values() {
+        if group.len() == 1 {
+            let asset = group.remove(0);
+            catalog_assets.push(CatalogAsset {
+                backup_status: standalone_backup_status(
+                    &asset,
+                    source_by_id.get(asset.source_id.as_str()).copied(),
+                ),
+                asset,
+            });
+            continue;
+        }
+
+        group.sort_by(|left, right| {
+            let left_score =
+                canonical_asset_score(left, source_by_id.get(left.source_id.as_str()).copied());
+            let right_score =
+                canonical_asset_score(right, source_by_id.get(right.source_id.as_str()).copied());
+            left_score
+                .cmp(&right_score)
+                .then_with(|| left.name.cmp(&right.name))
+                .then_with(|| left.absolute_path.cmp(&right.absolute_path))
+        });
+
+        let canonical = group.remove(0);
+        let hidden_asset_ids = group
+            .iter()
+            .map(|asset| asset.id.clone())
+            .collect::<Vec<_>>();
+        let backup_path = std::iter::once(&canonical)
+            .chain(group.iter())
+            .find(|asset| {
+                backup_entry_state(asset, source_by_id.get(asset.source_id.as_str()).copied())
+                    == Some(SkillBackupState::BackedUp)
+            })
+            .map(|asset| asset.absolute_path.clone());
+        let backup_status = if let Some(backup_path) = backup_path {
+            Some(SkillBackupAssetStatus {
+                state: SkillBackupState::BackedUp,
+                backup_path: Some(backup_path),
+                hidden_asset_ids,
+            })
+        } else {
+            standalone_backup_status(
+                &canonical,
+                source_by_id.get(canonical.source_id.as_str()).copied(),
+            )
+            .map(|mut status| {
+                status.hidden_asset_ids = hidden_asset_ids;
+                status
+            })
+        };
+
+        catalog_assets.push(CatalogAsset {
+            asset: canonical,
+            backup_status,
+        });
+    }
+
+    catalog_assets.sort_by(|left, right| {
+        left.asset
+            .name
+            .cmp(&right.asset.name)
+            .then_with(|| left.asset.relative_path.cmp(&right.asset.relative_path))
+    });
+    catalog_assets
+}
+
+fn standalone_backup_status(
+    asset: &Asset,
+    source: Option<&Source>,
+) -> Option<SkillBackupAssetStatus> {
+    backup_entry_state(asset, source).map(|state| SkillBackupAssetStatus {
+        state,
+        backup_path: Some(asset.absolute_path.clone()),
+        hidden_asset_ids: Vec::new(),
+    })
+}
+
+fn backup_entry_state(asset: &Asset, source: Option<&Source>) -> Option<SkillBackupState> {
+    let source = source?;
+    if source.id != SKILL_BACKUP_SOURCE_ID
+        && !matches!(source.source_origin, SourceOrigin::AssetiweaveLibrary)
+    {
+        return None;
+    }
+
+    if asset.relative_path.starts_with("downloaded/")
+        || asset.relative_path.starts_with("imported/")
+    {
+        return Some(SkillBackupState::Downloaded);
+    }
+    if asset.relative_path.starts_with("backed-up/") {
+        return Some(SkillBackupState::BackedUp);
+    }
+    None
+}
+
+fn canonical_asset_score(asset: &Asset, source: Option<&Source>) -> u8 {
+    let Some(source) = source else {
+        return 50;
+    };
+    match source.source_origin {
+        SourceOrigin::AppTarget | SourceOrigin::AppLocal => 40,
+        SourceOrigin::AssetiweaveLibrary => match backup_entry_state(asset, Some(source)) {
+            Some(SkillBackupState::Downloaded) => 20,
+            Some(SkillBackupState::BackedUp) => 30,
+            None => 25,
+        },
+        SourceOrigin::GitRepo | SourceOrigin::LocalFolder | SourceOrigin::Custom => 0,
     }
 }
 
@@ -2478,6 +2671,63 @@ pub(crate) fn copy_dir(source: &Path, target: &Path) -> AppResult<()> {
         }
     }
     Ok(())
+}
+
+pub(crate) fn copy_dir_without_conflicts(source: &Path, target: &Path) -> AppResult<()> {
+    if !source.exists() {
+        return Ok(());
+    }
+    if !source.is_dir() {
+        return Err(format!(
+            "backup source is not a directory: {}",
+            source.display()
+        ));
+    }
+
+    for entry in WalkDir::new(source).into_iter().filter_map(Result::ok) {
+        let relative = entry
+            .path()
+            .strip_prefix(source)
+            .map_err(|error| error.to_string())?;
+        let destination = target.join(relative);
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&destination).map_err(|error| error.to_string())?;
+            continue;
+        }
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        if destination.exists() {
+            if !destination.is_file() {
+                return Err(format!(
+                    "backup migration target is not a file: {}",
+                    destination.display()
+                ));
+            }
+            let source_bytes = fs::read(entry.path()).map_err(|error| error.to_string())?;
+            let destination_bytes = fs::read(&destination).map_err(|error| error.to_string())?;
+            if source_bytes != destination_bytes {
+                return Err(format!(
+                    "backup migration target already has different content: {}",
+                    destination.display()
+                ));
+            }
+            continue;
+        }
+
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::copy(entry.path(), destination).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+pub(crate) fn same_path_or_text(left: &Path, right: &Path) -> bool {
+    let normalized_left = left.canonicalize().unwrap_or_else(|_| left.to_path_buf());
+    let normalized_right = right.canonicalize().unwrap_or_else(|_| right.to_path_buf());
+    normalized_left == normalized_right || left == right
 }
 
 #[cfg(test)]
@@ -3125,7 +3375,7 @@ mod tests {
             .skipped
             .iter()
             .any(|item| item.asset_id == app_local_asset.id
-                && item.reason.contains("must be adopted")));
+                && item.reason.contains("must be backed up")));
         assert!(result
             .preview
             .skipped
@@ -3196,7 +3446,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn sync_asset_mount_observations_adopts_physical_mount_snapshot() {
+    fn sync_asset_mount_observations_records_physical_mount_snapshot() {
         let db_path = unique_temp_path("assetiweave-observation-db");
         let source_root = unique_temp_path("assetiweave-observation-source");
         let target_root = unique_temp_path("assetiweave-observation-target");
@@ -3395,6 +3645,128 @@ mod tests {
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();
         std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn catalog_assets_fold_backed_up_copy_to_original_source() {
+        let original_source = test_source("source-a", PathBuf::from("/tmp/source-a"));
+        let backup_source =
+            assetiweave_library_source_with_root("/tmp/assetiweave-backup".to_string());
+        let mut original = test_asset(
+            &original_source,
+            "skill-a",
+            PathBuf::from("/tmp/source-a/skill-a"),
+        );
+        original.content_hash = Some("same-content".to_string());
+        let mut backup = test_asset(
+            &backup_source,
+            "backup-skill-a",
+            PathBuf::from("/tmp/assetiweave-backup/backed-up/source-a/skill-a"),
+        );
+        backup.name = "skill-a".to_string();
+        backup.relative_path = "backed-up/source-a/skill-a".to_string();
+        backup.content_hash = Some("same-content".to_string());
+
+        let catalog = build_catalog_assets(
+            vec![backup.clone(), original.clone()],
+            &[backup_source, original_source],
+        );
+
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].asset.id, original.id);
+        let status = catalog[0].backup_status.as_ref().expect("backup status");
+        assert_eq!(status.state, SkillBackupState::BackedUp);
+        assert_eq!(
+            status.backup_path.as_deref(),
+            Some(backup.absolute_path.as_str())
+        );
+        assert_eq!(status.hidden_asset_ids, vec![backup.id]);
+    }
+
+    #[test]
+    fn catalog_assets_use_backup_copy_for_app_target_duplicate() {
+        let app_source = test_source_with_origin(
+            "codex-skills",
+            PathBuf::from("/tmp/codex"),
+            SourceOrigin::AppTarget,
+        );
+        let backup_source =
+            assetiweave_library_source_with_root("/tmp/assetiweave-backup".to_string());
+        let mut app_asset = test_asset(&app_source, "skill-a", PathBuf::from("/tmp/codex/skill-a"));
+        app_asset.content_hash = Some("same-content".to_string());
+        let mut backup = test_asset(
+            &backup_source,
+            "backup-skill-a",
+            PathBuf::from("/tmp/assetiweave-backup/backed-up/codex/skill-a"),
+        );
+        backup.name = "skill-a".to_string();
+        backup.relative_path = "backed-up/codex/skill-a".to_string();
+        backup.content_hash = Some("same-content".to_string());
+
+        let catalog = build_catalog_assets(
+            vec![app_asset.clone(), backup.clone()],
+            &[app_source, backup_source],
+        );
+
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].asset.id, backup.id);
+        assert_eq!(
+            catalog[0].backup_status.as_ref().map(|status| status.state),
+            Some(SkillBackupState::BackedUp)
+        );
+        assert_eq!(
+            catalog[0]
+                .backup_status
+                .as_ref()
+                .map(|status| status.hidden_asset_ids.clone()),
+            Some(vec![app_asset.id])
+        );
+    }
+
+    #[test]
+    fn catalog_assets_keep_downloaded_unique_skill() {
+        let backup_source =
+            assetiweave_library_source_with_root("/tmp/assetiweave-backup".to_string());
+        let mut downloaded = test_asset(
+            &backup_source,
+            "downloaded-skill",
+            PathBuf::from("/tmp/assetiweave-backup/downloaded/downloaded-skill"),
+        );
+        downloaded.relative_path = "downloaded/downloaded-skill".to_string();
+        downloaded.content_hash = Some("downloaded-content".to_string());
+
+        let catalog = build_catalog_assets(vec![downloaded.clone()], &[backup_source]);
+
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].asset.id, downloaded.id);
+        assert_eq!(
+            catalog[0].backup_status.as_ref().map(|status| status.state),
+            Some(SkillBackupState::Downloaded)
+        );
+    }
+
+    #[test]
+    fn catalog_assets_do_not_fold_skills_without_hash() {
+        let original_source = test_source("source-a", PathBuf::from("/tmp/source-a"));
+        let backup_source =
+            assetiweave_library_source_with_root("/tmp/assetiweave-backup".to_string());
+        let original = test_asset(
+            &original_source,
+            "skill-a",
+            PathBuf::from("/tmp/source-a/skill-a"),
+        );
+        let mut backup = test_asset(
+            &backup_source,
+            "backup-skill-a",
+            PathBuf::from("/tmp/assetiweave-backup/backed-up/source-a/skill-a"),
+        );
+        backup.name = "skill-a".to_string();
+        backup.relative_path = "backed-up/source-a/skill-a".to_string();
+
+        let catalog =
+            build_catalog_assets(vec![backup, original], &[backup_source, original_source]);
+
+        assert_eq!(catalog.len(), 2);
     }
 
     fn test_missing_source(id: &str) -> Source {

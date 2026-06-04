@@ -52,6 +52,7 @@ assetiweave-cli asset list --kind skill
 
 assetiweave-cli skill list
 assetiweave-cli skill import --from ./downloaded-skill --name downloaded-skill
+assetiweave-cli skill backup <asset-id>
 assetiweave-cli skill mount downloaded-skill --profile codex
 assetiweave-cli skill unmount downloaded-skill --profile codex
 assetiweave-cli skill delete downloaded-skill --unmount --yes
@@ -98,4 +99,5 @@ assetiweave-cli api call create_profile --json '{"input":{"id":"codex-test","nam
 
 First-version online search is intentionally outside the CLI. An AI agent should
 search the web, install or download a skill according to the source site, then
-call `assetiweave-cli skill import --from <installed-dir>`.
+call `assetiweave-cli skill import --from <installed-dir>`. Existing local
+skills can be copied into the backup library with `assetiweave-cli skill backup`.

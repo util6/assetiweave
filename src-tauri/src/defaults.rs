@@ -24,7 +24,7 @@ pub(crate) fn default_sources() -> Vec<Source> {
     let candidates = [
         (
             "assetiweave-library-skills",
-            "AssetIWeave Library Skills",
+            "AssetIWeave Skill Backup Library",
             "~/.assetiweave/library/skills",
             vec!["**/SKILL.md"],
             Some(AssetKind::Skill),

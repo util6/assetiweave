@@ -40,6 +40,7 @@ import type {
   ExecutionResult,
   Source,
   SourceInput,
+  SkillBackupSettings,
   SkillGroupExclusiveMountInput,
   SkillGroupExclusiveMountPreview,
   TargetProfile,
@@ -66,6 +67,32 @@ export async function listAssets(kind?: AssetKind): Promise<Asset[]> {
   } catch {
     return kind ? fallbackAssets.filter((asset) => asset.kind === kind) : fallbackAssets;
   }
+}
+
+export async function getSkillBackupSettings(): Promise<SkillBackupSettings> {
+  try {
+    return await invoke<SkillBackupSettings>("get_skill_backup_settings");
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return {
+      root_path: "~/.assetiweave/library/skills",
+      expanded_root_path: "~/.assetiweave/library/skills",
+      default_root_path: "~/.assetiweave/library/skills",
+      is_default_root: true,
+      exists: true,
+    };
+  }
+}
+
+export async function updateSkillBackupSettings(rootPath: string, migrate = true): Promise<SkillBackupSettings> {
+  return await invoke<SkillBackupSettings>("update_skill_backup_settings", { root_path: rootPath, migrate });
+}
+
+export async function backupSkill(assetId: string): Promise<Asset> {
+  return await invoke<Asset>("backup_skill", { assetId });
 }
 
 export async function updateAssetDescription(assetId: string, description: string | null): Promise<Asset> {
@@ -520,10 +547,6 @@ export async function scanSkillSources(): Promise<Asset[]> {
   } catch {
     return fallbackAssets.filter((asset) => asset.kind === "skill");
   }
-}
-
-export async function adoptAppLocalSkill(assetId: string): Promise<Asset> {
-  return await invoke<Asset>("adopt_app_local_skill", { assetId });
 }
 
 export async function createPlan(profileId?: string): Promise<DeploymentPlan> {

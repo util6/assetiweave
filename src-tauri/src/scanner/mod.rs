@@ -497,12 +497,14 @@ mod tests {
     #[test]
     fn scan_skill_source_keeps_canonical_locale_for_duplicate_skill_names() {
         let root = unique_temp_dir("assetiweave-scan-canonical-skill");
-        fs::create_dir_all(root.join("zh-cn").join("learn-project"))
-            .expect("create zh skill");
-        fs::create_dir_all(root.join("en-us").join("learn-project"))
-            .expect("create en skill");
-        fs::create_dir_all(root.join("en-us").join("office-utils").join("learn-project"))
-            .expect("create nested en skill");
+        fs::create_dir_all(root.join("zh-cn").join("learn-project")).expect("create zh skill");
+        fs::create_dir_all(root.join("en-us").join("learn-project")).expect("create en skill");
+        fs::create_dir_all(
+            root.join("en-us")
+                .join("office-utils")
+                .join("learn-project"),
+        )
+        .expect("create nested en skill");
         fs::write(
             root.join("zh-cn").join("learn-project").join("SKILL.md"),
             "description: zh",
