@@ -321,7 +321,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Download updater manifest
-        run: gh release download "$RELEASE_TAG" --pattern latest.json --dir dist
+        run: gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir dist
 
       - name: Verify updater manifest and signatures
         shell: bash
@@ -339,11 +339,11 @@ jobs:
             and (.platforms["darwin-x86_64"].url | length > 0)
             and (.platforms["darwin-x86_64"].signature | length > 0)
           ' dist/latest.json
-          signature_count="$(gh release view "$RELEASE_TAG" --json assets --jq '[.assets[].name | select(endswith(".sig"))] | length')"
+          signature_count="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name | select(endswith(".sig"))] | length')"
           if (( signature_count < 4 )); then
             echo "::error::Expected at least four updater signature assets, found $signature_count"
             exit 1
           fi
 
       - name: Publish stable release
-        run: gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest
+        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
