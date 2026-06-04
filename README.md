@@ -17,7 +17,7 @@ Local-first AI asset catalog and mount manager.
 </div>
 
 > [!IMPORTANT]
-> AssetIWeave `v0.1.0` 仍是预发布版本，当前产品重点是 **Skill 的发现、编目、分组、备份、App 挂载与 CLI 自动化**。导航中可见的其他资产类型正在持续完善。当前安装包尚未接入操作系统代码签名。
+> AssetIWeave `v0.1.1` 已接入应用内自动更新，当前产品重点是 **Skill 的发现、编目、分组、备份、App 挂载与 CLI 自动化**。导航中可见的其他资产类型正在持续完善。更新包使用 Tauri updater 签名验证；当前安装包尚未接入操作系统代码签名。
 
 ## 为什么需要 AssetIWeave
 
@@ -91,6 +91,7 @@ flowchart LR
 | Skill 备份库、导入与删除 | 可用 |
 | Codex / Claude / Cursor / OpenCode / Gemini / Antigravity / OpenClaw / Custom Profile | 可用 |
 | Prompt / Rule / Custom 基础扫描与目录展示 | 基础能力可用 |
+| 应用内自动检测、下载、安装与重启更新 | 可用 |
 | MCP / Agent / Command / Workflow 专用工作流 | 规划中 |
 | 中文 / English 界面与多主题 | 可用 |
 

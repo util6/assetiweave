@@ -6,7 +6,7 @@ on:
       release_tag:
         description: Git tag to release
         required: true
-        default: v0.1.0
+        default: v0.1.1
   push:
     tags:
       - "v*"
@@ -18,8 +18,53 @@ env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
 
 jobs:
+  release-preflight:
+    name: Release preflight
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify release version and signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_version="$(node -p "require('./package.json').version")"
+          expected_tag="v${app_version}"
+          if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
+            echo "::error::Release tag $RELEASE_TAG does not match application version $expected_tag"
+            exit 1
+          fi
+          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY repository secret is required"
+            exit 1
+          fi
+
+      - name: Create draft release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)"
+            if [[ "$is_draft" != "true" ]]; then
+              echo "::error::Release $RELEASE_TAG already exists and is not a draft"
+              exit 1
+            fi
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" \
+            --verify-tag \
+            --draft \
+            --title "AssetIWeave $RELEASE_TAG" \
+            --notes "Update artifacts are signed for the in-app updater. macOS and Windows may still show an extra trust prompt until OS code signing is configured." \
+            --generate-notes
+
   desktop-installers:
     name: Desktop installer (${{ matrix.label }})
+    needs: release-preflight
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
@@ -38,7 +83,7 @@ jobs:
             rust_target: aarch64-apple-darwin
             args: "--target aarch64-apple-darwin --bundles app"
           - label: macOS x64 updater
-            platform: macos-13
+            platform: macos-15-intel
             rust_target: x86_64-apple-darwin
             args: "--target x86_64-apple-darwin --bundles app"
 
@@ -91,11 +136,12 @@ jobs:
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: AssetIWeave ${{ env.RELEASE_TAG }}
           releaseBody: |
-            AssetIWeave v0.1 initial GitHub release.
+            AssetIWeave ${{ env.RELEASE_TAG }} release.
 
-            Download the installer or app archive for your operating system from the assets below. This early release is unsigned; macOS and Windows may show an extra trust prompt.
-          releaseDraft: false
-          prerelease: true
+            Download the installer or app archive for your operating system from the assets below. Update artifacts are signed for the in-app updater; macOS and Windows may still show an extra trust prompt until OS code signing is configured.
+          releaseDraft: true
+          prerelease: false
+          generateReleaseNotes: true
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
           args: ${{ matrix.args }}
@@ -113,7 +159,7 @@ jobs:
             platform: macos-latest
           - target: x86_64-apple-darwin
             label: macos-x64
-            platform: macos-latest
+            platform: macos-15-intel
 
     steps:
       - name: Checkout
@@ -158,7 +204,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          prerelease: true
+          draft: true
+          prerelease: false
           files: dist/release/*.app.zip
 
       - name: Build DMG
@@ -180,7 +227,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          prerelease: true
+          draft: true
+          prerelease: false
           files: dist/release/*.dmg
 
   cli-tools:
@@ -198,7 +246,7 @@ jobs:
           - target: macos-arm64
             platform: macos-latest
           - target: macos-x64
-            platform: macos-13
+            platform: macos-15-intel
           - target: windows-x64
             platform: windows-latest
 
@@ -257,7 +305,46 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          prerelease: true
+          draft: true
+          prerelease: false
           files: |
             dist/release/*.tar.gz
             dist/release/*.zip
+
+  publish-release:
+    name: Verify and publish release
+    needs:
+      - desktop-installers
+      - macos-app
+      - cli-tools
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Download updater manifest
+        run: gh release download "$RELEASE_TAG" --pattern latest.json --dir dist
+
+      - name: Verify updater manifest and signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          jq --arg version "$version" -e '
+            .version == $version
+            and (.platforms["linux-x86_64"].url | length > 0)
+            and (.platforms["linux-x86_64"].signature | length > 0)
+            and (.platforms["windows-x86_64"].url | length > 0)
+            and (.platforms["windows-x86_64"].signature | length > 0)
+            and (.platforms["darwin-aarch64"].url | length > 0)
+            and (.platforms["darwin-aarch64"].signature | length > 0)
+            and (.platforms["darwin-x86_64"].url | length > 0)
+            and (.platforms["darwin-x86_64"].signature | length > 0)
+          ' dist/latest.json
+          signature_count="$(gh release view "$RELEASE_TAG" --json assets --jq '[.assets[].name | select(endswith(".sig"))] | length')"
+          if (( signature_count < 4 )); then
+            echo "::error::Expected at least four updater signature assets, found $signature_count"
+            exit 1
+          fi
+
+      - name: Publish stable release
+        run: gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest
