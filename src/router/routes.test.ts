@@ -27,4 +27,65 @@ describe("app route resolution", () => {
   it("keeps the default skills overview route on the catalog page", () => {
     expect(resolveAppRoute(fallbackNavigationModel, "overview")).toBe("catalog");
   });
+
+  it("routes the conversations tab to the conversations page", () => {
+    expect(
+      resolveAppRoute(
+        {
+          ...fallbackNavigationModel,
+          activeHeaderTabId: "conversations",
+          activeSubNavId: "sessions",
+        },
+        "sessions",
+      ),
+    ).toBe("conversations");
+  });
+
+  it("keeps all conversation sub-navigation entries on the conversations page", () => {
+    expect(
+      resolveAppRoute(
+        {
+          ...fallbackNavigationModel,
+          activeHeaderTabId: "conversations",
+          activeSubNavId: "sources",
+        },
+        "sources",
+      ),
+    ).toBe("conversations");
+
+    expect(
+      resolveAppRoute(
+        {
+          ...fallbackNavigationModel,
+          activeHeaderTabId: "conversations",
+          activeSubNavId: "adapters",
+        },
+        "adapters",
+      ),
+    ).toBe("conversations");
+  });
+
+  it("routes enabled but unimplemented navigation entries to the under-construction page", () => {
+    expect(
+      resolveAppRoute(
+        {
+          ...fallbackNavigationModel,
+          activeHeaderTabId: "mcp",
+          activeSubNavId: "servers",
+        },
+        "servers",
+      ),
+    ).toBe("under-construction");
+
+    expect(
+      resolveAppRoute(
+        {
+          ...fallbackNavigationModel,
+          activeHeaderTabId: "prompts",
+          activeSubNavId: "overview",
+        },
+        "overview",
+      ),
+    ).toBe("under-construction");
+  });
 });

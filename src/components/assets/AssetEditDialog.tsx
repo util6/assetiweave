@@ -1,9 +1,11 @@
 import clsx from "clsx";
-import { FilePenLine, X } from "lucide-react";
+import { Archive, FilePenLine, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { assetKindLabel } from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
-import type { Asset, AssetGroupDetail, AssetMountStatus, TargetProfile } from "../../types";
+import type { Asset, AssetGroupDetail, AssetMountStatus, Source, TargetProfile } from "../../types";
+import { assetSourceHref, assetSourceLabel } from "../../utils/assetSource";
+import { openExternalLink } from "../../utils/externalLinks";
 import { getMountDisplayState } from "../../utils/mountState";
 import { displayAssetPath } from "../../utils/path";
 import { Button } from "../ui/button";
@@ -13,21 +15,25 @@ export function AssetEditDialog({
   busy,
   groups,
   mountStatuses,
+  onBackup,
   onClose,
   onSetGroupMembership,
   onSubmit,
   onToggleMount,
   profiles,
+  source,
 }: {
   asset: Asset | null;
   busy: boolean;
   groups: AssetGroupDetail[];
   mountStatuses: AssetMountStatus[];
+  onBackup?: () => Promise<void>;
   onClose: () => void;
   onSetGroupMembership: (group: AssetGroupDetail, enabled: boolean) => Promise<void>;
   onSubmit: (description: string | null) => Promise<void>;
   onToggleMount: (profileId: string) => Promise<void>;
   profiles: TargetProfile[];
+  source?: Source;
 }) {
   const { t } = useI18n();
   const [description, setDescription] = useState("");
@@ -43,6 +49,7 @@ export function AssetEditDialog({
   if (!asset) {
     return null;
   }
+  const sourceHref = assetSourceHref(asset);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -83,7 +90,7 @@ export function AssetEditDialog({
           <section className="grid gap-2 rounded-xl border border-theme-card-border bg-theme-card-header/55 p-3">
             <p className="text-body-sm text-on-surface-variant">{t("asset.editDialog.readonlyMeta")}</p>
             <div className="grid gap-2 text-body-sm">
-              <ReadonlyRow label={t("asset.source")} value={asset.source_id} mono />
+              <ReadonlyRow href={sourceHref} label={t("asset.source")} value={assetSourceLabel(asset, source)} mono />
               <ReadonlyRow label={t("asset.deleteDialog.path")} value={displayAssetPath(asset)} mono />
               <ReadonlyRow label={t("source.field.defaultKind")} value={assetKindLabel(asset.kind, t)} />
             </div>
@@ -151,13 +158,29 @@ export function AssetEditDialog({
             )}
           </section>
 
-          <footer className="flex items-center justify-end gap-2 border-t border-theme-card-border pt-4">
-            <Button disabled={busy} onClick={onClose} type="button" variant="outline">
-              {t("common.cancel")}
-            </Button>
-            <Button disabled={busy} type="submit">
-              {busy ? t("common.saving") : t("asset.editDialog.submit")}
-            </Button>
+          <footer className="flex items-center justify-between gap-3 border-t border-theme-card-border pt-4 max-[640px]:flex-col max-[640px]:items-stretch">
+            <div className="max-[640px]:grid">
+              {asset.kind === "skill" && onBackup && (
+                <Button
+                  className="max-[640px]:w-full"
+                  disabled={busy || Boolean(asset.backup_status)}
+                  onClick={() => void onBackup()}
+                  type="button"
+                  variant="outline"
+                >
+                  <Archive size={16} />
+                  {asset.backup_status ? t("backup.action.inDirectory") : t("backup.action.backupToDirectory")}
+                </Button>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 max-[640px]:grid max-[640px]:grid-cols-2">
+              <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+                {t("common.cancel")}
+              </Button>
+              <Button disabled={busy} type="submit">
+                {busy ? t("common.saving") : t("asset.editDialog.submit")}
+              </Button>
+            </div>
           </footer>
         </form>
       </section>
@@ -262,13 +285,31 @@ function StatusChip({ children }: { children: string }) {
   );
 }
 
-function ReadonlyRow({ label, mono = false, value }: { label: string; mono?: boolean; value: string }) {
+function ReadonlyRow({ href, label, mono = false, value }: { href?: string; label: string; mono?: boolean; value: string }) {
+  const valueClassName = mono
+    ? "mt-0.5 truncate font-mono text-body-sm text-on-surface"
+    : "mt-0.5 truncate text-body-sm text-on-surface";
+
   return (
     <div className="min-w-0">
       <div className="text-label-caps uppercase text-outline">{label}</div>
-      <div className={mono ? "mt-0.5 truncate font-mono text-body-sm text-on-surface" : "mt-0.5 truncate text-body-sm text-on-surface"}>
-        {value}
-      </div>
+      {href ? (
+        <a
+          className={`${valueClassName} block text-primary hover:text-primary-strong hover:underline hover:decoration-primary/55 hover:underline-offset-2`}
+          href={href}
+          onClick={(event) => {
+            event.preventDefault();
+            void openExternalLink(href);
+          }}
+          rel="noreferrer"
+          target="_blank"
+          title={value}
+        >
+          {value}
+        </a>
+      ) : (
+        <div className={valueClassName}>{value}</div>
+      )}
     </div>
   );
 }

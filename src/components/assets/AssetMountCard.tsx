@@ -38,28 +38,39 @@ export function AssetMountCard({
       className={clsx(
         "group relative min-h-[76px] overflow-hidden rounded-xl border px-3 py-2.5 text-left transition-all",
         "bg-theme-control/80 hover:-translate-y-px hover:bg-theme-control-hover/80",
-        mounted
-          ? "border-status-create/70 bg-status-create/12 shadow-[0_0_0_1px_rgb(var(--color-status-create)/0.25),0_16px_34px_rgb(var(--color-status-create)/0.16)]"
-          : mountCardStateClass(displayState),
+        mounted ? "hover:brightness-[1.03]" : mountCardStateClass(displayState),
         !supported && "opacity-60",
         disabled && "cursor-not-allowed opacity-55 hover:translate-y-0 hover:border-theme-control-border hover:bg-theme-control/80",
       )}
       disabled={disabled}
       onClick={() => onToggle(profile.id)}
+      style={
+        mounted
+          ? {
+              backgroundColor: `${accentColor}1f`,
+              borderColor: `${accentColor}b3`,
+              boxShadow: `0 0 0 1px ${accentColor}40, 0 16px 34px ${accentColor}29`,
+            }
+          : undefined
+      }
       title={mountBlockedReason}
       type="button"
     >
-      {mounted && <span className="absolute inset-x-3 top-0 h-px bg-status-create/80" aria-hidden="true" />}
+      {mounted && (
+        <span
+          className="absolute inset-x-3 top-0 h-px"
+          aria-hidden="true"
+          style={{ backgroundColor: `${accentColor}cc` }}
+        />
+      )}
       <div className="flex min-w-0 items-start gap-3">
         <span
-          className={clsx(
-            "relative grid size-9 shrink-0 place-items-center overflow-hidden rounded-full border text-[13px] font-bold transition-transform group-hover:scale-105",
-            mounted && "shadow-[0_0_18px_rgb(var(--color-status-create)/0.2)]",
-          )}
+          className="relative grid size-9 shrink-0 place-items-center overflow-hidden rounded-full border text-[13px] font-bold transition-transform group-hover:scale-105"
           style={{
-            borderColor: mounted ? "rgb(var(--color-status-create))" : mountCardRingColor(displayState, accentColor),
-            backgroundColor: mounted ? "rgb(var(--color-status-create) / 0.16)" : `${accentColor}18`,
-            color: mounted ? "rgb(var(--color-status-create))" : accentColor,
+            borderColor: mounted ? accentColor : mountCardRingColor(displayState, accentColor),
+            backgroundColor: mounted ? `${accentColor}29` : `${accentColor}18`,
+            boxShadow: mounted ? `0 0 18px ${accentColor}33` : undefined,
+            color: accentColor,
           }}
           aria-hidden="true"
         >
@@ -73,9 +84,10 @@ export function AssetMountCard({
             <span
               className={clsx(
                 "grid size-5 shrink-0 place-items-center rounded-full border transition-colors",
-                mounted ? "border-status-create bg-status-create text-background" : "border-theme-control-border bg-theme-control text-transparent",
+                mounted ? "text-background" : "border-theme-control-border bg-theme-control text-transparent",
               )}
               aria-hidden="true"
+              style={mounted ? { backgroundColor: accentColor, borderColor: accentColor } : undefined}
             >
               <Check size={13} />
             </span>
@@ -87,15 +99,17 @@ export function AssetMountCard({
             <span
               className={clsx(
                 "inline-flex min-w-0 items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm",
-                disabled || !supported ? "text-status-conflict" : mountCardStateTextClass(displayState),
+                disabled || !supported ? "text-status-conflict" : !mounted && mountCardStateTextClass(displayState),
               )}
+              style={mounted && !disabled && supported ? { color: accentColor } : undefined}
             >
               <span
                 className={clsx(
                   "size-1.5 shrink-0 rounded-full",
-                  disabled || !supported ? "bg-status-conflict" : mountCardStateDotClass(displayState),
+                  disabled || !supported ? "bg-status-conflict" : !mounted && mountCardStateDotClass(displayState),
                 )}
                 aria-hidden="true"
+                style={mounted && !disabled && supported ? { backgroundColor: accentColor } : undefined}
               />
               {disabled ? t("mount.blocked") : supported ? t(`mount.display.${displayState}` as TranslationKey) : t("mount.unsupported")}
             </span>
@@ -123,13 +137,11 @@ function mountCardStateClass(state: MountDisplayState) {
 }
 
 function mountCardStateTextClass(state: MountDisplayState) {
-  if (state === "mounted") return "text-status-create";
   if (state === "conflict" || state === "broken") return "text-status-remove";
   return "text-on-surface-variant";
 }
 
 function mountCardStateDotClass(state: MountDisplayState) {
-  if (state === "mounted") return "bg-status-create";
   if (state === "conflict" || state === "broken") return "bg-status-remove";
   return "bg-outline";
 }

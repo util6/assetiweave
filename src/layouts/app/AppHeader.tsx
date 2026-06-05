@@ -1,16 +1,18 @@
 import { Archive } from "lucide-react";
 import { AppUpdateButton } from "../../app/updates/AppUpdateButton";
 import { useI18n } from "../../i18n/I18nProvider";
-import type { NavigationModel } from "../../router/types";
+import type { HeaderTabItem, NavigationModel } from "../../router/types";
 import type { AppOverview } from "../../types";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { HeaderTabs } from "./navigation/HeaderTabs";
 
 export function AppHeader({
   navigationModel,
+  onHeaderTabSelect,
   overview,
 }: {
   navigationModel: NavigationModel;
+  onHeaderTabSelect: (tab: HeaderTabItem) => void;
   overview: AppOverview | null;
 }) {
   const { t } = useI18n();
@@ -21,7 +23,7 @@ export function AppHeader({
         <Archive size={22} />
         <span>{t("app.title")}</span>
       </div>
-      <HeaderTabs activeId={navigationModel.activeHeaderTabId} tabs={navigationModel.headerTabs} />
+      <HeaderTabs activeId={navigationModel.activeHeaderTabId} onSelect={onHeaderTabSelect} tabs={navigationModel.headerTabs} />
       <div className="flex min-w-0 items-center justify-end gap-3">
         <AppUpdateButton />
         <LanguageSwitcher />

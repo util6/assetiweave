@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { GlobalSettingsDialog } from "../../components/settings/GlobalSettingsDialog";
 import { NotificationBanner, type NotificationMessage } from "../../components/notifications/NotificationBanner";
-import type { NavigationModel, RailMenuItem } from "../../router/types";
+import type { HeaderTabItem, NavigationModel, RailMenuItem } from "../../router/types";
 import type { AppOverview, AppShortcut } from "../../types";
 import { AppHeader } from "./AppHeader";
 import { SideRail } from "./navigation/SideRail";
@@ -16,6 +16,7 @@ export function AppLayout({
   onAppShortcutsChange,
   onDismissNotification,
   onLogViewerOpen,
+  onHeaderTabSelect,
   onNavigationModelChange,
   onSkillBackupLibraryChange,
   onSettingsClose,
@@ -34,6 +35,7 @@ export function AppLayout({
   onAppShortcutsChange: (shortcuts: AppShortcut[]) => void;
   onDismissNotification: (id: string) => void;
   onLogViewerOpen: () => void;
+  onHeaderTabSelect: (tab: HeaderTabItem) => void;
   onNavigationModelChange: (navigationModel: NavigationModel) => void;
   onSkillBackupLibraryChange?: () => Promise<void> | void;
   onSettingsClose: () => void;
@@ -68,7 +70,7 @@ export function AppLayout({
       />
 
       <main className="ml-sidebar-width flex min-h-screen w-[calc(100%-64px)] flex-1 flex-col" style={mainStyle}>
-        <AppHeader navigationModel={navigationModel} overview={overview} />
+        <AppHeader navigationModel={navigationModel} onHeaderTabSelect={onHeaderTabSelect} overview={overview} />
         <SubNavigation activeId={activeSubNavId} items={activeSubNavItems} onSelect={(item) => onSubNavSelect(item.id)} />
         <NotificationBanner notification={notification} onDismiss={onDismissNotification} />
         {children}

@@ -26,6 +26,7 @@ export const navigationModel: NavigationModel = {
     { id: "prompts", label: "Prompts", assetKind: "prompt", enabled: true },
     { id: "rules", label: "Rules", assetKind: "rule", enabled: true },
     { id: "profiles", label: "Profiles", assetKind: "profile", enabled: true },
+    { id: "conversations", label: "Conversations", enabled: true },
   ],
   subNavItems: {
     skills: [
@@ -53,6 +54,11 @@ export const navigationModel: NavigationModel = {
       { id: "overview", label: "App Overview", routeKey: "profiles.overview", enabled: true },
       { id: "templates", label: "Profile Templates", routeKey: "profiles.templates", enabled: true },
       { id: "plans", label: "Deployment Plans", routeKey: "profiles.plans", enabled: true },
+    ],
+    conversations: [
+      { id: "sessions", label: "Sessions", routeKey: "conversations.sessions", enabled: true },
+      { id: "sources", label: "Sources", routeKey: "conversations.sources", enabled: true },
+      { id: "adapters", label: "Adapters", routeKey: "conversations.adapters", enabled: true },
     ],
   },
 };

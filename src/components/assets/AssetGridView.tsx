@@ -6,6 +6,8 @@ import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from
 import { getAssetMountSummaryState, getMountedProfileIds } from "../../utils/mountState";
 import { isDirectMountBlockedSource } from "../../utils/mountPolicy";
 import { displayAssetPath } from "../../utils/path";
+import { assetSourceHref, assetSourceLabel } from "../../utils/assetSource";
+import { openExternalLink } from "../../utils/externalLinks";
 import { kindBadgeClass } from "../../utils/styles";
 import { MountStatePill } from "./MountStatePill";
 import { QuickMountButtons } from "./QuickMountButtons";
@@ -50,6 +52,8 @@ export function AssetGridView({
         const mountedProfileIds = getMountedProfileIds(mountStatuses);
         const mountSummaryState = getAssetMountSummaryState(mountStatuses);
         const mountBlockedReason = isDirectMountBlockedSource(source) ? t("mount.blocked") : undefined;
+        const sourceLabel = assetSourceLabel(asset, source);
+        const sourceHref = assetSourceHref(asset);
 
         return (
           <article
@@ -67,7 +71,23 @@ export function AssetGridView({
                   <MountStatePill compact state={mountSummaryState} />
                 </div>
                 <p className="mt-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-outline">
-                  {source?.name ?? asset.source_id}
+                  {sourceHref ? (
+                    <a
+                      className="text-primary hover:text-primary-strong hover:underline hover:decoration-primary/55 hover:underline-offset-2"
+                      href={sourceHref}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void openExternalLink(sourceHref);
+                      }}
+                      rel="noreferrer"
+                      target="_blank"
+                      title={sourceLabel}
+                    >
+                      {sourceLabel}
+                    </a>
+                  ) : (
+                    sourceLabel
+                  )}
                 </p>
               </div>
 

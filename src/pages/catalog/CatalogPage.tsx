@@ -7,7 +7,13 @@ import { AssetToolbar, type AssetViewMode } from "../../components/assets/AssetT
 import { DeploymentPlanPanel } from "../../components/plans/DeploymentPlanPanel";
 import type { CatalogController } from "../../hooks/catalog/useCatalogController";
 import { useI18n } from "../../i18n/I18nProvider";
-import { deleteAsset, listSkillGroups, setSkillGroupManualMembers, updateAssetDescription } from "../../services/catalog";
+import {
+  backupSkill,
+  deleteAsset,
+  listSkillGroups,
+  setSkillGroupManualMembers,
+  updateAssetDescription,
+} from "../../services/catalog";
 import type { Asset, AssetGroupDetail } from "../../types";
 
 export function CatalogPage({
@@ -48,7 +54,7 @@ export function CatalogPage({
     setAssetActionBusy(true);
     try {
       const savedAsset = await updateAssetDescription(editingAsset.id, description);
-      catalog.applyAssetUpdate(savedAsset);
+      catalog.applyAssetUpdate({ ...editingAsset, ...savedAsset });
       catalog.clearDeploymentPlan();
       catalog.showNotification({
         tone: "success",
@@ -79,6 +85,30 @@ export function CatalogPage({
         messageParams: { name: deletedAsset.name },
       });
       setDeletingAsset(null);
+    } catch (error) {
+      catalog.showNotification({ tone: "error", message: errorMessage(error) });
+    } finally {
+      setAssetActionBusy(false);
+    }
+  }
+
+  async function handleBackupAsset() {
+    if (!editingAsset) {
+      return;
+    }
+
+    const asset = editingAsset;
+    setAssetActionBusy(true);
+    try {
+      await backupSkill(asset.id);
+      await catalog.refreshOverview();
+      catalog.clearDeploymentPlan();
+      catalog.showNotification({
+        tone: "success",
+        messageKey: "backup.notification.completed",
+        messageParams: { name: asset.name },
+      });
+      setEditingAsset(null);
     } catch (error) {
       catalog.showNotification({ tone: "error", message: errorMessage(error) });
     } finally {
@@ -197,11 +227,13 @@ export function CatalogPage({
         busy={assetActionBusy}
         groups={assetGroups}
         mountStatuses={catalog.assetMountStatuses}
+        onBackup={handleBackupAsset}
         onClose={() => setEditingAsset(null)}
         onSetGroupMembership={handleSetAssetGroupMembership}
         onSubmit={handleSaveAssetDescription}
         onToggleMount={handleToggleAssetMount}
         profiles={catalog.profiles}
+        source={catalog.sources.find((source) => source.id === editingAsset?.source_id)}
       />
       <AssetDeleteDialog
         asset={deletingAsset}

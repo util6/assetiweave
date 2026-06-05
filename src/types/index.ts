@@ -34,7 +34,14 @@ export interface Asset {
   content_hash?: string | null;
   discovered_at: string;
   updated_at: string;
+  repository?: GitRepositoryInfo | null;
   backup_status?: SkillBackupAssetStatus | null;
+}
+
+export interface GitRepositoryInfo {
+  root_path: string;
+  remote_url?: string | null;
+  web_url?: string | null;
 }
 
 export type SkillBackupState = "backed_up" | "downloaded";
@@ -109,6 +116,127 @@ export type AppKind =
   | "antigravity"
   | "openclaw"
   | "custom";
+
+export type ConversationAdapterKind = "codex" | "claude_code" | "opencode" | "external";
+export type ConversationSourceKind = "live" | "file" | "directory" | "sqlite" | "custom";
+export type ConversationAdapterTrustState = "built_in" | "trusted" | "changed" | "untrusted";
+export type ConversationPartRole = "user" | "assistant" | "tool" | "system";
+export type ConversationPartKind = "text" | "code_block" | "command" | "tool" | "file_change" | "subagent" | "metadata";
+export type ConversationGroupingOrigin = "imported" | "auto_merged" | "manual";
+
+export interface ConversationAdapter {
+  id: string;
+  name: string;
+  kind: ConversationAdapterKind;
+  version: string;
+  enabled: boolean;
+  manifest_path?: string | null;
+  executable_path?: string | null;
+  content_hash?: string | null;
+  trusted_hash?: string | null;
+  trust_state: ConversationAdapterTrustState;
+  protocol_version?: number | null;
+  capabilities: string[];
+  input_kinds: ConversationSourceKind[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationSource {
+  id: string;
+  adapter_id: string;
+  name: string;
+  kind: ConversationSourceKind;
+  location: string;
+  config_json?: string | null;
+  enabled: boolean;
+  last_synced_at?: string | null;
+  last_sync_status?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationSession {
+  id: string;
+  source_id: string;
+  adapter_id: string;
+  external_id: string;
+  title: string;
+  project_path?: string | null;
+  started_at?: string | null;
+  updated_at?: string | null;
+  source_locator?: string | null;
+  source_fingerprint?: string | null;
+  missing: boolean;
+  created_at: string;
+  imported_at: string;
+}
+
+export interface ConversationSessionListItem extends ConversationSession {
+  question_count: number;
+  turn_count: number;
+}
+
+export interface ConversationTurn {
+  id: string;
+  session_id: string;
+  external_id: string;
+  turn_index: number;
+  user_text: string;
+  title?: string | null;
+  started_at?: string | null;
+  ended_at?: string | null;
+  fingerprint: string;
+  missing: boolean;
+  imported_at: string;
+}
+
+export interface ConversationPart {
+  id: string;
+  turn_id: string;
+  part_index: number;
+  role: ConversationPartRole;
+  kind: ConversationPartKind;
+  text?: string | null;
+  language?: string | null;
+  command?: string | null;
+  cwd?: string | null;
+  status?: string | null;
+  exit_code?: number | null;
+  metadata_json?: string | null;
+}
+
+export interface ConversationQuestion {
+  id: string;
+  session_id: string;
+  question_index: number;
+  title?: string | null;
+  question_text: string;
+  answer_text: string;
+  code_text: string;
+  command_text: string;
+  grouping_origin: ConversationGroupingOrigin;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationQuestionDetail {
+  question: ConversationQuestion;
+  turns: ConversationTurn[];
+  parts: ConversationPart[];
+}
+
+export interface ConversationSessionDetail {
+  session: ConversationSession;
+  questions: ConversationQuestionDetail[];
+}
+
+export interface ConversationMutationResult {
+  dry_run: boolean;
+  session_id: string;
+  affected_question_ids: string[];
+  questions: ConversationQuestionDetail[];
+}
 
 export type DeploymentStrategy =
   | "symlink_to_source"

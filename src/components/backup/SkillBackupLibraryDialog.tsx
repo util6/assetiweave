@@ -20,7 +20,7 @@ export function SkillBackupLibraryDialog({
 }: {
   onClose: () => void;
   onNotifyError: (message: string) => void;
-  onSaved?: () => Promise<void> | void;
+  onSaved?: (settings: SkillBackupSettings) => Promise<void> | void;
   open: boolean;
 }) {
   const { t } = useI18n();
@@ -92,7 +92,7 @@ export function SkillBackupLibraryDialog({
       const nextSettings = await updateSkillBackupSettings(trimmedRootPath, true);
       setSettings(nextSettings);
       setRootPath(nextSettings.root_path);
-      await onSaved?.();
+      await onSaved?.(nextSettings);
       onClose();
     } catch (error) {
       onNotifyError(errorMessage(error));

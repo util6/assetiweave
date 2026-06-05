@@ -6,6 +6,7 @@ import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from
 import { getAssetMountSummaryState } from "../../utils/mountState";
 import { isDirectMountBlockedSource } from "../../utils/mountPolicy";
 import { displayAssetPath } from "../../utils/path";
+import { assetSourceHref, assetSourceLabel } from "../../utils/assetSource";
 import { kindBadgeClass } from "../../utils/styles";
 import { AssetMountPanel } from "./AssetMountPanel";
 import { InlineMeta } from "./InlineMeta";
@@ -42,6 +43,7 @@ export function AssetRow({
   const mountBlockedReason = isDirectMountBlockedSource(source) ? t("mount.blocked") : undefined;
   const mountSummaryState = getAssetMountSummaryState(mountStatuses);
   const hasVisibleMountShortcuts = appShortcuts.some((shortcut) => shortcut.enabled);
+  const sourceHref = assetSourceHref(asset);
 
   return (
     <article
@@ -77,7 +79,7 @@ export function AssetRow({
           </button>
           <div className="mt-3 flex min-w-0 items-start gap-5 max-[980px]:flex-col max-[980px]:gap-2">
             <InlineMeta label={t("asset.description")} value={asset.description ?? t("asset.noDescription")} />
-            <InlineMeta label={t("asset.source")} value={asset.source_id} mono />
+            <InlineMeta href={sourceHref} label={t("asset.source")} value={assetSourceLabel(asset, source)} mono />
           </div>
         </div>
         <div

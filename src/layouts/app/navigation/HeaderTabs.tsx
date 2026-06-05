@@ -3,7 +3,15 @@ import { useI18n } from "../../../i18n/I18nProvider";
 import { headerTabLabel } from "../../../i18n/navigation";
 import type { HeaderTabItem } from "../../../router/types";
 
-export function HeaderTabs({ activeId, tabs }: { activeId: string; tabs: HeaderTabItem[] }) {
+export function HeaderTabs({
+  activeId,
+  onSelect,
+  tabs,
+}: {
+  activeId: string;
+  onSelect: (tab: HeaderTabItem) => void;
+  tabs: HeaderTabItem[];
+}) {
   const { locale, t } = useI18n();
 
   return (
@@ -21,6 +29,7 @@ export function HeaderTabs({ activeId, tabs }: { activeId: string; tabs: HeaderT
               tab.id === activeId && "bg-theme-nav-active text-theme-nav-active-fg shadow-[0_10px_24px_rgb(var(--theme-panel-shadow)/0.22)]",
             )}
             key={tab.id}
+            onClick={() => onSelect(tab)}
             role="tab"
             aria-selected={tab.id === activeId}
           >

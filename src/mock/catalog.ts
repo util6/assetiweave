@@ -26,6 +26,11 @@ export const fallbackAssets: Asset[] = [
     absolute_path: "/assets/skills/android-native-dev/SKILL.md",
     entry_file: "SKILL.md",
     description: "Android native application development and UI design guide covering Material Design 3 and Kotlin/Compose.",
+    repository: {
+      root_path: "/assets/repositories/util6-agents",
+      remote_url: "https://github.com/util6/util6-agents.git",
+      web_url: "https://github.com/util6/util6-agents/tree/main/skills/android-native-dev",
+    },
     discovered_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },

@@ -42,6 +42,7 @@ const headerLabelKeys: Partial<Record<string, TranslationKey>> = {
   prompts: "nav.header.prompts",
   rules: "nav.header.rules",
   profiles: "nav.header.profiles",
+  conversations: "nav.header.conversations",
 };
 
 const headerDefaultLabels: Partial<Record<string, string[]>> = {
@@ -50,6 +51,7 @@ const headerDefaultLabels: Partial<Record<string, string[]>> = {
   prompts: ["Prompts", "提示词"],
   rules: ["Rules", "规则"],
   profiles: ["Profiles", "目标配置"],
+  conversations: ["Conversations", "对话记录"],
 };
 
 const subNavLabelKeys: Partial<Record<string, TranslationKey>> = {
@@ -69,6 +71,9 @@ const subNavLabelKeys: Partial<Record<string, TranslationKey>> = {
   "profiles.overview": "nav.sub.profiles.overview",
   "profiles.templates": "nav.sub.profiles.templates",
   "profiles.plans": "nav.sub.profiles.plans",
+  "conversations.sessions": "nav.sub.conversations.sessions",
+  "conversations.sources": "nav.sub.conversations.sources",
+  "conversations.adapters": "nav.sub.conversations.adapters",
 };
 
 const subNavDefaultLabels: Partial<Record<string, string[]>> = {
@@ -88,6 +93,9 @@ const subNavDefaultLabels: Partial<Record<string, string[]>> = {
   "profiles.overview": ["App Overview", "应用总览", "App 总览"],
   "profiles.templates": ["Profile Templates", "配置模板", "Profile 模板"],
   "profiles.plans": ["Deployment Plans", "部署计划"],
+  "conversations.sessions": ["Sessions", "Session 浏览"],
+  "conversations.sources": ["Sources", "对话来源"],
+  "conversations.adapters": ["Adapters", "适配器"],
 };
 
 export function railLabel(item: RailMenuItem, t: Translator, locale: Locale) {
