@@ -8,32 +8,36 @@ import (
 	"strings"
 	"testing"
 
+	engineclient "github.com/util6/assetiweave/internal/client"
 	"github.com/util6/assetiweave/internal/cmdutil"
 	"github.com/util6/assetiweave/internal/output"
+	"github.com/util6/assetiweave/internal/protocol"
 )
 
 type fakeClient struct {
 	data json.RawMessage
+	meta *protocol.EngineMeta
 	err  error
 }
 
-func (f fakeClient) Call(context.Context, string, any) (json.RawMessage, error) {
-	return f.data, f.err
+func (f fakeClient) Call(context.Context, string, any) (engineclient.CallResult, error) {
+	return engineclient.CallResult{Data: f.data, Meta: f.meta}, f.err
 }
 
 type recordingClient struct {
 	method string
 	params any
 	data   json.RawMessage
+	meta   *protocol.EngineMeta
 }
 
-func (r *recordingClient) Call(_ context.Context, method string, params any) (json.RawMessage, error) {
+func (r *recordingClient) Call(_ context.Context, method string, params any) (engineclient.CallResult, error) {
 	r.method = method
 	r.params = params
 	if r.data != nil {
-		return r.data, nil
+		return engineclient.CallResult{Data: r.data, Meta: r.meta}, nil
 	}
-	return json.RawMessage(`{}`), nil
+	return engineclient.CallResult{Data: json.RawMessage(`{}`), Meta: r.meta}, nil
 }
 
 func TestOverviewWritesSuccessEnvelopeToStdout(t *testing.T) {
@@ -41,7 +45,19 @@ func TestOverviewWritesSuccessEnvelopeToStdout(t *testing.T) {
 	stderr := &bytes.Buffer{}
 	factory := &cmdutil.Factory{
 		IOStreams: &cmdutil.IOStreams{In: &bytes.Buffer{}, Out: stdout, ErrOut: stderr},
-		Client:    fakeClient{data: json.RawMessage(`{"source_count":1}`)},
+		Client: fakeClient{
+			data: json.RawMessage(`{"source_count":1}`),
+			meta: &protocol.EngineMeta{
+				ProtocolVersion: 1,
+				ContractVersion: 2,
+				EngineVersion:   "0.1.1",
+				Invocation: &protocol.InvocationMeta{
+					Method:     "overview.get",
+					Outcome:    "success",
+					DurationMS: 1,
+				},
+			},
+		},
 	}
 	root := Build(context.Background(), factory)
 	root.SetArgs([]string{"overview"})
@@ -54,6 +70,64 @@ func TestOverviewWritesSuccessEnvelopeToStdout(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `"ok": true`) || !strings.Contains(stdout.String(), `"source_count": 1`) {
 		t.Fatalf("stdout missing success envelope: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"method": "overview.get"`) {
+		t.Fatalf("stdout missing Engine invocation meta: %s", stdout.String())
+	}
+}
+
+func TestVersionReportsCLIAndEngineCompatibility(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	client := &recordingClient{
+		data: json.RawMessage(`{
+			"product": "AssetIWeave",
+			"engine_version": "0.1.1",
+			"protocol_version": 1,
+			"contract_version": 2,
+			"capabilities": ["command-contract-v1"]
+		}`),
+	}
+	factory := &cmdutil.Factory{
+		IOStreams: &cmdutil.IOStreams{In: &bytes.Buffer{}, Out: stdout, ErrOut: &bytes.Buffer{}},
+		Client:    client,
+	}
+	root := Build(context.Background(), factory)
+	root.SetArgs([]string{"version"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if client.method != "system.version" {
+		t.Fatalf("method = %q, want system.version", client.method)
+	}
+	if !strings.Contains(stdout.String(), `"compatible": true`) ||
+		!strings.Contains(stdout.String(), `"cli_version"`) ||
+		!strings.Contains(stdout.String(), `"engine_version": "0.1.1"`) {
+		t.Fatalf("stdout missing version compatibility: %s", stdout.String())
+	}
+}
+
+func TestVersionReportsIncompatibleEngineWithoutBlockingDiagnostics(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	factory := &cmdutil.Factory{
+		IOStreams: &cmdutil.IOStreams{In: &bytes.Buffer{}, Out: stdout, ErrOut: &bytes.Buffer{}},
+		Client: fakeClient{data: json.RawMessage(`{
+			"product": "AssetIWeave",
+			"engine_version": "99.0.0",
+			"protocol_version": 99,
+			"contract_version": 2,
+			"capabilities": []
+		}`)},
+	}
+	root := Build(context.Background(), factory)
+	root.SetArgs([]string{"version"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"compatible": false`) ||
+		!strings.Contains(stdout.String(), `"engine_protocol_version": 99`) {
+		t.Fatalf("stdout missing incompatibility diagnostics: %s", stdout.String())
 	}
 }
 
@@ -173,12 +247,33 @@ func TestAPICallPassesRawJSONParams(t *testing.T) {
 	if client.method != "profile.list" {
 		t.Fatalf("method = %q, want profile.list", client.method)
 	}
-	raw, ok := client.params.(json.RawMessage)
+	params, ok := client.params.(map[string]any)
 	if !ok {
-		t.Fatalf("params type = %T, want json.RawMessage", client.params)
+		t.Fatalf("params type = %T, want map[string]any", client.params)
 	}
-	if string(raw) != `{"dry_run":true}` {
-		t.Fatalf("params = %s", raw)
+	if params["dry_run"] != true {
+		t.Fatalf("params = %#v", params)
+	}
+}
+
+func TestAPICallYesAddsExplicitConfirmation(t *testing.T) {
+	client := &recordingClient{}
+	factory := &cmdutil.Factory{
+		IOStreams: &cmdutil.IOStreams{In: &bytes.Buffer{}, Out: &bytes.Buffer{}, ErrOut: &bytes.Buffer{}},
+		Client:    client,
+	}
+	root := Build(context.Background(), factory)
+	root.SetArgs([]string{"api", "call", "delete_source", "--json", `{"id":"source-id"}`, "--yes"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	params, ok := client.params.(map[string]any)
+	if !ok {
+		t.Fatalf("params type = %T, want map[string]any", client.params)
+	}
+	if params["id"] != "source-id" || params["yes"] != true {
+		t.Fatalf("params = %#v", params)
 	}
 }
 
@@ -203,8 +298,38 @@ func TestAPICallRejectsInvalidJSON(t *testing.T) {
 	if client.method != "" {
 		t.Fatalf("engine was called with method %q", client.method)
 	}
-	if !strings.Contains(stderr.String(), `"type": "invalid_json"`) {
-		t.Fatalf("stderr missing invalid_json envelope: %s", stderr.String())
+	if !strings.Contains(stderr.String(), `"type": "validation"`) ||
+		!strings.Contains(stderr.String(), `"subtype": "invalid_json"`) ||
+		!strings.Contains(stderr.String(), `"code": "invalid_json"`) {
+		t.Fatalf("stderr missing typed invalid_json envelope: %s", stderr.String())
+	}
+}
+
+func TestAPICallRejectsNonObjectJSON(t *testing.T) {
+	client := &recordingClient{}
+	stderr := &bytes.Buffer{}
+	factory := &cmdutil.Factory{
+		IOStreams: &cmdutil.IOStreams{In: &bytes.Buffer{}, Out: &bytes.Buffer{}, ErrOut: stderr},
+		Client:    client,
+	}
+	root := Build(context.Background(), factory)
+	root.SetArgs([]string{"api", "call", "profile.list", "--json", `[]`})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want validation error")
+	}
+	code := handleError(factory, err)
+	if code != output.ExitValidation {
+		t.Fatalf("exit code = %d, want %d", code, output.ExitValidation)
+	}
+	if client.method != "" {
+		t.Fatalf("engine was called with method %q", client.method)
+	}
+	if !strings.Contains(stderr.String(), `"type": "validation"`) ||
+		!strings.Contains(stderr.String(), `"subtype": "invalid_json"`) ||
+		!strings.Contains(stderr.String(), `"code": "invalid_json"`) {
+		t.Fatalf("stderr missing typed invalid_json envelope: %s", stderr.String())
 	}
 }
 
@@ -223,8 +348,8 @@ func TestSkillDeleteRequiresYesBeforeCallingEngine(t *testing.T) {
 		t.Fatal("Execute() error = nil, want confirmation error")
 	}
 	code := handleError(factory, err)
-	if code != output.ExitValidation {
-		t.Fatalf("exit code = %d, want %d", code, output.ExitValidation)
+	if code != output.ExitConfirmationRequired {
+		t.Fatalf("exit code = %d, want %d", code, output.ExitConfirmationRequired)
 	}
 	if client.method != "" {
 		t.Fatalf("engine was called with method %q", client.method)

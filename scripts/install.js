@@ -3,7 +3,6 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const exe = process.platform === "win32" ? ".exe" : "";
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -24,8 +23,4 @@ function run(command, args, options = {}) {
 }
 
 run("cargo", ["build", "-p", "assetiweave", "--bin", "assetiweave-engine"]);
-run("go", ["build", "-o", join(root, "target", "debug", `assetiweave-cli${exe}`), "."], {
-  env: {
-    GOCACHE: join(root, "target", "go-build"),
-  },
-});
+run(process.execPath, [join(root, "scripts", "build-cli.js")]);

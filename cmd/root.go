@@ -7,8 +7,12 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/util6/assetiweave/extension/platform"
+	"github.com/util6/assetiweave/internal/cmdpolicy"
 	"github.com/util6/assetiweave/internal/cmdutil"
+	"github.com/util6/assetiweave/internal/hook"
 	"github.com/util6/assetiweave/internal/output"
+	internalplatform "github.com/util6/assetiweave/internal/platform"
 )
 
 const rootLong = `assetiweave-cli controls AssetIWeave through the local Rust engine.
@@ -21,14 +25,24 @@ The CLI is designed for AI agents and scripts:
 
 func Execute() int {
 	f := cmdutil.NewDefault(cmdutil.SystemIO())
-	root := Build(context.Background(), f)
-	if err := root.Execute(); err != nil {
-		return handleError(f, err)
+	ctx := context.Background()
+	root, registry := buildInternal(ctx, f)
+	runErr := root.Execute()
+	if registry != nil && !isCompletionCommand() {
+		_ = hook.Emit(ctx, registry, platform.Shutdown, runErr, f.IOStreams.ErrOut)
+	}
+	if runErr != nil {
+		return handleError(f, runErr)
 	}
 	return 0
 }
 
 func Build(ctx context.Context, f *cmdutil.Factory) *cobra.Command {
+	root, _ := buildInternal(ctx, f)
+	return root
+}
+
+func buildInternal(ctx context.Context, f *cmdutil.Factory) (*cobra.Command, *hook.Registry) {
 	root := &cobra.Command{
 		Use:           "assetiweave-cli",
 		Short:         "AssetIWeave CLI for AI-agent workflows",
@@ -41,20 +55,71 @@ func Build(ctx context.Context, f *cmdutil.Factory) *cobra.Command {
 	root.SetOut(f.IOStreams.Out)
 	root.SetErr(f.IOStreams.ErrOut)
 
+	root.AddCommand(newCmdVersion(f))
 	root.AddCommand(newCmdOverview(f))
 	root.AddCommand(newCmdSource(f))
 	root.AddCommand(newCmdProfile(f))
 	root.AddCommand(newCmdAsset(f))
 	root.AddCommand(newCmdSkill(f))
+	root.AddCommand(newCmdConversation(f))
+	root.AddCommand(newCmdApp(f))
+	root.AddCommand(newCmdConfig(f))
 	root.AddCommand(newCmdAPI(f))
 	root.AddCommand(newCmdSchema(f))
 	root.AddCommand(newCmdDoctor(f))
 	root.AddCommand(newCmdCompletion(f))
+	annotateCommandTree(root)
 
-	return root
+	plugins := platform.RegisteredPlugins()
+	if len(plugins) == 0 {
+		internalplatform.SetActiveInventory(internalplatform.BuildInventory(nil, nil, nil))
+		return root, nil
+	}
+	pluginConfig, configErr := loadPluginConfig()
+	if configErr != nil {
+		internalplatform.SetActiveInventory(nil)
+		installPluginConfigGuard(root, configErr)
+		return root, nil
+	}
+	installResult, err := internalplatform.InstallAllWithOptions(
+		plugins,
+		f.IOStreams.ErrOut,
+		internalplatform.WithPluginConfig(pluginConfig),
+	)
+	if err != nil {
+		internalplatform.SetActiveInventory(nil)
+		installPluginInstallGuard(root, err)
+		return root, nil
+	}
+	rules, source, err := cmdpolicy.ResolvePluginRules(installResult.PluginRules)
+	if err != nil {
+		internalplatform.SetActiveInventory(nil)
+		installPluginPolicyGuard(root, err)
+		return root, nil
+	}
+	if len(rules) > 0 {
+		ruleName := ""
+		if len(rules) == 1 {
+			ruleName = rules[0].Name
+		}
+		engine := cmdpolicy.New(rules)
+		cmdpolicy.Apply(root, engine.EvaluateAll(root), source, ruleName)
+	}
+	registry := installResult.Registry
+	hook.Install(root, registry, f.IOStreams.ErrOut)
+	if err := hook.Emit(ctx, registry, platform.Startup, nil, f.IOStreams.ErrOut); err != nil {
+		internalplatform.SetActiveInventory(nil)
+		installPluginLifecycleGuard(root, err)
+		return root, nil
+	}
+	internalplatform.SetActiveInventory(internalplatform.BuildInventory(installResult.Plugins, registry, installResult.PluginRules))
+	return root, registry
 }
 
 func handleError(f *cmdutil.Factory, err error) int {
+	if output.WriteTypedErrorEnvelope(f.IOStreams.ErrOut, err) {
+		return output.ExitCodeOf(err)
+	}
 	var exitErr *output.ExitError
 	if errors.As(err, &exitErr) {
 		output.WriteErrorEnvelope(f.IOStreams.ErrOut, exitErr)
@@ -65,11 +130,15 @@ func handleError(f *cmdutil.Factory, err error) int {
 }
 
 func callAndPrint(cmd *cobra.Command, f *cmdutil.Factory, method string, params any) error {
-	data, err := f.Client.Call(cmd.Context(), method, params)
+	result, err := f.Client.Call(cmd.Context(), method, params)
 	if err != nil {
 		return err
 	}
-	output.WriteSuccess(f.IOStreams.Out, data)
+	if result.Meta == nil {
+		output.WriteSuccess(f.IOStreams.Out, result.Data)
+	} else {
+		output.WriteSuccessWithMeta(f.IOStreams.Out, result.Data, result.Meta)
+	}
 	return nil
 }
 
@@ -84,7 +153,7 @@ func requireYes(yes bool, action string) error {
 	if yes {
 		return nil
 	}
-	return output.ErrWithHint(output.ExitValidation, "confirmation_required", fmt.Sprintf("%s requires --yes", action), "rerun the command with --yes after confirming the operation")
+	return output.ErrWithHint(output.ExitConfirmationRequired, "confirmation_required", fmt.Sprintf("%s requires --yes", action), "rerun the command with --yes after confirming the operation")
 }
 
 func isCompletionCommand() bool {

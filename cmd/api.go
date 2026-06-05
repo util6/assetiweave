@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/util6/assetiweave/errs"
 	"github.com/util6/assetiweave/internal/cmdutil"
-	"github.com/util6/assetiweave/internal/output"
 )
 
 func newCmdAPI(f *cmdutil.Factory) *cobra.Command {
@@ -19,6 +19,7 @@ func newCmdAPI(f *cmdutil.Factory) *cobra.Command {
 
 func newCmdAPICall(f *cmdutil.Factory) *cobra.Command {
 	var jsonArg string
+	var yes bool
 	cmd := &cobra.Command{
 		Use:   "call <method>",
 		Short: "Call an engine method with JSON params",
@@ -28,14 +29,18 @@ func newCmdAPICall(f *cmdutil.Factory) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if yes {
+				params["yes"] = true
+			}
 			return callAndPrint(cmd, f, args[0], params)
 		},
 	}
 	cmd.Flags().StringVar(&jsonArg, "json", "", "JSON params, @file path, or - for stdin")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm a high-risk engine method")
 	return cmd
 }
 
-func readJSONParams(f *cmdutil.Factory, value string) (any, error) {
+func readJSONParams(f *cmdutil.Factory, value string) (map[string]any, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return map[string]any{}, nil
@@ -52,12 +57,22 @@ func readJSONParams(f *cmdutil.Factory, value string) (any, error) {
 		bytes = []byte(value)
 	}
 	if err != nil {
-		return nil, output.Errorf(output.ExitValidation, "validation", "failed to read JSON params: %v", err)
+		return nil, errs.NewValidationError(errs.SubtypeInvalidArgument, "failed to read JSON params: %v", err).
+			WithCode("validation").
+			WithCause(err)
 	}
 
-	var raw json.RawMessage
-	if err := json.Unmarshal(bytes, &raw); err != nil {
-		return nil, output.ErrWithHint(output.ExitValidation, "invalid_json", err.Error(), "pass a valid JSON object, @file, or - for stdin")
+	var params map[string]any
+	if err := json.Unmarshal(bytes, &params); err != nil {
+		return nil, errs.NewValidationError(errs.SubtypeInvalidJSON, err.Error()).
+			WithCode("invalid_json").
+			WithHint("pass a valid JSON object, @file, or - for stdin").
+			WithCause(err)
 	}
-	return raw, nil
+	if params == nil {
+		return nil, errs.NewValidationError(errs.SubtypeInvalidJSON, "engine params must be a JSON object").
+			WithCode("invalid_json").
+			WithHint("pass a valid JSON object, @file, or - for stdin")
+	}
+	return params, nil
 }
