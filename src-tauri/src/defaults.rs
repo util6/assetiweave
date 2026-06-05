@@ -195,6 +195,7 @@ pub(crate) fn default_navigation_model() -> NavigationModel {
             header_tab("prompts", "Prompts", Some("prompt")),
             header_tab("rules", "Rules", Some("rule")),
             header_tab("profiles", "Profiles", Some("profile")),
+            header_tab("conversations", "Conversations", None),
         ],
         sub_nav_items: BTreeMap::from([
             (
@@ -236,6 +237,14 @@ pub(crate) fn default_navigation_model() -> NavigationModel {
                     sub_nav("overview", "App 总览", "profiles.overview"),
                     sub_nav("templates", "Profile 模板", "profiles.templates"),
                     sub_nav("plans", "部署计划", "profiles.plans"),
+                ],
+            ),
+            (
+                "conversations".to_string(),
+                vec![
+                    sub_nav("sessions", "Session 浏览", "conversations.sessions"),
+                    sub_nav("sources", "对话来源", "conversations.sources"),
+                    sub_nav("adapters", "适配器", "conversations.adapters"),
                 ],
             ),
         ]),

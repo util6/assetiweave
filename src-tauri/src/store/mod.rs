@@ -1,5 +1,6 @@
 mod asset_repo;
 mod codec;
+mod conversation_repo;
 mod deployment_repo;
 mod group_repo;
 mod menu_repo;
@@ -13,6 +14,15 @@ mod sql;
 
 pub(crate) use asset_repo::{
     load_assets, load_assets_by_kind, replace_source_assets, update_asset_description,
+};
+pub(crate) use conversation_repo::{
+    delete_conversation_adapter, disable_conversation_source, import_conversation_sessions,
+    list_conversation_adapters, list_conversation_question_details, list_conversation_sessions,
+    list_conversation_sources, load_conversation_adapter, load_conversation_question_detail,
+    load_conversation_session_detail, load_conversation_source, merge_conversation_questions,
+    render_session_markdown, seed_builtin_conversation_adapters, split_conversation_question,
+    upsert_conversation_adapter, upsert_conversation_source, ConversationMutationResult,
+    ConversationQuestionDetail, ConversationSessionDetail, ConversationSessionListItem,
 };
 pub(crate) use deployment_repo::{
     delete_deployment_state, delete_orphan_deployment_state, is_managed_deployment,

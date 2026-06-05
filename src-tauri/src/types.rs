@@ -3,6 +3,7 @@ use assetiweave_core::{
     AppKind, Asset, AssetGroupRules, AssetKind, AssetMount, DeploymentStrategy, ProfileSafety,
     RuleSet, SourceKind, SourceOrigin, SourceScannerKind,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Mutex};
 
@@ -26,7 +27,16 @@ pub(crate) struct CatalogAsset {
     #[serde(flatten)]
     pub(crate) asset: Asset,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) repository: Option<GitRepositoryInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) backup_status: Option<SkillBackupAssetStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct GitRepositoryInfo {
+    pub(crate) root_path: String,
+    pub(crate) remote_url: Option<String>,
+    pub(crate) web_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -52,25 +62,34 @@ pub(crate) struct SkillBackupSettings {
     pub(crate) exists: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SourceInput {
     pub(crate) id: Option<String>,
     pub(crate) name: String,
     pub(crate) kind: SourceKind,
+    #[serde(alias = "rootPath")]
     pub(crate) root_path: String,
+    #[serde(alias = "scannerKind")]
     pub(crate) scanner_kind: Option<SourceScannerKind>,
+    #[serde(alias = "sourceOrigin")]
     pub(crate) source_origin: Option<SourceOrigin>,
+    #[serde(alias = "repoRoot")]
     pub(crate) repo_root: Option<String>,
+    #[serde(alias = "scanRoot")]
     pub(crate) scan_root: Option<String>,
+    #[serde(alias = "originAppKind")]
     pub(crate) origin_app_kind: Option<AppKind>,
+    #[serde(alias = "includeGlobs")]
     pub(crate) include_globs: Vec<String>,
+    #[serde(alias = "excludeGlobs")]
     pub(crate) exclude_globs: Vec<String>,
+    #[serde(alias = "defaultKind")]
     pub(crate) default_kind: Option<AssetKind>,
     pub(crate) enabled: bool,
     pub(crate) priority: i32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct TargetProfileInput {
     pub(crate) id: Option<String>,
     pub(crate) name: String,
@@ -128,7 +147,7 @@ pub(crate) struct AssetMountUpdateResult {
     pub(crate) status: AssetMountStatus,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct AssetGroupInput {
     pub(crate) id: Option<String>,
     pub(crate) name: String,
@@ -158,7 +177,7 @@ pub(crate) struct ApplyAssetGroupMountResult {
     pub(crate) errors: Vec<AssetGroupMountError>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct SkillGroupExclusiveMountInput {
     pub(crate) group_ids: Vec<String>,
     pub(crate) profile_id: String,
@@ -220,7 +239,7 @@ impl From<PhysicalMountState> for PhysicalMountStateDto {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppShortcut {
     pub(crate) profile_id: String,
@@ -233,7 +252,7 @@ pub(crate) struct AppShortcut {
     pub(crate) enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppShortcutIconSvg {
     pub(crate) paths: Vec<AppShortcutIconPath>,
@@ -241,7 +260,7 @@ pub(crate) struct AppShortcutIconSvg {
     pub(crate) view_box: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppShortcutIconPath {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -251,7 +270,7 @@ pub(crate) struct AppShortcutIconPath {
     pub(crate) fill_rule: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NavigationModel {
     pub(crate) active_rail_id: String,
@@ -262,7 +281,7 @@ pub(crate) struct NavigationModel {
     pub(crate) sub_nav_items: std::collections::BTreeMap<String, Vec<SubNavItem>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RailMenuItem {
     pub(crate) id: String,
@@ -275,7 +294,7 @@ pub(crate) struct RailMenuItem {
     pub(crate) position: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HeaderTabItem {
     pub(crate) id: String,
@@ -286,7 +305,7 @@ pub(crate) struct HeaderTabItem {
     pub(crate) enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SubNavItem {
     pub(crate) id: String,
@@ -297,7 +316,7 @@ pub(crate) struct SubNavItem {
     pub(crate) enabled: bool,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LocalizedNavigationLabels {
     #[serde(skip_serializing_if = "Option::is_none")]

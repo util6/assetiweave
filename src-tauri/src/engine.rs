@@ -1,29 +1,37 @@
-use crate::{
-    service::{
-        self, AppService, ApplySkillGroupMountParams, AssetIdParams, AssetProfileParams,
-        AssetRefParams, CreateProfileParams, CreateSkillGroupParams, CreateSourceParams,
-        ExecutePlanParams, GroupIdParams, IdParams, ImportSkillParams, ListAssetsParams,
-        LogsGetSnapshotParams, LogsWriteOperationParams, ProfileIdParams, RequiredAssetIdParams,
-        RevealPathParams, SetAssetMountParams, SetSkillGroupManualMembersParams,
-        SkillGroupExclusiveMountParams, SkillGroupMountParams, SourceAddParams, SourceRemoveParams,
-        SourceScanParams, UpdateAppShortcutsParams, UpdateNavigationModelParams,
-        UpdateProfileParams, UpdateSkillBackupSettingsParams, UpdateSkillGroupParams,
-        UpdateSourceParams,
-    },
-    types::AppResult,
-};
+use crate::{command_registry, policy, protocol, runtime};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, Read, Write};
 
 type EngineResult<T> = Result<T, EngineError>;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 struct EngineRequest {
+    method: String,
+    params: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct WireEngineRequest {
     id: Option<String>,
     method: String,
     #[serde(default)]
     params: Value,
+    protocol_version: Option<u32>,
+    contract_version: Option<u32>,
+}
+
+impl From<WireEngineRequest> for EngineRequest {
+    fn from(request: WireEngineRequest) -> Self {
+        Self {
+            method: request.method,
+            params: if request.params.is_null() {
+                json!({})
+            } else {
+                request.params
+            },
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -55,14 +63,14 @@ pub(crate) fn run_stdio() -> Result<(), String> {
     io::stdin()
         .read_to_string(&mut input)
         .map_err(|error| error.to_string())?;
-    let request: EngineRequest = match serde_json::from_str(&input) {
+    let request: WireEngineRequest = match serde_json::from_str(&input) {
         Ok(request) => request,
         Err(error) => {
             return write_response(EngineResponse {
                 id: None,
                 ok: false,
                 data: None,
-                meta: None,
+                meta: Some(response_meta()),
                 error: Some(EngineError::validation(
                     "invalid_json",
                     format!("request body is not valid JSON: {error}"),
@@ -73,19 +81,27 @@ pub(crate) fn run_stdio() -> Result<(), String> {
     };
 
     let id = request.id.clone();
-    let response = match dispatch(request) {
+    let (hooks, mut invocation) = runtime::before(&request.method);
+    let result = handle_wire_request(request);
+    runtime::after(
+        &hooks,
+        &mut invocation,
+        result.as_ref().err().map(|error| error.kind.as_str()),
+    );
+    let meta = response_meta_with_invocation(&invocation);
+    let response = match result {
         Ok(data) => EngineResponse {
             id,
             ok: true,
             data: Some(data),
-            meta: None,
+            meta: Some(meta),
             error: None,
         },
         Err(error) => EngineResponse {
             id,
             ok: false,
             data: None,
-            meta: None,
+            meta: Some(meta),
             error: Some(error),
         },
     };
@@ -107,251 +123,87 @@ fn write_response(response: EngineResponse) -> Result<(), String> {
     stdout.write_all(b"\n").map_err(|error| error.to_string())
 }
 
-fn dispatch(request: EngineRequest) -> EngineResult<Value> {
+fn response_meta() -> Value {
+    protocol::response_meta()
+}
+
+fn response_meta_with_invocation(invocation: &runtime::Invocation) -> Value {
+    let mut meta = response_meta();
+    if let Some(object) = meta.as_object_mut() {
+        object.insert("invocation".to_string(), runtime::response_meta(invocation));
+    }
+    meta
+}
+
+fn handle_wire_request(request: WireEngineRequest) -> EngineResult<Value> {
+    validate_wire_compatibility(&request)?;
+    dispatch(request.into())
+}
+
+fn validate_wire_compatibility(request: &WireEngineRequest) -> EngineResult<()> {
+    if request.method == "system.version" {
+        return Ok(());
+    }
+    if request.protocol_version != Some(protocol::PROTOCOL_VERSION) {
+        return Err(EngineError::engine_incompatible(
+            "protocol_version_mismatch",
+            "Engine protocol version is incompatible with this request",
+            json!({
+                "expected": protocol::PROTOCOL_VERSION,
+                "received": request.protocol_version
+            }),
+        ));
+    }
+    if request.contract_version != Some(protocol::CONTRACT_VERSION) {
+        return Err(EngineError::engine_incompatible(
+            "contract_version_mismatch",
+            "Engine command contract version is incompatible with this request",
+            json!({
+                "expected": protocol::CONTRACT_VERSION,
+                "received": request.contract_version
+            }),
+        ));
+    }
+    Ok(())
+}
+
+fn dispatch(mut request: EngineRequest) -> EngineResult<Value> {
     let method = request.method.clone();
-    match method.as_str() {
-        "schema.list" => Ok(service::schema_index()),
-        "schema.get" => Ok(request
-            .params
-            .get("method")
-            .and_then(Value::as_str)
-            .map_or_else(service::schema_index, service::schema_get)),
-        service_method if service::is_service_method(service_method) => dispatch_service(request),
-        other => Err(EngineError::unknown_method(other)),
+    let spec =
+        command_registry::find(&method).ok_or_else(|| EngineError::unknown_method(&method))?;
+    policy::authorize(spec).map_err(EngineError::from_policy)?;
+    if command_registry::requires_confirmation(spec, &request.params) {
+        return Err(EngineError::confirmation_required(
+            &method,
+            spec.risk.as_str(),
+        ));
     }
-}
-
-fn dispatch_service(request: EngineRequest) -> EngineResult<Value> {
-    let service = AppService::open_for_engine().map_err(EngineError::internal)?;
-
-    match request.method.as_str() {
-        "overview.get" | "get_app_overview" => json_result(service.overview()),
-        "source.list" | "list_sources" => json_result(service.list_sources()),
-        "list_skill_sources" => json_result(service.list_skill_sources()),
-        "create_source" => {
-            let params = parse_params::<CreateSourceParams>(request.params)?;
-            json_result(service.add_source(params.source))
-        }
-        "update_source" => {
-            let params = parse_params::<UpdateSourceParams>(request.params)?;
-            json_result(service.update_source(params.source))
-        }
-        "delete_source" => {
-            let params = parse_params::<IdParams>(request.params)?;
-            json_result(service.delete_source(params.id))
-        }
-        "source.add" => {
-            let params = parse_params::<SourceAddParams>(request.params)?;
-            json_result(service.add_source_with_options(params))
-        }
-        "source.remove" => {
-            let params = parse_params::<SourceRemoveParams>(request.params)?;
-            json_result(service.remove_source(params))
-        }
-        "source.scan" | "scan_sources" => {
-            let params = parse_params::<SourceScanParams>(request.params)?;
-            json_result(service.scan_sources(params))
-        }
-        "scan_skill_sources" => json_result(service.scan_skill_sources()),
-        "profile.list" | "list_profiles" => json_result(service.list_profiles()),
-        "create_profile" => {
-            let params = parse_params::<CreateProfileParams>(request.params)?;
-            json_result(service.create_profile(params.input))
-        }
-        "update_profile" => {
-            let params = parse_params::<UpdateProfileParams>(request.params)?;
-            json_result(service.update_profile(params.profile))
-        }
-        "delete_profile" => {
-            let params = parse_params::<IdParams>(request.params)?;
-            json_result(service.delete_profile(params.id))
-        }
-        "get_navigation_model" => json_result(service.navigation_model()),
-        "update_navigation_model" => {
-            let params = parse_params::<UpdateNavigationModelParams>(request.params)?;
-            json_result(service.update_navigation_model(params.model))
-        }
-        "list_app_shortcuts" => json_result(service.list_app_shortcuts()),
-        "list_app_shortcut_settings" => json_result(service.list_app_shortcut_settings()),
-        "update_app_shortcuts" => {
-            let params = parse_params::<UpdateAppShortcutsParams>(request.params)?;
-            json_result(service.update_app_shortcuts(params.shortcuts))
-        }
-        "asset.list" | "list_assets" => {
-            let params = parse_params::<ListAssetsParams>(request.params)?;
-            json_result(service.list_assets(params))
-        }
-        "get_skill_backup_settings" => json_result(service.get_skill_backup_settings()),
-        "update_skill_backup_settings" => {
-            let params = parse_params::<UpdateSkillBackupSettingsParams>(request.params)?;
-            json_result(service.update_skill_backup_settings(params))
-        }
-        "backup_skill" => {
-            let params = parse_params::<RequiredAssetIdParams>(request.params)?;
-            json_result(service.backup_skill(params.asset_id))
-        }
-        "update_asset_description" => {
-            let params_value = request.params;
-            let params = parse_params::<RequiredAssetIdParams>(params_value.clone())?;
-            let description = params_value
-                .get("description")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            json_result(service.update_asset_description(params.asset_id, description))
-        }
-        "delete_asset" => {
-            let params_value = request.params;
-            let params = parse_params::<RequiredAssetIdParams>(params_value.clone())?;
-            let unmount = params_value
-                .get("unmount")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            json_result(service.delete_asset(params.asset_id, unmount))
-        }
-        "list_asset_mounts" => {
-            let params = parse_params::<AssetIdParams>(request.params)?;
-            json_result(service.list_asset_mounts(params.asset_id.as_deref()))
-        }
-        "list_asset_mount_statuses" => {
-            let params = parse_params::<AssetIdParams>(request.params)?;
-            json_result(service.list_asset_mount_statuses(params.asset_id.as_deref()))
-        }
-        "refresh_asset_mount_statuses" => {
-            let params = parse_params::<AssetIdParams>(request.params)?;
-            json_result(service.refresh_asset_mount_statuses(params.asset_id.as_deref()))
-        }
-        "skill.list" => json_result(service.list_skills()),
-        "skill.import" => {
-            let params = parse_params::<ImportSkillParams>(request.params)?;
-            json_result(service.import_skill(params))
-        }
-        "skill.backup" => {
-            let params = parse_params::<RequiredAssetIdParams>(request.params)?;
-            json_result(service.backup_skill(params.asset_id))
-        }
-        "skill.delete" => {
-            let params = parse_params::<AssetRefParams>(request.params)?;
-            json_result(service.delete_skill(params))
-        }
-        "skill.mount" => {
-            let params = parse_params::<AssetRefParams>(request.params)?;
-            json_result(service.mount_skill(params, true))
-        }
-        "skill.unmount" => {
-            let params = parse_params::<AssetRefParams>(request.params)?;
-            json_result(service.mount_skill(params, false))
-        }
-        "mount_asset_mount" => {
-            let params = parse_params::<AssetProfileParams>(request.params)?;
-            json_result(service.mount_asset_by_id(&params.asset_id, &params.profile_id))
-        }
-        "unmount_asset_mount" => {
-            let params = parse_params::<AssetProfileParams>(request.params)?;
-            json_result(service.unmount_asset_by_id(&params.asset_id, &params.profile_id))
-        }
-        "skill.group.list" | "list_skill_groups" => json_result(service.list_skill_groups()),
-        "skill.group.mount" => {
-            let params = parse_params::<SkillGroupMountParams>(request.params)?;
-            json_result(service.mount_skill_group(params, true))
-        }
-        "skill.group.unmount" => {
-            let params = parse_params::<SkillGroupMountParams>(request.params)?;
-            json_result(service.mount_skill_group(params, false))
-        }
-        "create_skill_group" => {
-            let params = parse_params::<CreateSkillGroupParams>(request.params)?;
-            json_result(service.create_skill_group(params.input))
-        }
-        "update_skill_group" => {
-            let params = parse_params::<UpdateSkillGroupParams>(request.params)?;
-            json_result(service.update_skill_group(params.group))
-        }
-        "delete_skill_group" => {
-            let params = parse_params::<GroupIdParams>(request.params)?;
-            json_result(service.delete_skill_group(params.group_id))
-        }
-        "set_skill_group_manual_members" => {
-            let params = parse_params::<SetSkillGroupManualMembersParams>(request.params)?;
-            json_result(service.set_skill_group_manual_members(params.group_id, params.asset_ids))
-        }
-        "apply_skill_group_mount" => {
-            let params = parse_params::<ApplySkillGroupMountParams>(request.params)?;
-            json_result(service.apply_skill_group_mount(
-                &params.group_id,
-                &params.profile_id,
-                params.enabled,
-            ))
-        }
-        "preview_skill_group_exclusive_mount" => {
-            let params = parse_params::<SkillGroupExclusiveMountParams>(request.params)?;
-            json_result(service.preview_skill_group_exclusive_mount(params.input))
-        }
-        "apply_skill_group_exclusive_mount" => {
-            let params = parse_params::<SkillGroupExclusiveMountParams>(request.params)?;
-            json_result(service.apply_skill_group_exclusive_mount(params.input))
-        }
-        "toggle_asset_mount" => {
-            let params = parse_params::<AssetProfileParams>(request.params)?;
-            json_result(service.toggle_asset_mount(&params.asset_id, &params.profile_id))
-        }
-        "set_asset_mount" => {
-            let params = parse_params::<SetAssetMountParams>(request.params)?;
-            json_result(service.set_asset_mount(
-                &params.asset_id,
-                &params.profile_id,
-                params.enabled,
-                params.strategy,
-            ))
-        }
-        "create_plan" => {
-            let params = parse_params::<ProfileIdParams>(request.params)?;
-            json_result(service.create_plan(params.profile_id.as_deref()))
-        }
-        "execute_plan" => {
-            let params = parse_params::<ExecutePlanParams>(request.params)?;
-            json_result(service.execute_plan(params.plan, params.action_ids))
-        }
-        "logs_get_snapshot" => {
-            let params = parse_params::<LogsGetSnapshotParams>(request.params)?;
-            json_result(service.logs_get_snapshot(params.file_name, params.line_limit))
-        }
-        "logs_open_log_directory" => json_result(service.logs_open_log_directory()),
-        "logs_write_operation" => {
-            let params = parse_params::<LogsWriteOperationParams>(request.params)?;
-            json_result(service.logs_write_operation(
-                params.level,
-                params.operation,
-                params.message,
-                params.fields,
-            ))
-        }
-        "reveal_path" => {
-            let params = parse_params::<RevealPathParams>(request.params)?;
-            json_result(service.reveal_path(params.path))
-        }
-        "doctor.run" => json_result(service.run_doctor()),
-        other => Err(EngineError::unknown_method(other)),
-    }
-}
-
-fn parse_params<T: for<'de> Deserialize<'de>>(value: Value) -> EngineResult<T> {
-    serde_json::from_value(value).map_err(|error| {
-        EngineError::validation(
-            "invalid_params",
-            format!("invalid method params: {error}"),
-            Some(
-                "run `assetiweave-cli schema get <method>` to inspect required params".to_string(),
-            ),
-        )
-    })
-}
-
-fn json_result<T: Serialize>(result: AppResult<T>) -> EngineResult<Value> {
-    let value = result.map_err(EngineError::from_app)?;
-    serde_json::to_value(value).map_err(|error| EngineError::internal(error.to_string()))
+    request.params = command_registry::validate_params(spec, &request.params)
+        .map_err(|violations| EngineError::invalid_params(&method, violations))?;
+    spec.dispatch(request.params)
+        .map_err(EngineError::from_dispatch)
 }
 
 impl EngineError {
+    fn from_dispatch(failure: command_registry::DispatchFailure) -> Self {
+        match failure {
+            command_registry::DispatchFailure::InvalidParams(message) => Self::internal(message),
+            command_registry::DispatchFailure::OpenService(message) => Self::internal(message),
+            command_registry::DispatchFailure::App(message) => Self::from_app(message),
+            command_registry::DispatchFailure::Serialize(message) => Self::internal(message),
+        }
+    }
+
+    fn engine_incompatible(code: &str, message: &str, details: Value) -> Self {
+        Self {
+            kind: "engine_incompatible".to_string(),
+            code: code.to_string(),
+            message: message.to_string(),
+            hint: Some("install the CLI and Engine from the same AssetIWeave release".to_string()),
+            details: Some(details),
+        }
+    }
+
     fn unknown_method(method: &str) -> Self {
         Self {
             kind: "unknown_method".to_string(),
@@ -359,6 +211,47 @@ impl EngineError {
             message: format!("unknown engine method: {method}"),
             hint: Some("run `assetiweave-cli schema` to list supported methods".to_string()),
             details: Some(json!({ "method": method })),
+        }
+    }
+
+    fn confirmation_required(method: &str, risk: &str) -> Self {
+        Self {
+            kind: "confirmation_required".to_string(),
+            code: "confirmation_required".to_string(),
+            message: format!("{method} requires explicit confirmation"),
+            hint: Some("rerun with yes=true after reviewing the operation".to_string()),
+            details: Some(json!({
+                "method": method,
+                "risk": risk
+            })),
+        }
+    }
+
+    fn invalid_params(method: &str, violations: Vec<command_registry::ParamViolation>) -> Self {
+        Self {
+            kind: "validation".to_string(),
+            code: "invalid_params".to_string(),
+            message: format!("invalid method params for {method}"),
+            hint: Some(
+                "run `assetiweave-cli schema get <method>` to inspect required params".to_string(),
+            ),
+            details: Some(json!({
+                "method": method,
+                "violations": violations
+            })),
+        }
+    }
+
+    fn from_policy(failure: policy::PolicyFailure) -> Self {
+        Self {
+            kind: failure.kind.to_string(),
+            code: failure.kind.to_string(),
+            message: failure.message,
+            hint: Some(
+                "review ASSETIWEAVE_POLICY_PATH or run a diagnostic command for details"
+                    .to_string(),
+            ),
+            details: Some(failure.details),
         }
     }
 
@@ -419,7 +312,6 @@ mod tests {
     fn unknown_method_returns_structured_error() {
         let _guard = env_lock().lock().expect("env lock");
         let error = dispatch(EngineRequest {
-            id: Some("1".to_string()),
             method: "missing.method".to_string(),
             params: json!({}),
         })
@@ -428,6 +320,105 @@ mod tests {
         assert_eq!(error.kind, "unknown_method");
         assert_eq!(error.code, "unknown_method");
         assert!(error.hint.as_deref().unwrap_or_default().contains("schema"));
+    }
+
+    #[test]
+    fn registered_handler_uses_the_bound_request_type() {
+        let spec = command_registry::find("source.add").expect("source.add spec");
+        let error = spec
+            .dispatch(json!({ "id": "source-id" }))
+            .expect_err("registered handler must parse the bound request type");
+
+        assert!(matches!(
+            error,
+            command_registry::DispatchFailure::InvalidParams(message)
+                if message.contains("registered handler params failed")
+        ));
+    }
+
+    #[test]
+    fn mismatched_wire_protocol_is_rejected_before_dispatch() {
+        let error = handle_wire_request(WireEngineRequest {
+            id: None,
+            method: "profile.list".to_string(),
+            params: json!({}),
+            protocol_version: Some(99),
+            contract_version: Some(crate::protocol::CONTRACT_VERSION),
+        })
+        .expect_err("mismatched protocol should fail");
+
+        assert_eq!(error.kind, "engine_incompatible");
+        assert_eq!(error.code, "protocol_version_mismatch");
+    }
+
+    #[test]
+    fn version_probe_does_not_require_compatibility_fields() {
+        let value = handle_wire_request(WireEngineRequest {
+            id: Some("version".to_string()),
+            method: "system.version".to_string(),
+            params: json!({}),
+            protocol_version: None,
+            contract_version: None,
+        })
+        .expect("version probe");
+
+        assert_eq!(
+            value["protocol_version"],
+            json!(crate::protocol::PROTOCOL_VERSION)
+        );
+        assert_eq!(
+            value["contract_version"],
+            json!(crate::protocol::CONTRACT_VERSION)
+        );
+    }
+
+    #[test]
+    fn system_version_exposes_compatibility_contract() {
+        let value = dispatch(EngineRequest {
+            method: "system.version".to_string(),
+            params: json!({}),
+        })
+        .expect("system.version");
+
+        assert_eq!(value["product"], json!("AssetIWeave"));
+        assert_eq!(
+            value["protocol_version"],
+            json!(crate::protocol::PROTOCOL_VERSION)
+        );
+        assert_eq!(
+            value["contract_version"],
+            json!(crate::protocol::CONTRACT_VERSION)
+        );
+        assert_eq!(value["engine_version"], json!(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn response_meta_exposes_compatibility_contract() {
+        let meta = response_meta();
+        assert_eq!(
+            meta["protocol_version"],
+            json!(crate::protocol::PROTOCOL_VERSION)
+        );
+        assert_eq!(
+            meta["contract_version"],
+            json!(crate::protocol::CONTRACT_VERSION)
+        );
+        assert_eq!(meta["engine_version"], json!(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn response_meta_exposes_postflight_invocation_details() {
+        let (hooks, mut invocation) = runtime::before("delete_source");
+        runtime::after(&hooks, &mut invocation, Some("command_denied"));
+        let meta = response_meta_with_invocation(&invocation);
+
+        assert_eq!(meta["invocation"]["method"], json!("delete_source"));
+        assert_eq!(
+            meta["invocation"]["canonical_method"],
+            json!("source.remove")
+        );
+        assert_eq!(meta["invocation"]["outcome"], json!("error"));
+        assert_eq!(meta["invocation"]["error_type"], json!("command_denied"));
     }
 
     #[test]
@@ -442,7 +433,6 @@ mod tests {
         env::set_var("HOME", &home);
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
         let value = dispatch(EngineRequest {
-            id: Some("1".to_string()),
             method: "skill.import".to_string(),
             params: json!({
                 "from": source.to_string_lossy(),
@@ -480,16 +470,15 @@ mod tests {
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         dispatch(EngineRequest {
-            id: Some("settings".to_string()),
             method: "update_skill_backup_settings".to_string(),
             params: json!({
                 "root_path": backup_root.to_string_lossy(),
-                "migrate": true
+                "migrate": true,
+                "yes": true
             }),
         })
         .expect("update backup settings");
         let value = dispatch(EngineRequest {
-            id: Some("import".to_string()),
             method: "skill.import".to_string(),
             params: json!({
                 "from": source.to_string_lossy(),
@@ -524,11 +513,11 @@ mod tests {
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         dispatch(EngineRequest {
-            id: Some("old".to_string()),
             method: "update_skill_backup_settings".to_string(),
             params: json!({
                 "root_path": old_root.to_string_lossy(),
-                "migrate": true
+                "migrate": true,
+                "yes": true
             }),
         })
         .expect("move to old custom backup root");
@@ -537,11 +526,11 @@ mod tests {
         fs::write(old_skill.join("SKILL.md"), "description: old").expect("write old skill");
 
         let settings = dispatch(EngineRequest {
-            id: Some("new".to_string()),
             method: "update_skill_backup_settings".to_string(),
             params: json!({
                 "root_path": new_root.to_string_lossy(),
-                "migrate": true
+                "migrate": true,
+                "yes": true
             }),
         })
         .expect("move to new custom backup root");
@@ -574,16 +563,15 @@ mod tests {
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         dispatch(EngineRequest {
-            id: Some("settings".to_string()),
             method: "update_skill_backup_settings".to_string(),
             params: json!({
                 "root_path": backup_root.to_string_lossy(),
-                "migrate": true
+                "migrate": true,
+                "yes": true
             }),
         })
         .expect("update backup settings");
         dispatch(EngineRequest {
-            id: Some("source".to_string()),
             method: "source.add".to_string(),
             params: json!({
                 "name": "App Target",
@@ -603,7 +591,6 @@ mod tests {
         })
         .expect("add app target source");
         let scanned = dispatch(EngineRequest {
-            id: Some("scan".to_string()),
             method: "source.scan".to_string(),
             params: json!({ "kind": "skill" }),
         })
@@ -618,13 +605,11 @@ mod tests {
             .to_string();
 
         dispatch(EngineRequest {
-            id: Some("backup".to_string()),
             method: "backup_skill".to_string(),
             params: json!({ "asset_id": app_asset_id }),
         })
         .expect("backup skill");
         let catalog = dispatch(EngineRequest {
-            id: Some("list".to_string()),
             method: "asset.list".to_string(),
             params: json!({ "kind": "skill" }),
         })
@@ -657,7 +642,6 @@ mod tests {
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         let value = dispatch(EngineRequest {
-            id: Some("1".to_string()),
             method: "source.add".to_string(),
             params: json!({
                 "name": "DryRun Source",
@@ -679,7 +663,6 @@ mod tests {
         .expect("dry run source add");
 
         let sources = dispatch(EngineRequest {
-            id: Some("2".to_string()),
             method: "source.list".to_string(),
             params: json!({}),
         })
@@ -697,6 +680,43 @@ mod tests {
     }
 
     #[test]
+    fn source_add_aliases_are_normalized_before_typed_dispatch() {
+        let _guard = env_lock().lock().expect("env lock");
+        let home = unique_temp_dir("assetiweave-engine-source-alias-home");
+        let db_path = home.join("app.db");
+        fs::create_dir_all(&home).expect("create temp home");
+        env::set_var("HOME", &home);
+        env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
+
+        let value = dispatch(EngineRequest {
+            method: "source.add".to_string(),
+            params: json!({
+                "name": "Alias Source",
+                "kind": "local",
+                "rootPath": home.to_string_lossy(),
+                "scannerKind": "skill",
+                "sourceOrigin": "local_folder",
+                "includeGlobs": ["**/SKILL.md"],
+                "excludeGlobs": [],
+                "defaultKind": "skill",
+                "enabled": true,
+                "priority": 100,
+                "repoRoot": null,
+                "scanRoot": "",
+                "originAppKind": null,
+                "dryRun": true
+            }),
+        })
+        .expect("aliases should reach typed source.add dispatch");
+
+        env::remove_var("ASSETIWEAVE_DB_PATH");
+        env::remove_var("HOME");
+        assert_eq!(value["dry_run"], json!(true));
+        assert_eq!(value["source"]["root_path"], json!(home.to_string_lossy()));
+        fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
     fn invalid_params_return_validation_error() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-invalid-params-home");
@@ -706,7 +726,6 @@ mod tests {
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         let error = dispatch(EngineRequest {
-            id: Some("1".to_string()),
             method: "skill.import".to_string(),
             params: json!({}),
         })
@@ -730,19 +749,16 @@ mod tests {
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         let profiles = dispatch(EngineRequest {
-            id: Some("1".to_string()),
             method: "list_profiles".to_string(),
             params: json!({}),
         })
         .expect("list profiles alias");
         let schema = dispatch(EngineRequest {
-            id: Some("2".to_string()),
             method: "schema.list".to_string(),
             params: json!({}),
         })
         .expect("schema list");
         let mounts = dispatch(EngineRequest {
-            id: Some("3".to_string()),
             method: "list_asset_mounts".to_string(),
             params: json!({ "assetId": null }),
         })
@@ -762,17 +778,16 @@ mod tests {
 
     #[test]
     fn schema_lists_every_cli_and_tauri_command_method() {
-        let schema = service::schema_index();
+        let schema = command_registry::schema_index();
         let methods = schema["methods"].as_array().expect("methods array");
         let method_set = methods
             .iter()
             .map(|method| method.as_str().expect("method string"))
             .collect::<BTreeSet<_>>();
 
-        for method in service::CLI_SERVICE_METHODS
+        for method in command_registry::command_specs()
             .iter()
-            .chain(service::TAURI_COMMAND_METHODS.iter())
-            .chain(["schema.list", "schema.get"].iter())
+            .map(|spec| spec.method)
         {
             assert!(
                 method_set.contains(method),
@@ -787,21 +802,238 @@ mod tests {
     }
 
     #[test]
+    fn command_registry_owns_engine_dispatch_handlers() {
+        let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root")
+            .to_path_buf();
+        let engine_source = fs::read_to_string(workspace_root.join("src-tauri/src/engine.rs"))
+            .expect("read engine");
+        let version = command_registry::find("system.version")
+            .expect("system.version spec")
+            .dispatch(json!({}))
+            .expect("registered handler should execute");
+
+        assert_eq!(version["product"], json!("AssetIWeave"));
+        let legacy_dispatch_function = ["fn dispatch_", "service("].concat();
+        assert!(!engine_source.contains(&legacy_dispatch_function));
+    }
+
+    #[test]
+    fn registry_matches_tauri_handler_methods() {
+        let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root")
+            .to_path_buf();
+        let lib_source =
+            fs::read_to_string(workspace_root.join("src-tauri/src/lib.rs")).expect("read lib");
+        let tauri_handlers = extract_tauri_handler_methods(&lib_source);
+        let registered = command_registry::command_specs()
+            .iter()
+            .filter(|spec| command_registry::is_app_method(spec.method))
+            .map(|spec| spec.method.to_string())
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(
+            tauri_handlers, registered,
+            "Tauri invoke handlers and App command registry drifted"
+        );
+    }
+
+    #[test]
+    fn schema_exposes_contract_metadata_for_every_method() {
+        let schema = command_registry::schema_index();
+        let methods = schema["methods"].as_array().expect("methods array");
+        let commands = schema["commands"].as_array().expect("commands array");
+
+        assert_eq!(commands.len(), methods.len());
+        for command in commands {
+            assert!(
+                command["method"]
+                    .as_str()
+                    .is_some_and(|value| !value.is_empty()),
+                "command contract is missing method: {command}"
+            );
+            assert!(
+                matches!(
+                    command["risk"].as_str(),
+                    Some("read" | "write" | "high-risk-write")
+                ),
+                "command contract has invalid risk: {command}"
+            );
+            assert!(
+                command["params_schema"].is_object(),
+                "command contract is missing params_schema: {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn high_risk_raw_method_requires_explicit_confirmation() {
+        let error = dispatch(EngineRequest {
+            method: "delete_source".to_string(),
+            params: json!({ "id": "source-id" }),
+        })
+        .expect_err("high-risk raw method should require confirmation");
+
+        assert_eq!(error.kind, "confirmation_required");
+        assert_eq!(error.code, "confirmation_required");
+        assert_eq!(
+            error.details,
+            Some(json!({
+                "method": "delete_source",
+                "risk": "high-risk-write"
+            }))
+        );
+    }
+
+    #[test]
+    fn unsupported_dry_run_does_not_bypass_high_risk_confirmation() {
+        let error = dispatch(EngineRequest {
+            method: "delete_source".to_string(),
+            params: json!({ "id": "source-id", "dry_run": true }),
+        })
+        .expect_err("unsupported dry-run must not bypass confirmation");
+
+        assert_eq!(error.kind, "confirmation_required");
+        assert_eq!(error.code, "confirmation_required");
+    }
+
+    #[test]
+    fn unknown_method_params_are_rejected_before_service_dispatch() {
+        let error = dispatch(EngineRequest {
+            method: "profile.list".to_string(),
+            params: json!({ "typo": true }),
+        })
+        .expect_err("unknown params should fail");
+
+        assert_eq!(error.kind, "validation");
+        assert_eq!(error.code, "invalid_params");
+        assert!(error
+            .details
+            .as_ref()
+            .is_some_and(|details| details["violations"].is_array()));
+    }
+
+    #[test]
+    fn nested_type_mismatch_is_rejected_before_service_dispatch() {
+        let _guard = env_lock().lock().expect("env lock");
+        let home = unique_temp_dir("assetiweave-engine-nested-params-home");
+        let db_path = home.join("app.db");
+        fs::create_dir_all(&home).expect("create temp home");
+        env::set_var("HOME", &home);
+        env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
+
+        let error = dispatch(EngineRequest {
+            method: "create_profile".to_string(),
+            params: json!({
+                "input": {
+                    "name": "Invalid profile",
+                    "target_paths": "not-an-array"
+                }
+            }),
+        })
+        .expect_err("nested type mismatch should fail");
+
+        env::remove_var("ASSETIWEAVE_DB_PATH");
+        env::remove_var("HOME");
+        assert_eq!(error.kind, "validation");
+        assert_eq!(error.code, "invalid_params");
+        assert!(
+            !db_path.exists(),
+            "validation must run before database open"
+        );
+        fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn command_policy_denies_confirmed_high_risk_method_before_service_dispatch() {
+        let _guard = env_lock().lock().expect("env lock");
+        let home = unique_temp_dir("assetiweave-engine-policy-home");
+        let policy_path = home.join("policy.json");
+        fs::create_dir_all(&home).expect("create policy home");
+        fs::write(&policy_path, r#"{"version":1,"deny":["delete_source"]}"#).expect("write policy");
+        env::set_var("HOME", &home);
+        env::set_var("ASSETIWEAVE_DB_PATH", home.join("app.db"));
+        env::set_var("ASSETIWEAVE_POLICY_PATH", &policy_path);
+
+        let error = dispatch(EngineRequest {
+            method: "delete_source".to_string(),
+            params: json!({ "id": "missing", "yes": true }),
+        })
+        .expect_err("policy should deny command");
+
+        env::remove_var("ASSETIWEAVE_POLICY_PATH");
+        env::remove_var("ASSETIWEAVE_DB_PATH");
+        env::remove_var("HOME");
+        assert_eq!(error.kind, "command_denied");
+        assert_eq!(error.code, "command_denied");
+        assert!(!home.join("app.db").exists());
+        fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn invalid_command_policy_fails_closed_for_non_diagnostic_methods() {
+        let _guard = env_lock().lock().expect("env lock");
+        let home = unique_temp_dir("assetiweave-engine-invalid-policy-home");
+        let policy_path = home.join("policy.json");
+        fs::create_dir_all(&home).expect("create policy home");
+        fs::write(&policy_path, "{").expect("write invalid policy");
+        env::set_var("HOME", &home);
+        env::set_var("ASSETIWEAVE_DB_PATH", home.join("app.db"));
+        env::set_var("ASSETIWEAVE_POLICY_PATH", &policy_path);
+
+        let error = dispatch(EngineRequest {
+            method: "profile.list".to_string(),
+            params: json!({}),
+        })
+        .expect_err("invalid policy should fail closed");
+
+        env::remove_var("ASSETIWEAVE_POLICY_PATH");
+        env::remove_var("ASSETIWEAVE_DB_PATH");
+        env::remove_var("HOME");
+        assert_eq!(error.kind, "policy_invalid");
+        assert_eq!(error.code, "policy_invalid");
+        assert!(!home.join("app.db").exists());
+        fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn diagnostic_method_remains_available_when_command_policy_is_invalid() {
+        let _guard = env_lock().lock().expect("env lock");
+        let home = unique_temp_dir("assetiweave-engine-diagnostic-policy-home");
+        let policy_path = home.join("policy.json");
+        fs::create_dir_all(&home).expect("create policy home");
+        fs::write(&policy_path, "{").expect("write invalid policy");
+        env::set_var("ASSETIWEAVE_POLICY_PATH", &policy_path);
+
+        let value = dispatch(EngineRequest {
+            method: "system.version".to_string(),
+            params: json!({}),
+        })
+        .expect("diagnostic method should bypass invalid policy");
+
+        env::remove_var("ASSETIWEAVE_POLICY_PATH");
+        assert_eq!(value["product"], json!("AssetIWeave"));
+        fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
     fn frontend_invoke_methods_are_registered_for_cli_api() {
         let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("workspace root")
             .to_path_buf();
         let mut frontend_methods = BTreeSet::new();
-        for file in ["src/services/catalog.ts", "src/services/logService.ts"] {
-            let content =
-                fs::read_to_string(workspace_root.join(file)).expect("read frontend service");
+        for file in frontend_source_files(&workspace_root.join("src")) {
+            let content = fs::read_to_string(file).expect("read frontend source");
             frontend_methods.extend(extract_frontend_invoke_methods(&content));
         }
 
-        let registered = service::TAURI_COMMAND_METHODS
+        let registered = command_registry::command_specs()
             .iter()
-            .copied()
+            .filter(|spec| command_registry::is_app_method(spec.method))
+            .map(|spec| spec.method)
             .collect::<BTreeSet<_>>();
         let missing = frontend_methods
             .iter()
@@ -825,7 +1057,6 @@ mod tests {
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         let error = dispatch(EngineRequest {
-            id: Some("1".to_string()),
             method: "create_profile".to_string(),
             params: json!({}),
         })
@@ -852,7 +1083,6 @@ mod tests {
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         dispatch(EngineRequest {
-            id: Some("1".to_string()),
             method: "source.add".to_string(),
             params: json!({
                 "name": "External Source",
@@ -872,13 +1102,11 @@ mod tests {
         })
         .expect("add external source");
         dispatch(EngineRequest {
-            id: Some("2".to_string()),
             method: "source.scan".to_string(),
             params: json!({ "kind": "skill" }),
         })
         .expect("scan external source");
         let error = dispatch(EngineRequest {
-            id: Some("3".to_string()),
             method: "skill.delete".to_string(),
             params: json!({ "asset_ref": "external-skill", "yes": true }),
         })
@@ -905,7 +1133,6 @@ mod tests {
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         let error = dispatch(EngineRequest {
-            id: Some("1".to_string()),
             method: "source.remove".to_string(),
             params: json!({ "id": "assetiweave-library-skills", "yes": true }),
         })
@@ -929,23 +1156,57 @@ mod tests {
 
     fn extract_frontend_invoke_methods(content: &str) -> BTreeSet<String> {
         let mut methods = BTreeSet::new();
-        for line in content.lines().filter(|line| line.contains("invoke")) {
-            let Some(invoke_start) = line.find("invoke") else {
-                continue;
-            };
-            let after_invoke = &line[invoke_start..];
+        let mut remaining = content;
+        while let Some(invoke_start) = remaining.find("invoke") {
+            let after_invoke = &remaining[invoke_start..];
             if !(after_invoke.starts_with("invoke<") || after_invoke.starts_with("invoke(")) {
+                remaining = &after_invoke["invoke".len()..];
                 continue;
             }
             let Some(first_quote) = after_invoke.find('"') else {
-                continue;
+                break;
             };
             let after_first_quote = &after_invoke[first_quote + 1..];
             let Some(second_quote) = after_first_quote.find('"') else {
-                continue;
+                break;
             };
             methods.insert(after_first_quote[..second_quote].to_string());
+            remaining = &after_first_quote[second_quote + 1..];
         }
         methods
+    }
+
+    fn extract_tauri_handler_methods(content: &str) -> BTreeSet<String> {
+        let marker = ".invoke_handler(tauri::generate_handler![";
+        let start = content.find(marker).expect("generate_handler marker") + marker.len();
+        let body = &content[start..];
+        let end = body.find("])").expect("generate_handler end");
+        body[..end]
+            .split(',')
+            .map(str::trim)
+            .filter(|method| !method.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn frontend_source_files(root: &std::path::Path) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        let entries = fs::read_dir(root).expect("read frontend source directory");
+        for entry in entries {
+            let path = entry.expect("frontend source entry").path();
+            if path.is_dir() {
+                files.extend(frontend_source_files(&path));
+            } else if matches!(
+                path.extension().and_then(|value| value.to_str()),
+                Some("ts" | "tsx")
+            ) && !path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| name.contains(".test."))
+            {
+                files.push(path);
+            }
+        }
+        files
     }
 }

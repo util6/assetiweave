@@ -13,6 +13,46 @@ pub(crate) fn seed_navigation_model(
     save_navigation_model(conn, model)
 }
 
+pub(crate) fn ensure_navigation_model_items(
+    conn: &Connection,
+    defaults: &NavigationModel,
+) -> Result<(), String> {
+    let mut current = load_navigation_model(conn)?;
+    for item in &defaults.rail_items {
+        if !current
+            .rail_items
+            .iter()
+            .any(|candidate| candidate.id == item.id)
+        {
+            current.rail_items.push(item.clone());
+        }
+    }
+    for tab in &defaults.header_tabs {
+        if !current
+            .header_tabs
+            .iter()
+            .any(|candidate| candidate.id == tab.id)
+        {
+            current.header_tabs.push(tab.clone());
+        }
+    }
+    for (parent_id, default_items) in &defaults.sub_nav_items {
+        let current_items = current
+            .sub_nav_items
+            .entry(parent_id.clone())
+            .or_insert_with(Vec::new);
+        for item in default_items {
+            if !current_items
+                .iter()
+                .any(|candidate| candidate.id == item.id)
+            {
+                current_items.push(item.clone());
+            }
+        }
+    }
+    save_navigation_model(conn, &current)
+}
+
 pub(crate) fn save_navigation_model(
     conn: &Connection,
     model: &NavigationModel,

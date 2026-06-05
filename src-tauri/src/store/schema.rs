@@ -4,8 +4,9 @@ use std::path::Path;
 
 use super::{
     codec::db_error,
-    menu_repo::seed_navigation_model,
+    menu_repo::{ensure_navigation_model_items, seed_navigation_model},
     profile_repo::{load_profiles, upsert_profile},
+    seed_builtin_conversation_adapters,
     shortcut_repo::seed_app_shortcuts,
     source_repo::{load_sources, upsert_source},
     sql,
@@ -122,8 +123,12 @@ fn seed_defaults(conn: &Connection) -> AppResult<()> {
     }
     normalize_default_profiles(conn)?;
 
+    seed_builtin_conversation_adapters(conn)?;
+
     if count_rows(conn, "navigation_state")? == 0 {
         seed_navigation_model(conn, &defaults::default_navigation_model())?;
+    } else {
+        ensure_navigation_model_items(conn, &defaults::default_navigation_model())?;
     }
 
     if count_rows(conn, "app_shortcut_items")? == 0 {

@@ -1,5 +1,6 @@
 use crate::{
-    commands, executor, logs, path_utils, planner, platform, scanner, store, targeting,
+    commands, conversations, executor, logs, path_utils, planner, platform, scanner, store,
+    targeting,
     types::{
         AppOverview, AppResult, AppShortcut, ApplyAssetGroupMountResult,
         ApplySkillGroupExclusiveMountResult, AssetGroupInput, AssetMountStatus,
@@ -9,11 +10,13 @@ use crate::{
     },
 };
 use assetiweave_core::{
-    Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, DeploymentPlan, DeploymentStrategy,
-    Source, SourceOrigin, SourceScannerKind, TargetProfile,
+    Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
+    ConversationSource, DeploymentPlan, DeploymentStrategy, Source, SourceOrigin,
+    SourceScannerKind, TargetProfile,
 };
 use chrono::Utc;
 use rusqlite::Connection;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
@@ -28,35 +31,50 @@ pub(crate) struct AppService {
     db_path: PathBuf,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ListAssetsParams {
     pub(crate) kind: Option<AssetKind>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct AssetIdParams {
     #[serde(alias = "assetId")]
     pub(crate) asset_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct RequiredAssetIdParams {
     #[serde(alias = "assetId")]
     pub(crate) asset_id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct UpdateAssetDescriptionParams {
+    #[serde(alias = "assetId")]
+    pub(crate) asset_id: String,
+    pub(crate) description: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct DeleteAssetParams {
+    #[serde(alias = "assetId")]
+    pub(crate) asset_id: String,
+    #[serde(default)]
+    pub(crate) unmount: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ProfileIdParams {
     #[serde(alias = "profileId")]
     pub(crate) profile_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct IdParams {
     pub(crate) id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct AssetProfileParams {
     #[serde(alias = "assetId")]
     pub(crate) asset_id: String,
@@ -64,7 +82,7 @@ pub(crate) struct AssetProfileParams {
     pub(crate) profile_id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SetAssetMountParams {
     #[serde(alias = "assetId")]
     pub(crate) asset_id: String,
@@ -74,7 +92,7 @@ pub(crate) struct SetAssetMountParams {
     pub(crate) strategy: Option<DeploymentStrategy>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ApplySkillGroupMountParams {
     #[serde(alias = "groupId")]
     pub(crate) group_id: String,
@@ -83,53 +101,53 @@ pub(crate) struct ApplySkillGroupMountParams {
     pub(crate) enabled: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct CreateSourceParams {
     pub(crate) source: SourceInput,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct UpdateSourceParams {
     pub(crate) source: Source,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct CreateProfileParams {
     pub(crate) input: TargetProfileInput,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct UpdateProfileParams {
     pub(crate) profile: TargetProfile,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct UpdateNavigationModelParams {
     pub(crate) model: NavigationModel,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct UpdateAppShortcutsParams {
     pub(crate) shortcuts: Vec<AppShortcut>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct CreateSkillGroupParams {
     pub(crate) input: AssetGroupInput,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct UpdateSkillGroupParams {
     pub(crate) group: AssetGroup,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GroupIdParams {
     #[serde(alias = "groupId")]
     pub(crate) group_id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SetSkillGroupManualMembersParams {
     #[serde(alias = "groupId")]
     pub(crate) group_id: String,
@@ -137,19 +155,19 @@ pub(crate) struct SetSkillGroupManualMembersParams {
     pub(crate) asset_ids: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SkillGroupExclusiveMountParams {
     pub(crate) input: SkillGroupExclusiveMountInput,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ExecutePlanParams {
     pub(crate) plan: DeploymentPlan,
     #[serde(alias = "actionIds")]
     pub(crate) action_ids: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct LogsGetSnapshotParams {
     #[serde(alias = "fileName")]
     pub(crate) file_name: Option<String>,
@@ -157,7 +175,7 @@ pub(crate) struct LogsGetSnapshotParams {
     pub(crate) line_limit: Option<usize>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct LogsWriteOperationParams {
     pub(crate) level: String,
     pub(crate) operation: String,
@@ -165,12 +183,12 @@ pub(crate) struct LogsWriteOperationParams {
     pub(crate) fields: Option<BTreeMap<String, String>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct RevealPathParams {
     pub(crate) path: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SourceAddParams {
     #[serde(flatten)]
     pub(crate) source: SourceInput,
@@ -178,7 +196,7 @@ pub(crate) struct SourceAddParams {
     pub(crate) dry_run: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct AssetRefParams {
     #[serde(alias = "assetRef")]
     pub(crate) asset_ref: String,
@@ -192,7 +210,7 @@ pub(crate) struct AssetRefParams {
     pub(crate) unmount: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ImportSkillParams {
     pub(crate) from: String,
     pub(crate) name: Option<String>,
@@ -200,7 +218,7 @@ pub(crate) struct ImportSkillParams {
     pub(crate) dry_run: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct UpdateSkillBackupSettingsParams {
     #[serde(alias = "rootPath")]
     pub(crate) root_path: String,
@@ -208,7 +226,7 @@ pub(crate) struct UpdateSkillBackupSettingsParams {
     pub(crate) migrate: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SourceRemoveParams {
     pub(crate) id: String,
     #[serde(default, alias = "dryRun")]
@@ -217,14 +235,14 @@ pub(crate) struct SourceRemoveParams {
     pub(crate) yes: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SourceScanParams {
     pub(crate) kind: Option<AssetKind>,
     #[serde(default, alias = "dryRun")]
     pub(crate) dry_run: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SkillGroupMountParams {
     #[serde(alias = "groupId")]
     pub(crate) group_id: String,
@@ -234,6 +252,100 @@ pub(crate) struct SkillGroupMountParams {
     pub(crate) dry_run: bool,
     #[serde(default)]
     pub(crate) yes: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationAdapterUnregisterParams {
+    #[serde(alias = "adapterId")]
+    pub(crate) adapter_id: String,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+    #[serde(default)]
+    pub(crate) yes: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationSourceUpsertParams {
+    pub(crate) source: ConversationSource,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationSourceDisableParams {
+    pub(crate) id: String,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationSyncParams {
+    #[serde(alias = "sourceId")]
+    pub(crate) source_id: Option<String>,
+    #[serde(alias = "adapterId")]
+    pub(crate) adapter_id: Option<String>,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationSessionListParams {
+    #[serde(alias = "adapterId")]
+    pub(crate) adapter_id: Option<String>,
+    #[serde(alias = "sourceId")]
+    pub(crate) source_id: Option<String>,
+    pub(crate) query: Option<String>,
+    pub(crate) limit: Option<usize>,
+    pub(crate) offset: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationSessionGetParams {
+    #[serde(alias = "sessionId")]
+    pub(crate) session_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationSessionExportParams {
+    #[serde(alias = "sessionId")]
+    pub(crate) session_id: String,
+    #[serde(alias = "outputRoot")]
+    pub(crate) output_root: String,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationQuestionListParams {
+    #[serde(alias = "sessionId")]
+    pub(crate) session_id: String,
+    pub(crate) query: Option<String>,
+    pub(crate) limit: Option<usize>,
+    pub(crate) offset: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationQuestionGetParams {
+    #[serde(alias = "questionId")]
+    pub(crate) question_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationQuestionMergeParams {
+    #[serde(alias = "questionIds")]
+    pub(crate) question_ids: Vec<String>,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationQuestionSplitParams {
+    #[serde(alias = "questionId")]
+    pub(crate) question_id: String,
+    #[serde(alias = "beforeTurnId")]
+    pub(crate) before_turn_id: String,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
 }
 
 impl AppService {
@@ -333,6 +445,266 @@ impl AppService {
         let sources = store::load_skill_sources(&self.conn)?;
         commands::scan_selected_sources(&self.conn, sources, scanner::scan_skill_source)?;
         commands::catalog_assets(&self.conn, Some(AssetKind::Skill))
+    }
+
+    pub(crate) fn list_conversation_adapters(&self) -> AppResult<Vec<ConversationAdapter>> {
+        store::list_conversation_adapters(&self.conn)
+    }
+
+    pub(crate) fn scaffold_conversation_adapter(
+        &self,
+        params: conversations::ExternalAdapterScaffoldParams,
+    ) -> AppResult<conversations::ExternalAdapterScaffoldResult> {
+        conversations::scaffold_external_adapter(params)
+    }
+
+    pub(crate) fn validate_conversation_adapter(
+        &self,
+        params: conversations::ExternalAdapterValidateParams,
+    ) -> AppResult<conversations::ExternalAdapterValidationResult> {
+        conversations::validate_external_adapter(params)
+    }
+
+    pub(crate) fn register_conversation_adapter(
+        &self,
+        params: conversations::ExternalAdapterRegisterParams,
+    ) -> AppResult<Value> {
+        let dry_run = params.dry_run;
+        let preview = conversations::register_external_adapter(params)?;
+        if !dry_run {
+            let adapter = conversations::adapter_from_registration_preview(preview.clone())?;
+            store::upsert_conversation_adapter(&self.conn, &adapter)?;
+        }
+        Ok(preview)
+    }
+
+    pub(crate) fn unregister_conversation_adapter(
+        &self,
+        params: ConversationAdapterUnregisterParams,
+    ) -> AppResult<Value> {
+        if !params.dry_run && !params.yes {
+            return Err("conversation.adapter.unregister requires --yes".to_string());
+        }
+        let adapter = store::load_conversation_adapter(&self.conn, &params.adapter_id)?
+            .ok_or_else(|| format!("conversation adapter not found: {}", params.adapter_id))?;
+        if params.dry_run {
+            return Ok(json!({
+                "dry_run": true,
+                "unregistered": false,
+                "adapter": adapter
+            }));
+        }
+        let adapter = store::delete_conversation_adapter(&self.conn, &params.adapter_id)?;
+        Ok(json!({
+            "dry_run": false,
+            "unregistered": true,
+            "adapter": adapter
+        }))
+    }
+
+    pub(crate) fn try_run_conversation_adapter(
+        &self,
+        params: conversations::ExternalAdapterTryRunParams,
+    ) -> AppResult<conversations::ExternalAdapterRunResult> {
+        conversations::try_run_external_adapter(params)
+    }
+
+    pub(crate) fn list_conversation_sources(&self) -> AppResult<Vec<ConversationSource>> {
+        store::list_conversation_sources(&self.conn)
+    }
+
+    pub(crate) fn upsert_conversation_source(
+        &self,
+        params: ConversationSourceUpsertParams,
+    ) -> AppResult<Value> {
+        if store::load_conversation_adapter(&self.conn, &params.source.adapter_id)?.is_none() {
+            return Err(format!(
+                "conversation adapter not found: {}",
+                params.source.adapter_id
+            ));
+        }
+        if params.dry_run {
+            return Ok(json!({
+                "dry_run": true,
+                "source": params.source
+            }));
+        }
+        store::upsert_conversation_source(&self.conn, &params.source)?;
+        Ok(json!({
+            "dry_run": false,
+            "source": params.source
+        }))
+    }
+
+    pub(crate) fn disable_conversation_source(
+        &self,
+        params: ConversationSourceDisableParams,
+    ) -> AppResult<Value> {
+        let source = store::load_conversation_source(&self.conn, &params.id)?
+            .ok_or_else(|| format!("conversation source not found: {}", params.id))?;
+        if params.dry_run {
+            return Ok(json!({
+                "dry_run": true,
+                "disabled": false,
+                "source": source
+            }));
+        }
+        let source = store::disable_conversation_source(&self.conn, &params.id)?;
+        Ok(json!({
+            "dry_run": false,
+            "disabled": true,
+            "source": source
+        }))
+    }
+
+    pub(crate) fn sync_conversations(&self, params: ConversationSyncParams) -> AppResult<Value> {
+        let sources = store::list_conversation_sources(&self.conn)?
+            .into_iter()
+            .filter(|source| params.source_id.as_deref().is_none_or(|id| id == source.id))
+            .filter(|source| {
+                params
+                    .adapter_id
+                    .as_deref()
+                    .is_none_or(|id| id == source.adapter_id)
+            })
+            .filter(|source| {
+                source.enabled || params.source_id.as_deref() == Some(source.id.as_str())
+            })
+            .collect::<Vec<_>>();
+        if sources.is_empty() {
+            return Err("no matching conversation sources".to_string());
+        }
+
+        let mut results = Vec::new();
+        let mut errors = Vec::new();
+        for source in sources {
+            match conversations::read_source_sessions(&source).and_then(|sessions| {
+                store::import_conversation_sessions(&self.conn, &source, &sessions, params.dry_run)
+            }) {
+                Ok(result) => results.push(json!(result)),
+                Err(error) if params.source_id.is_some() => return Err(error),
+                Err(error) => errors.push(json!({
+                    "source_id": source.id,
+                    "adapter_id": source.adapter_id,
+                    "message": error
+                })),
+            }
+        }
+        Ok(json!({
+            "dry_run": params.dry_run,
+            "results": results,
+            "errors": errors
+        }))
+    }
+
+    pub(crate) fn list_conversation_sessions(
+        &self,
+        params: ConversationSessionListParams,
+    ) -> AppResult<Vec<store::ConversationSessionListItem>> {
+        store::list_conversation_sessions(
+            &self.conn,
+            params.adapter_id.as_deref(),
+            params.source_id.as_deref(),
+            params.query.as_deref(),
+            params.limit.unwrap_or(50).clamp(1, 500),
+            params.offset.unwrap_or(0),
+        )
+    }
+
+    pub(crate) fn get_conversation_session(
+        &self,
+        params: ConversationSessionGetParams,
+    ) -> AppResult<store::ConversationSessionDetail> {
+        store::load_conversation_session_detail(&self.conn, &params.session_id)
+    }
+
+    pub(crate) fn export_conversation_session(
+        &self,
+        params: ConversationSessionExportParams,
+    ) -> AppResult<Value> {
+        let detail = store::load_conversation_session_detail(&self.conn, &params.session_id)?;
+        let output_root = path_utils::expand_path(&params.output_root)?;
+        let project_segment = detail
+            .session
+            .project_path
+            .as_deref()
+            .and_then(|path| Path::new(path).file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("unknown-project");
+        let short_id = detail
+            .session
+            .id
+            .chars()
+            .rev()
+            .take(8)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect::<String>();
+        let target_path = output_root
+            .join(sanitize_path_segment(&detail.session.adapter_id))
+            .join(sanitize_path_segment(project_segment))
+            .join(format!(
+                "{}-{short_id}.md",
+                sanitize_path_segment(&detail.session.title)
+            ));
+        let content = store::render_session_markdown(&self.conn, &params.session_id)?;
+        if params.dry_run {
+            return Ok(json!({
+                "dry_run": true,
+                "written": false,
+                "path": target_path,
+                "bytes": content.len()
+            }));
+        }
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::write(&target_path, content).map_err(|error| error.to_string())?;
+        Ok(json!({
+            "dry_run": false,
+            "written": true,
+            "path": target_path
+        }))
+    }
+
+    pub(crate) fn list_conversation_questions(
+        &self,
+        params: ConversationQuestionListParams,
+    ) -> AppResult<Vec<store::ConversationQuestionDetail>> {
+        store::list_conversation_question_details(
+            &self.conn,
+            &params.session_id,
+            params.query.as_deref(),
+            params.limit.unwrap_or(100).clamp(1, 500),
+            params.offset.unwrap_or(0),
+        )
+    }
+
+    pub(crate) fn get_conversation_question(
+        &self,
+        params: ConversationQuestionGetParams,
+    ) -> AppResult<store::ConversationQuestionDetail> {
+        store::load_conversation_question_detail(&self.conn, &params.question_id)
+    }
+
+    pub(crate) fn merge_conversation_questions(
+        &self,
+        params: ConversationQuestionMergeParams,
+    ) -> AppResult<store::ConversationMutationResult> {
+        store::merge_conversation_questions(&self.conn, &params.question_ids, params.dry_run)
+    }
+
+    pub(crate) fn split_conversation_question(
+        &self,
+        params: ConversationQuestionSplitParams,
+    ) -> AppResult<store::ConversationMutationResult> {
+        store::split_conversation_question(
+            &self.conn,
+            &params.question_id,
+            &params.before_turn_id,
+            params.dry_run,
+        )
     }
 
     pub(crate) fn list_profiles(&self) -> AppResult<Vec<TargetProfile>> {
@@ -981,6 +1353,29 @@ fn slug_path_segment(value: &str) -> String {
     }
 }
 
+fn sanitize_path_segment(value: &str) -> String {
+    let mut segment = String::new();
+    let mut last_was_separator = false;
+    for character in value.trim().chars() {
+        if character.is_alphanumeric() || matches!(character, '_' | '.') {
+            segment.push(character);
+            last_was_separator = false;
+        } else if !last_was_separator && !segment.is_empty() {
+            segment.push('-');
+            last_was_separator = true;
+        }
+        if segment.chars().count() >= 96 {
+            break;
+        }
+    }
+    let segment = segment.trim_matches(['-', '.']).to_string();
+    if segment.is_empty() {
+        "untitled".to_string()
+    } else {
+        segment
+    }
+}
+
 fn engine_db_path() -> AppResult<PathBuf> {
     if let Ok(path) = env::var("ASSETIWEAVE_DB_PATH") {
         if !path.trim().is_empty() {
@@ -1027,258 +1422,4 @@ fn source_from_input(source: SourceInput) -> Source {
         last_scan_status: Some("pending".to_string()),
     };
     store::normalize_source(&source)
-}
-
-pub(crate) const CLI_SERVICE_METHODS: &[&str] = &[
-    "overview.get",
-    "source.list",
-    "source.add",
-    "source.remove",
-    "source.scan",
-    "profile.list",
-    "asset.list",
-    "skill.list",
-    "skill.import",
-    "skill.backup",
-    "skill.delete",
-    "skill.mount",
-    "skill.unmount",
-    "skill.group.list",
-    "skill.group.mount",
-    "skill.group.unmount",
-    "doctor.run",
-];
-
-pub(crate) const TAURI_COMMAND_METHODS: &[&str] = &[
-    "get_app_overview",
-    "list_assets",
-    "get_skill_backup_settings",
-    "update_skill_backup_settings",
-    "backup_skill",
-    "list_sources",
-    "list_skill_sources",
-    "create_source",
-    "update_source",
-    "delete_source",
-    "update_asset_description",
-    "delete_asset",
-    "list_profiles",
-    "create_profile",
-    "update_profile",
-    "delete_profile",
-    "get_navigation_model",
-    "update_navigation_model",
-    "list_app_shortcuts",
-    "list_app_shortcut_settings",
-    "update_app_shortcuts",
-    "list_asset_mounts",
-    "list_asset_mount_statuses",
-    "refresh_asset_mount_statuses",
-    "list_skill_groups",
-    "create_skill_group",
-    "update_skill_group",
-    "delete_skill_group",
-    "set_skill_group_manual_members",
-    "apply_skill_group_mount",
-    "preview_skill_group_exclusive_mount",
-    "apply_skill_group_exclusive_mount",
-    "toggle_asset_mount",
-    "mount_asset_mount",
-    "unmount_asset_mount",
-    "set_asset_mount",
-    "scan_sources",
-    "scan_skill_sources",
-    "create_plan",
-    "execute_plan",
-    "logs_get_snapshot",
-    "logs_open_log_directory",
-    "logs_write_operation",
-    "reveal_path",
-];
-
-pub(crate) fn is_service_method(method: &str) -> bool {
-    CLI_SERVICE_METHODS.contains(&method) || TAURI_COMMAND_METHODS.contains(&method)
-}
-
-pub(crate) fn schema_index() -> Value {
-    let mut methods = Vec::new();
-    methods.extend(CLI_SERVICE_METHODS.iter().copied());
-    methods.extend(TAURI_COMMAND_METHODS.iter().copied());
-    methods.extend(["schema.list", "schema.get"]);
-    json!({ "methods": methods })
-}
-
-pub(crate) fn schema_get(method: &str) -> Value {
-    let mut schemas = BTreeMap::new();
-    schemas.insert(
-        "overview.get",
-        json!({
-            "params": {},
-            "cli": "assetiweave-cli overview"
-        }),
-    );
-    schemas.insert(
-        "source.list",
-        json!({
-            "params": {},
-            "cli": "assetiweave-cli source list"
-        }),
-    );
-    schemas.insert(
-        "source.add",
-        json!({
-            "params": {
-                "name": "string",
-                "kind": "local|git_checkout|import|custom",
-                "root_path": "string",
-                "scanner_kind": "skill|mcp|prompt|rule|mixed|custom?",
-                "source_origin": "local_folder|git_repo|assetiweave_library?",
-                "default_kind": "prompt|rule|memory|skill|mcp|agent|command|workflow|profile|custom|unclassified?",
-                "enabled": "bool?",
-                "dry_run": "bool?"
-            },
-            "cli": "assetiweave-cli source add --name <name> --path <path> [--scanner-kind skill] [--dry-run]"
-        }),
-    );
-    schemas.insert(
-        "source.remove",
-        json!({
-            "params": { "id": "string", "yes": "bool", "dry_run": "bool?" },
-            "cli": "assetiweave-cli source remove <source-id> --yes [--dry-run]"
-        }),
-    );
-    schemas.insert(
-        "source.scan",
-        json!({
-            "params": { "kind": "asset_kind?", "dry_run": "bool?" },
-            "cli": "assetiweave-cli source scan [--kind skill] [--dry-run]"
-        }),
-    );
-    schemas.insert(
-        "profile.list",
-        json!({
-            "params": {},
-            "cli": "assetiweave-cli profile list"
-        }),
-    );
-    schemas.insert(
-        "asset.list",
-        json!({
-            "params": { "kind": "prompt|rule|memory|skill|mcp|agent|command|workflow|profile|custom|unclassified?" },
-            "cli": "assetiweave-cli asset list [--kind skill]"
-        }),
-    );
-    schemas.insert(
-        "skill.list",
-        json!({
-            "params": {},
-            "cli": "assetiweave-cli skill list"
-        }),
-    );
-    schemas.insert(
-        "skill.import",
-        json!({
-            "params": { "from": "string", "name": "string?", "dry_run": "bool?" },
-            "cli": "assetiweave-cli skill import --from <dir> [--name <name>] [--dry-run]"
-        }),
-    );
-    schemas.insert(
-        "skill.backup",
-        json!({
-            "params": { "asset_id": "string" },
-            "cli": "assetiweave-cli skill backup <asset-id>"
-        }),
-    );
-    schemas.insert(
-        "get_skill_backup_settings",
-        json!({
-            "params": {},
-            "api": "get_skill_backup_settings"
-        }),
-    );
-    schemas.insert(
-        "update_skill_backup_settings",
-        json!({
-            "params": { "root_path": "string", "migrate": "bool?" },
-            "api": "update_skill_backup_settings"
-        }),
-    );
-    schemas.insert(
-        "backup_skill",
-        json!({
-            "params": { "asset_id": "string" },
-            "api": "backup_skill"
-        }),
-    );
-    schemas.insert(
-        "skill.mount",
-        json!({
-            "params": { "asset_ref": "string", "profile_id": "string", "dry_run": "bool?" },
-            "cli": "assetiweave-cli skill mount <asset-ref> --profile <profile-id> [--dry-run]"
-        }),
-    );
-    schemas.insert(
-        "skill.unmount",
-        json!({
-            "params": { "asset_ref": "string", "profile_id": "string", "dry_run": "bool?" },
-            "cli": "assetiweave-cli skill unmount <asset-ref> --profile <profile-id> [--dry-run]"
-        }),
-    );
-    schemas.insert("skill.delete", json!({
-        "params": { "asset_ref": "string", "yes": "bool", "unmount": "bool?", "dry_run": "bool?" },
-        "cli": "assetiweave-cli skill delete <asset-ref> --yes [--unmount] [--dry-run]"
-    }));
-    schemas.insert(
-        "skill.group.list",
-        json!({
-            "params": {},
-            "cli": "assetiweave-cli skill group list"
-        }),
-    );
-    schemas.insert(
-        "skill.group.mount",
-        json!({
-            "params": { "group_id": "string", "profile_id": "string", "dry_run": "bool?" },
-            "cli": "assetiweave-cli skill group mount <group-id> --profile <profile-id> [--dry-run]"
-        }),
-    );
-    schemas.insert(
-        "skill.group.unmount",
-        json!({
-            "params": { "group_id": "string", "profile_id": "string", "yes": "bool", "dry_run": "bool?" },
-            "cli": "assetiweave-cli skill group unmount <group-id> --profile <profile-id> --yes [--dry-run]"
-        }),
-    );
-    schemas.insert(
-        "doctor.run",
-        json!({
-            "params": {},
-            "cli": "assetiweave-cli doctor"
-        }),
-    );
-    schemas.insert(
-        "schema.list",
-        json!({
-            "params": {},
-            "cli": "assetiweave-cli schema"
-        }),
-    );
-    schemas.insert(
-        "schema.get",
-        json!({
-            "params": { "method": "string?" },
-            "cli": "assetiweave-cli schema get <method>"
-        }),
-    );
-    schemas.remove(method).unwrap_or_else(|| {
-        if TAURI_COMMAND_METHODS.contains(&method) {
-            json!({
-                "method": method,
-                "params": "same JSON shape as the Tauri invoke command arguments",
-                "cli": format!("assetiweave-cli api call {method} --json '<json-params>'")
-            })
-        } else {
-            json!({ "method": method, "params": {}, "cli": null })
-        }
-    })
 }

@@ -1,9 +1,22 @@
 use crate::{
+    conversations::{
+        ExternalAdapterRegisterParams, ExternalAdapterScaffoldParams, ExternalAdapterTryRunParams,
+        ExternalAdapterValidateParams,
+    },
     defaults, executor, logs,
-    path_utils::{default_skill_backup_root, expand_path},
+    path_utils::{
+        default_skill_backup_root, expand_path, find_git_root, git_browser_url,
+        git_repository_for_path,
+    },
     planner, platform, scanner,
-    service::UpdateSkillBackupSettingsParams,
-    service::{AppService, ListAssetsParams, SourceRemoveParams, SourceScanParams},
+    service::{
+        AppService, ConversationAdapterUnregisterParams, ConversationQuestionGetParams,
+        ConversationQuestionListParams, ConversationQuestionMergeParams,
+        ConversationQuestionSplitParams, ConversationSessionExportParams,
+        ConversationSessionGetParams, ConversationSessionListParams,
+        ConversationSourceDisableParams, ConversationSourceUpsertParams, ConversationSyncParams,
+        ListAssetsParams, SourceRemoveParams, SourceScanParams, UpdateSkillBackupSettingsParams,
+    },
     store, targeting,
     types::{
         AppOverview, AppResult, AppShortcut, AppState, ApplyAssetGroupMountResult,
@@ -18,8 +31,8 @@ use crate::{
 };
 use assetiweave_core::{
     AppKind, Asset, AssetGroup, AssetGroupDetail, AssetGroupRules, AssetKind, AssetMount,
-    DeploymentPlan, DeploymentState, DeploymentStrategy, ProfileSafety, RuleSet, Source,
-    SourceKind, SourceOrigin, SourceScannerKind, TargetProfile,
+    ConversationAdapter, ConversationSource, DeploymentPlan, DeploymentState, DeploymentStrategy,
+    ProfileSafety, RuleSet, Source, SourceKind, SourceOrigin, SourceScannerKind, TargetProfile,
 };
 use chrono::Utc;
 use std::{
@@ -1626,6 +1639,168 @@ pub(crate) fn scan_skill_sources(state: State<'_, AppState>) -> AppResult<Vec<Ca
     result
 }
 
+#[tauri::command]
+pub(crate) fn list_conversation_adapters(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<ConversationAdapter>> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.list_conversation_adapters()
+}
+
+#[tauri::command]
+pub(crate) fn scaffold_conversation_adapter(
+    state: State<'_, AppState>,
+    params: ExternalAdapterScaffoldParams,
+) -> AppResult<crate::conversations::ExternalAdapterScaffoldResult> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.scaffold_conversation_adapter(params)
+}
+
+#[tauri::command]
+pub(crate) fn validate_conversation_adapter(
+    state: State<'_, AppState>,
+    params: ExternalAdapterValidateParams,
+) -> AppResult<crate::conversations::ExternalAdapterValidationResult> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.validate_conversation_adapter(params)
+}
+
+#[tauri::command]
+pub(crate) fn register_conversation_adapter(
+    state: State<'_, AppState>,
+    params: ExternalAdapterRegisterParams,
+) -> AppResult<serde_json::Value> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.register_conversation_adapter(params)
+}
+
+#[tauri::command]
+pub(crate) fn unregister_conversation_adapter(
+    state: State<'_, AppState>,
+    params: ConversationAdapterUnregisterParams,
+) -> AppResult<serde_json::Value> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.unregister_conversation_adapter(params)
+}
+
+#[tauri::command]
+pub(crate) fn try_run_conversation_adapter(
+    state: State<'_, AppState>,
+    params: ExternalAdapterTryRunParams,
+) -> AppResult<crate::conversations::ExternalAdapterRunResult> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.try_run_conversation_adapter(params)
+}
+
+#[tauri::command]
+pub(crate) fn list_conversation_sources(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<ConversationSource>> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.list_conversation_sources()
+}
+
+#[tauri::command]
+pub(crate) fn upsert_conversation_source(
+    state: State<'_, AppState>,
+    params: ConversationSourceUpsertParams,
+) -> AppResult<serde_json::Value> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.upsert_conversation_source(params)
+}
+
+#[tauri::command]
+pub(crate) fn disable_conversation_source(
+    state: State<'_, AppState>,
+    params: ConversationSourceDisableParams,
+) -> AppResult<serde_json::Value> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.disable_conversation_source(params)
+}
+
+#[tauri::command]
+pub(crate) fn sync_conversations(
+    state: State<'_, AppState>,
+    params: ConversationSyncParams,
+) -> AppResult<serde_json::Value> {
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.sync_conversations(params)
+    })();
+    match &result {
+        Ok(value) => log_info(
+            "conversation.sync",
+            "同步对话记录成功",
+            &[("result", value.to_string())],
+        ),
+        Err(error) => log_error("conversation.sync", "同步对话记录失败", error, &[]),
+    }
+    result
+}
+
+#[tauri::command]
+pub(crate) fn list_conversation_sessions(
+    state: State<'_, AppState>,
+    params: ConversationSessionListParams,
+) -> AppResult<Vec<store::ConversationSessionListItem>> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.list_conversation_sessions(params)
+}
+
+#[tauri::command]
+pub(crate) fn get_conversation_session(
+    state: State<'_, AppState>,
+    params: ConversationSessionGetParams,
+) -> AppResult<store::ConversationSessionDetail> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.get_conversation_session(params)
+}
+
+#[tauri::command]
+pub(crate) fn export_conversation_session(
+    state: State<'_, AppState>,
+    params: ConversationSessionExportParams,
+) -> AppResult<serde_json::Value> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.export_conversation_session(params)
+}
+
+#[tauri::command]
+pub(crate) fn list_conversation_questions(
+    state: State<'_, AppState>,
+    params: ConversationQuestionListParams,
+) -> AppResult<Vec<store::ConversationQuestionDetail>> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.list_conversation_questions(params)
+}
+
+#[tauri::command]
+pub(crate) fn get_conversation_question(
+    state: State<'_, AppState>,
+    params: ConversationQuestionGetParams,
+) -> AppResult<store::ConversationQuestionDetail> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.get_conversation_question(params)
+}
+
+#[tauri::command]
+pub(crate) fn merge_conversation_questions(
+    state: State<'_, AppState>,
+    params: ConversationQuestionMergeParams,
+) -> AppResult<store::ConversationMutationResult> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.merge_conversation_questions(params)
+}
+
+#[tauri::command]
+pub(crate) fn split_conversation_question(
+    state: State<'_, AppState>,
+    params: ConversationQuestionSplitParams,
+) -> AppResult<store::ConversationMutationResult> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.split_conversation_question(params)
+}
+
 pub(crate) fn scan_selected_sources(
     conn: &rusqlite::Connection,
     sources: Vec<Source>,
@@ -2400,6 +2575,7 @@ pub(crate) fn build_catalog_assets(assets: Vec<Asset>, sources: &[Source]) -> Ve
                 &asset,
                 source_by_id.get(asset.source_id.as_str()).copied(),
             ),
+            repository: None,
             asset,
         });
     }
@@ -2413,6 +2589,7 @@ pub(crate) fn build_catalog_assets(assets: Vec<Asset>, sources: &[Source]) -> Ve
                     &asset,
                     source_by_id.get(asset.source_id.as_str()).copied(),
                 ),
+                repository: None,
                 asset,
             });
             continue;
@@ -2461,9 +2638,11 @@ pub(crate) fn build_catalog_assets(assets: Vec<Asset>, sources: &[Source]) -> Ve
         catalog_assets.push(CatalogAsset {
             asset: canonical,
             backup_status,
+            repository: None,
         });
     }
 
+    attach_git_repository_info(&mut catalog_assets);
     catalog_assets.sort_by(|left, right| {
         left.asset
             .name
@@ -2471,6 +2650,26 @@ pub(crate) fn build_catalog_assets(assets: Vec<Asset>, sources: &[Source]) -> Ve
             .then_with(|| left.asset.relative_path.cmp(&right.asset.relative_path))
     });
     catalog_assets
+}
+
+fn attach_git_repository_info(catalog_assets: &mut [CatalogAsset]) {
+    let mut repository_by_root = HashMap::new();
+    for catalog_asset in catalog_assets {
+        let asset_path = Path::new(&catalog_asset.asset.absolute_path);
+        let Some(repository_root) = find_git_root(asset_path) else {
+            continue;
+        };
+        let repository = repository_by_root
+            .entry(repository_root.clone())
+            .or_insert_with(|| git_repository_for_path(&repository_root));
+        catalog_asset.repository = repository.clone().map(|mut repository| {
+            repository.web_url = repository
+                .remote_url
+                .as_deref()
+                .and_then(|remote| git_browser_url(remote, &repository_root, asset_path));
+            repository
+        });
+    }
 }
 
 fn standalone_backup_status(
@@ -2737,7 +2936,7 @@ mod tests {
         AppKind, AssetFormat, AssetGroup, AssetGroupRules, AssetKind, DeploymentStrategy,
         ProfileSafety, RuleSet, SourceKind,
     };
-    use std::path::PathBuf;
+    use std::{path::PathBuf, process::Command};
 
     #[test]
     fn refresh_recorded_assets_prunes_missing_sources() {
@@ -3769,6 +3968,91 @@ mod tests {
         assert_eq!(catalog.len(), 2);
     }
 
+    #[test]
+    fn catalog_assets_attach_each_nested_repository_remote() {
+        let collection_root = unique_temp_path("assetiweave-catalog-nested-repositories");
+        let first_repo = collection_root.join("first-repo");
+        let second_repo = collection_root.join("second-repo");
+        let first_skill = first_repo.join("skills").join("first-skill");
+        let second_skill = second_repo.join("skills").join("second-skill");
+        std::fs::create_dir_all(&first_skill).expect("create first skill");
+        std::fs::create_dir_all(&second_skill).expect("create second skill");
+        init_git_repo(&first_repo, "https://example.com/first.git");
+        init_git_repo(&second_repo, "git@example.com:second.git");
+
+        let source = test_source("repository-collection", collection_root.clone());
+        let first_asset = test_asset(&source, "first-skill", first_skill);
+        let second_asset = test_asset(&source, "second-skill", second_skill);
+        let catalog = build_catalog_assets(
+            vec![first_asset.clone(), second_asset.clone()],
+            std::slice::from_ref(&source),
+        );
+
+        let first_repository = catalog
+            .iter()
+            .find(|candidate| candidate.asset.id == first_asset.id)
+            .and_then(|candidate| candidate.repository.as_ref())
+            .expect("first repository");
+        let second_repository = catalog
+            .iter()
+            .find(|candidate| candidate.asset.id == second_asset.id)
+            .and_then(|candidate| candidate.repository.as_ref())
+            .expect("second repository");
+        assert_eq!(
+            first_repository.remote_url.as_deref(),
+            Some("https://example.com/first.git")
+        );
+        assert_eq!(
+            second_repository.remote_url.as_deref(),
+            Some("git@example.com:second.git")
+        );
+        assert_eq!(PathBuf::from(&first_repository.root_path), first_repo);
+        assert_eq!(PathBuf::from(&second_repository.root_path), second_repo);
+
+        std::fs::remove_dir_all(collection_root).ok();
+    }
+
+    #[test]
+    fn catalog_assets_attach_repository_browser_url_to_asset_directory() {
+        let repo = unique_temp_path("assetiweave-catalog-repository-browser-url");
+        let skill = repo.join("skills").join("zh-cn").join("office-utils");
+        std::fs::create_dir_all(&skill).expect("create skill");
+        init_git_repo(&repo, "https://github.com/util6/util6-agents.git");
+
+        let source = test_source("repository-root", repo.clone());
+        let asset = test_asset(&source, "office-utils", skill);
+        let catalog = build_catalog_assets(vec![asset.clone()], std::slice::from_ref(&source));
+        let repository = catalog[0].repository.as_ref().expect("repository");
+
+        assert_eq!(
+            repository.web_url.as_deref(),
+            Some("https://github.com/util6/util6-agents/tree/main/skills/zh-cn/office-utils")
+        );
+
+        std::fs::remove_dir_all(repo).ok();
+    }
+
+    #[test]
+    fn catalog_assets_convert_github_ssh_remote_to_browser_url() {
+        let collection_root = unique_temp_path("assetiweave-catalog-ssh-browser-url");
+        let repo = collection_root.join("kicad-happy");
+        let skill = repo.join("skills").join("pcbway");
+        std::fs::create_dir_all(&skill).expect("create skill");
+        init_git_repo(&repo, "git@github.com:aklofas/kicad-happy.git");
+
+        let source = test_source("repository-collection", collection_root.clone());
+        let asset = test_asset(&source, "pcbway", skill);
+        let catalog = build_catalog_assets(vec![asset.clone()], std::slice::from_ref(&source));
+        let repository = catalog[0].repository.as_ref().expect("repository");
+
+        assert_eq!(
+            repository.web_url.as_deref(),
+            Some("https://github.com/aklofas/kicad-happy/tree/main/skills/pcbway")
+        );
+
+        std::fs::remove_dir_all(collection_root).ok();
+    }
+
     fn test_missing_source(id: &str) -> Source {
         let root_path = unique_temp_path(id);
         test_source(id, root_path)
@@ -3880,5 +4164,27 @@ mod tests {
 
     fn unique_temp_path(prefix: &str) -> PathBuf {
         std::env::temp_dir().join(format!("{prefix}-{}", Uuid::new_v4()))
+    }
+
+    fn init_git_repo(path: &Path, remote_url: &str) {
+        std::fs::create_dir_all(path).expect("create repository directory");
+        let init = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(path)
+            .status()
+            .expect("run git init");
+        assert!(init.success());
+        let remote = Command::new("git")
+            .args(["remote", "add", "origin", remote_url])
+            .current_dir(path)
+            .status()
+            .expect("add git remote");
+        assert!(remote.success());
+        let branch = Command::new("git")
+            .args(["checkout", "-b", "main", "--quiet"])
+            .current_dir(path)
+            .status()
+            .expect("create main branch");
+        assert!(branch.success());
     }
 }
