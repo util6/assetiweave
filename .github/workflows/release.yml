@@ -33,9 +33,16 @@ jobs:
         run: |
           set -euo pipefail
           app_version="$(node -p "require('./package.json').version")"
+          tauri_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          contract_engine_version="$(node -p "require('./internal/schema/contract.json').engine_version")"
+          engine_version="$(sed -n '/^\[package\]/,/^\[/s/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n 1)"
           expected_tag="v${app_version}"
           if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
             echo "::error::Release tag $RELEASE_TAG does not match application version $expected_tag"
+            exit 1
+          fi
+          if [[ "$engine_version" != "$app_version" || "$tauri_version" != "$app_version" || "$contract_engine_version" != "$app_version" ]]; then
+            echo "::error::package.json, src-tauri/Cargo.toml, tauri.conf.json, and the embedded CLI contract must share version $app_version"
             exit 1
           fi
           if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
@@ -286,7 +293,9 @@ jobs:
           fi
 
           cargo build --release -p assetiweave --bin assetiweave-engine
-          go build -o "target/release/assetiweave-cli${exe}" .
+          go build -ldflags "-X github.com/util6/assetiweave/internal/protocol.CLIVersion=${RELEASE_TAG#v}" -o "target/release/assetiweave-cli${exe}" .
+
+          ASSETIWEAVE_E2E_PROFILE=release go test -tags=e2e ./tests/cli_e2e
 
           package_dir="dist/release/assetiweave-tools-${RELEASE_TAG}-${{ matrix.target }}"
           mkdir -p "$package_dir"

@@ -41,6 +41,7 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - `scanner/`：资产扫描与分类模块目录，负责 Source 目录遍历、include/exclude glob、`SKILL.md` 目录识别和资产描述提取。后续按规模继续拆分为 walker、classifier、extractor。
 - `planner/`：部署计划生成模块目录，负责 create/skip/conflict 决策和解释文本。后续按 Profile 匹配、目标路径解析、冲突判断继续拆分。
 - `executor/`：部署执行模块目录，负责 `symlink_to_source`、`copy_to_target`、安全边界、非托管文件冲突和 deployment state 记录。后续按 filesystem、strategy、state recorder 继续拆分。
+- `conversations/`：对话记录适配器模块，负责内置 Codex/Claude Code/OpenCode 解析、外部适配器 manifest 校验、可信注册、NDJSON try-run 和标准化 Session/Turn/Part 输出。
 - `defaults.rs`：默认 Source/Profile 模板。
 - `path_utils.rs`：路径展开、相对路径归一化、hash 等跨模块工具。
 - `platform.rs`：平台集成，例如在文件管理器中显示路径。
@@ -75,6 +76,7 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - 中英文 i18n 基础。
 - 前端目录架构已收敛：保留 `services` 和 `pages` 作为项目约定，新增/明确 `layouts`、`router`、`mock`、`store`、`styles`、`types` 等顶层边界。
 - 当前验证基线：`pnpm typecheck`、`pnpm test`、`cargo test`、`pnpm build` 通过；Vite 单 chunk 超过 500 kB 的提示保留为后续性能优化项。
+- Conversation v1 已接入独立领域模型、SQLite 表、Engine/Go CLI 方法、Tauri commands、Session-first 前端页面、Markdown Session 导出和双向导航入口。
 
 下一阶段重点不是继续搭框架，而是补齐挂载闭环的验证和产品边界：更多存储/扫描测试、Profile 规则细化、执行确认与结果展示、导出复制。
 
@@ -97,6 +99,41 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - `styles/`：全局样式入口和设计 token 相关样式。
 - `types/`：前端共享领域类型。
 - `utils/`：纯工具函数。
+
+### 3.5 Conversation 领域架构
+
+Conversation 不属于文件资产 Catalog。它拥有独立的数据流：
+
+```text
+第三方 Session 存储
+  -> Adapter 标准化
+  -> conversation_sessions / turns / parts
+  -> conversation_questions / question_turns
+  -> 搜索、合并拆分、Markdown Session 导出
+```
+
+核心模型：
+
+- `ConversationSession`：第三方 App 的一个 Session，保留来源、外部 ID、标题、项目路径和 source locator。
+- `ConversationTurn`：以真实用户消息为边界的源对齐记录。
+- `ConversationPart`：Turn 内有序内容，支持 text、code_block、command、tool、file_change、subagent。
+- `ConversationQuestion`：用户可见的问题分组，可包含同一 Session 内相邻多个 Turn。
+
+同步原则：
+
+- 导入内容按 source/session/turn 外部 ID 和 fingerprint 幂等更新。
+- Question Group 是分组覆盖层；人工 merge/split 不会被后续同步覆盖。
+- 简单中英文确认/继续回复只在严格 allowlist 命中时自动并入上一 Question。
+- 原始来源消失时保留已导入记录，后续只标记 missing。
+
+外部适配器协议：
+
+- Adapter manifest 使用 schema version 1，声明 id、name、version、protocol version、command、capabilities、input kinds。
+- 运行时通过 stdin 发送 JSON request，通过 stdout 接收 NDJSON。
+- stdout 行类型包括 `item`、`warning`、`complete`、`error`。
+- `item` 必须输出标准化 Session/Turn/Part；AssetIWeave 不接受外部脚本直接输出最终 Question Group。
+- 启动外部脚本时使用 executable + args，不经过 Shell；注册时保存 manifest/executable hash。
+- try-run 与 register/unregister 属于高风险 CLI 操作，必须显式确认。
 
 ```mermaid
 flowchart TB
@@ -248,6 +285,16 @@ source repo asset
 - SQLite Catalog 已经提供集中视图，不需要通过中间目录表达“集中管理”。
 
 `asset_mounts` 是部署计划的主要输入。计划生成不再默认尝试所有 Profile，而是只对已启用的挂载关系生成 create/update/remove/skip/conflict 动作。
+
+### 4.4.2 Conversation Records
+
+对话记录页面挂在顶层 `Conversations` tab 下，采用 Session-first 信息架构：
+
+- `Sessions`：先搜索/选择 Session，再浏览该 Session 中的 Question Group。
+- `Sources`：查看 Codex、Claude Code、OpenCode 和手动/外部来源，并触发同步。
+- `Adapters`：查看内置与外部适配器、信任状态和 CLI 开发工作流。
+
+页面不嵌入 AI API。需要 AI 辅助整理时，UI 提供 CLI 指令，引导外部 Agent/Skill 调用 `assetiweave-cli conversation ...` 完成同步、检查、merge/split 和导出。
 
 ### 4.5 Settings
 
