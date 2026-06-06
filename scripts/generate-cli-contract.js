@@ -8,7 +8,7 @@ const exe = process.platform === "win32" ? ".exe" : "";
 const engine =
   process.env.ASSETIWEAVE_ENGINE ??
   join(root, "target", "debug", `assetiweave-engine${exe}`);
-const output = join(root, "internal", "schema", "contract.json");
+const output = join(root, "cli", "internal", "schema", "contract.json");
 
 if (!existsSync(engine)) {
   console.error(`assetiweave-engine not found at ${engine}; run pnpm engine:build first`);

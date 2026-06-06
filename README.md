@@ -242,7 +242,7 @@ pnpm cli:run -- doctor
 pnpm typecheck
 pnpm test
 pnpm build
-go test ./...
+pnpm cli:test
 cargo test --workspace
 ```
 

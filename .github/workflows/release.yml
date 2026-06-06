@@ -32,9 +32,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          node scripts/release-audit.js --static-only
           app_version="$(node -p "require('./package.json').version")"
           tauri_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
-          contract_engine_version="$(node -p "require('./internal/schema/contract.json').engine_version")"
+          contract_engine_version="$(node -p "require('./cli/internal/schema/contract.json').engine_version")"
           engine_version="$(sed -n '/^\[package\]/,/^\[/s/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n 1)"
           expected_tag="v${app_version}"
           if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
@@ -270,6 +271,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.24"
+          cache-dependency-path: cli/go.sum
           cache: true
 
       - name: Setup Rust
@@ -293,9 +295,9 @@ jobs:
           fi
 
           cargo build --release -p assetiweave --bin assetiweave-engine
-          go build -ldflags "-X github.com/util6/assetiweave/internal/protocol.CLIVersion=${RELEASE_TAG#v}" -o "target/release/assetiweave-cli${exe}" .
+          ASSETIWEAVE_CLI_OUTPUT="target/release/assetiweave-cli${exe}" node scripts/build-cli.js
 
-          ASSETIWEAVE_E2E_PROFILE=release go test -tags=e2e ./tests/cli_e2e
+          ASSETIWEAVE_E2E_PROFILE=release go test -C cli -tags=e2e ./tests/cli_e2e
 
           package_dir="dist/release/assetiweave-tools-${RELEASE_TAG}-${{ matrix.target }}"
           mkdir -p "$package_dir"
@@ -308,6 +310,11 @@ jobs:
           else
             tar -czf "dist/release/assetiweave-tools-${RELEASE_TAG}-${{ matrix.target }}.tar.gz" -C dist/release "$(basename "$package_dir")"
           fi
+          for archive in dist/release/assetiweave-tools-${RELEASE_TAG}-${{ matrix.target }}.*; do
+            if [[ "$archive" == *.tar.gz || "$archive" == *.zip ]]; then
+              node -e "const fs=require('fs'); const crypto=require('crypto'); const path=require('path'); const file=process.argv[1]; const hash=crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'); fs.writeFileSync(file+'.sha256', hash+'  '+path.basename(file)+'\n');" "$archive"
+            fi
+          done
 
       - name: Upload CLI tools
         uses: softprops/action-gh-release@v2
@@ -317,7 +324,9 @@ jobs:
           prerelease: false
           files: |
             dist/release/*.tar.gz
+            dist/release/*.tar.gz.sha256
             dist/release/*.zip
+            dist/release/*.zip.sha256
 
   publish-release:
     name: Verify and publish release
@@ -351,6 +360,11 @@ jobs:
           signature_count="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name | select(endswith(".sig"))] | length')"
           if (( signature_count < 4 )); then
             echo "::error::Expected at least four updater signature assets, found $signature_count"
+            exit 1
+          fi
+          checksum_count="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name | select(endswith(".sha256"))] | length')"
+          if (( checksum_count < 4 )); then
+            echo "::error::Expected at least four CLI tools checksum assets, found $checksum_count"
             exit 1
           fi
 

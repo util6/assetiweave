@@ -5,13 +5,16 @@ use assetiweave_core::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Mutex};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 pub(crate) type AppResult<T> = Result<T, String>;
 
 pub(crate) struct AppState {
     pub(crate) db_path: PathBuf,
-    pub(crate) lock: Mutex<()>,
+    pub(crate) lock: Arc<Mutex<()>>,
 }
 
 #[derive(Debug, Serialize)]

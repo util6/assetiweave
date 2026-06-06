@@ -1,3 +1,4 @@
+mod app_settings;
 mod command_registry;
 mod commands;
 mod conversations;
@@ -22,27 +23,27 @@ use crate::{
         apply_skill_group_exclusive_mount, apply_skill_group_mount, backup_skill, create_plan,
         create_profile, create_skill_group, create_source, delete_asset, delete_profile,
         delete_skill_group, delete_source, disable_conversation_source, execute_plan,
-        export_conversation_session, get_app_overview, get_conversation_question,
+        export_conversation_session, get_app_overview, get_app_settings, get_conversation_question,
         get_conversation_session, get_navigation_model, get_skill_backup_settings,
         list_app_shortcut_settings, list_app_shortcuts, list_asset_mount_statuses,
         list_asset_mounts, list_assets, list_conversation_adapters, list_conversation_questions,
         list_conversation_sessions, list_conversation_sources, list_profiles, list_skill_groups,
         list_skill_sources, list_sources, merge_conversation_questions, mount_asset_mount,
         preview_skill_group_exclusive_mount, refresh_asset_mount_statuses,
-        register_conversation_adapter, reveal_path, scaffold_conversation_adapter,
-        scan_skill_sources, scan_sources, set_asset_mount, set_skill_group_manual_members,
-        split_conversation_question, sync_conversations, toggle_asset_mount,
-        try_run_conversation_adapter, unmount_asset_mount, unregister_conversation_adapter,
-        update_app_shortcuts, update_asset_description, update_navigation_model, update_profile,
-        update_skill_backup_settings, update_skill_group, update_source,
-        upsert_conversation_source, validate_conversation_adapter,
+        register_conversation_adapter, reveal_path, save_app_settings,
+        scaffold_conversation_adapter, scan_skill_sources, scan_sources, set_asset_mount,
+        set_skill_group_manual_members, split_conversation_question, sync_conversations,
+        toggle_asset_mount, try_run_conversation_adapter, unmount_asset_mount,
+        unregister_conversation_adapter, update_app_shortcuts, update_asset_description,
+        update_navigation_model, update_profile, update_skill_backup_settings, update_skill_group,
+        update_source, upsert_conversation_source, validate_conversation_adapter,
     },
     logs::{logs_get_snapshot, logs_open_log_directory, logs_write_operation},
     path_utils::app_db_path,
     store::open_initialized,
     types::AppState,
 };
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -89,10 +90,12 @@ pub fn run() {
         })
         .manage(AppState {
             db_path,
-            lock: Mutex::new(()),
+            lock: Arc::new(Mutex::new(())),
         })
         .invoke_handler(tauri::generate_handler![
             get_app_overview,
+            get_app_settings,
+            save_app_settings,
             list_assets,
             get_skill_backup_settings,
             update_skill_backup_settings,

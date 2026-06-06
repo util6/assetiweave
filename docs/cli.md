@@ -19,7 +19,7 @@ the same business rules.
 ## Architecture Parity Snapshot
 
 This assessment compares AssetIWeave CLI against the reusable architecture of
-`larksuite/cli` at local reference commit `c000dc3`. The goal is architectural
+`larksuite/cli` at remote reference commit `8c3cba1`. The goal is architectural
 parity, not copying Lark-specific product domains such as cloud OAuth, OpenAPI
 HTTP transport, or Feishu event resources.
 
@@ -33,18 +33,18 @@ HTTP transport, or Feishu event resources.
 | Plugin platform | Mostly implemented | Observer, Wrapper, Lifecycle, Restrict rules, failure policy, version constraints, inventory, and local config are available. |
 | Plugin diagnostics | Implemented | `config plugins show` exposes inventory and config key names without leaking config values. |
 | User policy pruning | Implemented for CLI plugins | Plugin restrictions and parent aggregation are present; Lark's YAML user policy layer is represented by `ASSETIWEAVE_POLICY_PATH`. |
-| Structured error contract | Partial | A typed `errs/` taxonomy now exists; plugin config, CLI-side Engine boundary errors, and local API/App JSON validation errors are typed. Subtype declarations and raw subtype casts are guarded, and legacy `ExitError` construction is frozen by a shrinking source baseline. Engine-returned business errors and promotion are still pending. |
-| Bootstrap/global UX flags | Partial | The CLI has a minimal root bootstrap; it lacks Lark-style global option parsing, profile hiding policy, update notices, and richer completion gating. |
+| Structured error contract | Implemented | A typed `cli/errs/` taxonomy covers CLI-local and Engine-returned validation, config, policy, hook, confirmation, business, protocol, and internal failures. Explicit wire types preserve the existing agent-facing `error.type`, exit codes, details, hints, and invocation metadata. Declared subtype, raw subtype cast, and zero-baseline legacy construction gates prevent regression. |
+| Command recovery | Implemented | Unknown root/nested commands, unknown or misplaced flags, invalid flag values, missing required flags, and positional argument errors return exit 2 typed validation envelopes with stable command/flag suggestions. Pure command groups remain outside metadata, policy, and plugin invocation semantics. |
+| Bootstrap/global UX flags | Implemented | The CLI has root bootstrap, diagnostic bypasses, pre-parsed `--plugin-config`, global `--engine`/`--policy` overrides, completion bootstrap gating, and an opt-in profile command hiding policy for single-profile packaging. |
 | Output adapters | Intentionally minimal | AssetIWeave is currently JSON-first for AI agents; Lark's table/CSV/JQ/color format layer is not copied. |
 | Auth, credentials, transport | Product-specific gap | Lark's OAuth/keychain/HTTP transport stack should not be copied directly. AssetIWeave needs equivalent local workspace/profile/Engine endpoint config only if the desktop app requires it. |
 | Event runtime | Product-specific gap | Lark's event consume/status/stop runtime maps to Feishu webhooks. AssetIWeave should add a local event or conversation runtime only when the desktop app exposes that workflow. |
-| Release/update notices | Missing | Lark has update and skills-drift notices plus self-update support; AssetIWeave currently only builds and tests local binaries. |
-| Static architecture gates | Partial | Contract drift and e2e gates exist. Error-contract lint, command metadata lint, and broader release audit are still missing. |
+| Release/update notices | Partial | `version` reports CLI release provenance, Engine compatibility, and optional remote updater-manifest diagnostics via `--check-updates`. Release builds inject cached `_notice.update` hints into JSON envelopes when a newer manifest version is known. `update --check` resolves the matching CLI tools release package, and `update --yes` downloads, checksum-verifies, and replaces local CLI tools. Skills-drift notices are still missing. |
+| Static architecture gates | Implemented | Contract drift, e2e, declared error subtype, raw subtype cast, zero-baseline legacy error-construction, command metadata, and release audit gates exist. |
 
-Near-term work should continue migrating legacy error producers into typed
-errors, then add bootstrap/global config, release/update diagnostics, and
-stricter static gates. Product-specific Lark domains should be translated only
-when AssetIWeave has the matching desktop workflow.
+Near-term work should add skills-drift notices once AssetIWeave has a reliable
+external skill-state source. Product-specific Lark domains should be translated
+only when AssetIWeave has the matching desktop workflow.
 
 ## Build
 
@@ -75,7 +75,7 @@ temporary locations.
 binary is available.
 
 `pnpm cli:contract` exports the Rust command registry to
-`internal/schema/contract.json`. The Go CLI embeds this file to construct the
+`cli/internal/schema/contract.json`. The Go CLI embeds this file to construct the
 generated App command layer. Rust tests fail when the committed contract drifts
 from the registry.
 
@@ -124,6 +124,23 @@ registered plugins
   -> Observer / Wrapper command hooks
   -> Startup and Shutdown lifecycle hooks
 ```
+
+Shell completion runs through a lightweight bootstrap path. `completion`,
+`__complete`, and `__completeNoDesc` build the command tree and metadata but
+skip plugin config loading, plugin install, Startup/Shutdown hooks, command
+policy pruning, and update notices so completion output is not corrupted by
+runtime diagnostics or network work.
+
+Single-profile builds can set `ASSETIWEAVE_CLI_HIDE_PROFILES=1` to hide the
+`profile` command group from help and shell completion while keeping explicit
+commands such as `assetiweave-cli profile list` executable for diagnostics and
+automation.
+
+CLI syntax failures use the same typed JSON error contract as Engine and plugin
+failures. A mistyped nested command no longer falls through to help with exit
+0, and Cobra parse errors no longer surface as internal failures. Error details
+include `command_path`, the unknown token, available commands or flags, and
+ranked suggestions where a plausible match exists.
 
 Plugins declare a failure policy. `FailOpen` plugins that fail installation are
 skipped with a warning. `FailClosed` plugins block startup with a structured
@@ -208,11 +225,33 @@ compiled CLI and Engine together and verifies product-version alignment,
 protocol compatibility, generated App commands, runtime parameter validation,
 command policy, invocation metadata, and high-risk confirmation.
 
+`assetiweave-cli version --check-updates` reads the remote Tauri updater
+manifest and reports non-blocking diagnostics under `data.update`. Successful
+checks refresh `$HOME/.assetiweave-cli/update-state.json`. Normal release
+commands read that cache and inject a structured `_notice.update` object into
+success and error JSON envelopes when a newer CLI version is known. The notice
+is suppressed for dev builds and CI environments; set
+`ASSETIWEAVE_CLI_NO_UPDATE_NOTIFIER=1` to suppress it in other automation.
+Tests and isolated runs can override `ASSETIWEAVE_UPDATE_STATE_PATH` and
+`ASSETIWEAVE_UPDATE_MANIFEST_URL`.
+
+`assetiweave-cli update --check` uses the same manifest to resolve the GitHub
+release URL and the current platform's CLI tools archive, such as
+`assetiweave-tools-v0.1.1-macos-arm64.tar.gz`, plus its `.sha256` checksum.
+`assetiweave-cli update --yes` downloads both files, verifies SHA256, extracts
+the archive into a temporary directory, and replaces `assetiweave-cli` and
+`assetiweave-engine` in the running executable's directory with rollback on
+installation failure.
+
 ## Commands
 
 ```bash
 assetiweave-cli overview
 assetiweave-cli version
+assetiweave-cli settings show
+assetiweave-cli settings save --json '{"density":"compact"}'
+assetiweave-cli update --check
+assetiweave-cli update --yes
 assetiweave-cli source list
 assetiweave-cli source add --name LocalSkills --path ./skills --dry-run
 assetiweave-cli source scan --kind skill
@@ -318,7 +357,7 @@ When adding or changing an App operation:
    nested schemas, Engine dispatch, and generated App CLI flags all come from
    this registration.
 5. Run `pnpm cli:contract`.
-6. Run `go test ./...`, `cargo test --workspace`, and `pnpm cli:test:e2e`.
+6. Run `pnpm cli:test`, `cargo test --workspace`, and `pnpm cli:test:e2e`.
 
 The Rust tests compare frontend invokes, Tauri handlers, executable registry
 entries, and the committed Go contract. Any missing synchronization fails CI.

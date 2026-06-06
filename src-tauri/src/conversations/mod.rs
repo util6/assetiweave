@@ -773,17 +773,18 @@ fn read_opencode_turns(
             .map(|rows| normalize_opencode_parts(rows, message_role.as_str()))
             .unwrap_or_default();
         if message_role == "user" {
-            if let Some(turn) = current.take() {
-                turns.push(turn);
-            }
             let user_text = parts
                 .iter()
                 .filter(|part| part.role == ConversationPartRole::User)
+                .filter(|part| part.kind == ConversationPartKind::Text)
                 .filter_map(|part| part.text.clone())
                 .collect::<Vec<_>>()
                 .join("\n\n");
             if user_text.trim().is_empty() {
                 continue;
+            }
+            if let Some(turn) = current.take() {
+                turns.push(turn);
             }
             current = Some(NormalizedConversationTurn {
                 external_id: message_id,
@@ -813,7 +814,11 @@ struct OpenCodePartRow {
     kind: String,
     text: String,
     command: Option<String>,
+    cwd: Option<String>,
+    status: Option<String>,
+    exit_code: Option<i32>,
     metadata_json: Option<String>,
+    ignored: bool,
 }
 
 fn read_opencode_part_rows(
@@ -861,10 +866,19 @@ fn read_opencode_part_rows(
                     .and_then(|value| value_field_any_as_string(value, &["type", "kind"]))
             })
             .unwrap_or_else(|| "text".to_string());
-        let text =
-            text.unwrap_or_else(|| data_value.as_ref().map(extract_text).unwrap_or_default());
+        let text = text
+            .or_else(|| {
+                data_value
+                    .as_ref()
+                    .and_then(|value| opencode_part_text(&kind, value))
+            })
+            .unwrap_or_default();
         let command = data_value.as_ref().and_then(command_from_value);
+        let cwd = data_value.as_ref().and_then(cwd_from_value);
+        let status = data_value.as_ref().and_then(status_from_value);
+        let exit_code = data_value.as_ref().and_then(exit_code_from_value);
         let metadata_json = data_value.as_ref().map(compact_json);
+        let ignored = data_value.as_ref().is_some_and(is_ignored_content_value);
         by_message
             .entry(message_id)
             .or_default()
@@ -872,7 +886,11 @@ fn read_opencode_part_rows(
                 kind,
                 text,
                 command,
+                cwd,
+                status,
+                exit_code,
                 metadata_json,
+                ignored,
             });
     }
 
@@ -885,13 +903,19 @@ fn normalize_opencode_parts(
 ) -> Vec<NormalizedConversationPart> {
     let mut parts = Vec::new();
     for row in rows {
+        if row.ignored {
+            continue;
+        }
         if matches!(
             row.kind.as_str(),
-            "reasoning" | "step-start" | "step-finish"
+            "reasoning" | "step-start" | "step-finish" | "compaction" | "retry" | "snapshot"
         ) {
             continue;
         }
         let mapped_kind = match row.kind.as_str() {
+            "tool" | "tool-call" | "tool-result" if row.command.is_some() => {
+                ConversationPartKind::Command
+            }
             "tool" | "tool-call" | "tool-result" => ConversationPartKind::Tool,
             "command" => ConversationPartKind::Command,
             "file" | "patch" => ConversationPartKind::FileChange,
@@ -917,9 +941,9 @@ fn normalize_opencode_parts(
                 text: (!row.text.trim().is_empty()).then_some(row.text.clone()),
                 language: None,
                 command: row.command.clone(),
-                cwd: None,
-                status: None,
-                exit_code: None,
+                cwd: row.cwd.clone(),
+                status: row.status.clone(),
+                exit_code: row.exit_code,
                 metadata_json: row.metadata_json.clone(),
             });
         }
@@ -976,11 +1000,9 @@ fn parse_jsonl_conversation(
             .or_else(|| string_field_any(&value, &["type"]))
             .unwrap_or_default();
 
-        if role.as_deref() == Some("user") && !is_synthetic_user_event(payload) {
-            let user_text = extract_text(payload);
-            if user_text.trim().is_empty() {
-                continue;
-            }
+        if let Some(user_text) =
+            real_user_text_for_event(&value, payload, flavor, role.as_deref(), &record_type)
+        {
             if let Some(turn) = current.take() {
                 turns.push(turn);
             }
@@ -1001,6 +1023,13 @@ fn parse_jsonl_conversation(
         let Some(turn) = current.as_mut() else {
             continue;
         };
+        if matches!(flavor, ParserFlavor::ClaudeCode) && is_user_tool_result_message(payload) {
+            if let Some(part) = tool_part_from_event(payload) {
+                turn.parts.push(part);
+            }
+            turn.ended_at = timestamp;
+            continue;
+        }
         if role.as_deref() == Some("assistant") {
             let text = extract_text(payload);
             if !text.trim().is_empty() {
@@ -1012,11 +1041,7 @@ fn parse_jsonl_conversation(
             turn.ended_at = timestamp;
             continue;
         }
-        if record_type.contains("tool")
-            || record_type.contains("function")
-            || record_type.contains("exec")
-            || payload.get("tool_use_id").is_some()
-        {
+        if is_tool_record(&record_type, payload) {
             if let Some(part) = tool_part_from_event(payload) {
                 turn.parts.push(part);
             }
@@ -1031,29 +1056,87 @@ fn parse_jsonl_conversation(
 
 fn tool_part_from_event(value: &Value) -> Option<NormalizedConversationPart> {
     let command = command_from_value(value);
-    let text = extract_text(value);
+    let text = tool_text_from_event(value);
+    let record_type = string_field_any(value, &["type"]).unwrap_or_default();
+    let tool_name = tool_name_from_value(value);
+    let fallback_text = tool_name.as_ref().map(|name| {
+        let event_type = if record_type.is_empty() {
+            "tool".to_string()
+        } else {
+            record_type.clone()
+        };
+        format!("{event_type}: {name}")
+    });
+    let text = if text.trim().is_empty() {
+        fallback_text.unwrap_or_default()
+    } else {
+        text
+    };
     if command.is_none() && text.trim().is_empty() {
         return None;
     }
+    let kind = if is_file_change_tool(&record_type, tool_name.as_deref(), value) {
+        ConversationPartKind::FileChange
+    } else if command.is_some() || record_type.contains("shell") {
+        ConversationPartKind::Command
+    } else {
+        ConversationPartKind::Tool
+    };
     Some(NormalizedConversationPart {
         role: ConversationPartRole::Tool,
-        kind: if command.is_some() {
-            ConversationPartKind::Command
-        } else {
-            ConversationPartKind::Tool
-        },
+        kind,
         text: (!text.trim().is_empty()).then_some(text),
         language: None,
         command,
-        cwd: string_field_any(value, &["cwd", "workdir"]),
-        status: string_field_any(value, &["status"]),
-        exit_code: value
-            .get("exit_code")
-            .or_else(|| value.get("exitCode"))
-            .and_then(Value::as_i64)
-            .map(|value| value as i32),
+        cwd: cwd_from_value(value),
+        status: status_from_value(value),
+        exit_code: exit_code_from_value(value),
         metadata_json: Some(compact_json(value)),
     })
+}
+
+fn is_tool_record(record_type: &str, payload: &Value) -> bool {
+    record_type.contains("tool")
+        || record_type.contains("function")
+        || record_type.contains("exec")
+        || record_type.contains("shell")
+        || record_type == "patch"
+        || payload.get("tool_use_id").is_some()
+        || payload.get("toolUseID").is_some()
+        || payload.get("call_id").is_some()
+        || payload.get("callID").is_some()
+        || payload.get("tool_name").is_some()
+        || payload.get("toolName").is_some()
+}
+
+fn is_file_change_tool(record_type: &str, tool_name: Option<&str>, value: &Value) -> bool {
+    record_type == "patch"
+        || tool_name.is_some_and(|name| {
+            let name = name.to_ascii_lowercase();
+            name.contains("apply_patch") || name.contains("patch") || name.contains("edit")
+        })
+        || value
+            .get("arguments")
+            .and_then(parse_json_string_value)
+            .as_ref()
+            .is_some_and(value_contains_file_change_key)
+        || value
+            .get("arguments")
+            .is_some_and(value_contains_file_change_key)
+}
+
+fn value_contains_file_change_key(value: &Value) -> bool {
+    match value {
+        Value::Array(items) => items.iter().any(value_contains_file_change_key),
+        Value::Object(object) => {
+            object.contains_key("patch")
+                || object.contains_key("diff")
+                || object.contains_key("file_change")
+                || object.contains_key("fileChange")
+                || object.values().any(value_contains_file_change_key)
+        }
+        _ => false,
+    }
 }
 
 fn event_payload(value: &Value) -> &Value {
@@ -1073,31 +1156,392 @@ fn role_of(value: &Value) -> Option<String> {
     })
 }
 
+fn real_user_text_for_event(
+    value: &Value,
+    payload: &Value,
+    flavor: ParserFlavor,
+    role: Option<&str>,
+    record_type: &str,
+) -> Option<String> {
+    if is_synthetic_user_event(value) || is_synthetic_user_event(payload) {
+        return None;
+    }
+    if matches!(flavor, ParserFlavor::ClaudeCode) && is_user_tool_result_message(payload) {
+        return None;
+    }
+
+    let is_user_boundary = match flavor {
+        ParserFlavor::Codex => {
+            role == Some("user") && is_message_like_payload(payload, record_type)
+        }
+        ParserFlavor::ClaudeCode => {
+            (record_type == "user" && value.get("content").is_some())
+                || (role == Some("user") && is_message_like_payload(payload, record_type))
+        }
+    };
+    if !is_user_boundary {
+        return None;
+    }
+
+    let text = extract_user_message_text(payload);
+    clean_real_user_text(&text)
+}
+
+fn is_message_like_payload(payload: &Value, record_type: &str) -> bool {
+    record_type == "message" || payload.get("content").is_some() || payload.get("text").is_some()
+}
+
 fn is_synthetic_user_event(value: &Value) -> bool {
-    let text = compact_json(value);
-    text.contains("tool_result") || text.contains("function_call_output")
+    if is_ignored_content_value(value) {
+        return true;
+    }
+    let event_type = string_field_any(value, &["type"]).unwrap_or_default();
+    matches!(
+        event_type.as_str(),
+        "attachment"
+            | "auth_status"
+            | "compaction"
+            | "compaction_summary"
+            | "context_compaction"
+            | "custom_tool_call"
+            | "custom_tool_call_output"
+            | "event_msg"
+            | "function_call"
+            | "function_call_output"
+            | "grouped_tool_use"
+            | "hook_result"
+            | "image_generation_call"
+            | "local_shell_call"
+            | "mcp_tool_call"
+            | "mcp_tool_call_output"
+            | "progress"
+            | "rate_limit_event"
+            | "reasoning"
+            | "result"
+            | "system"
+            | "tombstone"
+            | "tool_result"
+            | "tool_search_call"
+            | "tool_search_output"
+            | "tool_use"
+            | "tool_use_summary"
+            | "turn_context"
+            | "web_search_call"
+    ) || value.get("tool_use_id").is_some()
+        || value.get("toolUseID").is_some()
+        || value.get("call_id").is_some()
+        || value.get("callID").is_some()
+        || value.get("tool_name").is_some()
+        || value.get("toolName").is_some()
+}
+
+fn extract_user_message_text(value: &Value) -> String {
+    let mut texts = Vec::new();
+    if let Some(content) = value.get("content") {
+        collect_user_content_text(content, &mut texts);
+    } else if let Some(text) = value.get("text").and_then(Value::as_str) {
+        texts.push(text.to_string());
+    }
+    texts.join("\n\n").trim().to_string()
+}
+
+fn collect_user_content_text(value: &Value, texts: &mut Vec<String>) {
+    match value {
+        Value::String(text) => {
+            if !text.trim().is_empty() {
+                texts.push(text.clone());
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_user_content_text(item, texts);
+            }
+        }
+        Value::Object(object) => {
+            let item_type = object.get("type").and_then(Value::as_str).unwrap_or("");
+            if object_flag_true(object, &["synthetic", "ignored", "isSynthetic", "isMeta"]) {
+                return;
+            }
+            if matches!(
+                item_type,
+                "attachment"
+                    | "file"
+                    | "hook_result"
+                    | "image"
+                    | "input_image"
+                    | "reasoning"
+                    | "thinking"
+                    | "tool_result"
+                    | "tool_use"
+            ) {
+                return;
+            }
+            if matches!(item_type, "" | "text" | "input_text" | "user" | "message") {
+                if let Some(text) = object.get("text").and_then(Value::as_str) {
+                    if !text.trim().is_empty() {
+                        texts.push(text.to_string());
+                    }
+                    return;
+                }
+            }
+            if let Some(input_text) = object.get("input_text").and_then(Value::as_str) {
+                if !input_text.trim().is_empty() {
+                    texts.push(input_text.to_string());
+                }
+                return;
+            }
+            if let Some(content) = object.get("content") {
+                collect_user_content_text(content, texts);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_user_tool_result_message(value: &Value) -> bool {
+    value
+        .get("content")
+        .is_some_and(|content| value_contains_type(content, "tool_result"))
+}
+
+fn value_contains_type(value: &Value, expected_type: &str) -> bool {
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .any(|item| value_contains_type(item, expected_type)),
+        Value::Object(object) => {
+            object.get("type").and_then(Value::as_str) == Some(expected_type)
+                || object
+                    .get("content")
+                    .is_some_and(|content| value_contains_type(content, expected_type))
+        }
+        _ => false,
+    }
+}
+
+fn clean_real_user_text(text: &str) -> Option<String> {
+    clean_real_user_fragment(text)
+}
+
+fn clean_real_user_fragment(fragment: &str) -> Option<String> {
+    let mut remaining = fragment.trim();
+    loop {
+        if remaining.starts_with("# AGENTS.md instructions for ") {
+            let end = remaining.find("</INSTRUCTIONS>")?;
+            remaining = remaining[end + "</INSTRUCTIONS>".len()..].trim_start();
+            continue;
+        }
+        if remaining.starts_with("<environment_context") {
+            let end = remaining.find("</environment_context>")?;
+            remaining = remaining[end + "</environment_context>".len()..].trim_start();
+            continue;
+        }
+        if remaining.starts_with("<codex_internal_context") {
+            let end = remaining.find("</codex_internal_context>")?;
+            remaining = remaining[end + "</codex_internal_context>".len()..].trim_start();
+            continue;
+        }
+        if let Some(next) = strip_wrapped_prefix(remaining, "permissions instructions") {
+            remaining = next;
+            continue;
+        }
+        if let Some(next) = strip_wrapped_prefix(remaining, "app-context") {
+            remaining = next;
+            continue;
+        }
+        if let Some(next) = strip_wrapped_prefix(remaining, "personality_spec") {
+            remaining = next;
+            continue;
+        }
+        if let Some(next) = strip_wrapped_prefix(remaining, "skills_instructions") {
+            remaining = next;
+            continue;
+        }
+        if let Some(next) = strip_wrapped_prefix(remaining, "plugins_instructions") {
+            remaining = next;
+            continue;
+        }
+        break;
+    }
+    (!remaining.trim().is_empty()).then(|| remaining.trim().to_string())
+}
+
+fn strip_wrapped_prefix<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
+    if !text.starts_with(&format!("<{tag}")) {
+        return None;
+    }
+    let closing = format!("</{tag}>");
+    let end = text.find(&closing)?;
+    Some(text[end + closing.len()..].trim_start())
+}
+
+fn opencode_part_text(kind: &str, value: &Value) -> Option<String> {
+    if is_ignored_content_value(value) {
+        return None;
+    }
+    let text = match kind {
+        "text" => string_field_any(value, &["text", "content"]),
+        "tool" | "tool-call" | "tool-result" => {
+            let text = tool_text_from_event(value);
+            (!text.trim().is_empty()).then_some(text)
+        }
+        "patch" => {
+            string_field_any(value, &["text", "patch", "diff", "summary", "path"]).or_else(|| {
+                let text = tool_text_from_event(value);
+                (!text.trim().is_empty()).then_some(text)
+            })
+        }
+        "file" => string_field_any(value, &["path", "filename", "name", "text", "summary"]),
+        "subtask" => string_field_any(value, &["description", "prompt", "command", "agent"]),
+        "agent" => string_field_any(value, &["agent", "summary", "text", "description"]),
+        _ => {
+            let text = extract_text(value);
+            (!text.trim().is_empty()).then_some(text)
+        }
+    };
+    text.filter(|text| !text.trim().is_empty())
+}
+
+fn tool_text_from_event(value: &Value) -> String {
+    let mut texts = Vec::new();
+    for key in [
+        "output",
+        "tool_output",
+        "toolOutput",
+        "result",
+        "content",
+        "summary",
+        "message",
+        "error",
+    ] {
+        if let Some(child) = value.get(key) {
+            collect_tool_text(child, &mut texts);
+        }
+    }
+    if let Some(state) = value.get("state") {
+        for key in ["title", "output", "error", "message"] {
+            if let Some(child) = state.get(key) {
+                collect_tool_text(child, &mut texts);
+            }
+        }
+    }
+    if texts.is_empty() {
+        if let Some(arguments) = value.get("arguments") {
+            if let Some(parsed) = parse_json_string_value(arguments) {
+                collect_tool_text(&parsed, &mut texts);
+            } else {
+                collect_tool_text(arguments, &mut texts);
+            }
+        }
+    }
+    texts.join("\n").trim().to_string()
+}
+
+fn collect_tool_text(value: &Value, texts: &mut Vec<String>) {
+    match value {
+        Value::String(text) => {
+            if !text.trim().is_empty() {
+                texts.push(text.clone());
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_tool_text(item, texts);
+            }
+        }
+        Value::Object(object) => {
+            if object_flag_true(
+                object,
+                &[
+                    "ignored",
+                    "synthetic",
+                    "isSynthetic",
+                    "isMeta",
+                    "isVisibleInTranscriptOnly",
+                ],
+            ) {
+                return;
+            }
+            let item_type = object.get("type").and_then(Value::as_str).unwrap_or("");
+            if matches!(
+                item_type,
+                "thinking" | "reasoning" | "step-start" | "step-finish" | "snapshot" | "retry"
+            ) {
+                return;
+            }
+            for key in [
+                "text", "content", "output", "result", "summary", "stdout", "stderr", "preview",
+                "message", "title", "patch", "diff",
+            ] {
+                if let Some(child) = object.get(key) {
+                    collect_tool_text(child, texts);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn command_from_value(value: &Value) -> Option<String> {
-    if let Some(command) = string_field_any(value, &["command", "cmd"]) {
-        return Some(command);
+    command_from_value_inner(value, 0)
+}
+
+fn command_from_value_inner(value: &Value, depth: usize) -> Option<String> {
+    if depth > 8 {
+        return None;
     }
-    if let Some(args) = value.get("arguments").or_else(|| value.get("args")) {
-        if let Some(command) = string_field_any(args, &["command", "cmd"]) {
-            return Some(command);
+    let object = value.as_object()?;
+    if let Some(command) = string_field_any(value, &["command", "cmd", "shell_command"]) {
+        return Some(command).filter(|value| !value.trim().is_empty());
+    }
+    for key in [
+        "action",
+        "input",
+        "tool_input",
+        "toolInput",
+        "state",
+        "request",
+        "params",
+        "parameters",
+    ] {
+        if let Some(child) = object.get(key) {
+            if let Some(command) = command_from_value_inner(child, depth + 1) {
+                return Some(command);
+            }
         }
-        if let Some(array) = args.as_array() {
-            return Some(
-                array
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            )
-            .filter(|value| !value.is_empty());
+    }
+    for key in ["arguments", "args"] {
+        if let Some(child) = object.get(key) {
+            if let Some(command) = command_from_arguments(child, depth + 1) {
+                return Some(command);
+            }
         }
     }
     None
+}
+
+fn command_from_arguments(value: &Value, depth: usize) -> Option<String> {
+    match value {
+        Value::Object(_) => command_from_value_inner(value, depth),
+        Value::Array(items) => {
+            let args = items.iter().filter_map(Value::as_str).collect::<Vec<_>>();
+            (!args.is_empty())
+                .then(|| args.join(" "))
+                .filter(|value| !value.trim().is_empty())
+        }
+        Value::String(_) => parse_json_string_value(value)
+            .as_ref()
+            .and_then(|parsed| command_from_value_inner(parsed, depth + 1)),
+        _ => None,
+    }
+}
+
+fn parse_json_string_value(value: &Value) -> Option<Value> {
+    let text = value.as_str()?.trim();
+    if !text.starts_with('{') && !text.starts_with('[') {
+        return None;
+    }
+    serde_json::from_str::<Value>(text).ok()
 }
 
 fn extract_text(value: &Value) -> String {
@@ -1122,7 +1566,13 @@ fn collect_text(value: &Value, texts: &mut Vec<String>) {
             let item_type = object.get("type").and_then(Value::as_str).unwrap_or("");
             if matches!(
                 item_type,
-                "thinking" | "reasoning" | "step-start" | "step-finish"
+                "thinking"
+                    | "reasoning"
+                    | "step-start"
+                    | "step-finish"
+                    | "compaction"
+                    | "retry"
+                    | "snapshot"
             ) {
                 return;
             }
@@ -1134,6 +1584,112 @@ fn collect_text(value: &Value, texts: &mut Vec<String>) {
         }
         _ => {}
     }
+}
+
+fn tool_name_from_value(value: &Value) -> Option<String> {
+    string_field_any(value, &["tool_name", "toolName", "tool", "name"])
+}
+
+fn cwd_from_value(value: &Value) -> Option<String> {
+    nested_string_field_any(
+        value,
+        &["cwd", "workdir", "working_directory", "workingDirectory"],
+        0,
+    )
+}
+
+fn status_from_value(value: &Value) -> Option<String> {
+    nested_string_field_any(value, &["status", "state"], 0)
+}
+
+fn exit_code_from_value(value: &Value) -> Option<i32> {
+    nested_i64_field_any(value, &["exit_code", "exitCode", "code"], 0).map(|value| value as i32)
+}
+
+fn nested_string_field_any(value: &Value, names: &[&str], depth: usize) -> Option<String> {
+    if depth > 6 {
+        return None;
+    }
+    if let Some(value) = value_field_any_as_string(value, names) {
+        return Some(value).filter(|value| !value.trim().is_empty());
+    }
+    let object = value.as_object()?;
+    for key in ["arguments", "args"] {
+        if let Some(child) = object.get(key) {
+            if let Some(parsed) = parse_json_string_value(child) {
+                if let Some(value) = nested_string_field_any(&parsed, names, depth + 1) {
+                    return Some(value);
+                }
+            } else if let Some(value) = nested_string_field_any(child, names, depth + 1) {
+                return Some(value);
+            }
+        }
+    }
+    for key in ["state", "input", "tool_input", "toolInput", "action"] {
+        if let Some(child) = object.get(key) {
+            if let Some(value) = nested_string_field_any(child, names, depth + 1) {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+fn nested_i64_field_any(value: &Value, names: &[&str], depth: usize) -> Option<i64> {
+    if depth > 6 {
+        return None;
+    }
+    for name in names {
+        if let Some(child) = value.get(*name) {
+            if let Some(number) = child.as_i64() {
+                return Some(number);
+            }
+            if let Some(text) = child.as_str().and_then(|text| text.parse::<i64>().ok()) {
+                return Some(text);
+            }
+        }
+    }
+    let object = value.as_object()?;
+    for key in ["arguments", "args"] {
+        if let Some(child) = object.get(key) {
+            if let Some(parsed) = parse_json_string_value(child) {
+                if let Some(value) = nested_i64_field_any(&parsed, names, depth + 1) {
+                    return Some(value);
+                }
+            } else if let Some(value) = nested_i64_field_any(child, names, depth + 1) {
+                return Some(value);
+            }
+        }
+    }
+    for key in ["state", "input", "tool_input", "toolInput", "action"] {
+        if let Some(child) = object.get(key) {
+            if let Some(value) = nested_i64_field_any(child, names, depth + 1) {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+fn is_ignored_content_value(value: &Value) -> bool {
+    value.as_object().is_some_and(|object| {
+        object_flag_true(
+            object,
+            &[
+                "ignored",
+                "synthetic",
+                "isSynthetic",
+                "isMeta",
+                "isVisibleInTranscriptOnly",
+            ],
+        )
+    })
+}
+
+fn object_flag_true(object: &serde_json::Map<String, Value>, names: &[&str]) -> bool {
+    names
+        .iter()
+        .any(|name| object.get(*name).and_then(Value::as_bool) == Some(true))
 }
 
 fn string_field_any(value: &Value, names: &[&str]) -> Option<String> {
@@ -1394,6 +1950,227 @@ mod tests {
     }
 
     #[test]
+    fn codex_adapter_ignores_context_only_user_messages() {
+        let fixture = TempFixture::new("assetiweave-codex-context-fixture");
+        let rollout_path = fixture.path().join("rollout.jsonl");
+        fs::write(
+            &rollout_path,
+            [
+                r##"{"timestamp":"2026-01-01T00:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /tmp/project\n\n<INSTRUCTIONS>\nUse repo rules.\n</INSTRUCTIONS>"},{"type":"input_text","text":"<environment_context>\n  <cwd>/tmp/project</cwd>\n</environment_context>"}]}}"##,
+                r#"{"timestamp":"2026-01-01T00:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Please implement the conversation importer."}]}}"#,
+                r#"{"timestamp":"2026-01-01T00:00:02Z","type":"response_item","payload":{"type":"message","role":"assistant","content":"Importer started."}}"#,
+                r#"{"timestamp":"2026-01-01T00:00:03Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<codex_internal_context source=\"goal\">\nContinue working toward the active thread goal.\n</codex_internal_context>"}]}}"#,
+                r#"{"timestamp":"2026-01-01T00:00:04Z","type":"response_item","payload":{"type":"message","role":"assistant","content":"Importer finished."}}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let db_path = fixture.path().join("state_5.sqlite");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT, updated_at INTEGER);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                "codex-context-session",
+                rollout_path.to_string_lossy().as_ref(),
+                "Codex Context Fixture",
+                1_767_225_604i64
+            ],
+        )
+        .unwrap();
+        drop(conn);
+
+        let sessions = read_source_sessions(&source_fixture(
+            "codex",
+            ConversationSourceKind::File,
+            db_path.to_string_lossy().as_ref(),
+        ))
+        .unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        let turns = &sessions[0].turns;
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].user_text,
+            "Please implement the conversation importer."
+        );
+        assert!(turns[0]
+            .parts
+            .iter()
+            .any(|part| part.text.as_deref() == Some("Importer started.")));
+        assert!(turns[0]
+            .parts
+            .iter()
+            .any(|part| part.text.as_deref() == Some("Importer finished.")));
+    }
+
+    #[test]
+    fn codex_adapter_classifies_commands_file_changes_code_blocks_and_noise() {
+        let fixture = TempFixture::new("assetiweave-codex-rich-fixture");
+        let rollout_path = fixture.path().join("rollout.jsonl");
+        fs::write(
+            &rollout_path,
+            [
+                json!({
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "<environment_context>\n<cwd>/tmp/project</cwd>\n</environment_context>"}]
+                    }
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-01-01T00:00:01Z",
+                    "type": "response_item",
+                    "payload": {
+                        "id": "u1",
+                        "type": "message",
+                        "role": "user",
+                        "content": [{
+                            "type": "input_text",
+                            "text": "Run the importer tests:\n```sh\npnpm test\n```"
+                        }]
+                    }
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-01-01T00:00:02Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "Use a parser.\n```rs\nlet parsed = true;\n```"}]
+                    }
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-01-01T00:00:03Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "local_shell_call",
+                        "action": {"command": "pnpm test"},
+                        "cwd": "/tmp/project",
+                        "status": "completed",
+                        "exit_code": 0
+                    }
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-01-01T00:00:04Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "exec_command",
+                        "arguments": "{\"cmd\":\"cargo test --workspace\",\"workdir\":\"/tmp/project\"}"
+                    }
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-01-01T00:00:05Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "apply_patch",
+                        "arguments": "{\"patch\":\"*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n+let ok = true;\\n*** End Patch\"}"
+                    }
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-01-01T00:00:06Z",
+                    "type": "response_item",
+                    "payload": {"type": "function_call_output", "output": "patch applied"}
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-01-01T00:00:07Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "<codex_internal_context source=\"goal\">\nContinue active goal.\n</codex_internal_context>"}]
+                    }
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-01-01T00:00:08Z",
+                    "type": "response_item",
+                    "payload": {
+                        "id": "u2",
+                        "type": "message",
+                        "role": "user",
+                        "content": "Export the result"
+                    }
+                })
+                .to_string(),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let db_path = fixture.path().join("state_5.sqlite");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT, updated_at INTEGER);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                "codex-rich-session",
+                rollout_path.to_string_lossy().as_ref(),
+                "Codex Rich Fixture",
+                1_767_225_604i64
+            ],
+        )
+        .unwrap();
+        drop(conn);
+
+        let sessions = read_source_sessions(&source_fixture(
+            "codex",
+            ConversationSourceKind::File,
+            db_path.to_string_lossy().as_ref(),
+        ))
+        .unwrap();
+
+        let turns = &sessions[0].turns;
+        assert_eq!(turns.len(), 2);
+        assert!(turns[0].user_text.starts_with("Run the importer tests"));
+        assert_eq!(turns[1].user_text, "Export the result");
+        assert!(turns[0].parts.iter().any(|part| {
+            part.kind == ConversationPartKind::CodeBlock
+                && part.language.as_deref() == Some("rs")
+                && part.text.as_deref() == Some("let parsed = true;")
+        }));
+        assert!(turns[0].parts.iter().any(|part| {
+            part.kind == ConversationPartKind::Command
+                && part.command.as_deref() == Some("pnpm test")
+                && part.cwd.as_deref() == Some("/tmp/project")
+        }));
+        assert!(turns[0].parts.iter().any(|part| {
+            part.kind == ConversationPartKind::Command
+                && part.command.as_deref() == Some("cargo test --workspace")
+                && part.cwd.as_deref() == Some("/tmp/project")
+        }));
+        assert!(turns[0]
+            .parts
+            .iter()
+            .any(|part| part.kind == ConversationPartKind::FileChange));
+        assert!(turns[0].parts.iter().any(|part| {
+            part.kind == ConversationPartKind::Tool
+                && part
+                    .text
+                    .as_deref()
+                    .is_some_and(|text| text.contains("patch applied"))
+        }));
+    }
+
+    #[test]
     fn claude_code_adapter_uses_real_user_boundaries_and_keeps_sidechain_output() {
         let fixture = TempFixture::new("assetiweave-claude-fixture");
         let project_dir = fixture.path().join("Users-util6-project");
@@ -1431,6 +2208,150 @@ mod tests {
                 .text
                 .as_deref()
                 .is_some_and(|text| text.contains("Subagent checked"))));
+    }
+
+    #[test]
+    fn claude_code_adapter_uses_top_level_user_events_only_as_boundaries() {
+        let fixture = TempFixture::new("assetiweave-claude-top-level-fixture");
+        let session_path = fixture.path().join("claude-top-level.jsonl");
+        fs::write(
+            &session_path,
+            [
+                r#"{"timestamp":"2026-01-01T00:00:00Z","type":"user","content":"Plan the import"}"#,
+                r#"{"timestamp":"2026-01-01T00:00:01Z","type":"tool_use","tool_name":"read","tool_input":{"filePath":"/tmp/project/input.jsonl"}}"#,
+                r#"{"timestamp":"2026-01-01T00:00:02Z","type":"tool_result","tool_name":"read","tool_output":{"preview":"fixture rows","truncated":false}}"#,
+                r#"{"timestamp":"2026-01-01T00:00:03Z","type":"user","content":"Now export it"}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let sessions = read_source_sessions(&source_fixture(
+            "claude-code",
+            ConversationSourceKind::File,
+            session_path.to_string_lossy().as_ref(),
+        ))
+        .unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        let turns = &sessions[0].turns;
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].user_text, "Plan the import");
+        assert_eq!(turns[1].user_text, "Now export it");
+        assert!(turns[0].parts.iter().any(|part| {
+            part.role == ConversationPartRole::Tool
+                && part
+                    .metadata_json
+                    .as_deref()
+                    .is_some_and(|metadata| metadata.contains("tool_use"))
+        }));
+    }
+
+    #[test]
+    fn claude_code_adapter_filters_tool_result_user_wrappers_and_classifies_tools() {
+        let fixture = TempFixture::new("assetiweave-claude-tool-wrapper-fixture");
+        let session_path = fixture.path().join("claude-tool-wrapper.jsonl");
+        fs::write(
+            &session_path,
+            [
+                json!({
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "type": "user",
+                    "content": "Inspect the project"
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-01-01T00:00:01Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "I will inspect it.\n```ts\nconst ok = true;\n```"}]
+                    }
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-01-01T00:00:02Z",
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_1",
+                            "content": "tool result wrapper output"
+                        }]
+                    }
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-01-01T00:00:03Z",
+                    "type": "tool_use",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "ls -la"}
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-01-01T00:00:04Z",
+                    "type": "tool_result",
+                    "tool_name": "Bash",
+                    "tool_output": {"stdout": "listed files", "stderr": ""}
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-01-01T00:00:05Z",
+                    "type": "result",
+                    "subtype": "success",
+                    "result": "bookkeeping success"
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-01-01T00:00:06Z",
+                    "type": "user",
+                    "content": [{"type": "text", "text": "Now summarize"}]
+                })
+                .to_string(),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let sessions = read_source_sessions(&source_fixture(
+            "claude-code",
+            ConversationSourceKind::File,
+            session_path.to_string_lossy().as_ref(),
+        ))
+        .unwrap();
+
+        let turns = &sessions[0].turns;
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].user_text, "Inspect the project");
+        assert_eq!(turns[1].user_text, "Now summarize");
+        assert!(turns[0].parts.iter().any(|part| {
+            part.kind == ConversationPartKind::CodeBlock
+                && part.language.as_deref() == Some("ts")
+                && part.text.as_deref() == Some("const ok = true;")
+        }));
+        assert!(turns[0].parts.iter().any(|part| {
+            part.kind == ConversationPartKind::Command && part.command.as_deref() == Some("ls -la")
+        }));
+        assert!(turns[0].parts.iter().any(|part| {
+            part.kind == ConversationPartKind::Tool
+                && part
+                    .text
+                    .as_deref()
+                    .is_some_and(|text| text.contains("listed files"))
+        }));
+        assert!(turns[0].parts.iter().any(|part| {
+            part.kind == ConversationPartKind::Tool
+                && part
+                    .text
+                    .as_deref()
+                    .is_some_and(|text| text.contains("tool result wrapper output"))
+        }));
+        assert!(turns[0].parts.iter().all(|part| {
+            !part
+                .text
+                .as_deref()
+                .is_some_and(|text| text.contains("bookkeeping success"))
+        }));
     }
 
     #[test]
@@ -1530,6 +2451,255 @@ mod tests {
             .iter()
             .any(|part| part.kind == ConversationPartKind::Command
                 && part.text.as_deref() == Some("pnpm test")));
+    }
+
+    #[test]
+    fn opencode_adapter_ignores_user_role_bookkeeping_parts_as_turn_boundaries() {
+        let fixture = TempFixture::new("assetiweave-opencode-user-bookkeeping-fixture");
+        let db_path = fixture.path().join("opencode.sqlite");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE session (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                project_path TEXT,
+                time_updated INTEGER
+            );
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                time_created INTEGER,
+                data TEXT
+            );
+            CREATE TABLE part (
+                session_id TEXT,
+                message_id TEXT,
+                data TEXT
+            );
+            "#,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session (id, title, project_path, time_updated) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                "open-session-bookkeeping",
+                "OpenCode Bookkeeping Fixture",
+                "/tmp/opencode",
+                1_767_225_604i64
+            ],
+        )
+        .unwrap();
+        for (id, role, timestamp) in [
+            ("m1", "user", 1_767_225_600i64),
+            ("m2", "assistant", 1_767_225_601i64),
+            ("m3", "user", 1_767_225_602i64),
+            ("m4", "user", 1_767_225_603i64),
+            ("m5", "user", 1_767_225_604i64),
+        ] {
+            let data = json!({ "role": role, "time": timestamp }).to_string();
+            conn.execute(
+                "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+                params![id, "open-session-bookkeeping", timestamp, data],
+            )
+            .unwrap();
+        }
+        for (message_id, kind, text) in [
+            ("m1", "text", "First real question"),
+            ("m2", "text", "First answer"),
+            ("m3", "compaction", "Conversation compaction summary"),
+            ("m4", "file", "/tmp/opencode/attachment.txt"),
+            ("m5", "text", "Second real question"),
+        ] {
+            let data = json!({ "type": kind, "text": text }).to_string();
+            conn.execute(
+                "INSERT INTO part (session_id, message_id, data) VALUES (?1, ?2, ?3)",
+                params!["open-session-bookkeeping", message_id, data],
+            )
+            .unwrap();
+        }
+        drop(conn);
+
+        let sessions = read_source_sessions(&source_fixture(
+            "opencode",
+            ConversationSourceKind::Sqlite,
+            db_path.to_string_lossy().as_ref(),
+        ))
+        .unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        let turns = &sessions[0].turns;
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].user_text, "First real question");
+        assert_eq!(turns[1].user_text, "Second real question");
+    }
+
+    #[test]
+    fn opencode_adapter_filters_synthetic_user_text_and_maps_rich_part_types() {
+        let fixture = TempFixture::new("assetiweave-opencode-rich-part-fixture");
+        let db_path = fixture.path().join("opencode.sqlite");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE session (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                project_path TEXT,
+                time_updated INTEGER
+            );
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                time_created INTEGER,
+                data TEXT
+            );
+            CREATE TABLE part (
+                session_id TEXT,
+                message_id TEXT,
+                data TEXT
+            );
+            "#,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session (id, title, project_path, time_updated) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                "open-session-rich",
+                "OpenCode Rich Fixture",
+                "/tmp/opencode",
+                1_767_225_608i64
+            ],
+        )
+        .unwrap();
+        for (id, role, timestamp) in [
+            ("m1", "user", 1_767_225_600i64),
+            ("m2", "assistant", 1_767_225_601i64),
+            ("m3", "user", 1_767_225_602i64),
+            ("m4", "user", 1_767_225_603i64),
+            ("m5", "user", 1_767_225_604i64),
+            ("m6", "user", 1_767_225_605i64),
+            ("m7", "user", 1_767_225_606i64),
+        ] {
+            let data = json!({ "role": role, "time": timestamp }).to_string();
+            conn.execute(
+                "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+                params![id, "open-session-rich", timestamp, data],
+            )
+            .unwrap();
+        }
+        for (message_id, data) in [
+            (
+                "m1",
+                json!({
+                    "type": "text",
+                    "text": "The following tool was executed by the user",
+                    "synthetic": true
+                }),
+            ),
+            (
+                "m1",
+                json!({"type": "text", "text": "Real OpenCode question"}),
+            ),
+            (
+                "m2",
+                json!({"type": "reasoning", "text": "hidden reasoning"}),
+            ),
+            ("m2", json!({"type": "step-start", "text": "step start"})),
+            ("m2", json!({"type": "retry", "text": "retry bookkeeping"})),
+            (
+                "m2",
+                json!({"type": "snapshot", "text": "snapshot bookkeeping"}),
+            ),
+            (
+                "m2",
+                json!({
+                    "type": "text",
+                    "text": "Here is code.\n```ts\nconst rich = true;\n```"
+                }),
+            ),
+            (
+                "m2",
+                json!({
+                    "type": "tool",
+                    "tool": "bash",
+                    "state": {
+                        "status": "completed",
+                        "input": {"command": "pnpm test"},
+                        "output": "tests passed",
+                        "title": "Run tests"
+                    }
+                }),
+            ),
+            (
+                "m2",
+                json!({
+                    "type": "patch",
+                    "path": "src/main.ts",
+                    "text": "updated src/main.ts"
+                }),
+            ),
+            (
+                "m3",
+                json!({"type": "text", "text": "Synthetic only", "synthetic": true}),
+            ),
+            (
+                "m4",
+                json!({"type": "text", "text": "Ignored only", "ignored": true}),
+            ),
+            ("m5", json!({"type": "compaction", "text": "summary only"})),
+            (
+                "m6",
+                json!({"type": "file", "path": "/tmp/opencode/input.txt"}),
+            ),
+            (
+                "m7",
+                json!({"type": "text", "text": "Second OpenCode question"}),
+            ),
+        ] {
+            conn.execute(
+                "INSERT INTO part (session_id, message_id, data) VALUES (?1, ?2, ?3)",
+                params!["open-session-rich", message_id, data.to_string()],
+            )
+            .unwrap();
+        }
+        drop(conn);
+
+        let sessions = read_source_sessions(&source_fixture(
+            "opencode",
+            ConversationSourceKind::Sqlite,
+            db_path.to_string_lossy().as_ref(),
+        ))
+        .unwrap();
+
+        let turns = &sessions[0].turns;
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].user_text, "Real OpenCode question");
+        assert_eq!(turns[1].user_text, "Second OpenCode question");
+        assert!(turns[0].parts.iter().any(|part| {
+            part.kind == ConversationPartKind::CodeBlock
+                && part.language.as_deref() == Some("ts")
+                && part.text.as_deref() == Some("const rich = true;")
+        }));
+        assert!(turns[0].parts.iter().any(|part| {
+            part.kind == ConversationPartKind::Command
+                && part.command.as_deref() == Some("pnpm test")
+                && part
+                    .text
+                    .as_deref()
+                    .is_some_and(|text| text.contains("tests passed"))
+        }));
+        assert!(turns[0]
+            .parts
+            .iter()
+            .any(|part| part.kind == ConversationPartKind::FileChange));
+        assert!(turns[0].parts.iter().all(|part| {
+            !part.text.as_deref().is_some_and(|text| {
+                text.contains("hidden reasoning")
+                    || text.contains("retry bookkeeping")
+                    || text.contains("snapshot bookkeeping")
+                    || text.contains("The following tool was executed")
+            })
+        }));
     }
 
     #[test]

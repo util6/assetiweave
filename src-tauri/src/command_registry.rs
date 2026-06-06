@@ -817,6 +817,30 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "get_app_settings",
+        "settings.get",
+        "Get the user settings JSON file and managed settings paths",
+        Read,
+        App,
+        false,
+        NoParams,
+        Service => |service, _params| service.get_app_settings(),
+        &[],
+        Some("assetiweave-cli settings show")
+    ),
+    command!(
+        "save_app_settings",
+        "settings.save",
+        "Save the user settings JSON file",
+        Write,
+        App,
+        false,
+        crate::service::SaveAppSettingsParams,
+        Service => |service, params| service.save_app_settings(Value::Object(params.settings.into_iter().collect())),
+        &[param!("settings", "Normalized application settings object")],
+        Some("assetiweave-cli settings save --json <json>")
+    ),
+    command!(
         "list_assets",
         "asset.list",
         "List catalog assets",
@@ -2173,7 +2197,7 @@ mod tests {
     #[test]
     fn committed_cli_contract_matches_registry() {
         let committed: Value =
-            serde_json::from_str(include_str!("../../internal/schema/contract.json"))
+            serde_json::from_str(include_str!("../../cli/internal/schema/contract.json"))
                 .expect("parse committed CLI contract");
         assert_eq!(
             committed,

@@ -1,6 +1,6 @@
 use crate::{
-    commands, conversations, executor, logs, path_utils, planner, platform, scanner, store,
-    targeting,
+    app_settings, commands, conversations, executor, logs, path_utils, planner, platform, scanner,
+    store, targeting,
     types::{
         AppOverview, AppResult, AppShortcut, ApplyAssetGroupMountResult,
         ApplySkillGroupExclusiveMountResult, AssetGroupInput, AssetMountStatus,
@@ -186,6 +186,11 @@ pub(crate) struct LogsWriteOperationParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct RevealPathParams {
     pub(crate) path: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct SaveAppSettingsParams {
+    pub(crate) settings: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1276,6 +1281,17 @@ impl AppService {
 
     pub(crate) fn reveal_path(&self, path: String) -> AppResult<()> {
         platform::reveal_path(path)
+    }
+
+    pub(crate) fn get_app_settings(&self) -> AppResult<app_settings::AppSettingsFile> {
+        app_settings::get_app_settings()
+    }
+
+    pub(crate) fn save_app_settings(
+        &self,
+        settings: Value,
+    ) -> AppResult<app_settings::AppSettingsFile> {
+        app_settings::save_app_settings(settings)
     }
 
     pub(crate) fn run_doctor(&self) -> AppResult<Value> {

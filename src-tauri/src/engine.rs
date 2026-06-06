@@ -1025,7 +1025,7 @@ mod tests {
             .expect("workspace root")
             .to_path_buf();
         let mut frontend_methods = BTreeSet::new();
-        for file in frontend_source_files(&workspace_root.join("src")) {
+        for file in frontend_source_files(&workspace_root.join("frontend/src")) {
             let content = fs::read_to_string(file).expect("read frontend source");
             frontend_methods.extend(extract_frontend_invoke_methods(&content));
         }

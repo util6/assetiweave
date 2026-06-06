@@ -188,6 +188,23 @@ pub(crate) fn get_app_overview(state: State<'_, AppState>) -> AppResult<AppOverv
 }
 
 #[tauri::command]
+pub(crate) fn get_app_settings(
+    state: State<'_, AppState>,
+) -> AppResult<crate::app_settings::AppSettingsFile> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.get_app_settings()
+}
+
+#[tauri::command]
+pub(crate) fn save_app_settings(
+    state: State<'_, AppState>,
+    settings: serde_json::Value,
+) -> AppResult<crate::app_settings::AppSettingsFile> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.save_app_settings(settings)
+}
+
+#[tauri::command]
 pub(crate) fn list_assets(
     state: State<'_, AppState>,
     kind: Option<AssetKind>,
@@ -1719,14 +1736,19 @@ pub(crate) fn disable_conversation_source(
 }
 
 #[tauri::command]
-pub(crate) fn sync_conversations(
+pub(crate) async fn sync_conversations(
     state: State<'_, AppState>,
     params: ConversationSyncParams,
 ) -> AppResult<serde_json::Value> {
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.sync_conversations(params)
-    })();
+    let db_path = state.db_path.clone();
+    let lock = state.lock.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let _guard = lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(db_path)?.sync_conversations(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+
     match &result {
         Ok(value) => log_info(
             "conversation.sync",
