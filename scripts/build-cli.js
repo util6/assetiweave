@@ -7,9 +7,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cliRoot = join(root, "cli");
 const exe = process.platform === "win32" ? ".exe" : "";
 const packageJSON = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-const output =
-  process.env.ASSETIWEAVE_CLI_OUTPUT ??
-  join(root, "target", "debug", `assetiweave-cli${exe}`);
+const output = process.env.ASSETIWEAVE_CLI_OUTPUT
+  ? resolve(root, process.env.ASSETIWEAVE_CLI_OUTPUT)
+  : join(root, "target", "debug", `assetiweave-cli${exe}`);
 
 mkdirSync(dirname(output), { recursive: true });
 

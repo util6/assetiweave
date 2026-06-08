@@ -17,7 +17,7 @@ Local-first AI asset catalog and mount manager.
 </div>
 
 > [!IMPORTANT]
-> AssetIWeave `v0.1.2` 已接入应用内自动更新，当前产品重点是 **Skill 的发现、编目、分组、备份、App 挂载与 CLI 自动化**。导航中可见的其他资产类型正在持续完善。更新包使用 Tauri updater 签名验证；当前安装包尚未接入操作系统代码签名。
+> AssetIWeave `v0.1.3` 已接入应用内自动更新，当前产品重点是 **Skill 的发现、编目、分组、备份、App 挂载与 CLI 自动化**。导航中可见的其他资产类型正在持续完善。更新包使用 Tauri updater 签名验证；当前安装包尚未接入操作系统代码签名。
 
 ## 为什么需要 AssetIWeave
 

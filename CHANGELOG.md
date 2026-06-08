@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.3
+
+- Fix CLI release archive builds so `scripts/build-cli.js` resolves custom output paths from the repository root before running from the `cli/` package.
+- Supersede the failed `v0.1.2` draft release attempt with a clean release build.
+
 ## v0.1.2
 
 - Add Skill search/acquire surfaces, group bulk workflows, and richer source management controls.
