@@ -3,8 +3,7 @@ import { GlobalSettingsDialog } from "../../components/settings/GlobalSettingsDi
 import { NotificationBanner, type NotificationMessage } from "../../components/notifications/NotificationBanner";
 import type { HeaderTabItem, NavigationModel, RailMenuItem } from "../../router/types";
 import type { SettingsPanelId } from "../../store/settings/AppSettingsProvider";
-import type { AppOverview, AppShortcut } from "../../types";
-import { AppHeader } from "./AppHeader";
+import type { AppShortcut } from "../../types";
 import { SideRail } from "./navigation/SideRail";
 import { SubNavigation } from "./navigation/SubNavigation";
 
@@ -23,7 +22,6 @@ export function AppLayout({
   onSettingsClose,
   onSettingsOpen,
   onSubNavSelect,
-  overview,
   logViewerOpen,
   settingsPanel,
   settingsOpen,
@@ -43,12 +41,11 @@ export function AppLayout({
   onSettingsClose: () => void;
   onSettingsOpen: () => void;
   onSubNavSelect: (id: string) => void;
-  overview: AppOverview | null;
   settingsPanel: SettingsPanelId;
   settingsOpen: boolean;
 }) {
   const activeSubNavItems = navigationModel.subNavItems[navigationModel.activeHeaderTabId] ?? [];
-  const railItems = ensureLogRailItem(navigationModel.railItems);
+  const railItems = ensureLogRailItem(navigationModel.railItems).filter(isSupportedRailItem);
   const mainStyle = {
     "--app-notification-offset": notification ? "4.5rem" : "0px",
   } as CSSProperties;
@@ -68,12 +65,14 @@ export function AppLayout({
     <div className="grid-texture flex min-h-screen bg-background text-on-surface">
       <SideRail
         activeId={logViewerOpen ? "logs" : settingsOpen ? "settings" : navigationModel.activeRailId}
+        activeHeaderTabId={navigationModel.activeHeaderTabId}
+        headerTabs={navigationModel.headerTabs}
         items={railItems}
+        onHeaderTabSelect={onHeaderTabSelect}
         onItemSelect={handleRailItemSelect}
       />
 
       <main className="ml-sidebar-width flex min-h-screen w-[calc(100%-64px)] flex-1 flex-col" style={mainStyle}>
-        <AppHeader navigationModel={navigationModel} onHeaderTabSelect={onHeaderTabSelect} overview={overview} />
         <SubNavigation activeId={activeSubNavId} items={activeSubNavItems} onSelect={(item) => onSubNavSelect(item.id)} />
         <NotificationBanner notification={notification} onDismiss={onDismissNotification} />
         {children}
@@ -101,6 +100,12 @@ const logRailItem: RailMenuItem = {
   enabled: true,
   position: "secondary",
 };
+
+const supportedRailItemIds = new Set(["logs", "settings"]);
+
+function isSupportedRailItem(item: RailMenuItem) {
+  return supportedRailItemIds.has(item.id);
+}
 
 function ensureLogRailItem(items: RailMenuItem[]) {
   if (items.some((item) => item.id === "logs")) {

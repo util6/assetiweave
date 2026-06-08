@@ -3,9 +3,17 @@ import { normalizeThemeId } from "../../theme/themes";
 
 export type InterfaceDensity = "comfortable" | "compact";
 
-export type FontFamilyPresetId = "system" | "geist" | "serif" | "mono";
-export type FontFamilyToken = FontFamilyPresetId;
-export type FontFamilyValue = string;
+export type FontFamilyPresetId = "system" | "geist" | "serif" | "mono" | "custom";
+export type BuiltInFontFamilyPresetId = Exclude<FontFamilyPresetId, "custom">;
+export type FontFamilyToken = BuiltInFontFamilyPresetId;
+export type FontFallbackKind = "sans" | "serif" | "mono";
+
+export interface FontFamilySetting {
+  customFontFamily: string;
+  preset: FontFamilyPresetId;
+}
+
+export type FontFamilyValue = FontFamilySetting;
 
 export type SettingsPanelId =
   | "general.appearance"
@@ -19,23 +27,30 @@ export type SettingsPanelId =
   | "conversations.adapters";
 
 export interface FontFamilyOption {
+  fallback: FontFallbackKind;
+  id: BuiltInFontFamilyPresetId;
   labelKey: string;
-  value: FontFamilyValue;
+  value: string;
 }
 
-export const fontFamilyCss: Record<FontFamilyPresetId, string> = {
-  system:
-    'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  geist: '"Geist", ui-sans-serif, system-ui, sans-serif',
+const fontFallbackCss: Record<FontFallbackKind, string> = {
+  sans: 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   serif: 'Georgia, "Times New Roman", Times, serif',
   mono: '"JetBrains Mono", "SFMono-Regular", Consolas, monospace',
 };
 
+export const fontFamilyCss: Record<BuiltInFontFamilyPresetId, string> = {
+  system: `system-ui, ${fontFallbackCss.sans}`,
+  geist: `"Geist", ${fontFallbackCss.sans}`,
+  serif: fontFallbackCss.serif,
+  mono: fontFallbackCss.mono,
+};
+
 export const fontFamilyOptions: FontFamilyOption[] = [
-  { labelKey: "settings.font.system", value: fontFamilyCss.system },
-  { labelKey: "settings.font.geist", value: fontFamilyCss.geist },
-  { labelKey: "settings.font.serif", value: fontFamilyCss.serif },
-  { labelKey: "settings.font.mono", value: fontFamilyCss.mono },
+  { fallback: "sans", id: "system", labelKey: "settings.font.system", value: "system-ui" },
+  { fallback: "sans", id: "geist", labelKey: "settings.font.geist", value: "Geist" },
+  { fallback: "serif", id: "serif", labelKey: "settings.font.serif", value: "Georgia" },
+  { fallback: "mono", id: "mono", labelKey: "settings.font.mono", value: "JetBrains Mono" },
 ];
 
 export const COLUMN_MIN_WIDTH_MIN = 220;
@@ -49,21 +64,38 @@ export const FONT_SIZE_STEP = 1;
 
 export interface TypographySettings {
   baseFontSize: number;
-  codeFontFamily: FontFamilyValue;
+  codeFontFamily: FontFamilySetting;
   codeFontSize: number;
-  contentFontFamily: FontFamilyValue;
+  contentFontFamily: FontFamilySetting;
   contentFontSize: number;
-  interfaceFontFamily: FontFamilyValue;
+  interfaceFontFamily: FontFamilySetting;
 }
 
 export interface ConversationPageSettings {
-  contentFontFamily: FontFamilyValue;
+  contentFontFamily: FontFamilySetting;
+  contentCardColors: ConversationContentCardColorSettings;
   contentFontSize: number;
   codeFontSize: number;
-  sessionBrowserFontFamily: FontFamilyValue;
+  sessionBrowserFontFamily: FontFamilySetting;
   sessionBrowserFontSize: number;
   sessionToolbarCompact: boolean;
 }
+
+export interface ConversationContentCardColorSettings {
+  answer: string;
+  code: string;
+  command: string;
+  result: string;
+  tool: string;
+}
+
+export const DEFAULT_CONVERSATION_CONTENT_CARD_COLORS: ConversationContentCardColorSettings = {
+  answer: "#b99545",
+  code: "#4f8bd9",
+  command: "#d08a19",
+  result: "#2f9d78",
+  tool: "#46a4d5",
+};
 
 export interface AppSettings {
   columnMinWidth: number;
@@ -91,17 +123,18 @@ export const defaultSettings: AppSettings = {
   theme: "midnight",
   typography: {
     baseFontSize: 14,
-    codeFontFamily: fontFamilyCss.mono,
+    codeFontFamily: createFontFamilySetting("mono"),
     codeFontSize: 13,
-    contentFontFamily: fontFamilyCss.system,
+    contentFontFamily: createFontFamilySetting("system"),
     contentFontSize: 14,
-    interfaceFontFamily: fontFamilyCss.geist,
+    interfaceFontFamily: createFontFamilySetting("geist"),
   },
   conversations: {
     codeFontSize: 13,
-    contentFontFamily: fontFamilyCss.system,
+    contentCardColors: DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
+    contentFontFamily: createFontFamilySetting("system"),
     contentFontSize: 14,
-    sessionBrowserFontFamily: fontFamilyCss.system,
+    sessionBrowserFontFamily: createFontFamilySetting("system"),
     sessionBrowserFontSize: 13,
     sessionToolbarCompact: true,
   },
@@ -150,7 +183,7 @@ function normalizeTypographySettings(value: unknown): TypographySettings {
       stored.baseFontSize,
       defaultSettings.typography.baseFontSize,
     ),
-    codeFontFamily: normalizeFontFamily(
+    codeFontFamily: normalizeFontFamilySetting(
       stored.codeFontFamily,
       defaultSettings.typography.codeFontFamily,
     ),
@@ -158,7 +191,7 @@ function normalizeTypographySettings(value: unknown): TypographySettings {
       stored.codeFontSize,
       defaultSettings.typography.codeFontSize,
     ),
-    contentFontFamily: normalizeFontFamily(
+    contentFontFamily: normalizeFontFamilySetting(
       stored.contentFontFamily,
       defaultSettings.typography.contentFontFamily,
     ),
@@ -166,7 +199,7 @@ function normalizeTypographySettings(value: unknown): TypographySettings {
       stored.contentFontSize,
       defaultSettings.typography.contentFontSize,
     ),
-    interfaceFontFamily: normalizeFontFamily(
+    interfaceFontFamily: normalizeFontFamilySetting(
       stored.interfaceFontFamily,
       defaultSettings.typography.interfaceFontFamily,
     ),
@@ -180,7 +213,8 @@ function normalizeConversationPageSettings(
   const stored = isRecord(value) ? (value as Partial<ConversationPageSettings>) : {};
   return {
     codeFontSize: normalizeFontSize(stored.codeFontSize, typography.codeFontSize),
-    contentFontFamily: normalizeFontFamily(
+    contentCardColors: normalizeContentCardColors(stored.contentCardColors),
+    contentFontFamily: normalizeFontFamilySetting(
       stored.contentFontFamily,
       typography.contentFontFamily,
     ),
@@ -188,7 +222,7 @@ function normalizeConversationPageSettings(
       stored.contentFontSize,
       typography.contentFontSize,
     ),
-    sessionBrowserFontFamily: normalizeFontFamily(
+    sessionBrowserFontFamily: normalizeFontFamilySetting(
       stored.sessionBrowserFontFamily,
       typography.contentFontFamily,
     ),
@@ -198,6 +232,26 @@ function normalizeConversationPageSettings(
         ? stored.sessionToolbarCompact
         : defaultSettings.conversations.sessionToolbarCompact,
   };
+}
+
+function normalizeContentCardColors(value: unknown): ConversationContentCardColorSettings {
+  const stored = isRecord(value) ? (value as Partial<ConversationContentCardColorSettings>) : {};
+  return {
+    answer: normalizeHexColor(stored.answer, defaultSettings.conversations.contentCardColors.answer),
+    code: normalizeHexColor(stored.code, defaultSettings.conversations.contentCardColors.code),
+    command: normalizeHexColor(stored.command, defaultSettings.conversations.contentCardColors.command),
+    result: normalizeHexColor(stored.result, defaultSettings.conversations.contentCardColors.result),
+    tool: normalizeHexColor(stored.tool, defaultSettings.conversations.contentCardColors.tool),
+  };
+}
+
+function normalizeHexColor(value: unknown, fallback: string) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const trimmed = value.trim();
+  return /^#[0-9a-fA-F]{6}$/.test(trimmed) ? trimmed.toLowerCase() : fallback;
 }
 
 function normalizeColumnMinWidth(value: unknown) {
@@ -216,30 +270,161 @@ function normalizeFontSize(value: unknown, fallback: number) {
   return clamp(Math.round(value), FONT_SIZE_MIN, FONT_SIZE_MAX);
 }
 
-export function resolveFontFamilyCss(value: FontFamilyValue) {
-  return normalizeFontFamily(value, fontFamilyCss.system);
+export function resolveFontFamilyCss(value: FontFamilyValue, fallback: FontFallbackKind = "sans") {
+  const setting = normalizeFontFamilySetting(value, defaultSettings.typography.contentFontFamily);
+  if (setting.preset !== "custom") {
+    return presetToFontFamilyCss(fontFamilyOptionForPreset(setting.preset));
+  }
+
+  if (!setting.customFontFamily) {
+    return fontFallbackCss[fallback];
+  }
+
+  return `${quoteFontFamilyName(setting.customFontFamily)}, ${fontFallbackCss[fallback]}`;
 }
 
-function normalizeFontFamily(value: unknown, fallback: FontFamilyValue): FontFamilyValue {
+function normalizeFontFamilySetting(value: unknown, fallback: FontFamilySetting): FontFamilySetting {
+  if (isRecord(value)) {
+    const preset = normalizeFontFamilyPreset((value as Partial<FontFamilySetting>).preset);
+    const customFontFamily = normalizeCustomFontFamily(
+      (value as Partial<FontFamilySetting>).customFontFamily,
+    );
+
+    if (!preset) {
+      return fallback;
+    }
+
+    if (preset === "custom" && customFontFamily === null) {
+      return fallback;
+    }
+
+    return {
+      customFontFamily: customFontFamily ?? fallback.customFontFamily,
+      preset,
+    };
+  }
+
   if (typeof value !== "string") {
     return fallback;
   }
 
   const trimmedValue = value.trim().replace(/\s+/g, " ");
-  const legacyPreset = fontFamilyCss[trimmedValue as FontFamilyPresetId];
+  const legacyPreset = normalizeFontFamilyPreset(trimmedValue);
+  if (legacyPreset) {
+    return createFontFamilySetting(legacyPreset);
+  }
+
+  const legacyOption = fontFamilyOptions.find((option) => option.value === trimmedValue);
+  if (legacyOption) {
+    return createFontFamilySetting(legacyOption.id);
+  }
+
+  const legacyPresetCss = Object.entries(fontFamilyCss).find(([, cssValue]) => cssValue === trimmedValue);
+  if (legacyPresetCss) {
+    return createFontFamilySetting(legacyPresetCss[0] as BuiltInFontFamilyPresetId);
+  }
+
+  const customFontFamily = normalizeCustomFontFamily(trimmedValue);
+  if (customFontFamily === null) {
+    return fallback;
+  }
+
+  return {
+    customFontFamily,
+    preset: "custom",
+  };
+}
+
+function presetToFontFamilyCss(option: FontFamilyOption) {
+  const legacyPreset = fontFamilyCss[option.id];
   if (legacyPreset) {
     return legacyPreset;
   }
 
-  if (!isValidFontFamilyValue(trimmedValue)) {
-    return fallback;
+  return `${quoteFontFamilyName(option.value)}, ${fontFallbackCss[option.fallback]}`;
+}
+
+export function createFontFamilySetting(preset: FontFamilyPresetId, customFontFamily = ""): FontFamilySetting {
+  return {
+    customFontFamily,
+    preset,
+  };
+}
+
+export function fontFamilyOptionForPreset(preset: BuiltInFontFamilyPresetId) {
+  return fontFamilyOptions.find((option) => option.id === preset) ?? fontFamilyOptions[0];
+}
+
+function normalizeFontFamilyPreset(value: unknown): FontFamilyPresetId | null {
+  return value === "system" ||
+    value === "geist" ||
+    value === "serif" ||
+    value === "mono" ||
+    value === "custom"
+    ? value
+    : null;
+}
+
+function normalizeCustomFontFamily(value: unknown) {
+  if (typeof value !== "string") {
+    return "";
   }
 
-  return trimmedValue;
+  const fontName = firstFontFamilyName(value);
+  if (!fontName) {
+    return "";
+  }
+
+  if (!isValidFontFamilyValue(fontName)) {
+    return null;
+  }
+
+  return fontName;
+}
+
+export function firstFontFamilyName(value: string) {
+  const trimmedValue = value.trim();
+  let quote: string | null = null;
+  let firstFamily = "";
+
+  for (const character of trimmedValue) {
+    if ((character === '"' || character === "'") && (!quote || quote === character)) {
+      quote = quote ? null : character;
+      firstFamily += character;
+      continue;
+    }
+
+    if (character === "," && !quote) {
+      break;
+    }
+
+    firstFamily += character;
+  }
+
+  return unquoteFontFamilyName(firstFamily.trim().replace(/\s+/g, " "));
+}
+
+function unquoteFontFamilyName(value: string) {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1).trim();
+  }
+
+  return value;
+}
+
+function quoteFontFamilyName(value: string) {
+  if (/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(value)) {
+    return value;
+  }
+
+  return `"${value.replace(/"/g, '\\"')}"`;
 }
 
 function isValidFontFamilyValue(value: string) {
-  return value.length > 0 && value.length <= 180 && !/[;{}<>]/.test(value);
+  return value.length > 0 && value.length <= 80 && !/[,;{}<>]/.test(value);
 }
 
 function clamp(value: number, min: number, max: number) {

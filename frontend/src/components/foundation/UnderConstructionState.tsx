@@ -10,6 +10,7 @@ export interface UnderConstructionStateProps extends Omit<React.HTMLAttributes<H
   eyebrow?: React.ReactNode;
   icon?: React.ReactNode;
   title: React.ReactNode;
+  titleAction?: React.ReactNode;
 }
 
 const UnderConstructionState = React.forwardRef<HTMLElement, UnderConstructionStateProps>(
@@ -22,6 +23,7 @@ const UnderConstructionState = React.forwardRef<HTMLElement, UnderConstructionSt
       eyebrow,
       icon = <Wrench aria-hidden="true" size={22} />,
       title,
+      titleAction,
       ...props
     },
     ref,
@@ -46,9 +48,12 @@ const UnderConstructionState = React.forwardRef<HTMLElement, UnderConstructionSt
             </div>
           )}
           {eyebrow && <p className="text-label-caps uppercase text-primary">{eyebrow}</p>}
-          <h1 className="mt-2 text-h2 text-on-surface" id={titleId}>
-            {title}
-          </h1>
+          <div className="mt-2 flex items-center justify-center gap-3">
+            <h1 className="text-h2 text-on-surface" id={titleId}>
+              {title}
+            </h1>
+            {titleAction ? <span className="mt-1 shrink-0">{titleAction}</span> : null}
+          </div>
           {description && <p className="mt-3 max-w-lg text-body-sm text-on-surface-variant">{description}</p>}
           {actions && <div className="mt-5 flex flex-wrap items-center justify-center gap-2">{actions}</div>}
         </Panel>

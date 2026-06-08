@@ -1,10 +1,11 @@
 import clsx from "clsx";
 import { Search } from "lucide-react";
+import type { ReactNode } from "react";
 
 export type ToolbarViewMode = "list" | "columns" | "grid";
 
 export interface ToolbarViewOption<Value extends ToolbarViewMode = ToolbarViewMode> {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   value: Value;
 }
@@ -12,15 +13,17 @@ export interface ToolbarViewOption<Value extends ToolbarViewMode = ToolbarViewMo
 export function DataToolbar({
   actions,
   ariaLabel,
+  className,
   compact = false,
   leading,
   sticky = false,
   stickyBleed = false,
 }: {
-  actions: React.ReactNode;
+  actions: ReactNode;
   ariaLabel: string;
+  className?: string;
   compact?: boolean;
-  leading: React.ReactNode;
+  leading: ReactNode;
   sticky?: boolean;
   stickyBleed?: boolean;
 }) {
@@ -33,6 +36,7 @@ export function DataToolbar({
         sticky &&
           "sticky top-[calc(var(--app-toolbar-top)+var(--app-notification-offset,0px))] z-10 border-b border-theme-card-border bg-theme-toolbar/85 px-[var(--app-page-x)] py-[var(--app-toolbar-y)] shadow-[0_12px_28px_rgb(var(--theme-panel-shadow)/0.18)] backdrop-blur",
         sticky && stickyBleed && "-mx-[var(--app-page-x)]",
+        className,
       )}
     >
       <div className={clsx("flex min-w-0 flex-wrap items-center gap-3", compact && "gap-2")}>{leading}</div>
@@ -40,6 +44,29 @@ export function DataToolbar({
         {actions}
       </div>
     </section>
+  );
+}
+
+export function ToolbarCluster({
+  ariaLabel,
+  children,
+  className,
+}: {
+  ariaLabel: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      aria-label={ariaLabel}
+      className={clsx(
+        "inline-flex min-h-10 max-w-full flex-wrap items-center gap-2 rounded-xl border border-theme-control-border bg-theme-control/95 px-3 py-1.5 text-body-sm text-theme-control-fg shadow-[var(--theme-shadow-control-inset)]",
+        className,
+      )}
+      role="group"
+    >
+      {children}
+    </div>
   );
 }
 
@@ -114,7 +141,7 @@ export function ToolbarActionButton({
   text,
 }: {
   disabled?: boolean;
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   onClick?: () => void;
   primary?: boolean;
@@ -148,7 +175,7 @@ export function ToolbarTextButton({
   onClick,
 }: {
   disabled?: boolean;
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   onClick?: () => void;
 }) {

@@ -16,15 +16,28 @@ export {
   COLUMN_MIN_WIDTH_MIN,
   COLUMN_MIN_WIDTH_STEP,
   DEFAULT_COLUMN_MIN_WIDTH,
+  DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
   FONT_SIZE_STEP,
+  createFontFamilySetting,
   fontFamilyCss,
+  fontFamilyOptionForPreset,
   fontFamilyOptions,
+  firstFontFamilyName,
   normalizeStoredSettings,
   resolveFontFamilyCss,
 } from "./settingsSchema";
-export type { AppSettings, AppSettingsStorageInfo, FontFamilyValue, InterfaceDensity, SettingsPanelId } from "./settingsSchema";
+export type {
+  AppSettings,
+  AppSettingsStorageInfo,
+  ConversationContentCardColorSettings,
+  FontFallbackKind,
+  FontFamilyPresetId,
+  FontFamilyValue,
+  InterfaceDensity,
+  SettingsPanelId,
+} from "./settingsSchema";
 
 const STORAGE_KEY = "assetiweave.settings";
 
@@ -90,15 +103,15 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
     document.documentElement.dataset.motion = settings.reduceMotion ? "reduced" : "full";
     document.documentElement.style.setProperty(
       "--app-font-family",
-      resolveFontFamilyCss(settings.typography.interfaceFontFamily),
+      resolveFontFamilyCss(settings.typography.interfaceFontFamily, "sans"),
     );
     document.documentElement.style.setProperty(
       "--app-content-font-family",
-      resolveFontFamilyCss(settings.typography.contentFontFamily),
+      resolveFontFamilyCss(settings.typography.contentFontFamily, "sans"),
     );
     document.documentElement.style.setProperty(
       "--app-code-font-family",
-      resolveFontFamilyCss(settings.typography.codeFontFamily),
+      resolveFontFamilyCss(settings.typography.codeFontFamily, "mono"),
     );
     document.documentElement.style.setProperty(
       "--app-base-font-size",

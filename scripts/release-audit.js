@@ -110,6 +110,18 @@ requireIncludes("settings command", settingsCommand, "SubtypeInvalidJSON");
 requireIncludes("CLI contract", JSON.stringify(contract), "assetiweave-cli settings show");
 requireIncludes("CLI contract", JSON.stringify(contract), "assetiweave-cli settings save --json <json>");
 
+const skillCommand = read("cli/cmd/skill.go");
+requireIncludes("skill command", skillCommand, "newCmdSkillSearch");
+requireIncludes("skill command", skillCommand, "newCmdSkillAcquire");
+requireIncludes("skill group command", skillCommand, "newCmdSkillGroupCreate");
+requireIncludes("skill group command", skillCommand, "newCmdSkillGroupMembersSet");
+requireIncludes("skill group command", skillCommand, "newCmdSkillGroupExclusiveApply");
+requireIncludes("CLI contract", JSON.stringify(contract), "assetiweave-cli skill search --query <query>");
+requireIncludes("CLI contract", JSON.stringify(contract), "assetiweave-cli skill acquire --url <github-url> --yes");
+requireIncludes("CLI contract", JSON.stringify(contract), "assetiweave-cli skill group create --name <name>");
+requireIncludes("CLI contract", JSON.stringify(contract), "assetiweave-cli skill group members set <group-id> --asset <asset-id>");
+requireIncludes("CLI contract", JSON.stringify(contract), "assetiweave-cli skill group exclusive apply --group <group-id> --profile <profile-id> --yes");
+
 const outputContract = read("cli/internal/output/output.go");
 requireIncludes("output envelope", outputContract, 'json:"_notice,omitempty"');
 requireIncludes("output envelope", outputContract, "PendingNotice");

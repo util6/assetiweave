@@ -5,18 +5,6 @@ export const navigationModel: NavigationModel = {
   activeHeaderTabId: "skills",
   activeSubNavId: "overview",
   railItems: [
-    { id: "home", label: "Launchpad", icon: "rocket", scope: "global", enabled: true, position: "primary" },
-    { id: "dashboard", label: "Overview", icon: "gauge", scope: "global", enabled: true, position: "primary" },
-    { id: "routes", label: "Routes", icon: "navigation", scope: "global", enabled: true, position: "primary" },
-    { id: "knowledge", label: "Knowledge Assets", icon: "brain", scope: "asset-catalog", enabled: true, position: "primary" },
-    { id: "sources", label: "Source Management", icon: "layers", scope: "asset-catalog", enabled: true, position: "primary" },
-    { id: "profiles", label: "Profiles", icon: "boxes", scope: "profile", enabled: true, position: "primary" },
-    { id: "commands", label: "Commands", icon: "command", scope: "asset-catalog", enabled: true, position: "primary" },
-    { id: "automation", label: "Automation", icon: "sparkles", scope: "global", enabled: true, position: "primary" },
-    { id: "catalog", label: "Asset Catalog", icon: "archive", scope: "asset-catalog", enabled: true, position: "primary" },
-    { id: "apps", label: "App Management", icon: "grid", scope: "profile", enabled: true, position: "primary" },
-    { id: "security", label: "Security Policies", icon: "shield", scope: "settings", enabled: true, position: "secondary" },
-    { id: "docs", label: "Docs", icon: "file-code", scope: "global", enabled: true, position: "secondary" },
     { id: "logs", label: "Logs", icon: "file-text", scope: "global", enabled: true, position: "secondary" },
     { id: "settings", label: "Settings", icon: "settings", scope: "settings", enabled: true, position: "secondary" },
   ],
@@ -57,8 +45,6 @@ export const navigationModel: NavigationModel = {
     ],
     conversations: [
       { id: "sessions", label: "Sessions", routeKey: "conversations.sessions", enabled: true },
-      { id: "sources", label: "Sources", routeKey: "conversations.sources", enabled: true },
-      { id: "adapters", label: "Adapters", routeKey: "conversations.adapters", enabled: true },
     ],
   },
 };

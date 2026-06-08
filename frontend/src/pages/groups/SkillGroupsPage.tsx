@@ -20,12 +20,14 @@ import { MountStatePill } from "../../components/assets/MountStatePill";
 import { QuickMountButtons } from "../../components/assets/QuickMountButtons";
 import { GroupBulkMountControls } from "../../components/groups/GroupBulkMountControls";
 import { GroupExclusiveMountControls, type GroupMountMode } from "../../components/groups/GroupExclusiveMountControls";
+import { PageHeader } from "../../components/foundation/PageHeader";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { SkillGroupCreateDialog } from "../../components/groups/SkillGroupCreateDialog";
 import { SkillGroupExclusiveMountDialog } from "../../components/groups/SkillGroupExclusiveMountDialog";
 import { SkillGroupEditDialog } from "../../components/groups/SkillGroupEditDialog";
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
+import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import { useAppSettings } from "../../store/settings/AppSettingsProvider";
 import {
   createSkillGroup,
@@ -62,6 +64,7 @@ interface SkillGroupsPageProps {
   assetMountStatuses: AssetMountStatus[];
   assets: Asset[];
   expandedAssetIds: Set<string>;
+  onManualOpen: () => void;
   onNotifyError: (message: string) => void;
   onOpenSettings: () => void;
   onApplyGroupExclusiveMount: (groupIds: string[], profileId: string) => Promise<ApplySkillGroupExclusiveMountResult>;
@@ -84,6 +87,7 @@ export function SkillGroupsPage({
   assetMountStatuses,
   assets,
   expandedAssetIds,
+  onManualOpen,
   onNotifyError,
   onOpenSettings,
   onApplyGroupExclusiveMount,
@@ -404,15 +408,12 @@ export function SkillGroupsPage({
 
   return (
     <section className="flex flex-1 flex-col gap-[var(--app-section-gap)] px-[var(--app-page-x)] py-[var(--app-page-y)]">
-      <div className="flex items-start justify-between gap-4 max-[920px]:flex-col">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-status-update">
-            <Layers3 size={21} />
-            <span className="text-label-caps uppercase">{t("group.page.subtitle")}</span>
-          </div>
-          <h1 className="mt-1 text-h2 text-on-surface">{t("group.page.title")}</h1>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow={t("group.page.subtitle")}
+        icon={<Layers3 size={21} />}
+        title={t("group.page.title")}
+        titleAction={<ManualHelpButton onOpen={onManualOpen} />}
+      />
 
       <AssetToolbar
         actionGroups={[

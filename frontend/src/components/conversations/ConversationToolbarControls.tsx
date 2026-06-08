@@ -1,5 +1,10 @@
 import type { Translator } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
+import {
+  DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
+  type ConversationContentCardColorSettings,
+} from "../../store/settings/AppSettingsProvider";
+import { ToolbarCluster } from "../common/DataToolbar";
 import { Switch } from "../ui/switch";
 import type {
   ConversationContentType,
@@ -19,53 +24,42 @@ export interface ConversationSyncProgressState {
   failedStep?: 1 | 2 | 3;
 }
 
-const contentFilterOptions: Array<{
-  accentClass: string;
-  type: ConversationContentType;
-}> = [
-  { type: "answer", accentClass: "bg-primary" },
-  { type: "tool", accentClass: "bg-status-update" },
-  { type: "command", accentClass: "bg-status-conflict" },
-  { type: "code", accentClass: "bg-primary-strong" },
-  { type: "result", accentClass: "bg-status-create" },
-];
+const contentFilterOptions: ConversationContentType[] = ["answer", "tool", "command", "code", "result"];
 
 export function ConversationContentFilter({
+  colors = DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
   onChange,
   t,
   visibility,
 }: {
+  colors?: ConversationContentCardColorSettings;
   onChange: (type: ConversationContentType, checked: boolean) => void;
   t: Translator;
   visibility: ConversationContentVisibility;
 }) {
   return (
-    <div
-      aria-label={t("conversation.content.filterAria")}
-      className="flex flex-wrap items-center justify-end gap-2"
-      role="group"
-    >
-      <span className="text-label-caps text-on-surface-muted">
+    <ToolbarCluster ariaLabel={t("conversation.content.filterAria")} className="justify-start">
+      <span className="mr-1 text-label-caps text-on-surface-muted">
         {t("conversation.content.visible")}
       </span>
-      {contentFilterOptions.map((option) => {
-        const label = t(`conversation.content.${option.type}` as TranslationKey);
+      {contentFilterOptions.map((type) => {
+        const label = t(`conversation.content.${type}` as TranslationKey);
         return (
           <label
-            className="inline-flex h-10 items-center gap-2 rounded-xl border border-theme-control-border bg-theme-control/75 px-2.5 text-body-sm text-on-surface-variant shadow-[var(--theme-shadow-control-inset)]"
-            key={option.type}
+            className="inline-flex min-h-8 items-center gap-2 rounded-lg px-1.5 text-body-sm text-on-surface-variant transition-colors hover:bg-theme-control-hover/70"
+            key={type}
           >
-            <span className={`size-2 rounded-full ${option.accentClass}`} />
-            <span>{label}</span>
+            <span className="size-2 rounded-full" style={{ backgroundColor: colors[type] }} />
+            <span className="whitespace-nowrap">{label}</span>
             <Switch
               aria-label={t("conversation.content.toggle", { type: label })}
-              checked={visibility[option.type]}
-              onCheckedChange={(checked) => onChange(option.type, checked)}
+              checked={visibility[type]}
+              onCheckedChange={(checked) => onChange(type, checked)}
             />
           </label>
         );
       })}
-    </div>
+    </ToolbarCluster>
   );
 }
 

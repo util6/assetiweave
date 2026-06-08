@@ -37,14 +37,16 @@ HTTP transport, or Feishu event resources.
 | Command recovery | Implemented | Unknown root/nested commands, unknown or misplaced flags, invalid flag values, missing required flags, and positional argument errors return exit 2 typed validation envelopes with stable command/flag suggestions. Pure command groups remain outside metadata, policy, and plugin invocation semantics. |
 | Bootstrap/global UX flags | Implemented | The CLI has root bootstrap, diagnostic bypasses, pre-parsed `--plugin-config`, global `--engine`/`--policy` overrides, completion bootstrap gating, and an opt-in profile command hiding policy for single-profile packaging. |
 | Output adapters | Intentionally minimal | AssetIWeave is currently JSON-first for AI agents; Lark's table/CSV/JQ/color format layer is not copied. |
+| Skill discovery and acquisition | Initial provider implemented | `skill search` uses provider-based internet discovery, resolves GitHub repositories into concrete `SKILL.md` directories when possible, and `skill acquire` downloads/imports a selected candidate through the shared Rust service. Confirmed acquisitions record remote source metadata for later drift checks. |
 | Auth, credentials, transport | Product-specific gap | Lark's OAuth/keychain/HTTP transport stack should not be copied directly. AssetIWeave needs equivalent local workspace/profile/Engine endpoint config only if the desktop app requires it. |
 | Event runtime | Product-specific gap | Lark's event consume/status/stop runtime maps to Feishu webhooks. AssetIWeave should add a local event or conversation runtime only when the desktop app exposes that workflow. |
-| Release/update notices | Partial | `version` reports CLI release provenance, Engine compatibility, and optional remote updater-manifest diagnostics via `--check-updates`. Release builds inject cached `_notice.update` hints into JSON envelopes when a newer manifest version is known. `update --check` resolves the matching CLI tools release package, and `update --yes` downloads, checksum-verifies, and replaces local CLI tools. Skills-drift notices are still missing. |
+| Release/update notices | Partial | `version` reports CLI release provenance, Engine compatibility, and optional remote updater-manifest diagnostics via `--check-updates`. Release builds inject cached `_notice.update` hints into JSON envelopes when a newer manifest version is known. `update --check` resolves the matching CLI tools release package, and `update --yes` downloads, checksum-verifies, and replaces local CLI tools. `skill remote check` now provides explicit Skill drift status; proactive background Skill notices remain future work. |
 | Static architecture gates | Implemented | Contract drift, e2e, declared error subtype, raw subtype cast, zero-baseline legacy error-construction, command metadata, and release audit gates exist. |
 
-Near-term work should add skills-drift notices once AssetIWeave has a reliable
-external skill-state source. Product-specific Lark domains should be translated
-only when AssetIWeave has the matching desktop workflow.
+Near-term work should add richer provider/ranking hooks and UI drift badges once
+AssetIWeave has more external skill-state sources. Product-specific
+Lark domains should be translated only when AssetIWeave has the matching desktop
+workflow.
 
 ## Build
 
@@ -260,14 +262,24 @@ assetiweave-cli asset list --kind skill
 
 assetiweave-cli skill list
 assetiweave-cli skill import --from ./downloaded-skill --name downloaded-skill
+assetiweave-cli skill search --query "browser automation skill"
+assetiweave-cli skill acquire --url https://github.com/lackeyjb/playwright-skill/tree/main/skills/playwright-skill --dry-run
+assetiweave-cli skill acquire --url https://github.com/lackeyjb/playwright-skill/tree/main/skills/playwright-skill --yes
+assetiweave-cli skill remote list
+assetiweave-cli skill remote check [asset-id]
 assetiweave-cli skill backup <asset-id>
 assetiweave-cli skill mount downloaded-skill --profile codex
 assetiweave-cli skill unmount downloaded-skill --profile codex
 assetiweave-cli skill delete downloaded-skill --unmount --yes
 
 assetiweave-cli skill group list
+assetiweave-cli skill group show <group-id>
+assetiweave-cli skill group create --name Frontend --path-glob 'frontend/**'
+assetiweave-cli skill group members set <group-id> --asset <asset-id>
 assetiweave-cli skill group mount <group-id> --profile codex
 assetiweave-cli skill group unmount <group-id> --profile codex --yes
+assetiweave-cli skill group exclusive preview --group <group-id> --profile codex
+assetiweave-cli skill group exclusive apply --group <group-id> --profile codex --yes
 
 assetiweave-cli schema
 assetiweave-cli schema skill.import
@@ -329,7 +341,8 @@ friendly methods, it includes every Tauri command used by the desktop App:
 `get_app_overview`, `list_assets`, `create_source`, `update_source`,
 `delete_source`, `create_profile`, `update_profile`, `delete_profile`,
 `update_navigation_model`, `update_app_shortcuts`, `list_asset_mounts`,
-`toggle_asset_mount`, `set_asset_mount`, all Skill group operations,
+`toggle_asset_mount`, `set_asset_mount`, `search_skills`, `acquire_skill`,
+all Skill group operations,
 `create_plan`, `execute_plan`, log commands, and `reveal_path`.
 
 For App command methods, pass the same JSON argument shape that the frontend
@@ -340,10 +353,57 @@ assetiweave-cli api call list_asset_mounts --json '{"assetId":null}'
 assetiweave-cli api call create_profile --json '{"input":{"id":"codex-test","name":"Codex Test","app_kind":"codex","target_paths":["/tmp/codex-skills"],"supported_kinds":["skill"],"deployment_strategy":"symlink_to_source","enabled":true}}'
 ```
 
-First-version online search is intentionally outside the CLI. An AI agent should
-search the web, install or download a skill according to the source site, then
-call `assetiweave-cli skill import --from <installed-dir>`. Existing local
-skills can be copied into the backup library with `assetiweave-cli skill backup`.
+## Internet Skill Discovery And Acquisition
+
+The first provider-backed discovery path is built into the shared Engine so the
+desktop app, CLI, and external agents use the same import rules:
+
+```bash
+assetiweave-cli skill search --query "browser automation skill" --provider github --limit 5
+assetiweave-cli skill search --query "browser automation skill" --provider github-code --limit 5
+assetiweave-cli skill acquire --url <github-repo-or-tree-url> --dry-run
+assetiweave-cli skill acquire --url <github-repo-or-tree-url> --yes
+assetiweave-cli skill remote list
+assetiweave-cli skill remote check [asset-id]
+```
+
+`skill search --provider github` starts with GitHub repository search and then
+inspects each candidate repository tree for `SKILL.md`. When concrete skills
+are found, the candidate URL points at the specific GitHub tree path, so it can
+be passed directly to `skill acquire`. If tree inspection fails or a repository
+does not contain `SKILL.md`, the command falls back to a repository-level
+candidate. `skill search --provider github-code` uses GitHub code search with a
+`filename:SKILL.md` qualifier to find Skill files directly on default branches.
+Each candidate includes `match_reason`; provider, code-search, or
+tree-inspection problems are returned in `warnings` so agents can judge whether
+the result set is strong or only a degraded fallback.
+
+Unauthenticated GitHub requests work, but public API rate limits are low. Set
+`GITHUB_TOKEN` or `GH_TOKEN` to let the Engine use an authenticated request
+header. Tokens are read from the process environment and are not written to the
+database or CLI output.
+
+`skill acquire --dry-run` plans the clone, staging path, inferred Skill path,
+import name, and `security_notice` without writing files. A confirmed acquire
+clones the repository into the AssetIWeave staging area, resolves the selected
+`SKILL.md` directory, copies it into `~/.assetiweave/library/skills/downloaded`,
+registers the AssetIWeave library source, rescans it, returns the imported
+asset and the same `security_notice`, and records the GitHub repository, branch,
+Skill path, acquired tree SHA, and local content hash as remote-source metadata.
+The notice reminds callers to review remote Skill contents before importing;
+AssetIWeave does not execute or automatically trust remote code.
+
+`skill remote list` shows acquired Skill remote-source records. `skill remote
+check` fetches the current GitHub tree for each record, compares the selected
+Skill directory tree SHA with the acquired tree SHA, and returns `current`,
+`changed`, `unknown`, or `error` status. Passing an asset id checks only that
+Skill. The check persists `last_checked_at`, `latest_tree_sha`, `status`, and
+`message` so the desktop app can surface update reminders without reimplementing
+provider logic.
+
+This is not a hosted marketplace: AssetIWeave does not curate remote packages
+or run an embedded LLM API in v1. It exposes a provider-based Agent chain that
+can be driven from UI, CLI, or an external AI workflow.
 
 ## Adding App Operations
 

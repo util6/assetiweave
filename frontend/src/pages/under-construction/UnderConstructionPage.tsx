@@ -1,11 +1,14 @@
 import { UnderConstructionState } from "../../components/foundation/UnderConstructionState";
 import { useI18n } from "../../i18n/I18nProvider";
+import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 
 export function UnderConstructionPage({
   featureLabel,
+  onManualOpen,
   routeKey,
 }: {
   featureLabel?: string;
+  onManualOpen: () => void;
   routeKey?: string;
 }) {
   const { t } = useI18n();
@@ -24,6 +27,7 @@ export function UnderConstructionPage({
         description={t("underConstruction.description")}
         eyebrow={t("underConstruction.eyebrow")}
         title={t("underConstruction.title", { feature })}
+        titleAction={<ManualHelpButton onOpen={onManualOpen} />}
       />
     </section>
   );

@@ -304,6 +304,7 @@ mod tests {
         collections::BTreeSet,
         env, fs,
         path::PathBuf,
+        process::Command,
         sync::{Mutex, OnceLock},
     };
     use uuid::Uuid;
@@ -499,6 +500,139 @@ mod tests {
         fs::remove_dir_all(home).ok();
         fs::remove_dir_all(backup_root).ok();
         fs::remove_dir_all(source).ok();
+    }
+
+    #[test]
+    fn acquire_skill_dry_run_plans_github_tree_without_cloning() {
+        let _guard = env_lock().lock().expect("env lock");
+        let home = unique_temp_dir("assetiweave-engine-acquire-home");
+        let db_path = home.join("app.db");
+        fs::create_dir_all(&home).expect("create temp home");
+        env::set_var("HOME", &home);
+        env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
+
+        let value = dispatch(EngineRequest {
+            method: "skill.acquire".to_string(),
+            params: json!({
+                "url": "https://github.com/util6/util6-agents/tree/main/skills/browser",
+                "dry_run": true
+            }),
+        })
+        .expect("dry run acquire");
+
+        env::remove_var("ASSETIWEAVE_DB_PATH");
+        env::remove_var("HOME");
+        assert_eq!(value["dry_run"], json!(true));
+        assert_eq!(
+            value["repo_url"],
+            json!("https://github.com/util6/util6-agents.git")
+        );
+        assert_eq!(value["branch"], json!("main"));
+        assert_eq!(value["path"], json!("skills/browser"));
+        assert_eq!(value["name"], json!("browser"));
+        assert!(value["security_notice"]
+            .as_str()
+            .expect("security notice")
+            .contains("does not execute or trust remote code"));
+        let staging_path = value["staging_path"].as_str().expect("staging path");
+        assert!(!std::path::Path::new(staging_path).exists());
+        fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn acquire_skill_imports_from_isolated_git_repo_and_records_remote_source() {
+        let _guard = env_lock().lock().expect("env lock");
+        let home = unique_temp_dir("assetiweave-engine-acquire-import-home");
+        let db_path = home.join("app.db");
+        let backup_root = unique_temp_dir("assetiweave-engine-acquire-import-backup");
+        let repo = unique_temp_dir("assetiweave-engine-acquire-import-repo");
+        fs::create_dir_all(&home).expect("create temp home");
+        fs::create_dir_all(repo.join("skills/browser")).expect("create local skill repo");
+        fs::write(
+            repo.join("skills/browser/SKILL.md"),
+            "# Browser Skill\n\nUse browser automation safely.",
+        )
+        .expect("write skill file");
+        run_git(&repo, &["init", "-b", "main"]);
+        run_git(&repo, &["add", "skills/browser/SKILL.md"]);
+        run_git(
+            &repo,
+            &[
+                "-c",
+                "user.name=AssetIWeave Test",
+                "-c",
+                "user.email=test@example.local",
+                "commit",
+                "-m",
+                "add browser skill",
+            ],
+        );
+        let repo_url = format!("file://{}", repo.display());
+        fs::write(
+            home.join(".gitconfig"),
+            format!(
+                "[url \"{repo_url}\"]\n\tinsteadOf = https://github.com/util6/test-skill.git\n"
+            ),
+        )
+        .expect("write git url rewrite");
+
+        env::set_var("HOME", &home);
+        env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
+        dispatch(EngineRequest {
+            method: "update_skill_backup_settings".to_string(),
+            params: json!({
+                "root_path": backup_root.to_string_lossy(),
+                "migrate": true,
+                "yes": true
+            }),
+        })
+        .expect("configure backup root");
+        let value = dispatch(EngineRequest {
+            method: "skill.acquire".to_string(),
+            params: json!({
+                "url": "https://github.com/util6/test-skill/tree/main/skills/browser",
+                "yes": true
+            }),
+        })
+        .expect("acquire skill from rewritten local repo");
+        let remotes = dispatch(EngineRequest {
+            method: "skill.remote.list".to_string(),
+            params: json!({}),
+        })
+        .expect("list remote sources");
+
+        env::remove_var("ASSETIWEAVE_DB_PATH");
+        env::remove_var("HOME");
+        let target = backup_root.join("downloaded/browser");
+        assert!(target.join("SKILL.md").exists());
+        assert_eq!(value["dry_run"], json!(false));
+        assert_eq!(value["name"], json!("browser"));
+        assert_eq!(
+            value["import"]["asset"]["relative_path"],
+            json!("downloaded/browser")
+        );
+        assert_eq!(
+            value["remote_source"]["repo_url"],
+            json!("https://github.com/util6/test-skill.git")
+        );
+        assert_eq!(value["remote_source"]["branch"], json!("main"));
+        assert_eq!(value["remote_source"]["path"], json!("skills/browser"));
+        assert!(value["remote_source"]["acquired_tree_sha"]
+            .as_str()
+            .is_some_and(|sha| !sha.is_empty()));
+        assert!(value["remote_source"]["local_content_hash"]
+            .as_str()
+            .is_some_and(|hash| !hash.is_empty()));
+        assert!(value["security_notice"]
+            .as_str()
+            .expect("security notice")
+            .contains("does not execute or trust remote code"));
+        let remote_list = remotes.as_array().expect("remote list array");
+        assert_eq!(remote_list.len(), 1);
+        assert_eq!(remote_list[0]["asset_id"], value["import"]["asset"]["id"]);
+        fs::remove_dir_all(home).ok();
+        fs::remove_dir_all(backup_root).ok();
+        fs::remove_dir_all(repo).ok();
     }
 
     #[test]
@@ -1152,6 +1286,21 @@ mod tests {
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
         env::temp_dir().join(format!("{prefix}-{}", Uuid::new_v4()))
+    }
+
+    fn run_git(repo: &std::path::Path, args: &[&str]) {
+        let output = Command::new("git")
+            .current_dir(repo)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     fn extract_frontend_invoke_methods(content: &str) -> BTreeSet<String> {

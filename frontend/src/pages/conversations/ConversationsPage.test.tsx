@@ -18,8 +18,10 @@ import type {
 } from "../../types";
 import {
   groupConversationSessionsByApp,
+  ConversationExportDialog,
   MarkdownContent,
   QuestionPreview,
+  SessionQuestionWorkspace,
 } from "./ConversationsPage";
 
 describe("MarkdownContent", () => {
@@ -48,6 +50,56 @@ describe("MarkdownContent", () => {
     expect(html).toContain("dry run");
     expect(html).toContain("<li>Session</li>");
     expect(html).toContain("assetiweave-cli conversation sync --dry-run");
+  });
+
+  it("renders markdown tables and mermaid diagrams", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent
+        value={[
+          "| 阶段 | 状态 |",
+          "| --- | --- |",
+          "| 导入 | 完成 |",
+          "| 渲染 | 等待 |",
+          "",
+          "```mermaid",
+          "flowchart TD",
+          "  A[导入] --> B[渲染]",
+          "```",
+        ].join("\n")}
+      />,
+    );
+
+    expect(html).toContain("<table");
+    expect(html).toContain("<th");
+    expect(html).toContain("阶段");
+    expect(html).toContain("<td");
+    expect(html).toContain("完成");
+    expect(html).toContain('data-mermaid-diagram="true"');
+    expect(html).toContain("flowchart TD");
+  });
+
+  it("normalizes escaped OpenCode markdown text before rendering", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent
+        value={[
+          "| 管理费率 | 1\\.20%（前端） | 托管费率 | 0\\.20% |\\n| 业绩比较基准 | 沪深300指数收益率\\*95%+活期存款利率（税后）\\*5% | 跟踪标的 | 沪深300指数 |",
+          "\\n\\n什么是保本基金的保本模式？ [详情]\\n(http://help.1234567.com.cn/question_795.html)",
+          "\\n\\n#### 投资目标\\n本基金为指数增强型股票基金，追求超越业绩比较基准的投资回报。",
+          "\\n\\n- 内地依法发行上市的股票\\n- 存托凭证",
+        ].join("")}
+      />,
+    );
+
+    expect(html).toContain("<table");
+    expect(html).toContain("管理费率");
+    expect(html).toContain("1.20%（前端）");
+    expect(html).toContain("沪深300指数收益率*95%+活期存款利率（税后）*5%");
+    expect(html).toContain('href="http://help.1234567.com.cn/question_795.html"');
+    expect(html).toContain("投资目标");
+    expect(html).toContain("<li>内地依法发行上市的股票</li>");
+    expect(html).not.toContain("\\n");
+    expect(html).not.toContain("\\*");
+    expect(html).not.toContain("\\.");
   });
 
   it("renders a question-based preview with markdown parts and turn split controls", () => {
@@ -175,6 +227,83 @@ describe("MarkdownContent", () => {
       expect(previewHtml).toContain(`data-content-type="${type}"`);
     }
     expect(previewHtml).not.toContain("回答内容显示设置");
+  });
+
+  it("renders question checkboxes for batch export selection", () => {
+    const html = renderToStaticMarkup(
+      <SessionQuestionWorkspace
+        contentCardColors={{
+          answer: "#facc15",
+          code: "#60a5fa",
+          command: "#f59e0b",
+          result: "#34d399",
+          tool: "#22c55e",
+        }}
+        onExport={async () => undefined}
+        onMerge={async () => undefined}
+        onQuestionSelect={vi.fn()}
+        onQuestionSelectionChange={vi.fn()}
+        onSplit={async () => undefined}
+        outputRoot="/tmp/conversation-export"
+        question={richQuestionDetail}
+        questions={[questionDetail, richQuestionDetail]}
+        selectedQuestionId={richQuestionDetail.question.id}
+        selectedQuestionIds={new Set([richQuestionDetail.question.id])}
+        session={{ ...sessionDetail, questions: [questionDetail, richQuestionDetail] }}
+        setOutputRoot={vi.fn()}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    expect(html).toContain('type="checkbox"');
+    expect(html).toContain("选择问题");
+    expect(html).toContain('checked=""');
+  });
+
+  it("renders an export dialog that reuses content visibility controls", () => {
+    const html = renderToStaticMarkup(
+      <ConversationExportDialog
+        contentCardColors={{
+          answer: "#facc15",
+          code: "#60a5fa",
+          command: "#f59e0b",
+          result: "#34d399",
+          tool: "#22c55e",
+        }}
+        exporting={false}
+        mode="questions"
+        onClose={vi.fn()}
+        onConfirm={async () => undefined}
+        onOutputRootChange={vi.fn()}
+        onVisibilityChange={vi.fn()}
+        outputRoot="/tmp/conversation-export"
+        questionCount={2}
+        t={t}
+        visibility={{
+          answer: true,
+          code: false,
+          command: true,
+          result: true,
+          tool: false,
+        }}
+      />,
+    );
+
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain("导出 Markdown");
+    expect(html).toContain("2 个问题");
+    expect(html).toContain("/tmp/conversation-export");
+    for (const label of ["回答文字", "工具调用", "命令执行", "代码", "执行结果"]) {
+      expect(html).toContain(label);
+    }
+    expect(html).toContain("确认导出");
   });
 
   it("renders explicit sync phases and accessible progress", () => {

@@ -9,6 +9,7 @@ mod mount_repo;
 mod profile_repo;
 mod schema;
 mod shortcut_repo;
+mod skill_remote_repo;
 mod source_repo;
 mod sql;
 
@@ -20,8 +21,9 @@ pub(crate) use conversation_repo::{
     list_conversation_adapters, list_conversation_question_details, list_conversation_sessions,
     list_conversation_sources, load_conversation_adapter, load_conversation_question_detail,
     load_conversation_session_detail, load_conversation_source, merge_conversation_questions,
-    render_session_markdown, seed_builtin_conversation_adapters, split_conversation_question,
-    upsert_conversation_adapter, upsert_conversation_source, ConversationMutationResult,
+    render_session_markdown_for_questions_with_filter, render_session_markdown_with_filter,
+    seed_builtin_conversation_adapters, split_conversation_question, upsert_conversation_adapter,
+    upsert_conversation_source, ConversationExportContentFilter, ConversationMutationResult,
     ConversationQuestionDetail, ConversationSessionDetail, ConversationSessionListItem,
 };
 pub(crate) use deployment_repo::{
@@ -47,6 +49,10 @@ pub(crate) use profile_repo::{
 pub(crate) use schema::{count_rows, latest_scan_status, open_initialized};
 pub(crate) use shortcut_repo::{
     load_app_shortcut_settings, load_app_shortcuts, save_app_shortcuts,
+};
+pub(crate) use skill_remote_repo::{
+    delete_orphan_skill_remote_sources, list_skill_remote_sources, load_skill_remote_source,
+    update_skill_remote_check_result, upsert_skill_remote_source,
 };
 pub(crate) use source_repo::{
     delete_source, load_skill_sources, load_sources, normalize_source, upsert_source,

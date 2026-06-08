@@ -8,6 +8,7 @@ use assetiweave_core::{
 };
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Row};
+use schemars::JsonSchema;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,6 +23,32 @@ pub(crate) struct ConversationImportResult {
     pub(crate) turn_count: usize,
     pub(crate) warning_count: usize,
     pub(crate) warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize, JsonSchema)]
+pub(crate) struct ConversationExportContentFilter {
+    #[serde(default = "default_true")]
+    pub(crate) answer: bool,
+    #[serde(default = "default_true")]
+    pub(crate) tool: bool,
+    #[serde(default = "default_true")]
+    pub(crate) command: bool,
+    #[serde(default = "default_true")]
+    pub(crate) code: bool,
+    #[serde(default = "default_true")]
+    pub(crate) result: bool,
+}
+
+impl Default for ConversationExportContentFilter {
+    fn default() -> Self {
+        Self {
+            answer: true,
+            tool: true,
+            command: true,
+            code: true,
+            result: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -630,8 +657,44 @@ pub(crate) fn split_conversation_question(
     })
 }
 
-pub(crate) fn render_session_markdown(conn: &Connection, session_id: &str) -> AppResult<String> {
+pub(crate) fn render_session_markdown_with_filter(
+    conn: &Connection,
+    session_id: &str,
+    content_filter: &ConversationExportContentFilter,
+) -> AppResult<String> {
     let detail = load_conversation_session_detail(conn, session_id)?;
+    render_session_detail_markdown(&detail, None, content_filter)
+}
+
+pub(crate) fn render_session_markdown_for_questions_with_filter(
+    conn: &Connection,
+    session_id: &str,
+    question_ids: &[String],
+    content_filter: &ConversationExportContentFilter,
+) -> AppResult<String> {
+    let detail = load_conversation_session_detail(conn, session_id)?;
+    render_session_detail_markdown(&detail, Some(question_ids), content_filter)
+}
+
+fn render_session_detail_markdown(
+    detail: &ConversationSessionDetail,
+    question_ids: Option<&[String]>,
+    content_filter: &ConversationExportContentFilter,
+) -> AppResult<String> {
+    let selected = question_ids.map(|ids| ids.iter().collect::<BTreeSet<_>>());
+    if let Some(selected) = &selected {
+        let available = detail
+            .questions
+            .iter()
+            .map(|question| &question.question.id)
+            .collect::<BTreeSet<_>>();
+        if let Some(missing_id) = selected.iter().find(|id| !available.contains(*id)) {
+            return Err(format!(
+                "conversation question not found in session: {missing_id}"
+            ));
+        }
+    }
+
     let mut output = String::new();
     output.push_str(&format!("# {}\n\n", detail.session.title));
     output.push_str("## Session Metadata\n\n");
@@ -649,7 +712,18 @@ pub(crate) fn render_session_markdown(conn: &Connection, session_id: &str) -> Ap
     }
     output.push('\n');
 
-    for (index, question) in detail.questions.iter().enumerate() {
+    let questions = detail
+        .questions
+        .iter()
+        .filter(|question| {
+            selected
+                .as_ref()
+                .map(|ids| ids.contains(&question.question.id))
+                .unwrap_or(true)
+        })
+        .collect::<Vec<_>>();
+
+    for (index, question) in questions.iter().enumerate() {
         let title = question
             .question
             .title
@@ -663,7 +737,7 @@ pub(crate) fn render_session_markdown(conn: &Connection, session_id: &str) -> Ap
             output.push_str(&turn.user_text);
             output.push_str("\n\n");
             for part in question.parts.iter().filter(|part| part.turn_id == turn.id) {
-                render_part_markdown(&mut output, part);
+                render_part_markdown(&mut output, part, content_filter);
             }
         }
     }
@@ -1703,53 +1777,116 @@ fn first_line(text: &str) -> String {
     }
 }
 
-fn render_part_markdown(output: &mut String, part: &ConversationPart) {
+fn render_part_markdown(
+    output: &mut String,
+    part: &ConversationPart,
+    content_filter: &ConversationExportContentFilter,
+) {
     match part.kind {
         ConversationPartKind::Text => {
-            if let Some(text) = &part.text {
-                output.push_str(role_heading(part.role));
-                output.push_str("\n\n");
-                output.push_str(text);
-                output.push_str("\n\n");
+            if part.role == ConversationPartRole::Tool {
+                if content_filter.result {
+                    render_text_section(output, "### Result", part.text.as_deref());
+                }
+            } else if content_filter.answer {
+                render_text_section(output, role_heading(part.role), part.text.as_deref());
             }
         }
         ConversationPartKind::CodeBlock => {
-            output.push_str("### Code\n\n```");
-            if let Some(language) = &part.language {
-                output.push_str(language);
-            }
-            output.push('\n');
-            if let Some(text) = &part.text {
-                output.push_str(text);
+            if content_filter.code {
+                output.push_str("### Code\n\n```");
+                if let Some(language) = &part.language {
+                    output.push_str(language);
+                }
                 output.push('\n');
+                if let Some(text) = &part.text {
+                    output.push_str(text);
+                    output.push('\n');
+                }
+                output.push_str("```\n\n");
             }
-            output.push_str("```\n\n");
         }
         ConversationPartKind::Command => {
-            output.push_str("### Command\n\n```sh\n");
-            if let Some(command) = part.command.as_ref().or(part.text.as_ref()) {
-                output.push_str(command);
-                output.push('\n');
-            }
-            output.push_str("```\n\n");
-            if let Some(text) = &part.text {
-                if part.command.as_deref() != Some(text.as_str()) {
-                    output.push_str(text);
-                    output.push_str("\n\n");
+            if content_filter.command {
+                output.push_str("### Command\n\n```sh\n");
+                if let Some(command) = part.command.as_ref().or(part.text.as_ref()) {
+                    output.push_str(command);
+                    output.push('\n');
                 }
+                output.push_str("```\n\n");
+            }
+            if content_filter.result {
+                render_text_section(output, "### Result", command_result_text(part).as_deref());
             }
         }
         ConversationPartKind::Tool
         | ConversationPartKind::Subagent
         | ConversationPartKind::FileChange => {
-            output.push_str(&format!("### {:?}\n\n", part.kind));
-            if let Some(text) = &part.text {
-                output.push_str(text);
-                output.push_str("\n\n");
+            let is_result = is_export_result_part(part);
+            if (is_result && content_filter.result) || (!is_result && content_filter.tool) {
+                output.push_str(&format!("### {:?}\n\n", part.kind));
+                if let Some(text) = &part.text {
+                    output.push_str(text);
+                    output.push_str("\n\n");
+                }
             }
         }
         ConversationPartKind::Metadata => {}
     }
+}
+
+fn render_text_section(output: &mut String, heading: &str, text: Option<&str>) {
+    let Some(text) = text.map(str::trim).filter(|value| !value.is_empty()) else {
+        return;
+    };
+    output.push_str(heading);
+    output.push_str("\n\n");
+    output.push_str(text);
+    output.push_str("\n\n");
+}
+
+fn command_result_text(part: &ConversationPart) -> Option<String> {
+    let mut lines = Vec::new();
+    if let Some(text) =
+        part.text.as_deref().map(str::trim).filter(|value| {
+            !value.is_empty() && part.command.as_deref().map(str::trim) != Some(*value)
+        })
+    {
+        lines.push(text.to_string());
+    }
+    if let Some(status) = part
+        .status
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("Status: `{status}`"));
+    }
+    if let Some(exit_code) = part.exit_code {
+        lines.push(format!("Exit code: `{exit_code}`"));
+    }
+    (!lines.is_empty()).then(|| lines.join("\n\n"))
+}
+
+fn is_export_result_part(part: &ConversationPart) -> bool {
+    if part.role == ConversationPartRole::Tool && part.kind == ConversationPartKind::Text {
+        return true;
+    }
+    if part.status.is_some() || part.exit_code.is_some() {
+        return true;
+    }
+    let metadata = part.metadata_json.as_deref().unwrap_or("").to_lowercase();
+    [
+        "tool_result",
+        "tool-result",
+        "tool_output",
+        "tooloutput",
+        "function_call_output",
+        "\"output\"",
+        "\"result\"",
+    ]
+    .iter()
+    .any(|marker| metadata.contains(marker))
 }
 
 fn role_heading(role: ConversationPartRole) -> &'static str {
@@ -1759,6 +1896,10 @@ fn role_heading(role: ConversationPartRole) -> &'static str {
         ConversationPartRole::Tool => "### Tool",
         ConversationPartRole::System => "### System",
     }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn stable_id(prefix: &str, parts: &[&str]) -> String {
@@ -1841,6 +1982,84 @@ mod tests {
         split_conversation_question(&conn, &merged.question.id, second_turn_id, false).unwrap();
         let detail = load_conversation_session_detail(&conn, &session.session.id).unwrap();
         assert_eq!(detail.questions.len(), 2);
+    }
+
+    #[test]
+    fn renders_markdown_for_selected_questions_only() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(crate::store::sql::INIT_SCHEMA).unwrap();
+        seed_builtin_conversation_adapters(&conn).unwrap();
+        let source = load_conversation_source(&conn, "codex-live")
+            .unwrap()
+            .unwrap();
+        import_conversation_sessions(&conn, &source, &[fixture_session("v1")], false).unwrap();
+        let session = list_conversation_sessions(&conn, None, None, None, 20, 0)
+            .unwrap()
+            .remove(0);
+        let detail = load_conversation_session_detail(&conn, &session.session.id).unwrap();
+        let selected_question_id = detail.questions[1].question.id.clone();
+
+        let markdown = render_session_markdown_for_questions_with_filter(
+            &conn,
+            &session.session.id,
+            &[selected_question_id],
+            &ConversationExportContentFilter::default(),
+        )
+        .unwrap();
+
+        assert!(markdown.contains("## 1. Export it"));
+        assert!(markdown.contains("answer for t3"));
+        assert!(!markdown.contains("How does sync work?"));
+        assert!(!markdown.contains("answer for t1"));
+    }
+
+    #[test]
+    fn renders_markdown_for_selected_content_types_only() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(crate::store::sql::INIT_SCHEMA).unwrap();
+        seed_builtin_conversation_adapters(&conn).unwrap();
+        let source = load_conversation_source(&conn, "codex-live")
+            .unwrap()
+            .unwrap();
+        let mut session = fixture_session("v2");
+        session.turns[2].parts.push(NormalizedConversationPart {
+            role: ConversationPartRole::Tool,
+            kind: ConversationPartKind::Command,
+            text: Some("tests passed".to_string()),
+            language: None,
+            command: Some("assetiweave-cli conversation session export".to_string()),
+            cwd: Some("/tmp/project".to_string()),
+            status: Some("completed".to_string()),
+            exit_code: Some(0),
+            metadata_json: None,
+        });
+        import_conversation_sessions(&conn, &source, &[session], false).unwrap();
+        let session = list_conversation_sessions(&conn, None, None, None, 20, 0)
+            .unwrap()
+            .remove(0);
+        let detail = load_conversation_session_detail(&conn, &session.session.id).unwrap();
+        let selected_question_id = detail.questions[1].question.id.clone();
+
+        let markdown = render_session_markdown_for_questions_with_filter(
+            &conn,
+            &session.session.id,
+            &[selected_question_id],
+            &ConversationExportContentFilter {
+                answer: false,
+                tool: false,
+                command: true,
+                code: false,
+                result: true,
+            },
+        )
+        .unwrap();
+
+        assert!(markdown.contains("### Command"));
+        assert!(markdown.contains("assetiweave-cli conversation session export"));
+        assert!(markdown.contains("### Result"));
+        assert!(markdown.contains("tests passed"));
+        assert!(!markdown.contains("answer for t3"));
+        assert!(!markdown.contains("cargo test"));
     }
 
     fn fixture_session(version: &str) -> NormalizedConversationSession {

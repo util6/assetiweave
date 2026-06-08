@@ -437,6 +437,162 @@
       "supports_dry_run": true
     },
     {
+      "canonical_method": "skill.search",
+      "cli": "assetiweave-cli skill search --query <query>",
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Search internet providers for Skill candidates",
+      "exposure": "friendly",
+      "method": "skill.search",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": null,
+            "description": "Maximum candidate count",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "provider": {
+            "default": null,
+            "description": "Search provider",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "query": {
+            "description": "Skill search query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "skill.acquire",
+      "cli": "assetiweave-cli skill acquire --url <github-url> --yes",
+      "confirmation_required": true,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Download and import a Skill candidate",
+      "exposure": "friendly",
+      "method": "skill.acquire",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "default": null,
+            "description": "Git branch override",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview without cloning or importing",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Imported Skill name",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "default": null,
+            "description": "Skill directory path inside the repository",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "description": "GitHub repository or tree URL",
+            "type": "string"
+          },
+          "yes": {
+            "default": false,
+            "description": "Confirm download and import",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": true
+    },
+    {
+      "canonical_method": "skill.remote.list",
+      "cli": "assetiweave-cli skill remote list",
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "List acquired Skill remote sources",
+      "exposure": "friendly",
+      "method": "skill.remote.list",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "skill.remote.check",
+      "cli": "assetiweave-cli skill remote check [asset-id]",
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Check acquired Skill remote sources for drift",
+      "exposure": "friendly",
+      "method": "skill.remote.check",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_id": {
+            "aliases": [
+              "assetId"
+            ],
+            "default": null,
+            "description": "Optional asset identifier",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "skill.backup",
       "cli": "assetiweave-cli skill backup <asset-id>",
       "confirmation_required": false,
@@ -656,6 +812,313 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "skill.group.get",
+      "cli": "assetiweave-cli skill group show <group-id>",
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Show a Skill group with resolved members",
+      "exposure": "friendly",
+      "method": "skill.group.get",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "group_id": {
+            "aliases": [
+              "groupId"
+            ],
+            "description": "Skill group identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "skill.group.create",
+      "cli": "assetiweave-cli skill group create --name <name>",
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Create a Skill group",
+      "exposure": "friendly",
+      "method": "skill.group.create",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "input": {
+            "description": "Skill group input",
+            "properties": {
+              "color": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "enabled": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "rules": {
+                "properties": {
+                  "name_contains": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "relative_path_globs": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "source_ids": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "source_ids",
+                  "relative_path_globs"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "sort_order": {
+                "format": "int32",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "skill.group.update",
+      "cli": "assetiweave-cli skill group update <group-id> --json <json>",
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Update a Skill group",
+      "exposure": "friendly",
+      "method": "skill.group.update",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "group": {
+            "description": "Complete Skill group record",
+            "properties": {
+              "asset_kind": {
+                "enum": [
+                  "prompt",
+                  "rule",
+                  "memory",
+                  "skill",
+                  "mcp",
+                  "agent",
+                  "command",
+                  "workflow",
+                  "profile",
+                  "custom",
+                  "unclassified"
+                ],
+                "type": "string"
+              },
+              "color": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "rules": {
+                "properties": {
+                  "name_contains": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "relative_path_globs": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "source_ids": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "source_ids",
+                  "relative_path_globs"
+                ],
+                "type": "object"
+              },
+              "sort_order": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "updated_at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "color",
+              "asset_kind",
+              "enabled",
+              "sort_order",
+              "rules",
+              "created_at",
+              "updated_at"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "group"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "skill.group.delete",
+      "cli": "assetiweave-cli skill group delete <group-id> --yes",
+      "confirmation_required": true,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Delete a Skill group",
+      "exposure": "friendly",
+      "method": "skill.group.delete",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "group_id": {
+            "aliases": [
+              "groupId"
+            ],
+            "description": "Skill group identifier",
+            "type": "string"
+          },
+          "yes": {
+            "description": "Confirm the high-risk operation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "group_id"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "skill.group.members.set",
+      "cli": "assetiweave-cli skill group members set <group-id> --asset <asset-id>",
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Replace the manual members of a Skill group",
+      "exposure": "friendly",
+      "method": "skill.group.members.set",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_ids": {
+            "aliases": [
+              "assetIds"
+            ],
+            "description": "Manual member asset identifiers",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "group_id": {
+            "aliases": [
+              "groupId"
+            ],
+            "description": "Skill group identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id",
+          "asset_ids"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "skill.group.mount",
       "cli": "assetiweave-cli skill group mount <group-id> --profile <profile-id>",
       "confirmation_required": false,
@@ -754,6 +1217,108 @@
       "risk": "high-risk-write",
       "since": "0.1.0",
       "supports_dry_run": true
+    },
+    {
+      "canonical_method": "skill.group.exclusive.preview",
+      "cli": "assetiweave-cli skill group exclusive preview --group <group-id> --profile <profile-id>",
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Preview an exclusive Skill group mount operation",
+      "exposure": "friendly",
+      "method": "skill.group.exclusive.preview",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "input": {
+            "description": "Exclusive mount input",
+            "properties": {
+              "dry_run": {
+                "type": "boolean"
+              },
+              "group_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "mount_selected": {
+                "type": "boolean"
+              },
+              "profile_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "group_ids",
+              "profile_id",
+              "mount_selected",
+              "dry_run"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "skill.group.exclusive.apply",
+      "cli": "assetiweave-cli skill group exclusive apply --group <group-id> --profile <profile-id> --yes",
+      "confirmation_required": true,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Apply an exclusive Skill group mount operation",
+      "exposure": "friendly",
+      "method": "skill.group.exclusive.apply",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "input": {
+            "description": "Exclusive mount input",
+            "properties": {
+              "dry_run": {
+                "type": "boolean"
+              },
+              "group_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "mount_selected": {
+                "type": "boolean"
+              },
+              "profile_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "group_ids",
+              "profile_id",
+              "mount_selected",
+              "dry_run"
+            ],
+            "type": "object"
+          },
+          "yes": {
+            "description": "Confirm the high-risk operation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": false
     },
     {
       "canonical_method": "conversation.adapter.list",
@@ -1385,6 +1950,35 @@
       "params_schema": {
         "additionalProperties": false,
         "properties": {
+          "content_filter": {
+            "aliases": [
+              "contentFilter"
+            ],
+            "description": "Optional content categories to include in Markdown export",
+            "properties": {
+              "answer": {
+                "default": true,
+                "type": "boolean"
+              },
+              "code": {
+                "default": true,
+                "type": "boolean"
+              },
+              "command": {
+                "default": true,
+                "type": "boolean"
+              },
+              "result": {
+                "default": true,
+                "type": "boolean"
+              },
+              "tool": {
+                "default": true,
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
           "dry_run": {
             "aliases": [
               "dryRun"
@@ -1399,6 +1993,17 @@
             ],
             "description": "Output root directory",
             "type": "string"
+          },
+          "question_ids": {
+            "aliases": [
+              "questionIds"
+            ],
+            "default": [],
+            "description": "Optional question identifiers to export instead of the full session",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "session_id": {
             "aliases": [
@@ -1855,6 +2460,162 @@
         "required": [
           "asset_id"
         ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "skill.search",
+      "cli": "assetiweave-cli skill search --query <query>",
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Search internet providers for Skill candidates",
+      "exposure": "app",
+      "method": "search_skills",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": null,
+            "description": "Maximum candidate count",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "provider": {
+            "default": null,
+            "description": "Search provider",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "query": {
+            "description": "Skill search query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "skill.acquire",
+      "cli": "assetiweave-cli skill acquire --url <github-url> --yes",
+      "confirmation_required": true,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Download and import a Skill candidate",
+      "exposure": "app",
+      "method": "acquire_skill",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "default": null,
+            "description": "Git branch override",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview without cloning or importing",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Imported Skill name",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "default": null,
+            "description": "Skill directory path inside the repository",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "description": "GitHub repository or tree URL",
+            "type": "string"
+          },
+          "yes": {
+            "default": false,
+            "description": "Confirm download and import",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": true
+    },
+    {
+      "canonical_method": "skill.remote.list",
+      "cli": "assetiweave-cli skill remote list",
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "List acquired Skill remote sources",
+      "exposure": "app",
+      "method": "list_skill_remote_sources",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "skill.remote.check",
+      "cli": "assetiweave-cli skill remote check [asset-id]",
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Check acquired Skill remote sources for drift",
+      "exposure": "app",
+      "method": "check_skill_remote_sources",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_id": {
+            "aliases": [
+              "assetId"
+            ],
+            "default": null,
+            "description": "Optional asset identifier",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [],
         "type": "object"
       },
       "risk": "write",
@@ -4499,6 +5260,35 @@
       "params_schema": {
         "additionalProperties": false,
         "properties": {
+          "content_filter": {
+            "aliases": [
+              "contentFilter"
+            ],
+            "description": "Optional content categories to include in Markdown export",
+            "properties": {
+              "answer": {
+                "default": true,
+                "type": "boolean"
+              },
+              "code": {
+                "default": true,
+                "type": "boolean"
+              },
+              "command": {
+                "default": true,
+                "type": "boolean"
+              },
+              "result": {
+                "default": true,
+                "type": "boolean"
+              },
+              "tool": {
+                "default": true,
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
           "dry_run": {
             "aliases": [
               "dryRun"
@@ -4513,6 +5303,17 @@
             ],
             "description": "Output root directory",
             "type": "string"
+          },
+          "question_ids": {
+            "aliases": [
+              "questionIds"
+            ],
+            "default": [],
+            "description": "Optional question identifiers to export instead of the full session",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "session_id": {
             "aliases": [
@@ -5038,7 +5839,7 @@
     }
   ],
   "contract_version": 2,
-  "engine_version": "0.1.1",
+  "engine_version": "0.1.2",
   "methods": [
     "overview.get",
     "source.list",
@@ -5049,13 +5850,24 @@
     "asset.list",
     "skill.list",
     "skill.import",
+    "skill.search",
+    "skill.acquire",
+    "skill.remote.list",
+    "skill.remote.check",
     "skill.backup",
     "skill.delete",
     "skill.mount",
     "skill.unmount",
     "skill.group.list",
+    "skill.group.get",
+    "skill.group.create",
+    "skill.group.update",
+    "skill.group.delete",
+    "skill.group.members.set",
     "skill.group.mount",
     "skill.group.unmount",
+    "skill.group.exclusive.preview",
+    "skill.group.exclusive.apply",
     "conversation.adapter.list",
     "conversation.adapter.scaffold",
     "conversation.adapter.validate",
@@ -5085,6 +5897,10 @@
     "get_skill_backup_settings",
     "update_skill_backup_settings",
     "backup_skill",
+    "search_skills",
+    "acquire_skill",
+    "list_skill_remote_sources",
+    "check_skill_remote_sources",
     "list_sources",
     "list_skill_sources",
     "create_source",

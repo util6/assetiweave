@@ -6,6 +6,10 @@ import type {
   ConversationPart,
   ConversationPartRole,
 } from "../../types";
+import {
+  DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
+  type ConversationContentCardColorSettings,
+} from "../../store/settings/AppSettingsProvider";
 import { abbreviateHomePath } from "../../utils/path";
 import { MarkdownContent } from "./ConversationMarkdown";
 
@@ -30,22 +34,6 @@ export const DEFAULT_CONVERSATION_CONTENT_VISIBILITY: ConversationContentVisibil
   command: true,
   code: true,
   result: true,
-};
-
-const cardClasses: Record<ConversationContentType, string> = {
-  answer: "border-primary/35 bg-primary/[0.06]",
-  tool: "border-status-update/40 bg-status-update/[0.07]",
-  command: "border-status-conflict/40 bg-status-conflict/[0.07]",
-  code: "border-primary-strong/40 bg-primary-strong/[0.07]",
-  result: "border-status-create/40 bg-status-create/[0.07]",
-};
-
-const accentClasses: Record<ConversationContentType, string> = {
-  answer: "text-primary",
-  tool: "text-status-update",
-  command: "text-status-conflict",
-  code: "text-primary-strong",
-  result: "text-status-create",
 };
 
 const icons: Record<ConversationContentType, ReactNode> = {
@@ -85,10 +73,12 @@ export function buildConversationContentBlocks(parts: ConversationPart[]): Conve
 
 export function ConversationContentCards({
   blocks,
+  colors = DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
   t,
   visibility,
 }: {
   blocks: ConversationContentBlock[];
+  colors?: ConversationContentCardColorSettings;
   t: Translator;
   visibility: ConversationContentVisibility;
 }) {
@@ -105,7 +95,7 @@ export function ConversationContentCards({
   return (
     <div className="grid gap-3">
       {visibleBlocks.map((block) => (
-        <ConversationContentCard block={block} key={block.id} t={t} />
+        <ConversationContentCard block={block} colors={colors} key={block.id} t={t} />
       ))}
     </div>
   );
@@ -113,21 +103,28 @@ export function ConversationContentCards({
 
 function ConversationContentCard({
   block,
+  colors,
   t,
 }: {
   block: ConversationContentBlock;
+  colors: ConversationContentCardColorSettings;
   t: Translator;
 }) {
   const label = t(`conversation.content.${block.type}` as TranslationKey);
   const role = t(`conversation.part.role.${block.role}` as TranslationKey);
+  const accentColor = colors[block.type];
 
   return (
     <section
-      className={`overflow-hidden rounded-xl border ${cardClasses[block.type]}`}
+      className="overflow-hidden rounded-xl border"
       data-content-type={block.type}
+      style={{
+        backgroundColor: withAlpha(accentColor, "12"),
+        borderColor: withAlpha(accentColor, "66"),
+      }}
     >
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-inherit px-4 py-2.5">
-        <div className={`flex items-center gap-2 text-label-caps ${accentClasses[block.type]}`}>
+        <div className="flex items-center gap-2 text-label-caps" style={{ color: accentColor }}>
           {icons[block.type]}
           <span>{label}</span>
         </div>
@@ -145,6 +142,10 @@ function ConversationContentCard({
       </div>
     </section>
   );
+}
+
+function withAlpha(hexColor: string, alpha: string) {
+  return `${hexColor}${alpha}`;
 }
 
 function BlockMetadata({

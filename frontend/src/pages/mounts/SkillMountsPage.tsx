@@ -24,6 +24,7 @@ import { SkillBackupLibraryDialog } from "../../components/backup/SkillBackupLib
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
 import { DialogFrame as FoundationDialogFrame } from "../../components/foundation/DialogFrame";
 import { EmptyState as FoundationEmptyState } from "../../components/foundation/EmptyState";
+import { PageHeader } from "../../components/foundation/PageHeader";
 import { Panel as FoundationPanel } from "../../components/foundation/Panel";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { Button } from "../../components/ui/button";
@@ -32,6 +33,7 @@ import { Switch } from "../../components/ui/switch";
 import { assetKindLabel, sourceOriginLabel } from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
+import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import { useAppSettings } from "../../store/settings/AppSettingsProvider";
 import { DEFAULT_ENTITY_ACCENT_HEX } from "../../theme/themes";
 import {
@@ -77,6 +79,7 @@ interface SkillMountsPageProps {
   assets: Asset[];
   onNotifyError: (message: string) => void;
   onCatalogRefresh: () => Promise<void>;
+  onManualOpen: () => void;
   onOpenSettings: () => void;
   onRefreshMountStatus: () => Promise<void>;
   onRefreshProfiles: () => Promise<void>;
@@ -102,6 +105,7 @@ export function SkillMountsPage({
   assets,
   onNotifyError,
   onCatalogRefresh,
+  onManualOpen,
   onOpenSettings,
   onRefreshMountStatus,
   onRefreshProfiles,
@@ -270,15 +274,12 @@ export function SkillMountsPage({
 
   return (
     <section className="flex flex-1 flex-col gap-[var(--app-section-gap)] px-[var(--app-page-x)] py-[var(--app-page-y)]">
-      <div className="flex items-start justify-between gap-4 max-[920px]:flex-col">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-status-update">
-            <Boxes size={21} />
-            <span className="text-label-caps uppercase">{t("appMount.page.subtitle")}</span>
-          </div>
-          <h1 className="mt-1 text-h2 text-on-surface">{t("appMount.page.title")}</h1>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow={t("appMount.page.subtitle")}
+        icon={<Boxes size={21} />}
+        title={t("appMount.page.title")}
+        titleAction={<ManualHelpButton onOpen={onManualOpen} />}
+      />
 
       <AssetToolbar
         actionGroups={[

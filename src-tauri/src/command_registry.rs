@@ -380,6 +380,65 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli skill import --from <dir>")
     ),
     command!(
+        "skill.search",
+        "skill.search",
+        "Search internet providers for Skill candidates",
+        Read,
+        Friendly,
+        false,
+        crate::service::SkillSearchParams,
+        Service => |service, params| service.search_skills(params),
+        &[
+            param!("query", "Skill search query"),
+            param!("provider", "Search provider"),
+            param!("limit", "Maximum candidate count"),
+        ],
+        Some("assetiweave-cli skill search --query <query>")
+    ),
+    command!(
+        "skill.acquire",
+        "skill.acquire",
+        "Download and import a Skill candidate",
+        HighRiskWrite,
+        Friendly,
+        true,
+        crate::service::SkillAcquireParams,
+        Service => |service, params| service.acquire_skill(params),
+        &[
+            param!("url", "GitHub repository or tree URL"),
+            param!("branch", "Git branch override"),
+            param!("path", "Skill directory path inside the repository"),
+            param!("name", "Imported Skill name"),
+            param!("dry_run", "Preview without cloning or importing", ["dryRun"]),
+            param!("yes", "Confirm download and import"),
+        ],
+        Some("assetiweave-cli skill acquire --url <github-url> --yes")
+    ),
+    command!(
+        "skill.remote.list",
+        "skill.remote.list",
+        "List acquired Skill remote sources",
+        Read,
+        Friendly,
+        false,
+        NoParams,
+        Service => |service, _params| service.list_skill_remote_sources(),
+        &[],
+        Some("assetiweave-cli skill remote list")
+    ),
+    command!(
+        "skill.remote.check",
+        "skill.remote.check",
+        "Check acquired Skill remote sources for drift",
+        Write,
+        Friendly,
+        false,
+        crate::service::SkillRemoteCheckParams,
+        Service => |service, params| service.check_skill_remote_sources(params),
+        &[param!("asset_id", "Optional asset identifier", ["assetId"])],
+        Some("assetiweave-cli skill remote check [asset-id]")
+    ),
+    command!(
         "skill.backup",
         "skill.backup",
         "Back up a Skill into the AssetIWeave library",
@@ -454,6 +513,69 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli skill group list")
     ),
     command!(
+        "skill.group.get",
+        "skill.group.get",
+        "Show a Skill group with resolved members",
+        Read,
+        Friendly,
+        false,
+        crate::service::GroupIdParams,
+        Service => |service, params| service.get_skill_group(params.group_id),
+        &[param!("group_id", "Skill group identifier", ["groupId"])],
+        Some("assetiweave-cli skill group show <group-id>")
+    ),
+    command!(
+        "skill.group.create",
+        "skill.group.create",
+        "Create a Skill group",
+        Write,
+        Friendly,
+        false,
+        crate::service::CreateSkillGroupParams,
+        Service => |service, params| service.create_skill_group(params.input),
+        &[param!("input", "Skill group input")],
+        Some("assetiweave-cli skill group create --name <name>")
+    ),
+    command!(
+        "skill.group.update",
+        "skill.group.update",
+        "Update a Skill group",
+        Write,
+        Friendly,
+        false,
+        crate::service::UpdateSkillGroupParams,
+        Service => |service, params| service.update_skill_group(params.group),
+        &[param!("group", "Complete Skill group record")],
+        Some("assetiweave-cli skill group update <group-id> --json <json>")
+    ),
+    command!(
+        "skill.group.delete",
+        "skill.group.delete",
+        "Delete a Skill group",
+        HighRiskWrite,
+        Friendly,
+        false,
+        crate::service::GroupIdParams,
+        Service => |service, params| service.delete_skill_group(params.group_id),
+        &[param!("group_id", "Skill group identifier", ["groupId"])],
+        Some("assetiweave-cli skill group delete <group-id> --yes")
+    ),
+    command!(
+        "skill.group.members.set",
+        "skill.group.members.set",
+        "Replace the manual members of a Skill group",
+        Write,
+        Friendly,
+        false,
+        crate::service::SetSkillGroupManualMembersParams,
+        Service => |service, params| service.set_skill_group_manual_members(params.group_id, params.asset_ids),
+        &[
+            param!("group_id", "Skill group identifier", ["groupId"]),
+            param!("asset_ids", "Manual member asset identifiers", ["assetIds"]),
+        ],
+        Some("assetiweave-cli skill group members set <group-id> --asset <asset-id>")
+    ),
+    command!(
         "skill.group.mount",
         "skill.group.mount",
         "Mount a Skill group to a target profile",
@@ -485,6 +607,30 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("yes", "Confirm the destructive operation"),
         ],
         Some("assetiweave-cli skill group unmount <group-id> --profile <profile-id> --yes")
+    ),
+    command!(
+        "skill.group.exclusive.preview",
+        "skill.group.exclusive.preview",
+        "Preview an exclusive Skill group mount operation",
+        Read,
+        Friendly,
+        false,
+        crate::service::SkillGroupExclusiveMountParams,
+        Service => |service, params| service.preview_skill_group_exclusive_mount(params.input),
+        &[param!("input", "Exclusive mount input")],
+        Some("assetiweave-cli skill group exclusive preview --group <group-id> --profile <profile-id>")
+    ),
+    command!(
+        "skill.group.exclusive.apply",
+        "skill.group.exclusive.apply",
+        "Apply an exclusive Skill group mount operation",
+        HighRiskWrite,
+        Friendly,
+        false,
+        crate::service::SkillGroupExclusiveMountParams,
+        Service => |service, params| service.apply_skill_group_exclusive_mount(params.input),
+        &[param!("input", "Exclusive mount input")],
+        Some("assetiweave-cli skill group exclusive apply --group <group-id> --profile <profile-id> --yes")
     ),
     command!(
         "conversation.adapter.list",
@@ -692,6 +838,16 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         &[
             param!("session_id", "Session identifier", ["sessionId"]),
             param!("output_root", "Output root directory", ["outputRoot"]),
+            param!(
+                "question_ids",
+                "Optional question identifiers to export instead of the full session",
+                ["questionIds"]
+            ),
+            param!(
+                "content_filter",
+                "Optional content categories to include in Markdown export",
+                ["contentFilter"]
+            ),
             param!("dry_run", "Preview without writing", ["dryRun"]),
         ],
         Some("assetiweave-cli conversation session export <session-id> --output-root <dir>")
@@ -890,6 +1046,65 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Service => |service, params| service.backup_skill(params.asset_id),
         &[param!("asset_id", "Asset identifier", ["assetId"])],
         None
+    ),
+    command!(
+        "search_skills",
+        "skill.search",
+        "Search internet providers for Skill candidates",
+        Read,
+        App,
+        false,
+        crate::service::SkillSearchParams,
+        Service => |service, params| service.search_skills(params),
+        &[
+            param!("query", "Skill search query"),
+            param!("provider", "Search provider"),
+            param!("limit", "Maximum candidate count"),
+        ],
+        Some("assetiweave-cli skill search --query <query>")
+    ),
+    command!(
+        "acquire_skill",
+        "skill.acquire",
+        "Download and import a Skill candidate",
+        HighRiskWrite,
+        App,
+        true,
+        crate::service::SkillAcquireParams,
+        Service => |service, params| service.acquire_skill(params),
+        &[
+            param!("url", "GitHub repository or tree URL"),
+            param!("branch", "Git branch override"),
+            param!("path", "Skill directory path inside the repository"),
+            param!("name", "Imported Skill name"),
+            param!("dry_run", "Preview without cloning or importing", ["dryRun"]),
+            param!("yes", "Confirm download and import"),
+        ],
+        Some("assetiweave-cli skill acquire --url <github-url> --yes")
+    ),
+    command!(
+        "list_skill_remote_sources",
+        "skill.remote.list",
+        "List acquired Skill remote sources",
+        Read,
+        App,
+        false,
+        NoParams,
+        Service => |service, _params| service.list_skill_remote_sources(),
+        &[],
+        Some("assetiweave-cli skill remote list")
+    ),
+    command!(
+        "check_skill_remote_sources",
+        "skill.remote.check",
+        "Check acquired Skill remote sources for drift",
+        Write,
+        App,
+        false,
+        crate::service::SkillRemoteCheckParams,
+        Service => |service, params| service.check_skill_remote_sources(params),
+        &[param!("asset_id", "Optional asset identifier", ["assetId"])],
+        Some("assetiweave-cli skill remote check [asset-id]")
     ),
     command!(
         "list_sources",
@@ -1512,6 +1727,16 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         &[
             param!("session_id", "Session identifier", ["sessionId"]),
             param!("output_root", "Output root directory", ["outputRoot"]),
+            param!(
+                "question_ids",
+                "Optional question identifiers to export instead of the full session",
+                ["questionIds"]
+            ),
+            param!(
+                "content_filter",
+                "Optional content categories to include in Markdown export",
+                ["contentFilter"]
+            ),
             param!("dry_run", "Preview without writing", ["dryRun"]),
         ],
         None

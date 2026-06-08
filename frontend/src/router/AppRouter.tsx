@@ -5,6 +5,7 @@ import { useCatalogController } from "../hooks/catalog/useCatalogController";
 import { useI18n } from "../i18n/I18nProvider";
 import { headerTabLabel, subNavLabel } from "../i18n/navigation";
 import { AppLayout } from "../layouts/app/AppLayout";
+import { ManualPage } from "../manuals/ManualPage";
 import { CatalogPage } from "../pages/catalog/CatalogPage";
 import { ConversationsPage } from "../pages/conversations/ConversationsPage";
 import { SkillGroupsPage } from "../pages/groups/SkillGroupsPage";
@@ -20,12 +21,14 @@ export function AppRouter() {
   const catalog = useCatalogController();
   const [activeSubNavId, setActiveSubNavId] = useState(catalog.navigationModel.activeSubNavId);
   const [logViewerOpen, setLogViewerOpen] = useState(false);
+  const [manualRouteKey, setManualRouteKey] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPanel, setSettingsPanel] = useState<SettingsPanelId>("general.appearance");
 
   useEffect(() => {
     setActiveSubNavId(catalog.navigationModel.activeSubNavId);
-  }, [catalog.navigationModel.activeSubNavId]);
+    setManualRouteKey(null);
+  }, [catalog.navigationModel.activeHeaderTabId, catalog.navigationModel.activeSubNavId]);
 
   const routeId = resolveAppRoute(catalog.navigationModel, activeSubNavId);
   const activeHeaderTab = catalog.navigationModel.headerTabs.find((tab) => tab.id === catalog.navigationModel.activeHeaderTabId);
@@ -35,11 +38,12 @@ export function AppRouter() {
   const activeHeaderLabel = activeHeaderTab ? headerTabLabel(activeHeaderTab, t, locale) : "";
   const activeSubNavLabel = activeSubNavItem ? subNavLabel(activeSubNavItem, t, locale) : "";
   const underConstructionFeatureLabel = [activeHeaderLabel, activeSubNavLabel].filter(Boolean).join(" / ") || undefined;
-  const underConstructionRouteKey = activeSubNavItem?.routeKey ?? `${catalog.navigationModel.activeHeaderTabId}.${activeSubNavId}`;
+  const activeRouteKey = activeSubNavItem?.routeKey ?? `${catalog.navigationModel.activeHeaderTabId}.${activeSubNavId}`;
 
   function handleHeaderTabSelect(tab: HeaderTabItem) {
     const nextSubNavId = catalog.navigationModel.subNavItems[tab.id]?.find((item) => item.enabled)?.id ?? "overview";
     setActiveSubNavId(nextSubNavId);
+    setManualRouteKey(null);
     void catalog.saveNavigationModel({
       ...catalog.navigationModel,
       activeHeaderTabId: tab.id,
@@ -50,6 +54,15 @@ export function AppRouter() {
   function openSettings(panel: SettingsPanelId = "general.appearance") {
     setSettingsPanel(panel);
     setSettingsOpen(true);
+  }
+
+  function handleSubNavSelect(id: string) {
+    setManualRouteKey(null);
+    setActiveSubNavId(id);
+  }
+
+  function openCurrentManual() {
+    setManualRouteKey(activeRouteKey);
   }
 
   return (
@@ -68,14 +81,17 @@ export function AppRouter() {
         onSkillBackupLibraryChange={() => catalog.refreshOverview()}
         onSettingsClose={() => setSettingsOpen(false)}
         onSettingsOpen={() => openSettings()}
-        onSubNavSelect={setActiveSubNavId}
-        overview={catalog.overview}
+        onSubNavSelect={handleSubNavSelect}
         settingsPanel={settingsPanel}
         settingsOpen={settingsOpen}
       >
-        {routeId === "conversations" ? (
+        {manualRouteKey ? (
+          <ManualPage routeKey={manualRouteKey} onBack={() => setManualRouteKey(null)} />
+        ) : routeId === "conversations" ? (
           <ConversationsPage
             activeSubNavId={activeSubNavId}
+            appShortcuts={catalog.appShortcuts}
+            onManualOpen={openCurrentManual}
             onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
             onOpenSettings={openSettings}
           />
@@ -85,6 +101,7 @@ export function AppRouter() {
             assetMountStatuses={catalog.assetMountStatuses}
             assets={catalog.assets}
             onCatalogRefresh={catalog.refreshOverview}
+            onManualOpen={openCurrentManual}
             onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
             onOpenSettings={() => openSettings("workspace.deployment")}
             onRefreshMountStatus={catalog.refreshMountStatus}
@@ -103,6 +120,7 @@ export function AppRouter() {
             assetMountStatuses={catalog.assetMountStatuses}
             assets={catalog.assets}
             expandedAssetIds={catalog.expandedIds}
+            onManualOpen={openCurrentManual}
             onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
             onOpenSettings={() => openSettings("workspace.deployment")}
             onApplyGroupExclusiveMount={catalog.applyGroupExclusiveMount}
@@ -125,6 +143,7 @@ export function AppRouter() {
             expandedAssetIds={catalog.expandedIds}
             onAssetReveal={(path) => void catalog.revealPath(path)}
             onCatalogRefresh={catalog.refreshOverview}
+            onManualOpen={openCurrentManual}
             onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
             onOpenSettings={() => openSettings("workspace.menu")}
             onRefreshMountStatus={catalog.refreshMountStatus}
@@ -135,9 +154,9 @@ export function AppRouter() {
             refreshingMountStatus={catalog.refreshingMountStatus}
           />
         ) : routeId === "under-construction" ? (
-          <UnderConstructionPage featureLabel={underConstructionFeatureLabel} routeKey={underConstructionRouteKey} />
+          <UnderConstructionPage featureLabel={underConstructionFeatureLabel} onManualOpen={openCurrentManual} routeKey={activeRouteKey} />
         ) : (
-          <CatalogPage catalog={catalog} onOpenSettings={() => openSettings("general.appearance")} />
+          <CatalogPage catalog={catalog} onManualOpen={openCurrentManual} onOpenSettings={() => openSettings("general.appearance")} />
         )}
       </AppLayout>
       <LogViewerModal open={logViewerOpen} onClose={() => setLogViewerOpen(false)} />

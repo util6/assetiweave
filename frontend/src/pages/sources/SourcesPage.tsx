@@ -1,13 +1,16 @@
 import { useState } from "react";
-import { Columns3, DatabaseZap, FolderPlus, LayoutList, RefreshCw, Settings } from "lucide-react";
+import { Columns3, DatabaseZap, DownloadCloud, FolderPlus, LayoutList, RefreshCw, Settings } from "lucide-react";
 import { AssetToolbar, type AssetToolbarViewMode } from "../../components/assets/AssetToolbar";
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
+import { PageHeader } from "../../components/foundation/PageHeader";
 import { SourceEditDialog } from "../../components/sources/SourceEditDialog";
+import { SkillAcquireDialog } from "../../components/sources/SkillAcquireDialog";
 import { SourceList } from "../../components/sources/SourceList";
 import { SourceImportDialog } from "../../components/sources/SourceImportDialog";
 import { SourceSummary } from "../../components/sources/SourceSummary";
 import { useSourcesController } from "../../hooks/sources/useSourcesController";
 import { useI18n } from "../../i18n/I18nProvider";
+import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import { selectSourceDirectory } from "../../services/catalog";
 import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
 
@@ -20,6 +23,7 @@ export function SourcesPage({
   expandedAssetIds,
   onAssetReveal,
   onCatalogRefresh,
+  onManualOpen,
   onNotifyError,
   onOpenSettings,
   onRefreshMountStatus,
@@ -35,6 +39,7 @@ export function SourcesPage({
   expandedAssetIds: Set<string>;
   onAssetReveal: (path: string) => void;
   onCatalogRefresh: (assets?: Asset[]) => Promise<void>;
+  onManualOpen: () => void;
   onNotifyError: (message: string) => void;
   onOpenSettings: () => void;
   onRefreshMountStatus: () => Promise<void>;
@@ -47,6 +52,7 @@ export function SourcesPage({
   const { t } = useI18n();
   const sources = useSourcesController(assets, onCatalogRefresh);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [acquireDialogOpen, setAcquireDialogOpen] = useState(false);
   const [editingSource, setEditingSource] = useState<Source | null>(null);
   const [deletingSource, setDeletingSource] = useState<Source | null>(null);
   const [viewMode, setViewMode] = useState<SourceViewMode>("list");
@@ -80,23 +86,20 @@ export function SourcesPage({
 
   return (
     <section className="flex flex-1 flex-col gap-[var(--app-section-gap)] px-[var(--app-page-x)] py-[var(--app-page-y)]">
-      <div className="flex items-start justify-between gap-4 max-[920px]:flex-col">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-status-update">
-            <DatabaseZap size={21} />
-            <span className="text-label-caps uppercase">{t("source.page.subtitle")}</span>
-          </div>
-          <h1 className="mt-1 text-h2 text-on-surface">{t("source.page.title")}</h1>
-        </div>
-        <div className="w-full max-w-3xl">
+      <PageHeader
+        actions={
           <SourceSummary
             assets={sources.summary.assets}
             enabled={sources.summary.enabled}
             issues={sources.summary.issues}
             total={sources.summary.total}
           />
-        </div>
-      </div>
+        }
+        eyebrow={t("source.page.subtitle")}
+        icon={<DatabaseZap size={21} />}
+        title={t("source.page.title")}
+        titleAction={<ManualHelpButton onOpen={onManualOpen} />}
+      />
 
       <AssetToolbar
         actionGroups={[
@@ -108,6 +111,13 @@ export function SourcesPage({
               onClick: () => setImportDialogOpen(true),
               primary: true,
               text: t("source.toolbar.add"),
+            },
+            {
+              disabled: sources.busy,
+              icon: <DownloadCloud size={17} />,
+              label: t("source.toolbar.discover"),
+              onClick: () => setAcquireDialogOpen(true),
+              text: t("source.toolbar.discover"),
             },
           ],
           [
@@ -165,6 +175,12 @@ export function SourcesPage({
         onSubmit={sources.importSource}
         open={importDialogOpen}
         suggestedPriority={sources.nextPriority}
+      />
+      <SkillAcquireDialog
+        onAcquired={sources.scanAllSources}
+        onClose={() => setAcquireDialogOpen(false)}
+        onNotifyError={onNotifyError}
+        open={acquireDialogOpen}
       />
       <SourceEditDialog
         busy={sources.busy}

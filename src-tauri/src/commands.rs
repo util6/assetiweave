@@ -15,7 +15,8 @@ use crate::{
         ConversationQuestionSplitParams, ConversationSessionExportParams,
         ConversationSessionGetParams, ConversationSessionListParams,
         ConversationSourceDisableParams, ConversationSourceUpsertParams, ConversationSyncParams,
-        ListAssetsParams, SourceRemoveParams, SourceScanParams, UpdateSkillBackupSettingsParams,
+        ListAssetsParams, SkillAcquireParams, SkillRemoteCheckParams, SkillSearchParams,
+        SkillSearchResult, SourceRemoveParams, SourceScanParams, UpdateSkillBackupSettingsParams,
     },
     store, targeting,
     types::{
@@ -25,8 +26,8 @@ use crate::{
         ExecutionResult, NavigationModel, PhysicalMountStateDto, SkillBackupAssetStatus,
         SkillBackupSettings, SkillBackupState, SkillGroupExclusiveMountError,
         SkillGroupExclusiveMountInput, SkillGroupExclusiveMountItem,
-        SkillGroupExclusiveMountPreview, SkillGroupExclusiveMountSkippedItem, SourceInput,
-        TargetProfileInput,
+        SkillGroupExclusiveMountPreview, SkillGroupExclusiveMountSkippedItem, SkillRemoteSource,
+        SourceInput, TargetProfileInput,
     },
 };
 use assetiweave_core::{
@@ -35,6 +36,7 @@ use assetiweave_core::{
     ProfileSafety, RuleSet, Source, SourceKind, SourceOrigin, SourceScannerKind, TargetProfile,
 };
 use chrono::Utc;
+use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fs,
@@ -278,6 +280,131 @@ pub(crate) fn backup_skill(
             &asset_log_fields(&asset.asset),
         ),
         Err(error) => log_error("skill.backup", "备份 Skill 失败", error, &fields),
+    }
+    result
+}
+
+#[tauri::command]
+pub(crate) fn search_skills(
+    state: State<'_, AppState>,
+    params: SkillSearchParams,
+) -> AppResult<SkillSearchResult> {
+    let fields = vec![("query", params.query.clone())];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.search_skills(params)
+    })();
+
+    match &result {
+        Ok(result) => log_info(
+            "skill.search",
+            "搜索 Skill 成功",
+            &[
+                ("query", result.query.clone()),
+                ("candidate_count", result.candidates.len().to_string()),
+            ],
+        ),
+        Err(error) => log_error("skill.search", "搜索 Skill 失败", error, &fields),
+    }
+    result
+}
+
+#[tauri::command]
+pub(crate) fn acquire_skill(
+    state: State<'_, AppState>,
+    params: SkillAcquireParams,
+) -> AppResult<Value> {
+    let fields = vec![("url", params.url.clone())];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.acquire_skill(params)
+    })();
+
+    match &result {
+        Ok(value) => log_info(
+            "skill.acquire",
+            "获取 Skill 成功",
+            &[
+                (
+                    "dry_run",
+                    value
+                        .get("dry_run")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                        .to_string(),
+                ),
+                (
+                    "name",
+                    value
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                ),
+            ],
+        ),
+        Err(error) => log_error("skill.acquire", "获取 Skill 失败", error, &fields),
+    }
+    result
+}
+
+#[tauri::command]
+pub(crate) fn list_skill_remote_sources(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<SkillRemoteSource>> {
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.list_skill_remote_sources()
+    })();
+
+    match &result {
+        Ok(sources) => log_info(
+            "skill.remote.list",
+            "读取远程 Skill 来源成功",
+            &[("source_count", sources.len().to_string())],
+        ),
+        Err(error) => log_error("skill.remote.list", "读取远程 Skill 来源失败", error, &[]),
+    }
+    result
+}
+
+#[tauri::command]
+pub(crate) fn check_skill_remote_sources(
+    state: State<'_, AppState>,
+    params: SkillRemoteCheckParams,
+) -> AppResult<Vec<SkillRemoteSource>> {
+    let fields = params
+        .asset_id
+        .as_ref()
+        .map(|asset_id| vec![("asset_id", asset_id.clone())])
+        .unwrap_or_default();
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.check_skill_remote_sources(params)
+    })();
+
+    match &result {
+        Ok(sources) => log_info(
+            "skill.remote.check",
+            "检查远程 Skill 来源成功",
+            &[
+                ("checked_count", sources.len().to_string()),
+                (
+                    "changed_count",
+                    sources
+                        .iter()
+                        .filter(|source| source.status == "changed")
+                        .count()
+                        .to_string(),
+                ),
+            ],
+        ),
+        Err(error) => log_error(
+            "skill.remote.check",
+            "检查远程 Skill 来源失败",
+            error,
+            &fields,
+        ),
     }
     result
 }
@@ -1967,6 +2094,7 @@ pub(crate) fn cleanup_orphan_asset_records(conn: &rusqlite::Connection) -> AppRe
     store::delete_orphan_asset_mounts(conn)?;
     store::delete_orphan_asset_group_members(conn)?;
     store::delete_orphan_deployment_state(conn)?;
+    store::delete_orphan_skill_remote_sources(conn)?;
     Ok(())
 }
 

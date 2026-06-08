@@ -60,6 +60,61 @@ export interface SkillBackupSettings {
   exists: boolean;
 }
 
+export interface SkillSearchCandidate {
+  name: string;
+  description?: string | null;
+  match_reason?: string | null;
+  url: string;
+  path?: string | null;
+  clone_url?: string | null;
+  default_branch?: string | null;
+  stars?: number | null;
+  acquire_command: string;
+}
+
+export interface SkillSearchResult {
+  query: string;
+  provider: string;
+  candidates: SkillSearchCandidate[];
+  warnings: string[];
+}
+
+export type SkillRemoteSourceStatus = "unknown" | "current" | "changed" | "error";
+
+export interface SkillRemoteSource {
+  asset_id: string;
+  provider: string;
+  source_url: string;
+  repo_url: string;
+  branch: string;
+  path?: string | null;
+  acquired_at: string;
+  acquired_tree_sha?: string | null;
+  local_content_hash?: string | null;
+  last_checked_at?: string | null;
+  latest_tree_sha?: string | null;
+  status: SkillRemoteSourceStatus;
+  message?: string | null;
+}
+
+export interface SkillAcquireResult {
+  dry_run: boolean;
+  provider: string;
+  url: string;
+  repo_url: string;
+  branch?: string | null;
+  path?: string | null;
+  name: string;
+  staging_path: string;
+  skill_path: string;
+  security_notice?: string | null;
+  import?: {
+    dry_run: boolean;
+    asset?: Asset;
+  };
+  remote_source?: SkillRemoteSource;
+}
+
 export interface AppOverview {
   source_count: number;
   asset_count: number;

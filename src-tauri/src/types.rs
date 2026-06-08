@@ -65,6 +65,23 @@ pub(crate) struct SkillBackupSettings {
     pub(crate) exists: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SkillRemoteSource {
+    pub(crate) asset_id: String,
+    pub(crate) provider: String,
+    pub(crate) source_url: String,
+    pub(crate) repo_url: String,
+    pub(crate) branch: String,
+    pub(crate) path: Option<String>,
+    pub(crate) acquired_at: String,
+    pub(crate) acquired_tree_sha: Option<String>,
+    pub(crate) local_content_hash: Option<String>,
+    pub(crate) last_checked_at: Option<String>,
+    pub(crate) latest_tree_sha: Option<String>,
+    pub(crate) status: String,
+    pub(crate) message: Option<String>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SourceInput {
     pub(crate) id: Option<String>,

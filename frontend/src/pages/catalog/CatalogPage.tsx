@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
-import { Filter, Grid3X3, LayoutList, Plus, RefreshCw, Settings, SlidersHorizontal, Tag } from "lucide-react";
+import { Filter, Grid3X3, LayoutList, Plus, RefreshCw, Settings, SlidersHorizontal, Sparkles, Tag } from "lucide-react";
 import { AssetDeleteDialog } from "../../components/assets/AssetDeleteDialog";
 import { AssetEditDialog } from "../../components/assets/AssetEditDialog";
 import { AssetList } from "../../components/assets/AssetList";
 import { AssetToolbar, type AssetViewMode } from "../../components/assets/AssetToolbar";
+import { PageHeader } from "../../components/foundation/PageHeader";
 import { DeploymentPlanPanel } from "../../components/plans/DeploymentPlanPanel";
 import type { CatalogController } from "../../hooks/catalog/useCatalogController";
 import { useI18n } from "../../i18n/I18nProvider";
+import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import {
   backupSkill,
   deleteAsset,
@@ -18,9 +20,11 @@ import type { Asset, AssetGroupDetail } from "../../types";
 
 export function CatalogPage({
   catalog,
+  onManualOpen,
   onOpenSettings,
 }: {
   catalog: CatalogController;
+  onManualOpen: () => void;
   onOpenSettings: () => void;
 }) {
   const { t } = useI18n();
@@ -160,7 +164,14 @@ export function CatalogPage({
   }
 
   return (
-    <>
+    <section className="flex flex-1 flex-col gap-[var(--app-section-gap)] px-[var(--app-page-x)] py-[var(--app-page-y)]">
+      <PageHeader
+        eyebrow={t("catalog.page.subtitle")}
+        icon={<Sparkles size={21} />}
+        title={t("catalog.page.title")}
+        titleAction={<ManualHelpButton onOpen={onManualOpen} />}
+      />
+
       <AssetToolbar
         actionGroups={[
           [
@@ -197,6 +208,7 @@ export function CatalogPage({
         query={catalog.query}
         searchPlaceholder={t("toolbar.searchPlaceholder")}
         sticky
+        stickyBleed
         viewAriaLabel={t("toolbar.view.aria")}
         viewMode={assetViewMode}
         viewOptions={[
@@ -205,23 +217,21 @@ export function CatalogPage({
         ]}
       />
 
-      <section className="flex flex-1 flex-col gap-[var(--app-section-gap)] px-[var(--app-page-x)] py-[var(--app-page-y)]">
-        <DeploymentPlanPanel plan={catalog.plan} />
-        <AssetList
-          appShortcuts={catalog.appShortcuts}
-          assetMountStatuses={catalog.assetMountStatuses}
-          assets={catalog.filteredAssets}
-          expandedIds={catalog.expandedIds}
-          onDeleteAsset={setDeletingAsset}
-          onEditAsset={setEditingAsset}
-          onRevealPath={(path) => void catalog.revealPath(path)}
-          onToggleAsset={catalog.toggleAsset}
-          onToggleMount={catalog.toggleMountProfile}
-          profiles={catalog.profiles}
-          sources={catalog.sources}
-          viewMode={assetViewMode}
-        />
-      </section>
+      <DeploymentPlanPanel plan={catalog.plan} />
+      <AssetList
+        appShortcuts={catalog.appShortcuts}
+        assetMountStatuses={catalog.assetMountStatuses}
+        assets={catalog.filteredAssets}
+        expandedIds={catalog.expandedIds}
+        onDeleteAsset={setDeletingAsset}
+        onEditAsset={setEditingAsset}
+        onRevealPath={(path) => void catalog.revealPath(path)}
+        onToggleAsset={catalog.toggleAsset}
+        onToggleMount={catalog.toggleMountProfile}
+        profiles={catalog.profiles}
+        sources={catalog.sources}
+        viewMode={assetViewMode}
+      />
       <AssetEditDialog
         asset={editingAsset}
         busy={assetActionBusy}
@@ -242,7 +252,7 @@ export function CatalogPage({
         onClose={() => setDeletingAsset(null)}
         onConfirm={handleDeleteAsset}
       />
-    </>
+    </section>
   );
 }
 

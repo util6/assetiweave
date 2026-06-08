@@ -140,6 +140,22 @@ CREATE TABLE IF NOT EXISTS asset_group_members (
     PRIMARY KEY (group_id, asset_id)
 );
 
+CREATE TABLE IF NOT EXISTS skill_remote_sources (
+    asset_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    repo_url TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    path TEXT,
+    acquired_at TEXT NOT NULL,
+    acquired_tree_sha TEXT,
+    local_content_hash TEXT,
+    last_checked_at TEXT,
+    latest_tree_sha TEXT,
+    status TEXT NOT NULL,
+    message TEXT
+);
+
 CREATE TABLE IF NOT EXISTS conversation_adapters (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -615,6 +631,59 @@ pub(crate) const COUNT_DEPLOYMENT_STATE_BY_PROFILE: &str =
     "SELECT COUNT(*) FROM deployment_state WHERE profile_id = ?1";
 
 pub(crate) const DELETE_ASSETS_BY_SOURCE: &str = "DELETE FROM assets WHERE source_id = ?1";
+
+pub(crate) const LIST_SKILL_REMOTE_SOURCES: &str = r#"
+SELECT asset_id, provider, source_url, repo_url, branch, path, acquired_at,
+       acquired_tree_sha, local_content_hash, last_checked_at, latest_tree_sha,
+       status, message
+FROM skill_remote_sources
+ORDER BY acquired_at DESC, asset_id ASC
+"#;
+
+pub(crate) const GET_SKILL_REMOTE_SOURCE: &str = r#"
+SELECT asset_id, provider, source_url, repo_url, branch, path, acquired_at,
+       acquired_tree_sha, local_content_hash, last_checked_at, latest_tree_sha,
+       status, message
+FROM skill_remote_sources
+WHERE asset_id = ?1
+"#;
+
+pub(crate) const UPSERT_SKILL_REMOTE_SOURCE: &str = r#"
+INSERT INTO skill_remote_sources (
+    asset_id, provider, source_url, repo_url, branch, path, acquired_at,
+    acquired_tree_sha, local_content_hash, last_checked_at, latest_tree_sha,
+    status, message
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+ON CONFLICT(asset_id) DO UPDATE SET
+    provider = excluded.provider,
+    source_url = excluded.source_url,
+    repo_url = excluded.repo_url,
+    branch = excluded.branch,
+    path = excluded.path,
+    acquired_at = excluded.acquired_at,
+    acquired_tree_sha = excluded.acquired_tree_sha,
+    local_content_hash = excluded.local_content_hash,
+    last_checked_at = excluded.last_checked_at,
+    latest_tree_sha = excluded.latest_tree_sha,
+    status = excluded.status,
+    message = excluded.message
+"#;
+
+pub(crate) const UPDATE_SKILL_REMOTE_CHECK: &str = r#"
+UPDATE skill_remote_sources
+SET last_checked_at = ?2,
+    latest_tree_sha = ?3,
+    status = ?4,
+    message = ?5
+WHERE asset_id = ?1
+"#;
+
+pub(crate) const DELETE_ORPHAN_SKILL_REMOTE_SOURCES: &str = r#"
+DELETE FROM skill_remote_sources
+WHERE NOT EXISTS (
+    SELECT 1 FROM assets WHERE assets.id = skill_remote_sources.asset_id
+)
+"#;
 
 pub(crate) const UPDATE_ASSET_DESCRIPTION: &str = r#"
 UPDATE assets

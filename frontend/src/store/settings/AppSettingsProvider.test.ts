@@ -5,9 +5,11 @@ import {
   DEFAULT_COLUMN_MIN_WIDTH,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
+  createFontFamilySetting,
   defaultSettings,
   fontFamilyCss,
   normalizeStoredSettings,
+  resolveFontFamilyCss,
 } from "./settingsSchema";
 
 describe("AppSettingsProvider", () => {
@@ -32,18 +34,18 @@ describe("AppSettingsProvider", () => {
   });
 
   it("preserves custom page-level typography overrides", () => {
-    const contentFontFamily = '"Inter Variable", ui-sans-serif, system-ui, sans-serif';
-    const codeFontFamily = '"Maple Mono NF CN", "JetBrains Mono", monospace';
-    const sessionBrowserFontFamily = '"LXGW WenKai", Georgia, serif';
+    const contentFontFamily = createFontFamilySetting("custom", "Inter Variable");
+    const codeFontFamily = createFontFamilySetting("custom", "Maple Mono NF CN");
+    const sessionBrowserFontFamily = createFontFamilySetting("custom", "LXGW WenKai");
     const settings = normalizeStoredSettings({
       typography: {
         codeFontFamily,
         contentFontFamily,
         contentFontSize: 16,
-        interfaceFontFamily: "SF Pro Display, system-ui, sans-serif",
+        interfaceFontFamily: createFontFamilySetting("custom", "SF Pro Display"),
       },
       conversations: {
-        contentFontFamily: "Atkinson Hyperlegible, sans-serif",
+        contentFontFamily: createFontFamilySetting("custom", "Atkinson Hyperlegible"),
         contentFontSize: 15,
         sessionBrowserFontFamily,
         sessionBrowserFontSize: 12,
@@ -51,18 +53,18 @@ describe("AppSettingsProvider", () => {
       },
     });
 
-    expect(settings.typography.codeFontFamily).toBe(codeFontFamily);
-    expect(settings.typography.contentFontFamily).toBe(contentFontFamily);
+    expect(settings.typography.codeFontFamily).toEqual(codeFontFamily);
+    expect(settings.typography.contentFontFamily).toEqual(contentFontFamily);
     expect(settings.typography.contentFontSize).toBe(16);
-    expect(settings.typography.interfaceFontFamily).toBe("SF Pro Display, system-ui, sans-serif");
-    expect(settings.conversations.contentFontFamily).toBe("Atkinson Hyperlegible, sans-serif");
+    expect(settings.typography.interfaceFontFamily).toEqual(createFontFamilySetting("custom", "SF Pro Display"));
+    expect(settings.conversations.contentFontFamily).toEqual(createFontFamilySetting("custom", "Atkinson Hyperlegible"));
     expect(settings.conversations.contentFontSize).toBe(15);
-    expect(settings.conversations.sessionBrowserFontFamily).toBe(sessionBrowserFontFamily);
+    expect(settings.conversations.sessionBrowserFontFamily).toEqual(sessionBrowserFontFamily);
     expect(settings.conversations.sessionBrowserFontSize).toBe(12);
     expect(settings.conversations.sessionToolbarCompact).toBe(false);
   });
 
-  it("migrates legacy font tokens to editable CSS font-family values", () => {
+  it("migrates legacy font tokens to single editable font names", () => {
     const settings = normalizeStoredSettings({
       typography: {
         codeFontFamily: "mono",
@@ -75,22 +77,57 @@ describe("AppSettingsProvider", () => {
       },
     });
 
-    expect(settings.typography.codeFontFamily).toBe(fontFamilyCss.mono);
-    expect(settings.typography.contentFontFamily).toBe(fontFamilyCss.serif);
-    expect(settings.typography.interfaceFontFamily).toBe(fontFamilyCss.geist);
-    expect(settings.conversations.contentFontFamily).toBe(fontFamilyCss.system);
-    expect(settings.conversations.sessionBrowserFontFamily).toBe(fontFamilyCss.mono);
+    expect(settings.typography.codeFontFamily).toEqual(createFontFamilySetting("mono"));
+    expect(settings.typography.contentFontFamily).toEqual(createFontFamilySetting("serif"));
+    expect(settings.typography.interfaceFontFamily).toEqual(createFontFamilySetting("geist"));
+    expect(settings.conversations.contentFontFamily).toEqual(createFontFamilySetting("system"));
+    expect(settings.conversations.sessionBrowserFontFamily).toEqual(createFontFamilySetting("mono"));
+  });
+
+  it("migrates legacy CSS font-family stacks to the primary font name", () => {
+    const settings = normalizeStoredSettings({
+      typography: {
+        codeFontFamily: fontFamilyCss.mono,
+        contentFontFamily: '"Inter Variable", ui-sans-serif, system-ui, sans-serif',
+        interfaceFontFamily: fontFamilyCss.geist,
+      },
+      conversations: {
+        sessionBrowserFontFamily: '"LXGW WenKai", Georgia, serif',
+      },
+    });
+
+    expect(settings.typography.codeFontFamily).toEqual(createFontFamilySetting("mono"));
+    expect(settings.typography.contentFontFamily).toEqual(createFontFamilySetting("custom", "Inter Variable"));
+    expect(settings.typography.interfaceFontFamily).toEqual(createFontFamilySetting("geist"));
+    expect(settings.conversations.sessionBrowserFontFamily).toEqual(createFontFamilySetting("custom", "LXGW WenKai"));
+  });
+
+  it("resolves single font names to CSS font-family stacks at render time", () => {
+    expect(resolveFontFamilyCss(createFontFamilySetting("custom", "Maple Mono NF CN"), "mono")).toBe(
+      '"Maple Mono NF CN", "JetBrains Mono", "SFMono-Regular", Consolas, monospace',
+    );
+    expect(resolveFontFamilyCss(createFontFamilySetting("geist"), "sans")).toBe(fontFamilyCss.geist);
+  });
+
+  it("preserves custom mode even when the custom font name matches a preset font", () => {
+    const settings = normalizeStoredSettings({
+      typography: {
+        codeFontFamily: createFontFamilySetting("custom", "JetBrains Mono"),
+      },
+    });
+
+    expect(settings.typography.codeFontFamily).toEqual(createFontFamilySetting("custom", "JetBrains Mono"));
   });
 
   it("normalizes invalid typography values", () => {
     const settings = normalizeStoredSettings({
       typography: {
         baseFontSize: 99,
-        codeFontFamily: "Arial; color: red",
+        codeFontFamily: createFontFamilySetting("custom", "Arial; color: red"),
       },
       conversations: {
         contentFontSize: 2,
-        sessionBrowserFontFamily: "Bad { font-family: serif }",
+        sessionBrowserFontFamily: createFontFamilySetting("custom", "Bad { font-family: serif }"),
       },
     });
 

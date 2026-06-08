@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fallbackNavigationModel } from "../mock/catalog";
-import { resolveAppRoute } from "./routes";
+import { normalizeNavigationModelRoutes, resolveAppRoute } from "./routes";
 
 describe("app route resolution", () => {
   it("routes the existing skills groups tab to the skill groups page", () => {
@@ -41,7 +41,7 @@ describe("app route resolution", () => {
     ).toBe("conversations");
   });
 
-  it("keeps all conversation sub-navigation entries on the conversations page", () => {
+  it("does not route retired conversation source and adapter tabs to the conversations page", () => {
     expect(
       resolveAppRoute(
         {
@@ -51,7 +51,7 @@ describe("app route resolution", () => {
         },
         "sources",
       ),
-    ).toBe("conversations");
+    ).toBe("under-construction");
 
     expect(
       resolveAppRoute(
@@ -62,7 +62,28 @@ describe("app route resolution", () => {
         },
         "adapters",
       ),
-    ).toBe("conversations");
+    ).toBe("under-construction");
+  });
+
+  it("normalizes retired conversation sub-navigation entries to the sessions tab", () => {
+    const normalized = normalizeNavigationModelRoutes({
+      ...fallbackNavigationModel,
+      activeHeaderTabId: "conversations",
+      activeSubNavId: "adapters",
+      subNavItems: {
+        ...fallbackNavigationModel.subNavItems,
+        conversations: [
+          { id: "sessions", label: "Sessions", routeKey: "conversations.sessions", enabled: true },
+          { id: "sources", label: "Sources", routeKey: "conversations.sources", enabled: true },
+          { id: "adapters", label: "Adapters", routeKey: "conversations.adapters", enabled: true },
+        ],
+      },
+    });
+
+    expect(normalized.activeSubNavId).toBe("sessions");
+    expect(normalized.subNavItems.conversations.map((item) => item.routeKey)).toEqual([
+      "conversations.sessions",
+    ]);
   });
 
   it("routes enabled but unimplemented navigation entries to the under-construction page", () => {

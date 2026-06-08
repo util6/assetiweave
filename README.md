@@ -17,7 +17,7 @@ Local-first AI asset catalog and mount manager.
 </div>
 
 > [!IMPORTANT]
-> AssetIWeave `v0.1.1` 已接入应用内自动更新，当前产品重点是 **Skill 的发现、编目、分组、备份、App 挂载与 CLI 自动化**。导航中可见的其他资产类型正在持续完善。更新包使用 Tauri updater 签名验证；当前安装包尚未接入操作系统代码签名。
+> AssetIWeave `v0.1.2` 已接入应用内自动更新，当前产品重点是 **Skill 的发现、编目、分组、备份、App 挂载与 CLI 自动化**。导航中可见的其他资产类型正在持续完善。更新包使用 Tauri updater 签名验证；当前安装包尚未接入操作系统代码签名。
 
 ## 为什么需要 AssetIWeave
 
@@ -87,6 +87,7 @@ flowchart LR
 | Skill 扫描、编目、搜索、描述与来源展示 | 可用 |
 | Skill Source 导入、扫描规则与来源级批量挂载 | 可用 |
 | Skill Group 创建、规则匹配、批量与独占挂载 | 可用 |
+| 互联网 Skill 搜索、GitHub `SKILL.md` 目录识别与确认导入 | 可用 |
 | 单个 Skill 快捷挂载、状态刷新与部署计划 | 可用 |
 | Skill 备份库、导入与删除 | 可用 |
 | Codex / Claude / Cursor / OpenCode / Gemini / Antigravity / OpenClaw / Custom Profile | 可用 |
@@ -157,6 +158,10 @@ assetiweave-cli source scan --kind skill
 
 assetiweave-cli skill list
 assetiweave-cli skill import --from ./downloaded-skill --name downloaded-skill
+assetiweave-cli skill search --query "browser automation skill"
+assetiweave-cli skill acquire --url <github-repo-or-tree-url> --dry-run
+assetiweave-cli skill acquire --url <github-repo-or-tree-url> --yes
+assetiweave-cli skill remote check
 assetiweave-cli skill backup <asset-id>
 assetiweave-cli skill mount downloaded-skill --profile codex
 assetiweave-cli skill unmount downloaded-skill --profile codex

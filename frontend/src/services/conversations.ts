@@ -23,10 +23,22 @@ export interface ConversationQuestionListParams {
   offset?: number;
 }
 
+export interface ConversationExportContentFilter {
+  answer: boolean;
+  tool: boolean;
+  command: boolean;
+  code: boolean;
+  result: boolean;
+}
+
 export async function listConversationAdapters(): Promise<ConversationAdapter[]> {
   try {
     return await invoke<ConversationAdapter[]>("list_conversation_adapters");
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
     return fallbackAdapters;
   }
 }
@@ -34,7 +46,11 @@ export async function listConversationAdapters(): Promise<ConversationAdapter[]>
 export async function listConversationSources(): Promise<ConversationSource[]> {
   try {
     return await invoke<ConversationSource[]>("list_conversation_sources");
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
     return fallbackSources;
   }
 }
@@ -42,7 +58,11 @@ export async function listConversationSources(): Promise<ConversationSource[]> {
 export async function syncConversations(params: { source_id?: string | null; adapter_id?: string | null; dry_run?: boolean }) {
   try {
     return await invoke("sync_conversations", { params });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
     return {
       dry_run: Boolean(params.dry_run),
       errors: [],
@@ -64,7 +84,11 @@ export async function syncConversations(params: { source_id?: string | null; ada
 export async function listConversationSessions(params: ConversationSessionListParams): Promise<ConversationSessionListItem[]> {
   try {
     return await invoke<ConversationSessionListItem[]>("list_conversation_sessions", { params });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
     return fallbackSessions.filter((session) => {
       if (params.adapter_id && session.adapter_id !== params.adapter_id) return false;
       if (params.source_id && session.source_id !== params.source_id) return false;
@@ -77,7 +101,11 @@ export async function listConversationSessions(params: ConversationSessionListPa
 export async function getConversationSession(sessionId: string): Promise<ConversationSessionDetail> {
   try {
     return await invoke<ConversationSessionDetail>("get_conversation_session", { params: { session_id: sessionId } });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
     return fallbackSessionDetail;
   }
 }
@@ -85,7 +113,11 @@ export async function getConversationSession(sessionId: string): Promise<Convers
 export async function listConversationQuestions(params: ConversationQuestionListParams): Promise<ConversationQuestionDetail[]> {
   try {
     return await invoke<ConversationQuestionDetail[]>("list_conversation_questions", { params });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
     return fallbackSessionDetail.questions;
   }
 }
@@ -93,7 +125,11 @@ export async function listConversationQuestions(params: ConversationQuestionList
 export async function getConversationQuestion(questionId: string): Promise<ConversationQuestionDetail> {
   try {
     return await invoke<ConversationQuestionDetail>("get_conversation_question", { params: { question_id: questionId } });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
     return fallbackSessionDetail.questions.find((question) => question.question.id === questionId) ?? fallbackSessionDetail.questions[0];
   }
 }
@@ -103,7 +139,11 @@ export async function mergeConversationQuestions(questionIds: string[], dryRun =
     return await invoke<ConversationMutationResult>("merge_conversation_questions", {
       params: { question_ids: questionIds, dry_run: dryRun },
     });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
     return {
       dry_run: dryRun,
       session_id: fallbackSessionDetail.session.id,
@@ -118,7 +158,11 @@ export async function splitConversationQuestion(questionId: string, beforeTurnId
     return await invoke<ConversationMutationResult>("split_conversation_question", {
       params: { question_id: questionId, before_turn_id: beforeTurnId, dry_run: dryRun },
     });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
     return {
       dry_run: dryRun,
       session_id: fallbackSessionDetail.session.id,
@@ -128,18 +172,46 @@ export async function splitConversationQuestion(questionId: string, beforeTurnId
   }
 }
 
-export async function exportConversationSession(sessionId: string, outputRoot: string, dryRun = false) {
+export async function exportConversationSession(
+  sessionId: string,
+  outputRoot: string,
+  dryRun = false,
+  questionIds: string[] = [],
+  contentFilter?: ConversationExportContentFilter,
+) {
+  const resolvedContentFilter = contentFilter ?? {
+    answer: true,
+    code: true,
+    command: true,
+    result: true,
+    tool: true,
+  };
   try {
     return await invoke("export_conversation_session", {
-      params: { session_id: sessionId, output_root: outputRoot, dry_run: dryRun },
+      params: {
+        session_id: sessionId,
+        output_root: outputRoot,
+        question_ids: questionIds,
+        content_filter: resolvedContentFilter,
+        dry_run: dryRun,
+      },
     });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
     return {
       dry_run: dryRun,
       session_id: sessionId,
+      question_ids: questionIds,
       output_path: `${outputRoot}/codex/preview-project/preview-conversation-session-preview.md`,
     };
   }
+}
+
+function isTauriRuntime() {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 const now = new Date().toISOString();

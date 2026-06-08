@@ -69,9 +69,13 @@ import {
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
   FONT_SIZE_STEP,
+  firstFontFamilyName,
   fontFamilyOptions,
   resolveFontFamilyCss,
   useAppSettings,
+  type ConversationContentCardColorSettings,
+  type FontFallbackKind,
+  type FontFamilyPresetId,
   type FontFamilyValue,
   type InterfaceDensity,
   type SettingsPanelId,
@@ -208,6 +212,7 @@ export function GlobalSettingsDialog({
   const activeScope =
     settingGroups.find((group) => group.panels.some((panel) => panel.id === activePanel))?.scope ??
     t("settings.scope.general");
+  const configurableRailItems = navigationModel.railItems.filter(isConfigurableRailItem);
 
   function commitNavigationModel(nextNavigationModel: NavigationModel) {
     onNavigationModelChange(nextNavigationModel);
@@ -510,6 +515,7 @@ export function GlobalSettingsDialog({
               <SettingsGroup>
                 <SettingRow icon={<Type size={18} />} label={t("settings.font.interface")}>
                   <FontFamilyControl
+                    fallback="sans"
                     label={t("settings.font.interface")}
                     onChange={(value) =>
                       updateSetting("typography", {
@@ -523,6 +529,7 @@ export function GlobalSettingsDialog({
                 </SettingRow>
                 <SettingRow icon={<Type size={18} />} label={t("settings.font.content")}>
                   <FontFamilyControl
+                    fallback="sans"
                     label={t("settings.font.content")}
                     onChange={(value) =>
                       updateSetting("typography", {
@@ -536,6 +543,7 @@ export function GlobalSettingsDialog({
                 </SettingRow>
                 <SettingRow icon={<Code2 size={18} />} label={t("settings.font.code")}>
                   <FontFamilyControl
+                    fallback="mono"
                     label={t("settings.font.code")}
                     onChange={(value) =>
                       updateSetting("typography", {
@@ -626,34 +634,7 @@ export function GlobalSettingsDialog({
 
             {activePanel === "workspace.menu" && (
               <div className="flex flex-col gap-5">
-                <MenuSection icon={<PanelLeft size={18} />} title={t("settings.menu.sideRail")}>
-                  {(["primary", "secondary"] as const).map((position) => {
-                    const items = navigationModel.railItems.filter((item) => item.position === position);
-
-                    return (
-                      <div className="border-b border-theme-card-border last:border-b-0" key={position}>
-                        <div className="border-b border-theme-card-border/70 bg-theme-card-header/65 px-4 py-2 text-label-caps uppercase text-outline">
-                          {position === "primary" ? t("settings.menu.primary") : t("settings.menu.secondary")}
-                        </div>
-                        <SortableMenuList itemIds={items.map((item) => item.id)} onReorder={(orderedIds) => reorderRailItems(position, orderedIds)}>
-                          {items.map((item) => (
-                            <SortableMenuEditRow
-                              enabled={item.enabled}
-                              id={item.id}
-                              key={item.id}
-                              label={railLabel(item, t, locale)}
-                              onEnabledChange={(enabled) => updateRailItem(item.id, { enabled })}
-                              onLabelChange={(label) => updateRailItemLabel(item.id, label)}
-                              t={t}
-                            />
-                          ))}
-                        </SortableMenuList>
-                      </div>
-                    );
-                  })}
-                </MenuSection>
-
-                <MenuSection icon={<PanelTop size={18} />} title={t("settings.menu.headerTabs")}>
+                <MenuSection icon={<PanelLeft size={18} />} title={t("settings.menu.headerTabs")}>
                   <SortableMenuList itemIds={navigationModel.headerTabs.map((item) => item.id)} onReorder={reorderHeaderTabs}>
                     {navigationModel.headerTabs.map((item) => (
                       <SortableMenuEditRow
@@ -663,6 +644,22 @@ export function GlobalSettingsDialog({
                         label={headerTabLabel(item, t, locale)}
                         onEnabledChange={(enabled) => updateHeaderTab(item.id, { enabled })}
                         onLabelChange={(label) => updateHeaderTabLabel(item.id, label)}
+                        t={t}
+                      />
+                    ))}
+                  </SortableMenuList>
+                </MenuSection>
+
+                <MenuSection icon={<PanelTop size={18} />} title={t("settings.menu.sideRail")}>
+                  <SortableMenuList itemIds={configurableRailItems.map((item) => item.id)} onReorder={(orderedIds) => reorderRailItems("secondary", orderedIds)}>
+                    {configurableRailItems.map((item) => (
+                      <SortableMenuEditRow
+                        enabled={item.enabled}
+                        id={item.id}
+                        key={item.id}
+                        label={railLabel(item, t, locale)}
+                        onEnabledChange={(enabled) => updateRailItem(item.id, { enabled })}
+                        onLabelChange={(label) => updateRailItemLabel(item.id, label)}
                         t={t}
                       />
                     ))}
@@ -757,6 +754,7 @@ export function GlobalSettingsDialog({
               <SettingsGroup>
                 <SettingRow icon={<Type size={18} />} label={t("settings.conversation.sessionBrowserFont")}>
                   <FontFamilyControl
+                    fallback="sans"
                     label={t("settings.conversation.sessionBrowserFont")}
                     onChange={(value) =>
                       updateSetting("conversations", {
@@ -784,8 +782,21 @@ export function GlobalSettingsDialog({
                     value={settings.conversations.sessionBrowserFontSize}
                   />
                 </SettingRow>
+                <SettingRow icon={<Palette size={18} />} label={t("settings.conversation.contentCardColors")}>
+                  <ConversationContentCardColorControl
+                    onChange={(colors) =>
+                      updateSetting("conversations", {
+                        ...settings.conversations,
+                        contentCardColors: colors,
+                      })
+                    }
+                    t={t}
+                    value={settings.conversations.contentCardColors}
+                  />
+                </SettingRow>
                 <SettingRow icon={<Type size={18} />} label={t("settings.conversation.contentFont")}>
                   <FontFamilyControl
+                    fallback="sans"
                     label={t("settings.conversation.contentFont")}
                     onChange={(value) =>
                       updateSetting("conversations", {
@@ -1401,54 +1412,171 @@ function RangeSettingControl({
 }
 
 function FontFamilyControl({
+  fallback,
   label,
   onChange,
   t,
   value,
 }: {
+  fallback: FontFallbackKind;
   label: string;
   onChange: (value: FontFamilyValue) => void;
   t: Translator;
   value: FontFamilyValue;
 }) {
+  const presetOption = value.preset === "custom"
+    ? null
+    : fontFamilyOptions.find((option) => option.id === value.preset);
+  const customSelected = value.preset === "custom";
+  const inputValue = customSelected ? value.customFontFamily : presetOption?.value ?? "";
+
   return (
-    <div className="flex w-[min(34rem,100%)] flex-col gap-2">
+    <div className="grid w-[min(34rem,100%)] grid-cols-[minmax(9rem,0.42fr)_minmax(0,1fr)] gap-2 max-[760px]:grid-cols-1">
+      <select
+        aria-label={t("settings.font.preset")}
+        className="h-10 rounded-xl border border-theme-control-border bg-theme-control px-3 text-body-sm font-semibold text-on-surface outline-none transition-colors focus:border-primary-strong/60"
+        onChange={(event) => {
+          onChange({
+            ...value,
+            preset: event.target.value as FontFamilyPresetId,
+          });
+        }}
+        value={value.preset}
+      >
+        {fontFamilyOptions.map((option) => (
+          <option key={option.id} value={option.id}>
+            {t(option.labelKey as TranslationKey)}
+          </option>
+        ))}
+        <option value="custom">{t("settings.font.custom")}</option>
+      </select>
       <input
         aria-label={label}
-        className="h-10 w-full rounded-xl border border-theme-control-border bg-theme-control px-3 font-mono text-body-sm text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60"
-        onChange={(event) => onChange(event.target.value)}
+        className={clsx(
+          "h-10 w-full rounded-xl border border-theme-control-border bg-theme-control px-3 text-body-sm text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60",
+          !customSelected && "cursor-not-allowed opacity-70",
+        )}
+        disabled={!customSelected}
+        maxLength={80}
+        onChange={(event) =>
+          onChange({
+            ...value,
+            customFontFamily: firstFontFamilyName(event.target.value),
+            preset: "custom",
+          })
+        }
         placeholder={t("settings.font.customPlaceholder")}
         spellCheck={false}
-        style={{ fontFamily: resolveFontFamilyCss(value) }}
-        value={value}
+        style={{ fontFamily: resolveFontFamilyCss(value, fallback) }}
+        value={inputValue}
       />
-      <div
-        aria-label={t("settings.font.presets")}
-        className="flex flex-wrap gap-2"
-        role="group"
-      >
-        {fontFamilyOptions.map((option) => {
-          const selected = value === option.value;
-
-          return (
-            <button
-              className={clsx(
-                "h-8 rounded-lg border px-3 text-body-sm transition-colors",
-                selected
-                  ? "border-theme-nav-active-border bg-theme-nav-active text-theme-nav-active-fg"
-                  : "border-theme-control-border bg-theme-control/70 text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
-              )}
-              key={option.value}
-              onClick={() => onChange(option.value)}
-              style={{ fontFamily: option.value }}
-              type="button"
-            >
-              {t(option.labelKey as TranslationKey)}
-            </button>
-          );
-        })}
-      </div>
     </div>
+  );
+}
+
+const conversationContentCardColorFields: Array<{
+  key: keyof ConversationContentCardColorSettings;
+  labelKey: TranslationKey;
+}> = [
+  { key: "answer", labelKey: "conversation.content.answer" },
+  { key: "tool", labelKey: "conversation.content.tool" },
+  { key: "command", labelKey: "conversation.content.command" },
+  { key: "code", labelKey: "conversation.content.code" },
+  { key: "result", labelKey: "conversation.content.result" },
+];
+
+function ConversationContentCardColorControl({
+  onChange,
+  t,
+  value,
+}: {
+  onChange: (value: ConversationContentCardColorSettings) => void;
+  t: Translator;
+  value: ConversationContentCardColorSettings;
+}) {
+  function commitColor(key: keyof ConversationContentCardColorSettings, color: string) {
+    const nextColor = color.trim();
+    if (!isHexColor(nextColor) || nextColor === value[key]) {
+      return;
+    }
+
+    onChange({
+      ...value,
+      [key]: nextColor.toLowerCase(),
+    });
+  }
+
+  return (
+    <div className="grid w-[min(42rem,100%)] grid-cols-2 gap-3 max-[900px]:grid-cols-1">
+      {conversationContentCardColorFields.map((field) => (
+        <ConversationContentCardColorField
+          key={field.key}
+          label={t(field.labelKey)}
+          onCommit={(color) => commitColor(field.key, color)}
+          value={value[field.key]}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ConversationContentCardColorField({
+  label,
+  onCommit,
+  value,
+}: {
+  label: string;
+  onCommit: (value: string) => void;
+  value: string;
+}) {
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  function commitDraft(nextValue: string) {
+    if (!isHexColor(nextValue)) {
+      setDraft(value);
+      return;
+    }
+
+    const normalized = nextValue.toLowerCase();
+    setDraft(normalized);
+    onCommit(normalized);
+  }
+
+  return (
+    <label className="flex min-w-0 flex-col gap-1">
+      <span className="text-label-caps uppercase text-outline">{label}</span>
+      <div className="flex h-10 items-center gap-2 rounded-xl border border-theme-control-border bg-theme-control px-2 transition-colors focus-within:border-primary-strong/60">
+        <input
+          aria-label={label}
+          className="size-5 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
+          onChange={(event) => commitDraft(event.target.value)}
+          type="color"
+          value={value}
+        />
+        <Input
+          aria-label={label}
+          className="h-auto min-w-0 flex-1 border-0 bg-transparent p-0 font-mono text-code-md focus:border-transparent"
+          maxLength={7}
+          onBlur={(event) => commitDraft(event.currentTarget.value)}
+          onChange={(event) => setDraft(event.target.value.slice(0, 7))}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              commitDraft(event.currentTarget.value);
+              event.currentTarget.blur();
+            }
+            if (event.key === "Escape") {
+              setDraft(value);
+              event.currentTarget.blur();
+            }
+          }}
+          value={draft}
+        />
+      </div>
+    </label>
   );
 }
 
@@ -1664,4 +1792,10 @@ function SwitchControl({
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+const configurableRailItemIds = new Set(["logs", "settings"]);
+
+function isConfigurableRailItem(item: RailMenuItem) {
+  return item.position === "secondary" && configurableRailItemIds.has(item.id);
 }

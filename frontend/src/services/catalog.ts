@@ -8,6 +8,7 @@ import {
   fallbackSources,
   fallbackSkillGroups,
 } from "../mock/catalog";
+import { normalizeNavigationModelRoutes } from "../router/routes";
 import type { NavigationModel } from "../router/types";
 import {
   applyAssetGroupMountResultSchema,
@@ -20,6 +21,11 @@ import {
 } from "../schemas/group";
 import { appShortcutListSchema, navigationModelSchema } from "../schemas/navigation";
 import { targetProfileInputSchema, targetProfileListSchema, targetProfileSchema } from "../schemas/profile";
+import {
+  skillAcquireResultSchema,
+  skillRemoteSourceSchema,
+  skillSearchResultSchema,
+} from "../schemas/skillDiscovery";
 import { sourceInputSchema } from "../schemas/source";
 import { parseSchemaOrFallback, parseSchemaOrThrow } from "../schemas/validation";
 import type {
@@ -40,7 +46,10 @@ import type {
   ExecutionResult,
   Source,
   SourceInput,
+  SkillAcquireResult,
   SkillBackupSettings,
+  SkillRemoteSource,
+  SkillSearchResult,
   SkillGroupExclusiveMountInput,
   SkillGroupExclusiveMountPreview,
   TargetProfile,
@@ -93,6 +102,77 @@ export async function updateSkillBackupSettings(rootPath: string, migrate = true
 
 export async function backupSkill(assetId: string): Promise<Asset> {
   return await invoke<Asset>("backup_skill", { assetId });
+}
+
+export async function searchSkills(query: string, limit = 8, provider = "github"): Promise<SkillSearchResult> {
+  const trimmedQuery = query.trim();
+  if (!trimmedQuery) {
+    throw new Error("Skill search query is required");
+  }
+
+  try {
+    return parseSchemaOrThrow(
+      skillSearchResultSchema,
+      await invoke<SkillSearchResult>("search_skills", { params: { query: trimmedQuery, provider, limit } }),
+      "Invalid skill search result",
+    );
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return fallbackSkillSearch(trimmedQuery);
+  }
+}
+
+export async function acquireSkill(params: {
+  url: string;
+  branch?: string | null;
+  path?: string | null;
+  name?: string | null;
+  dryRun?: boolean;
+}): Promise<SkillAcquireResult> {
+  const payload = {
+    url: params.url,
+    branch: params.branch?.trim() || null,
+    path: params.path?.trim() || null,
+    name: params.name?.trim() || null,
+    dry_run: params.dryRun ?? false,
+    yes: params.dryRun ? false : true,
+  };
+
+  try {
+    return parseSchemaOrThrow(
+      skillAcquireResultSchema,
+      await invoke<SkillAcquireResult>("acquire_skill", { params: payload }),
+      "Invalid skill acquire result",
+    );
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return fallbackSkillAcquire(payload);
+  }
+}
+
+export async function listSkillRemoteSources(): Promise<SkillRemoteSource[]> {
+  return parseSchemaOrThrow(
+    skillRemoteSourceSchema.array(),
+    await invoke<SkillRemoteSource[]>("list_skill_remote_sources"),
+    "Invalid skill remote source list",
+  );
+}
+
+export async function checkSkillRemoteSources(assetId?: string | null): Promise<SkillRemoteSource[]> {
+  const trimmedAssetId = assetId?.trim();
+  return parseSchemaOrThrow(
+    skillRemoteSourceSchema.array(),
+    await invoke<SkillRemoteSource[]>("check_skill_remote_sources", {
+      params: trimmedAssetId ? { asset_id: trimmedAssetId } : {},
+    }),
+    "Invalid skill remote check result",
+  );
 }
 
 export async function updateAssetDescription(assetId: string, description: string | null): Promise<Asset> {
@@ -258,18 +338,19 @@ export async function deleteProfile(id: string): Promise<void> {
 
 export async function getNavigationModel(): Promise<NavigationModel> {
   try {
-    return await invoke<NavigationModel>("get_navigation_model");
+    return normalizeNavigationModelRoutes(await invoke<NavigationModel>("get_navigation_model"));
   } catch {
     return getStoredFallbackNavigationModel();
   }
 }
 
 export async function updateNavigationModel(model: NavigationModel): Promise<NavigationModel> {
+  const normalizedModel = normalizeNavigationModelRoutes(model);
   try {
-    return await invoke<NavigationModel>("update_navigation_model", { model });
+    return normalizeNavigationModelRoutes(await invoke<NavigationModel>("update_navigation_model", { model: normalizedModel }));
   } catch {
-    localStorage.setItem(FALLBACK_NAVIGATION_STORAGE_KEY, JSON.stringify(model));
-    return model;
+    localStorage.setItem(FALLBACK_NAVIGATION_STORAGE_KEY, JSON.stringify(normalizedModel));
+    return normalizedModel;
   }
 }
 
@@ -590,11 +671,12 @@ const FALLBACK_SKILL_GROUPS_STORAGE_KEY = "assetiweave.preview.skillGroups";
 function getStoredFallbackNavigationModel(): NavigationModel {
   try {
     const stored = localStorage.getItem(FALLBACK_NAVIGATION_STORAGE_KEY);
-    return stored
+    const model = stored
       ? parseSchemaOrFallback(navigationModelSchema, JSON.parse(stored), fallbackNavigationModel)
       : fallbackNavigationModel;
+    return normalizeNavigationModelRoutes(model);
   } catch {
-    return fallbackNavigationModel;
+    return normalizeNavigationModelRoutes(fallbackNavigationModel);
   }
 }
 
@@ -896,5 +978,86 @@ function resolveFallbackGroupDetail(detail: AssetGroupDetail): AssetGroupDetail 
     ...detail,
     members: [...members].map(([asset_id, origin]) => ({ asset_id, origin })),
     manual_asset_ids: [...manualIds],
+  };
+}
+
+function fallbackSkillSearch(query: string): SkillSearchResult {
+  const normalizedQuery = query.toLowerCase();
+  const candidates = [
+    {
+      acquire_command: "assetiweave-cli skill acquire --url https://github.com/browser-act/skills --yes",
+      clone_url: "https://github.com/browser-act/skills.git",
+      default_branch: "main",
+      description: "Browser automation and agent workflow skills.",
+      match_reason: "Repository fallback: preview data for non-Tauri development",
+      name: "browser-act/skills",
+      stars: 2032,
+      url: "https://github.com/browser-act/skills",
+    },
+    {
+      acquire_command: "assetiweave-cli skill acquire --url https://github.com/util6/util6-agents/tree/main/skills/browser --yes",
+      clone_url: "https://github.com/util6/util6-agents.git",
+      default_branch: "main",
+      description: "Personal agent skill collection with browser and workflow helpers.",
+      match_reason: "Resolved concrete Skill directory from skills/browser/SKILL.md",
+      name: "util6/util6-agents/skills/browser",
+      path: "skills/browser",
+      stars: 0,
+      url: "https://github.com/util6/util6-agents/tree/main/skills/browser",
+    },
+  ].filter((candidate) => `${candidate.name} ${candidate.description}`.toLowerCase().includes(normalizedQuery) || normalizedQuery.length > 0);
+
+  return {
+    candidates,
+    provider: "github",
+    query,
+    warnings: [],
+  };
+}
+
+function fallbackSkillAcquire(params: {
+  url: string;
+  branch?: string | null;
+  path?: string | null;
+  name?: string | null;
+  dry_run: boolean;
+}): SkillAcquireResult {
+  const pathParts = params.path?.split("/").filter(Boolean) ?? [];
+  const urlParts = params.url.split("/").filter(Boolean);
+  const inferredName =
+    params.name ||
+    pathParts[pathParts.length - 1] ||
+    urlParts[urlParts.length - 1] ||
+    "downloaded-skill";
+  return {
+    branch: params.branch ?? "main",
+    dry_run: params.dry_run,
+    name: inferredName,
+    path: params.path ?? null,
+    provider: "github",
+    repo_url: params.url.endsWith(".git") ? params.url : `${params.url.replace(/\/tree\/.*$/, "")}.git`,
+    security_notice:
+      "Review the remote Skill contents before importing; AssetIWeave does not execute or trust remote code automatically.",
+    skill_path: `~/.assetiweave/library/skills/staging/${inferredName}`,
+    staging_path: `~/.assetiweave/library/skills/staging/${inferredName}`,
+    url: params.url,
+    import: params.dry_run
+      ? undefined
+      : {
+          dry_run: false,
+          asset: {
+            absolute_path: `~/.assetiweave/library/skills/downloaded/${inferredName}`,
+            content_hash: null,
+            discovered_at: new Date().toISOString(),
+            entry_file: "SKILL.md",
+            format: "directory",
+            id: `fallback-${inferredName}`,
+            kind: "skill",
+            name: inferredName,
+            relative_path: `downloaded/${inferredName}`,
+            source_id: "assetiweave-library-skills",
+            updated_at: new Date().toISOString(),
+          },
+        },
   };
 }
