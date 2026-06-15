@@ -224,11 +224,10 @@ pub(crate) fn default_navigation_model() -> NavigationModel {
             ),
             (
                 "conversations".to_string(),
-                vec![sub_nav(
-                    "sessions",
-                    "Session 浏览",
-                    "conversations.sessions",
-                )],
+                vec![
+                    sub_nav("sessions", "Session 浏览", "conversations.sessions"),
+                    sub_nav("web-records", "网页记录浏览", "conversations.web-records"),
+                ],
             ),
         ]),
     }

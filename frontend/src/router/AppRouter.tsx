@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { AppUpdateDialog } from "../app/updates/AppUpdateDialog";
 import { LogViewerModal } from "../components/logs/LogViewerModal";
 import { useCatalogController } from "../hooks/catalog/useCatalogController";
@@ -7,7 +7,6 @@ import { headerTabLabel, subNavLabel } from "../i18n/navigation";
 import { AppLayout } from "../layouts/app/AppLayout";
 import { ManualPage } from "../manuals/ManualPage";
 import { CatalogPage } from "../pages/catalog/CatalogPage";
-import { ConversationsPage } from "../pages/conversations/ConversationsPage";
 import { SkillGroupsPage } from "../pages/groups/SkillGroupsPage";
 import { SkillMountsPage } from "../pages/mounts/SkillMountsPage";
 import { SourcesPage } from "../pages/sources/SourcesPage";
@@ -15,6 +14,12 @@ import { UnderConstructionPage } from "../pages/under-construction/UnderConstruc
 import { resolveAppRoute } from "./routes";
 import type { HeaderTabItem } from "./types";
 import type { SettingsPanelId } from "../store/settings/AppSettingsProvider";
+
+const ConversationsPage = lazy(() =>
+  import("../pages/conversations/ConversationsPage").then((module) => ({
+    default: module.ConversationsPage,
+  })),
+);
 
 export function AppRouter() {
   const { locale, t } = useI18n();
@@ -87,14 +92,17 @@ export function AppRouter() {
       >
         {manualRouteKey ? (
           <ManualPage routeKey={manualRouteKey} onBack={() => setManualRouteKey(null)} />
-        ) : routeId === "conversations" ? (
-          <ConversationsPage
-            activeSubNavId={activeSubNavId}
-            appShortcuts={catalog.appShortcuts}
-            onManualOpen={openCurrentManual}
-            onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
-            onOpenSettings={openSettings}
-          />
+        ) : routeId === "conversations" || routeId === "web-records" ? (
+          <Suspense fallback={<RouteLoadingState />}>
+            <ConversationsPage
+              activeSubNavId={activeSubNavId}
+              appShortcuts={catalog.appShortcuts}
+              onManualOpen={openCurrentManual}
+              onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
+              onOpenSettings={openSettings}
+              recordKind={routeId === "web-records" ? "web" : "session"}
+            />
+          </Suspense>
         ) : routeId === "skill-mounts" ? (
           <SkillMountsPage
             appShortcuts={catalog.appShortcuts}
@@ -163,4 +171,10 @@ export function AppRouter() {
       <AppUpdateDialog />
     </>
   );
+}
+
+function RouteLoadingState() {
+  const { t } = useI18n();
+
+  return <div className="grid min-h-[320px] place-items-center text-body-sm text-on-surface-variant">{t("common.loading")}</div>;
 }

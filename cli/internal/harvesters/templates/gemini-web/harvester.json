@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "gemini-web",
+  "name": "Gemini Web",
+  "version": "0.1.2",
+  "origin": "official",
+  "description": "Official AssetIWeave harvester template for Gemini web conversations.",
+  "entrypoint": [
+    "scripts/harvest.js"
+  ],
+  "capabilities": [
+    "browser_cookie_auth",
+    "conversation_export",
+    "normalized_sessions"
+  ],
+  "output": {
+    "raw_dir": "output/raw",
+    "normalized_dir": "output/normalized",
+    "sessions_file": "sessions.json"
+  },
+  "adapter": {
+    "manifest": "conversation-adapter.json"
+  },
+  "source": {
+    "id": "gemini-web-export",
+    "kind": "directory",
+    "name": "Gemini Web Export"
+  },
+  "update": {
+    "channel": "official"
+  }
+}

@@ -259,6 +259,77 @@ CREATE TABLE IF NOT EXISTS conversation_question_turns (
     UNIQUE(turn_id)
 );
 
+CREATE TABLE IF NOT EXISTS web_record_sessions (
+    id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL,
+    adapter_id TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    project_path TEXT,
+    started_at TEXT,
+    updated_at TEXT,
+    source_locator TEXT,
+    source_fingerprint TEXT,
+    missing INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    imported_at TEXT NOT NULL,
+    UNIQUE(source_id, external_id)
+);
+
+CREATE TABLE IF NOT EXISTS web_record_turns (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    turn_index INTEGER NOT NULL,
+    user_text TEXT NOT NULL,
+    title TEXT,
+    started_at TEXT,
+    ended_at TEXT,
+    fingerprint TEXT NOT NULL,
+    missing INTEGER NOT NULL,
+    imported_at TEXT NOT NULL,
+    UNIQUE(session_id, external_id)
+);
+
+CREATE TABLE IF NOT EXISTS web_record_parts (
+    id TEXT PRIMARY KEY,
+    turn_id TEXT NOT NULL,
+    part_index INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    text TEXT,
+    language TEXT,
+    command TEXT,
+    cwd TEXT,
+    status TEXT,
+    exit_code INTEGER,
+    metadata_json TEXT,
+    UNIQUE(turn_id, part_index)
+);
+
+CREATE TABLE IF NOT EXISTS web_record_questions (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    question_index INTEGER NOT NULL,
+    title TEXT,
+    question_text TEXT NOT NULL,
+    answer_text TEXT NOT NULL,
+    code_text TEXT NOT NULL,
+    command_text TEXT NOT NULL,
+    grouping_origin TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(session_id, question_index)
+);
+
+CREATE TABLE IF NOT EXISTS web_record_question_turns (
+    question_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    turn_order INTEGER NOT NULL,
+    PRIMARY KEY (question_id, turn_id),
+    UNIQUE(turn_id)
+);
+
 CREATE TABLE IF NOT EXISTS conversation_sync_runs (
     id TEXT PRIMARY KEY,
     source_id TEXT,

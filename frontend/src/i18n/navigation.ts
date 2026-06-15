@@ -72,6 +72,7 @@ const subNavLabelKeys: Partial<Record<string, TranslationKey>> = {
   "profiles.templates": "nav.sub.profiles.templates",
   "profiles.plans": "nav.sub.profiles.plans",
   "conversations.sessions": "nav.sub.conversations.sessions",
+  "conversations.web-records": "nav.sub.conversations.webRecords",
 };
 
 const subNavDefaultLabels: Partial<Record<string, string[]>> = {
@@ -92,6 +93,7 @@ const subNavDefaultLabels: Partial<Record<string, string[]>> = {
   "profiles.templates": ["Profile Templates", "配置模板", "Profile 模板"],
   "profiles.plans": ["Deployment Plans", "部署计划"],
   "conversations.sessions": ["Sessions", "Session 浏览"],
+  "conversations.web-records": ["Web Records", "网页记录浏览"],
 };
 
 export function railLabel(item: RailMenuItem, t: Translator, locale: Locale) {

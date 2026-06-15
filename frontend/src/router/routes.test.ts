@@ -41,6 +41,19 @@ describe("app route resolution", () => {
     ).toBe("conversations");
   });
 
+  it("routes web records to the independent web record page", () => {
+    expect(
+      resolveAppRoute(
+        {
+          ...fallbackNavigationModel,
+          activeHeaderTabId: "conversations",
+          activeSubNavId: "web-records",
+        },
+        "web-records",
+      ),
+    ).toBe("web-records");
+  });
+
   it("does not route retired conversation source and adapter tabs to the conversations page", () => {
     expect(
       resolveAppRoute(
@@ -74,6 +87,7 @@ describe("app route resolution", () => {
         ...fallbackNavigationModel.subNavItems,
         conversations: [
           { id: "sessions", label: "Sessions", routeKey: "conversations.sessions", enabled: true },
+          { id: "web-records", label: "Web Records", routeKey: "conversations.web-records", enabled: true },
           { id: "sources", label: "Sources", routeKey: "conversations.sources", enabled: true },
           { id: "adapters", label: "Adapters", routeKey: "conversations.adapters", enabled: true },
         ],
@@ -83,6 +97,7 @@ describe("app route resolution", () => {
     expect(normalized.activeSubNavId).toBe("sessions");
     expect(normalized.subNavItems.conversations.map((item) => item.routeKey)).toEqual([
       "conversations.sessions",
+      "conversations.web-records",
     ]);
   });
 

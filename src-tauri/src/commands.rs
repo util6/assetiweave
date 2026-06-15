@@ -1915,6 +1915,33 @@ pub(crate) fn export_conversation_session(
 }
 
 #[tauri::command]
+pub(crate) fn list_web_record_sessions(
+    state: State<'_, AppState>,
+    params: ConversationSessionListParams,
+) -> AppResult<Vec<store::ConversationSessionListItem>> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.list_web_record_sessions(params)
+}
+
+#[tauri::command]
+pub(crate) fn get_web_record_session(
+    state: State<'_, AppState>,
+    params: ConversationSessionGetParams,
+) -> AppResult<store::ConversationSessionDetail> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.get_web_record_session(params)
+}
+
+#[tauri::command]
+pub(crate) fn export_web_record_session(
+    state: State<'_, AppState>,
+    params: ConversationSessionExportParams,
+) -> AppResult<serde_json::Value> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.export_web_record_session(params)
+}
+
+#[tauri::command]
 pub(crate) fn list_conversation_questions(
     state: State<'_, AppState>,
     params: ConversationQuestionListParams,

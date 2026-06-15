@@ -44,9 +44,12 @@ import {
 } from "../../store/settings/AppSettingsProvider";
 import {
   exportConversationSession,
+  exportWebRecordSession,
   getConversationSession,
+  getWebRecordSession,
   listConversationAdapters,
   listConversationSessions,
+  listWebRecordSessions,
   mergeConversationQuestions,
   splitConversationQuestion,
   syncConversations,
@@ -68,15 +71,18 @@ export function ConversationsPage({
   onManualOpen,
   onNotifyError,
   onOpenSettings,
+  recordKind = "session",
 }: {
   activeSubNavId?: string;
   appShortcuts: AppShortcut[];
   onManualOpen: () => void;
   onNotifyError: (message: string) => void;
   onOpenSettings: (panel?: SettingsPanelId) => void;
+  recordKind?: "session" | "web";
 }) {
   const { t } = useI18n();
   const { settings: appSettings } = useAppSettings();
+  const webRecordMode = recordKind === "web";
   const [adapters, setAdapters] = useState<ConversationAdapter[]>([]);
   const [sessions, setSessions] = useState<ConversationSessionListItem[]>([]);
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
@@ -95,7 +101,9 @@ export function ConversationsPage({
   const [syncProgress, setSyncProgress] = useState<ConversationSyncProgressState | null>(null);
   const [query, setQuery] = useState("");
   const [detailQuery, setDetailQuery] = useState("");
-  const [outputRoot, setOutputRoot] = useState("~/Desktop/assetiweave-conversations");
+  const [outputRoot, setOutputRoot] = useState(
+    webRecordMode ? "~/Desktop/assetiweave-web-records" : "~/Desktop/assetiweave-conversations",
+  );
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -129,12 +137,21 @@ export function ConversationsPage({
   );
 
   useEffect(() => {
+    setSelectedAppId(null);
+    setSelectedSessionId(null);
+    setSelectedQuestionId(null);
+    setSessionDetail(null);
+    setSessionView("browser");
+    setSelectedQuestionIds(new Set());
+    setOutputRoot(
+      webRecordMode ? "~/Desktop/assetiweave-web-records" : "~/Desktop/assetiweave-conversations",
+    );
     void refreshCatalog();
-  }, []);
+  }, [recordKind]);
 
   useEffect(() => {
     void refreshSessions();
-  }, [query]);
+  }, [query, recordKind]);
 
   useEffect(() => {
     setSelectedAppId((current) => {
@@ -190,7 +207,9 @@ export function ConversationsPage({
 
   async function refreshCatalog(options: { rethrow?: boolean } = {}) {
     try {
-      const nextAdapters = await listConversationAdapters();
+      const nextAdapters = (await listConversationAdapters()).filter(
+        (adapter) => isWebRecordAdapter(adapter) === webRecordMode,
+      );
       setAdapters(nextAdapters);
       await refreshSessions({ rethrow: true });
     } catch (error) {
@@ -201,7 +220,8 @@ export function ConversationsPage({
 
   async function refreshSessions(options: { rethrow?: boolean } = {}) {
     try {
-      const nextSessions = await listConversationSessions({ query: query || null, limit: 100, offset: 0 });
+      const listSessions = webRecordMode ? listWebRecordSessions : listConversationSessions;
+      const nextSessions = await listSessions({ query: query || null, limit: 100, offset: 0 });
       setSessions(nextSessions);
       setSelectedSessionId((current) => current && nextSessions.some((session) => session.id === current) ? current : null);
     } catch (error) {
@@ -212,7 +232,8 @@ export function ConversationsPage({
 
   async function loadSession(sessionId: string) {
     try {
-      setSessionDetail(await getConversationSession(sessionId));
+      const getSession = webRecordMode ? getWebRecordSession : getConversationSession;
+      setSessionDetail(await getSession(sessionId));
     } catch (error) {
       onNotifyError(errorMessage(error));
     }
@@ -240,7 +261,7 @@ export function ConversationsPage({
       await waitForMinimumDuration(refreshingStartedAt, 250);
 
       setSyncProgress({ phase: "completed", sourceLabel });
-      setStatus(t("conversation.status.syncedAll"));
+      setStatus(t(webRecordMode ? "conversation.webRecords.status.syncedAll" : "conversation.status.syncedAll"));
     } catch (error) {
       setSyncProgress({ failedStep, phase: "failed", sourceLabel });
       onNotifyError(errorMessage(error));
@@ -289,7 +310,8 @@ export function ConversationsPage({
     const questionIds = exportDialog.questionIds;
     setExporting(true);
     try {
-      await exportConversationSession(selectedSessionId, outputRoot, false, questionIds, exportVisibility);
+      const exportSession = webRecordMode ? exportWebRecordSession : exportConversationSession;
+      await exportSession(selectedSessionId, outputRoot, false, questionIds, exportVisibility);
       setStatus(
         questionIds.length > 0
           ? t("conversation.status.exportedSelected", { count: questionIds.length })
@@ -333,8 +355,8 @@ export function ConversationsPage({
   return (
     <ConversationShell
       style={conversationStyle}
-      title={t("conversation.sessions.title")}
-      subtitle={t("conversation.sessions.subtitle")}
+      title={t(webRecordMode ? "conversation.webRecords.title" : "conversation.sessions.title")}
+      subtitle={t(webRecordMode ? "conversation.webRecords.subtitle" : "conversation.sessions.subtitle")}
       onManualOpen={onManualOpen}
       t={t}
     >
@@ -379,7 +401,7 @@ export function ConversationsPage({
         <div className="sticky top-[calc(var(--app-toolbar-top)+var(--app-notification-offset,0px))] z-10 -mx-[var(--app-page-x)] border-b border-theme-card-border bg-theme-toolbar/85 shadow-[0_12px_28px_rgb(var(--theme-panel-shadow)/0.18)] backdrop-blur">
           <section
             aria-label={t("conversation.content.filterAria")}
-            className="flex min-w-0 flex-wrap items-center gap-3 border-b border-theme-card-border/70 px-[var(--app-page-x)] py-3"
+            className="flex min-w-0 flex-nowrap items-center gap-3 overflow-hidden border-b border-theme-card-border/70 px-[var(--app-page-x)] py-3"
           >
             <ToolbarTextButton
               icon={<ArrowLeft size={16} />}
@@ -482,10 +504,10 @@ export function ConversationsPage({
         <SessionQuestionWorkspace
           contentCardColors={appSettings.conversations.contentCardColors}
           onExport={() => openExportDialog("session")}
-          onMerge={handleMerge}
+          onMerge={webRecordMode ? undefined : handleMerge}
           onQuestionSelect={setSelectedQuestionId}
           onQuestionSelectionChange={handleQuestionSelectionChange}
-          onSplit={handleSplit}
+          onSplit={webRecordMode ? undefined : handleSplit}
           outputRoot={outputRoot}
           question={selectedQuestion}
           questions={visibleSessionQuestions}
@@ -517,7 +539,7 @@ function ConversationShell({
   title: string;
 }) {
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-[var(--app-page-x)] py-6" style={style}>
+    <div className="flex w-full flex-1 flex-col px-[var(--app-page-x)] py-6" style={style}>
       <PageHeader
         className="mb-5"
         description={subtitle}
@@ -642,7 +664,8 @@ export function ConversationExportDialog({
 
   return (
     <DialogFrame
-      className="max-w-2xl"
+      busy={exporting}
+      closeLabel={t("conversation.export.close")}
       description={t("conversation.export.description")}
       footer={
         <>
@@ -662,19 +685,9 @@ export function ConversationExportDialog({
           />
         </>
       }
-      headerActions={
-        <button
-          aria-label={t("conversation.export.close")}
-          className="grid size-9 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-on-surface"
-          disabled={exporting}
-          onClick={onClose}
-          type="button"
-        >
-          <X size={16} />
-        </button>
-      }
       icon={<Download size={18} />}
-      onBackdropClick={exporting ? undefined : onClose}
+      onClose={onClose}
+      size="lg"
       title={t("conversation.export.title")}
     >
       <div className="grid gap-4">
@@ -867,6 +880,10 @@ function conversationAdapterKindToAppKind(kind: ConversationAdapter["kind"]): Ap
   }
 }
 
+function isWebRecordAdapter(adapter: ConversationAdapter) {
+  return adapter.capabilities.includes("web_records") || adapter.id.endsWith("-web");
+}
+
 function inferAppKindFromAdapterId(adapterId: string): AppKind {
   const normalized = adapterId.toLowerCase().replace(/_/g, "-");
   if (normalized === "claude" || normalized === "claude-code") return "claude";
@@ -930,10 +947,10 @@ export function SessionQuestionWorkspace({
 }: {
   contentCardColors: ConversationContentCardColorSettings;
   onExport: () => void;
-  onMerge: (previous: ConversationQuestionDetail, current: ConversationQuestionDetail) => Promise<void>;
+  onMerge?: (previous: ConversationQuestionDetail, current: ConversationQuestionDetail) => Promise<void>;
   onQuestionSelect: (questionId: string) => void;
   onQuestionSelectionChange: (questionId: string, checked: boolean) => void;
-  onSplit: (question: ConversationQuestionDetail, turnId: string) => Promise<void>;
+  onSplit?: (question: ConversationQuestionDetail, turnId: string) => Promise<void>;
   outputRoot: string;
   question: ConversationQuestionDetail | null;
   questions: ConversationQuestionDetail[];
@@ -969,7 +986,7 @@ export function SessionQuestionWorkspace({
               <QuestionListItem
                 key={item.question.id}
                 onMergeWithPrevious={
-                  previousQuestion ? () => void onMerge(previousQuestion, item) : undefined
+                  previousQuestion && onMerge ? () => void onMerge(previousQuestion, item) : undefined
                 }
                 onSelect={() => onQuestionSelect(item.question.id)}
                 onSelectionChange={(checked) => onQuestionSelectionChange(item.question.id, checked)}
@@ -1073,7 +1090,7 @@ export function QuestionPreview({
 }: {
   contentCardColors?: ConversationContentCardColorSettings;
   onExport: () => void;
-  onSplit: (question: ConversationQuestionDetail, turnId: string) => Promise<void>;
+  onSplit?: (question: ConversationQuestionDetail, turnId: string) => Promise<void>;
   outputRoot: string;
   question: ConversationQuestionDetail;
   session: ConversationSessionDetail;
@@ -1120,7 +1137,7 @@ export function QuestionPreview({
                     <span className="size-2 rounded-full bg-primary" />
                     {t("conversation.question.userPrompt")}
                   </h3>
-                  {index > 0 ? (
+                  {index > 0 && onSplit ? (
                     <ToolbarTextButton icon={<Scissors size={15} />} label={t("conversation.question.splitHere")} onClick={() => void onSplit(question, turn.id)} />
                   ) : null}
                 </div>

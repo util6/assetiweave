@@ -641,9 +641,25 @@ impl AppService {
         let mut results = Vec::new();
         let mut errors = Vec::new();
         for source in sources {
-            match conversations::read_source_sessions(&source).and_then(|sessions| {
-                store::import_conversation_sessions(&self.conn, &source, &sessions, params.dry_run)
-            }) {
+            let adapter = store::load_conversation_adapter(&self.conn, &source.adapter_id)?;
+            match conversations::read_source_sessions_with_adapter(adapter.as_ref(), &source)
+                .and_then(|sessions| {
+                    if is_web_record_adapter(adapter.as_ref(), &source.adapter_id) {
+                        store::import_web_record_sessions(
+                            &self.conn,
+                            &source,
+                            &sessions,
+                            params.dry_run,
+                        )
+                    } else {
+                        store::import_conversation_sessions(
+                            &self.conn,
+                            &source,
+                            &sessions,
+                            params.dry_run,
+                        )
+                    }
+                }) {
                 Ok(result) => results.push(json!(result)),
                 Err(error) if params.source_id.is_some() => return Err(error),
                 Err(error) => errors.push(json!({
@@ -679,6 +695,27 @@ impl AppService {
         params: ConversationSessionGetParams,
     ) -> AppResult<store::ConversationSessionDetail> {
         store::load_conversation_session_detail(&self.conn, &params.session_id)
+    }
+
+    pub(crate) fn list_web_record_sessions(
+        &self,
+        params: ConversationSessionListParams,
+    ) -> AppResult<Vec<store::ConversationSessionListItem>> {
+        store::list_web_record_sessions(
+            &self.conn,
+            params.adapter_id.as_deref(),
+            params.source_id.as_deref(),
+            params.query.as_deref(),
+            params.limit.unwrap_or(50).clamp(1, 500),
+            params.offset.unwrap_or(0),
+        )
+    }
+
+    pub(crate) fn get_web_record_session(
+        &self,
+        params: ConversationSessionGetParams,
+    ) -> AppResult<store::ConversationSessionDetail> {
+        store::load_web_record_session_detail(&self.conn, &params.session_id)
     }
 
     pub(crate) fn export_conversation_session(
@@ -731,6 +768,72 @@ impl AppService {
                 &params.content_filter,
             )?
         };
+        if params.dry_run {
+            return Ok(json!({
+                "dry_run": true,
+                "written": false,
+                "path": target_path,
+                "bytes": content.len(),
+                "question_ids": params.question_ids,
+                "question_count": question_count
+            }));
+        }
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::write(&target_path, &content).map_err(|error| error.to_string())?;
+        Ok(json!({
+            "dry_run": false,
+            "written": true,
+            "path": target_path,
+            "bytes": content.len(),
+            "question_ids": params.question_ids,
+            "question_count": question_count
+        }))
+    }
+
+    pub(crate) fn export_web_record_session(
+        &self,
+        params: ConversationSessionExportParams,
+    ) -> AppResult<Value> {
+        let detail = store::load_web_record_session_detail(&self.conn, &params.session_id)?;
+        let output_root = path_utils::expand_path(&params.output_root)?;
+        let project_segment = detail
+            .session
+            .project_path
+            .as_deref()
+            .and_then(|path| Path::new(path).file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("web");
+        let short_id = detail
+            .session
+            .id
+            .chars()
+            .rev()
+            .take(8)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect::<String>();
+        let question_count = params.question_ids.len();
+        let file_stem = if question_count == 0 {
+            sanitize_path_segment(&detail.session.title)
+        } else {
+            format!(
+                "{}-selected-{question_count}",
+                sanitize_path_segment(&detail.session.title)
+            )
+        };
+        let target_path = output_root
+            .join(sanitize_path_segment(&detail.session.adapter_id))
+            .join(sanitize_path_segment(project_segment))
+            .join(format!("{file_stem}-{short_id}.md"));
+        let content = store::render_web_record_markdown_with_filter(
+            &self.conn,
+            &params.session_id,
+            &params.question_ids,
+            &params.content_filter,
+        )?;
         if params.dry_run {
             return Ok(json!({
                 "dry_run": true,
@@ -2281,6 +2384,15 @@ fn sanitize_path_segment(value: &str) -> String {
     } else {
         segment
     }
+}
+
+fn is_web_record_adapter(adapter: Option<&ConversationAdapter>, adapter_id: &str) -> bool {
+    adapter.is_some_and(|adapter| {
+        adapter
+            .capabilities
+            .iter()
+            .any(|capability| capability == "web_records")
+    }) || adapter_id.ends_with("-web")
 }
 
 #[cfg(test)]

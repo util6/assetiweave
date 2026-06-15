@@ -5,7 +5,9 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/util6/assetiweave/internal/cmdutil"
+	"github.com/util6/assetiweave/internal/output"
 	"github.com/util6/assetiweave/internal/schema"
+	"github.com/util6/assetiweave/internal/webharvester"
 )
 
 func newCmdConversation(f *cmdutil.Factory) *cobra.Command {
@@ -14,7 +16,9 @@ func newCmdConversation(f *cmdutil.Factory) *cobra.Command {
 	cmd.AddCommand(newCmdConversationSource(f))
 	cmd.AddCommand(newCmdConversationSync(f))
 	cmd.AddCommand(newCmdConversationSession(f))
+	cmd.AddCommand(newCmdConversationWebRecord(f))
 	cmd.AddCommand(newCmdConversationQuestion(f))
+	cmd.AddCommand(newCmdConversationWeb(f))
 	return cmd
 }
 
@@ -329,12 +333,189 @@ func newCmdConversationSessionExport(f *cmdutil.Factory) *cobra.Command {
 	return cmd
 }
 
+func newCmdConversationWebRecord(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "web-record", Short: "Browse and export imported web conversations"}
+	cmd.AddCommand(newCmdConversationWebRecordList(f))
+	cmd.AddCommand(newCmdConversationWebRecordGet(f))
+	cmd.AddCommand(newCmdConversationWebRecordExport(f))
+	return cmd
+}
+
+func newCmdConversationWebRecordList(f *cmdutil.Factory) *cobra.Command {
+	var adapterID, sourceID, query string
+	var limit, offset int
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List imported web conversations",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			params := paginationParams(limit, offset)
+			params["adapter_id"] = nil
+			params["source_id"] = nil
+			params["query"] = nil
+			if adapterID != "" {
+				params["adapter_id"] = adapterID
+			}
+			if sourceID != "" {
+				params["source_id"] = sourceID
+			}
+			if query != "" {
+				params["query"] = query
+			}
+			return callAndPrint(cmd, f, schema.MethodConversationWebRecordList, params)
+		},
+	}
+	cmd.Flags().StringVar(&adapterID, "adapter", "", "adapter id filter")
+	cmd.Flags().StringVar(&sourceID, "source", "", "source id filter")
+	cmd.Flags().StringVar(&query, "query", "", "search query")
+	cmd.Flags().IntVar(&limit, "limit", 50, "maximum web conversations")
+	cmd.Flags().IntVar(&offset, "offset", 0, "pagination offset")
+	return cmd
+}
+
+func newCmdConversationWebRecordGet(f *cmdutil.Factory) *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <record-id>",
+		Short: "Get one web conversation with question groups",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodConversationWebRecordGet, map[string]any{"session_id": args[0]})
+		},
+	}
+}
+
+func newCmdConversationWebRecordExport(f *cmdutil.Factory) *cobra.Command {
+	var outputRoot string
+	var dryRun bool
+	cmd := &cobra.Command{
+		Use:   "export <record-id>",
+		Short: "Export one web conversation as Markdown",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodConversationWebRecordExport, map[string]any{
+				"session_id":  args[0],
+				"output_root": outputRoot,
+				"dry_run":     dryRun,
+			})
+		},
+	}
+	cmd.Flags().StringVar(&outputRoot, "output-root", "", "directory for exported Markdown")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without writing files")
+	_ = cmd.MarkFlagRequired("output-root")
+	return cmd
+}
+
 func newCmdConversationQuestion(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{Use: "question", Short: "Manage session question groups"}
 	cmd.AddCommand(newCmdConversationQuestionList(f))
 	cmd.AddCommand(newCmdConversationQuestionGet(f))
 	cmd.AddCommand(newCmdConversationQuestionMerge(f))
 	cmd.AddCommand(newCmdConversationQuestionSplit(f))
+	return cmd
+}
+
+func newCmdConversationWeb(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "web", Short: "Build and run web conversation harvesters"}
+	cmd.AddCommand(newCmdConversationWebScaffold(f))
+	cmd.AddCommand(newCmdConversationWebAuthDetect(f))
+	cmd.AddCommand(newCmdConversationWebAuthCheck(f))
+	cmd.AddCommand(newCmdConversationWebSync(f))
+	return cmd
+}
+
+func newCmdConversationWebScaffold(f *cmdutil.Factory) *cobra.Command {
+	var directory, site, name string
+	var dryRun bool
+	cmd := &cobra.Command{
+		Use:   "scaffold",
+		Short: "Create a lightweight web conversation harvester scaffold",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			result, err := webharvester.Scaffold(webharvester.ScaffoldOptions{
+				Directory: directory,
+				SiteID:    site,
+				Name:      name,
+				DryRun:    dryRun,
+			})
+			if err != nil {
+				return err
+			}
+			output.WriteSuccess(f.IOStreams.Out, result)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&directory, "directory", "", "directory where web harvester files will be created")
+	cmd.Flags().StringVar(&site, "site", "", "site id, for example qwen-web")
+	cmd.Flags().StringVar(&name, "name", "", "site display name")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without writing files")
+	_ = cmd.MarkFlagRequired("directory")
+	_ = cmd.MarkFlagRequired("site")
+	return cmd
+}
+
+func newCmdConversationWebAuthDetect(f *cmdutil.Factory) *cobra.Command {
+	var browser, profile, domain, probeURL, credential string
+	cmd := &cobra.Command{
+		Use:   "auth-detect <directory>",
+		Short: "Create an auth probe request from a local browser login state",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			result, err := webharvester.AuthDetect(webharvester.AuthDetectOptions{
+				Directory:  args[0],
+				Browser:    browser,
+				Profile:    profile,
+				Domain:     domain,
+				ProbeURL:   probeURL,
+				Credential: credential,
+			})
+			if err != nil {
+				return err
+			}
+			output.WriteSuccess(f.IOStreams.Out, result)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&browser, "browser", "auto", "browser profile to inspect: auto, chrome, edge, brave, chromium")
+	cmd.Flags().StringVar(&profile, "profile", "Default", "browser profile name")
+	cmd.Flags().StringVar(&domain, "domain", "qianwen.com", "cookie domain to extract")
+	cmd.Flags().StringVar(&probeURL, "probe-url", "", "auth probe URL; defaults to a site-specific probe when known")
+	cmd.Flags().StringVar(&credential, "credential", "auto", "credential source: auto, cookie, token")
+	return cmd
+}
+
+func newCmdConversationWebAuthCheck(f *cmdutil.Factory) *cobra.Command {
+	return &cobra.Command{
+		Use:   "auth-check <directory>",
+		Short: "Run a configured web harvester login-state probe",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			result, err := webharvester.AuthCheck(webharvester.AuthCheckOptions{Directory: args[0]})
+			if err != nil {
+				return err
+			}
+			output.WriteSuccess(f.IOStreams.Out, result)
+			return nil
+		},
+	}
+}
+
+func newCmdConversationWebSync(f *cmdutil.Factory) *cobra.Command {
+	var limit int
+	cmd := &cobra.Command{
+		Use:   "sync <directory>",
+		Short: "Download and normalize web conversation data from configured request templates",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			result, err := webharvester.Sync(webharvester.SyncOptions{
+				Directory: args[0],
+				Limit:     limit,
+			})
+			if err != nil {
+				return err
+			}
+			output.WriteSuccess(f.IOStreams.Out, result)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 0, "maximum sessions to download; 0 means all sessions in the list response")
 	return cmd
 }
 

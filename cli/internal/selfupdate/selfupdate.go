@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/util6/assetiweave/internal/harvesters"
 	"github.com/util6/assetiweave/internal/update"
 )
 
@@ -18,20 +19,21 @@ type Options struct {
 }
 
 type Result struct {
-	Checked         bool     `json:"checked"`
-	UpdateAvailable bool     `json:"update_available"`
-	Current         string   `json:"current"`
-	Latest          string   `json:"latest,omitempty"`
-	Action          string   `json:"action"`
-	Target          string   `json:"target,omitempty"`
-	ReleaseURL      string   `json:"release_url,omitempty"`
-	PackageAsset    string   `json:"package_asset,omitempty"`
-	PackageURL      string   `json:"package_url,omitempty"`
-	ChecksumAsset   string   `json:"checksum_asset,omitempty"`
-	ChecksumURL     string   `json:"checksum_url,omitempty"`
-	Installed       []string `json:"installed,omitempty"`
-	Message         string   `json:"message"`
-	Error           string   `json:"error,omitempty"`
+	Checked         bool                       `json:"checked"`
+	UpdateAvailable bool                       `json:"update_available"`
+	Current         string                     `json:"current"`
+	Latest          string                     `json:"latest,omitempty"`
+	Action          string                     `json:"action"`
+	Target          string                     `json:"target,omitempty"`
+	ReleaseURL      string                     `json:"release_url,omitempty"`
+	PackageAsset    string                     `json:"package_asset,omitempty"`
+	PackageURL      string                     `json:"package_url,omitempty"`
+	ChecksumAsset   string                     `json:"checksum_asset,omitempty"`
+	ChecksumURL     string                     `json:"checksum_url,omitempty"`
+	Installed       []string                   `json:"installed,omitempty"`
+	Harvesters      []harvesters.InstallResult `json:"harvesters,omitempty"`
+	Message         string                     `json:"message"`
+	Error           string                     `json:"error,omitempty"`
 }
 
 func Check(options Options) Result {

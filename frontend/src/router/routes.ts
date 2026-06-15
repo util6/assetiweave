@@ -1,11 +1,12 @@
 import type { NavigationModel } from "./types";
 
-export type AppRouteId = "catalog" | "conversations" | "sources" | "skill-groups" | "skill-mounts" | "under-construction";
+export type AppRouteId = "catalog" | "conversations" | "web-records" | "sources" | "skill-groups" | "skill-mounts" | "under-construction";
 
 const retiredRouteKeys = new Set(["conversations.sources", "conversations.adapters"]);
 
 const implementedRoutes: Record<string, AppRouteId> = {
   "conversations.sessions": "conversations",
+  "conversations.web-records": "web-records",
   "skills.groups": "skill-groups",
   "skills.mounts": "skill-mounts",
   "skills.overview": "catalog",

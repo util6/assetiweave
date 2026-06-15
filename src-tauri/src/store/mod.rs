@@ -12,6 +12,7 @@ mod shortcut_repo;
 mod skill_remote_repo;
 mod source_repo;
 mod sql;
+mod web_record_repo;
 
 pub(crate) use asset_repo::{
     load_assets, load_assets_by_kind, replace_source_assets, update_asset_description,
@@ -56,4 +57,8 @@ pub(crate) use skill_remote_repo::{
 };
 pub(crate) use source_repo::{
     delete_source, load_skill_sources, load_sources, normalize_source, upsert_source,
+};
+pub(crate) use web_record_repo::{
+    import_web_record_sessions, list_web_record_sessions, load_web_record_session_detail,
+    render_web_record_markdown_with_filter,
 };

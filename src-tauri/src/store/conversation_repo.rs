@@ -676,7 +676,7 @@ pub(crate) fn render_session_markdown_for_questions_with_filter(
     render_session_detail_markdown(&detail, Some(question_ids), content_filter)
 }
 
-fn render_session_detail_markdown(
+pub(super) fn render_session_detail_markdown(
     detail: &ConversationSessionDetail,
     question_ids: Option<&[String]>,
     content_filter: &ConversationExportContentFilter,
@@ -896,7 +896,7 @@ fn map_conversation_source(row: &Row<'_>) -> rusqlite::Result<ConversationSource
     })
 }
 
-fn map_conversation_session(row: &Row<'_>) -> rusqlite::Result<ConversationSession> {
+pub(super) fn map_conversation_session(row: &Row<'_>) -> rusqlite::Result<ConversationSession> {
     Ok(ConversationSession {
         id: row.get(0)?,
         source_id: row.get(1)?,
@@ -914,7 +914,7 @@ fn map_conversation_session(row: &Row<'_>) -> rusqlite::Result<ConversationSessi
     })
 }
 
-fn map_conversation_turn(row: &Row<'_>) -> rusqlite::Result<ConversationTurn> {
+pub(super) fn map_conversation_turn(row: &Row<'_>) -> rusqlite::Result<ConversationTurn> {
     Ok(ConversationTurn {
         id: row.get(0)?,
         session_id: row.get(1)?,
@@ -930,7 +930,7 @@ fn map_conversation_turn(row: &Row<'_>) -> rusqlite::Result<ConversationTurn> {
     })
 }
 
-fn map_conversation_part(row: &Row<'_>) -> rusqlite::Result<ConversationPart> {
+pub(super) fn map_conversation_part(row: &Row<'_>) -> rusqlite::Result<ConversationPart> {
     Ok(ConversationPart {
         id: row.get(0)?,
         turn_id: row.get(1)?,
@@ -947,7 +947,7 @@ fn map_conversation_part(row: &Row<'_>) -> rusqlite::Result<ConversationPart> {
     })
 }
 
-fn map_conversation_question(row: &Row<'_>) -> rusqlite::Result<ConversationQuestion> {
+pub(super) fn map_conversation_question(row: &Row<'_>) -> rusqlite::Result<ConversationQuestion> {
     Ok(ConversationQuestion {
         id: row.get(0)?,
         session_id: row.get(1)?,

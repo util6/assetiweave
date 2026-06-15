@@ -135,6 +135,85 @@ pub(crate) fn read_source_sessions(
     }
 }
 
+pub(crate) fn read_source_sessions_with_adapter(
+    adapter: Option<&ConversationAdapter>,
+    source: &ConversationSource,
+) -> AppResult<Vec<NormalizedConversationSession>> {
+    match source.adapter_id.as_str() {
+        "codex" | "claude-code" | "opencode" => read_source_sessions(source),
+        _ => {
+            let adapter = adapter
+                .ok_or_else(|| format!("conversation adapter not found: {}", source.adapter_id))?;
+            read_external_adapter_sessions(adapter, source)
+        }
+    }
+}
+
+fn read_external_adapter_sessions(
+    adapter: &ConversationAdapter,
+    source: &ConversationSource,
+) -> AppResult<Vec<NormalizedConversationSession>> {
+    if adapter.kind != ConversationAdapterKind::External {
+        return Err(format!(
+            "conversation adapter {} is not a built-in or external adapter",
+            adapter.id
+        ));
+    }
+    if !adapter.enabled {
+        return Err(format!("conversation adapter is disabled: {}", adapter.id));
+    }
+    if adapter.trust_state != ConversationAdapterTrustState::Trusted {
+        return Err(format!(
+            "external conversation adapter is not trusted: {}",
+            adapter.id
+        ));
+    }
+    if !adapter.input_kinds.iter().any(|kind| *kind == source.kind) {
+        return Err(format!(
+            "external conversation adapter {} does not support source kind {:?}",
+            adapter.id, source.kind
+        ));
+    }
+    let manifest_path = adapter.manifest_path.as_deref().ok_or_else(|| {
+        format!(
+            "external conversation adapter has no manifest: {}",
+            adapter.id
+        )
+    })?;
+    let validation = validate_external_adapter_manifest(manifest_path)?;
+    if !validation
+        .manifest
+        .capabilities
+        .iter()
+        .any(|capability| capability == "read_session")
+    {
+        return Err(format!(
+            "external conversation adapter {} does not declare read_session",
+            adapter.id
+        ));
+    }
+    let config = match source.config_json.as_deref() {
+        Some(text) if !text.trim().is_empty() => {
+            Some(serde_json::from_str::<Value>(text).map_err(|error| error.to_string())?)
+        }
+        _ => None,
+    };
+    let request = json!({
+        "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+        "request_id": format!("sync-{}-{}", source.id, Utc::now().timestamp_millis()),
+        "method": "read_session",
+        "source": { "location": source.location, "config": config },
+        "params": { "session_id": null }
+    });
+    Ok(run_external_adapter(
+        &validation,
+        "read_session",
+        request,
+        Duration::from_millis(DEFAULT_READ_TIMEOUT_MS),
+    )?
+    .sessions)
+}
+
 pub(crate) fn scaffold_external_adapter(
     params: ExternalAdapterScaffoldParams,
 ) -> AppResult<ExternalAdapterScaffoldResult> {
@@ -348,7 +427,7 @@ fn validate_manifest_shape(manifest: &ConversationAdapterManifest) -> AppResult<
     for capability in &manifest.capabilities {
         if !matches!(
             capability.as_str(),
-            "probe" | "list_sessions" | "read_session"
+            "probe" | "list_sessions" | "read_session" | "web_records"
         ) {
             return Err(format!("unsupported adapter capability: {capability}"));
         }
@@ -2795,6 +2874,60 @@ printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
         assert_eq!(result.sessions[0].turns[0].user_text, "External question");
         assert!(result.stderr.contains(&injection_arg));
         assert!(!hacked_path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_adapter_sync_reads_registered_adapter_sessions() {
+        let fixture = TempFixture::new("assetiweave-adapter-sync-fixture");
+        write_executable_script(
+            fixture.path(),
+            "adapter.sh",
+            r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"web-session-1","title":"Web Fixture","project_path":null,"started_at":null,"updated_at":null,"source_locator":"fixture://web-session-1","source_fingerprint":"fixture-hash","turns":[{"external_id":"turn-1","turn_index":0,"user_text":"Web question","title":null,"started_at":null,"ended_at":null,"parts":[{"role":"assistant","kind":"text","text":"Web answer","language":null,"command":null,"cwd":null,"status":null,"exit_code":null,"metadata_json":null}]}]}}}'
+printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+"#,
+        );
+        let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+        let adapter = ConversationAdapter {
+            id: "fixture-external".to_string(),
+            name: "Fixture External".to_string(),
+            kind: ConversationAdapterKind::External,
+            version: "0.1.0".to_string(),
+            enabled: true,
+            manifest_path: Some(manifest.to_string_lossy().to_string()),
+            executable_path: Some(
+                fixture
+                    .path()
+                    .join("adapter.sh")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            content_hash: None,
+            trusted_hash: None,
+            trust_state: ConversationAdapterTrustState::Trusted,
+            protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+            capabilities: vec!["read_session".to_string()],
+            input_kinds: vec![ConversationSourceKind::Directory],
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let source = source_fixture(
+            "fixture-external",
+            ConversationSourceKind::Directory,
+            &fixture.path().to_string_lossy(),
+        );
+
+        let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].external_id, "web-session-1");
+        assert_eq!(sessions[0].turns[0].user_text, "Web question");
+        assert_eq!(
+            sessions[0].turns[0].parts[0].text.as_deref(),
+            Some("Web answer")
+        );
     }
 
     #[cfg(unix)]

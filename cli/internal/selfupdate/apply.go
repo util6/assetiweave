@@ -16,6 +16,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/util6/assetiweave/internal/harvesters"
 )
 
 const (
@@ -25,9 +27,10 @@ const (
 )
 
 type ApplyOptions struct {
-	InstallDir string
-	GOOS       string
-	HTTPClient *http.Client
+	InstallDir    string
+	HarvesterRoot string
+	GOOS          string
+	HTTPClient    *http.Client
 }
 
 func Apply(ctx context.Context, result Result, options ApplyOptions) (Result, error) {
@@ -86,10 +89,59 @@ func Apply(ctx context.Context, result Result, options ApplyOptions) (Result, er
 	if err != nil {
 		return result, err
 	}
+	harvesterUpdates, err := installBundledHarvesters(tempDir, options.HarvesterRoot)
+	if err != nil {
+		return result, err
+	}
 	result.Action = "updated"
 	result.Installed = installed
+	result.Harvesters = harvesterUpdates
 	result.Message = fmt.Sprintf("AssetIWeave CLI tools updated to %s", result.Latest)
 	return result, nil
+}
+
+func installBundledHarvesters(extractedRoot, harvesterRoot string) ([]harvesters.InstallResult, error) {
+	roots := []string{
+		filepath.Join(extractedRoot, "harvesters"),
+		filepath.Join(extractedRoot, "assetiweave-tools", "harvesters"),
+	}
+	var results []harvesters.InstallResult
+	seen := map[string]bool{}
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read bundled harvesters: %w", err)
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			source := filepath.Join(root, entry.Name())
+			manifest, err := harvesters.LoadManifest(source)
+			if err != nil {
+				return nil, fmt.Errorf("read bundled harvester %s: %w", source, err)
+			}
+			if seen[manifest.ID] {
+				continue
+			}
+			seen[manifest.ID] = true
+			result, err := harvesters.InstallPackage(harvesters.InstallPackageOptions{
+				Root:          harvesterRoot,
+				ID:            manifest.ID,
+				Source:        source,
+				Force:         true,
+				PreserveState: true,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("install bundled harvester %s: %w", manifest.ID, err)
+			}
+			results = append(results, result)
+		}
+	}
+	return results, nil
 }
 
 func fetchBytes(ctx context.Context, client *http.Client, url string, limit int64) ([]byte, error) {

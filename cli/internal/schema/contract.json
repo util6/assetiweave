@@ -2024,6 +2024,185 @@
       "supports_dry_run": true
     },
     {
+      "canonical_method": "conversation.web-record.list",
+      "cli": "assetiweave-cli conversation web-record list",
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "List imported web conversation records",
+      "exposure": "friendly",
+      "method": "conversation.web-record.list",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter_id": {
+            "aliases": [
+              "adapterId"
+            ],
+            "description": "Optional adapter filter",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "description": "Maximum number of web records",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offset": {
+            "description": "Pagination offset",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "query": {
+            "description": "Search query",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_id": {
+            "aliases": [
+              "sourceId"
+            ],
+            "description": "Optional source filter",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.web-record.get",
+      "cli": "assetiweave-cli conversation web-record get <record-id>",
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Get one web conversation record with question groups",
+      "exposure": "friendly",
+      "method": "conversation.web-record.get",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "aliases": [
+              "sessionId"
+            ],
+            "description": "Web record identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.web-record.export",
+      "cli": "assetiweave-cli conversation web-record export <record-id> --output-root <dir>",
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Export one web conversation record as Markdown",
+      "exposure": "friendly",
+      "method": "conversation.web-record.export",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "content_filter": {
+            "aliases": [
+              "contentFilter"
+            ],
+            "description": "Optional content categories to include in Markdown export",
+            "properties": {
+              "answer": {
+                "default": true,
+                "type": "boolean"
+              },
+              "code": {
+                "default": true,
+                "type": "boolean"
+              },
+              "command": {
+                "default": true,
+                "type": "boolean"
+              },
+              "result": {
+                "default": true,
+                "type": "boolean"
+              },
+              "tool": {
+                "default": true,
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview without writing",
+            "type": "boolean"
+          },
+          "output_root": {
+            "aliases": [
+              "outputRoot"
+            ],
+            "description": "Output root directory",
+            "type": "string"
+          },
+          "question_ids": {
+            "aliases": [
+              "questionIds"
+            ],
+            "default": [],
+            "description": "Optional question identifiers to export instead of the full record",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "session_id": {
+            "aliases": [
+              "sessionId"
+            ],
+            "description": "Web record identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "output_root"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": true
+    },
+    {
       "canonical_method": "conversation.question.list",
       "cli": "assetiweave-cli conversation question list <session-id>",
       "confirmation_required": false,
@@ -5334,6 +5513,185 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.web-record.list",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "List imported web conversation records",
+      "exposure": "app",
+      "method": "list_web_record_sessions",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter_id": {
+            "aliases": [
+              "adapterId"
+            ],
+            "description": "Optional adapter filter",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "description": "Maximum number of web records",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offset": {
+            "description": "Pagination offset",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "query": {
+            "description": "Search query",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_id": {
+            "aliases": [
+              "sourceId"
+            ],
+            "description": "Optional source filter",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.web-record.get",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Get one web conversation record with question groups",
+      "exposure": "app",
+      "method": "get_web_record_session",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "aliases": [
+              "sessionId"
+            ],
+            "description": "Web record identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.web-record.export",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Export one web conversation record as Markdown",
+      "exposure": "app",
+      "method": "export_web_record_session",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "content_filter": {
+            "aliases": [
+              "contentFilter"
+            ],
+            "description": "Optional content categories to include in Markdown export",
+            "properties": {
+              "answer": {
+                "default": true,
+                "type": "boolean"
+              },
+              "code": {
+                "default": true,
+                "type": "boolean"
+              },
+              "command": {
+                "default": true,
+                "type": "boolean"
+              },
+              "result": {
+                "default": true,
+                "type": "boolean"
+              },
+              "tool": {
+                "default": true,
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview without writing",
+            "type": "boolean"
+          },
+          "output_root": {
+            "aliases": [
+              "outputRoot"
+            ],
+            "description": "Output root directory",
+            "type": "string"
+          },
+          "question_ids": {
+            "aliases": [
+              "questionIds"
+            ],
+            "default": [],
+            "description": "Optional question identifiers to export instead of the full record",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "session_id": {
+            "aliases": [
+              "sessionId"
+            ],
+            "description": "Web record identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "output_root"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.question.list",
       "cli": null,
       "confirmation_required": false,
@@ -5882,6 +6240,9 @@
     "conversation.session.list",
     "conversation.session.get",
     "conversation.session.export",
+    "conversation.web-record.list",
+    "conversation.web-record.get",
+    "conversation.web-record.export",
     "conversation.question.list",
     "conversation.question.get",
     "conversation.question.merge",
@@ -5947,6 +6308,9 @@
     "list_conversation_sessions",
     "get_conversation_session",
     "export_conversation_session",
+    "list_web_record_sessions",
+    "get_web_record_session",
+    "export_web_record_session",
     "list_conversation_questions",
     "get_conversation_question",
     "merge_conversation_questions",

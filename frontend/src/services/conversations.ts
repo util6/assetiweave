@@ -110,6 +110,35 @@ export async function getConversationSession(sessionId: string): Promise<Convers
   }
 }
 
+export async function listWebRecordSessions(params: ConversationSessionListParams): Promise<ConversationSessionListItem[]> {
+  try {
+    return await invoke<ConversationSessionListItem[]>("list_web_record_sessions", { params });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return fallbackWebSessions.filter((session) => {
+      if (params.adapter_id && session.adapter_id !== params.adapter_id) return false;
+      if (params.source_id && session.source_id !== params.source_id) return false;
+      if (params.query && !`${session.title} ${session.project_path ?? ""}`.toLowerCase().includes(params.query.toLowerCase())) return false;
+      return true;
+    });
+  }
+}
+
+export async function getWebRecordSession(sessionId: string): Promise<ConversationSessionDetail> {
+  try {
+    return await invoke<ConversationSessionDetail>("get_web_record_session", { params: { session_id: sessionId } });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return fallbackWebSessionDetail;
+  }
+}
+
 export async function listConversationQuestions(params: ConversationQuestionListParams): Promise<ConversationQuestionDetail[]> {
   try {
     return await invoke<ConversationQuestionDetail[]>("list_conversation_questions", { params });
@@ -210,6 +239,44 @@ export async function exportConversationSession(
   }
 }
 
+export async function exportWebRecordSession(
+  sessionId: string,
+  outputRoot: string,
+  dryRun = false,
+  questionIds: string[] = [],
+  contentFilter?: ConversationExportContentFilter,
+) {
+  const resolvedContentFilter = contentFilter ?? {
+    answer: true,
+    code: true,
+    command: true,
+    result: true,
+    tool: true,
+  };
+  try {
+    return await invoke("export_web_record_session", {
+      params: {
+        session_id: sessionId,
+        output_root: outputRoot,
+        question_ids: questionIds,
+        content_filter: resolvedContentFilter,
+        dry_run: dryRun,
+      },
+    });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return {
+      dry_run: dryRun,
+      session_id: sessionId,
+      question_ids: questionIds,
+      output_path: `${outputRoot}/qwen-web/web/preview-web-record.md`,
+    };
+  }
+}
+
 function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
@@ -250,6 +317,18 @@ const fallbackAdapters: ConversationAdapter[] = [
     trust_state: "built_in",
     capabilities: ["probe", "list_sessions", "read_session"],
     input_kinds: ["live", "sqlite"],
+    created_at: now,
+    updated_at: now,
+  },
+  {
+    id: "qwen-web",
+    name: "Qwen Web",
+    kind: "external",
+    version: "0.1.0",
+    enabled: true,
+    trust_state: "trusted",
+    capabilities: ["probe", "read_session", "web_records"],
+    input_kinds: ["directory"],
     created_at: now,
     updated_at: now,
   },
@@ -380,4 +459,38 @@ const fallbackSessionDetail: ConversationSessionDetail = {
       ],
     },
   ],
+};
+
+const fallbackWebSessions: ConversationSessionListItem[] = [
+  {
+    ...fallbackSessions[0],
+    id: "preview-web-record",
+    source_id: "qwen-web-export",
+    adapter_id: "qwen-web",
+    external_id: "qwen-preview",
+    title: "Qwen web conversation",
+    project_path: null,
+  },
+];
+
+const fallbackWebSessionDetail: ConversationSessionDetail = {
+  session: fallbackWebSessions[0],
+  questions: fallbackSessionDetail.questions.map((detail, questionIndex) => ({
+    ...detail,
+    question: {
+      ...detail.question,
+      id: `preview-web-question-${questionIndex + 1}`,
+      session_id: fallbackWebSessions[0].id,
+    },
+    turns: detail.turns.map((turn, turnIndex) => ({
+      ...turn,
+      id: `preview-web-turn-${questionIndex + 1}-${turnIndex + 1}`,
+      session_id: fallbackWebSessions[0].id,
+    })),
+    parts: detail.parts.map((part, partIndex) => ({
+      ...part,
+      id: `preview-web-part-${questionIndex + 1}-${partIndex + 1}`,
+      turn_id: `preview-web-turn-${questionIndex + 1}-${Math.min(partIndex + 1, detail.turns.length)}`,
+    })),
+  })),
 };

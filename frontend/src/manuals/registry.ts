@@ -568,6 +568,79 @@ export const manualDocuments = [
     },
   ),
   manual(
+    "conversations.web-records",
+    {
+      title: "网页记录浏览使用手册",
+      subtitle: "采集、同步和管理网页版 AI 对话",
+      overview: "网页记录浏览只展示由用户目录采集脚本导入的网页版 AI 对话。解析脚本保存在 .assetiweave 下，应用负责执行、标准化，并把结果写入独立的 web_record 数据表。",
+      sections: [
+        {
+          heading: "采集链路",
+          items: [
+            "网页 harvester 和 adapter 位于 ~/.assetiweave/harvesters，应用代码不包含站点私有解析细节。",
+            "adapter manifest 通过 web_records capability 声明数据应进入网页记录仓储。",
+            "同步前必须先由采集脚本确认浏览器登录状态，并生成标准化对话数据。",
+          ],
+          cautions: [
+            "网页接口和认证方式可能变化，脚本更新后应先执行 auth-check 和测试同步。",
+            "只运行已审查的用户目录脚本，避免把浏览器凭据交给不可信代码。",
+          ],
+        },
+        {
+          heading: "浏览和导出",
+          items: [
+            "页面按站点、网页对话和问题三级结构展示，布局与 Session 浏览保持一致。",
+            "网页记录使用独立表，不会出现在 Session 浏览列表中。",
+            "可搜索网页对话内容，并导出完整记录或选中的问题为 Markdown。",
+          ],
+        },
+        {
+          heading: "CLI",
+          items: [
+            "同步网页来源：assetiweave-cli conversation sync --adapter qwen-web。",
+            "列出网页记录：assetiweave-cli conversation web-record list。",
+            "查看或导出：assetiweave-cli conversation web-record get <record-id>；assetiweave-cli conversation web-record export <record-id> --output-root <dir>。",
+          ],
+        },
+      ],
+    },
+    {
+      title: "Web Record Browser Manual",
+      subtitle: "Harvest, sync, and manage AI web conversations",
+      overview: "The web record browser only shows conversations imported by user-directory web harvesters. Scripts live under .assetiweave, while the app executes adapters, normalizes output, and stores it in independent web_record tables.",
+      sections: [
+        {
+          heading: "Harvest pipeline",
+          items: [
+            "Web harvesters and adapters live under ~/.assetiweave/harvesters, outside application code.",
+            "The adapter manifest declares web_records so sync selects the independent web record repository.",
+            "The harvester must verify browser login state before producing normalized conversation data.",
+          ],
+          cautions: [
+            "Web APIs and authentication can change; run auth-check and a test sync after script updates.",
+            "Only execute reviewed user-directory scripts because they may access browser credentials.",
+          ],
+        },
+        {
+          heading: "Browse and export",
+          items: [
+            "Browse by site, web conversation, and question using the same structure as the session browser.",
+            "Web records use independent tables and never appear in the Session browser.",
+            "Search content and export a full record or selected questions as Markdown.",
+          ],
+        },
+        {
+          heading: "CLI",
+          items: [
+            "Sync a web adapter: assetiweave-cli conversation sync --adapter qwen-web.",
+            "List records: assetiweave-cli conversation web-record list.",
+            "Inspect or export: assetiweave-cli conversation web-record get <record-id>; assetiweave-cli conversation web-record export <record-id> --output-root <dir>.",
+          ],
+        },
+      ],
+    },
+  ),
+  manual(
     "mcp.overview",
     {
       title: "服务总览使用手册",

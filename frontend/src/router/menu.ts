@@ -45,6 +45,7 @@ export const navigationModel: NavigationModel = {
     ],
     conversations: [
       { id: "sessions", label: "Sessions", routeKey: "conversations.sessions", enabled: true },
+      { id: "web-records", label: "Web Records", routeKey: "conversations.web-records", enabled: true },
     ],
   },
 };

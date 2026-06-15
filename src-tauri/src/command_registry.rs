@@ -853,6 +853,62 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli conversation session export <session-id> --output-root <dir>")
     ),
     command!(
+        "conversation.web-record.list",
+        "conversation.web-record.list",
+        "List imported web conversation records",
+        Read,
+        Friendly,
+        false,
+        crate::service::ConversationSessionListParams,
+        Service => |service, params| service.list_web_record_sessions(params),
+        &[
+            param!("adapter_id", "Optional adapter filter", ["adapterId"]),
+            param!("source_id", "Optional source filter", ["sourceId"]),
+            param!("query", "Search query"),
+            param!("limit", "Maximum number of web records"),
+            param!("offset", "Pagination offset"),
+        ],
+        Some("assetiweave-cli conversation web-record list")
+    ),
+    command!(
+        "conversation.web-record.get",
+        "conversation.web-record.get",
+        "Get one web conversation record with question groups",
+        Read,
+        Friendly,
+        false,
+        crate::service::ConversationSessionGetParams,
+        Service => |service, params| service.get_web_record_session(params),
+        &[param!("session_id", "Web record identifier", ["sessionId"])],
+        Some("assetiweave-cli conversation web-record get <record-id>")
+    ),
+    command!(
+        "conversation.web-record.export",
+        "conversation.web-record.export",
+        "Export one web conversation record as Markdown",
+        Write,
+        Friendly,
+        true,
+        crate::service::ConversationSessionExportParams,
+        Service => |service, params| service.export_web_record_session(params),
+        &[
+            param!("session_id", "Web record identifier", ["sessionId"]),
+            param!("output_root", "Output root directory", ["outputRoot"]),
+            param!(
+                "question_ids",
+                "Optional question identifiers to export instead of the full record",
+                ["questionIds"]
+            ),
+            param!(
+                "content_filter",
+                "Optional content categories to include in Markdown export",
+                ["contentFilter"]
+            ),
+            param!("dry_run", "Preview without writing", ["dryRun"]),
+        ],
+        Some("assetiweave-cli conversation web-record export <record-id> --output-root <dir>")
+    ),
+    command!(
         "conversation.question.list",
         "conversation.question.list",
         "List question groups in a conversation session",
@@ -1730,6 +1786,62 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!(
                 "question_ids",
                 "Optional question identifiers to export instead of the full session",
+                ["questionIds"]
+            ),
+            param!(
+                "content_filter",
+                "Optional content categories to include in Markdown export",
+                ["contentFilter"]
+            ),
+            param!("dry_run", "Preview without writing", ["dryRun"]),
+        ],
+        None
+    ),
+    command!(
+        "list_web_record_sessions",
+        "conversation.web-record.list",
+        "List imported web conversation records",
+        Read,
+        App,
+        false,
+        crate::service::ConversationSessionListParams,
+        Service => |service, params| service.list_web_record_sessions(params),
+        &[
+            param!("adapter_id", "Optional adapter filter", ["adapterId"]),
+            param!("source_id", "Optional source filter", ["sourceId"]),
+            param!("query", "Search query"),
+            param!("limit", "Maximum number of web records"),
+            param!("offset", "Pagination offset"),
+        ],
+        None
+    ),
+    command!(
+        "get_web_record_session",
+        "conversation.web-record.get",
+        "Get one web conversation record with question groups",
+        Read,
+        App,
+        false,
+        crate::service::ConversationSessionGetParams,
+        Service => |service, params| service.get_web_record_session(params),
+        &[param!("session_id", "Web record identifier", ["sessionId"])],
+        None
+    ),
+    command!(
+        "export_web_record_session",
+        "conversation.web-record.export",
+        "Export one web conversation record as Markdown",
+        Write,
+        App,
+        false,
+        crate::service::ConversationSessionExportParams,
+        Service => |service, params| service.export_web_record_session(params),
+        &[
+            param!("session_id", "Web record identifier", ["sessionId"]),
+            param!("output_root", "Output root directory", ["outputRoot"]),
+            param!(
+                "question_ids",
+                "Optional question identifiers to export instead of the full record",
                 ["questionIds"]
             ),
             param!(
