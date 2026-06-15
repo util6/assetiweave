@@ -626,7 +626,7 @@ function AppMountColumnView({
   const defaultSelectedApp = isDefaultAppProfileId(selectedProfile.id);
 
   return (
-    <FoundationPanel className="overflow-hidden" padding="none">
+    <FoundationPanel className="overflow-visible" padding="none">
       <ResizableColumns
         ariaLabel={t("layout.resizeColumns")}
         className="min-h-[560px]"
@@ -783,7 +783,7 @@ function AppMountWorkbench({
   }
 
   return (
-    <FoundationPanel className="overflow-hidden" padding="none" variant="muted">
+    <FoundationPanel className="overflow-visible" padding="none" variant="muted">
       <ResizableColumns
         ariaLabel={t("layout.resizeColumns")}
         className="min-h-[420px]"

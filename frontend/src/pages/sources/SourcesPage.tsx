@@ -161,7 +161,6 @@ export function SourcesPage({
         }
         onToggleAsset={onToggleAsset}
         onToggleMount={onToggleMount}
-        onToggle={(source) => void sources.toggleSource(source)}
         profiles={profiles}
         sources={sources.filteredSources}
         viewMode={viewMode}

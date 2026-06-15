@@ -311,47 +311,50 @@ export function ResizableColumns({
   }
 
   return (
-    <div className={cn("grid min-w-0 grid-rows-[minmax(0,1fr)_2rem]", className)}>
-      <div className="resizable-columns-viewport min-h-0 min-w-0 overflow-x-auto overflow-y-hidden" ref={scrollViewportRef}>
-        <div
-          className={cn(
-            "relative grid h-full min-h-0 w-[max(100%,var(--resizable-columns-width))] grid-cols-[var(--resizable-columns-template)]",
-            responsiveClassName,
-          )}
-          ref={gridRef}
-          style={style}
-        >
-          {childArray}
-          {boundaries.map((boundary, index) => (
-            <div
-              aria-label={`${ariaLabel} ${index + 1}`}
-              aria-orientation="vertical"
-              className={cn(
-                "absolute inset-y-0 z-10 w-3 -translate-x-1/2 cursor-col-resize touch-none outline-none",
-                "before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-theme-card-border",
-                "after:absolute after:left-1/2 after:top-1/2 after:h-10 after:w-1 after:-translate-x-1/2 after:-translate-y-1/2 after:rounded-full after:bg-theme-control-border after:opacity-0 after:transition-opacity",
-                "hover:after:opacity-100 focus-visible:after:opacity-100 focus-visible:ring-2 focus-visible:ring-primary-strong/55",
-                columnDragState?.handleIndex === index && "after:opacity-100",
-                handleClassName,
-              )}
-              key={index}
-              onKeyDown={(event) => resizeFromKeyboard(index, event)}
-              onPointerDown={(event) => startResize(index, event)}
-              role="separator"
-              style={{
-                left:
-                  handlePositions[index] === undefined
-                    ? `calc(var(--resizable-column-boundary-${index}) * 100%)`
-                    : `${handlePositions[index]}px`,
-              }}
-              tabIndex={0}
-            />
-          ))}
+    <div className={cn("grid min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-visible", className, "overflow-visible")}>
+      <div className="min-h-0 min-w-0 overflow-hidden rounded-t-[inherit]">
+        <div className="resizable-columns-viewport min-h-0 min-w-0 overflow-x-auto overflow-y-hidden" ref={scrollViewportRef}>
+          <div
+            className={cn(
+              "relative grid h-full min-h-0 w-[max(100%,var(--resizable-columns-width))] grid-cols-[var(--resizable-columns-template)]",
+              responsiveClassName,
+            )}
+            ref={gridRef}
+            style={style}
+          >
+            {childArray}
+            {boundaries.map((boundary, index) => (
+              <div
+                aria-label={`${ariaLabel} ${index + 1}`}
+                aria-orientation="vertical"
+                className={cn(
+                  "absolute inset-y-0 z-10 w-3 -translate-x-1/2 cursor-col-resize touch-none outline-none",
+                  "before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-theme-card-border",
+                  "after:absolute after:left-1/2 after:top-1/2 after:h-10 after:w-1 after:-translate-x-1/2 after:-translate-y-1/2 after:rounded-full after:bg-theme-control-border after:opacity-0 after:transition-opacity",
+                  "hover:after:opacity-100 focus-visible:after:opacity-100 focus-visible:ring-2 focus-visible:ring-primary-strong/55",
+                  columnDragState?.handleIndex === index && "after:opacity-100",
+                  handleClassName,
+                )}
+                key={index}
+                onKeyDown={(event) => resizeFromKeyboard(index, event)}
+                onPointerDown={(event) => startResize(index, event)}
+                role="separator"
+                style={{
+                  left:
+                    handlePositions[index] === undefined
+                      ? `calc(var(--resizable-column-boundary-${index}) * 100%)`
+                      : `${handlePositions[index]}px`,
+                }}
+                tabIndex={0}
+              />
+            ))}
+          </div>
         </div>
       </div>
 
       <div
-        className="flex min-w-0 items-center gap-1 border-t border-theme-card-border bg-theme-card-header/85 px-1.5"
+        className="sticky bottom-0 z-20 flex min-h-8 min-w-0 items-center gap-1 rounded-b-[inherit] border-t border-theme-card-border bg-theme-card-header/90 px-1.5 shadow-[0_-10px_24px_rgb(var(--theme-panel-shadow)/0.18)] backdrop-blur"
+        data-resizable-columns-scroll-controls=""
       >
         <button
           aria-label={scrollLeftLabel}

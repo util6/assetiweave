@@ -21,6 +21,8 @@ import {
   Bell,
   Code2,
   Columns3,
+  ChevronDown,
+  ChevronRight,
   FileJson,
   FolderOpen,
   Gauge,
@@ -118,6 +120,7 @@ export function GlobalSettingsDialog({
   const { locale, setLocale, t } = useI18n();
   const { resetSettings, settings, storageInfo, updateSetting } = useAppSettings();
   const [activePanel, setActivePanel] = useState<SettingsPanelId>(initialPanel);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [editingShortcutIconId, setEditingShortcutIconId] = useState<string | null>(null);
   const [iconSvgDraft, setIconSvgDraft] = useState("");
   const [iconSvgError, setIconSvgError] = useState("");
@@ -128,8 +131,38 @@ export function GlobalSettingsDialog({
   useEffect(() => {
     if (open) {
       setActivePanel(initialPanel);
+      ensureGroupExpanded(initialPanel);
     }
   }, [initialPanel, open]);
+
+  function toggleGroupCollapsed(groupId: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
+  }
+
+  function ensureGroupExpanded(panelId: SettingsPanelId) {
+    const group = settingGroups.find((candidate) =>
+      candidate.panels.some((panel) => panel.id === panelId),
+    );
+    if (!group) {
+      return;
+    }
+    setCollapsedGroups((prev) => {
+      if (!prev.has(group.id)) {
+        return prev;
+      }
+      const next = new Set(prev);
+      next.delete(group.id);
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!open) {
@@ -431,34 +464,48 @@ export function GlobalSettingsDialog({
           </div>
 
           <nav className="flex flex-1 flex-col gap-1 px-4 py-5" aria-label={t("settings.navAria")}>
-            {settingGroups.map((group) => (
-              <div className="mb-3 last:mb-0" key={group.id}>
-                <p className="px-3 pb-1 text-label-caps uppercase text-outline">{group.label}</p>
-                <div className="flex flex-col gap-1">
-                  {group.panels.map((panel) => {
-                    const Icon = panel.icon;
+            {settingGroups.map((group) => {
+              const collapsed = collapsedGroups.has(group.id);
+              return (
+                <div className="mb-3 last:mb-0" key={group.id}>
+                  <button
+                    aria-expanded={!collapsed}
+                    aria-label={`${t(collapsed ? "settings.group.toggle.expand" : "settings.group.toggle.collapse")} ${group.label}`}
+                    className="-mx-1 flex w-[calc(100%+0.5rem)] items-center gap-1 rounded-md px-3 pb-1 text-label-caps uppercase text-outline transition-colors hover:text-on-surface-variant"
+                    onClick={() => toggleGroupCollapsed(group.id)}
+                    type="button"
+                  >
+                    {collapsed ? <ChevronRight size={17} /> : <ChevronDown size={17} />}
+                    <span>{group.label}</span>
+                  </button>
+                  {!collapsed && (
+                    <div className="flex flex-col gap-1">
+                      {group.panels.map((panel) => {
+                        const Icon = panel.icon;
 
-                    return (
-                      <Button
-                        variant="ghost"
-                        className={clsx(
-                          "h-10 justify-start px-3",
-                          activePanel === panel.id
-                            ? "bg-theme-nav-active text-theme-nav-active-fg"
-                            : "text-on-surface-variant hover:bg-theme-nav-hover hover:text-theme-nav-active-fg",
-                        )}
-                        key={panel.id}
-                        onClick={() => setActivePanel(panel.id)}
-                        type="button"
-                      >
-                        <Icon size={17} />
-                        <span>{panel.label}</span>
-                      </Button>
-                    );
-                  })}
+                        return (
+                          <Button
+                            variant="ghost"
+                            className={clsx(
+                              "h-10 justify-start px-3",
+                              activePanel === panel.id
+                                ? "bg-theme-nav-active text-theme-nav-active-fg"
+                                : "text-on-surface-variant hover:bg-theme-nav-hover hover:text-theme-nav-active-fg",
+                            )}
+                            key={panel.id}
+                            onClick={() => setActivePanel(panel.id)}
+                            type="button"
+                          >
+                            <Icon size={17} />
+                            <span>{panel.label}</span>
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </nav>
 
           <div className="border-t border-theme-card-border p-4">

@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { ChevronDown, ChevronRight, FolderOpen, Pencil, Power, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, FolderOpen, Pencil, Trash2 } from "lucide-react";
 import { AssetRow } from "../assets/AssetRow";
 import { sourceKindLabel, sourceOriginLabel, translateScanStatus } from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -22,7 +22,6 @@ export function SourceRow({
   onToggleAsset,
   onToggleExpanded,
   onToggleMount,
-  onToggle,
   profiles,
   source,
 }: {
@@ -40,7 +39,6 @@ export function SourceRow({
   onToggleAsset: (assetId: string) => void;
   onToggleExpanded: () => void;
   onToggleMount: (assetId: string, profileId: string) => void;
-  onToggle: () => void;
   profiles: TargetProfile[];
   source: Source;
 }) {
@@ -110,13 +108,6 @@ export function SourceRow({
             source={source}
           />
           <div className="flex items-start gap-1.5">
-            <SourceIconButton
-              disabled={busy}
-              label={t(source.enabled ? "source.action.disable" : "source.action.enable")}
-              onClick={onToggle}
-            >
-              <Power size={16} />
-            </SourceIconButton>
             <SourceIconButton disabled={busy} label={t("source.action.edit")} onClick={onEdit}>
               <Pencil size={16} />
             </SourceIconButton>

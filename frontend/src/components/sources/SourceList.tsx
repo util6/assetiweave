@@ -18,7 +18,6 @@ export function SourceList({
   onSetSourceMountProfile,
   onToggleAsset,
   onToggleMount,
-  onToggle,
   profiles,
   sources,
   viewMode,
@@ -35,7 +34,6 @@ export function SourceList({
   onSetSourceMountProfile: (assetIds: string[], profileId: string, enabled: boolean) => void;
   onToggleAsset: (assetId: string) => void;
   onToggleMount: (assetId: string, profileId: string) => void;
-  onToggle: (source: Source) => void;
   profiles: TargetProfile[];
   sources: Source[];
   viewMode: "list" | "columns";
@@ -120,7 +118,6 @@ export function SourceList({
           onToggleAsset={onToggleAsset}
           onToggleExpanded={() => toggleSourceExpanded(source.id)}
           onToggleMount={onToggleMount}
-          onToggle={() => onToggle(source)}
           profiles={profiles}
           source={source}
         />
