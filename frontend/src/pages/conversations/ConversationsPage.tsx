@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   AppWindow,
   ArrowLeft,
@@ -32,10 +32,12 @@ import {
   type ConversationSyncProgressState,
 } from "../../components/conversations/ConversationToolbarControls";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
+import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { PageHeader } from "../../components/foundation/PageHeader";
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
+import { DEFAULT_COLUMN_MIN_WIDTH } from "../../store/settings/settingsSchema";
 import {
   resolveFontFamilyCss,
   useAppSettings,
@@ -52,8 +54,10 @@ import {
   listWebRecordSessions,
   mergeConversationQuestions,
   splitConversationQuestion,
-  syncConversations,
+  summarizeConversationSyncTask,
+  type ConversationSyncSummaryCounts,
 } from "../../services/conversations";
+import { useConversationSync } from "../../app/backgroundTasks/ConversationSyncProvider";
 import type {
   AppKind,
   AppShortcut,
@@ -81,6 +85,7 @@ export function ConversationsPage({
   recordKind?: "session" | "web";
 }) {
   const { t } = useI18n();
+  const { startSync, task: syncTask } = useConversationSync();
   const { settings: appSettings } = useAppSettings();
   const webRecordMode = recordKind === "web";
   const [adapters, setAdapters] = useState<ConversationAdapter[]>([]);
@@ -99,14 +104,16 @@ export function ConversationsPage({
     ...DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
   });
   const [syncProgress, setSyncProgress] = useState<ConversationSyncProgressState | null>(null);
+  const [syncProgressDismissed, setSyncProgressDismissed] = useState(false);
   const [query, setQuery] = useState("");
   const [detailQuery, setDetailQuery] = useState("");
   const [outputRoot, setOutputRoot] = useState(
     webRecordMode ? "~/Desktop/assetiweave-web-records" : "~/Desktop/assetiweave-conversations",
   );
-  const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const handledSyncTaskIdRef = useRef<string | null>(null);
+  const syncRunning = syncTask?.status === "running";
 
   const sessionQuestionCount = useMemo(() => sessions.reduce((total, session) => total + session.question_count, 0), [sessions]);
   const appGroups = useMemo(() => groupConversationSessionsByApp(adapters, sessions), [adapters, sessions]);
@@ -205,6 +212,58 @@ export function ConversationsPage({
     });
   }, [sessionDetail]);
 
+  useEffect(() => {
+    if (!syncTask) {
+      return;
+    }
+
+    const sourceLabel = t("conversation.sync.allSources");
+    if (syncTask.status === "running") {
+      setSyncProgressDismissed(false);
+      setSyncProgress({ phase: "importing", sourceLabel });
+      return;
+    }
+    if (handledSyncTaskIdRef.current === syncTask.id) {
+      return;
+    }
+    handledSyncTaskIdRef.current = syncTask.id;
+
+    if (syncTask.status === "failed") {
+      setSyncProgress({ failedStep: 2, phase: "failed", sourceLabel });
+      onNotifyError(syncTask.error ?? t("conversation.sync.description.failed"));
+      return;
+    }
+
+    const summary = formatConversationSyncSummary(summarizeConversationSyncTask(syncTask), t);
+    let cancelled = false;
+    setSyncProgress({ phase: "refreshing", sourceLabel, summary });
+    void refreshCatalog({ rethrow: true })
+      .then(() => {
+        if (cancelled) {
+          return;
+        }
+        setSyncProgress({ phase: "completed", sourceLabel, summary });
+        setStatus(
+          summary ??
+            t(
+              webRecordMode
+                ? "conversation.webRecords.status.syncedAll"
+                : "conversation.status.syncedAll",
+            ),
+        );
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSyncProgress({ failedStep: 3, phase: "failed", sourceLabel });
+          onNotifyError(errorMessage(error));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [syncTask?.id, syncTask?.status]);
+
   async function refreshCatalog(options: { rethrow?: boolean } = {}) {
     try {
       const nextAdapters = (await listConversationAdapters()).filter(
@@ -241,32 +300,27 @@ export function ConversationsPage({
 
   async function handleSync() {
     const sourceLabel = t("conversation.sync.allSources");
-    let failedStep: 1 | 2 | 3 = 2;
-
-    setLoading(true);
     setStatus(null);
+    setSyncProgressDismissed(false);
     setSyncProgress({ phase: "preparing", sourceLabel });
-    await waitForNextPaint();
 
     try {
-      setSyncProgress({ phase: "importing", sourceLabel });
-      const importingStartedAt = Date.now();
-      await syncConversations({ source_id: null, dry_run: false });
-      await waitForMinimumDuration(importingStartedAt, 450);
-
-      failedStep = 3;
-      setSyncProgress({ phase: "refreshing", sourceLabel });
-      const refreshingStartedAt = Date.now();
-      await refreshCatalog({ rethrow: true });
-      await waitForMinimumDuration(refreshingStartedAt, 250);
-
-      setSyncProgress({ phase: "completed", sourceLabel });
-      setStatus(t(webRecordMode ? "conversation.webRecords.status.syncedAll" : "conversation.status.syncedAll"));
+      const task = await startSync({ source_id: null, dry_run: false });
+      const summary = formatConversationSyncSummary(summarizeConversationSyncTask(task), t);
+      setSyncProgress({
+        failedStep: task.status === "failed" ? 2 : undefined,
+        phase:
+          task.status === "failed"
+            ? "failed"
+            : task.status === "completed"
+              ? "refreshing"
+              : "importing",
+        sourceLabel,
+        summary,
+      });
     } catch (error) {
-      setSyncProgress({ failedStep, phase: "failed", sourceLabel });
+      setSyncProgress({ failedStep: 1, phase: "failed", sourceLabel });
       onNotifyError(errorMessage(error));
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -370,12 +424,12 @@ export function ConversationsPage({
                 onClick={() => onOpenSettings("conversations.sessions")}
               />
               <ToolbarActionButton
-                disabled={loading}
+                disabled={syncRunning}
                 icon={<RefreshCw size={17} />}
-                label={loading ? t("conversation.toolbar.syncing") : t("conversation.toolbar.sync")}
+                label={syncRunning ? t("conversation.toolbar.syncing") : t("conversation.toolbar.sync")}
                 onClick={() => void handleSync()}
                 primary
-                text={loading ? t("conversation.toolbar.syncing") : t("conversation.toolbar.sync")}
+                text={syncRunning ? t("conversation.toolbar.syncing") : t("conversation.toolbar.sync")}
               />
             </>
           }
@@ -439,12 +493,12 @@ export function ConversationsPage({
                   onClick={() => onOpenSettings("conversations.sessions")}
                 />
                 <ToolbarActionButton
-                  disabled={loading}
+                  disabled={syncRunning}
                   icon={<RefreshCw size={17} />}
-                  label={loading ? t("conversation.toolbar.syncing") : t("conversation.toolbar.sync")}
+                  label={syncRunning ? t("conversation.toolbar.syncing") : t("conversation.toolbar.sync")}
                   onClick={() => void handleSync()}
                   primary
-                  text={loading ? t("conversation.toolbar.syncing") : t("conversation.toolbar.sync")}
+                  text={syncRunning ? t("conversation.toolbar.syncing") : t("conversation.toolbar.sync")}
                 />
               </>
             }
@@ -467,7 +521,17 @@ export function ConversationsPage({
         </div>
       )}
 
-      {syncProgress ? <ConversationSyncProgress state={syncProgress} t={t} /> : null}
+      {syncProgress && !syncProgressDismissed ? (
+        <ConversationSyncProgress
+          onDismiss={
+            syncProgress.phase === "completed"
+              ? () => setSyncProgressDismissed(true)
+              : undefined
+          }
+          state={syncProgress}
+          t={t}
+        />
+      ) : null}
       {status ? <div className="mt-4 rounded-xl border border-theme-card-border bg-theme-control px-4 py-2 text-body-sm text-on-surface">{status}</div> : null}
       {exportDialog ? (
         <ConversationExportDialog
@@ -494,6 +558,7 @@ export function ConversationsPage({
       {sessionView === "browser" ? (
         <AppSessionBrowser
           appShortcuts={appShortcuts}
+          columnMinWidth={appSettings.columnMinWidth}
           groups={appGroups}
           onAppSelect={setSelectedAppId}
           onSessionOpen={handleOpenSession}
@@ -508,6 +573,7 @@ export function ConversationsPage({
           onQuestionSelect={setSelectedQuestionId}
           onQuestionSelectionChange={handleQuestionSelectionChange}
           onSplit={webRecordMode ? undefined : handleSplit}
+          columnMinWidth={appSettings.columnMinWidth}
           outputRoot={outputRoot}
           question={selectedQuestion}
           questions={visibleSessionQuestions}
@@ -714,8 +780,9 @@ export function ConversationExportDialog({
   );
 }
 
-function AppSessionBrowser({
+export function AppSessionBrowser({
   appShortcuts,
+  columnMinWidth = DEFAULT_COLUMN_MIN_WIDTH,
   groups,
   onAppSelect,
   onSessionOpen,
@@ -723,6 +790,7 @@ function AppSessionBrowser({
   t,
 }: {
   appShortcuts: AppShortcut[];
+  columnMinWidth?: number;
   groups: ConversationAppSessionGroup[];
   onAppSelect: (appId: string) => void;
   onSessionOpen: (sessionId: string) => void;
@@ -733,7 +801,21 @@ function AppSessionBrowser({
   const selectedShortcut = selectedGroup ? findConversationAppShortcut(appShortcuts, selectedGroup.app) : null;
 
   return (
-    <div className="conversation-session-browser mt-5 grid min-h-[620px] overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)] grid-cols-[minmax(250px,0.34fr)_minmax(0,1.66fr)] max-[860px]:grid-cols-1">
+    <ResizableColumns
+      ariaLabel={t("layout.resizeColumns")}
+      className="conversation-session-browser mt-5 min-h-[620px] rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
+      columns={[
+        { defaultWeight: 0.34 },
+        { defaultWeight: 1.66, minWidthScale: 1.35 },
+      ]}
+      handleClassName="max-[860px]:hidden"
+      minimumWidth={columnMinWidth}
+      responsiveClassName="max-[860px]:w-full max-[860px]:grid-cols-1"
+      scrollBarLabel={t("layout.scrollColumns")}
+      scrollLeftLabel={t("layout.scrollColumnsLeft")}
+      scrollRightLabel={t("layout.scrollColumnsRight")}
+      storageKey="assetiweave.conversationBrowserColumns.v1"
+    >
       <ColumnPanel title={t("conversation.column.apps")} icon={<AppWindow size={16} />}>
         {groups.length === 0 ? (
           <EmptyPanel>{t("conversation.app.empty")}</EmptyPanel>
@@ -790,7 +872,7 @@ function AppSessionBrowser({
           )}
         </div>
       </section>
-    </div>
+    </ResizableColumns>
   );
 }
 
@@ -929,6 +1011,7 @@ function SessionCard({
 }
 
 export function SessionQuestionWorkspace({
+  columnMinWidth = DEFAULT_COLUMN_MIN_WIDTH,
   contentCardColors,
   onExport,
   onMerge,
@@ -945,6 +1028,7 @@ export function SessionQuestionWorkspace({
   t,
   visibility,
 }: {
+  columnMinWidth?: number;
   contentCardColors: ConversationContentCardColorSettings;
   onExport: () => void;
   onMerge?: (previous: ConversationQuestionDetail, current: ConversationQuestionDetail) => Promise<void>;
@@ -962,7 +1046,21 @@ export function SessionQuestionWorkspace({
   visibility: ConversationContentVisibility;
 }) {
   return (
-    <div className="conversation-readable mt-5 grid min-h-[680px] overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)] grid-cols-[minmax(260px,0.42fr)_minmax(0,1.58fr)] max-[920px]:grid-cols-1">
+    <ResizableColumns
+      ariaLabel={t("layout.resizeColumns")}
+      className="conversation-readable mt-5 min-h-[680px] rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
+      columns={[
+        { defaultWeight: 0.42 },
+        { defaultWeight: 1.58, minWidthScale: 1.35 },
+      ]}
+      handleClassName="max-[920px]:hidden"
+      minimumWidth={columnMinWidth}
+      responsiveClassName="max-[920px]:w-full max-[920px]:grid-cols-1"
+      scrollBarLabel={t("layout.scrollColumns")}
+      scrollLeftLabel={t("layout.scrollColumnsLeft")}
+      scrollRightLabel={t("layout.scrollColumnsRight")}
+      storageKey="assetiweave.conversationDetailColumns.v1"
+    >
       <ColumnPanel
         className="max-[920px]:border-r-0 max-[920px]:border-b"
         title={t("conversation.column.questions")}
@@ -1016,7 +1114,7 @@ export function SessionQuestionWorkspace({
           <EmptyPanel>{t("conversation.question.noSelection")}</EmptyPanel>
         )}
       </section>
-    </div>
+    </ResizableColumns>
   );
 }
 
@@ -1193,23 +1291,25 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function waitForNextPaint() {
-  return new Promise<void>((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timeoutId);
-      resolve();
-    };
-    const timeoutId = window.setTimeout(finish, 80);
-    requestAnimationFrame(() => requestAnimationFrame(finish));
-  });
-}
+function formatConversationSyncSummary(
+  summary: ConversationSyncSummaryCounts | null,
+  t: Translator,
+) {
+  if (!summary) {
+    return t("conversation.sync.summaryUnavailable");
+  }
 
-function waitForMinimumDuration(startedAt: number, minimumDuration: number) {
-  const remaining = Math.max(0, minimumDuration - (Date.now() - startedAt));
-  return remaining > 0
-    ? new Promise<void>((resolve) => window.setTimeout(resolve, remaining))
-    : Promise.resolve();
+  return t(
+    summary.errorCount > 0
+      ? "conversation.sync.summaryWithErrors"
+      : "conversation.sync.summary",
+    {
+      errors: summary.errorCount,
+      sessions: summary.changedSessionCount,
+      skipped: summary.skippedSessionCount,
+      sources: summary.sourceCount,
+      turns: summary.turnCount,
+      warnings: summary.warningCount,
+    },
+  );
 }

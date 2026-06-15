@@ -234,6 +234,9 @@ macro_rules! command {
     (@system_handler System, $handler:expr) => {
         $handler
     };
+    (@system_handler App, $handler:expr) => {
+        $handler
+    };
 }
 
 const COMMAND_SPECS: &[CommandSpec] = &[
@@ -1739,6 +1742,18 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("adapter_id", "Optional adapter identifier", ["adapterId"]),
             param!("dry_run", "Preview without importing", ["dryRun"]),
         ],
+        None
+    ),
+    command!(
+        "get_conversation_sync_task",
+        "get_conversation_sync_task",
+        "Get the current desktop conversation sync background task",
+        Read,
+        App,
+        false,
+        NoParams,
+        System => |_params| Value::Null,
+        &[],
         None
     ),
     command!(

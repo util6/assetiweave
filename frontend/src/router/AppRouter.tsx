@@ -1,5 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { AppUpdateDialog } from "../app/updates/AppUpdateDialog";
+import { useConversationSync } from "../app/backgroundTasks/ConversationSyncProvider";
+import { ConversationBackgroundTaskIndicator } from "../components/conversations/ConversationToolbarControls";
 import { LogViewerModal } from "../components/logs/LogViewerModal";
 import { useCatalogController } from "../hooks/catalog/useCatalogController";
 import { useI18n } from "../i18n/I18nProvider";
@@ -23,6 +25,7 @@ const ConversationsPage = lazy(() =>
 
 export function AppRouter() {
   const { locale, t } = useI18n();
+  const { task: conversationSyncTask } = useConversationSync();
   const catalog = useCatalogController();
   const [activeSubNavId, setActiveSubNavId] = useState(catalog.navigationModel.activeSubNavId);
   const [logViewerOpen, setLogViewerOpen] = useState(false);
@@ -169,6 +172,7 @@ export function AppRouter() {
       </AppLayout>
       <LogViewerModal open={logViewerOpen} onClose={() => setLogViewerOpen(false)} />
       <AppUpdateDialog />
+      <ConversationBackgroundTaskIndicator task={conversationSyncTask} t={t} />
     </>
   );
 }

@@ -31,6 +31,73 @@ export interface ConversationExportContentFilter {
   result: boolean;
 }
 
+export type ConversationSyncTaskStatus = "running" | "completed" | "failed";
+
+export interface ConversationSyncTaskSnapshot {
+  id: string;
+  status: ConversationSyncTaskStatus;
+  source_id: string | null;
+  adapter_id: string | null;
+  dry_run: boolean;
+  started_at: string;
+  finished_at: string | null;
+  result: unknown | null;
+  error: string | null;
+}
+
+export interface ConversationSyncSummaryCounts {
+  sourceCount: number;
+  changedSessionCount: number;
+  skippedSessionCount: number;
+  turnCount: number;
+  warningCount: number;
+  errorCount: number;
+}
+
+interface ConversationSyncResultItem {
+  session_count?: unknown;
+  skipped_session_count?: unknown;
+  turn_count?: unknown;
+  warning_count?: unknown;
+}
+
+export function summarizeConversationSyncTask(
+  task: ConversationSyncTaskSnapshot,
+): ConversationSyncSummaryCounts | null {
+  if (!isRecord(task.result)) {
+    return null;
+  }
+  const results = Array.isArray(task.result.results) ? task.result.results : [];
+  const errors = Array.isArray(task.result.errors) ? task.result.errors : [];
+  if (results.length === 0 && errors.length === 0) {
+    return null;
+  }
+
+  return results.reduce<ConversationSyncSummaryCounts>(
+    (summary, rawResult) => {
+      const result = isRecord(rawResult) ? (rawResult as ConversationSyncResultItem) : {};
+      const sessionCount = numberValue(result.session_count);
+      const skippedSessionCount = numberValue(result.skipped_session_count);
+      return {
+        sourceCount: summary.sourceCount + 1,
+        changedSessionCount: summary.changedSessionCount + Math.max(0, sessionCount - skippedSessionCount),
+        skippedSessionCount: summary.skippedSessionCount + skippedSessionCount,
+        turnCount: summary.turnCount + numberValue(result.turn_count),
+        warningCount: summary.warningCount + numberValue(result.warning_count),
+        errorCount: summary.errorCount,
+      };
+    },
+    {
+      sourceCount: 0,
+      changedSessionCount: 0,
+      skippedSessionCount: 0,
+      turnCount: 0,
+      warningCount: 0,
+      errorCount: errors.length,
+    },
+  );
+}
+
 export async function listConversationAdapters(): Promise<ConversationAdapter[]> {
   try {
     return await invoke<ConversationAdapter[]>("list_conversation_adapters");
@@ -41,6 +108,14 @@ export async function listConversationAdapters(): Promise<ConversationAdapter[]>
 
     return fallbackAdapters;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 export async function listConversationSources(): Promise<ConversationSource[]> {
@@ -55,29 +130,53 @@ export async function listConversationSources(): Promise<ConversationSource[]> {
   }
 }
 
-export async function syncConversations(params: { source_id?: string | null; adapter_id?: string | null; dry_run?: boolean }) {
+export async function syncConversations(
+  params: { source_id?: string | null; adapter_id?: string | null; dry_run?: boolean },
+): Promise<ConversationSyncTaskSnapshot> {
   try {
-    return await invoke("sync_conversations", { params });
+    return await invoke<ConversationSyncTaskSnapshot>("sync_conversations", { params });
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
     }
 
     return {
+      id: "preview-conversation-sync",
+      status: "completed",
+      source_id: params.source_id ?? null,
+      adapter_id: params.adapter_id ?? null,
       dry_run: Boolean(params.dry_run),
-      errors: [],
-      results: [
-        {
-          source_id: "codex-live",
-          adapter_id: "codex",
-          dry_run: Boolean(params.dry_run),
-          session_count: fallbackSessions.length,
-          turn_count: fallbackSessions.reduce((total, session) => total + session.turn_count, 0),
-          warning_count: 0,
-          warnings: [],
-        },
-      ],
+      started_at: new Date().toISOString(),
+      finished_at: new Date().toISOString(),
+      result: {
+        dry_run: Boolean(params.dry_run),
+        errors: [],
+        results: [
+          {
+            source_id: "codex-live",
+            adapter_id: "codex",
+            dry_run: Boolean(params.dry_run),
+            session_count: fallbackSessions.length,
+            skipped_session_count: 0,
+            turn_count: fallbackSessions.reduce((total, session) => total + session.turn_count, 0),
+            warning_count: 0,
+            warnings: [],
+          },
+        ],
+      },
+      error: null,
     };
+  }
+}
+
+export async function getConversationSyncTask(): Promise<ConversationSyncTaskSnapshot | null> {
+  try {
+    return await invoke<ConversationSyncTaskSnapshot | null>("get_conversation_sync_task");
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+    return null;
   }
 }
 

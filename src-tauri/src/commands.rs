@@ -1,3 +1,4 @@
+use crate::background_tasks::ConversationSyncTaskSnapshot;
 use crate::models::{
     AppKind, Asset, AssetGroup, AssetGroupDetail, AssetGroupRules, AssetKind, AssetMount,
     ConversationAdapter, ConversationSource, DeploymentPlan, DeploymentState, DeploymentStrategy,
@@ -42,7 +43,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -1576,6 +1577,8 @@ pub(crate) fn asset_group_from_input(
         description: input.description,
         color: input.color.unwrap_or_else(|| "#10b981".to_string()),
         asset_kind: AssetKind::Skill,
+        display_icon: input.display_icon,
+        icon_svg: input.icon_svg,
         enabled: input.enabled.unwrap_or(true),
         sort_order: input.sort_order.unwrap_or(0),
         rules: input.rules.unwrap_or(AssetGroupRules {
@@ -1863,28 +1866,68 @@ pub(crate) fn disable_conversation_source(
 }
 
 #[tauri::command]
-pub(crate) async fn sync_conversations(
+pub(crate) fn sync_conversations(
+    app: AppHandle,
     state: State<'_, AppState>,
     params: ConversationSyncParams,
-) -> AppResult<serde_json::Value> {
-    let db_path = state.db_path.clone();
-    let lock = state.lock.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let _guard = lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(db_path)?.sync_conversations(params)
-    })
-    .await
-    .map_err(|error| error.to_string())?;
-
-    match &result {
-        Ok(value) => log_info(
-            "conversation.sync",
-            "同步对话记录成功",
-            &[("result", value.to_string())],
-        ),
-        Err(error) => log_error("conversation.sync", "同步对话记录失败", error, &[]),
+) -> AppResult<ConversationSyncTaskSnapshot> {
+    let (snapshot, should_start) = state.background_tasks.begin_conversation_sync(&params)?;
+    if !should_start {
+        return Ok(snapshot);
     }
-    result
+
+    let db_path = state.db_path.clone();
+    let background_tasks = state.background_tasks.clone();
+    let task_id = snapshot.id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            AppService::open_with_db_path(db_path)
+                .and_then(|service| service.sync_conversations(params))
+        }))
+        .unwrap_or_else(|_| Err("conversation sync task panicked".to_string()));
+        match &result {
+            Ok(value) => log_info(
+                "conversation.sync",
+                "后台同步对话记录成功",
+                &[("task_id", task_id.clone()), ("result", value.to_string())],
+            ),
+            Err(error) => log_error(
+                "conversation.sync",
+                "后台同步对话记录失败",
+                error,
+                &[("task_id", task_id.clone())],
+            ),
+        }
+        match background_tasks.finish_conversation_sync(&task_id, result) {
+            Ok(snapshot) => {
+                if let Err(error) = app.emit("conversation-sync-task-updated", &snapshot) {
+                    log_error(
+                        "conversation.sync",
+                        "推送后台同步任务状态失败",
+                        &error.to_string(),
+                        &[("task_id", task_id)],
+                    );
+                }
+            }
+            Err(error) => {
+                log_error(
+                    "conversation.sync",
+                    "更新后台同步任务状态失败",
+                    &error,
+                    &[("task_id", task_id)],
+                );
+            }
+        }
+    });
+
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub(crate) fn get_conversation_sync_task(
+    state: State<'_, AppState>,
+) -> AppResult<Option<ConversationSyncTaskSnapshot>> {
+    state.background_tasks.conversation_sync_snapshot()
 }
 
 #[tauri::command]
@@ -4327,6 +4370,8 @@ mod tests {
             description: None,
             color: "#10b981".to_string(),
             asset_kind: AssetKind::Skill,
+            display_icon: None,
+            icon_svg: None,
             enabled: true,
             sort_order: 0,
             rules: AssetGroupRules {

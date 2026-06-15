@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{atomic::AtomicBool, Arc, Mutex},
 };
 
 pub(crate) type AppResult<T> = Result<T, String>;
@@ -15,6 +15,10 @@ pub(crate) type AppResult<T> = Result<T, String>;
 pub(crate) struct AppState {
     pub(crate) db_path: PathBuf,
     pub(crate) lock: Arc<Mutex<()>>,
+    pub(crate) background_tasks: Arc<crate::background_tasks::BackgroundTaskRegistry>,
+    pub(crate) allow_close: Arc<AtomicBool>,
+    pub(crate) allow_exit: Arc<AtomicBool>,
+    pub(crate) exit_prompt_open: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -173,6 +177,10 @@ pub(crate) struct AssetGroupInput {
     pub(crate) name: String,
     pub(crate) description: Option<String>,
     pub(crate) color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) display_icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) icon_svg: Option<crate::models::AssetGroupIconSvg>,
     pub(crate) enabled: Option<bool>,
     pub(crate) sort_order: Option<i32>,
     pub(crate) rules: Option<AssetGroupRules>,

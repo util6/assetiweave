@@ -337,7 +337,7 @@ pub(crate) struct ConversationSourceDisableParams {
     pub(crate) dry_run: bool,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct ConversationSyncParams {
     #[serde(alias = "sourceId")]
     pub(crate) source_id: Option<String>,

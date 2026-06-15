@@ -6,6 +6,7 @@ import {
   type ConversationContentVisibility,
 } from "../../components/conversations/ConversationContentCards";
 import {
+  ConversationBackgroundTaskIndicator,
   ConversationContentFilter,
   ConversationSyncProgress,
 } from "../../components/conversations/ConversationToolbarControls";
@@ -17,6 +18,7 @@ import type {
   ConversationSessionDetail,
 } from "../../types";
 import {
+  AppSessionBrowser,
   groupConversationSessionsByApp,
   ConversationExportDialog,
   MarkdownContent,
@@ -149,6 +151,30 @@ describe("MarkdownContent", () => {
     expect(groups[1].turnCount).toBe(7);
   });
 
+  it("uses shared sticky split controls for session browsing", () => {
+    const html = renderToStaticMarkup(
+      <AppSessionBrowser
+        appShortcuts={[]}
+        columnMinWidth={300}
+        groups={groupConversationSessionsByApp(adapters, [
+          {
+            ...sessionDetail.session,
+            question_count: 1,
+            turn_count: 2,
+          },
+        ])}
+        onAppSelect={vi.fn()}
+        onSessionOpen={vi.fn()}
+        selectedAppId="codex"
+        t={t}
+      />,
+    );
+
+    expect(html).toContain("水平浏览分栏");
+    expect(html).toContain('role="scrollbar"');
+    expect(html).toContain("sticky bottom-0");
+  });
+
   it("splits commands and execution results into independently filterable cards", () => {
     const blocks = buildConversationContentBlocks(questionDetail.parts);
 
@@ -265,6 +291,9 @@ describe("MarkdownContent", () => {
     expect(html).toContain('type="checkbox"');
     expect(html).toContain("选择问题");
     expect(html).toContain('checked=""');
+    expect(html).toContain("水平浏览分栏");
+    expect(html).toContain('role="scrollbar"');
+    expect(html).toContain("sticky bottom-0");
   });
 
   it("renders an export dialog that reuses content visibility controls", () => {
@@ -324,6 +353,48 @@ describe("MarkdownContent", () => {
     expect(html).toContain("正在读取并导入对话");
     expect(html).toContain("第 2/4 阶段");
     expect(html).toContain("全部来源");
+  });
+
+  it("renders completed sync summary with a dismiss action", () => {
+    const html = renderToStaticMarkup(
+      <ConversationSyncProgress
+        onDismiss={() => undefined}
+        state={{
+          phase: "completed",
+          sourceLabel: "全部来源",
+          summary: "本次新增/更新 3 个 Session、18 条内容，跳过 7 个未变化 Session，覆盖 2 个来源。",
+        }}
+        t={t}
+      />,
+    );
+
+    expect(html).toContain("同步完成");
+    expect(html).toContain("本次新增/更新 3 个 Session、18 条内容");
+    expect(html).toContain("关闭同步进度");
+  });
+
+  it("renders a global background sync indicator without blocking other controls", () => {
+    const html = renderToStaticMarkup(
+      <ConversationBackgroundTaskIndicator
+        task={{
+          id: "sync-1",
+          status: "running",
+          source_id: null,
+          adapter_id: null,
+          dry_run: false,
+          started_at: "2026-06-15T00:00:00Z",
+          finished_at: null,
+          result: null,
+          error: null,
+        }}
+        t={t}
+      />,
+    );
+
+    expect(html).toContain('role="status"');
+    expect(html).toContain("后台同步对话记录");
+    expect(html).toContain("可继续使用其他功能");
+    expect(html).not.toContain("disabled");
   });
 });
 

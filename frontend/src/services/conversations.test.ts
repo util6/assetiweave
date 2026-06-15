@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mergeConversationQuestions } from "./conversations";
+import {
+  getConversationSyncTask,
+  mergeConversationQuestions,
+  summarizeConversationSyncTask,
+  syncConversations,
+} from "./conversations";
 
 const invokeMock = vi.hoisted(() => vi.fn());
 
@@ -30,6 +35,79 @@ describe("conversation services", () => {
     await expect(mergeConversationQuestions(["preview-question-1", "preview-question-2"])).resolves.toMatchObject({
       dry_run: false,
       affected_question_ids: ["preview-question-1", "preview-question-2"],
+    });
+  });
+
+  it("starts sync as a background task", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValueOnce({
+      id: "sync-1",
+      status: "running",
+      source_id: null,
+      adapter_id: null,
+      dry_run: false,
+      started_at: "2026-06-15T00:00:00Z",
+      finished_at: null,
+      result: null,
+      error: null,
+    });
+
+    await expect(syncConversations({ source_id: null, dry_run: false })).resolves.toMatchObject({
+      id: "sync-1",
+      status: "running",
+    });
+    expect(invokeMock).toHaveBeenCalledWith("sync_conversations", {
+      params: { source_id: null, dry_run: false },
+    });
+  });
+
+  it("reads the desktop sync background task status", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValueOnce({
+      id: "sync-1",
+      status: "completed",
+      source_id: null,
+      adapter_id: null,
+      dry_run: false,
+      started_at: "2026-06-15T00:00:00Z",
+      finished_at: "2026-06-15T00:00:05Z",
+      result: { results: [] },
+      error: null,
+    });
+
+    await expect(getConversationSyncTask()).resolves.toMatchObject({
+      id: "sync-1",
+      status: "completed",
+    });
+    expect(invokeMock).toHaveBeenCalledWith("get_conversation_sync_task");
+  });
+
+  it("summarizes completed sync task results for user-facing completion messages", () => {
+    expect(
+      summarizeConversationSyncTask({
+        id: "sync-1",
+        status: "completed",
+        source_id: null,
+        adapter_id: null,
+        dry_run: false,
+        started_at: "2026-06-15T00:00:00Z",
+        finished_at: "2026-06-15T00:00:05Z",
+        result: {
+          results: [
+            { session_count: 10, skipped_session_count: 7, turn_count: 15, warning_count: 1 },
+            { session_count: 2, skipped_session_count: 0, turn_count: 3, warning_count: 0 },
+          ],
+          errors: [{ source_id: "bad-source" }],
+        },
+        error: null,
+      }),
+    ).toEqual({
+      sourceCount: 2,
+      changedSessionCount: 5,
+      skippedSessionCount: 7,
+      turnCount: 18,
+      warningCount: 1,
+      errorCount: 1,
     });
   });
 });
