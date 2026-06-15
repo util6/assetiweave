@@ -678,7 +678,7 @@ function GroupColumnView({
                   onClick={() => onSelectGroup(detail.group.id)}
                   type="button"
                 >
-                  <GroupAvatar color={detail.group.color} enabled={detail.group.enabled} compact />
+                  <GroupAvatar color={detail.group.color} displayIcon={detail.group.display_icon} enabled={detail.group.enabled} iconSvg={detail.group.icon_svg} compact />
                   <span className="min-w-0 flex-1">
                     <span className="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold">
                       {detail.group.name}
@@ -862,12 +862,18 @@ function GroupRuleList({ label, rules }: { label: string; rules: string[] }) {
 function GroupAvatar({
   color,
   compact = false,
+  displayIcon,
   enabled,
+  iconSvg,
 }: {
   color: string;
   compact?: boolean;
+  displayIcon?: string | null;
   enabled: boolean;
+  iconSvg?: { paths: Array<{ d: string; clip_rule?: 'evenodd' | 'nonzero'; fill_rule?: 'evenodd' | 'nonzero' }>; view_box?: string } | null;
 }) {
+  const hasCustomIcon = iconSvg && iconSvg.paths.length > 0;
+
   return (
     <span
       className={clsx(
@@ -882,7 +888,29 @@ function GroupAvatar({
       }}
       aria-hidden="true"
     >
-      <Layers3 size={compact ? 16 : 18} />
+      {hasCustomIcon ? (
+        <svg
+          aria-hidden="true"
+          className={compact ? "size-4" : "size-[18px]"}
+          fill="currentColor"
+          viewBox={iconSvg.view_box ?? "0 0 24 24"}
+        >
+          {iconSvg.paths.map((path, index) => (
+            <path
+              clipRule={path.clip_rule}
+              d={path.d}
+              fillRule={path.fill_rule}
+              key={`${path.d}-${index}`}
+            />
+          ))}
+        </svg>
+      ) : displayIcon ? (
+        <span className={clsx("font-mono font-bold", compact ? "text-[11px]" : "text-[13px]")}>
+          {displayIcon.slice(0, 4)}
+        </span>
+      ) : (
+        <Layers3 size={compact ? 16 : 18} />
+      )}
       <span
         className={clsx(
           "absolute rounded-full border border-surface-card",
@@ -954,7 +982,7 @@ function GroupRow({
           type="checkbox"
         />
         <div className="flex min-w-0 items-start gap-3">
-          <GroupAvatar color={detail.group.color} enabled={detail.group.enabled} />
+          <GroupAvatar color={detail.group.color} displayIcon={detail.group.display_icon} enabled={detail.group.enabled} iconSvg={detail.group.icon_svg} />
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <h3 className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md text-on-surface">

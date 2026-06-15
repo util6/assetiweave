@@ -391,12 +391,25 @@ export interface AssetGroupRules {
   name_contains: string | null;
 }
 
+export interface AssetGroupIconSvg {
+  paths: AssetGroupIconPath[];
+  view_box?: string;
+}
+
+export interface AssetGroupIconPath {
+  clip_rule?: "evenodd" | "nonzero";
+  d: string;
+  fill_rule?: "evenodd" | "nonzero";
+}
+
 export interface AssetGroup {
   id: string;
   name: string;
   description: string | null;
   color: string;
   asset_kind: AssetKind;
+  display_icon?: string | null;
+  icon_svg?: AssetGroupIconSvg | null;
   enabled: boolean;
   sort_order: number;
   rules: AssetGroupRules;
@@ -422,6 +435,8 @@ export interface AssetGroupInput {
   name: string;
   description?: string | null;
   color?: string | null;
+  display_icon?: string | null;
+  icon_svg?: AssetGroupIconSvg | null;
   enabled?: boolean;
   sort_order?: number;
   rules?: AssetGroupRules;

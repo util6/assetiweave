@@ -53,6 +53,8 @@ pub(crate) fn upsert_asset_group(conn: &Connection, group: &AssetGroup) -> AppRe
                 .filter(|value| !value.is_empty()),
             group.color.trim(),
             encode_enum(group.asset_kind)?,
+            group.display_icon.as_deref().map(str::trim).filter(|v| !v.is_empty()),
+            group.icon_svg.as_ref().and_then(|svg| encode_json(svg).ok()),
             if group.enabled { 1 } else { 0 },
             group.sort_order,
             encode_json(&normalize_rules(&group.rules))?,
@@ -225,18 +227,20 @@ fn load_group_members(conn: &Connection) -> AppResult<BTreeMap<String, BTreeSet<
 }
 
 fn map_asset_group_row(row: &Row<'_>) -> rusqlite::Result<AssetGroup> {
-    let rules_payload: String = row.get(7)?;
+    let rules_payload: String = row.get(9)?;
     Ok(AssetGroup {
         id: row.get(0)?,
         name: row.get(1)?,
         description: row.get(2)?,
         color: row.get(3)?,
         asset_kind: decode_enum(row.get::<_, String>(4)?).map_err(to_sql_error)?,
-        enabled: row.get::<_, i64>(5)? == 1,
-        sort_order: row.get(6)?,
+        display_icon: row.get::<_, Option<String>>(5)?,
+        icon_svg: row.get::<_, Option<String>>(6)?.and_then(|payload| decode_json(payload).ok()),
+        enabled: row.get::<_, i64>(7)? == 1,
+        sort_order: row.get(8)?,
         rules: decode_json(rules_payload).map_err(to_sql_error)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
     })
 }
 
@@ -385,6 +389,8 @@ mod tests {
             description: None,
             color: "#10b981".to_string(),
             asset_kind: AssetKind::Skill,
+            display_icon: None,
+            icon_svg: None,
             enabled: true,
             sort_order: 0,
             rules,

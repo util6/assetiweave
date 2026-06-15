@@ -246,12 +246,32 @@ pub struct AssetGroupRules {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AssetGroupIconSvg {
+    pub paths: Vec<AssetGroupIconPath>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub view_box: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AssetGroupIconPath {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clip_rule: Option<String>,
+    pub d: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fill_rule: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AssetGroup {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
     pub color: String,
     pub asset_kind: AssetKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_svg: Option<AssetGroupIconSvg>,
     pub enabled: bool,
     pub sort_order: i32,
     pub rules: AssetGroupRules,

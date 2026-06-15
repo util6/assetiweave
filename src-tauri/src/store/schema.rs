@@ -1,6 +1,11 @@
 use crate::{defaults, path_utils::ensure_app_library_dirs, types::AppResult};
 use rusqlite::{Connection, OptionalExtension};
-use std::path::Path;
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
+    time::Duration,
+};
 
 use super::{
     codec::db_error,
@@ -12,11 +17,38 @@ use super::{
     sql,
 };
 
+static INITIALIZED_DB_PATHS: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
+
 pub(crate) fn open_initialized(db_path: &Path) -> AppResult<Connection> {
     let conn = Connection::open(db_path).map_err(db_error)?;
-    init_schema(&conn)?;
-    seed_defaults(&conn)?;
+    configure_connection(&conn)?;
+    let initialized_paths = INITIALIZED_DB_PATHS.get_or_init(|| Mutex::new(BTreeSet::new()));
+    let mut initialized_paths = initialized_paths
+        .lock()
+        .map_err(|error| error.to_string())?;
+    if !initialized_paths.contains(db_path) {
+        init_schema(&conn)?;
+        seed_defaults(&conn)?;
+        initialized_paths.insert(db_path.to_path_buf());
+    }
     Ok(conn)
+}
+
+fn configure_connection(conn: &Connection) -> AppResult<()> {
+    conn.busy_timeout(Duration::from_secs(10))
+        .map_err(db_error)?;
+    let journal_mode: String = conn
+        .pragma_query_value(None, "journal_mode", |row| row.get(0))
+        .map_err(db_error)?;
+    if !journal_mode.eq_ignore_ascii_case("wal") {
+        conn.pragma_update(None, "journal_mode", "WAL")
+            .map_err(db_error)?;
+    }
+    conn.pragma_update(None, "synchronous", "NORMAL")
+        .map_err(db_error)?;
+    conn.pragma_update(None, "foreign_keys", "ON")
+        .map_err(db_error)?;
+    Ok(())
 }
 
 fn init_schema(conn: &Connection) -> AppResult<()> {
@@ -73,6 +105,18 @@ fn migrate_schema(conn: &Connection) -> AppResult<()> {
         "app_shortcut_items",
         "icon_svg",
         sql::ADD_APP_SHORTCUT_ICON_SVG,
+    )?;
+    ensure_column(
+        conn,
+        "asset_groups",
+        "display_icon",
+        sql::ADD_ASSET_GROUP_DISPLAY_ICON,
+    )?;
+    ensure_column(
+        conn,
+        "asset_groups",
+        "icon_svg",
+        sql::ADD_ASSET_GROUP_ICON_SVG,
     )?;
     conn.execute_batch(sql::MIGRATE_DEPLOYMENT_STATE_STRATEGY_NAMES)
         .map_err(db_error)?;
@@ -221,4 +265,40 @@ pub(crate) fn count_rows(conn: &Connection, table: &str) -> AppResult<usize> {
         .query_row(statement, [], |row| row.get(0))
         .map_err(db_error)?;
     Ok(count as usize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn reopening_initialized_database_does_not_reseed_defaults() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-schema-reopen-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let conn = open_initialized(&db_path).unwrap();
+        conn.execute(
+            "UPDATE conversation_adapters SET name = 'preserved' WHERE id = 'codex'",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let reopened = open_initialized(&db_path).unwrap();
+        let name: String = reopened
+            .query_row(
+                "SELECT name FROM conversation_adapters WHERE id = 'codex'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(name, "preserved");
+        drop(reopened);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
 }

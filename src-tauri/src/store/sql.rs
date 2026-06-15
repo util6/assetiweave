@@ -126,6 +126,8 @@ CREATE TABLE IF NOT EXISTS asset_groups (
     description TEXT,
     color TEXT NOT NULL,
     asset_kind TEXT NOT NULL,
+    display_icon TEXT,
+    icon_svg TEXT,
     enabled INTEGER NOT NULL,
     sort_order INTEGER NOT NULL,
     rules_payload TEXT NOT NULL,
@@ -375,6 +377,11 @@ pub(crate) const ADD_SUB_NAV_LABEL_EN: &str = "ALTER TABLE sub_nav_items ADD COL
 pub(crate) const ADD_APP_SHORTCUT_ICON_SVG: &str =
     "ALTER TABLE app_shortcut_items ADD COLUMN icon_svg TEXT";
 
+pub(crate) const ADD_ASSET_GROUP_DISPLAY_ICON: &str =
+    "ALTER TABLE asset_groups ADD COLUMN display_icon TEXT";
+pub(crate) const ADD_ASSET_GROUP_ICON_SVG: &str =
+    "ALTER TABLE asset_groups ADD COLUMN icon_svg TEXT";
+
 pub(crate) const MIGRATE_DEPLOYMENT_STATE_STRATEGY_NAMES: &str = r#"
 UPDATE deployment_state
 SET strategy = CASE strategy
@@ -602,7 +609,7 @@ WHERE NOT EXISTS (
 "#;
 
 pub(crate) const LIST_ASSET_GROUPS_BY_KIND: &str = r#"
-SELECT id, name, description, color, asset_kind, enabled, sort_order, rules_payload,
+SELECT id, name, description, color, asset_kind, display_icon, icon_svg, enabled, sort_order, rules_payload,
        created_at, updated_at
 FROM asset_groups
 WHERE asset_kind = ?1
@@ -610,7 +617,7 @@ ORDER BY sort_order ASC, name ASC
 "#;
 
 pub(crate) const GET_ASSET_GROUP: &str = r#"
-SELECT id, name, description, color, asset_kind, enabled, sort_order, rules_payload,
+SELECT id, name, description, color, asset_kind, display_icon, icon_svg, enabled, sort_order, rules_payload,
        created_at, updated_at
 FROM asset_groups
 WHERE id = ?1
@@ -618,14 +625,16 @@ WHERE id = ?1
 
 pub(crate) const UPSERT_ASSET_GROUP: &str = r#"
 INSERT INTO asset_groups (
-    id, name, description, color, asset_kind, enabled, sort_order, rules_payload,
+    id, name, description, color, asset_kind, display_icon, icon_svg, enabled, sort_order, rules_payload,
     created_at, updated_at
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
 ON CONFLICT(id) DO UPDATE SET
     name = excluded.name,
     description = excluded.description,
     color = excluded.color,
     asset_kind = excluded.asset_kind,
+    display_icon = excluded.display_icon,
+    icon_svg = excluded.icon_svg,
     enabled = excluded.enabled,
     sort_order = excluded.sort_order,
     rules_payload = excluded.rules_payload,

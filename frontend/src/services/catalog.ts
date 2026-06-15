@@ -481,6 +481,8 @@ export async function createSkillGroup(input: AssetGroupInput): Promise<AssetGro
         description: parsedInput.description ?? null,
         color: parsedInput.color ?? "#10b981",
         asset_kind: "skill",
+        display_icon: parsedInput.display_icon ?? null,
+        icon_svg: parsedInput.icon_svg ?? null,
         enabled: parsedInput.enabled ?? true,
         sort_order: parsedInput.sort_order ?? getStoredFallbackSkillGroups().length * 10,
         rules: parsedInput.rules ?? { source_ids: [], relative_path_globs: [], name_contains: null },

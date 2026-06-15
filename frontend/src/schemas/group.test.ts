@@ -19,6 +19,11 @@ describe("asset group schemas", () => {
           description: null,
           color: "#10b981",
           asset_kind: "skill",
+          display_icon: "UI",
+          icon_svg: {
+            paths: [{ d: "M4 4h16v16H4z", fill_rule: "evenodd" }],
+            view_box: "0 0 24 24",
+          },
           enabled: true,
           sort_order: 0,
           rules: {
@@ -36,14 +41,28 @@ describe("asset group schemas", () => {
     );
 
     expect(detail.group.rules.source_ids).toEqual(["source-a"]);
+    expect(detail.group.display_icon).toBe("UI");
+    expect(detail.group.icon_svg?.paths[0].d).toBe("M4 4h16v16H4z");
     expect(detail.members[0].origin).toBe("manual_and_rule");
   });
 
-  it("applies defaults for group rules in input", () => {
-    const input = parseSchemaOrThrow(assetGroupInputSchema, { name: "Frontend" }, "Invalid input");
+  it("preserves optional group appearance fields in input", () => {
+    const input = parseSchemaOrThrow(
+      assetGroupInputSchema,
+      {
+        name: "Frontend",
+        color: "#ef4444",
+        display_icon: "FE",
+        icon_svg: { paths: [{ d: "M2 12h20" }] },
+      },
+      "Invalid input",
+    );
 
     expect(input.rules).toBeUndefined();
     expect(input.name).toBe("Frontend");
+    expect(input.color).toBe("#ef4444");
+    expect(input.display_icon).toBe("FE");
+    expect(input.icon_svg?.paths[0].d).toBe("M2 12h20");
   });
 
   it("parses exclusive group mount preview and apply contracts", () => {

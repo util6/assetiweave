@@ -17,6 +17,20 @@ import { assetKindSchema, deploymentStrategySchema, physicalMountStateSchema } f
 
 const nonEmptyStringSchema = z.string().trim().min(1);
 
+const assetGroupIconSvgSchema = z
+  .strictObject({
+    paths: z
+      .array(
+        z.strictObject({
+          clip_rule: z.enum(["evenodd", "nonzero"]).optional(),
+          d: z.string().trim().min(1),
+          fill_rule: z.enum(["evenodd", "nonzero"]).optional(),
+        }),
+      )
+      .min(1),
+    view_box: z.string().trim().min(1).optional(),
+  });
+
 export const assetGroupRulesSchema = z.strictObject({
   source_ids: z.array(nonEmptyStringSchema).default([]),
   relative_path_globs: z.array(nonEmptyStringSchema).default([]),
@@ -29,6 +43,8 @@ export const assetGroupSchema = z.strictObject({
   description: z.string().nullable().default(null),
   color: nonEmptyStringSchema,
   asset_kind: assetKindSchema,
+  display_icon: z.string().trim().nullable().optional(),
+  icon_svg: assetGroupIconSvgSchema.nullable().optional(),
   enabled: z.boolean(),
   sort_order: z.number().int(),
   rules: assetGroupRulesSchema,
@@ -60,6 +76,8 @@ export const assetGroupInputSchema = z.strictObject({
   name: nonEmptyStringSchema,
   description: z.string().nullable().optional(),
   color: z.string().trim().nullable().optional(),
+  display_icon: z.string().trim().nullable().optional(),
+  icon_svg: assetGroupIconSvgSchema.nullable().optional(),
   enabled: z.boolean().optional(),
   sort_order: z.number().int().optional(),
   rules: assetGroupRulesSchema.optional(),
