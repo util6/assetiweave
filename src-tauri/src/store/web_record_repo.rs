@@ -8,6 +8,7 @@ use crate::types::AppResult;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 
 use super::{
     codec::{db_error, encode_enum},
@@ -15,7 +16,7 @@ use super::{
         map_conversation_part, map_conversation_question, map_conversation_session,
         map_conversation_turn, render_session_detail_markdown, ConversationExportContentFilter,
         ConversationImportResult, ConversationQuestionDetail, ConversationSessionDetail,
-        ConversationSessionListItem,
+        ConversationSessionListItem, CONVERSATION_IMPORT_BATCH_SIZE,
     },
 };
 
@@ -32,6 +33,7 @@ pub(crate) fn import_web_record_sessions(
             adapter_id: source.adapter_id.clone(),
             dry_run: true,
             session_count: sessions.len(),
+            skipped_session_count: 0,
             turn_count,
             warning_count: 0,
             warnings: Vec::new(),
@@ -39,31 +41,53 @@ pub(crate) fn import_web_record_sessions(
     }
 
     let now = Utc::now().to_rfc3339();
+    let incoming_session_ids = sessions
+        .iter()
+        .map(|session| stable_id("web-record-session", &[&source.id, &session.external_id]))
+        .collect::<BTreeSet<_>>();
+    {
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|error| error.to_string())?;
+        clear_legacy_conversation_records_for_source_tx(&tx, &source.id)?;
+        prune_missing_web_record_sessions_tx(&tx, &source.id, &incoming_session_ids)?;
+        tx.commit().map_err(|error| error.to_string())?;
+    }
+
+    let mut warning_count = 0usize;
+    let mut skipped_session_count = 0usize;
+    for batch in sessions.chunks(CONVERSATION_IMPORT_BATCH_SIZE) {
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|error| error.to_string())?;
+        for normalized in batch {
+            let session = web_record_session_from_normalized(source, normalized, &now);
+            if web_record_session_is_unchanged_tx(&tx, &session)? {
+                skipped_session_count += 1;
+                continue;
+            }
+            delete_web_record_session_tx(&tx, &session.id)?;
+            insert_web_record_session_tx(&tx, &session)?;
+
+            let mut stored_turns = Vec::new();
+            for turn in &normalized.turns {
+                if turn.user_text.trim().is_empty() {
+                    warning_count += 1;
+                    continue;
+                }
+                let stored_turn = web_record_turn_from_normalized(&session.id, turn, &now);
+                insert_web_record_turn_tx(&tx, &stored_turn)?;
+                insert_web_record_parts_tx(&tx, &stored_turn.id, &turn.parts)?;
+                stored_turns.push(stored_turn);
+            }
+            insert_web_record_questions_tx(&tx, &session.id, &stored_turns, &now)?;
+        }
+        tx.commit().map_err(|error| error.to_string())?;
+    }
+
     let tx = conn
         .unchecked_transaction()
         .map_err(|error| error.to_string())?;
-    clear_web_records_for_source_tx(&tx, &source.id)?;
-    clear_legacy_conversation_records_for_source_tx(&tx, &source.id)?;
-
-    let mut warning_count = 0usize;
-    for normalized in sessions {
-        let session = web_record_session_from_normalized(source, normalized, &now);
-        insert_web_record_session_tx(&tx, &session)?;
-
-        let mut stored_turns = Vec::new();
-        for turn in &normalized.turns {
-            if turn.user_text.trim().is_empty() {
-                warning_count += 1;
-                continue;
-            }
-            let stored_turn = web_record_turn_from_normalized(&session.id, turn, &now);
-            insert_web_record_turn_tx(&tx, &stored_turn)?;
-            insert_web_record_parts_tx(&tx, &stored_turn.id, &turn.parts)?;
-            stored_turns.push(stored_turn);
-        }
-        insert_web_record_questions_tx(&tx, &session.id, &stored_turns, &now)?;
-    }
-
     tx.execute(
         r#"
         UPDATE conversation_sources
@@ -95,6 +119,7 @@ pub(crate) fn import_web_record_sessions(
         adapter_id: source.adapter_id.clone(),
         dry_run: false,
         session_count: sessions.len(),
+        skipped_session_count,
         turn_count,
         warning_count,
         warnings: Vec::new(),
@@ -177,58 +202,117 @@ pub(crate) fn render_web_record_markdown_with_filter(
     render_session_detail_markdown(&detail, selection, content_filter)
 }
 
-fn clear_web_records_for_source_tx(
+fn prune_missing_web_record_sessions_tx(
     tx: &rusqlite::Transaction<'_>,
     source_id: &str,
+    incoming_session_ids: &BTreeSet<String>,
 ) -> AppResult<()> {
+    let mut stmt = tx
+        .prepare("SELECT id FROM web_record_sessions WHERE source_id = ?1")
+        .map_err(db_error)?;
+    let existing_ids = stmt
+        .query_map(params![source_id], |row| row.get::<_, String>(0))
+        .map_err(db_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(db_error)?;
+    drop(stmt);
+    for session_id in existing_ids {
+        if !incoming_session_ids.contains(&session_id) {
+            delete_web_record_session_tx(tx, &session_id)?;
+        }
+    }
+    Ok(())
+}
+
+fn delete_web_record_session_tx(tx: &rusqlite::Transaction<'_>, session_id: &str) -> AppResult<()> {
     tx.execute(
         r#"
         DELETE FROM web_record_question_turns
         WHERE question_id IN (
-            SELECT q.id
-            FROM web_record_questions q
-            JOIN web_record_sessions s ON s.id = q.session_id
-            WHERE s.source_id = ?1
+            SELECT id FROM web_record_questions WHERE session_id = ?1
         )
         "#,
-        params![source_id],
+        params![session_id],
     )
     .map_err(db_error)?;
     tx.execute(
-        r#"
-        DELETE FROM web_record_questions
-        WHERE session_id IN (SELECT id FROM web_record_sessions WHERE source_id = ?1)
-        "#,
-        params![source_id],
+        "DELETE FROM web_record_questions WHERE session_id = ?1",
+        params![session_id],
     )
     .map_err(db_error)?;
     tx.execute(
         r#"
         DELETE FROM web_record_parts
         WHERE turn_id IN (
-            SELECT t.id
-            FROM web_record_turns t
-            JOIN web_record_sessions s ON s.id = t.session_id
-            WHERE s.source_id = ?1
+            SELECT id FROM web_record_turns WHERE session_id = ?1
         )
         "#,
-        params![source_id],
+        params![session_id],
     )
     .map_err(db_error)?;
     tx.execute(
-        r#"
-        DELETE FROM web_record_turns
-        WHERE session_id IN (SELECT id FROM web_record_sessions WHERE source_id = ?1)
-        "#,
-        params![source_id],
+        "DELETE FROM web_record_turns WHERE session_id = ?1",
+        params![session_id],
     )
     .map_err(db_error)?;
     tx.execute(
-        "DELETE FROM web_record_sessions WHERE source_id = ?1",
-        params![source_id],
+        "DELETE FROM web_record_sessions WHERE id = ?1",
+        params![session_id],
     )
     .map_err(db_error)?;
     Ok(())
+}
+
+fn web_record_session_is_unchanged_tx(
+    tx: &rusqlite::Transaction<'_>,
+    session: &ConversationSession,
+) -> AppResult<bool> {
+    let Some(source_fingerprint) = session.source_fingerprint.as_deref() else {
+        return Ok(false);
+    };
+    let existing = tx
+        .query_row(
+            r#"
+            SELECT title, project_path, started_at, updated_at, source_locator,
+                   source_fingerprint, missing
+            FROM web_record_sessions
+            WHERE id = ?1
+            "#,
+            params![session.id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, i64>(6)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(db_error)?;
+
+    Ok(existing.is_some_and(
+        |(
+            title,
+            project_path,
+            started_at,
+            updated_at,
+            source_locator,
+            existing_fingerprint,
+            missing,
+        )| {
+            title == session.title
+                && project_path == session.project_path
+                && started_at == session.started_at
+                && updated_at == session.updated_at
+                && source_locator == session.source_locator
+                && existing_fingerprint.as_deref() == Some(source_fingerprint)
+                && missing == 0
+        },
+    ))
 }
 
 fn clear_legacy_conversation_records_for_source_tx(
@@ -815,6 +899,34 @@ mod tests {
         assert_eq!(detail.questions.len(), 1);
         assert_eq!(detail.questions[0].turns[0].user_text, "Hello from the web");
         assert_eq!(detail.questions[0].question.answer_text, "Web answer");
+    }
+
+    #[test]
+    fn unchanged_fingerprinted_web_session_is_not_rewritten() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(crate::store::sql::INIT_SCHEMA).unwrap();
+        let source = fixture_source();
+        super::super::conversation_repo::upsert_conversation_source(&conn, &source).unwrap();
+        let mut session = fixture_session();
+        session.source_fingerprint = Some("unchanged".to_string());
+
+        import_web_record_sessions(&conn, &source, &[session.clone()], false).unwrap();
+        conn.execute(
+            "UPDATE web_record_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
+            params![source.id],
+        )
+        .unwrap();
+
+        import_web_record_sessions(&conn, &source, &[session], false).unwrap();
+
+        let imported_at: String = conn
+            .query_row(
+                "SELECT imported_at FROM web_record_sessions WHERE source_id = ?1",
+                params![source.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(imported_at, "preserved");
     }
 
     fn fixture_source() -> ConversationSource {

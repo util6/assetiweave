@@ -14,12 +14,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::codec::{db_error, decode_enum, decode_json, encode_enum, encode_json, to_sql_error};
 
+pub(super) const CONVERSATION_IMPORT_BATCH_SIZE: usize = 8;
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct ConversationImportResult {
     pub(crate) source_id: String,
     pub(crate) adapter_id: String,
     pub(crate) dry_run: bool,
     pub(crate) session_count: usize,
+    pub(crate) skipped_session_count: usize,
     pub(crate) turn_count: usize,
     pub(crate) warning_count: usize,
     pub(crate) warnings: Vec<String>,
@@ -301,6 +304,7 @@ pub(crate) fn import_conversation_sessions(
             adapter_id: source.adapter_id.clone(),
             dry_run: true,
             session_count: sessions.len(),
+            skipped_session_count: 0,
             turn_count,
             warning_count: 0,
             warnings: Vec::new(),
@@ -308,28 +312,39 @@ pub(crate) fn import_conversation_sessions(
     }
 
     let now = Utc::now().to_rfc3339();
+    let mut warning_count = 0usize;
+    let mut skipped_session_count = 0usize;
+    let warnings = Vec::new();
+
+    for batch in sessions.chunks(CONVERSATION_IMPORT_BATCH_SIZE) {
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|error| error.to_string())?;
+        for normalized in batch {
+            let session = conversation_session_from_normalized(source, normalized, &now);
+            if conversation_session_is_unchanged_tx(&tx, &session)? {
+                skipped_session_count += 1;
+                continue;
+            }
+            upsert_conversation_session_tx(&tx, &session)?;
+            for turn in &normalized.turns {
+                if turn.user_text.trim().is_empty() {
+                    warning_count += 1;
+                    continue;
+                }
+                let stored_turn = conversation_turn_from_normalized(&session.id, turn, &now);
+                upsert_conversation_turn_tx(&tx, &stored_turn)?;
+                replace_conversation_parts_tx(&tx, &stored_turn.id, &turn.parts)?;
+            }
+            ensure_question_groups_for_session_tx(&tx, &session.id, &now)?;
+            rebuild_session_question_aggregates_tx(&tx, &session.id, &now)?;
+        }
+        tx.commit().map_err(|error| error.to_string())?;
+    }
+
     let tx = conn
         .unchecked_transaction()
         .map_err(|error| error.to_string())?;
-    let mut warning_count = 0usize;
-    let warnings = Vec::new();
-
-    for normalized in sessions {
-        let session = conversation_session_from_normalized(source, normalized, &now);
-        upsert_conversation_session_tx(&tx, &session)?;
-        for turn in &normalized.turns {
-            if turn.user_text.trim().is_empty() {
-                warning_count += 1;
-                continue;
-            }
-            let stored_turn = conversation_turn_from_normalized(&session.id, turn, &now);
-            upsert_conversation_turn_tx(&tx, &stored_turn)?;
-            replace_conversation_parts_tx(&tx, &stored_turn.id, &turn.parts)?;
-        }
-        ensure_question_groups_for_session_tx(&tx, &session.id, &now)?;
-        rebuild_session_question_aggregates_tx(&tx, &session.id, &now)?;
-    }
-
     tx.execute(
         r#"
         UPDATE conversation_sources
@@ -361,6 +376,7 @@ pub(crate) fn import_conversation_sessions(
         adapter_id: source.adapter_id.clone(),
         dry_run: false,
         session_count: sessions.len(),
+        skipped_session_count,
         turn_count,
         warning_count,
         warnings,
@@ -992,6 +1008,58 @@ fn conversation_session_from_normalized(
         created_at: now.to_string(),
         imported_at: now.to_string(),
     }
+}
+
+fn conversation_session_is_unchanged_tx(
+    tx: &rusqlite::Transaction<'_>,
+    session: &ConversationSession,
+) -> AppResult<bool> {
+    let Some(source_fingerprint) = session.source_fingerprint.as_deref() else {
+        return Ok(false);
+    };
+    let existing = tx
+        .query_row(
+            r#"
+            SELECT title, project_path, started_at, updated_at, source_locator,
+                   source_fingerprint, missing
+            FROM conversation_sessions
+            WHERE source_id = ?1 AND external_id = ?2
+            "#,
+            params![session.source_id, session.external_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, i64>(6)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(db_error)?;
+
+    Ok(existing.is_some_and(
+        |(
+            title,
+            project_path,
+            started_at,
+            updated_at,
+            source_locator,
+            existing_fingerprint,
+            missing,
+        )| {
+            title == session.title
+                && project_path == session.project_path
+                && started_at == session.started_at
+                && updated_at == session.updated_at
+                && source_locator == session.source_locator
+                && existing_fingerprint.as_deref() == Some(source_fingerprint)
+                && missing == 0
+        },
+    ))
 }
 
 fn conversation_turn_from_normalized(
@@ -1949,6 +2017,36 @@ mod tests {
             detail.questions[0].question.grouping_origin,
             ConversationGroupingOrigin::Manual
         );
+    }
+
+    #[test]
+    fn unchanged_fingerprinted_session_is_not_rewritten() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(crate::store::sql::INIT_SCHEMA).unwrap();
+        seed_builtin_conversation_adapters(&conn).unwrap();
+        let source = load_conversation_source(&conn, "codex-live")
+            .unwrap()
+            .unwrap();
+        let mut session = fixture_session("v1");
+        session.source_fingerprint = Some("unchanged".to_string());
+
+        import_conversation_sessions(&conn, &source, &[session.clone()], false).unwrap();
+        conn.execute(
+            "UPDATE conversation_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
+            params![source.id],
+        )
+        .unwrap();
+
+        import_conversation_sessions(&conn, &source, &[session], false).unwrap();
+
+        let imported_at: String = conn
+            .query_row(
+                "SELECT imported_at FROM conversation_sessions WHERE source_id = ?1",
+                params![source.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(imported_at, "preserved");
     }
 
     #[test]
