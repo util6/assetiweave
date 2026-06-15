@@ -1,9 +1,7 @@
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import type { ReactNode } from "react";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { useI18n } from "../../i18n/I18nProvider";
-import { cn } from "../../lib/utils";
-import { iconButtonRecipe } from "../../theme/recipes";
 import { Button } from "../ui/button";
 
 export function ConfirmDialog({
@@ -39,7 +37,8 @@ export function ConfirmDialog({
 
   return (
     <DialogFrame
-      className="flex max-h-[92vh] max-w-xl flex-col"
+      busy={busy}
+      closeLabel={t("common.close")}
       contentClassName="grid gap-4"
       footer={
         <>
@@ -51,25 +50,14 @@ export function ConfirmDialog({
           </Button>
         </>
       }
-      headerActions={
-        <button
-          aria-label={t("common.close")}
-          className={cn(iconButtonRecipe({ size: "sm" }))}
-          disabled={busy}
-          onClick={onClose}
-          title={t("common.close")}
-          type="button"
-        >
-          <X size={17} />
-        </button>
-      }
       icon={<AlertTriangle size={18} />}
       iconClassName={
         danger
           ? "border-status-remove/35 bg-status-remove/15 text-status-remove"
           : "border-status-update/30 bg-status-update/15 text-status-update"
       }
-      onBackdropClick={busy ? undefined : onClose}
+      onClose={onClose}
+      size="md"
       title={title}
     >
       <p className="text-body-sm leading-6 text-on-surface-variant">{message}</p>

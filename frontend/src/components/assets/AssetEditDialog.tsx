@@ -1,6 +1,6 @@
 import clsx from "clsx";
-import { Archive, FilePenLine, X } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Archive, FilePenLine } from "lucide-react";
+import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
 import { assetKindLabel } from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { Asset, AssetGroupDetail, AssetMountStatus, Source, TargetProfile } from "../../types";
@@ -8,6 +8,7 @@ import { assetSourceHref, assetSourceLabel } from "../../utils/assetSource";
 import { openExternalLink } from "../../utils/externalLinks";
 import { getMountDisplayState } from "../../utils/mountState";
 import { abbreviateHomePath, displayAssetPath } from "../../utils/path";
+import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
 
 export function AssetEditDialog({
@@ -36,6 +37,7 @@ export function AssetEditDialog({
   source?: Source;
 }) {
   const { t } = useI18n();
+  const formId = useId();
   const [description, setDescription] = useState("");
   const assetMountStatuses = useMemo(
     () => (asset ? mountStatuses.filter((status) => status.asset_id === asset.id) : []),
@@ -56,37 +58,48 @@ export function AssetEditDialog({
     await onSubmit(description.trim() || null);
   }
 
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-background/72 px-4 py-6 backdrop-blur-sm" role="presentation">
-      <section
-        aria-label={t("asset.editDialog.title")}
-        aria-modal="true"
-        className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-theme-card-border bg-theme-card shadow-[0_24px_70px_rgb(var(--theme-panel-shadow)/0.34)]"
-        role="dialog"
-      >
-        <header className="flex min-h-14 items-center justify-between gap-3 border-b border-theme-card-border bg-theme-card-header px-4 py-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="grid size-9 shrink-0 place-items-center rounded-xl border border-status-update/30 bg-status-update/15 text-status-update">
-              <FilePenLine size={18} />
-            </span>
-            <div className="min-w-0">
-              <h2 className="truncate text-body-md font-semibold text-on-surface">{t("asset.editDialog.title")}</h2>
-              <p className="mt-0.5 truncate font-mono text-body-sm text-outline">{asset.name}</p>
-            </div>
-          </div>
-          <button
-            aria-label={t("common.close")}
-            className="grid size-8 place-items-center rounded-lg text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={busy}
-            onClick={onClose}
-            title={t("common.close")}
+  const footer = (
+    <>
+      <div className="max-[640px]:grid">
+        {asset.kind === "skill" && onBackup && (
+          <Button
+            className="max-[640px]:w-full"
+            disabled={busy || Boolean(asset.backup_status)}
+            onClick={() => void onBackup()}
             type="button"
+            variant="outline"
           >
-            <X size={17} />
-          </button>
-        </header>
+            <Archive size={16} />
+            {asset.backup_status ? t("backup.action.inDirectory") : t("backup.action.backupToDirectory")}
+          </Button>
+        )}
+      </div>
+      <div className="flex items-center justify-end gap-2 max-[640px]:grid max-[640px]:grid-cols-2">
+        <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+          {t("common.cancel")}
+        </Button>
+        <Button disabled={busy} form={formId} type="submit">
+          {busy ? t("common.saving") : t("asset.editDialog.submit")}
+        </Button>
+      </div>
+    </>
+  );
 
-        <form className="grid gap-4 overflow-y-auto p-4" onSubmit={(event) => void handleSubmit(event)}>
+  return (
+    <DialogFrame
+      busy={busy}
+      closeLabel={t("common.close")}
+      contentClassName="p-4"
+      description={asset.name}
+      footer={footer}
+      footerClassName="justify-between max-[640px]:flex-col max-[640px]:items-stretch"
+      icon={<FilePenLine size={18} />}
+      iconClassName="border-status-update/30 bg-status-update/15 text-status-update"
+      onClose={onClose}
+      size="xl"
+      title={t("asset.editDialog.title")}
+    >
+        <form className="grid gap-4" id={formId} onSubmit={(event) => void handleSubmit(event)}>
           <section className="grid gap-2 rounded-xl border border-theme-card-border bg-theme-card-header/55 p-3">
             <p className="text-body-sm text-on-surface-variant">{t("asset.editDialog.readonlyMeta")}</p>
             <div className="grid gap-2 text-body-sm">
@@ -158,33 +171,8 @@ export function AssetEditDialog({
             )}
           </section>
 
-          <footer className="flex items-center justify-between gap-3 border-t border-theme-card-border pt-4 max-[640px]:flex-col max-[640px]:items-stretch">
-            <div className="max-[640px]:grid">
-              {asset.kind === "skill" && onBackup && (
-                <Button
-                  className="max-[640px]:w-full"
-                  disabled={busy || Boolean(asset.backup_status)}
-                  onClick={() => void onBackup()}
-                  type="button"
-                  variant="outline"
-                >
-                  <Archive size={16} />
-                  {asset.backup_status ? t("backup.action.inDirectory") : t("backup.action.backupToDirectory")}
-                </Button>
-              )}
-            </div>
-            <div className="flex items-center justify-end gap-2 max-[640px]:grid max-[640px]:grid-cols-2">
-              <Button disabled={busy} onClick={onClose} type="button" variant="outline">
-                {t("common.cancel")}
-              </Button>
-              <Button disabled={busy} type="submit">
-                {busy ? t("common.saving") : t("asset.editDialog.submit")}
-              </Button>
-            </div>
-          </footer>
         </form>
-      </section>
-    </div>
+    </DialogFrame>
   );
 }
 

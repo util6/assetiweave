@@ -1,4 +1,4 @@
-import { FolderOpen, Save, X } from "lucide-react";
+import { FolderCog, FolderOpen, Save } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { Source } from "../../types";
@@ -10,7 +10,7 @@ import {
   validateSourceImportForm,
 } from "../../utils/sourceImport";
 import { abbreviateHomePath } from "../../utils/path";
-import { DialogFrame as FoundationDialogFrame } from "../foundation/DialogFrame";
+import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
@@ -33,6 +33,7 @@ export function SourceEditDialog({
   const { t } = useI18n();
   const rootPathErrorId = useId();
   const priorityErrorId = useId();
+  const formId = useId();
   const rootPathInputRef = useRef<HTMLInputElement>(null);
   const [values, setValues] = useState<SourceImportFormValues>(() => sourceToFormValues(source));
   const [fieldErrors, setFieldErrors] = useState<SourceImportFormErrors>({});
@@ -42,9 +43,6 @@ export function SourceEditDialog({
     setValues(sourceToFormValues(source));
     setFieldErrors({});
     setPickingRootPath(false);
-    if (source) {
-      window.setTimeout(() => rootPathInputRef.current?.focus(), 0);
-    }
   }, [source]);
 
   if (!source) {
@@ -93,28 +91,30 @@ export function SourceEditDialog({
   }
 
   return (
-    <FoundationDialogFrame
-      className="flex max-h-[92vh] max-w-2xl flex-col"
-      contentClassName="min-h-0 overflow-y-auto p-0"
+    <DialogFrame
+      busy={busy}
+      closeLabel={t("common.close")}
+      contentClassName="p-0"
       description={currentSource.name}
-      headerActions={
-        <Button
-          aria-label={t("common.close")}
-          className="text-on-surface-variant hover:text-on-surface"
-          disabled={busy}
-          onClick={onClose}
-          size="icon"
-          title={t("common.close")}
-          type="button"
-          variant="ghost"
-        >
-          <X size={17} />
-        </Button>
+      footer={
+        <>
+          <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+            {t("common.cancel")}
+          </Button>
+          <Button disabled={busy} form={formId} type="submit">
+            <Save size={16} />
+            {busy ? t("source.edit.submitting") : t("source.edit.submit")}
+          </Button>
+        </>
       }
-      onBackdropClick={busy ? undefined : onClose}
+      icon={<FolderCog size={18} />}
+      iconClassName="border-status-update/25 bg-status-update/15 text-status-update"
+      initialFocusRef={rootPathInputRef}
+      onClose={onClose}
+      size="lg"
       title={t("source.edit.title")}
     >
-        <form className="px-5 py-5" onSubmit={(event) => void handleSubmit(event)}>
+        <form className="px-5 py-5" id={formId} onSubmit={(event) => void handleSubmit(event)}>
           <div className="grid gap-4">
             <Field label={t("source.field.rootPath")} required>
               <div className="flex gap-2">
@@ -193,17 +193,8 @@ export function SourceEditDialog({
             </div>
           </div>
 
-          <footer className="mt-5 flex justify-end gap-2 border-t border-theme-card-border pt-4">
-            <Button disabled={busy} onClick={onClose} type="button" variant="outline">
-              {t("common.cancel")}
-            </Button>
-            <Button disabled={busy} type="submit">
-              <Save size={16} />
-              {busy ? t("source.edit.submitting") : t("source.edit.submit")}
-            </Button>
-          </footer>
         </form>
-    </FoundationDialogFrame>
+    </DialogFrame>
   );
 }
 

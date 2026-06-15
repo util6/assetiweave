@@ -1,5 +1,5 @@
-import { Archive, FolderOpen, X } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Archive, FolderOpen } from "lucide-react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
   getSkillBackupSettings,
@@ -8,7 +8,7 @@ import {
 } from "../../services/catalog";
 import type { SkillBackupSettings } from "../../types";
 import { abbreviateHomePath } from "../../utils/path";
-import { DialogFrame as FoundationDialogFrame } from "../foundation/DialogFrame";
+import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 
@@ -24,6 +24,7 @@ export function SkillBackupLibraryDialog({
   open: boolean;
 }) {
   const { t } = useI18n();
+  const formId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [settings, setSettings] = useState<SkillBackupSettings | null>(null);
   const [rootPath, setRootPath] = useState("");
@@ -40,26 +41,10 @@ export function SkillBackupLibraryDialog({
       .then((nextSettings) => {
         setSettings(nextSettings);
         setRootPath(abbreviateHomePath(nextSettings.root_path));
-        window.setTimeout(() => inputRef.current?.focus(), 0);
       })
       .catch((error) => onNotifyError(errorMessage(error)))
       .finally(() => setLoading(false));
   }, [onNotifyError, open]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [busy, onClose, open]);
 
   if (!open) {
     return null;
@@ -104,31 +89,29 @@ export function SkillBackupLibraryDialog({
   const disabled = busy || loading;
 
   return (
-    <FoundationDialogFrame
-      className="flex max-h-full max-w-2xl flex-col"
-      contentClassName="min-h-0 overflow-y-auto p-0"
-      headerActions={
-        <Button
-          aria-label={t("backup.dialog.close")}
-          className="text-on-surface-variant hover:text-on-surface"
-          disabled={busy}
-          onClick={onClose}
-          size="icon"
-          title={t("backup.dialog.close")}
-          type="button"
-          variant="ghost"
-        >
-          <X size={18} />
-        </Button>
+    <DialogFrame
+      busy={busy}
+      closeLabel={t("backup.dialog.close")}
+      contentClassName="p-0"
+      footer={
+        <>
+          <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+            {t("common.cancel")}
+          </Button>
+          <Button disabled={disabled || !rootPath.trim()} form={formId} type="submit">
+            {busy ? t("common.saving") : t("backup.action.save")}
+          </Button>
+        </>
       }
-      headerClassName="h-16 shrink-0 items-center"
       icon={<Archive size={18} />}
       iconClassName="border-status-update/25 bg-status-update/15 text-status-update"
-      onBackdropClick={busy ? undefined : onClose}
+      initialFocusRef={inputRef}
+      onClose={onClose}
       overlayClassName="z-40 px-6 py-8"
+      size="lg"
       title={t("backup.dialog.title")}
     >
-      <form className="px-5 py-5" onSubmit={(event) => void handleSubmit(event)}>
+      <form className="px-5 py-5" id={formId} onSubmit={(event) => void handleSubmit(event)}>
         <div className="grid gap-4">
           <Field label={t("backup.field.rootPath")} required>
             <div className="flex gap-2">
@@ -163,16 +146,8 @@ export function SkillBackupLibraryDialog({
           )}
         </div>
 
-        <footer className="mt-5 flex justify-end gap-2 border-t border-theme-card-border pt-4">
-          <Button disabled={busy} onClick={onClose} type="button" variant="outline">
-            {t("common.cancel")}
-          </Button>
-          <Button disabled={disabled || !rootPath.trim()} type="submit">
-            {busy ? t("common.saving") : t("backup.action.save")}
-          </Button>
-        </footer>
       </form>
-    </FoundationDialogFrame>
+    </DialogFrame>
   );
 }
 

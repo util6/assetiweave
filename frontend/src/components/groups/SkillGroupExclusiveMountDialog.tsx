@@ -1,11 +1,11 @@
 import { AlertTriangle, CheckCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "../ui/button";
+import { DialogFrame } from "../foundation/DialogFrame";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { AppShortcut, SkillGroupExclusiveMountPreview } from "../../types";
 import { AppShortcutIconForShortcut } from "../apps/AppShortcutIcon";
 import type { GroupMountMode } from "./GroupExclusiveMountControls";
-import { DialogFrame } from "./SkillGroupCreateDialog";
 
 export function SkillGroupExclusiveMountDialog({
   busy,
@@ -28,10 +28,27 @@ export function SkillGroupExclusiveMountDialog({
     return null;
   }
 
+  const footer = (
+    <div className="flex items-center justify-end gap-2">
+      <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+        {t("group.dialog.cancel")}
+      </Button>
+      <Button disabled={busy} onClick={() => void onConfirm()} type="button">
+        <CheckCheck size={16} />
+        {t("group.exclusive.confirm")}
+      </Button>
+    </div>
+  );
+
   return (
     <DialogFrame
       busy={busy}
+      closeLabel={t("group.dialog.close")}
+      footer={footer}
+      icon={<CheckCheck size={18} />}
+      iconClassName="border-status-conflict/25 bg-status-conflict/15 text-status-conflict"
       onClose={onClose}
+      size="xl"
       title={t(mode === "exclusive" ? "group.exclusive.dialogTitle" : "group.exclusive.additiveDialogTitle")}
     >
       <div className="grid gap-4">
@@ -78,15 +95,6 @@ export function SkillGroupExclusiveMountDialog({
           />
         </section>
 
-        <div className="flex items-center justify-end gap-2">
-          <Button disabled={busy} onClick={onClose} type="button" variant="outline">
-            {t("group.dialog.cancel")}
-          </Button>
-          <Button disabled={busy} onClick={() => void onConfirm()} type="button">
-            <CheckCheck size={16} />
-            {t("group.exclusive.confirm")}
-          </Button>
-        </div>
       </div>
     </DialogFrame>
   );

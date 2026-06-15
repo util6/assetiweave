@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, DownloadCloud, ExternalLink, Search, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, DownloadCloud, ExternalLink, Search } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import { acquireSkill, searchSkills } from "../../services/catalog";
@@ -51,23 +51,7 @@ export function SkillAcquireDialog({
     setBusy(null);
     setQueryError(false);
     setUrlError(false);
-    window.setTimeout(() => queryInputRef.current?.focus(), 0);
   }, [open]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [busy, onClose, open]);
 
   if (!open) {
     return null;
@@ -156,26 +140,28 @@ export function SkillAcquireDialog({
 
   return (
     <DialogFrame
-      className="flex max-h-full max-w-5xl flex-col"
-      contentClassName="min-h-0 overflow-y-auto p-0"
+      busy={disabled}
+      closeLabel={t("skillAcquire.close")}
+      contentClassName="p-0"
       description={t("skillAcquire.dialog.description")}
-      headerActions={
-        <Button
-          aria-label={t("skillAcquire.close")}
-          disabled={disabled}
-          onClick={onClose}
-          size="icon"
-          title={t("skillAcquire.close")}
-          type="button"
-          variant="ghost"
-        >
-          <X size={18} />
-        </Button>
+      footer={
+        <>
+          <Button disabled={disabled} onClick={() => void handlePreview()} type="button" variant="outline">
+            <Search size={16} />
+            {busy === "preview" ? t("skillAcquire.preview.loading") : t("skillAcquire.preview.submit")}
+          </Button>
+          <Button disabled={disabled || !plan} onClick={() => void handleImport()} type="button">
+            <DownloadCloud size={16} />
+            {busy === "import" ? t("skillAcquire.import.importing") : t("skillAcquire.import.submit")}
+          </Button>
+        </>
       }
       icon={<DownloadCloud size={18} />}
       iconClassName="border-status-create/25 bg-status-create/15 text-status-create"
-      onBackdropClick={disabled ? undefined : onClose}
+      initialFocusRef={queryInputRef}
+      onClose={onClose}
       overlayClassName="z-40 px-6 py-8"
+      size="2xl"
       title={t("skillAcquire.dialog.title")}
     >
       <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.85fr)]">
@@ -296,17 +282,6 @@ export function SkillAcquireDialog({
                 value={name}
               />
             </Field>
-
-            <div className="flex justify-end gap-2">
-              <Button disabled={disabled} onClick={() => void handlePreview()} type="button" variant="outline">
-                <Search size={16} />
-                {busy === "preview" ? t("skillAcquire.preview.loading") : t("skillAcquire.preview.submit")}
-              </Button>
-              <Button disabled={disabled || !plan} onClick={() => void handleImport()} type="button">
-                <DownloadCloud size={16} />
-                {busy === "import" ? t("skillAcquire.import.importing") : t("skillAcquire.import.submit")}
-              </Button>
-            </div>
 
             <div className="rounded-lg border border-status-conflict/30 bg-status-conflict/10 p-3 text-body-sm text-on-surface-variant">
               <div className="flex items-center gap-2 font-medium text-on-surface">

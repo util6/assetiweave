@@ -45,6 +45,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { DialogFrame } from "@/components/foundation/DialogFrame";
 import {
   AppShortcutIconForShortcut,
   appIconToken,
@@ -353,26 +354,54 @@ export function GlobalSettingsDialog({
   }
 
   function saveShortcutIconSvg() {
-    if (!editingShortcutIconId) {
+    const shortcut = editingShortcutIcon;
+    if (!shortcut) {
       return;
     }
 
-    const result = parseIconSvgInput(iconSvgDraft);
-    if (!result.iconSvg) {
+    const input = iconSvgDraft.trim();
+    const result = parseIconSvgInput(input);
+    if (result.iconSvg) {
+      updateAppShortcut(shortcut.profileId, { iconSvg: result.iconSvg });
+      closeShortcutIconEditor();
+      return;
+    }
+
+    if (isPlainShortcutIconInput(input)) {
+      updateAppShortcut(shortcut.profileId, {
+        displayIcon: input.slice(0, 4),
+        iconSvg: null,
+      });
+      closeShortcutIconEditor();
+      return;
+    }
+
+    if (!input && supportsAppIcon(shortcut.appKind)) {
+      updateAppShortcut(shortcut.profileId, {
+        displayIcon: appIconToken(shortcut.appKind),
+        iconSvg: null,
+      });
+      closeShortcutIconEditor();
+      return;
+    }
+
+    if (!input) {
+      setIconSvgError(t("settings.shortcuts.iconCodeEmptyError"));
+    } else {
       setIconSvgError(t("settings.shortcuts.svgError"));
-      return;
     }
-
-    updateAppShortcut(editingShortcutIconId, { iconSvg: result.iconSvg });
-    closeShortcutIconEditor();
   }
 
   function clearShortcutIconSvg() {
-    if (!editingShortcutIconId) {
+    const shortcut = editingShortcutIcon;
+    if (!shortcut) {
       return;
     }
 
-    updateAppShortcut(editingShortcutIconId, { iconSvg: null });
+    updateAppShortcut(shortcut.profileId, {
+      ...(supportsAppIcon(shortcut.appKind) ? { displayIcon: appIconToken(shortcut.appKind) } : {}),
+      iconSvg: null,
+    });
     closeShortcutIconEditor();
   }
 
@@ -1074,39 +1103,18 @@ function SortableShortcutEditRow({
   t: Translator;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
-  const [draftIcon, setDraftIcon] = useState(shortcutCustomIconText(shortcut));
   const [draftColor, setDraftColor] = useState(shortcut.accentColor);
   const usesAppIcon = shortcutUsesAppIcon(shortcut);
   const canUseAppIcon = supportsAppIcon(shortcut.appKind);
+  const usesCustomIcon = Boolean(shortcut.iconSvg || shortcutCustomIconText(shortcut));
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
   };
 
   useEffect(() => {
-    setDraftIcon(shortcutCustomIconText(shortcut));
-  }, [shortcut]);
-
-  useEffect(() => {
     setDraftColor(shortcut.accentColor);
   }, [shortcut.accentColor]);
-
-  function commitIcon(value: string) {
-    const nextIcon = value.trim().slice(0, 4);
-    if (!nextIcon) {
-      if (canUseAppIcon) {
-        onDisplayIconChange(appIconToken(shortcut.appKind));
-        setDraftIcon("");
-      } else {
-        setDraftIcon(shortcut.displayIcon);
-      }
-      return;
-    }
-
-    if (nextIcon !== shortcut.displayIcon) {
-      onDisplayIconChange(nextIcon);
-    }
-  }
 
   function commitColor(value: string) {
     if (!isHexColor(value)) {
@@ -1122,7 +1130,7 @@ function SortableShortcutEditRow({
   return (
     <div
       className={clsx(
-        "grid min-h-16 grid-cols-[32px_minmax(200px,1fr)_300px_170px_auto] items-center gap-4 border-b border-theme-card-border px-4 py-3 last:border-b-0",
+        "grid min-h-16 grid-cols-[32px_minmax(200px,1fr)_240px_170px_auto] items-center gap-4 border-b border-theme-card-border px-4 py-3 last:border-b-0",
         isDragging && "relative z-10 border-theme-nav-active-border bg-theme-control-hover shadow-[0_18px_44px_rgb(var(--theme-panel-shadow)/0.28)]",
       )}
       ref={setNodeRef}
@@ -1175,33 +1183,16 @@ function SortableShortcutEditRow({
           </Button>
           <Button
             aria-label={t("settings.shortcuts.editSvg")}
-            aria-pressed={Boolean(shortcut.iconSvg)}
-            className={clsx("h-9 shrink-0", shortcut.iconSvg && "border-primary-strong/50 bg-theme-control-hover text-primary")}
+            aria-pressed={usesCustomIcon}
+            className={clsx("h-9 shrink-0 px-3", usesCustomIcon && "border-primary-strong/50 bg-theme-control-hover text-primary")}
             onClick={onIconSvgEdit}
             title={t("settings.shortcuts.editSvg")}
             type="button"
             variant="outline"
           >
             <Code2 size={15} />
+            <span>{t("settings.shortcuts.iconCode")}</span>
           </Button>
-          <Input
-            aria-label={t("settings.shortcuts.customIcon")}
-            className="min-w-0 flex-1 font-semibold"
-            onBlur={(event) => commitIcon(event.currentTarget.value)}
-            onChange={(event) => setDraftIcon(event.target.value.slice(0, 4))}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                commitIcon(event.currentTarget.value);
-                event.currentTarget.blur();
-              }
-              if (event.key === "Escape") {
-                setDraftIcon(shortcutCustomIconText(shortcut));
-                event.currentTarget.blur();
-              }
-            }}
-            placeholder={t("settings.shortcuts.customIcon")}
-            value={draftIcon}
-          />
         </div>
       </div>
 
@@ -1268,55 +1259,11 @@ function ShortcutIconSvgDialog({
   t: Translator;
 }) {
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-background/72 px-6 backdrop-blur-sm">
-      <section
-        aria-labelledby="shortcut-svg-title"
-        aria-modal="true"
-        className="flex max-h-[calc(100vh-72px)] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-theme-card-border bg-theme-card shadow-[0_24px_80px_rgb(var(--theme-panel-shadow)/0.34)]"
-        role="dialog"
-      >
-        <header className="flex shrink-0 items-center justify-between gap-4 border-b border-theme-card-border bg-theme-card-header px-5 py-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <span
-              className="grid size-10 shrink-0 place-items-center rounded-lg border text-[13px] font-bold"
-              style={{
-                borderColor: `${shortcut.accentColor}66`,
-                backgroundColor: `${shortcut.accentColor}1f`,
-                color: shortcut.accentColor,
-              }}
-              aria-hidden="true"
-            >
-              <AppShortcutIconForShortcut className="size-5" shortcut={shortcut} />
-            </span>
-            <div className="min-w-0">
-              <h4 className="truncate text-h3 text-on-surface" id="shortcut-svg-title">
-                {t("settings.shortcuts.svgEditorTitle")}
-              </h4>
-              <p className="truncate text-body-sm text-on-surface-variant">{shortcut.profileName}</p>
-            </div>
-          </div>
-          <Button aria-label={t("settings.shortcuts.closeSvg")} onClick={onCancel} size="icon" type="button" variant="ghost">
-            <X size={18} />
-          </Button>
-        </header>
-
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
-          <p className="text-body-sm text-on-surface-variant">{t("settings.shortcuts.svgEditorDescription")}</p>
-          <label className="flex min-h-0 flex-1 flex-col gap-2">
-            <span className="text-label-caps uppercase text-outline">{t("settings.shortcuts.svgInput")}</span>
-            <textarea
-              aria-label={t("settings.shortcuts.svgInput")}
-              className="min-h-80 resize-y rounded-lg border border-theme-control-border bg-theme-control px-3 py-3 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60"
-              onChange={(event) => onChange(event.target.value)}
-              placeholder={t("settings.shortcuts.svgPlaceholder")}
-              spellCheck={false}
-              value={draft}
-            />
-          </label>
-          {error && <p className="text-body-sm text-status-remove">{error}</p>}
-        </div>
-
-        <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-theme-card-border px-5 py-4">
+    <DialogFrame
+      closeLabel={t("settings.shortcuts.closeSvg")}
+      description={shortcut.profileName}
+      footer={
+        <>
           <Button onClick={onClear} type="button" variant="ghost">
             {t("settings.shortcuts.clearSvg")}
           </Button>
@@ -1328,9 +1275,44 @@ function ShortcutIconSvgDialog({
               {t("settings.shortcuts.saveSvg")}
             </Button>
           </div>
-        </footer>
-      </section>
-    </div>
+        </>
+      }
+      footerClassName="justify-between"
+      icon={
+        <span
+          className="grid size-10 place-items-center rounded-lg border text-[13px] font-bold"
+          style={{
+            borderColor: `${shortcut.accentColor}66`,
+            backgroundColor: `${shortcut.accentColor}1f`,
+            color: shortcut.accentColor,
+          }}
+          aria-hidden="true"
+        >
+          <AppShortcutIconForShortcut className="size-5" shortcut={shortcut} />
+        </span>
+      }
+      iconClassName="size-10 border-0 bg-transparent p-0"
+      onClose={onCancel}
+      overlayClassName="z-[60] px-6"
+      size="xl"
+      title={t("settings.shortcuts.svgEditorTitle")}
+    >
+      <div className="flex min-h-0 flex-col gap-3">
+        <p className="text-body-sm text-on-surface-variant">{t("settings.shortcuts.svgEditorDescription")}</p>
+        <label className="flex min-h-0 flex-1 flex-col gap-2">
+          <span className="text-label-caps uppercase text-outline">{t("settings.shortcuts.svgInput")}</span>
+          <textarea
+            aria-label={t("settings.shortcuts.svgInput")}
+            className="min-h-80 resize-y rounded-lg border border-theme-control-border bg-theme-control px-3 py-3 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60"
+            onChange={(event) => onChange(event.target.value)}
+            placeholder={t("settings.shortcuts.svgPlaceholder")}
+            spellCheck={false}
+            value={draft}
+          />
+        </label>
+        {error && <p className="text-body-sm text-status-remove">{error}</p>}
+      </div>
+    </DialogFrame>
   );
 }
 
@@ -1649,6 +1631,11 @@ function parseIconSvgInput(value: string) {
   }
 
   return { iconSvg: parseSvgMarkup(input) };
+}
+
+function isPlainShortcutIconInput(value: string) {
+  const input = value.trim();
+  return Boolean(input) && !input.startsWith("<") && !input.startsWith("{") && !input.startsWith("[");
 }
 
 function parseSvgMarkup(value: string): AppShortcutIconSvg | null {

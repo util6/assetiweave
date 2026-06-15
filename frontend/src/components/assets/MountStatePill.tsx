@@ -1,10 +1,11 @@
 import clsx from "clsx";
-import { Info, X } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { Info } from "lucide-react";
+import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
 import type { MountDisplayState } from "../../utils/mountState";
+import { DialogFrame } from "../foundation/DialogFrame";
 
 const mountDisplayStates: MountDisplayState[] = [
   "mounted",
@@ -72,106 +73,60 @@ function MountStateHelpDialog({
   open: boolean;
 }) {
   const { t } = useI18n();
-  const titleId = useId();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    closeButtonRef.current?.focus();
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, open]);
 
   if (!open) {
     return null;
   }
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-[70] grid place-items-center bg-background/72 px-4 py-8 backdrop-blur-sm"
-      onClick={(event) => {
-        event.stopPropagation();
-        onClose();
-      }}
+    <DialogFrame
+      closeButtonRef={closeButtonRef}
+      closeLabel={t("mount.stateHelp.close")}
+      description={t("mount.stateHelp.description")}
+      icon={<Info className="size-5" aria-hidden="true" />}
+      initialFocusRef={closeButtonRef}
+      onClose={onClose}
+      overlayClassName="z-[70] px-4 py-8"
+      size="xl"
+      title={t("mount.stateHelp.title")}
     >
-      <section
-        aria-labelledby={titleId}
-        aria-modal="true"
-        className="flex max-h-[calc(100vh-64px)] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-theme-card-border bg-theme-card shadow-[0_24px_72px_rgb(var(--theme-panel-shadow)/0.34)]"
-        onClick={(event) => event.stopPropagation()}
-        role="dialog"
-      >
-        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-theme-card-border bg-theme-card-header/70 px-5 py-4">
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
-              <Info className="size-5 shrink-0 text-primary" aria-hidden="true" />
-              <h2 className="truncate text-h2 text-on-surface" id={titleId}>
-                {t("mount.stateHelp.title")}
-              </h2>
-            </div>
-            <p className="mt-1 text-body-sm text-on-surface-variant">{t("mount.stateHelp.description")}</p>
-          </div>
-          <button
-            aria-label={t("mount.stateHelp.close")}
-            className="grid size-8 shrink-0 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-on-surface"
-            onClick={onClose}
-            ref={closeButtonRef}
-            title={t("mount.stateHelp.close")}
-            type="button"
-          >
-            <X size={18} />
-          </button>
-        </header>
+      <div className="grid gap-3">
+        {mountDisplayStates.map((state) => {
+          const active = state === currentState;
+          return (
+            <article
+              className={clsx(
+                "rounded-xl border bg-theme-control/65 p-3 transition-colors",
+                active ? "border-primary/60 ring-1 ring-primary/20" : "border-theme-control-border",
+              )}
+              key={state}
+            >
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className={clsx("size-2 rounded-full", mountStateDotClass(state))} aria-hidden="true" />
+                <h3 className="text-body-md font-bold text-on-surface">{t(`mount.display.${state}` as TranslationKey)}</h3>
+                {active && (
+                  <span className="rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">
+                    {t("mount.stateHelp.current")}
+                  </span>
+                )}
+              </div>
 
-        <div className="min-h-0 overflow-y-auto px-5 py-4">
-          <div className="grid gap-3">
-            {mountDisplayStates.map((state) => {
-              const active = state === currentState;
-              return (
-                <article
-                  className={clsx(
-                    "rounded-xl border bg-theme-control/65 p-3 transition-colors",
-                    active ? "border-primary/60 ring-1 ring-primary/20" : "border-theme-control-border",
-                  )}
-                  key={state}
-                >
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <span className={clsx("size-2 rounded-full", mountStateDotClass(state))} aria-hidden="true" />
-                    <h3 className="text-body-md font-bold text-on-surface">{t(`mount.display.${state}` as TranslationKey)}</h3>
-                    {active && (
-                      <span className="rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">
-                        {t("mount.stateHelp.current")}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="mt-3 grid gap-2 text-body-sm text-on-surface-variant">
-                    <p>
-                      <span className="font-bold text-on-surface">{t("mount.stateHelp.meaning")}</span>
-                      <span className="ml-2">{t(`mount.stateHelp.${state}.meaning` as TranslationKey)}</span>
-                    </p>
-                    <p>
-                      <span className="font-bold text-on-surface">{t("mount.stateHelp.action")}</span>
-                      <span className="ml-2">{t(`mount.stateHelp.${state}.action` as TranslationKey)}</span>
-                    </p>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-    </div>,
+              <div className="mt-3 grid gap-2 text-body-sm text-on-surface-variant">
+                <p>
+                  <span className="font-bold text-on-surface">{t("mount.stateHelp.meaning")}</span>
+                  <span className="ml-2">{t(`mount.stateHelp.${state}.meaning` as TranslationKey)}</span>
+                </p>
+                <p>
+                  <span className="font-bold text-on-surface">{t("mount.stateHelp.action")}</span>
+                  <span className="ml-2">{t(`mount.stateHelp.${state}.action` as TranslationKey)}</span>
+                </p>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </DialogFrame>,
     document.body,
   );
 }

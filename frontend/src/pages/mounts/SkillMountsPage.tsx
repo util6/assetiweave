@@ -14,7 +14,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { AssetToolbar, type AssetToolbarViewMode } from "../../components/assets/AssetToolbar";
 import { MountStatePill } from "../../components/assets/MountStatePill";
 import { QuickMountButtons } from "../../components/assets/QuickMountButtons";
@@ -22,7 +22,7 @@ import { SkillBackupBadge } from "../../components/assets/SkillBackupBadge";
 import { AppShortcutIconForShortcut } from "../../components/apps/AppShortcutIcon";
 import { SkillBackupLibraryDialog } from "../../components/backup/SkillBackupLibraryDialog";
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
-import { DialogFrame as FoundationDialogFrame } from "../../components/foundation/DialogFrame";
+import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { EmptyState as FoundationEmptyState } from "../../components/foundation/EmptyState";
 import { PageHeader } from "../../components/foundation/PageHeader";
 import { Panel as FoundationPanel } from "../../components/foundation/Panel";
@@ -1059,6 +1059,7 @@ function AppProfileDialog({
   profile: TargetProfile | null;
 }) {
   const { t } = useI18n();
+  const formId = useId();
   const shortcut = profile ? (appShortcuts.find((candidate) => candidate.profileId === profile.id) ?? null) : null;
   const [values, setValues] = useState<AppProfileDialogValues>(() => initialDialogValues(profile, shortcut));
   const [picking, setPicking] = useState(false);
@@ -1096,22 +1097,28 @@ function AppProfileDialog({
   }
 
   return (
-    <FoundationDialogFrame
-      className="flex max-h-full max-w-2xl flex-col"
-      contentClassName="min-h-0 overflow-y-auto p-0"
-      headerActions={
-        <Button aria-label={t("appMount.dialog.close")} disabled={busy} onClick={onClose} size="icon" title={t("appMount.dialog.close")} type="button" variant="ghost">
-          <X size={18} />
-        </Button>
+    <DialogFrame
+      busy={busy}
+      closeLabel={t("appMount.dialog.close")}
+      contentClassName="p-0"
+      footer={
+        <>
+          <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+            {t("appMount.dialog.cancel")}
+          </Button>
+          <Button disabled={busy || !values.name.trim() || !values.targetPath.trim()} form={formId} type="submit">
+            {busy ? t("appMount.dialog.saving") : t("appMount.dialog.save")}
+          </Button>
+        </>
       }
-      headerClassName="h-16 shrink-0 items-center"
       icon={<Boxes size={18} />}
       iconClassName="border-status-update/25 bg-status-update/15 text-status-update"
-      onBackdropClick={busy ? undefined : onClose}
+      onClose={onClose}
       overlayClassName="z-40 px-6 py-8"
+      size="lg"
       title={profile ? t("appMount.dialog.editTitle") : t("appMount.dialog.importTitle")}
     >
-        <form className="px-5 py-5" onSubmit={(event) => void handleSubmit(event)}>
+        <form className="px-5 py-5" id={formId} onSubmit={(event) => void handleSubmit(event)}>
           <div className="grid gap-4">
             <div className="grid grid-cols-[minmax(0,1fr)_12rem] gap-3 max-[720px]:grid-cols-1">
               <Field label={t("appMount.field.name")} required>
@@ -1205,16 +1212,8 @@ function AppProfileDialog({
             />
           </div>
 
-          <footer className="mt-5 flex justify-end gap-2 border-t border-theme-card-border pt-4">
-            <Button disabled={busy} onClick={onClose} type="button" variant="outline">
-              {t("appMount.dialog.cancel")}
-            </Button>
-            <Button disabled={busy || !values.name.trim() || !values.targetPath.trim()} type="submit">
-              {busy ? t("appMount.dialog.saving") : t("appMount.dialog.save")}
-            </Button>
-          </footer>
         </form>
-    </FoundationDialogFrame>
+    </DialogFrame>
   );
 }
 

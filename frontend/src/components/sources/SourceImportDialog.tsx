@@ -1,4 +1,4 @@
-import { FolderOpen, FolderPlus, X } from "lucide-react";
+import { FolderOpen, FolderPlus } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { SourceInput } from "../../types";
@@ -12,7 +12,7 @@ import {
   validateSourceImportForm,
 } from "../../utils/sourceImport";
 import { abbreviateHomePath } from "../../utils/path";
-import { DialogFrame as FoundationDialogFrame } from "../foundation/DialogFrame";
+import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
@@ -37,6 +37,7 @@ export function SourceImportDialog({
   const { t } = useI18n();
   const rootPathErrorId = useId();
   const priorityErrorId = useId();
+  const formId = useId();
   const rootPathInputRef = useRef<HTMLInputElement>(null);
   const [values, setValues] = useState<SourceImportFormValues>(() => createInitialValues(suggestedPriority));
   const [fieldErrors, setFieldErrors] = useState<SourceImportFormErrors>({});
@@ -50,23 +51,7 @@ export function SourceImportDialog({
     setValues(createInitialValues(suggestedPriority));
     setFieldErrors({});
     setPickingRootPath(false);
-    window.setTimeout(() => rootPathInputRef.current?.focus(), 0);
   }, [open, suggestedPriority]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [busy, onClose, open]);
 
   if (!open) {
     return null;
@@ -110,31 +95,29 @@ export function SourceImportDialog({
   }
 
   return (
-    <FoundationDialogFrame
-      className="flex max-h-full max-w-2xl flex-col"
-      contentClassName="min-h-0 overflow-y-auto p-0"
-      headerActions={
-        <Button
-          aria-label={t("source.import.close")}
-          className="text-on-surface-variant hover:text-on-surface"
-          disabled={busy}
-          onClick={onClose}
-          size="icon"
-          title={t("source.import.close")}
-          type="button"
-          variant="ghost"
-        >
-          <X size={18} />
-        </Button>
+    <DialogFrame
+      busy={busy}
+      closeLabel={t("source.import.close")}
+      contentClassName="p-0"
+      footer={
+        <>
+          <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+            {t("source.import.cancel")}
+          </Button>
+          <Button disabled={busy} form={formId} type="submit">
+            {busy ? t("source.import.submitting") : t("source.import.submit")}
+          </Button>
+        </>
       }
-      headerClassName="h-16 shrink-0 items-center"
       icon={<FolderPlus size={18} />}
       iconClassName="border-status-update/25 bg-status-update/15 text-status-update"
-      onBackdropClick={busy ? undefined : onClose}
+      initialFocusRef={rootPathInputRef}
+      onClose={onClose}
       overlayClassName="z-40 px-6 py-8"
+      size="lg"
       title={t("source.import.title")}
     >
-        <form className="px-5 py-5" onSubmit={(event) => void handleSubmit(event)}>
+        <form className="px-5 py-5" id={formId} onSubmit={(event) => void handleSubmit(event)}>
           <div className="grid gap-4">
             <Field label={t("source.field.rootPath")} required>
               <div className="flex gap-2">
@@ -222,16 +205,8 @@ export function SourceImportDialog({
 
           </div>
 
-          <footer className="mt-5 flex justify-end gap-2 border-t border-theme-card-border pt-4">
-            <Button disabled={busy} onClick={onClose} type="button" variant="outline">
-              {t("source.import.cancel")}
-            </Button>
-            <Button disabled={busy} type="submit">
-              {busy ? t("source.import.submitting") : t("source.import.submit")}
-            </Button>
-          </footer>
         </form>
-    </FoundationDialogFrame>
+    </DialogFrame>
   );
 }
 

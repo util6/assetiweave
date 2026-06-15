@@ -1,15 +1,13 @@
-import { CheckSquare, Search, X } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { DialogFrame as FoundationDialogFrame } from "../foundation/DialogFrame";
+import { FolderPlus } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
+import { DialogFrame } from "../foundation/DialogFrame";
 import { useI18n } from "../../i18n/I18nProvider";
-import { cn } from "../../lib/utils";
 import { DEFAULT_GROUP_COLOR_HEX } from "../../theme/themes";
-import { iconButtonRecipe } from "../../theme/recipes";
 import type { Asset, AssetGroupInput } from "../../types";
-import { displayAssetPath } from "../../utils/path";
+import { AssetPickerHeader, AssetPickerText, GroupField } from "./SkillGroupFormPrimitives";
 
 interface SkillGroupCreateDialogProps {
   assets: Asset[];
@@ -29,6 +27,7 @@ export function SkillGroupCreateDialog({
   open,
 }: SkillGroupCreateDialogProps) {
   const { t } = useI18n();
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [color, setColor] = useState(DEFAULT_GROUP_COLOR_HEX);
@@ -107,36 +106,51 @@ export function SkillGroupCreateDialog({
     });
   }
 
+  const footer = (
+    <div className="flex items-center justify-end gap-2">
+      <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+        {t("group.dialog.cancel")}
+      </Button>
+      <Button disabled={busy} onClick={() => void handleSubmit()} type="button">
+        {t("group.createDialog.submit")}
+      </Button>
+    </div>
+  );
+
   return (
     <DialogFrame
       busy={busy}
+      closeLabel={t("group.dialog.close")}
+      footer={footer}
+      icon={<FolderPlus size={18} />}
+      iconClassName="border-status-create/25 bg-status-create/15 text-status-create"
+      initialFocusRef={nameInputRef}
       onClose={onClose}
+      size="xl"
       title={t("group.createDialog.title")}
     >
       <div className="grid gap-4">
-        <section className="grid gap-3 rounded-xl border border-theme-card-border bg-theme-card/65 p-3">
-          <Field label={t("group.field.name")}>
-            <Input disabled={busy} onChange={(event) => setName(event.target.value)} value={name} />
-          </Field>
-          <Field label={t("group.field.description")}>
-            <textarea
-              className="min-h-20 resize-y rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 text-body-sm text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={busy}
-              onChange={(event) => setDescription(event.target.value)}
-              value={description}
-            />
-          </Field>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 max-[720px]:grid-cols-1">
-            <Field label={t("group.field.color")}>
+        <section className="grid gap-2 rounded-xl border border-theme-card-border bg-theme-card/65 p-3">
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-end gap-2 max-[720px]:grid-cols-1">
+            <GroupField label={t("group.field.name")}>
+              <Input disabled={busy} onChange={(event) => setName(event.target.value)} ref={nameInputRef} value={name} />
+            </GroupField>
+            <GroupField label={t("group.field.description")}>
+              <Input disabled={busy} onChange={(event) => setDescription(event.target.value)} value={description} />
+            </GroupField>
+          </div>
+          <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 max-[720px]:grid-cols-1">
+            <GroupField label={t("group.field.color")}>
               <input
-                className="h-10 w-full rounded-lg border border-theme-control-border bg-theme-control px-2"
+                className="h-8 w-16 rounded-lg border border-theme-control-border bg-theme-control px-1"
                 disabled={busy}
                 onChange={(event) => setColor(event.target.value)}
                 type="color"
                 value={color}
               />
-            </Field>
-            <label className="mt-6 flex h-10 items-center gap-2 rounded-lg border border-theme-control-border bg-theme-control px-3 max-[720px]:mt-0">
+            </GroupField>
+            <div />
+            <label className="flex h-8 items-center gap-2 self-end rounded-lg border border-theme-control-border bg-theme-control px-3">
               <Switch checked={enabled} disabled={busy} onCheckedChange={setEnabled} />
               <span className="text-body-sm text-on-surface-variant">{t("group.field.enabled")}</span>
             </label>
@@ -178,124 +192,8 @@ export function SkillGroupCreateDialog({
             )}
           </div>
         </section>
-
-        <div className="flex items-center justify-end gap-2">
-          <Button disabled={busy} onClick={onClose} type="button" variant="outline">
-            {t("group.dialog.cancel")}
-          </Button>
-          <Button disabled={busy} onClick={() => void handleSubmit()} type="button">
-            {t("group.createDialog.submit")}
-          </Button>
-        </div>
       </div>
     </DialogFrame>
-  );
-}
-
-export function DialogFrame({
-  busy,
-  children,
-  onClose,
-  title,
-}: {
-  busy: boolean;
-  children: ReactNode;
-  onClose: () => void;
-  title: string;
-}) {
-  const { t } = useI18n();
-
-  return (
-    <FoundationDialogFrame
-      className="flex max-h-[92vh] max-w-4xl flex-col"
-      contentClassName="min-h-0 overflow-y-auto p-4"
-      headerActions={
-        <button
-          aria-label={t("group.dialog.close")}
-          className={cn(iconButtonRecipe({ size: "sm" }))}
-          disabled={busy}
-          onClick={onClose}
-          title={t("group.dialog.close")}
-          type="button"
-        >
-          <X size={17} />
-        </button>
-      }
-      onBackdropClick={busy ? undefined : onClose}
-      title={title}
-    >
-      {children}
-    </FoundationDialogFrame>
-  );
-}
-
-export function Field({ children, label }: { children: ReactNode; label: string }) {
-  return (
-    <label className="grid gap-1.5">
-      <span className="text-body-sm font-medium text-on-surface-variant">{label}</span>
-      {children}
-    </label>
-  );
-}
-
-export function AssetPickerText({ asset }: { asset: Asset }) {
-  return (
-    <span className="min-w-0">
-      <span className="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold text-on-surface">
-        {asset.name}
-      </span>
-      <span className="mt-1 block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface-variant">
-        {displayAssetPath(asset)}
-      </span>
-    </span>
-  );
-}
-
-function AssetPickerHeader({
-  onQueryChange,
-  onToggleAll,
-  query,
-  selectedCount,
-  title,
-  totalCount,
-}: {
-  onQueryChange: (query: string) => void;
-  onToggleAll: () => void;
-  query: string;
-  selectedCount: number;
-  title: string;
-  totalCount: number;
-}) {
-  const { t } = useI18n();
-
-  return (
-    <div className="grid gap-3">
-      <div className="flex items-center justify-between gap-3 max-[720px]:flex-col max-[720px]:items-stretch">
-        <div className="min-w-0">
-          <div className="text-label-caps uppercase text-outline">{title}</div>
-          <div className="mt-1 text-body-sm text-on-surface-variant">
-            {t("group.assets.selected", { selected: selectedCount, total: totalCount })}
-          </div>
-        </div>
-        <button
-          className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm font-semibold text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-on-surface"
-          onClick={onToggleAll}
-          type="button"
-        >
-          <CheckSquare size={16} />
-          {t("group.assets.toggleVisible")}
-        </button>
-      </div>
-      <label className="flex h-10 min-w-0 items-center gap-2 rounded-xl border border-theme-control-border bg-theme-control/90 px-3 text-outline transition-colors focus-within:border-primary/60 focus-within:text-primary">
-        <Search size={16} />
-        <input
-          className="min-w-0 flex-1 border-0 bg-transparent text-body-sm text-on-surface outline-none placeholder:text-outline"
-          onChange={(event) => onQueryChange(event.target.value)}
-          placeholder={t("group.search.skills")}
-          value={query}
-        />
-      </label>
-    </div>
   );
 }
 

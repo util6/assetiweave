@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Copy, FileText, FolderOpen, RefreshCw, X } from "lucide-react";
+import { ChevronDown, Copy, FileText, FolderOpen, RefreshCw, Trash2 } from "lucide-react";
 import { useI18n } from "../../i18n/I18nProvider";
 import { getLogSnapshot, openLogDirectory, writeOperationLog, type LogSnapshot } from "../../services/logService";
 import {
@@ -11,6 +11,8 @@ import {
   type LogLevelFilter,
 } from "../../utils/logViewer";
 import { abbreviateHomePath } from "../../utils/path";
+import { DialogFrame } from "../foundation/DialogFrame";
+import { Button } from "../ui/button";
 import "./LogViewerModal.css";
 
 interface LogViewerModalProps {
@@ -151,21 +153,6 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
     view.scrollTop = view.scrollHeight;
   }, [displayedContent, open]);
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, open]);
-
   if (!open) {
     return null;
   }
@@ -245,134 +232,139 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
   }
 
   return (
-    <div className="modal-overlay log-viewer-overlay" onClick={onClose}>
-      <div className="modal log-viewer-modal" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-header">
-          <h2>{logsLabel}</h2>
-          <button className="modal-close" onClick={onClose} aria-label={t("common.close")}>
-            <X size={16} />
-          </button>
-        </div>
-
-        <div className="modal-body log-viewer-body">
-          <div className="log-viewer-meta">
-            <div className="log-viewer-meta-item log-viewer-file-item">
-              <FileText size={14} />
-              {snapshot?.available_files?.length ? (
-                <div className="log-viewer-select-wrap">
-                  <select
-                    className="log-viewer-select"
-                    value={activeFileName}
-                    onChange={(event) => {
-                      setSelectedFileName(event.target.value);
-                      setError("");
-                    }}
-                    aria-label={t("logViewer.fileLabel")}
-                  >
-                    {snapshot.available_files.map((file) => (
-                      <option key={file.log_file_name} value={file.log_file_name}>
-                        {file.log_file_name}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} />
-                </div>
-              ) : (
-                <span className="log-viewer-path-text">-</span>
-              )}
-            </div>
-            <div className="log-viewer-meta-item">
-              <FolderOpen size={14} />
-              <span className="log-viewer-path-text">{snapshot?.log_dir_path ? abbreviateHomePath(snapshot.log_dir_path) : "-"}</span>
-            </div>
-            <div className="log-viewer-meta-item">
-              <RefreshCw size={14} />
-              <span>{updatedAtText}</span>
-            </div>
-            <div className="log-viewer-toolbar">
-              <div className="log-viewer-filter-wrap">
-                <span className="log-viewer-line-limit-label">{t("logViewer.levelLabel")}</span>
-                <div className="log-viewer-select-wrap log-viewer-level-select-wrap">
-                  <select
-                    className="log-viewer-select"
-                    value={levelFilter}
-                    onChange={(event) => setLevelFilter(event.target.value as LogLevelFilter)}
-                    aria-label={t("logViewer.levelLabel")}
-                  >
-                    {levelOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} />
-                </div>
-              </div>
-              <div className="log-viewer-line-limit-wrap">
-                <span className="log-viewer-line-limit-label">{t("logViewer.lineLimit", { count: lineLimit })}</span>
-                <input
-                  className="log-viewer-line-limit-input"
-                  type="number"
-                  min={MIN_LOG_LINE_LIMIT}
-                  max={MAX_LOG_LINE_LIMIT}
-                  value={lineLimitDraft}
-                  onChange={(event) => setLineLimitDraft(event.target.value)}
-                  onBlur={applyLineLimit}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      applyLineLimit();
-                    }
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div
-            className="log-viewer-content"
-            ref={viewRef}
-            onScroll={(event) => {
-              const target = event.currentTarget;
-              const bottomDistance = target.scrollHeight - target.scrollTop - target.clientHeight;
-              shouldStickToBottomRef.current = bottomDistance <= 24;
-            }}
-          >
-            {loading && !displayedContent ? (
-              <div className="log-viewer-placeholder">{t("common.loading")}</div>
-            ) : displayedContent ? (
-              <pre>{displayedContent}</pre>
-            ) : (
-              <div className="log-viewer-placeholder">
-                {hasFilteredOutContent ? t("logViewer.noMatches") : t("common.none")}
-              </div>
-            )}
-          </div>
-
-          {error ? <p className="log-viewer-error">{error}</p> : null}
-        </div>
-
-        <div className="modal-footer log-viewer-footer">
-          <button className="btn btn-ghost" onClick={onClose}>
+    <DialogFrame
+      className="max-w-[920px]"
+      closeLabel={t("common.close")}
+      contentClassName="flex min-h-0 flex-col gap-3"
+      footer={
+        <>
+          <Button onClick={onClose} size="sm" type="button" variant="ghost">
             {t("common.close")}
-          </button>
-          <button className="btn btn-secondary" onClick={() => void handleManualRefresh()}>
+          </Button>
+          <Button onClick={() => void handleManualRefresh()} size="sm" type="button" variant="outline">
+            <RefreshCw size={15} />
             {t("common.refresh")}
-          </button>
-          <button className="btn btn-secondary" onClick={handleClearOutput}>
+          </Button>
+          <Button onClick={handleClearOutput} size="sm" type="button" variant="outline">
+            <Trash2 size={15} />
             {t("logViewer.clear")}
-          </button>
-          <button className="btn btn-secondary" onClick={() => void handleOpenDir()}>
+          </Button>
+          <Button onClick={() => void handleOpenDir()} size="sm" type="button" variant="outline">
+            <FolderOpen size={15} />
             {t("common.open")} {logDirLabel}
-          </button>
-          <button className="btn btn-secondary" onClick={() => void handleCopyPath()}>
+          </Button>
+          <Button onClick={() => void handleCopyPath()} size="sm" type="button" variant="outline">
+            <Copy size={15} />
             {pathCopied ? t("common.success") : `${t("common.copy")} ${t("logViewer.filePath")}`}
-          </button>
-          <button className="btn btn-primary" onClick={() => void handleCopyLogs()}>
-            <Copy size={14} />
+          </Button>
+          <Button onClick={() => void handleCopyLogs()} size="sm" type="button">
+            <Copy size={15} />
             {copied ? t("common.success") : `${t("common.copy")} ${logsLabel}`}
-          </button>
+          </Button>
+        </>
+      }
+      footerClassName="flex-wrap"
+      icon={<FileText size={18} />}
+      iconClassName="border-status-update/25 bg-status-update/15 text-status-update"
+      onClose={onClose}
+      overlayClassName="z-[12020]"
+      size="2xl"
+      title={logsLabel}
+    >
+      <div className="log-viewer-meta">
+        <div className="log-viewer-meta-item log-viewer-file-item">
+          <FileText size={14} />
+          {snapshot?.available_files?.length ? (
+            <div className="log-viewer-select-wrap">
+              <select
+                className="log-viewer-select"
+                value={activeFileName}
+                onChange={(event) => {
+                  setSelectedFileName(event.target.value);
+                  setError("");
+                }}
+                aria-label={t("logViewer.fileLabel")}
+              >
+                {snapshot.available_files.map((file) => (
+                  <option key={file.log_file_name} value={file.log_file_name}>
+                    {file.log_file_name}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={14} />
+            </div>
+          ) : (
+            <span className="log-viewer-path-text">-</span>
+          )}
+        </div>
+        <div className="log-viewer-meta-item">
+          <FolderOpen size={14} />
+          <span className="log-viewer-path-text">{snapshot?.log_dir_path ? abbreviateHomePath(snapshot.log_dir_path) : "-"}</span>
+        </div>
+        <div className="log-viewer-meta-item">
+          <RefreshCw size={14} />
+          <span>{updatedAtText}</span>
+        </div>
+        <div className="log-viewer-toolbar">
+          <div className="log-viewer-filter-wrap">
+            <span className="log-viewer-line-limit-label">{t("logViewer.levelLabel")}</span>
+            <div className="log-viewer-select-wrap log-viewer-level-select-wrap">
+              <select
+                className="log-viewer-select"
+                value={levelFilter}
+                onChange={(event) => setLevelFilter(event.target.value as LogLevelFilter)}
+                aria-label={t("logViewer.levelLabel")}
+              >
+                {levelOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={14} />
+            </div>
+          </div>
+          <div className="log-viewer-line-limit-wrap">
+            <span className="log-viewer-line-limit-label">{t("logViewer.lineLimit", { count: lineLimit })}</span>
+            <input
+              className="log-viewer-line-limit-input"
+              type="number"
+              min={MIN_LOG_LINE_LIMIT}
+              max={MAX_LOG_LINE_LIMIT}
+              value={lineLimitDraft}
+              onChange={(event) => setLineLimitDraft(event.target.value)}
+              onBlur={applyLineLimit}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  applyLineLimit();
+                }
+              }}
+            />
+          </div>
         </div>
       </div>
-    </div>
+
+      <div
+        className="log-viewer-content"
+        ref={viewRef}
+        onScroll={(event) => {
+          const target = event.currentTarget;
+          const bottomDistance = target.scrollHeight - target.scrollTop - target.clientHeight;
+          shouldStickToBottomRef.current = bottomDistance <= 24;
+        }}
+      >
+        {loading && !displayedContent ? (
+          <div className="log-viewer-placeholder">{t("common.loading")}</div>
+        ) : displayedContent ? (
+          <pre>{displayedContent}</pre>
+        ) : (
+          <div className="log-viewer-placeholder">
+            {hasFilteredOutContent ? t("logViewer.noMatches") : t("common.none")}
+          </div>
+        )}
+      </div>
+
+      {error ? <p className="log-viewer-error">{error}</p> : null}
+    </DialogFrame>
   );
 }

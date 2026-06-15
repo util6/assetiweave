@@ -1,5 +1,6 @@
-import { AlertTriangle, CheckCircle2, DownloadCloud, ExternalLink, RefreshCw, RotateCw, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, DownloadCloud, ExternalLink, RefreshCw, RotateCw } from "lucide-react";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
+import { Button } from "../../components/ui/button";
 import { useI18n } from "../../i18n/I18nProvider";
 import { cn } from "../../lib/utils";
 import { useAppUpdater } from "./AppUpdateProvider";
@@ -27,60 +28,45 @@ export function AppUpdateDialog() {
 
   return (
     <DialogFrame
-      className="max-w-xl"
+      busy={!canClose}
+      closeLabel={t("common.close")}
       contentClassName="space-y-4"
       description={t("update.dialog.description")}
       footer={
         <>
-          <button
-            className="rounded-lg border border-theme-control-border px-4 py-2 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!canClose}
-            onClick={handleClose}
-            type="button"
-          >
+          <Button disabled={!canClose} onClick={handleClose} type="button" variant="outline">
             {state.status === "ready" ? t("update.action.later") : t("common.close")}
-          </button>
+          </Button>
           {state.status === "upToDate" ? (
-            <button className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-body-sm font-semibold text-on-primary shadow-theme-soft transition-opacity hover:opacity-90" onClick={() => void checkForUpdates("manual")} type="button">
+            <Button onClick={() => void checkForUpdates("manual")} type="button">
               <RefreshCw size={16} />
               {t("update.action.checkAgain")}
-            </button>
+            </Button>
           ) : state.status === "ready" ? (
-            <button className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-body-sm font-semibold text-on-primary shadow-theme-soft transition-opacity hover:opacity-90" onClick={() => void restartApp()} type="button">
+            <Button onClick={() => void restartApp()} type="button">
               <RotateCw size={16} />
               {t("update.action.restart")}
-            </button>
+            </Button>
           ) : state.status === "available" || state.status === "error" ? (
             <>
               {state.status === "error" && (
-                <button className="inline-flex items-center gap-2 rounded-lg border border-theme-control-border px-4 py-2 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover" onClick={() => void openReleases()} type="button">
+                <Button onClick={() => void openReleases()} type="button" variant="outline">
                   <ExternalLink size={16} />
                   {t("update.action.releasePage")}
-                </button>
+                </Button>
               )}
-              <button className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-body-sm font-semibold text-on-primary shadow-theme-soft transition-opacity hover:opacity-90" onClick={() => void (hasUpdate ? downloadAndInstall() : checkForUpdates("manual"))} type="button">
+              <Button onClick={() => void (hasUpdate ? downloadAndInstall() : checkForUpdates("manual"))} type="button">
                 {state.status === "error" && !hasUpdate ? <RefreshCw size={16} /> : <DownloadCloud size={16} />}
                 {state.status === "error" && !hasUpdate ? t("update.action.retry") : t("update.action.install")}
-              </button>
+              </Button>
             </>
           ) : (
-            <button className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-body-sm font-semibold text-on-primary shadow-theme-soft disabled:cursor-not-allowed disabled:opacity-70" disabled type="button">
+            <Button disabled type="button">
               <RefreshCw className="animate-spin" size={16} />
               {state.status === "downloading" ? t("update.action.downloading") : state.status === "installing" ? t("update.action.installing") : t("update.action.checking")}
-            </button>
+            </Button>
           )}
         </>
-      }
-      headerActions={
-        <button
-          aria-label={t("common.close")}
-          className="grid size-8 shrink-0 place-items-center rounded-lg text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={!canClose}
-          onClick={handleClose}
-          type="button"
-        >
-          <X size={17} />
-        </button>
       }
       icon={getDialogIcon(state.status)}
       iconClassName={cn(
@@ -88,7 +74,8 @@ export function AppUpdateDialog() {
         state.status === "ready" && "border-status-create/30 bg-status-create/15 text-status-create",
         state.status === "error" && "border-status-remove/30 bg-status-remove/15 text-status-remove",
       )}
-      onBackdropClick={handleClose}
+      onClose={handleClose}
+      size="md"
       title={t("update.dialog.title")}
     >
       <div className="space-y-3">
