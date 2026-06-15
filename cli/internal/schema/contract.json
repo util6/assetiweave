@@ -867,9 +867,58 @@
                   "null"
                 ]
               },
+              "display_icon": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "enabled": {
                 "type": [
                   "boolean",
+                  "null"
+                ]
+              },
+              "icon_svg": {
+                "properties": {
+                  "paths": {
+                    "items": {
+                      "properties": {
+                        "clip_rule": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "d": {
+                          "type": "string"
+                        },
+                        "fill_rule": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "d"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "view_box": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "paths"
+                ],
+                "type": [
+                  "object",
                   "null"
                 ]
               },
@@ -978,8 +1027,57 @@
                   "null"
                 ]
               },
+              "display_icon": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "enabled": {
                 "type": "boolean"
+              },
+              "icon_svg": {
+                "properties": {
+                  "paths": {
+                    "items": {
+                      "properties": {
+                        "clip_rule": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "d": {
+                          "type": "string"
+                        },
+                        "fill_rule": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "d"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "view_box": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "paths"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               },
               "id": {
                 "type": "string"
@@ -4259,9 +4357,58 @@
                   "null"
                 ]
               },
+              "display_icon": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "enabled": {
                 "type": [
                   "boolean",
+                  "null"
+                ]
+              },
+              "icon_svg": {
+                "properties": {
+                  "paths": {
+                    "items": {
+                      "properties": {
+                        "clip_rule": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "d": {
+                          "type": "string"
+                        },
+                        "fill_rule": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "d"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "view_box": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "paths"
+                ],
+                "type": [
+                  "object",
                   "null"
                 ]
               },
@@ -4370,8 +4517,57 @@
                   "null"
                 ]
               },
+              "display_icon": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "enabled": {
                 "type": "boolean"
+              },
+              "icon_svg": {
+                "properties": {
+                  "paths": {
+                    "items": {
+                      "properties": {
+                        "clip_rule": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "d": {
+                          "type": "string"
+                        },
+                        "fill_rule": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "d"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "view_box": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "paths"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               },
               "id": {
                 "type": "string"
@@ -5330,6 +5526,25 @@
         "type": "object"
       },
       "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "get_conversation_sync_task",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Get the current desktop conversation sync background task",
+      "exposure": "app",
+      "method": "get_conversation_sync_task",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
       "since": "0.1.0",
       "supports_dry_run": false
     },
@@ -6305,6 +6520,7 @@
     "upsert_conversation_source",
     "disable_conversation_source",
     "sync_conversations",
+    "get_conversation_sync_task",
     "list_conversation_sessions",
     "get_conversation_session",
     "export_conversation_session",
