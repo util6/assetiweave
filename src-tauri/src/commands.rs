@@ -1,3 +1,8 @@
+use crate::models::{
+    AppKind, Asset, AssetGroup, AssetGroupDetail, AssetGroupRules, AssetKind, AssetMount,
+    ConversationAdapter, ConversationSource, DeploymentPlan, DeploymentState, DeploymentStrategy,
+    ProfileSafety, RuleSet, Source, SourceKind, SourceOrigin, SourceScannerKind, TargetProfile,
+};
 use crate::{
     conversations::{
         ExternalAdapterRegisterParams, ExternalAdapterScaffoldParams, ExternalAdapterTryRunParams,
@@ -29,11 +34,6 @@ use crate::{
         SkillGroupExclusiveMountPreview, SkillGroupExclusiveMountSkippedItem, SkillRemoteSource,
         SourceInput, TargetProfileInput,
     },
-};
-use assetiweave_core::{
-    AppKind, Asset, AssetGroup, AssetGroupDetail, AssetGroupRules, AssetKind, AssetMount,
-    ConversationAdapter, ConversationSource, DeploymentPlan, DeploymentState, DeploymentStrategy,
-    ProfileSafety, RuleSet, Source, SourceKind, SourceOrigin, SourceScannerKind, TargetProfile,
 };
 use chrono::Utc;
 use serde_json::Value;
@@ -3082,7 +3082,7 @@ pub(crate) fn same_path_or_text(left: &Path, right: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assetiweave_core::{
+    use crate::models::{
         AppKind, AssetFormat, AssetGroup, AssetGroupRules, AssetKind, DeploymentStrategy,
         ProfileSafety, RuleSet, SourceKind,
     };

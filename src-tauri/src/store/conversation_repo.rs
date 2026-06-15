@@ -1,11 +1,11 @@
-use crate::types::AppResult;
-use assetiweave_core::{
+use crate::models::{
     conversation_turn_fingerprint, group_turn_ids_by_question, ConversationAdapter,
     ConversationAdapterKind, ConversationAdapterTrustState, ConversationGroupingOrigin,
     ConversationPart, ConversationPartKind, ConversationPartRole, ConversationQuestion,
     ConversationSession, ConversationSource, ConversationSourceKind, ConversationSyncRun,
     ConversationSyncStatus, ConversationTurn, NormalizedConversationSession,
 };
+use crate::types::AppResult;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use schemars::JsonSchema;
@@ -996,7 +996,7 @@ fn conversation_session_from_normalized(
 
 fn conversation_turn_from_normalized(
     session_id: &str,
-    normalized: &assetiweave_core::NormalizedConversationTurn,
+    normalized: &crate::models::NormalizedConversationTurn,
     now: &str,
 ) -> ConversationTurn {
     ConversationTurn {
@@ -1098,7 +1098,7 @@ fn upsert_conversation_turn_tx(
 fn replace_conversation_parts_tx(
     tx: &rusqlite::Transaction<'_>,
     turn_id: &str,
-    parts: &[assetiweave_core::NormalizedConversationPart],
+    parts: &[crate::models::NormalizedConversationPart],
 ) -> AppResult<()> {
     tx.execute(
         "DELETE FROM conversation_parts WHERE turn_id = ?1",
@@ -1914,7 +1914,7 @@ fn stable_id(prefix: &str, parts: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assetiweave_core::{
+    use crate::models::{
         ConversationPartRole, NormalizedConversationPart, NormalizedConversationTurn,
     };
 

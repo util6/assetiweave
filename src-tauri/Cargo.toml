@@ -15,7 +15,6 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-assetiweave-core = { path = "../crates/assetiweave-core" }
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 globset = "0.4"

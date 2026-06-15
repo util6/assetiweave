@@ -1,3 +1,8 @@
+use crate::models::{
+    Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
+    ConversationSource, DeploymentPlan, DeploymentStrategy, Source, SourceOrigin,
+    SourceScannerKind, TargetProfile,
+};
 use crate::{
     app_settings, commands, conversations, executor, logs, path_utils, planner, platform, scanner,
     store, targeting,
@@ -8,11 +13,6 @@ use crate::{
         PhysicalMountStateDto, SkillBackupSettings, SkillGroupExclusiveMountInput,
         SkillGroupExclusiveMountPreview, SkillRemoteSource, SourceInput, TargetProfileInput,
     },
-};
-use assetiweave_core::{
-    Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
-    ConversationSource, DeploymentPlan, DeploymentStrategy, Source, SourceOrigin,
-    SourceScannerKind, TargetProfile,
 };
 use chrono::Utc;
 use rusqlite::Connection;

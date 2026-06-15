@@ -28,7 +28,7 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - 前端运行时：React + TypeScript + Vite。
 - 前端样式：Tailwind CSS，设计 token 统一放在 `frontend/tailwind.config.ts`，页面组件优先使用 Tailwind utility classes，`frontend/src/styles/index.css` 仅保留 Tailwind layers、全局背景和少量工具类。
 - 图标：`lucide-react`。
-- 后端核心：Rust workspace，`src-tauri` 作为桌面 App 壳，`crates/assetiweave-core` 承载领域模型、扫描、分类、计划生成等可测试核心逻辑。
+- 后端核心：单一 Rust package `src-tauri`，桌面 App 和 stdio Engine 共享同一个 library，后端代码按模型、存储、服务和接口模块组织。
 - 本地存储：SQLite 主存储，后续提供 JSON 导出/导入。
 - 包管理与构建：pnpm、Cargo。
 
@@ -52,7 +52,7 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 当前已经完成的产品开发基础：
 
 - Tauri 2 + React + TypeScript + Vite + Tailwind CSS + shadcn/ui  应用框架。
-- Rust workspace 与 `assetiweave-core` 领域模型 crate。
+- 单一 `src-tauri` Rust 后端包，以及其内部共享模型模块。
 - 前端采用组件化思想，页面元素首先考虑组件化。
 - SQLite 主存储，包含 Source、Asset、Profile、DeploymentState、Navigation、App Shortcut 等基础表。
 - Source seed、Profile seed、Navigation seed、App Shortcut seed 和 `asset_mounts` 持久化。

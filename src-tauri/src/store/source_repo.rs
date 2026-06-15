@@ -1,10 +1,10 @@
+use crate::models::{AssetKind, Source, SourceOrigin, SourceScannerKind};
 use crate::{
     path_utils::{
         detect_app_target, expand_path, find_git_root, is_app_library_path, normalize_relative_path,
     },
     types::AppResult,
 };
-use assetiweave_core::{AssetKind, Source, SourceOrigin, SourceScannerKind};
 use rusqlite::{params, Connection};
 
 use super::{

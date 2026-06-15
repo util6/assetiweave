@@ -1,10 +1,10 @@
+use crate::models::{
+    Asset, DeploymentAction, DeploymentActionType, DeploymentPlan, DeploymentState,
+    DeploymentStrategy, TargetProfile,
+};
 use crate::{
     logs, store, targeting,
     types::{AppResult, ExecutionResult},
-};
-use assetiweave_core::{
-    Asset, DeploymentAction, DeploymentActionType, DeploymentPlan, DeploymentState,
-    DeploymentStrategy, TargetProfile,
 };
 use chrono::Utc;
 use rusqlite::Connection;

@@ -2405,7 +2405,7 @@ mod tests {
     }
 
     #[test]
-    fn deployment_strategy_contract_matches_core_enum() {
+    fn deployment_strategy_contract_matches_backend_model() {
         let contract = schema_get("set_asset_mount");
         assert_eq!(
             contract["params_schema"]["properties"]["strategy"]["enum"],

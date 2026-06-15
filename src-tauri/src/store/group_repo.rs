@@ -1,8 +1,8 @@
-use crate::types::AppResult;
-use assetiweave_core::{
+use crate::models::{
     Asset, AssetGroup, AssetGroupDetail, AssetGroupMemberOrigin, AssetGroupResolvedMember,
     AssetGroupRules, AssetKind,
 };
+use crate::types::AppResult;
 use chrono::Utc;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -300,7 +300,7 @@ fn normalize_string_list(values: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assetiweave_core::{AssetFormat, AssetKind};
+    use crate::models::{AssetFormat, AssetKind};
 
     #[test]
     fn resolves_manual_and_rule_members_without_duplicates() {

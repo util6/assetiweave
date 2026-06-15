@@ -1,8 +1,8 @@
-use crate::targeting::{self, PhysicalMountState};
-use assetiweave_core::{
+use crate::models::{
     Asset, AssetKind, AssetMount, DeploymentAction, DeploymentActionType, DeploymentPlan,
     DeploymentPlanSummary, RiskLevel, TargetProfile,
 };
+use crate::targeting::{self, PhysicalMountState};
 use chrono::Utc;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -127,7 +127,7 @@ pub(crate) fn build_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assetiweave_core::{AppKind, AssetFormat, DeploymentStrategy, ProfileSafety, RuleSet};
+    use crate::models::{AppKind, AssetFormat, DeploymentStrategy, ProfileSafety, RuleSet};
 
     #[test]
     fn build_plan_only_uses_enabled_mounts() {

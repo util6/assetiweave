@@ -1,10 +1,10 @@
-use crate::{path_utils, types::AppResult};
-use assetiweave_core::{
+use crate::models::{
     split_markdown_text_parts, ConversationAdapter, ConversationAdapterKind,
     ConversationAdapterTrustState, ConversationPartKind, ConversationPartRole, ConversationSource,
     ConversationSourceKind, NormalizedConversationPart, NormalizedConversationSession,
     NormalizedConversationTurn,
 };
+use crate::{path_utils, types::AppResult};
 use chrono::Utc;
 use rusqlite::{params, types::ValueRef, Connection, Row};
 use schemars::JsonSchema;
@@ -1861,7 +1861,7 @@ fn _metadata_map(value: &Value) -> BTreeMap<String, Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assetiweave_core::{ConversationPartKind, ConversationSourceKind};
+    use crate::models::{ConversationPartKind, ConversationSourceKind};
     use rusqlite::params;
     use std::io::Cursor;
 

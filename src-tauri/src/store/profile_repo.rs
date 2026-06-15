@@ -1,5 +1,5 @@
+use crate::models::TargetProfile;
 use crate::types::AppResult;
-use assetiweave_core::TargetProfile;
 use rusqlite::{params, Connection};
 
 use super::{

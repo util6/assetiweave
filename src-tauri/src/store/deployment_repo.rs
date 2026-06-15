@@ -1,5 +1,5 @@
+use crate::models::DeploymentState;
 use crate::types::AppResult;
-use assetiweave_core::DeploymentState;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{

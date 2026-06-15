@@ -1,8 +1,8 @@
-use crate::types::{HeaderTabItem, NavigationModel, RailMenuItem, SubNavItem};
-use assetiweave_core::{
+use crate::models::{
     AppKind, AssetKind, DeploymentStrategy, ProfileSafety, RuleSet, Source, SourceKind,
     SourceOrigin, SourceScannerKind, TargetProfile,
 };
+use crate::types::{HeaderTabItem, NavigationModel, RailMenuItem, SubNavItem};
 use std::collections::BTreeMap;
 
 pub(crate) const DEFAULT_APP_PROFILE_IDS: &[&str] = &[

@@ -210,6 +210,8 @@ flowchart TB
 | CLI | Go 1.24 + Cobra，提供友好命令与通用 API 调用 |
 | Storage | SQLite + 本地文件系统 |
 
+开发时的目录职责、文件落点和新旧架构边界见 [仓库目录与架构边界](docs/repository-structure.md)。
+
 ## 本地开发
 
 ### 前置要求

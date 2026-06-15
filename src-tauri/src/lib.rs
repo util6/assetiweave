@@ -6,6 +6,7 @@ mod defaults;
 mod engine;
 mod executor;
 mod logs;
+mod models;
 mod path_utils;
 mod planner;
 mod platform;

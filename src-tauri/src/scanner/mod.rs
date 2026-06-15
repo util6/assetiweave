@@ -1,8 +1,8 @@
+use crate::models::{stable_asset_id, Asset, AssetFormat, AssetKind, Source, SourceScannerKind};
 use crate::{
     path_utils::{expand_path, hash_path, normalize_relative_path},
     types::AppResult,
 };
-use assetiweave_core::{stable_asset_id, Asset, AssetFormat, AssetKind, Source, SourceScannerKind};
 use chrono::Utc;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::{
@@ -429,7 +429,7 @@ fn build_glob_set(patterns: &[String], fallback: &[&str]) -> AppResult<GlobSet> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assetiweave_core::{SourceKind, SourceOrigin};
+    use crate::models::{SourceKind, SourceOrigin};
     use std::{fs, path::PathBuf};
 
     #[test]

@@ -1,5 +1,5 @@
+use crate::models::{Asset, AssetFormat, TargetProfile};
 use crate::{path_utils::expand_path, types::AppResult};
-use assetiweave_core::{Asset, AssetFormat, TargetProfile};
 use std::{
     fs,
     io::ErrorKind,
@@ -129,7 +129,7 @@ pub(crate) fn canonical_source_path(asset: &Asset) -> AppResult<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assetiweave_core::{AppKind, AssetKind, DeploymentStrategy, ProfileSafety, RuleSet};
+    use crate::models::{AppKind, AssetKind, DeploymentStrategy, ProfileSafety, RuleSet};
 
     #[test]
     fn inspect_mount_treats_source_at_target_path_as_not_mounted() {

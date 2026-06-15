@@ -1,8 +1,8 @@
-use crate::targeting::PhysicalMountState;
-use assetiweave_core::{
+use crate::models::{
     AppKind, Asset, AssetGroupRules, AssetKind, AssetMount, DeploymentStrategy, ProfileSafety,
     RuleSet, SourceKind, SourceOrigin, SourceScannerKind,
 };
+use crate::targeting::PhysicalMountState;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{

@@ -1,5 +1,5 @@
+use crate::models::AppKind;
 use crate::types::{AppResult, GitRepositoryInfo};
-use assetiweave_core::AppKind;
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path, path::PathBuf, process::Command};
 use walkdir::WalkDir;
