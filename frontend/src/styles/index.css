@@ -69,7 +69,7 @@
     --app-page-y: 1.5rem;
     --app-section-gap: 1rem;
     --app-subnav-y: 0.75rem;
-    --app-toolbar-top: 49px;
+    --app-toolbar-top: 57px;
     --app-toolbar-y: 1rem;
   }
 
@@ -79,7 +79,7 @@
     --app-page-y: 1rem;
     --app-section-gap: 0.75rem;
     --app-subnav-y: 0.5rem;
-    --app-toolbar-top: 41px;
+    --app-toolbar-top: 49px;
     --app-toolbar-y: 0.75rem;
   }
 
@@ -128,6 +128,20 @@
   }
 
   .resizable-columns-viewport::-webkit-scrollbar {
+    display: none;
+  }
+
+  .toolbar-bleed {
+    width: calc(100% + var(--app-page-x) + var(--app-page-x));
+  }
+
+  .toolbar-overflow-viewport {
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 1.75rem), transparent 100%);
+  }
+
+  .toolbar-overflow-viewport::-webkit-scrollbar {
     display: none;
   }
 

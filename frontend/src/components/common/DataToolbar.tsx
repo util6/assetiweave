@@ -31,16 +31,22 @@ export function DataToolbar({
     <section
       aria-label={ariaLabel}
       className={clsx(
-        "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 max-[820px]:grid-cols-1 max-[820px]:items-stretch",
+        "grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 overflow-hidden",
         compact && "gap-2",
         sticky &&
           "sticky top-[calc(var(--app-toolbar-top)+var(--app-notification-offset,0px))] z-10 border-b border-theme-card-border bg-theme-toolbar/85 px-[var(--app-page-x)] py-[var(--app-toolbar-y)] shadow-[0_12px_28px_rgb(var(--theme-panel-shadow)/0.18)] backdrop-blur",
-        sticky && stickyBleed && "-mx-[var(--app-page-x)]",
+        sticky && stickyBleed && "toolbar-bleed -mx-[var(--app-page-x)]",
         className,
       )}
+      data-toolbar-root=""
     >
-      <div className={clsx("flex min-w-0 flex-wrap items-center gap-3", compact && "gap-2")}>{leading}</div>
-      <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 max-[820px]:justify-start">
+      <div
+        className={clsx("toolbar-overflow-viewport flex min-w-0 flex-nowrap items-center gap-3 overflow-x-auto overflow-y-hidden", compact && "gap-2")}
+        data-toolbar-leading=""
+      >
+        {leading}
+      </div>
+      <div className="flex min-w-max shrink-0 flex-nowrap items-center justify-end gap-2" data-toolbar-actions="">
         {actions}
       </div>
     </section>
@@ -60,7 +66,7 @@ export function ToolbarCluster({
     <div
       aria-label={ariaLabel}
       className={clsx(
-        "inline-flex min-h-10 max-w-full flex-wrap items-center gap-2 rounded-xl border border-theme-control-border bg-theme-control/95 px-3 py-1.5 text-body-sm text-theme-control-fg shadow-[var(--theme-shadow-control-inset)]",
+        "toolbar-overflow-viewport inline-flex min-h-10 min-w-0 max-w-full flex-nowrap items-center gap-2 overflow-x-auto overflow-y-hidden rounded-xl border border-theme-control-border bg-theme-control/95 px-3 py-1.5 text-body-sm text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] [&>*]:shrink-0 [&>*]:whitespace-nowrap",
         className,
       )}
       role="group"
@@ -84,13 +90,14 @@ export function ToolbarSearch({
   return (
     <label
       className={clsx(
-        "flex h-10 min-w-[16rem] items-center gap-2 rounded-xl border border-theme-control-border bg-theme-control/95 px-3 text-outline shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors focus-within:border-primary/60 focus-within:text-primary",
+        "flex h-10 min-w-[16rem] shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-theme-control-border bg-theme-control/95 px-3 text-outline shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors focus-within:border-primary/60 focus-within:text-primary",
         className,
       )}
+      data-toolbar-control="search"
     >
       <Search size={17} />
       <input
-        className="min-w-0 flex-1 border-0 bg-transparent text-body-sm text-on-surface outline-none placeholder:text-outline"
+        className="min-w-0 flex-1 whitespace-nowrap border-0 bg-transparent text-body-sm text-on-surface outline-none placeholder:text-outline"
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         value={value}
@@ -111,7 +118,7 @@ export function ToolbarViewToggle<Value extends ToolbarViewMode>({
   value: Value;
 }) {
   return (
-    <div aria-label={ariaLabel} className="flex h-10 items-center rounded-xl border border-theme-control-border bg-theme-control/95 p-1" role="group">
+    <div aria-label={ariaLabel} className="flex h-10 shrink-0 items-center rounded-xl border border-theme-control-border bg-theme-control/95 p-1" role="group">
       {options.map((option) => (
         <button
           aria-label={option.label}
@@ -151,19 +158,20 @@ export function ToolbarActionButton({
     <button
       aria-label={label}
       className={clsx(
-        "inline-flex h-10 items-center justify-center gap-2 rounded-xl transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-55",
+        "inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-55",
         text ? "min-w-[5.75rem] px-3 text-body-sm font-semibold" : "w-10",
         primary
           ? "bg-theme-button-primary text-theme-button-primary-fg shadow-glow hover:-translate-y-0.5 hover:bg-theme-button-primary-hover"
           : "border border-theme-control-border bg-theme-control/95 text-theme-control-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] hover:bg-theme-control-hover hover:text-on-surface",
       )}
       disabled={disabled}
+      data-toolbar-control="action"
       onClick={onClick}
       title={label}
       type="button"
     >
       {icon}
-      {text && <span>{text}</span>}
+      {text && <span className="whitespace-nowrap">{text}</span>}
     </button>
   );
 }
@@ -181,8 +189,9 @@ export function ToolbarTextButton({
 }) {
   return (
     <button
-      className="inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-theme-control-border bg-theme-control/95 px-3 text-body-sm text-theme-control-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-55"
+      className="inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-theme-control-border bg-theme-control/95 px-3 text-body-sm text-theme-control-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-55"
       disabled={disabled}
+      data-toolbar-control="text"
       onClick={onClick}
       type="button"
     >
@@ -194,7 +203,10 @@ export function ToolbarTextButton({
 
 export function ToolbarMetric({ label, value }: { label: string; value: number }) {
   return (
-    <div className="inline-flex h-10 min-w-[5.75rem] items-center justify-between gap-2 rounded-xl border border-theme-control-border bg-theme-control/80 px-3 text-body-sm shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)]">
+    <div
+      className="inline-flex h-10 min-w-[5.75rem] shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-xl border border-theme-control-border bg-theme-control/80 px-3 text-body-sm shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)]"
+      data-toolbar-control="metric"
+    >
       <span className="whitespace-nowrap text-on-surface-variant">{label}</span>
       <strong className="font-mono text-code-md text-primary">{value}</strong>
     </div>
@@ -202,5 +214,5 @@ export function ToolbarMetric({ label, value }: { label: string; value: number }
 }
 
 export function ToolbarSeparator() {
-  return <span className="mx-1 h-6 w-px bg-theme-control-border" aria-hidden="true" />;
+  return <span className="mx-1 h-6 w-px shrink-0 bg-theme-control-border" aria-hidden="true" />;
 }

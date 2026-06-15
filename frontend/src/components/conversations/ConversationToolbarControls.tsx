@@ -39,14 +39,14 @@ export function ConversationContentFilter({
 }) {
   return (
     <ToolbarCluster ariaLabel={t("conversation.content.filterAria")} className="justify-start">
-      <span className="mr-1 text-label-caps text-on-surface-muted">
+      <span className="mr-1 whitespace-nowrap text-label-caps text-on-surface-muted">
         {t("conversation.content.visible")}
       </span>
       {contentFilterOptions.map((type) => {
         const label = t(`conversation.content.${type}` as TranslationKey);
         return (
           <label
-            className="inline-flex min-h-8 items-center gap-2 rounded-lg px-1.5 text-body-sm text-on-surface-variant transition-colors hover:bg-theme-control-hover/70"
+            className="inline-flex min-h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-1.5 text-body-sm text-on-surface-variant transition-colors hover:bg-theme-control-hover/70"
             key={type}
           >
             <span className="size-2 rounded-full" style={{ backgroundColor: colors[type] }} />

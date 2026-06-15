@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { GlobalSettingsDialog } from "../../components/settings/GlobalSettingsDialog";
 import { NotificationBanner, type NotificationMessage } from "../../components/notifications/NotificationBanner";
 import type { HeaderTabItem, NavigationModel, RailMenuItem } from "../../router/types";
@@ -44,10 +44,12 @@ export function AppLayout({
   settingsPanel: SettingsPanelId;
   settingsOpen: boolean;
 }) {
+  const [sideRailExpanded, setSideRailExpanded] = useState(false);
   const activeSubNavItems = navigationModel.subNavItems[navigationModel.activeHeaderTabId] ?? [];
   const railItems = ensureLogRailItem(navigationModel.railItems).filter(isSupportedRailItem);
-  const mainStyle = {
-    "--app-notification-offset": notification ? "4.5rem" : "0px",
+  const layoutStyle = {
+    "--app-sidebar-width": sideRailExpanded ? "216px" : "64px",
+    "--app-notification-offset": notification ? "78px" : "0px",
   } as CSSProperties;
 
   function handleRailItemSelect(item: RailMenuItem) {
@@ -62,17 +64,19 @@ export function AppLayout({
   }
 
   return (
-    <div className="grid-texture flex min-h-screen bg-background text-on-surface">
+    <div className="grid-texture flex min-h-screen bg-background text-on-surface" style={layoutStyle}>
       <SideRail
         activeId={logViewerOpen ? "logs" : settingsOpen ? "settings" : navigationModel.activeRailId}
         activeHeaderTabId={navigationModel.activeHeaderTabId}
+        expanded={sideRailExpanded}
         headerTabs={navigationModel.headerTabs}
         items={railItems}
+        onExpandedChange={setSideRailExpanded}
         onHeaderTabSelect={onHeaderTabSelect}
         onItemSelect={handleRailItemSelect}
       />
 
-      <main className="ml-sidebar-width flex min-h-screen w-[calc(100%-64px)] flex-1 flex-col" style={mainStyle}>
+      <main className="ml-[var(--app-sidebar-width)] flex min-h-screen w-[calc(100%-var(--app-sidebar-width))] flex-1 flex-col transition-[margin,width] duration-200">
         <SubNavigation activeId={activeSubNavId} items={activeSubNavItems} onSelect={(item) => onSubNavSelect(item.id)} />
         <NotificationBanner notification={notification} onDismiss={onDismissNotification} />
         {children}
