@@ -5,6 +5,8 @@ import {
   DEFAULT_COLUMN_MIN_WIDTH,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
+  RESULT_PREVIEW_LINE_LIMIT_MAX,
+  RESULT_PREVIEW_LINE_LIMIT_MIN,
   createFontFamilySetting,
   defaultSettings,
   fontFamilyCss,
@@ -47,6 +49,7 @@ describe("AppSettingsProvider", () => {
       conversations: {
         contentFontFamily: createFontFamilySetting("custom", "Atkinson Hyperlegible"),
         contentFontSize: 15,
+        resultPreviewLineLimit: 12,
         sessionBrowserFontFamily,
         sessionBrowserFontSize: 12,
         sessionToolbarCompact: false,
@@ -59,9 +62,22 @@ describe("AppSettingsProvider", () => {
     expect(settings.typography.interfaceFontFamily).toEqual(createFontFamilySetting("custom", "SF Pro Display"));
     expect(settings.conversations.contentFontFamily).toEqual(createFontFamilySetting("custom", "Atkinson Hyperlegible"));
     expect(settings.conversations.contentFontSize).toBe(15);
+    expect(settings.conversations.resultPreviewLineLimit).toBe(12);
     expect(settings.conversations.sessionBrowserFontFamily).toEqual(sessionBrowserFontFamily);
     expect(settings.conversations.sessionBrowserFontSize).toBe(12);
     expect(settings.conversations.sessionToolbarCompact).toBe(false);
+  });
+
+  it("normalizes command result preview line limits", () => {
+    expect(normalizeStoredSettings({
+      conversations: { resultPreviewLineLimit: 12 },
+    }).conversations.resultPreviewLineLimit).toBe(12);
+    expect(normalizeStoredSettings({
+      conversations: { resultPreviewLineLimit: 2 },
+    }).conversations.resultPreviewLineLimit).toBe(RESULT_PREVIEW_LINE_LIMIT_MIN);
+    expect(normalizeStoredSettings({
+      conversations: { resultPreviewLineLimit: 2000 },
+    }).conversations.resultPreviewLineLimit).toBe(RESULT_PREVIEW_LINE_LIMIT_MAX);
   });
 
   it("migrates legacy font tokens to single editable font names", () => {

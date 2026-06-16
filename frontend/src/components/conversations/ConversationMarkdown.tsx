@@ -1,4 +1,5 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import katex from "katex";
+import { useEffect, useId, useMemo, useState } from "react";
 
 type MarkdownBlock =
   | { type: "heading"; level: number; text: string }
@@ -6,7 +7,15 @@ type MarkdownBlock =
   | { type: "list"; items: string[] }
   | { type: "quote"; text: string }
   | { type: "code"; language: string | null; text: string }
+  | { type: "math"; display: boolean; text: string }
   | { type: "table"; headers: string[]; rows: string[][] };
+
+type InlineMarkdownToken =
+  | { type: "text"; value: string }
+  | { type: "code"; value: string }
+  | { type: "strong"; value: string }
+  | { type: "link"; label: string; href: string }
+  | { type: "math"; value: string };
 
 export function MarkdownContent({ value }: { value: string }) {
   const normalizedValue = useMemo(() => normalizeMarkdownSource(value), [value]);
@@ -46,6 +55,9 @@ export function MarkdownContent({ value }: { value: string }) {
               <code>{block.text}</code>
             </pre>
           );
+        }
+        if (block.type === "math") {
+          return <LatexMath display={block.display} key={index} value={block.text} />;
         }
         if (block.type === "table") {
           return (
@@ -154,6 +166,15 @@ function parseMarkdownBlocks(value: string): MarkdownBlock[] {
       continue;
     }
 
+    const mathBlock = readMarkdownMathBlock(lines, lineIndex);
+    if (mathBlock) {
+      flushParagraph();
+      flushList();
+      blocks.push(mathBlock.block);
+      lineIndex = mathBlock.nextIndex - 1;
+      continue;
+    }
+
     const table = readMarkdownTable(lines, lineIndex);
     if (table) {
       flushParagraph();
@@ -208,52 +229,174 @@ function parseMarkdownBlocks(value: string): MarkdownBlock[] {
 }
 
 function renderInlineMarkdown(text: string) {
-  const normalizedText = unescapeMarkdownPunctuation(text);
-  const parts: ReactNode[] = [];
-  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\))/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(normalizedText))) {
-    if (match.index > lastIndex) {
-      parts.push(normalizedText.slice(lastIndex, match.index));
+  return tokenizeInlineMarkdown(text).map((token, index) => {
+    if (token.type === "text") {
+      return unescapeMarkdownPunctuation(token.value);
     }
-    const token = match[0];
-    if (token.startsWith("`")) {
-      parts.push(
-        <code className="rounded bg-theme-control px-1 py-0.5 text-code-sm text-primary" key={`${match.index}-code`}>
-          {token.slice(1, -1)}
-        </code>,
+    if (token.type === "code") {
+      return (
+        <code className="rounded bg-theme-control px-1 py-0.5 text-code-sm text-primary" key={`${index}-code`}>
+          {token.value}
+        </code>
       );
-    } else if (token.startsWith("[")) {
-      const link = token.match(/^\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)$/);
-      if (link) {
-        parts.push(
-          <a
-            className="font-medium text-primary underline underline-offset-2 hover:text-primary-strong"
-            href={link[2]}
-            key={`${match.index}-link`}
-            rel="noreferrer"
-            target="_blank"
-          >
-            {link[1]}
-          </a>,
-        );
-      } else {
-        parts.push(token);
+    }
+    if (token.type === "link") {
+      return (
+        <a
+          className="font-medium text-primary underline underline-offset-2 hover:text-primary-strong"
+          href={token.href}
+          key={`${index}-link`}
+          rel="noreferrer"
+          target="_blank"
+        >
+          {unescapeMarkdownPunctuation(token.label)}
+        </a>
+      );
+    }
+    if (token.type === "math") {
+      return <LatexMath display={false} key={`${index}-math`} value={token.value} />;
+    }
+    return (
+      <strong className="font-semibold text-on-surface" key={`${index}-strong`}>
+        {unescapeMarkdownPunctuation(token.value)}
+      </strong>
+    );
+  });
+}
+
+function tokenizeInlineMarkdown(text: string) {
+  const tokens: InlineMarkdownToken[] = [];
+  let index = 0;
+
+  function pushText(value: string) {
+    if (!value) return;
+    const previous = tokens[tokens.length - 1];
+    if (previous?.type === "text") {
+      previous.value += value;
+      return;
+    }
+    tokens.push({ type: "text", value });
+  }
+
+  while (index < text.length) {
+    if (text[index] === "`") {
+      const endIndex = text.indexOf("`", index + 1);
+      if (endIndex > index + 1) {
+        tokens.push({ type: "code", value: text.slice(index + 1, endIndex) });
+        index = endIndex + 1;
+        continue;
       }
-    } else {
-      parts.push(
-        <strong className="font-semibold text-on-surface" key={`${match.index}-strong`}>
-          {token.slice(2, -2)}
-        </strong>,
-      );
     }
-    lastIndex = match.index + token.length;
+
+    if (text.startsWith("**", index)) {
+      const endIndex = text.indexOf("**", index + 2);
+      if (endIndex > index + 2) {
+        tokens.push({ type: "strong", value: text.slice(index + 2, endIndex) });
+        index = endIndex + 2;
+        continue;
+      }
+    }
+
+    const link = readInlineMarkdownLink(text, index);
+    if (link) {
+      tokens.push(link.token);
+      index = link.nextIndex;
+      continue;
+    }
+
+    const parenMath = readParenInlineMath(text, index);
+    if (parenMath) {
+      tokens.push(parenMath.token);
+      index = parenMath.nextIndex;
+      continue;
+    }
+
+    const dollarMath = readDollarInlineMath(text, index);
+    if (dollarMath) {
+      tokens.push(dollarMath.token);
+      index = dollarMath.nextIndex;
+      continue;
+    }
+
+    pushText(text[index]);
+    index += 1;
   }
-  if (lastIndex < normalizedText.length) {
-    parts.push(normalizedText.slice(lastIndex));
+
+  return tokens;
+}
+
+function readInlineMarkdownLink(
+  text: string,
+  startIndex: number,
+): { token: Extract<InlineMarkdownToken, { type: "link" }>; nextIndex: number } | null {
+  if (text[startIndex] !== "[") return null;
+
+  const labelEndIndex = text.indexOf("]", startIndex + 1);
+  if (labelEndIndex <= startIndex + 1 || text[labelEndIndex + 1] !== "(") return null;
+
+  const hrefEndIndex = text.indexOf(")", labelEndIndex + 2);
+  if (hrefEndIndex === -1) return null;
+
+  const href = text.slice(labelEndIndex + 2, hrefEndIndex);
+  if (!/^https?:\/\/[^)\s]+$/.test(href)) return null;
+
+  return {
+    nextIndex: hrefEndIndex + 1,
+    token: {
+      href,
+      label: text.slice(startIndex + 1, labelEndIndex),
+      type: "link",
+    },
+  };
+}
+
+function readParenInlineMath(
+  text: string,
+  startIndex: number,
+): { token: Extract<InlineMarkdownToken, { type: "math" }>; nextIndex: number } | null {
+  if (!text.startsWith("\\(", startIndex)) return null;
+
+  const endIndex = text.indexOf("\\)", startIndex + 2);
+  if (endIndex === -1) return null;
+
+  const value = text.slice(startIndex + 2, endIndex).trim();
+  if (!value) return null;
+
+  return {
+    nextIndex: endIndex + 2,
+    token: { type: "math", value },
+  };
+}
+
+function readDollarInlineMath(
+  text: string,
+  startIndex: number,
+): { token: Extract<InlineMarkdownToken, { type: "math" }>; nextIndex: number } | null {
+  if (text[startIndex] !== "$" || text[startIndex + 1] === "$" || isEscapedAt(text, startIndex)) {
+    return null;
   }
-  return parts;
+  if (!text[startIndex + 1] || /\s/.test(text[startIndex + 1])) {
+    return null;
+  }
+
+  for (let endIndex = startIndex + 1; endIndex < text.length; endIndex += 1) {
+    if (text[endIndex] !== "$" || text[endIndex + 1] === "$" || isEscapedAt(text, endIndex)) {
+      continue;
+    }
+    if (/\s/.test(text[endIndex - 1] ?? "")) {
+      continue;
+    }
+
+    const value = text.slice(startIndex + 1, endIndex).trim();
+    if (!value) return null;
+
+    return {
+      nextIndex: endIndex + 1,
+      token: { type: "math", value },
+    };
+  }
+
+  return null;
 }
 
 function normalizeMarkdownSource(value: string) {
@@ -278,6 +421,55 @@ function unescapeMarkdownPunctuation(text: string) {
 
 function isMermaidLanguage(language: string | null) {
   return language?.trim().toLowerCase() === "mermaid";
+}
+
+function readMarkdownMathBlock(
+  lines: string[],
+  startIndex: number,
+): { block: Extract<MarkdownBlock, { type: "math" }>; nextIndex: number } | null {
+  return readDelimitedMathBlock(lines, startIndex, "$$", "$$")
+    ?? readDelimitedMathBlock(lines, startIndex, "\\[", "\\]");
+}
+
+function readDelimitedMathBlock(
+  lines: string[],
+  startIndex: number,
+  openDelimiter: string,
+  closeDelimiter: string,
+): { block: Extract<MarkdownBlock, { type: "math" }>; nextIndex: number } | null {
+  const firstLine = lines[startIndex].trim();
+  if (!firstLine.startsWith(openDelimiter)) return null;
+
+  const firstContent = firstLine.slice(openDelimiter.length);
+  const sameLineCloseIndex = firstContent.indexOf(closeDelimiter);
+  if (sameLineCloseIndex !== -1) {
+    if (firstContent.slice(sameLineCloseIndex + closeDelimiter.length).trim()) return null;
+    const text = firstContent.slice(0, sameLineCloseIndex).trim();
+    if (!text) return null;
+    return { block: { display: true, text, type: "math" }, nextIndex: startIndex + 1 };
+  }
+
+  const mathLines = firstContent.trim() ? [firstContent] : [];
+  for (let lineIndex = startIndex + 1; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+    const closeIndex = line.indexOf(closeDelimiter);
+    if (closeIndex === -1) {
+      mathLines.push(line);
+      continue;
+    }
+
+    if (line.slice(closeIndex + closeDelimiter.length).trim()) return null;
+    const closingLineContent = line.slice(0, closeIndex);
+    if (closingLineContent.trim()) {
+      mathLines.push(closingLineContent);
+    }
+
+    const text = mathLines.join("\n").trim();
+    if (!text) return null;
+    return { block: { display: true, text, type: "math" }, nextIndex: lineIndex + 1 };
+  }
+
+  return null;
 }
 
 function readMarkdownTable(
@@ -350,6 +542,62 @@ function isEscapedAt(value: string, index: number) {
     slashCount += 1;
   }
   return slashCount % 2 === 1;
+}
+
+function LatexMath({ value, display }: { value: string; display: boolean }) {
+  const html = useMemo(() => renderLatexMath(value, display), [display, value]);
+  if (html) {
+    if (display) {
+      return (
+        <div
+          className="overflow-auto rounded-lg border border-theme-card-border bg-theme-card/60 px-3 py-2 text-on-surface [&_.katex-display]:my-0"
+          data-latex-math="display"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      );
+    }
+
+    return (
+      <span
+        className="align-baseline text-on-surface"
+        data-latex-math="inline"
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    );
+  }
+
+  if (display) {
+    return (
+      <pre
+        className="overflow-auto rounded-lg border border-theme-card-border bg-theme-control p-3 text-code-sm text-on-surface"
+        data-latex-math="display"
+      >
+        <code>{`$$\n${value}\n$$`}</code>
+      </pre>
+    );
+  }
+
+  return (
+    <code
+      className="rounded bg-theme-control px-1 py-0.5 text-code-sm text-primary"
+      data-latex-math="inline"
+    >
+      {`\\(${value}\\)`}
+    </code>
+  );
+}
+
+function renderLatexMath(value: string, display: boolean) {
+  try {
+    return katex.renderToString(value, {
+      displayMode: display,
+      output: "htmlAndMathml",
+      throwOnError: false,
+      trust: false,
+    });
+  } catch {
+    return null;
+  }
 }
 
 function MermaidDiagram({ value }: { value: string }) {

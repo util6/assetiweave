@@ -62,6 +62,11 @@ export const FONT_SIZE_MIN = 11;
 export const FONT_SIZE_MAX = 20;
 export const FONT_SIZE_STEP = 1;
 
+export const RESULT_PREVIEW_LINE_LIMIT_MIN = 5;
+export const RESULT_PREVIEW_LINE_LIMIT_MAX = 20;
+export const RESULT_PREVIEW_LINE_LIMIT_STEP = 1;
+export const DEFAULT_RESULT_PREVIEW_LINE_LIMIT = 10;
+
 export interface TypographySettings {
   baseFontSize: number;
   codeFontFamily: FontFamilySetting;
@@ -76,6 +81,7 @@ export interface ConversationPageSettings {
   contentCardColors: ConversationContentCardColorSettings;
   contentFontSize: number;
   codeFontSize: number;
+  resultPreviewLineLimit: number;
   sessionBrowserFontFamily: FontFamilySetting;
   sessionBrowserFontSize: number;
   sessionToolbarCompact: boolean;
@@ -134,6 +140,7 @@ export const defaultSettings: AppSettings = {
     contentCardColors: DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
     contentFontFamily: createFontFamilySetting("system"),
     contentFontSize: 14,
+    resultPreviewLineLimit: DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
     sessionBrowserFontFamily: createFontFamilySetting("system"),
     sessionBrowserFontSize: 13,
     sessionToolbarCompact: true,
@@ -222,6 +229,9 @@ function normalizeConversationPageSettings(
       stored.contentFontSize,
       typography.contentFontSize,
     ),
+    resultPreviewLineLimit: normalizeResultPreviewLineLimit(
+      stored.resultPreviewLineLimit,
+    ),
     sessionBrowserFontFamily: normalizeFontFamilySetting(
       stored.sessionBrowserFontFamily,
       typography.contentFontFamily,
@@ -268,6 +278,18 @@ function normalizeFontSize(value: unknown, fallback: number) {
   }
 
   return clamp(Math.round(value), FONT_SIZE_MIN, FONT_SIZE_MAX);
+}
+
+function normalizeResultPreviewLineLimit(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_RESULT_PREVIEW_LINE_LIMIT;
+  }
+
+  return clamp(
+    Math.round(value),
+    RESULT_PREVIEW_LINE_LIMIT_MIN,
+    RESULT_PREVIEW_LINE_LIMIT_MAX,
+  );
 }
 
 export function resolveFontFamilyCss(value: FontFamilyValue, fallback: FontFallbackKind = "sans") {

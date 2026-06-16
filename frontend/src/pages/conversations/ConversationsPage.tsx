@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import {
   AppWindow,
   ArrowLeft,
+  Check,
   ChevronRight,
+  Copy,
   Download,
   GitMerge,
   Layers3,
@@ -39,6 +41,7 @@ import type { TranslationKey } from "../../i18n/messages";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import { DEFAULT_COLUMN_MIN_WIDTH } from "../../store/settings/settingsSchema";
 import {
+  DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
   resolveFontFamilyCss,
   useAppSettings,
   type ConversationContentCardColorSettings,
@@ -69,6 +72,29 @@ import type {
 import { abbreviateHomePath } from "../../utils/path";
 
 export { MarkdownContent } from "../../components/conversations/ConversationMarkdown";
+
+const SESSION_PAGE_SIZE = 100;
+
+type ListConversationSessionPage = (params: {
+  query?: string | null;
+  limit?: number;
+  offset?: number;
+}) => Promise<ConversationSessionListItem[]>;
+
+export async function loadAllConversationSessionPages(
+  listSessions: ListConversationSessionPage,
+  query: string | null,
+  pageSize = SESSION_PAGE_SIZE,
+) {
+  const sessions: ConversationSessionListItem[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await listSessions({ query, limit: pageSize, offset });
+    sessions.push(...page);
+    if (page.length < pageSize) {
+      return sessions;
+    }
+  }
+}
 
 export function ConversationsPage({
   appShortcuts,
@@ -280,7 +306,7 @@ export function ConversationsPage({
   async function refreshSessions(options: { rethrow?: boolean } = {}) {
     try {
       const listSessions = webRecordMode ? listWebRecordSessions : listConversationSessions;
-      const nextSessions = await listSessions({ query: query || null, limit: 100, offset: 0 });
+      const nextSessions = await loadAllConversationSessionPages(listSessions, query || null);
       setSessions(nextSessions);
       setSelectedSessionId((current) => current && nextSessions.some((session) => session.id === current) ? current : null);
     } catch (error) {
@@ -569,6 +595,7 @@ export function ConversationsPage({
         <SessionQuestionWorkspace
           contentCardColors={appSettings.conversations.contentCardColors}
           onExport={() => openExportDialog("session")}
+          onCopyError={onNotifyError}
           onMerge={webRecordMode ? undefined : handleMerge}
           onQuestionSelect={setSelectedQuestionId}
           onQuestionSelectionChange={handleQuestionSelectionChange}
@@ -577,6 +604,7 @@ export function ConversationsPage({
           outputRoot={outputRoot}
           question={selectedQuestion}
           questions={visibleSessionQuestions}
+          resultPreviewLineLimit={appSettings.conversations.resultPreviewLineLimit}
           selectedQuestionId={selectedQuestionId}
           selectedQuestionIds={selectedQuestionIds}
           session={sessionDetail}
@@ -1014,6 +1042,7 @@ export function SessionQuestionWorkspace({
   columnMinWidth = DEFAULT_COLUMN_MIN_WIDTH,
   contentCardColors,
   onExport,
+  onCopyError,
   onMerge,
   onQuestionSelect,
   onQuestionSelectionChange,
@@ -1021,6 +1050,7 @@ export function SessionQuestionWorkspace({
   outputRoot,
   question,
   questions,
+  resultPreviewLineLimit = DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
   selectedQuestionId,
   selectedQuestionIds,
   session,
@@ -1031,6 +1061,7 @@ export function SessionQuestionWorkspace({
   columnMinWidth?: number;
   contentCardColors: ConversationContentCardColorSettings;
   onExport: () => void;
+  onCopyError?: (message: string) => void;
   onMerge?: (previous: ConversationQuestionDetail, current: ConversationQuestionDetail) => Promise<void>;
   onQuestionSelect: (questionId: string) => void;
   onQuestionSelectionChange: (questionId: string, checked: boolean) => void;
@@ -1038,6 +1069,7 @@ export function SessionQuestionWorkspace({
   outputRoot: string;
   question: ConversationQuestionDetail | null;
   questions: ConversationQuestionDetail[];
+  resultPreviewLineLimit?: number;
   selectedQuestionId: string | null;
   selectedQuestionIds: Set<string>;
   session: ConversationSessionDetail | null;
@@ -1102,9 +1134,11 @@ export function SessionQuestionWorkspace({
           <QuestionPreview
             contentCardColors={contentCardColors}
             onExport={onExport}
+            onCopyError={onCopyError}
             onSplit={onSplit}
             outputRoot={outputRoot}
             question={question}
+            resultPreviewLineLimit={resultPreviewLineLimit}
             session={session}
             setOutputRoot={setOutputRoot}
             t={t}
@@ -1178,9 +1212,11 @@ function QuestionListItem({
 export function QuestionPreview({
   contentCardColors,
   onExport,
+  onCopyError,
   onSplit,
   outputRoot,
   question,
+  resultPreviewLineLimit,
   session,
   setOutputRoot,
   t,
@@ -1188,15 +1224,42 @@ export function QuestionPreview({
 }: {
   contentCardColors?: ConversationContentCardColorSettings;
   onExport: () => void;
+  onCopyError?: (message: string) => void;
   onSplit?: (question: ConversationQuestionDetail, turnId: string) => Promise<void>;
   outputRoot: string;
   question: ConversationQuestionDetail;
+  resultPreviewLineLimit?: number;
   session: ConversationSessionDetail;
   setOutputRoot: (value: string) => void;
   t: Translator;
   visibility?: ConversationContentVisibility;
 }) {
   const title = question.question.title || firstLine(question.question.question_text, t);
+  const [copiedPromptTurnId, setCopiedPromptTurnId] = useState<string | null>(null);
+  const copiedPromptResetTimerRef = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      clearCopiedResetTimer(copiedPromptResetTimerRef);
+    },
+    [],
+  );
+
+  async function handleCopyUserPrompt(turnId: string, value: string) {
+    try {
+      await writeClipboardText(value);
+      clearCopiedResetTimer(copiedPromptResetTimerRef);
+      setCopiedPromptTurnId(turnId);
+      copiedPromptResetTimerRef.current = window.setTimeout(() => {
+        setCopiedPromptTurnId((current) => (current === turnId ? null : current));
+        copiedPromptResetTimerRef.current = null;
+      }, 1400);
+    } catch (error) {
+      onCopyError?.(
+        t("conversation.content.copyFailed", { message: errorMessage(error) }),
+      );
+    }
+  }
 
   return (
     <div className="conversation-readable flex min-h-full flex-col">
@@ -1235,9 +1298,16 @@ export function QuestionPreview({
                     <span className="size-2 rounded-full bg-primary" />
                     {t("conversation.question.userPrompt")}
                   </h3>
-                  {index > 0 && onSplit ? (
-                    <ToolbarTextButton icon={<Scissors size={15} />} label={t("conversation.question.splitHere")} onClick={() => void onSplit(question, turn.id)} />
-                  ) : null}
+                  <div className="flex items-center gap-2">
+                    {index > 0 && onSplit ? (
+                      <ToolbarTextButton icon={<Scissors size={15} />} label={t("conversation.question.splitHere")} onClick={() => void onSplit(question, turn.id)} />
+                    ) : null}
+                    <PromptCopyButton
+                      copied={copiedPromptTurnId === turn.id}
+                      onClick={() => void handleCopyUserPrompt(turn.id, turn.user_text)}
+                      t={t}
+                    />
+                  </div>
                 </div>
                 <MarkdownContent value={turn.user_text} />
               </div>
@@ -1246,7 +1316,14 @@ export function QuestionPreview({
                 {blocks.length === 0 ? (
                   <EmptyPanel>{t("conversation.markdown.empty")}</EmptyPanel>
                 ) : (
-                  <ConversationContentCards blocks={blocks} colors={contentCardColors} t={t} visibility={visibility} />
+                  <ConversationContentCards
+                    blocks={blocks}
+                    colors={contentCardColors}
+                    onCopyError={onCopyError}
+                    resultPreviewLineLimit={resultPreviewLineLimit}
+                    t={t}
+                    visibility={visibility}
+                  />
                 )}
               </div>
             </section>
@@ -1254,6 +1331,32 @@ export function QuestionPreview({
         })}
       </div>
     </div>
+  );
+}
+
+function PromptCopyButton({
+  copied,
+  onClick,
+  t,
+}: {
+  copied: boolean;
+  onClick: () => void;
+  t: Translator;
+}) {
+  const label = copied
+    ? t("conversation.content.copied")
+    : t("conversation.question.copyPrompt");
+
+  return (
+    <button
+      aria-label={label}
+      className="inline-grid size-[1em] shrink-0 place-items-center rounded-[3px] text-label-caps text-primary/80 transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
+      onClick={onClick}
+      title={label}
+      type="button"
+    >
+      {copied ? <Check className="size-[1em]" /> : <Copy className="size-[1em]" />}
+    </button>
   );
 }
 
@@ -1289,6 +1392,19 @@ function questionMatchesQuery(question: ConversationQuestionDetail, query: strin
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function clearCopiedResetTimer(timerRef: { current: number | null }) {
+  if (timerRef.current === null) return;
+  window.clearTimeout(timerRef.current);
+  timerRef.current = null;
+}
+
+async function writeClipboardText(value: string) {
+  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+    throw new Error("Clipboard API is unavailable");
+  }
+  await navigator.clipboard.writeText(value);
 }
 
 function formatConversationSyncSummary(

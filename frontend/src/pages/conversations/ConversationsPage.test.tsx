@@ -1,5 +1,8 @@
+/* @vitest-environment jsdom */
+
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ConversationContentCards,
   buildConversationContentBlocks,
@@ -21,10 +24,16 @@ import {
   AppSessionBrowser,
   groupConversationSessionsByApp,
   ConversationExportDialog,
+  loadAllConversationSessionPages,
   MarkdownContent,
   QuestionPreview,
   SessionQuestionWorkspace,
 } from "./ConversationsPage";
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("MarkdownContent", () => {
   it("renders markdown headings, lists, inline code, strong text, and code fences", () => {
@@ -104,6 +113,30 @@ describe("MarkdownContent", () => {
     expect(html).not.toContain("\\.");
   });
 
+  it("renders inline and display LaTeX math in markdown previews", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent
+        value={[
+          "Inline math supports \\(\\alpha + \\beta\\) and $E=mc^2$.",
+          "",
+          "$$",
+          "\\frac{a}{b} = c",
+          "$$",
+          "",
+          "\\[",
+          "\\int_0^1 x^2 dx",
+          "\\]",
+        ].join("\n")}
+      />,
+    );
+
+    expect(html.match(/data-latex-math="inline"/g)).toHaveLength(2);
+    expect(html.match(/data-latex-math="display"/g)).toHaveLength(2);
+    expect(html).toContain("katex");
+    expect(html).not.toContain("\\(\\alpha");
+    expect(html).not.toContain("$$");
+  });
+
   it("renders a question-based preview with markdown parts and turn split controls", () => {
     const html = renderToStaticMarkup(
       <QuestionPreview
@@ -149,6 +182,24 @@ describe("MarkdownContent", () => {
     ]);
     expect(groups[0].questionCount).toBe(1);
     expect(groups[1].turnCount).toBe(7);
+  });
+
+  it("loads every session page instead of only the first 100 records", async () => {
+    const allSessions = Array.from({ length: 153 }, (_, index) => ({
+      ...sessionDetail.session,
+      id: `session-${index + 1}`,
+      external_id: `external-${index + 1}`,
+      question_count: 1,
+      turn_count: 1,
+    }));
+    const listSessions = vi.fn(async ({ limit = 100, offset = 0 }) => allSessions.slice(offset, offset + limit));
+
+    const sessions = await loadAllConversationSessionPages(listSessions, null);
+
+    expect(sessions).toHaveLength(153);
+    expect(sessions[sessions.length - 1]?.id).toBe("session-153");
+    expect(listSessions).toHaveBeenCalledTimes(2);
+    expect(listSessions.mock.calls.map(([params]) => params.offset)).toEqual([0, 100]);
   });
 
   it("uses shared sticky split controls for session browsing", () => {
@@ -217,6 +268,135 @@ describe("MarkdownContent", () => {
     expect(commandOnlyHtml).not.toContain("tests passed");
     expect(commandOnlyHtml).not.toContain("completed");
     expect(commandOnlyHtml).not.toContain("退出码");
+  });
+
+  it("copies the raw text from a content card", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    render(
+      <ConversationContentCards
+        blocks={buildConversationContentBlocks(questionDetail.parts)}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "复制命令执行" }));
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("assetiweave-cli conversation sync --dry-run"),
+    );
+    expect(screen.getByRole("button", { name: "已复制" })).toBeTruthy();
+  });
+
+  it("copies user prompt text from the user question card", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    render(
+      <QuestionPreview
+        onExport={async () => undefined}
+        onSplit={async () => undefined}
+        outputRoot="/tmp/conversation-export"
+        question={questionDetail}
+        session={sessionDetail}
+        setOutputRoot={vi.fn()}
+        t={t}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "复制用户问题" })[0]);
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("AssetIWeave 如何同步对话记录？"),
+    );
+  });
+
+  it("preserves and restores line breaks in command result previews", () => {
+    const html = renderToStaticMarkup(
+      <ConversationContentCards
+        blocks={[
+          {
+            id: "result-with-file-matches",
+            role: "tool",
+            text: [
+              "Chunk ID: 5b951a Wall time: 0.0000 seconds Process exited with code 0 Output:",
+              "./specs/design.md:69:- App 快捷入口支持真实应用图标",
+              "./cli/internal/errlint/legacy_exit_test.go:23: got := summarizeBySymbol(violations)",
+              "./src-tauri/src/path_utils.rs:166: &[\"symbolic-ref\", \"--short\"]",
+            ].join(" "),
+            type: "result",
+          },
+        ]}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    expect(html).toContain("<pre");
+    expect(html).toContain("whitespace-pre-wrap");
+    expect(html).toContain("Output:\n./specs/design.md:69");
+    expect(html).toContain("\n./cli/internal/errlint/legacy_exit_test.go:23");
+    expect(html).toContain("\n./src-tauri/src/path_utils.rs:166");
+  });
+
+  it("collapses long command result previews with an expand-all action", () => {
+    render(
+      <ConversationContentCards
+        blocks={[
+          {
+            id: "long-result",
+            role: "tool",
+            text: ["line one", "line two", "line three", "line four"].join("\n"),
+            type: "result",
+          },
+        ]}
+        resultPreviewLineLimit={2}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByText((_content, element) =>
+      element?.tagName.toLowerCase() === "code" &&
+      element.textContent === "line one\nline two",
+    )).toBeTruthy();
+    expect(screen.queryByText(/line three/)).toBeNull();
+    expect(screen.getByText("显示 2 / 4 行")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "展开全部" }));
+
+    expect(screen.getByText((_content, element) =>
+      element?.tagName.toLowerCase() === "code" &&
+      element.textContent === "line one\nline two\nline three\nline four",
+    )).toBeTruthy();
+    expect(screen.getByText("显示 4 / 4 行")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "收起" })).toBeTruthy();
   });
 
   it("renders content switches as toolbar controls and cards for every supported type", () => {

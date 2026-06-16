@@ -1,4 +1,5 @@
 @import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+@import "katex/dist/katex.min.css";
 
 @tailwind base;
 @tailwind components;
@@ -177,6 +178,11 @@
   .conversation-readable .text-code-md {
     font-size: var(--conversation-code-font-size, var(--app-code-font-size, 13px));
     line-height: 1.55;
+  }
+
+  .conversation-readable .katex {
+    color: inherit;
+    font-size: 1em;
   }
 
   .asset-list-surface {

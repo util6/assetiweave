@@ -72,6 +72,9 @@ import {
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
   FONT_SIZE_STEP,
+  RESULT_PREVIEW_LINE_LIMIT_MAX,
+  RESULT_PREVIEW_LINE_LIMIT_MIN,
+  RESULT_PREVIEW_LINE_LIMIT_STEP,
   firstFontFamilyName,
   fontFamilyOptions,
   resolveFontFamilyCss,
@@ -914,6 +917,22 @@ export function GlobalSettingsDialog({
                     step={FONT_SIZE_STEP}
                     unit="px"
                     value={settings.conversations.codeFontSize}
+                  />
+                </SettingRow>
+                <SettingRow icon={<Gauge size={18} />} label={t("settings.conversation.resultPreviewLines")}>
+                  <RangeSettingControl
+                    label={t("settings.conversation.resultPreviewLines")}
+                    max={RESULT_PREVIEW_LINE_LIMIT_MAX}
+                    min={RESULT_PREVIEW_LINE_LIMIT_MIN}
+                    onChange={(value) =>
+                      updateSetting("conversations", {
+                        ...settings.conversations,
+                        resultPreviewLineLimit: value,
+                      })
+                    }
+                    step={RESULT_PREVIEW_LINE_LIMIT_STEP}
+                    unit={t("settings.unit.lines")}
+                    value={settings.conversations.resultPreviewLineLimit}
                   />
                 </SettingRow>
                 <SettingRow icon={<Columns3 size={18} />} label={t("settings.conversation.compactToolbar")}>
