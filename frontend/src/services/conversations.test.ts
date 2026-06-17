@@ -75,7 +75,11 @@ describe("conversation services", () => {
       searchConversationRecords({
         query: " deploy ",
         record_kind: "session",
+        project_path: "/Users/util6/code-space/assetiweave",
         content_types: ["question", "answer"],
+        since: "2026-01-01",
+        until: "2026-06-01T00:00:00Z",
+        timeline: true,
         limit: 25,
       }),
     ).resolves.toMatchObject({
@@ -86,7 +90,11 @@ describe("conversation services", () => {
       params: {
         query: "deploy",
         record_kind: "session",
+        project_path: "/Users/util6/code-space/assetiweave",
         content_types: ["question", "answer"],
+        since: "2026-01-01",
+        until: "2026-06-01T00:00:00Z",
+        timeline: true,
         limit: 25,
         offset: 0,
       },

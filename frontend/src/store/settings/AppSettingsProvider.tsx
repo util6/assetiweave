@@ -36,6 +36,7 @@ export type {
   AppSettings,
   AppSettingsStorageInfo,
   ConversationContentCardColorSettings,
+  DataBackupSettings,
   FontFallbackKind,
   FontFamilyPresetId,
   FontFamilyValue,
@@ -70,6 +71,7 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         setSettings(normalizeStoredSettings(file.settings));
         setStorageInfo({
+          ...defaultStorageInfo,
           configDir: file.config_dir,
           configPath: file.config_path,
           conversationAdapterDir: file.conversation_adapter_dir,
@@ -94,6 +96,7 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
     void saveAppSettings(settings)
       .then((file) => {
         setStorageInfo({
+          ...defaultStorageInfo,
           configDir: file.config_dir,
           configPath: file.config_path,
           conversationAdapterDir: file.conversation_adapter_dir,

@@ -11,4 +11,5 @@ pub(crate) struct AppState {
     pub(crate) allow_close: Arc<AtomicBool>,
     pub(crate) allow_exit: Arc<AtomicBool>,
     pub(crate) exit_prompt_open: Arc<AtomicBool>,
+    pub(crate) shutdown_sync_done: Arc<AtomicBool>,
 }

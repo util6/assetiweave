@@ -290,6 +290,20 @@ export type ConversationRecordKind = "session" | "web";
 
 export type ConversationSearchCardType = "question" | "answer" | "tool" | "command" | "code" | "result";
 
+export interface ConversationSearchScope {
+  record_kind: ConversationRecordKind;
+  adapter_id?: string | null;
+  source_id?: string | null;
+  project_path?: string | null;
+  query: string;
+  content_types: ConversationSearchCardType[];
+  since?: string | null;
+  until?: string | null;
+  timeline: boolean;
+  limit: number;
+  offset: number;
+}
+
 export interface ConversationSearchHit {
   session: ConversationSessionListItem;
   question_id: string;
@@ -306,6 +320,7 @@ export interface ConversationSearchHit {
 export interface ConversationSearchResult {
   query: string;
   record_kind: ConversationRecordKind;
+  scope?: ConversationSearchScope;
   total_count: number;
   hits: ConversationSearchHit[];
 }

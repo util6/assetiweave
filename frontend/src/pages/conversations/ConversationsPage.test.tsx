@@ -184,6 +184,39 @@ describe("MarkdownContent", () => {
     expect(groups[1].turnCount).toBe(7);
   });
 
+  it("groups app sessions by project folder before listing individual sessions", () => {
+    const groups = groupConversationSessionsByApp(adapters, [
+      {
+        ...sessionDetail.session,
+        id: "codex-1",
+        project_path: "/Users/util6/code-space/assetiweave",
+        question_count: 2,
+        turn_count: 5,
+      },
+      {
+        ...sessionDetail.session,
+        id: "codex-2",
+        project_path: "/Users/util6/code-space/assetiweave",
+        question_count: 3,
+        turn_count: 8,
+      },
+      {
+        ...sessionDetail.session,
+        id: "codex-no-project",
+        project_path: null,
+        question_count: 1,
+        turn_count: 1,
+      },
+    ]);
+
+    expect(groups[0].projectGroups.map((group) => [group.projectPath, group.sessions.length])).toEqual([
+      ["/Users/util6/code-space/assetiweave", 2],
+      [null, 1],
+    ]);
+    expect(groups[0].projectGroups[0].questionCount).toBe(5);
+    expect(groups[0].projectGroups[0].turnCount).toBe(13);
+  });
+
   it("loads every session page instead of only the first 100 records", async () => {
     const allSessions = Array.from({ length: 153 }, (_, index) => ({
       ...sessionDetail.session,
@@ -215,12 +248,16 @@ describe("MarkdownContent", () => {
           },
         ])}
         onAppSelect={vi.fn()}
+        onProjectSelect={vi.fn()}
         onSessionOpen={vi.fn()}
         selectedAppId="codex"
+        selectedProjectKey="/Users/util6/code-space/assetiweave"
         t={t}
       />,
     );
 
+    expect(html).toContain("项目文件夹");
+    expect(html).toContain("code-space/assetiweave");
     expect(html).toContain("水平浏览分栏");
     expect(html).toContain('role="scrollbar"');
     expect(html).toContain("sticky bottom-0");

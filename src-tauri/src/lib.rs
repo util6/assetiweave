@@ -3,7 +3,10 @@ mod backend;
 
 use crate::{
     adapters::{app_state::AppState, tauri::background_tasks::BackgroundTaskRegistry},
-    backend::{application::AppService, logs::write_startup_log, path_utils::app_db_path},
+    backend::{
+        application::AppService, data_backup::backup_database_from_settings,
+        logs::write_startup_log, path_utils::app_db_path,
+    },
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -84,7 +87,7 @@ pub fn run() {
                     return;
                 }
 
-                sync_before_close(&window_shutdown_db_path);
+                sync_before_close_once(&window_shutdown_db_path, &state.shutdown_sync_done);
             }
         })
         .manage(AppState {
@@ -94,6 +97,7 @@ pub fn run() {
             allow_close: Arc::new(AtomicBool::new(false)),
             allow_exit: Arc::new(AtomicBool::new(false)),
             exit_prompt_open: Arc::new(AtomicBool::new(false)),
+            shutdown_sync_done: Arc::new(AtomicBool::new(false)),
         })
         .invoke_handler(adapters::tauri::command_handler())
         .build(tauri::generate_context!())
@@ -135,9 +139,17 @@ pub fn run() {
                 return;
             }
 
-            sync_before_close(&app_shutdown_db_path);
+            sync_before_close_once(&app_shutdown_db_path, &state.shutdown_sync_done);
         }
     });
+}
+
+fn sync_before_close_once(db_path: &std::path::Path, shutdown_sync_done: &AtomicBool) {
+    if shutdown_sync_done.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    sync_before_close(db_path);
 }
 
 fn sync_before_close(db_path: &std::path::Path) {
@@ -149,6 +161,23 @@ fn sync_before_close(db_path: &std::path::Path) {
         }
         Err(error) => {
             eprintln!("failed to open AssetIWeave database before close: {error}");
+        }
+    }
+
+    match backup_database_from_settings(db_path) {
+        Ok(report) => {
+            if !report.errors.is_empty() {
+                let errors = report
+                    .errors
+                    .iter()
+                    .map(|error| format!("{}: {}", error.directory, error.message))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                eprintln!("AssetIWeave database backup completed with warnings: {errors}");
+            }
+        }
+        Err(error) => {
+            eprintln!("failed to back up AssetIWeave database before close: {error}");
         }
     }
 }

@@ -1,6 +1,10 @@
 package cmd
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -15,11 +19,368 @@ func newCmdConversation(f *cmdutil.Factory) *cobra.Command {
 	cmd.AddCommand(newCmdConversationAdapter(f))
 	cmd.AddCommand(newCmdConversationSource(f))
 	cmd.AddCommand(newCmdConversationSync(f))
+	cmd.AddCommand(newCmdConversationSearch(f))
 	cmd.AddCommand(newCmdConversationSession(f))
 	cmd.AddCommand(newCmdConversationWebRecord(f))
 	cmd.AddCommand(newCmdConversationQuestion(f))
 	cmd.AddCommand(newCmdConversationWeb(f))
 	return cmd
+}
+
+func newCmdConversationSearch(f *cmdutil.Factory) *cobra.Command {
+	var recordKind, adapterID, sourceID, projectPath, query, since, until, format string
+	var contentTypes, cardTypes []string
+	var currentProject, timeline bool
+	var limit, offset int
+	cmd := &cobra.Command{
+		Use:   "search",
+		Short: "Search conversation cards for AI memory retrieval",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resolvedProjectPath := projectPath
+			if currentProject {
+				wd, err := os.Getwd()
+				if err != nil {
+					return err
+				}
+				resolvedProjectPath = wd
+			}
+			resolvedContentTypes := append([]string{}, contentTypes...)
+			resolvedContentTypes = append(resolvedContentTypes, cardTypes...)
+			params := map[string]any{
+				"record_kind":   recordKind,
+				"adapter_id":    nil,
+				"source_id":     nil,
+				"project_path":  nil,
+				"query":         query,
+				"content_types": resolvedContentTypes,
+				"since":         nil,
+				"until":         nil,
+				"timeline":      timeline,
+				"limit":         limit,
+				"offset":        offset,
+			}
+			if adapterID != "" {
+				params["adapter_id"] = adapterID
+			}
+			if sourceID != "" {
+				params["source_id"] = sourceID
+			}
+			if resolvedProjectPath != "" {
+				params["project_path"] = resolvedProjectPath
+			}
+			if since != "" {
+				params["since"] = since
+			}
+			if until != "" {
+				params["until"] = until
+			}
+			switch format {
+			case "json":
+				return callAndPrint(cmd, f, schema.MethodConversationSearch, params)
+			case "compact-json", "markdown", "prompt":
+				result, err := callEngine(cmd, f, schema.MethodConversationSearch, params)
+				if err != nil {
+					return err
+				}
+				parsed, err := decodeConversationSearchResult(result.Data)
+				if err != nil {
+					return err
+				}
+				parsed.ensureScope(params)
+				switch format {
+				case "compact-json":
+					if result.Meta == nil {
+						output.WriteSuccess(f.IOStreams.Out, parsed.compact())
+					} else {
+						output.WriteSuccessWithMeta(f.IOStreams.Out, parsed.compact(), result.Meta)
+					}
+				case "markdown":
+					_, _ = fmt.Fprint(f.IOStreams.Out, parsed.markdown())
+				case "prompt":
+					_, _ = fmt.Fprint(f.IOStreams.Out, parsed.prompt())
+				}
+				return nil
+			default:
+				return fmt.Errorf("unsupported conversation search format %q: use json, compact-json, markdown, or prompt", format)
+			}
+		},
+	}
+	cmd.Flags().StringVar(&query, "query", "", "search query")
+	cmd.Flags().StringVar(&recordKind, "record-kind", "session", "conversation record kind: session or web")
+	cmd.Flags().StringVar(&adapterID, "adapter", "", "adapter id filter")
+	cmd.Flags().StringVar(&sourceID, "source", "", "source id filter")
+	cmd.Flags().StringVar(&projectPath, "project", "", "project path filter")
+	cmd.Flags().BoolVar(&currentProject, "current-project", false, "use the current working directory as the project path filter")
+	cmd.Flags().StringArrayVar(&contentTypes, "type", []string{}, "content card type filter; repeat for question, answer, tool, command, code, or result")
+	cmd.Flags().StringArrayVar(&cardTypes, "card-type", []string{}, "alias of --type")
+	cmd.Flags().StringVar(&since, "since", "", "only include sessions on or after this RFC3339 timestamp or YYYY-MM-DD date")
+	cmd.Flags().StringVar(&until, "until", "", "only include sessions on or before this RFC3339 timestamp or YYYY-MM-DD date")
+	cmd.Flags().BoolVar(&timeline, "timeline", false, "return hits in chronological session order")
+	cmd.Flags().IntVar(&limit, "limit", 50, "maximum hits")
+	cmd.Flags().IntVar(&offset, "offset", 0, "pagination offset")
+	cmd.Flags().StringVar(&format, "format", "json", "output format: json, compact-json, markdown, or prompt")
+	_ = cmd.MarkFlagRequired("query")
+	return cmd
+}
+
+type conversationSearchScope struct {
+	RecordKind   string   `json:"record_kind"`
+	AdapterID    *string  `json:"adapter_id"`
+	SourceID     *string  `json:"source_id"`
+	ProjectPath  *string  `json:"project_path"`
+	Query        string   `json:"query"`
+	ContentTypes []string `json:"content_types"`
+	Since        *string  `json:"since"`
+	Until        *string  `json:"until"`
+	Timeline     bool     `json:"timeline"`
+	Limit        int      `json:"limit"`
+	Offset       int      `json:"offset"`
+}
+
+type conversationSearchResult struct {
+	Query      string                   `json:"query"`
+	RecordKind string                   `json:"record_kind"`
+	Scope      *conversationSearchScope `json:"scope,omitempty"`
+	TotalCount int                      `json:"total_count"`
+	Hits       []conversationSearchHit  `json:"hits"`
+}
+
+type conversationSearchHit struct {
+	Session       conversationSearchSessionItem `json:"session"`
+	QuestionID    string                        `json:"question_id"`
+	QuestionIndex int                           `json:"question_index"`
+	QuestionTitle string                        `json:"question_title"`
+	TurnID        *string                       `json:"turn_id"`
+	PartID        *string                       `json:"part_id"`
+	BlockID       string                        `json:"block_id"`
+	CardType      string                        `json:"card_type"`
+	Snippet       string                        `json:"snippet"`
+	Score         int                           `json:"score"`
+}
+
+type conversationSearchSessionItem struct {
+	conversationSearchSession
+	QuestionCount int `json:"question_count"`
+	TurnCount     int `json:"turn_count"`
+}
+
+type conversationSearchSession struct {
+	ID          string  `json:"id"`
+	SourceID    string  `json:"source_id"`
+	AdapterID   string  `json:"adapter_id"`
+	ExternalID  string  `json:"external_id"`
+	Title       string  `json:"title"`
+	ProjectPath *string `json:"project_path"`
+	StartedAt   *string `json:"started_at"`
+	UpdatedAt   *string `json:"updated_at"`
+	ImportedAt  string  `json:"imported_at"`
+}
+
+type compactConversationSearchResult struct {
+	Query      string                         `json:"query"`
+	RecordKind string                         `json:"record_kind"`
+	Scope      conversationSearchScope        `json:"scope"`
+	TotalCount int                            `json:"total_count"`
+	Hits       []compactConversationSearchHit `json:"hits"`
+}
+
+type compactConversationSearchHit struct {
+	EventTime     string  `json:"event_time,omitempty"`
+	SessionID     string  `json:"session_id"`
+	SessionTitle  string  `json:"session_title"`
+	ProjectPath   *string `json:"project_path"`
+	QuestionID    string  `json:"question_id"`
+	QuestionIndex int     `json:"question_index"`
+	QuestionTitle string  `json:"question_title"`
+	TurnID        *string `json:"turn_id"`
+	PartID        *string `json:"part_id"`
+	BlockID       string  `json:"block_id"`
+	CardType      string  `json:"card_type"`
+	Snippet       string  `json:"snippet"`
+	Score         int     `json:"score"`
+}
+
+func decodeConversationSearchResult(data json.RawMessage) (*conversationSearchResult, error) {
+	var result conversationSearchResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("decode conversation search result: %w", err)
+	}
+	return &result, nil
+}
+
+func (r *conversationSearchResult) ensureScope(params map[string]any) {
+	if r.Scope != nil {
+		return
+	}
+	r.Scope = &conversationSearchScope{
+		RecordKind:   stringParam(params, "record_kind"),
+		AdapterID:    optionalStringParam(params, "adapter_id"),
+		SourceID:     optionalStringParam(params, "source_id"),
+		ProjectPath:  optionalStringParam(params, "project_path"),
+		Query:        stringParam(params, "query"),
+		ContentTypes: stringSliceParam(params, "content_types"),
+		Since:        optionalStringParam(params, "since"),
+		Until:        optionalStringParam(params, "until"),
+		Timeline:     boolParam(params, "timeline"),
+		Limit:        intParam(params, "limit"),
+		Offset:       intParam(params, "offset"),
+	}
+}
+
+func (r conversationSearchResult) compact() compactConversationSearchResult {
+	scope := conversationSearchScope{}
+	if r.Scope != nil {
+		scope = *r.Scope
+	}
+	hits := make([]compactConversationSearchHit, 0, len(r.Hits))
+	for _, hit := range r.Hits {
+		hits = append(hits, compactConversationSearchHit{
+			EventTime:     hit.eventTime(),
+			SessionID:     hit.Session.ID,
+			SessionTitle:  hit.Session.Title,
+			ProjectPath:   hit.Session.ProjectPath,
+			QuestionID:    hit.QuestionID,
+			QuestionIndex: hit.QuestionIndex,
+			QuestionTitle: hit.QuestionTitle,
+			TurnID:        hit.TurnID,
+			PartID:        hit.PartID,
+			BlockID:       hit.BlockID,
+			CardType:      hit.CardType,
+			Snippet:       hit.Snippet,
+			Score:         hit.Score,
+		})
+	}
+	return compactConversationSearchResult{
+		Query:      r.Query,
+		RecordKind: r.RecordKind,
+		Scope:      scope,
+		TotalCount: r.TotalCount,
+		Hits:       hits,
+	}
+}
+
+func (r conversationSearchResult) markdown() string {
+	var b strings.Builder
+	b.WriteString("# Conversation Search Evidence\n\n")
+	b.WriteString("## Search Scope\n")
+	if r.Scope != nil {
+		writeMarkdownKV(&b, "Query", r.Scope.Query)
+		writeMarkdownKV(&b, "Record kind", r.Scope.RecordKind)
+		writeMarkdownOptionalKV(&b, "Adapter", r.Scope.AdapterID)
+		writeMarkdownOptionalKV(&b, "Source", r.Scope.SourceID)
+		writeMarkdownOptionalKV(&b, "Project", r.Scope.ProjectPath)
+		if len(r.Scope.ContentTypes) == 0 {
+			writeMarkdownKV(&b, "Card types", "all")
+		} else {
+			writeMarkdownKV(&b, "Card types", strings.Join(r.Scope.ContentTypes, ", "))
+		}
+		writeMarkdownOptionalKV(&b, "Since", r.Scope.Since)
+		writeMarkdownOptionalKV(&b, "Until", r.Scope.Until)
+		if r.Scope.Timeline {
+			writeMarkdownKV(&b, "Ordering", "timeline, oldest session first")
+		} else {
+			writeMarkdownKV(&b, "Ordering", "default, newest updated session first")
+		}
+		writeMarkdownKV(&b, "Returned", fmt.Sprintf("%d of %d", len(r.Hits), r.TotalCount))
+	} else {
+		writeMarkdownKV(&b, "Query", r.Query)
+		writeMarkdownKV(&b, "Record kind", r.RecordKind)
+		writeMarkdownKV(&b, "Returned", fmt.Sprintf("%d of %d", len(r.Hits), r.TotalCount))
+	}
+	b.WriteString("\n## Hits\n")
+	if len(r.Hits) == 0 {
+		b.WriteString("No matching cards were returned.\n")
+		return b.String()
+	}
+	for index, hit := range r.Hits {
+		b.WriteString(fmt.Sprintf("\n### %d. %s - %s\n", index+1, hit.CardType, hit.Session.Title))
+		writeMarkdownKV(&b, "Time", hit.eventTime())
+		writeMarkdownKV(&b, "Session", hit.Session.ID)
+		writeMarkdownOptionalKV(&b, "Project", hit.Session.ProjectPath)
+		writeMarkdownKV(&b, "Question", fmt.Sprintf("#%d %s", hit.QuestionIndex, hit.QuestionTitle))
+		writeMarkdownKV(&b, "Question ID", hit.QuestionID)
+		writeMarkdownOptionalKV(&b, "Turn ID", hit.TurnID)
+		writeMarkdownOptionalKV(&b, "Part ID", hit.PartID)
+		writeMarkdownKV(&b, "Block ID", hit.BlockID)
+		writeMarkdownKV(&b, "Score", fmt.Sprintf("%d", hit.Score))
+		b.WriteString("\n")
+		b.WriteString(blockquote(hit.Snippet))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func (r conversationSearchResult) prompt() string {
+	return "# Prompt\n\n" +
+		"Use only the search evidence below to answer the user's question. " +
+		"Infer topics, preferences, and constraints yourself; do not assume that the CLI has already clustered them. " +
+		"When citing evidence, reference session_id, question_id, and block_id. " +
+		"If the evidence is insufficient, state the gap instead of inventing context.\n\n" +
+		r.markdown()
+}
+
+func (h conversationSearchHit) eventTime() string {
+	if h.Session.StartedAt != nil && *h.Session.StartedAt != "" {
+		return *h.Session.StartedAt
+	}
+	if h.Session.UpdatedAt != nil && *h.Session.UpdatedAt != "" {
+		return *h.Session.UpdatedAt
+	}
+	return h.Session.ImportedAt
+}
+
+func writeMarkdownKV(b *strings.Builder, key, value string) {
+	if strings.TrimSpace(value) == "" {
+		value = "all"
+	}
+	b.WriteString(fmt.Sprintf("- %s: `%s`\n", key, value))
+}
+
+func writeMarkdownOptionalKV(b *strings.Builder, key string, value *string) {
+	if value == nil || strings.TrimSpace(*value) == "" {
+		writeMarkdownKV(b, key, "all")
+		return
+	}
+	writeMarkdownKV(b, key, *value)
+}
+
+func blockquote(value string) string {
+	lines := strings.Split(strings.TrimSpace(value), "\n")
+	for i, line := range lines {
+		lines[i] = "> " + line
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func stringParam(params map[string]any, key string) string {
+	value, _ := params[key].(string)
+	return value
+}
+
+func optionalStringParam(params map[string]any, key string) *string {
+	value, ok := params[key].(string)
+	if !ok || value == "" {
+		return nil
+	}
+	return &value
+}
+
+func stringSliceParam(params map[string]any, key string) []string {
+	values, ok := params[key].([]string)
+	if !ok {
+		return []string{}
+	}
+	return values
+}
+
+func boolParam(params map[string]any, key string) bool {
+	value, _ := params[key].(bool)
+	return value
+}
+
+func intParam(params map[string]any, key string) int {
+	value, _ := params[key].(int)
+	return value
 }
 
 func newCmdConversationAdapter(f *cmdutil.Factory) *cobra.Command {

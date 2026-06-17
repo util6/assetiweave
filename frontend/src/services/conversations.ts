@@ -7,6 +7,7 @@ import type {
   ConversationSearchCardType,
   ConversationSearchHit,
   ConversationSearchResult,
+  ConversationSearchScope,
   ConversationSessionDetail,
   ConversationSessionListItem,
   ConversationSource,
@@ -31,8 +32,12 @@ export interface ConversationSearchParams {
   record_kind?: ConversationRecordKind;
   adapter_id?: string | null;
   source_id?: string | null;
+  project_path?: string | null;
   query: string;
   content_types?: ConversationSearchCardType[];
+  since?: string | null;
+  until?: string | null;
+  timeline?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -255,9 +260,21 @@ export async function getWebRecordSession(sessionId: string): Promise<Conversati
 export async function searchConversationRecords(params: ConversationSearchParams): Promise<ConversationSearchResult> {
   const trimmedQuery = params.query.trim();
   if (!trimmedQuery) {
+    const recordKind = params.record_kind ?? "session";
+    const limit = params.limit ?? 50;
+    const offset = params.offset ?? 0;
     return {
       query: "",
-      record_kind: params.record_kind ?? "session",
+      record_kind: recordKind,
+      scope: conversationSearchScope({
+        ...params,
+        query: "",
+        record_kind: recordKind,
+        content_types: params.content_types ?? [],
+        limit,
+        offset,
+        timeline: params.timeline ?? false,
+      }),
       total_count: 0,
       hits: [],
     };
@@ -268,6 +285,9 @@ export async function searchConversationRecords(params: ConversationSearchParams
     query: trimmedQuery,
     record_kind: params.record_kind ?? "session",
     content_types: params.content_types ?? [],
+    since: params.since ?? null,
+    until: params.until ?? null,
+    timeline: params.timeline ?? false,
     limit: params.limit ?? 50,
     offset: params.offset ?? 0,
   };
@@ -421,10 +441,28 @@ export async function exportWebRecordSession(
   }
 }
 
-function fallbackConversationSearch(params: Required<Pick<ConversationSearchParams, "query" | "record_kind" | "content_types" | "limit" | "offset">> & ConversationSearchParams): ConversationSearchResult {
+function fallbackConversationSearch(params: Required<Pick<ConversationSearchParams, "query" | "record_kind" | "content_types" | "limit" | "offset" | "timeline">> & ConversationSearchParams): ConversationSearchResult {
   const detail = params.record_kind === "web" ? fallbackWebSessionDetail : fallbackSessionDetail;
   const session = params.record_kind === "web" ? fallbackWebSessions[0] : fallbackSessions[0];
   const needle = params.query.trim().toLowerCase();
+  if (params.project_path && session.project_path !== params.project_path) {
+    return {
+      query: params.query,
+      record_kind: params.record_kind,
+      scope: conversationSearchScope(params),
+      total_count: 0,
+      hits: [],
+    };
+  }
+  if (!conversationSessionWithinSearchTime(session, params.since, params.until)) {
+    return {
+      query: params.query,
+      record_kind: params.record_kind,
+      scope: conversationSearchScope(params),
+      total_count: 0,
+      hits: [],
+    };
+  }
   const allowedTypes = new Set(params.content_types);
   const hits: ConversationSearchHit[] = [];
 
@@ -466,9 +504,41 @@ function fallbackConversationSearch(params: Required<Pick<ConversationSearchPara
   return {
     query: params.query,
     record_kind: params.record_kind,
+    scope: conversationSearchScope(params),
     total_count: hits.length,
     hits: hits.slice(params.offset, params.offset + params.limit),
   };
+}
+
+function conversationSearchScope(params: Required<Pick<ConversationSearchParams, "query" | "record_kind" | "content_types" | "limit" | "offset" | "timeline">> & ConversationSearchParams): ConversationSearchScope {
+  return {
+    record_kind: params.record_kind,
+    adapter_id: params.adapter_id ?? null,
+    source_id: params.source_id ?? null,
+    project_path: params.project_path ?? null,
+    query: params.query,
+    content_types: params.content_types,
+    since: params.since ?? null,
+    until: params.until ?? null,
+    timeline: params.timeline,
+    limit: params.limit,
+    offset: params.offset,
+  };
+}
+
+function conversationSessionWithinSearchTime(session: ConversationSessionListItem, since?: string | null, until?: string | null) {
+  if (!since && !until) return true;
+  const sessionTime = Date.parse(session.started_at ?? session.updated_at ?? session.imported_at);
+  if (!Number.isFinite(sessionTime)) return false;
+  const sinceTime = since ? Date.parse(searchDateBound(since, "start")) : Number.NEGATIVE_INFINITY;
+  const untilTime = until ? Date.parse(searchDateBound(until, "end")) : Number.POSITIVE_INFINITY;
+  return sessionTime >= sinceTime && sessionTime <= untilTime;
+}
+
+function searchDateBound(value: string, bound: "start" | "end") {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? `${value}T${bound === "start" ? "00:00:00.000Z" : "23:59:59.999Z"}`
+    : value;
 }
 
 function pushFallbackHit(

@@ -23,6 +23,17 @@ Use Node 22, pnpm 10, Go 1.24, and the stable Rust toolchain.
 
 Use two-space indentation, strict TypeScript, semicolons, and double quotes. React components and types use `PascalCase`; functions, variables, and hooks use `camelCase`, with hooks prefixed by `use`. Format Rust with `rustfmt` and Go with `gofmt`. UI colors, borders, and shadows must use semantic theme tokens or foundation components, not raw palette values. Extend the current architecture instead of creating parallel `legacy`, `new`, or `v2` trees.
 
+## Product & Frontend Preferences
+
+Use cockpit-tools, VS Code, and Codex App as fast product anchors when starting new UI work: quiet, dense, operational, and built for repeated use. Treat those as style references, not feature requirements.
+
+- Prefer workspace-style layouts with side navigation, top/sub navigation, toolbars, and Finder-like column or list views. Long lists must keep critical controls such as splitters, footers, and toolbar actions reachable without scrolling to the bottom.
+- Organize complex records into progressive levels instead of flat lists. Conversation flows should support paths like app -> project folder -> session -> question -> card, so users can move from overview to exact content.
+- Keep reusable UI surfaces consistent. Toolbars, dialogs, forms, cards, empty states, settings rows, and detail panels should share foundation/common components and one design language instead of per-page variants.
+- Persist durable user preferences in the settings system instead of hard-coding them. Theme, typography, app icons/colors, card colors, preview folding, backup directories, and similar long-lived choices should be configurable and validated.
+- Design for power-user workflows: batch selection, bulk mount/unmount, import/export, filtering, syncing, backup, recovery, and review. Avoid single-item-only flows when the domain naturally operates on sets.
+- Important app operations should be coverable by the Go CLI through the Rust Engine. Do not let the frontend become the only surface for a workflow that AI agents or scripts need to drive.
+
 ## Testing Guidelines
 
 Name frontend tests `*.test.ts(x)` and Go tests `*_test.go`; keep Rust unit tests near the module under test. Add regression coverage for behavior changes. Use a temporary `ASSETIWEAVE_DB_PATH` for tests that could alter local application state.

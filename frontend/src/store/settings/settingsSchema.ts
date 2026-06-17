@@ -95,6 +95,10 @@ export interface ConversationContentCardColorSettings {
   tool: string;
 }
 
+export interface DataBackupSettings {
+  customDirectory: string;
+}
+
 export const DEFAULT_CONVERSATION_CONTENT_CARD_COLORS: ConversationContentCardColorSettings = {
   answer: "#b99545",
   code: "#4f8bd9",
@@ -106,6 +110,7 @@ export const DEFAULT_CONVERSATION_CONTENT_CARD_COLORS: ConversationContentCardCo
 export interface AppSettings {
   columnMinWidth: number;
   confirmBeforeDeploy: boolean;
+  dataBackup: DataBackupSettings;
   density: InterfaceDensity;
   reduceMotion: boolean;
   showStartupNotification: boolean;
@@ -118,11 +123,15 @@ export interface AppSettingsStorageInfo {
   configDir: string;
   configPath: string;
   conversationAdapterDir: string;
+  defaultDataBackupDir: string;
 }
 
 export const defaultSettings: AppSettings = {
   columnMinWidth: DEFAULT_COLUMN_MIN_WIDTH,
   confirmBeforeDeploy: true,
+  dataBackup: {
+    customDirectory: "",
+  },
   density: "comfortable",
   reduceMotion: false,
   showStartupNotification: true,
@@ -151,6 +160,7 @@ export const defaultStorageInfo: AppSettingsStorageInfo = {
   configDir: "~/.assetiweave",
   configPath: "~/.assetiweave/config.json",
   conversationAdapterDir: "~/.assetiweave/conversation-adapters",
+  defaultDataBackupDir: "~/.assetiweave/library/database-backups",
 };
 
 export function normalizeStoredSettings(value: unknown): AppSettings {
@@ -168,6 +178,7 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
       typeof stored.confirmBeforeDeploy === "boolean"
         ? stored.confirmBeforeDeploy
         : defaultSettings.confirmBeforeDeploy,
+    dataBackup: normalizeDataBackupSettings(stored.dataBackup),
     density: stored.density === "compact" ? "compact" : defaultSettings.density,
     reduceMotion:
       typeof stored.reduceMotion === "boolean"
@@ -180,6 +191,13 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
     theme: normalizeThemeId(stored.theme),
     typography,
     conversations,
+  };
+}
+
+function normalizeDataBackupSettings(value: unknown): DataBackupSettings {
+  const stored = isRecord(value) ? (value as Partial<DataBackupSettings>) : {};
+  return {
+    customDirectory: normalizeDirectorySetting(stored.customDirectory),
   };
 }
 
@@ -290,6 +308,15 @@ function normalizeResultPreviewLineLimit(value: unknown) {
     RESULT_PREVIEW_LINE_LIMIT_MIN,
     RESULT_PREVIEW_LINE_LIMIT_MAX,
   );
+}
+
+function normalizeDirectorySetting(value: unknown) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length <= 4096 ? trimmed : "";
 }
 
 export function resolveFontFamilyCss(value: FontFamilyValue, fallback: FontFallbackKind = "sans") {

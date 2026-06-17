@@ -33,6 +33,27 @@ describe("AppSettingsProvider", () => {
 
     expect(settings.typography).toEqual(defaultSettings.typography);
     expect(settings.conversations).toEqual(defaultSettings.conversations);
+    expect(settings.dataBackup).toEqual(defaultSettings.dataBackup);
+  });
+
+  it("preserves a configured database backup directory", () => {
+    const settings = normalizeStoredSettings({
+      dataBackup: {
+        customDirectory: "  /Volumes/Asset Backups  ",
+      },
+    });
+
+    expect(settings.dataBackup.customDirectory).toBe("/Volumes/Asset Backups");
+  });
+
+  it("drops invalid database backup directory values", () => {
+    const settings = normalizeStoredSettings({
+      dataBackup: {
+        customDirectory: "x".repeat(4097),
+      },
+    });
+
+    expect(settings.dataBackup.customDirectory).toBe("");
   });
 
   it("preserves custom page-level typography overrides", () => {

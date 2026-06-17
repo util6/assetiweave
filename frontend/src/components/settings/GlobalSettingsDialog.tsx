@@ -23,6 +23,7 @@ import {
   Columns3,
   ChevronDown,
   ChevronRight,
+  Database,
   FileJson,
   FolderOpen,
   Gauge,
@@ -61,7 +62,7 @@ import { useI18n, type Translator } from "../../i18n/I18nProvider";
 import { headerTabLabel, railLabel, subNavLabel } from "../../i18n/navigation";
 import type { Locale, TranslationKey } from "../../i18n/messages";
 import type { HeaderTabItem, LocalizedNavigationLabels, NavigationModel, RailMenuItem, SubNavItem } from "../../router/types";
-import { getSkillBackupSettings, revealPath } from "../../services/catalog";
+import { getSkillBackupSettings, revealPath, selectTargetDirectory } from "../../services/catalog";
 import type { ThemeId } from "../../theme/schema";
 import { isHexColor } from "../../theme/colorValidation";
 import { themeOptions } from "../../theme/themes";
@@ -87,6 +88,7 @@ import {
   type SettingsPanelId,
 } from "../../store/settings/AppSettingsProvider";
 import type { AppShortcut, AppShortcutIconSvg, SkillBackupSettings } from "../../types";
+import { abbreviateHomePath } from "../../utils/path";
 
 interface SettingsPanelConfig {
   id: SettingsPanelId;
@@ -375,6 +377,25 @@ export function GlobalSettingsDialog({
         return shortcut ? [shortcut] : [];
       }),
     );
+  }
+
+  async function chooseDataBackupDirectory() {
+    const selected = await selectTargetDirectory(t("settings.storage.pickDataBackupDir"));
+    if (!selected) {
+      return;
+    }
+
+    updateSetting("dataBackup", {
+      ...settings.dataBackup,
+      customDirectory: selected,
+    });
+  }
+
+  function clearDataBackupDirectory() {
+    updateSetting("dataBackup", {
+      ...settings.dataBackup,
+      customDirectory: "",
+    });
   }
 
   function openShortcutIconEditor(shortcut: AppShortcut) {
@@ -700,6 +721,20 @@ export function GlobalSettingsDialog({
                   onOpen={() => void revealPath(storageInfo.configDir)}
                   openLabel={t("settings.storage.open")}
                   value={storageInfo.configDir}
+                />
+                <SettingsPathRow
+                  icon={<Database size={18} />}
+                  label={t("settings.storage.defaultDataBackupDir")}
+                  onOpen={() => void revealPath(storageInfo.defaultDataBackupDir)}
+                  openLabel={t("settings.storage.open")}
+                  value={storageInfo.defaultDataBackupDir}
+                />
+                <DataBackupDirectoryRow
+                  customDirectory={settings.dataBackup.customDirectory}
+                  onClear={clearDataBackupDirectory}
+                  onOpen={() => void revealPath(settings.dataBackup.customDirectory)}
+                  onPick={() => void chooseDataBackupDirectory()}
+                  t={t}
                 />
                 <SettingsPathRow
                   icon={<Puzzle size={18} />}
@@ -1417,6 +1452,63 @@ function SettingsPathRow({
           <FolderOpen size={15} />
           <span>{openLabel}</span>
         </Button>
+      </div>
+    </SettingRow>
+  );
+}
+
+function DataBackupDirectoryRow({
+  customDirectory,
+  onClear,
+  onOpen,
+  onPick,
+  t,
+}: {
+  customDirectory: string;
+  onClear: () => void;
+  onOpen: () => void;
+  onPick: () => void;
+  t: Translator;
+}) {
+  const hasCustomDirectory = customDirectory.trim().length > 0;
+  const displayPath = hasCustomDirectory
+    ? abbreviateHomePath(customDirectory)
+    : t("settings.storage.dataBackupDirEmpty");
+
+  return (
+    <SettingRow icon={<Database size={18} />} label={t("settings.storage.customDataBackupDir")}>
+      <div className="flex w-[min(38rem,52vw)] min-w-0 items-center gap-2">
+        <span
+          className={clsx(
+            "min-w-0 flex-1 truncate rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 text-code-md text-on-surface-variant",
+            !hasCustomDirectory && "font-sans",
+          )}
+          title={displayPath}
+        >
+          {displayPath}
+        </span>
+        {hasCustomDirectory && (
+          <Button onClick={onOpen} type="button" variant="outline">
+            <FolderOpen size={15} />
+            <span>{t("settings.storage.open")}</span>
+          </Button>
+        )}
+        <Button onClick={onPick} type="button" variant="outline">
+          <FolderOpen size={15} />
+          <span>{t("settings.storage.chooseDirectory")}</span>
+        </Button>
+        {hasCustomDirectory && (
+          <Button
+            aria-label={t("settings.storage.clearDataBackupDir")}
+            onClick={onClear}
+            size="icon"
+            title={t("settings.storage.clearDataBackupDir")}
+            type="button"
+            variant="ghost"
+          >
+            <X size={15} />
+          </Button>
+        )}
       </div>
     </SettingRow>
   );

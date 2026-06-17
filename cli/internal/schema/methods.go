@@ -43,6 +43,7 @@ const (
 	MethodConversationSourceDisable     = "conversation.source.disable"
 	MethodConversationSync              = "conversation.sync"
 	MethodConversationSessionList       = "conversation.session.list"
+	MethodConversationSearch            = "conversation.search"
 	MethodConversationSessionGet        = "conversation.session.get"
 	MethodConversationSessionExport     = "conversation.session.export"
 	MethodConversationWebRecordList     = "conversation.web-record.list"

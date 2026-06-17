@@ -11,7 +11,7 @@ use crate::backend::models::{
     ConversationSession, ConversationSource, ConversationSourceKind, ConversationSyncRun,
     ConversationSyncStatus, ConversationTurn, NormalizedConversationSession,
 };
-use chrono::Utc;
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -430,16 +430,30 @@ pub(crate) fn search_conversation_cards(
     record_kind: ConversationRecordKind,
     adapter_id: Option<&str>,
     source_id: Option<&str>,
+    project_path: Option<&str>,
     query: &str,
     content_types: &[ConversationSearchCardType],
+    since: Option<&str>,
+    until: Option<&str>,
+    timeline: bool,
     limit: usize,
     offset: usize,
 ) -> AppResult<ConversationSearchPage> {
     let needle = normalize_query(Some(query))
         .ok_or_else(|| "conversation search query is required".to_string())?;
+    let project_path = normalize_project_path(project_path);
+    let since = parse_search_time_bound(since, SearchTimeBound::Since)?;
+    let until = parse_search_time_bound(until, SearchTimeBound::Until)?;
     let allowed_types = content_types.iter().copied().collect::<BTreeSet<_>>();
     let tables = record_kind.tables();
-    let sessions = load_record_sessions(conn, tables)?;
+    let mut sessions = load_record_sessions(conn, tables)?;
+    if timeline {
+        sessions.sort_by(|left, right| {
+            conversation_session_search_time(left)
+                .cmp(&conversation_session_search_time(right))
+                .then_with(|| left.title.cmp(&right.title))
+        });
+    }
     let mut hits = Vec::new();
 
     for session in sessions {
@@ -448,6 +462,27 @@ pub(crate) fn search_conversation_cards(
         }
         if source_id.is_some_and(|value| value != session.source_id) {
             continue;
+        }
+        if let Some(project_path) = project_path.as_deref() {
+            let session_project = normalize_project_path(session.project_path.as_deref());
+            if session_project.as_deref() != Some(project_path) {
+                continue;
+            }
+        }
+        if since.is_some() || until.is_some() {
+            let Some(session_time) = conversation_session_search_time(&session) else {
+                continue;
+            };
+            if let Some(since) = since.as_ref() {
+                if &session_time < since {
+                    continue;
+                }
+            }
+            if let Some(until) = until.as_ref() {
+                if &session_time > until {
+                    continue;
+                }
+            }
         }
 
         let session_item = ConversationSessionListItem {
@@ -1526,6 +1561,53 @@ fn load_record_sessions(
     rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
 }
 
+#[derive(Clone, Copy)]
+enum SearchTimeBound {
+    Since,
+    Until,
+}
+
+fn parse_search_time_bound(
+    value: Option<&str>,
+    bound: SearchTimeBound,
+) -> AppResult<Option<DateTime<Utc>>> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if let Ok(parsed) = DateTime::parse_from_rfc3339(value) {
+        return Ok(Some(parsed.with_timezone(&Utc)));
+    }
+    if let Ok(date) = NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        let time = match bound {
+            SearchTimeBound::Since => NaiveTime::from_hms_opt(0, 0, 0),
+            SearchTimeBound::Until => NaiveTime::from_hms_nano_opt(23, 59, 59, 999_999_999),
+        }
+        .expect("valid search time bound");
+        return Ok(Some(DateTime::from_naive_utc_and_offset(
+            date.and_time(time),
+            Utc,
+        )));
+    }
+    Err(format!(
+        "invalid conversation search time {value:?}; use RFC3339 or YYYY-MM-DD"
+    ))
+}
+
+fn conversation_session_search_time(session: &ConversationSession) -> Option<DateTime<Utc>> {
+    session
+        .started_at
+        .as_deref()
+        .and_then(parse_rfc3339_utc)
+        .or_else(|| session.updated_at.as_deref().and_then(parse_rfc3339_utc))
+        .or_else(|| parse_rfc3339_utc(&session.imported_at))
+}
+
+fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value.trim())
+        .ok()
+        .map(|value| value.with_timezone(&Utc))
+}
+
 fn list_record_questions(
     conn: &Connection,
     tables: ConversationRecordTables,
@@ -2220,6 +2302,13 @@ fn normalize_query(query: Option<&str>) -> Option<String> {
         .map(str::to_lowercase)
 }
 
+fn normalize_project_path(project_path: Option<&str>) -> Option<String> {
+    project_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 fn first_line(text: &str) -> String {
     let line = text
         .lines()
@@ -2565,8 +2654,12 @@ mod tests {
             ConversationRecordKind::Session,
             Some("codex"),
             Some("codex-live"),
+            None,
             "sync work",
             &[ConversationSearchCardType::Question],
+            None,
+            None,
+            false,
             20,
             0,
         )
@@ -2598,8 +2691,12 @@ mod tests {
             ConversationRecordKind::Session,
             None,
             None,
+            None,
             "answer for t3",
             &[ConversationSearchCardType::Answer],
+            None,
+            None,
+            false,
             20,
             0,
         )
@@ -2613,6 +2710,87 @@ mod tests {
         assert!(hit.part_id.is_some());
         assert!(hit.block_id.ends_with("-answer"));
         assert!(hit.snippet.contains("answer for t3"));
+    }
+
+    #[test]
+    fn search_conversation_cards_filters_by_project_path() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(crate::backend::store::sql::INIT_SCHEMA)
+            .unwrap();
+        seed_builtin_conversation_adapters(&conn).unwrap();
+        let source = load_conversation_source(&conn, "codex-live")
+            .unwrap()
+            .unwrap();
+        let mut first = fixture_session("v1");
+        first.external_id = "session-project".to_string();
+        first.project_path = Some("/tmp/project".to_string());
+        let mut second = fixture_session("v1");
+        second.external_id = "session-other".to_string();
+        second.project_path = Some("/tmp/other".to_string());
+        import_conversation_sessions(&conn, &source, &[first, second], false).unwrap();
+
+        let page = search_conversation_cards(
+            &conn,
+            ConversationRecordKind::Session,
+            None,
+            None,
+            Some("/tmp/project"),
+            "answer for t1",
+            &[ConversationSearchCardType::Answer],
+            None,
+            None,
+            false,
+            20,
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(
+            page.hits[0].session.session.project_path.as_deref(),
+            Some("/tmp/project")
+        );
+    }
+
+    #[test]
+    fn search_conversation_cards_filters_by_time_range_and_timeline() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(crate::backend::store::sql::INIT_SCHEMA)
+            .unwrap();
+        seed_builtin_conversation_adapters(&conn).unwrap();
+        let source = load_conversation_source(&conn, "codex-live")
+            .unwrap()
+            .unwrap();
+        let mut early = fixture_session("v1");
+        early.external_id = "session-early".to_string();
+        early.started_at = Some("2026-01-02T10:00:00Z".to_string());
+        let mut late = fixture_session("v1");
+        late.external_id = "session-late".to_string();
+        late.started_at = Some("2026-03-02T10:00:00Z".to_string());
+        let mut outside = fixture_session("v1");
+        outside.external_id = "session-outside".to_string();
+        outside.started_at = Some("2026-05-02T10:00:00Z".to_string());
+        import_conversation_sessions(&conn, &source, &[late, outside, early], false).unwrap();
+
+        let page = search_conversation_cards(
+            &conn,
+            ConversationRecordKind::Session,
+            None,
+            None,
+            None,
+            "answer for t1",
+            &[ConversationSearchCardType::Answer],
+            Some("2026-01-01"),
+            Some("2026-04-01"),
+            true,
+            20,
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(page.total_count, 2);
+        assert_eq!(page.hits[0].session.session.external_id, "session-early");
+        assert_eq!(page.hits[1].session.session.external_id, "session-late");
     }
 
     fn fixture_session(version: &str) -> NormalizedConversationSession {

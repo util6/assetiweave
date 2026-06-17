@@ -389,17 +389,39 @@ pub(crate) struct ConversationSearchParams {
     pub(crate) adapter_id: Option<String>,
     #[serde(alias = "sourceId")]
     pub(crate) source_id: Option<String>,
+    #[serde(alias = "projectPath")]
+    pub(crate) project_path: Option<String>,
     pub(crate) query: String,
     #[serde(default, alias = "contentTypes")]
     pub(crate) content_types: Vec<crate::backend::dto::ConversationSearchCardType>,
+    pub(crate) since: Option<String>,
+    pub(crate) until: Option<String>,
+    #[serde(default)]
+    pub(crate) timeline: bool,
     pub(crate) limit: Option<usize>,
     pub(crate) offset: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ConversationSearchScope {
+    pub(crate) record_kind: String,
+    pub(crate) adapter_id: Option<String>,
+    pub(crate) source_id: Option<String>,
+    pub(crate) project_path: Option<String>,
+    pub(crate) query: String,
+    pub(crate) content_types: Vec<crate::backend::dto::ConversationSearchCardType>,
+    pub(crate) since: Option<String>,
+    pub(crate) until: Option<String>,
+    pub(crate) timeline: bool,
+    pub(crate) limit: usize,
+    pub(crate) offset: usize,
 }
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ConversationSearchResult {
     pub(crate) query: String,
     pub(crate) record_kind: String,
+    pub(crate) scope: ConversationSearchScope,
     pub(crate) total_count: usize,
     pub(crate) hits: Vec<crate::backend::dto::ConversationSearchHit>,
 }
@@ -762,19 +784,38 @@ impl AppService {
         }
         let (record_kind_label, record_kind) =
             normalize_conversation_record_kind(params.record_kind.as_deref())?;
+        let limit = params.limit.unwrap_or(50).clamp(1, 500);
+        let offset = params.offset.unwrap_or(0);
         let page = crate::backend::store::search_conversation_cards(
             &self.conn,
             record_kind,
             params.adapter_id.as_deref(),
             params.source_id.as_deref(),
+            params.project_path.as_deref(),
             query,
             &params.content_types,
-            params.limit.unwrap_or(50).clamp(1, 500),
-            params.offset.unwrap_or(0),
+            params.since.as_deref(),
+            params.until.as_deref(),
+            params.timeline,
+            limit,
+            offset,
         )?;
         Ok(ConversationSearchResult {
             query: query.to_string(),
-            record_kind: record_kind_label,
+            record_kind: record_kind_label.clone(),
+            scope: ConversationSearchScope {
+                record_kind: record_kind_label,
+                adapter_id: params.adapter_id,
+                source_id: params.source_id,
+                project_path: params.project_path,
+                query: query.to_string(),
+                content_types: params.content_types,
+                since: params.since,
+                until: params.until,
+                timeline: params.timeline,
+                limit,
+                offset,
+            },
             total_count: page.total_count,
             hits: page.hits,
         })

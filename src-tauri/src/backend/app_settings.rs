@@ -44,6 +44,14 @@ pub(crate) fn save_app_settings(settings: Value) -> AppResult<AppSettingsFile> {
     Ok(paths.into_file(document.settings))
 }
 
+pub(crate) fn read_app_settings_value() -> AppResult<Value> {
+    let paths = app_settings_paths()?;
+    if !paths.config_path.exists() {
+        return Ok(json!({}));
+    }
+    Ok(read_settings_document(&paths.config_path)?.settings)
+}
+
 struct AppSettingsPaths {
     config_dir: PathBuf,
     config_path: PathBuf,

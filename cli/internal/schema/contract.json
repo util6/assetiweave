@@ -2009,7 +2009,7 @@
     },
     {
       "canonical_method": "conversation.search",
-      "cli": null,
+      "cli": "assetiweave-cli conversation search --query <query>",
       "confirmation_required": false,
       "contract_version": 2,
       "deprecated": false,
@@ -2066,6 +2066,16 @@
               "null"
             ]
           },
+          "project_path": {
+            "aliases": [
+              "projectPath"
+            ],
+            "description": "Optional project path filter",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "query": {
             "description": "Search query",
             "type": "string"
@@ -2081,11 +2091,30 @@
               "null"
             ]
           },
+          "since": {
+            "description": "Only include sessions on or after this RFC3339 timestamp or YYYY-MM-DD date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "source_id": {
             "aliases": [
               "sourceId"
             ],
             "description": "Optional source filter",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timeline": {
+            "default": false,
+            "description": "Return hits in chronological session order",
+            "type": "boolean"
+          },
+          "until": {
+            "description": "Only include sessions on or before this RFC3339 timestamp or YYYY-MM-DD date",
             "type": [
               "string",
               "null"
@@ -5974,6 +6003,16 @@
               "null"
             ]
           },
+          "project_path": {
+            "aliases": [
+              "projectPath"
+            ],
+            "description": "Optional project path filter",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "query": {
             "description": "Search query",
             "type": "string"
@@ -5989,11 +6028,30 @@
               "null"
             ]
           },
+          "since": {
+            "description": "Only include sessions on or after this RFC3339 timestamp or YYYY-MM-DD date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "source_id": {
             "aliases": [
               "sourceId"
             ],
             "description": "Optional source filter",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timeline": {
+            "default": false,
+            "description": "Return hits in chronological session order",
+            "type": "boolean"
+          },
+          "until": {
+            "description": "Only include sessions on or before this RFC3339 timestamp or YYYY-MM-DD date",
             "type": [
               "string",
               "null"

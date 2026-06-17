@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Copy,
   Download,
+  Folder,
   GitMerge,
   Layers3,
   RefreshCw,
@@ -134,6 +135,7 @@ export function ConversationsPage({
   const [adapters, setAdapters] = useState<ConversationAdapter[]>([]);
   const [sessions, setSessions] = useState<ConversationSessionListItem[]>([]);
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
+  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedQuestionId, setSelectedQuestionId] = useState<string | null>(null);
   const [sessionDetail, setSessionDetail] = useState<ConversationSessionDetail | null>(null);
@@ -192,6 +194,7 @@ export function ConversationsPage({
 
   useEffect(() => {
     setSelectedAppId(null);
+    setSelectedProjectKey(null);
     setSelectedSessionId(null);
     setSelectedQuestionId(null);
     setSessionDetail(null);
@@ -269,6 +272,18 @@ export function ConversationsPage({
       setSessionView("browser");
     }
   }, [selectedAppGroup, selectedSessionId]);
+
+  useEffect(() => {
+    if (!selectedAppGroup) {
+      setSelectedProjectKey(null);
+      return;
+    }
+    setSelectedProjectKey((current) =>
+      current && selectedAppGroup.projectGroups.some((group) => group.key === current)
+        ? current
+        : selectedAppGroup.projectGroups[0]?.key ?? null,
+    );
+  }, [selectedAppGroup]);
 
   useEffect(() => {
     if (!selectedSessionId) {
@@ -490,6 +505,11 @@ export function ConversationsPage({
     setSessionView("detail");
   }
 
+  function handleAppSelect(appId: string) {
+    setSelectedAppId(appId);
+    setSelectedProjectKey(null);
+  }
+
   function handleOpenSearchHit(hit: ConversationSearchHit) {
     setSelectedSessionId(hit.session.id);
     setSelectedQuestionId(hit.question_id);
@@ -695,9 +715,11 @@ export function ConversationsPage({
           appShortcuts={appShortcuts}
           columnMinWidth={appSettings.columnMinWidth}
           groups={appGroups}
-          onAppSelect={setSelectedAppId}
+          onAppSelect={handleAppSelect}
+          onProjectSelect={setSelectedProjectKey}
           onSessionOpen={handleOpenSession}
           selectedAppId={selectedAppId}
+          selectedProjectKey={selectedProjectKey}
           t={t}
         />
       ) : (
@@ -777,6 +799,15 @@ interface ConversationAppSummary {
 
 export interface ConversationAppSessionGroup {
   app: ConversationAppSummary;
+  projectGroups: ConversationProjectSessionGroup[];
+  sessions: ConversationSessionListItem[];
+  questionCount: number;
+  turnCount: number;
+}
+
+export interface ConversationProjectSessionGroup {
+  key: string;
+  projectPath: string | null;
   sessions: ConversationSessionListItem[];
   questionCount: number;
   turnCount: number;
@@ -830,10 +861,48 @@ function createAppSessionGroup(
 ): ConversationAppSessionGroup {
   return {
     app,
+    projectGroups: groupConversationSessionsByProject(sessions),
     sessions,
     questionCount: sessions.reduce((total, session) => total + session.question_count, 0),
     turnCount: sessions.reduce((total, session) => total + session.turn_count, 0),
   };
+}
+
+const NO_PROJECT_GROUP_KEY = "__assetiweave_no_project__";
+
+export function groupConversationSessionsByProject(
+  sessions: ConversationSessionListItem[],
+): ConversationProjectSessionGroup[] {
+  const groups: ConversationProjectSessionGroup[] = [];
+  const groupByKey = new Map<string, ConversationProjectSessionGroup>();
+
+  for (const session of sessions) {
+    const projectPath = normalizedProjectPath(session);
+    const key = projectPath ?? NO_PROJECT_GROUP_KEY;
+    let group = groupByKey.get(key);
+    if (!group) {
+      group = {
+        key,
+        projectPath,
+        sessions: [],
+        questionCount: 0,
+        turnCount: 0,
+      };
+      groupByKey.set(key, group);
+      groups.push(group);
+    }
+
+    group.sessions.push(session);
+    group.questionCount += session.question_count;
+    group.turnCount += session.turn_count;
+  }
+
+  return groups;
+}
+
+function normalizedProjectPath(session: ConversationSessionListItem) {
+  const projectPath = session.project_path?.trim();
+  return projectPath ? projectPath : null;
 }
 
 export function ConversationExportDialog({
@@ -923,19 +992,27 @@ export function AppSessionBrowser({
   columnMinWidth = DEFAULT_COLUMN_MIN_WIDTH,
   groups,
   onAppSelect,
+  onProjectSelect,
   onSessionOpen,
   selectedAppId,
+  selectedProjectKey,
   t,
 }: {
   appShortcuts: AppShortcut[];
   columnMinWidth?: number;
   groups: ConversationAppSessionGroup[];
   onAppSelect: (appId: string) => void;
+  onProjectSelect: (projectKey: string) => void;
   onSessionOpen: (sessionId: string) => void;
   selectedAppId: string | null;
+  selectedProjectKey: string | null;
   t: Translator;
 }) {
   const selectedGroup = groups.find((group) => group.app.id === selectedAppId) ?? null;
+  const selectedProjectGroup =
+    selectedGroup?.projectGroups.find((group) => group.key === selectedProjectKey) ??
+    selectedGroup?.projectGroups[0] ??
+    null;
   const selectedShortcut = selectedGroup ? findConversationAppShortcut(appShortcuts, selectedGroup.app) : null;
 
   return (
@@ -943,16 +1020,17 @@ export function AppSessionBrowser({
       ariaLabel={t("layout.resizeColumns")}
       className="conversation-session-browser mt-5 min-h-[620px] rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
       columns={[
-        { defaultWeight: 0.34 },
-        { defaultWeight: 1.66, minWidthScale: 1.35 },
+        { defaultWeight: 0.3 },
+        { defaultWeight: 0.62 },
+        { defaultWeight: 1.08, minWidthScale: 1.25 },
       ]}
-      handleClassName="max-[860px]:hidden"
+      handleClassName="max-[1040px]:hidden"
       minimumWidth={columnMinWidth}
-      responsiveClassName="max-[860px]:w-full max-[860px]:grid-cols-1"
+      responsiveClassName="max-[1040px]:w-full max-[1040px]:grid-cols-1"
       scrollBarLabel={t("layout.scrollColumns")}
       scrollLeftLabel={t("layout.scrollColumnsLeft")}
       scrollRightLabel={t("layout.scrollColumnsRight")}
-      storageKey="assetiweave.conversationBrowserColumns.v1"
+      storageKey="assetiweave.conversationBrowserColumns.v2"
     >
       <ColumnPanel title={t("conversation.column.apps")} icon={<AppWindow size={16} />}>
         {groups.length === 0 ? (
@@ -970,6 +1048,23 @@ export function AppSessionBrowser({
           ))
         )}
       </ColumnPanel>
+      <ColumnPanel title={t("conversation.column.projects")} icon={<Folder size={16} />}>
+        {!selectedGroup ? (
+          <EmptyPanel>{t("conversation.app.select")}</EmptyPanel>
+        ) : selectedGroup.projectGroups.length === 0 ? (
+          <EmptyPanel>{t("conversation.session.emptyForApp")}</EmptyPanel>
+        ) : (
+          selectedGroup.projectGroups.map((group) => (
+            <ProjectListItem
+              key={group.key}
+              group={group}
+              onSelect={() => onProjectSelect(group.key)}
+              selected={group.key === selectedProjectGroup?.key}
+              t={t}
+            />
+          ))
+        )}
+      </ColumnPanel>
       <section className="flex min-h-0 flex-col">
         <header className="flex min-h-16 shrink-0 items-center justify-between gap-4 border-b border-theme-card-border bg-theme-card-header/72 px-5 py-3">
           <div className="flex min-w-0 items-center gap-3">
@@ -977,16 +1072,16 @@ export function AppSessionBrowser({
             <div className="min-w-0">
               <p className="text-label-caps text-primary">{t("conversation.column.sessions")}</p>
               <h2 className="mt-1 truncate text-title-sm text-on-surface">
-                {selectedGroup?.app.name ?? t("conversation.app.select")}
+                {selectedProjectGroup ? projectGroupLabel(selectedProjectGroup, t) : t("conversation.project.select")}
               </h2>
             </div>
           </div>
-          {selectedGroup ? (
+          {selectedProjectGroup ? (
             <span className="shrink-0 rounded-full bg-theme-control px-3 py-1 text-code-sm text-on-surface-variant">
-              {t("conversation.app.summary", {
-                questions: selectedGroup.questionCount,
-                sessions: selectedGroup.sessions.length,
-                turns: selectedGroup.turnCount,
+              {t("conversation.project.summary", {
+                questions: selectedProjectGroup.questionCount,
+                sessions: selectedProjectGroup.sessions.length,
+                turns: selectedProjectGroup.turnCount,
               })}
             </span>
           ) : null}
@@ -994,11 +1089,15 @@ export function AppSessionBrowser({
         <div className="min-h-0 flex-1 overflow-auto p-4">
           {!selectedGroup ? (
             <EmptyPanel>{t("conversation.app.select")}</EmptyPanel>
-          ) : selectedGroup.sessions.length === 0 ? (
+          ) : selectedGroup.projectGroups.length === 0 ? (
             <EmptyPanel>{t("conversation.session.emptyForApp")}</EmptyPanel>
+          ) : !selectedProjectGroup ? (
+            <EmptyPanel>{t("conversation.project.select")}</EmptyPanel>
+          ) : selectedProjectGroup.sessions.length === 0 ? (
+            <EmptyPanel>{t("conversation.session.emptyForProject")}</EmptyPanel>
           ) : (
             <div className="grid gap-3">
-              {selectedGroup.sessions.map((session) => (
+              {selectedProjectGroup.sessions.map((session) => (
                 <SessionCard
                   key={session.id}
                   onOpen={() => onSessionOpen(session.id)}
@@ -1012,6 +1111,47 @@ export function AppSessionBrowser({
       </section>
     </ResizableColumns>
   );
+}
+
+function ProjectListItem({
+  group,
+  onSelect,
+  selected,
+  t,
+}: {
+  group: ConversationProjectSessionGroup;
+  onSelect: () => void;
+  selected: boolean;
+  t: Translator;
+}) {
+  const label = projectGroupLabel(group, t);
+
+  return (
+    <button
+      aria-label={t("conversation.project.selectNamed", { path: label })}
+      aria-pressed={selected}
+      className={`grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 border-l-2 border-b border-theme-card-border px-4 py-3 text-left transition-colors ${
+        selected ? "border-l-primary bg-primary/10" : "border-l-transparent hover:bg-theme-card-header/70"
+      }`}
+      onClick={onSelect}
+      type="button"
+    >
+      <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-primary">
+        <Folder size={16} />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate font-mono text-code-sm font-semibold text-on-surface">{label}</span>
+        <span className="mt-1 block text-code-sm text-on-surface-variant">
+          {t("conversation.project.sessionCount", { count: group.sessions.length })}
+        </span>
+      </span>
+      <ChevronRight className={selected ? "text-primary" : "text-on-surface-muted"} size={16} />
+    </button>
+  );
+}
+
+function projectGroupLabel(group: ConversationProjectSessionGroup, t: Translator) {
+  return group.projectPath ? abbreviateHomePath(group.projectPath) : t("conversation.session.noProject");
 }
 
 function ConversationContentSearchResults({
