@@ -37,6 +37,10 @@ export const DEFAULT_CONVERSATION_CONTENT_VISIBILITY: ConversationContentVisibil
   result: true,
 };
 
+export function conversationCardDomId(blockId: string) {
+  return `conversation-card-${blockId}`;
+}
+
 const icons: Record<ConversationContentType, ReactNode> = {
   answer: <FileText size={15} />,
   tool: <Wrench size={15} />,
@@ -73,6 +77,7 @@ export function buildConversationContentBlocks(parts: ConversationPart[]): Conve
 }
 
 export function ConversationContentCards({
+  activeBlockId,
   blocks,
   colors = DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
   onCopyError,
@@ -80,6 +85,7 @@ export function ConversationContentCards({
   t,
   visibility,
 }: {
+  activeBlockId?: string | null;
   blocks: ConversationContentBlock[];
   colors?: ConversationContentCardColorSettings;
   onCopyError?: (message: string) => void;
@@ -129,6 +135,7 @@ export function ConversationContentCards({
           block={block}
           colors={colors}
           copied={copiedBlockId === block.id}
+          highlighted={activeBlockId === block.id}
           key={block.id}
           onCopy={() => void handleCopyBlock(block)}
           resultPreviewLineLimit={resultPreviewLineLimit}
@@ -143,6 +150,7 @@ function ConversationContentCard({
   block,
   colors,
   copied,
+  highlighted,
   onCopy,
   resultPreviewLineLimit,
   t,
@@ -150,6 +158,7 @@ function ConversationContentCard({
   block: ConversationContentBlock;
   colors: ConversationContentCardColorSettings;
   copied: boolean;
+  highlighted: boolean;
   onCopy: () => void;
   resultPreviewLineLimit: number;
   t: Translator;
@@ -163,8 +172,12 @@ function ConversationContentCard({
 
   return (
     <section
-      className="overflow-hidden rounded-xl border"
+      className={`scroll-mt-32 overflow-hidden rounded-xl border transition-shadow ${
+        highlighted ? "ring-2 ring-primary/70 shadow-[0_0_0_4px_rgb(var(--color-primary)/0.16)]" : ""
+      }`}
       data-content-type={block.type}
+      data-conversation-card-id={block.id}
+      id={conversationCardDomId(block.id)}
       style={{
         backgroundColor: withAlpha(accentColor, "12"),
         borderColor: withAlpha(accentColor, "66"),

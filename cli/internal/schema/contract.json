@@ -2008,6 +2008,100 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.search",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Search conversation content cards",
+      "exposure": "friendly",
+      "method": "conversation.search",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter_id": {
+            "aliases": [
+              "adapterId"
+            ],
+            "description": "Optional adapter filter",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "content_types": {
+            "aliases": [
+              "contentTypes"
+            ],
+            "default": [],
+            "description": "Content card types",
+            "items": {
+              "enum": [
+                "question",
+                "answer",
+                "tool",
+                "command",
+                "code",
+                "result"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "description": "Maximum number of hits",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offset": {
+            "description": "Pagination offset",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "query": {
+            "description": "Search query",
+            "type": "string"
+          },
+          "record_kind": {
+            "aliases": [
+              "recordKind"
+            ],
+            "default": null,
+            "description": "Conversation record kind",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_id": {
+            "aliases": [
+              "sourceId"
+            ],
+            "description": "Optional source filter",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.session.get",
       "cli": "assetiweave-cli conversation session get <session-id>",
       "confirmation_required": false,
@@ -5822,6 +5916,100 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.search",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Search conversation content cards",
+      "exposure": "app",
+      "method": "search_conversation_records",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter_id": {
+            "aliases": [
+              "adapterId"
+            ],
+            "description": "Optional adapter filter",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "content_types": {
+            "aliases": [
+              "contentTypes"
+            ],
+            "default": [],
+            "description": "Content card types",
+            "items": {
+              "enum": [
+                "question",
+                "answer",
+                "tool",
+                "command",
+                "code",
+                "result"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "description": "Maximum number of hits",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offset": {
+            "description": "Pagination offset",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "query": {
+            "description": "Search query",
+            "type": "string"
+          },
+          "record_kind": {
+            "aliases": [
+              "recordKind"
+            ],
+            "default": null,
+            "description": "Conversation record kind",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_id": {
+            "aliases": [
+              "sourceId"
+            ],
+            "description": "Optional source filter",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.web-record.export",
       "cli": null,
       "confirmation_required": false,
@@ -6453,6 +6641,7 @@
     "conversation.source.disable",
     "conversation.sync",
     "conversation.session.list",
+    "conversation.search",
     "conversation.session.get",
     "conversation.session.export",
     "conversation.web-record.list",
@@ -6526,6 +6715,7 @@
     "export_conversation_session",
     "list_web_record_sessions",
     "get_web_record_session",
+    "search_conversation_records",
     "export_web_record_session",
     "list_conversation_questions",
     "get_conversation_question",

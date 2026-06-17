@@ -3,6 +3,10 @@ import type {
   ConversationAdapter,
   ConversationMutationResult,
   ConversationQuestionDetail,
+  ConversationRecordKind,
+  ConversationSearchCardType,
+  ConversationSearchHit,
+  ConversationSearchResult,
   ConversationSessionDetail,
   ConversationSessionListItem,
   ConversationSource,
@@ -19,6 +23,16 @@ export interface ConversationSessionListParams {
 export interface ConversationQuestionListParams {
   session_id: string;
   query?: string | null;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ConversationSearchParams {
+  record_kind?: ConversationRecordKind;
+  adapter_id?: string | null;
+  source_id?: string | null;
+  query: string;
+  content_types?: ConversationSearchCardType[];
   limit?: number;
   offset?: number;
 }
@@ -238,6 +252,37 @@ export async function getWebRecordSession(sessionId: string): Promise<Conversati
   }
 }
 
+export async function searchConversationRecords(params: ConversationSearchParams): Promise<ConversationSearchResult> {
+  const trimmedQuery = params.query.trim();
+  if (!trimmedQuery) {
+    return {
+      query: "",
+      record_kind: params.record_kind ?? "session",
+      total_count: 0,
+      hits: [],
+    };
+  }
+
+  const payload = {
+    ...params,
+    query: trimmedQuery,
+    record_kind: params.record_kind ?? "session",
+    content_types: params.content_types ?? [],
+    limit: params.limit ?? 50,
+    offset: params.offset ?? 0,
+  };
+
+  try {
+    return await invoke<ConversationSearchResult>("search_conversation_records", { params: payload });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return fallbackConversationSearch(payload);
+  }
+}
+
 export async function listConversationQuestions(params: ConversationQuestionListParams): Promise<ConversationQuestionDetail[]> {
   try {
     return await invoke<ConversationQuestionDetail[]>("list_conversation_questions", { params });
@@ -374,6 +419,157 @@ export async function exportWebRecordSession(
       output_path: `${outputRoot}/qwen-web/web/preview-web-record.md`,
     };
   }
+}
+
+function fallbackConversationSearch(params: Required<Pick<ConversationSearchParams, "query" | "record_kind" | "content_types" | "limit" | "offset">> & ConversationSearchParams): ConversationSearchResult {
+  const detail = params.record_kind === "web" ? fallbackWebSessionDetail : fallbackSessionDetail;
+  const session = params.record_kind === "web" ? fallbackWebSessions[0] : fallbackSessions[0];
+  const needle = params.query.trim().toLowerCase();
+  const allowedTypes = new Set(params.content_types);
+  const hits: ConversationSearchHit[] = [];
+
+  for (const questionDetail of detail.questions) {
+    const questionTitle = questionDetail.question.title || firstLine(questionDetail.question.question_text);
+    for (const turn of questionDetail.turns) {
+      pushFallbackHit(hits, {
+        allowedTypes,
+        blockId: `${turn.id}-question`,
+        cardType: "question",
+        needle,
+        partId: null,
+        questionDetail,
+        questionTitle,
+        session,
+        text: turn.user_text,
+        turnId: turn.id,
+      });
+
+      for (const part of questionDetail.parts.filter((candidate) => candidate.turn_id === turn.id)) {
+        for (const entry of fallbackEntriesForPart(part)) {
+          pushFallbackHit(hits, {
+            allowedTypes,
+            blockId: entry.blockId,
+            cardType: entry.cardType,
+            needle,
+            partId: part.id,
+            questionDetail,
+            questionTitle,
+            session,
+            text: entry.text,
+            turnId: turn.id,
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    query: params.query,
+    record_kind: params.record_kind,
+    total_count: hits.length,
+    hits: hits.slice(params.offset, params.offset + params.limit),
+  };
+}
+
+function pushFallbackHit(
+  hits: ConversationSearchHit[],
+  params: {
+    allowedTypes: Set<ConversationSearchCardType>;
+    blockId: string;
+    cardType: ConversationSearchCardType;
+    needle: string;
+    partId: string | null;
+    questionDetail: ConversationQuestionDetail;
+    questionTitle: string;
+    session: ConversationSessionListItem;
+    text?: string | null;
+    turnId: string;
+  },
+) {
+  const text = params.text?.trim();
+  if (!text) return;
+  if (params.allowedTypes.size > 0 && !params.allowedTypes.has(params.cardType)) return;
+  if (!text.toLowerCase().includes(params.needle)) return;
+
+  hits.push({
+    block_id: params.blockId,
+    card_type: params.cardType,
+    part_id: params.partId,
+    question_id: params.questionDetail.question.id,
+    question_index: params.questionDetail.question.question_index,
+    question_title: params.questionTitle,
+    score: Math.max(1, text.toLowerCase().split(params.needle).length - 1) * 100,
+    session: params.session,
+    snippet: fallbackSnippet(text, params.needle),
+    turn_id: params.turnId,
+  });
+}
+
+function fallbackEntriesForPart(part: ConversationQuestionDetail["parts"][number]) {
+  if (part.kind === "code_block") {
+    return fallbackEntry(part.id, "code", part.text);
+  }
+  if (part.kind === "command") {
+    const command = part.command?.trim() || part.text?.trim();
+    const output = commandResultText(part);
+    return [
+      ...fallbackEntry(part.id, "command", command, "command"),
+      ...fallbackEntry(part.id, "result", output, "result"),
+    ];
+  }
+  if (part.kind === "text") {
+    const cardType = part.role === "tool" ? "result" : "answer";
+    return fallbackEntry(part.id, cardType, part.text);
+  }
+
+  const cardType = isResultPart(part) ? "result" : "tool";
+  return fallbackEntry(part.id, cardType, part.text ?? part.metadata_json);
+}
+
+function fallbackEntry(
+  partId: string,
+  cardType: ConversationSearchCardType,
+  text?: string | null,
+  suffix = cardType,
+) {
+  const trimmedText = text?.trim();
+  return trimmedText ? [{ blockId: `${partId}-${suffix}`, cardType, text: trimmedText }] : [];
+}
+
+function commandResultText(part: ConversationQuestionDetail["parts"][number]) {
+  const text = part.text?.trim();
+  if (text && text !== part.command?.trim()) return text;
+  if (part.status) return part.status;
+  if (part.exit_code != null) return `Exit code ${part.exit_code}`;
+  return null;
+}
+
+function isResultPart(part: ConversationQuestionDetail["parts"][number]) {
+  if (part.role === "tool" && part.kind === "text") return true;
+  if (part.status || part.exit_code != null) return true;
+  const metadata = part.metadata_json?.toLowerCase() ?? "";
+  return [
+    "tool_result",
+    "tool-result",
+    "tool_output",
+    "tooloutput",
+    "function_call_output",
+    "\"output\"",
+    "\"result\"",
+  ].some((marker) => metadata.includes(marker));
+}
+
+function fallbackSnippet(text: string, needle: string) {
+  const index = text.toLowerCase().indexOf(needle);
+  const start = Math.max(0, index - 64);
+  const end = Math.min(text.length, index + needle.length + 96);
+  return `${start > 0 ? "..." : ""}${text.slice(start, end)}${end < text.length ? "..." : ""}`
+    .split(/\s+/)
+    .join(" ");
+}
+
+function firstLine(value: string) {
+  return value.split(/\r?\n/).find((line) => line.trim())?.trim() ?? "Untitled question";
 }
 
 function isTauriRuntime() {

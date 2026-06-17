@@ -325,6 +325,30 @@ describe("MarkdownContent", () => {
     );
   });
 
+  it("renders stable card anchors for search-result navigation", () => {
+    const html = renderToStaticMarkup(
+      <QuestionPreview
+        activeSearchTarget={{
+          blockId: "part-1-answer",
+          cardType: "answer",
+          questionId: "question-1",
+          sessionId: "session-1",
+        }}
+        onExport={async () => undefined}
+        outputRoot="/tmp/conversation-export"
+        question={questionDetail}
+        session={sessionDetail}
+        setOutputRoot={vi.fn()}
+        t={t}
+      />,
+    );
+
+    expect(html).toContain('id="conversation-card-turn-1-question"');
+    expect(html).toContain('id="conversation-card-part-1-answer"');
+    expect(html).toContain('data-conversation-card-id="part-1-answer"');
+    expect(html).toContain("ring-2 ring-primary/70");
+  });
+
   it("preserves and restores line breaks in command result previews", () => {
     const html = renderToStaticMarkup(
       <ConversationContentCards

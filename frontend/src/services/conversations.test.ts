@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getConversationSyncTask,
   mergeConversationQuestions,
+  searchConversationRecords,
   summarizeConversationSyncTask,
   syncConversations,
 } from "./conversations";
@@ -58,6 +59,37 @@ describe("conversation services", () => {
     });
     expect(invokeMock).toHaveBeenCalledWith("sync_conversations", {
       params: { source_id: null, dry_run: false },
+    });
+  });
+
+  it("searches conversation records with content-type filters", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValueOnce({
+      query: "deploy",
+      record_kind: "session",
+      total_count: 1,
+      hits: [],
+    });
+
+    await expect(
+      searchConversationRecords({
+        query: " deploy ",
+        record_kind: "session",
+        content_types: ["question", "answer"],
+        limit: 25,
+      }),
+    ).resolves.toMatchObject({
+      query: "deploy",
+      total_count: 1,
+    });
+    expect(invokeMock).toHaveBeenCalledWith("search_conversation_records", {
+      params: {
+        query: "deploy",
+        record_kind: "session",
+        content_types: ["question", "answer"],
+        limit: 25,
+        offset: 0,
+      },
     });
   });
 

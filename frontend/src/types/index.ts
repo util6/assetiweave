@@ -286,6 +286,30 @@ export interface ConversationSessionDetail {
   questions: ConversationQuestionDetail[];
 }
 
+export type ConversationRecordKind = "session" | "web";
+
+export type ConversationSearchCardType = "question" | "answer" | "tool" | "command" | "code" | "result";
+
+export interface ConversationSearchHit {
+  session: ConversationSessionListItem;
+  question_id: string;
+  question_index: number;
+  question_title: string;
+  turn_id?: string | null;
+  part_id?: string | null;
+  block_id: string;
+  card_type: ConversationSearchCardType;
+  snippet: string;
+  score: number;
+}
+
+export interface ConversationSearchResult {
+  query: string;
+  record_kind: ConversationRecordKind;
+  total_count: number;
+  hits: ConversationSearchHit[];
+}
+
 export interface ConversationMutationResult {
   dry_run: boolean;
   session_id: string;
