@@ -16,6 +16,7 @@ export default defineConfig({
   build: {
     outDir: path.resolve(frontendRoot, "../dist"),
     emptyOutDir: true,
+    chunkSizeWarningLimit: 700,
   },
   server: {
     strictPort: true,

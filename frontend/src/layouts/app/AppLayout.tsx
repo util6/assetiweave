@@ -1,11 +1,16 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
-import { GlobalSettingsDialog } from "../../components/settings/GlobalSettingsDialog";
+import { lazy, Suspense, useState, type CSSProperties, type ReactNode } from "react";
 import { NotificationBanner, type NotificationMessage } from "../../components/notifications/NotificationBanner";
 import type { HeaderTabItem, NavigationModel, RailMenuItem } from "../../router/types";
 import type { SettingsPanelId } from "../../store/settings/AppSettingsProvider";
 import type { AppShortcut } from "../../types";
 import { SideRail } from "./navigation/SideRail";
 import { SubNavigation } from "./navigation/SubNavigation";
+
+const GlobalSettingsDialog = lazy(() =>
+  import("../../components/settings/GlobalSettingsDialog").then((module) => ({
+    default: module.GlobalSettingsDialog,
+  })),
+);
 
 export function AppLayout({
   activeSubNavId,
@@ -82,16 +87,20 @@ export function AppLayout({
         {children}
       </main>
 
-      <GlobalSettingsDialog
-        appShortcuts={appShortcuts}
-        initialPanel={settingsPanel}
-        navigationModel={navigationModel}
-        onAppShortcutsChange={onAppShortcutsChange}
-        onClose={onSettingsClose}
-        onNavigationModelChange={onNavigationModelChange}
-        onSkillBackupLibraryChange={onSkillBackupLibraryChange}
-        open={settingsOpen}
-      />
+      {settingsOpen ? (
+        <Suspense fallback={null}>
+          <GlobalSettingsDialog
+            appShortcuts={appShortcuts}
+            initialPanel={settingsPanel}
+            navigationModel={navigationModel}
+            onAppShortcutsChange={onAppShortcutsChange}
+            onClose={onSettingsClose}
+            onNavigationModelChange={onNavigationModelChange}
+            onSkillBackupLibraryChange={onSkillBackupLibraryChange}
+            open={settingsOpen}
+          />
+        </Suspense>
+      ) : null}
     </div>
   );
 }
