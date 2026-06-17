@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Columns3, DatabaseZap, DownloadCloud, FolderPlus, LayoutList, RefreshCw, Settings } from "lucide-react";
+import { AssetDeleteDialog } from "../../components/assets/AssetDeleteDialog";
+import { AssetEditDialog } from "../../components/assets/AssetEditDialog";
 import { AssetToolbar, type AssetToolbarViewMode } from "../../components/assets/AssetToolbar";
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
 import { PageHeader } from "../../components/foundation/PageHeader";
@@ -11,8 +13,17 @@ import { SourceSummary } from "../../components/sources/SourceSummary";
 import { useSourcesController } from "../../hooks/sources/useSourcesController";
 import { useI18n } from "../../i18n/I18nProvider";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
-import { selectSourceDirectory } from "../../services/catalog";
-import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
+import {
+  backupSkill,
+  backupSkills,
+  deleteAsset,
+  listSkillGroups,
+  selectSourceDirectory,
+  setSkillGroupManualMembers,
+  updateAssetDescription,
+} from "../../services/catalog";
+import type { AppShortcut, Asset, AssetGroupDetail, AssetMountStatus, Source, TargetProfile } from "../../types";
+import { getBackupableSkillAssets } from "../../utils/skillBackup";
 
 type SourceViewMode = Extract<AssetToolbarViewMode, "list" | "columns">;
 
@@ -22,11 +33,14 @@ export function SourcesPage({
   assets,
   expandedAssetIds,
   onAssetReveal,
+  onApplyAssetUpdate,
   onCatalogRefresh,
+  onClearDeploymentPlan,
   onManualOpen,
   onNotifyError,
   onOpenSettings,
   onRefreshMountStatus,
+  onRemoveAsset,
   onSetSourceMountProfile,
   onToggleAsset,
   onToggleMount,
@@ -38,11 +52,14 @@ export function SourcesPage({
   assets: Asset[];
   expandedAssetIds: Set<string>;
   onAssetReveal: (path: string) => void;
+  onApplyAssetUpdate: (asset: Asset) => void;
   onCatalogRefresh: (assets?: Asset[]) => Promise<void>;
+  onClearDeploymentPlan: () => void;
   onManualOpen: () => void;
   onNotifyError: (message: string) => void;
   onOpenSettings: () => void;
   onRefreshMountStatus: () => Promise<void>;
+  onRemoveAsset: (assetId: string) => void;
   onSetSourceMountProfile: (assetIds: string[], profileId: string, enabled: boolean) => Promise<void>;
   onToggleAsset: (assetId: string) => void;
   onToggleMount: (assetId: string, profileId: string) => void;
@@ -55,7 +72,33 @@ export function SourcesPage({
   const [acquireDialogOpen, setAcquireDialogOpen] = useState(false);
   const [editingSource, setEditingSource] = useState<Source | null>(null);
   const [deletingSource, setDeletingSource] = useState<Source | null>(null);
+  const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
+  const [deletingAsset, setDeletingAsset] = useState<Asset | null>(null);
+  const [assetGroups, setAssetGroups] = useState<AssetGroupDetail[]>([]);
+  const [assetActionBusy, setAssetActionBusy] = useState(false);
   const [viewMode, setViewMode] = useState<SourceViewMode>("list");
+  const sourceBackupAssets = useMemo(() => {
+    if (!editingSource) {
+      return [];
+    }
+    return getBackupableSkillAssets(assets.filter((asset) => asset.source_id === editingSource.id));
+  }, [assets, editingSource]);
+
+  useEffect(() => {
+    if (!editingAsset) {
+      return;
+    }
+
+    void refreshAssetGroups();
+  }, [editingAsset]);
+
+  async function refreshAssetGroups() {
+    try {
+      setAssetGroups(await listSkillGroups());
+    } catch (error) {
+      onNotifyError(errorMessage(error));
+    }
+  }
 
   async function handleDeleteSource() {
     if (!deletingSource) {
@@ -72,6 +115,119 @@ export function SourcesPage({
       setDeletingSource(null);
     } catch (error) {
       onNotifyError(errorMessage(error));
+    }
+  }
+
+  async function handleSaveAssetDescription(description: string | null) {
+    if (!editingAsset) {
+      return;
+    }
+
+    setAssetActionBusy(true);
+    try {
+      const savedAsset = await updateAssetDescription(editingAsset.id, description);
+      onApplyAssetUpdate({ ...editingAsset, ...savedAsset });
+      onClearDeploymentPlan();
+      setEditingAsset(null);
+    } catch (error) {
+      onNotifyError(errorMessage(error));
+    } finally {
+      setAssetActionBusy(false);
+    }
+  }
+
+  async function handleDeleteAsset(unmount: boolean) {
+    if (!deletingAsset) {
+      return;
+    }
+
+    setAssetActionBusy(true);
+    try {
+      const deletedAsset = await deleteAsset(deletingAsset.id, unmount);
+      onRemoveAsset(deletedAsset.id);
+      onClearDeploymentPlan();
+      setDeletingAsset(null);
+    } catch (error) {
+      onNotifyError(errorMessage(error));
+    } finally {
+      setAssetActionBusy(false);
+    }
+  }
+
+  async function handleBackupAsset() {
+    if (!editingAsset) {
+      return;
+    }
+
+    setAssetActionBusy(true);
+    try {
+      await backupSkill(editingAsset.id);
+      await onCatalogRefresh();
+      onClearDeploymentPlan();
+      setEditingAsset(null);
+    } catch (error) {
+      onNotifyError(errorMessage(error));
+    } finally {
+      setAssetActionBusy(false);
+    }
+  }
+
+  async function handleBackupSourceAssets() {
+    if (sourceBackupAssets.length === 0) {
+      return;
+    }
+
+    setAssetActionBusy(true);
+    try {
+      await backupSkills(sourceBackupAssets.map((asset) => asset.id));
+    } catch (error) {
+      onNotifyError(errorMessage(error));
+    } finally {
+      try {
+        await onCatalogRefresh();
+        onClearDeploymentPlan();
+      } catch (refreshError) {
+        onNotifyError(errorMessage(refreshError));
+      }
+      setAssetActionBusy(false);
+    }
+  }
+
+  async function handleSetAssetGroupMembership(group: AssetGroupDetail, enabled: boolean) {
+    if (!editingAsset) {
+      return;
+    }
+
+    const manualAssetIds = new Set(group.manual_asset_ids);
+    if (enabled) {
+      manualAssetIds.add(editingAsset.id);
+    } else {
+      manualAssetIds.delete(editingAsset.id);
+    }
+
+    setAssetActionBusy(true);
+    try {
+      const savedGroup = await setSkillGroupManualMembers(group.group.id, [...manualAssetIds]);
+      setAssetGroups((current) =>
+        current.map((candidate) => (candidate.group.id === savedGroup.group.id ? savedGroup : candidate)),
+      );
+    } catch (error) {
+      onNotifyError(errorMessage(error));
+    } finally {
+      setAssetActionBusy(false);
+    }
+  }
+
+  async function handleToggleAssetMount(profileId: string) {
+    if (!editingAsset) {
+      return;
+    }
+
+    setAssetActionBusy(true);
+    try {
+      await onToggleMount(editingAsset.id, profileId);
+    } finally {
+      setAssetActionBusy(false);
     }
   }
 
@@ -153,7 +309,9 @@ export function SourcesPage({
         busy={sources.busy}
         expandedAssetIds={expandedAssetIds}
         onDelete={setDeletingSource}
+        onDeleteAsset={setDeletingAsset}
         onEdit={setEditingSource}
+        onEditAsset={setEditingAsset}
         onAssetReveal={onAssetReveal}
         onReveal={(path) => void sources.revealPath(path)}
         onSetSourceMountProfile={(assetIds, profileId, enabled) =>
@@ -182,8 +340,10 @@ export function SourcesPage({
         open={acquireDialogOpen}
       />
       <SourceEditDialog
-        busy={sources.busy}
+        backupAssetCount={sourceBackupAssets.length}
+        busy={sources.busy || assetActionBusy}
         onClose={() => setEditingSource(null)}
+        onBackup={handleBackupSourceAssets}
         onNotifyError={onNotifyError}
         onPickRootPath={() => selectSourceDirectory(t("source.import.dialogTitle"))}
         onSubmit={handleSaveSource}
@@ -203,6 +363,26 @@ export function SourcesPage({
           {t("source.deleteDialog.detail")}
         </div>
       </ConfirmDialog>
+      <AssetEditDialog
+        asset={editingAsset}
+        busy={assetActionBusy}
+        groups={assetGroups}
+        mountStatuses={assetMountStatuses}
+        onBackup={handleBackupAsset}
+        onClose={() => setEditingAsset(null)}
+        onSetGroupMembership={handleSetAssetGroupMembership}
+        onSubmit={handleSaveAssetDescription}
+        onToggleMount={handleToggleAssetMount}
+        profiles={profiles}
+        source={sources.sources.find((source) => source.id === editingAsset?.source_id)}
+      />
+      <AssetDeleteDialog
+        asset={deletingAsset}
+        busy={assetActionBusy}
+        mountStatuses={assetMountStatuses}
+        onClose={() => setDeletingAsset(null)}
+        onConfirm={handleDeleteAsset}
+      />
     </section>
   );
 }

@@ -166,6 +166,8 @@ export function AppRouter() {
               assetMountStatuses={catalog.assetMountStatuses}
               assets={catalog.assets}
               expandedAssetIds={catalog.expandedIds}
+              onCatalogRefresh={catalog.refreshOverview}
+              onClearDeploymentPlan={catalog.clearDeploymentPlan}
               onManualOpen={openCurrentManual}
               onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
               onOpenSettings={() => openSettings("workspace.deployment")}
@@ -190,11 +192,14 @@ export function AppRouter() {
               assets={catalog.assets}
               expandedAssetIds={catalog.expandedIds}
               onAssetReveal={(path) => void catalog.revealPath(path)}
+              onApplyAssetUpdate={catalog.applyAssetUpdate}
               onCatalogRefresh={catalog.refreshOverview}
+              onClearDeploymentPlan={catalog.clearDeploymentPlan}
               onManualOpen={openCurrentManual}
               onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
               onOpenSettings={() => openSettings("workspace.menu")}
               onRefreshMountStatus={catalog.refreshMountStatus}
+              onRemoveAsset={catalog.removeAsset}
               onSetSourceMountProfile={catalog.setMountProfiles}
               onToggleAsset={catalog.toggleAsset}
               onToggleMount={catalog.toggleMountProfile}

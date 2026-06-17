@@ -22,6 +22,7 @@ import { SkillBackupBadge } from "../../components/assets/SkillBackupBadge";
 import { AppShortcutIconForShortcut } from "../../components/apps/AppShortcutIcon";
 import { SkillBackupLibraryDialog } from "../../components/backup/SkillBackupLibraryDialog";
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
+import { PathPickerInput } from "../../components/common/PathPickerInput";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { EmptyState as FoundationEmptyState } from "../../components/foundation/EmptyState";
 import { PageHeader } from "../../components/foundation/PageHeader";
@@ -1146,26 +1147,15 @@ function AppProfileDialog({
             </div>
 
             <Field label={t("appMount.field.targetPath")} required>
-              <div className="flex gap-2">
-                <Input
-                  className="min-w-0 flex-1"
-                  disabled={busy || picking}
-                  onChange={(event) => updateValue("targetPath", event.target.value)}
-                  placeholder={t("appMount.dialog.targetPlaceholder")}
-                  value={values.targetPath}
-                />
-                <Button
-                  aria-label={t("appMount.dialog.pickTarget")}
-                  disabled={busy || picking}
-                  onClick={() => void handlePickTargetPath()}
-                  size="icon"
-                  title={t("appMount.dialog.pickTarget")}
-                  type="button"
-                  variant="outline"
-                >
-                  <FolderOpen size={17} />
-                </Button>
-              </div>
+              <PathPickerInput
+                disabled={busy}
+                onChange={(event) => updateValue("targetPath", event.target.value)}
+                onPick={() => void handlePickTargetPath()}
+                pickLabel={t("appMount.dialog.pickTarget")}
+                picking={picking}
+                placeholder={t("appMount.dialog.targetPlaceholder")}
+                value={values.targetPath}
+              />
             </Field>
 
             <div className="grid grid-cols-[minmax(0,1fr)_9rem] gap-3 max-[720px]:grid-cols-1">

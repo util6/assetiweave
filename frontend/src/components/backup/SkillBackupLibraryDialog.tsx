@@ -1,4 +1,4 @@
-import { Archive, FolderOpen } from "lucide-react";
+import { Archive } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
@@ -8,9 +8,9 @@ import {
 } from "../../services/catalog";
 import type { SkillBackupSettings } from "../../types";
 import { abbreviateHomePath } from "../../utils/path";
+import { PathPickerInput } from "../common/PathPickerInput";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 
 export function SkillBackupLibraryDialog({
   onClose,
@@ -114,27 +114,16 @@ export function SkillBackupLibraryDialog({
       <form className="px-5 py-5" id={formId} onSubmit={(event) => void handleSubmit(event)}>
         <div className="grid gap-4">
           <Field label={t("backup.field.rootPath")} required>
-            <div className="flex gap-2">
-              <Input
-                className="min-w-0 flex-1 font-mono"
-                disabled={disabled}
-                onChange={(event) => setRootPath(event.target.value)}
-                placeholder={settings?.default_root_path ? abbreviateHomePath(settings.default_root_path) : "~/.assetiweave/library/skills"}
-                ref={inputRef}
-                value={rootPath}
-              />
-              <Button
-                aria-label={t("backup.dialog.pickDirectory")}
-                disabled={disabled}
-                onClick={() => void handlePickDirectory()}
-                size="icon"
-                title={t("backup.dialog.pickDirectory")}
-                type="button"
-                variant="outline"
-              >
-                <FolderOpen size={17} />
-              </Button>
-            </div>
+            <PathPickerInput
+              disabled={disabled}
+              inputClassName="font-mono"
+              onChange={(event) => setRootPath(event.target.value)}
+              onPick={() => void handlePickDirectory()}
+              pickLabel={t("backup.dialog.pickDirectory")}
+              placeholder={settings?.default_root_path ? abbreviateHomePath(settings.default_root_path) : "~/.assetiweave/library/skills"}
+              ref={inputRef}
+              value={rootPath}
+            />
           </Field>
 
           {settings && (

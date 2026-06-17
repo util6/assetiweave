@@ -21,7 +21,9 @@ export function SourceColumnView({
   mountStatusesByAssetId,
   onAssetReveal,
   onDelete,
+  onDeleteAsset,
   onEdit,
+  onEditAsset,
   onReveal,
   onSelectSource,
   onSetSourceMountProfile,
@@ -36,7 +38,9 @@ export function SourceColumnView({
   mountStatusesByAssetId: Map<string, AssetMountStatus[]>;
   onAssetReveal: (path: string) => void;
   onDelete: (source: Source) => void;
+  onDeleteAsset: (asset: Asset) => void;
   onEdit: (source: Source) => void;
+  onEditAsset: (asset: Asset) => void;
   onReveal: (path: string) => void;
   onSelectSource: (sourceId: string) => void;
   onSetSourceMountProfile: (assetIds: string[], profileId: string, enabled: boolean) => void;
@@ -49,6 +53,7 @@ export function SourceColumnView({
   const { settings } = useAppSettings();
   const selectedAssets = assetsBySourceId.get(selectedSource.id) ?? [];
   const mountBlockedReason = isDirectMountBlockedSource(selectedSource) ? t("mount.blocked") : undefined;
+  const hasVisibleMountShortcuts = appShortcuts.some((shortcut) => shortcut.enabled);
 
   return (
     <ResizableColumns
@@ -143,14 +148,23 @@ export function SourceColumnView({
                       {displayAssetPath(asset)}
                     </button>
                   </div>
-                  <QuickMountButtons
-                    asset={asset}
-                    mountBlockedReason={mountBlockedReason}
-                    mountStatuses={mountStatuses}
-                    profiles={profiles}
-                    shortcuts={appShortcuts}
-                    onToggle={(profileId) => onToggleMount(asset.id, profileId)}
-                  />
+                  <div className="inline-flex w-fit max-w-full shrink-0 flex-wrap items-center justify-end gap-2 rounded-xl border border-theme-control-border bg-theme-control/55 p-1.5 shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.38)]">
+                    <QuickMountButtons
+                      asset={asset}
+                      mountBlockedReason={mountBlockedReason}
+                      mountStatuses={mountStatuses}
+                      profiles={profiles}
+                      shortcuts={appShortcuts}
+                      onToggle={(profileId) => onToggleMount(asset.id, profileId)}
+                    />
+                    {hasVisibleMountShortcuts && <span className="h-6 w-px bg-theme-control-border/80" aria-hidden="true" />}
+                    <ColumnAssetIconButton label={t("asset.edit")} onClick={() => onEditAsset(asset)}>
+                      <Pencil size={16} />
+                    </ColumnAssetIconButton>
+                    <ColumnAssetIconButton danger label={t("asset.delete")} onClick={() => onDeleteAsset(asset)}>
+                      <Trash2 size={16} />
+                    </ColumnAssetIconButton>
+                  </div>
                 </article>
               );
             })
@@ -203,6 +217,33 @@ export function SourceColumnView({
         </div>
       </section>
     </ResizableColumns>
+  );
+}
+
+function ColumnAssetIconButton({
+  children,
+  danger = false,
+  label,
+  onClick,
+}: {
+  children: React.ReactNode;
+  danger?: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-label={label}
+      className={clsx(
+        "grid size-8 place-items-center rounded-lg text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-primary",
+        danger && "hover:text-status-remove",
+      )}
+      onClick={onClick}
+      title={label}
+      type="button"
+    >
+      {children}
+    </button>
   );
 }
 

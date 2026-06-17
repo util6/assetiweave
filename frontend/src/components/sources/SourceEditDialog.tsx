@@ -1,4 +1,4 @@
-import { FolderCog, FolderOpen, Save } from "lucide-react";
+import { Archive, FolderCog, Save } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { Source } from "../../types";
@@ -10,20 +10,25 @@ import {
   validateSourceImportForm,
 } from "../../utils/sourceImport";
 import { abbreviateHomePath } from "../../utils/path";
+import { PathPickerInput } from "../common/PathPickerInput";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 
 export function SourceEditDialog({
+  backupAssetCount = 0,
   busy,
+  onBackup,
   onClose,
   onNotifyError,
   onPickRootPath,
   onSubmit,
   source,
 }: {
+  backupAssetCount?: number;
   busy: boolean;
+  onBackup?: () => Promise<void>;
   onClose: () => void;
   onNotifyError: (message: string) => void;
   onPickRootPath: () => Promise<string | null>;
@@ -49,6 +54,9 @@ export function SourceEditDialog({
     return null;
   }
   const currentSource = source;
+  const backupActionLabel = backupAssetCount > 0
+    ? t("backup.action.backupCount", { count: backupAssetCount })
+    : t("backup.action.allInDirectory");
 
   function updateValue<Key extends keyof SourceImportFormValues>(key: Key, value: SourceImportFormValues[Key]) {
     setValues((currentValues) => ({ ...currentValues, [key]: value }));
@@ -90,23 +98,42 @@ export function SourceEditDialog({
     }
   }
 
+  const footer = (
+    <>
+      <div className="max-[640px]:grid">
+        {onBackup && (
+          <Button
+            className="max-[640px]:w-full"
+            disabled={busy || backupAssetCount === 0}
+            onClick={() => void onBackup()}
+            type="button"
+            variant="outline"
+          >
+            <Archive size={16} />
+            {backupActionLabel}
+          </Button>
+        )}
+      </div>
+      <div className="flex items-center justify-end gap-2 max-[640px]:grid max-[640px]:grid-cols-2">
+        <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+          {t("common.cancel")}
+        </Button>
+        <Button disabled={busy} form={formId} type="submit">
+          <Save size={16} />
+          {busy ? t("source.edit.submitting") : t("source.edit.submit")}
+        </Button>
+      </div>
+    </>
+  );
+
   return (
     <DialogFrame
       busy={busy}
       closeLabel={t("common.close")}
       contentClassName="p-0"
       description={currentSource.name}
-      footer={
-        <>
-          <Button disabled={busy} onClick={onClose} type="button" variant="outline">
-            {t("common.cancel")}
-          </Button>
-          <Button disabled={busy} form={formId} type="submit">
-            <Save size={16} />
-            {busy ? t("source.edit.submitting") : t("source.edit.submit")}
-          </Button>
-        </>
-      }
+      footer={footer}
+      footerClassName="justify-between max-[640px]:flex-col max-[640px]:items-stretch"
       icon={<FolderCog size={18} />}
       iconClassName="border-status-update/25 bg-status-update/15 text-status-update"
       initialFocusRef={rootPathInputRef}
@@ -117,28 +144,17 @@ export function SourceEditDialog({
         <form className="px-5 py-5" id={formId} onSubmit={(event) => void handleSubmit(event)}>
           <div className="grid gap-4">
             <Field label={t("source.field.rootPath")} required>
-              <div className="flex gap-2">
-                <Input
-                  aria-describedby={fieldErrors.rootPath ? rootPathErrorId : undefined}
-                  aria-invalid={Boolean(fieldErrors.rootPath)}
-                  className="min-w-0 flex-1"
-                  disabled={busy || pickingRootPath}
-                  onChange={(event) => updateValue("rootPath", event.target.value)}
-                  ref={rootPathInputRef}
-                  value={values.rootPath}
-                />
-                <Button
-                  aria-label={t("source.import.pickDirectory")}
-                  disabled={busy || pickingRootPath}
-                  onClick={() => void handlePickRootPath()}
-                  size="icon"
-                  title={t("source.import.pickDirectory")}
-                  type="button"
-                  variant="outline"
-                >
-                  <FolderOpen size={17} />
-                </Button>
-              </div>
+              <PathPickerInput
+                aria-describedby={fieldErrors.rootPath ? rootPathErrorId : undefined}
+                aria-invalid={Boolean(fieldErrors.rootPath)}
+                disabled={busy}
+                onChange={(event) => updateValue("rootPath", event.target.value)}
+                onPick={() => void handlePickRootPath()}
+                pickLabel={t("source.import.pickDirectory")}
+                picking={pickingRootPath}
+                ref={rootPathInputRef}
+                value={values.rootPath}
+              />
               {fieldErrors.rootPath && (
                 <FieldError id={rootPathErrorId}>{t("source.import.error.rootPathRequired")}</FieldError>
               )}

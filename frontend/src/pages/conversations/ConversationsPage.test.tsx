@@ -141,6 +141,7 @@ describe("MarkdownContent", () => {
     const html = renderToStaticMarkup(
       <QuestionPreview
         onExport={async () => undefined}
+        onPickOutputRoot={async () => null}
         onSplit={async () => undefined}
         outputRoot="/tmp/conversation-export"
         question={questionDetail}
@@ -157,6 +158,34 @@ describe("MarkdownContent", () => {
     expect(html).toContain("assetiweave-cli conversation sync --dry-run");
     expect(html).toContain("从这里拆分");
     expect(html).toContain("导出");
+  });
+
+  it("lets users choose the inline question export output root", async () => {
+    const setOutputRoot = vi.fn();
+    const onPickOutputRoot = vi.fn(async () => "/tmp/detail-export-root");
+
+    render(
+      <QuestionPreview
+        onExport={async () => undefined}
+        onPickOutputRoot={onPickOutputRoot}
+        onSplit={async () => undefined}
+        outputRoot="/tmp/conversation-export"
+        question={questionDetail}
+        session={sessionDetail}
+        setOutputRoot={setOutputRoot}
+        t={t}
+      />,
+    );
+
+    const pickButton = screen.getByRole("button", { name: "选择导出根目录" });
+    expect(pickButton.textContent).toBe("");
+
+    fireEvent.click(pickButton);
+
+    await waitFor(() => {
+      expect(onPickOutputRoot).toHaveBeenCalledTimes(1);
+      expect(setOutputRoot).toHaveBeenCalledWith("/tmp/detail-export-root");
+    });
   });
 
   it("groups sessions from the app level before browsing individual sessions", () => {
@@ -346,6 +375,7 @@ describe("MarkdownContent", () => {
     render(
       <QuestionPreview
         onExport={async () => undefined}
+        onPickOutputRoot={async () => null}
         onSplit={async () => undefined}
         outputRoot="/tmp/conversation-export"
         question={questionDetail}
@@ -372,6 +402,7 @@ describe("MarkdownContent", () => {
           sessionId: "session-1",
         }}
         onExport={async () => undefined}
+        onPickOutputRoot={async () => null}
         outputRoot="/tmp/conversation-export"
         question={questionDetail}
         session={sessionDetail}
@@ -478,6 +509,7 @@ describe("MarkdownContent", () => {
     const previewHtml = renderToStaticMarkup(
       <QuestionPreview
         onExport={async () => undefined}
+        onPickOutputRoot={async () => null}
         onSplit={async () => undefined}
         outputRoot="/tmp/conversation-export"
         question={richQuestionDetail}
@@ -508,6 +540,7 @@ describe("MarkdownContent", () => {
         }}
         onExport={async () => undefined}
         onMerge={async () => undefined}
+        onPickOutputRoot={async () => null}
         onQuestionSelect={vi.fn()}
         onQuestionSelectionChange={vi.fn()}
         onSplit={async () => undefined}
@@ -535,6 +568,8 @@ describe("MarkdownContent", () => {
     expect(html).toContain("水平浏览分栏");
     expect(html).toContain('role="scrollbar"');
     expect(html).toContain("sticky bottom-0");
+    expect(html).toContain("flex h-48 flex-col overflow-hidden");
+    expect(html).toContain("line-clamp-2 min-w-0 break-words");
   });
 
   it("renders an export dialog that reuses content visibility controls", () => {
@@ -552,6 +587,7 @@ describe("MarkdownContent", () => {
         onClose={vi.fn()}
         onConfirm={async () => undefined}
         onOutputRootChange={vi.fn()}
+        onPickOutputRoot={async () => "/tmp/selected-export-root"}
         onVisibilityChange={vi.fn()}
         outputRoot="/tmp/conversation-export"
         questionCount={2}
@@ -570,10 +606,55 @@ describe("MarkdownContent", () => {
     expect(html).toContain("导出 Markdown");
     expect(html).toContain("2 个问题");
     expect(html).toContain("/tmp/conversation-export");
+    expect(html).toContain('aria-label="选择导出根目录"');
     for (const label of ["回答文字", "工具调用", "命令执行", "代码", "执行结果"]) {
       expect(html).toContain(label);
     }
     expect(html).toContain("确认导出");
+  });
+
+  it("lets users choose the export output root from a filesystem picker", async () => {
+    const onOutputRootChange = vi.fn();
+    const onPickOutputRoot = vi.fn(async () => "/tmp/selected-export-root");
+
+    render(
+      <ConversationExportDialog
+        contentCardColors={{
+          answer: "#facc15",
+          code: "#60a5fa",
+          command: "#f59e0b",
+          result: "#34d399",
+          tool: "#22c55e",
+        }}
+        exporting={false}
+        mode="session"
+        onClose={vi.fn()}
+        onConfirm={async () => undefined}
+        onOutputRootChange={onOutputRootChange}
+        onPickOutputRoot={onPickOutputRoot}
+        onVisibilityChange={vi.fn()}
+        outputRoot="/tmp/conversation-export"
+        questionCount={3}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    const pickButton = screen.getByRole("button", { name: "选择导出根目录" });
+    expect(pickButton.textContent).toBe("");
+
+    fireEvent.click(pickButton);
+
+    await waitFor(() => {
+      expect(onPickOutputRoot).toHaveBeenCalledTimes(1);
+      expect(onOutputRootChange).toHaveBeenCalledWith("/tmp/selected-export-root");
+    });
   });
 
   it("renders explicit sync phases and accessible progress", () => {

@@ -104,6 +104,15 @@ export async function backupSkill(assetId: string): Promise<Asset> {
   return await invoke<Asset>("backup_skill", { assetId });
 }
 
+export async function backupSkills(assetIds: string[]): Promise<Asset[]> {
+  const backedUpAssets: Asset[] = [];
+  const uniqueAssetIds = [...new Set(assetIds)];
+  for (const assetId of uniqueAssetIds) {
+    backedUpAssets.push(await backupSkill(assetId));
+  }
+  return backedUpAssets;
+}
+
 export async function searchSkills(query: string, limit = 8, provider = "github"): Promise<SkillSearchResult> {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) {

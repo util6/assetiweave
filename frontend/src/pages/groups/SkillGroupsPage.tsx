@@ -30,6 +30,7 @@ import type { TranslationKey } from "../../i18n/messages";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import { useAppSettings } from "../../store/settings/AppSettingsProvider";
 import {
+  backupSkills,
   createSkillGroup,
   deleteSkillGroup,
   listSkillGroups,
@@ -64,6 +65,8 @@ interface SkillGroupsPageProps {
   assetMountStatuses: AssetMountStatus[];
   assets: Asset[];
   expandedAssetIds: Set<string>;
+  onCatalogRefresh: () => Promise<void>;
+  onClearDeploymentPlan: () => void;
   onManualOpen: () => void;
   onNotifyError: (message: string) => void;
   onOpenSettings: () => void;
@@ -87,6 +90,8 @@ export function SkillGroupsPage({
   assetMountStatuses,
   assets,
   expandedAssetIds,
+  onCatalogRefresh,
+  onClearDeploymentPlan,
   onManualOpen,
   onNotifyError,
   onOpenSettings,
@@ -150,7 +155,6 @@ export function SkillGroupsPage({
     () => selectedGroupDetails.map((detail) => detail.group.id),
     [selectedGroupDetails],
   );
-
   useEffect(() => {
     void refreshGroups();
   }, []);
@@ -242,6 +246,27 @@ export function SkillGroupsPage({
     } catch (updateError) {
       onNotifyError(errorMessage(updateError));
     } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleBackupEditingGroupAssets(assetIds: string[]) {
+    if (assetIds.length === 0) {
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await backupSkills(assetIds);
+    } catch (backupError) {
+      onNotifyError(errorMessage(backupError));
+    } finally {
+      try {
+        await onCatalogRefresh();
+        onClearDeploymentPlan();
+      } catch (refreshError) {
+        onNotifyError(errorMessage(refreshError));
+      }
       setBusy(false);
     }
   }
@@ -551,6 +576,7 @@ export function SkillGroupsPage({
         assets={assets}
         busy={busy}
         detail={editingGroup}
+        onBackup={handleBackupEditingGroupAssets}
         onClose={() => setEditingGroup(null)}
         onSubmit={handleUpdateGroup}
       />

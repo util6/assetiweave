@@ -1,4 +1,4 @@
-import { Code2, Save } from "lucide-react";
+import { Archive, Code2, Save } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -8,13 +8,14 @@ import { useI18n } from "../../i18n/I18nProvider";
 import { DEFAULT_GROUP_COLOR_HEX } from "../../theme/themes";
 import { isHexColor } from "../../theme/colorValidation";
 import type { Asset, AssetGroup, AssetGroupDetail, AssetGroupIconSvg } from "../../types";
-import { groupMemberAssetIds } from "../../utils/skillGroups";
+import { getBackupableSkillAssetsByIds } from "../../utils/skillBackup";
 import { AssetPickerHeader, AssetPickerText, GroupField } from "./SkillGroupFormPrimitives";
 
 interface SkillGroupEditDialogProps {
   assets: Asset[];
   busy: boolean;
   detail: AssetGroupDetail | null;
+  onBackup?: (assetIds: string[]) => Promise<void>;
   onClose: () => void;
   onSubmit: (group: AssetGroup, manualAssetIds: string[]) => Promise<void>;
 }
@@ -23,6 +24,7 @@ export function SkillGroupEditDialog({
   assets,
   busy,
   detail,
+  onBackup,
   onClose,
   onSubmit,
 }: SkillGroupEditDialogProps) {
@@ -43,6 +45,7 @@ export function SkillGroupEditDialog({
   const [svgError, setSvgError] = useState("");
 
   const skillAssets = useMemo(() => assets.filter((asset) => asset.kind === "skill"), [assets]);
+  const skillAssetsById = useMemo(() => new Map(skillAssets.map((asset) => [asset.id, asset])), [skillAssets]);
   const filteredAssets = useMemo(() => filterAssets(skillAssets, query), [query, skillAssets]);
   const ruleAssetIds = useMemo(
     () =>
@@ -53,9 +56,20 @@ export function SkillGroupEditDialog({
       ),
     [detail],
   );
+  const draftMemberAssetIds = useMemo(() => {
+    const assetIds = new Set<string>(ruleAssetIds);
+    for (const assetId of manualAssetIds) {
+      assetIds.add(assetId);
+    }
+    return [...assetIds];
+  }, [manualAssetIds, ruleAssetIds]);
+  const backupAssets = useMemo(
+    () => getBackupableSkillAssetsByIds(skillAssetsById, draftMemberAssetIds),
+    [draftMemberAssetIds, skillAssetsById],
+  );
   const selectedCount = useMemo(
-    () => new Set([...groupMemberAssetIds(detail), ...manualAssetIds]).size,
-    [detail, manualAssetIds],
+    () => draftMemberAssetIds.length,
+    [draftMemberAssetIds],
   );
 
   useEffect(() => {
@@ -78,6 +92,10 @@ export function SkillGroupEditDialog({
   if (!detail) {
     return null;
   }
+  const backupAssetCount = backupAssets.length;
+  const backupActionLabel = backupAssetCount > 0
+    ? t("backup.action.backupCount", { count: backupAssetCount })
+    : t("backup.action.allInDirectory");
 
   function commitColor(nextColor: string) {
     const trimmed = nextColor.trim();
@@ -164,15 +182,31 @@ export function SkillGroupEditDialog({
   }
 
   const footer = (
-    <div className="flex items-center justify-end gap-2">
-      <Button disabled={busy} onClick={onClose} type="button" variant="outline">
-        {t("group.dialog.cancel")}
-      </Button>
-      <Button disabled={busy} onClick={() => void handleSubmit()} type="button">
-        <Save size={16} />
-        {t("group.editDialog.submit")}
-      </Button>
-    </div>
+    <>
+      <div className="max-[640px]:grid">
+        {onBackup && (
+          <Button
+            className="max-[640px]:w-full"
+            disabled={busy || backupAssetCount === 0}
+            onClick={() => void onBackup(backupAssets.map((asset) => asset.id))}
+            type="button"
+            variant="outline"
+          >
+            <Archive size={16} />
+            {backupActionLabel}
+          </Button>
+        )}
+      </div>
+      <div className="flex items-center justify-end gap-2 max-[640px]:grid max-[640px]:grid-cols-2">
+        <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+          {t("group.dialog.cancel")}
+        </Button>
+        <Button disabled={busy} onClick={() => void handleSubmit()} type="button">
+          <Save size={16} />
+          {t("group.editDialog.submit")}
+        </Button>
+      </div>
+    </>
   );
 
   return (
@@ -181,6 +215,7 @@ export function SkillGroupEditDialog({
         busy={busy}
         closeLabel={t("group.dialog.close")}
         footer={footer}
+        footerClassName="justify-between max-[640px]:flex-col max-[640px]:items-stretch"
         icon={<Save size={18} />}
         iconClassName="border-status-update/25 bg-status-update/15 text-status-update"
         initialFocusRef={nameInputRef}

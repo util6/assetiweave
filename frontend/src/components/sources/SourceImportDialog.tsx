@@ -1,4 +1,4 @@
-import { FolderOpen, FolderPlus } from "lucide-react";
+import { FolderPlus } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { SourceInput } from "../../types";
@@ -12,6 +12,7 @@ import {
   validateSourceImportForm,
 } from "../../utils/sourceImport";
 import { abbreviateHomePath } from "../../utils/path";
+import { PathPickerInput } from "../common/PathPickerInput";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -120,29 +121,18 @@ export function SourceImportDialog({
         <form className="px-5 py-5" id={formId} onSubmit={(event) => void handleSubmit(event)}>
           <div className="grid gap-4">
             <Field label={t("source.field.rootPath")} required>
-              <div className="flex gap-2">
-                <Input
-                  aria-describedby={fieldErrors.rootPath ? rootPathErrorId : undefined}
-                  aria-invalid={Boolean(fieldErrors.rootPath)}
-                  className="min-w-0 flex-1"
-                  disabled={busy || pickingRootPath}
-                  onChange={(event) => updateValue("rootPath", event.target.value)}
-                  placeholder={t("source.import.rootPathPlaceholder")}
-                  ref={rootPathInputRef}
-                  value={values.rootPath}
-                />
-                <Button
-                  aria-label={t("source.import.pickDirectory")}
-                  disabled={busy || pickingRootPath}
-                  onClick={() => void handlePickRootPath()}
-                  title={t("source.import.pickDirectory")}
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                >
-                  <FolderOpen size={17} />
-                </Button>
-              </div>
+              <PathPickerInput
+                aria-describedby={fieldErrors.rootPath ? rootPathErrorId : undefined}
+                aria-invalid={Boolean(fieldErrors.rootPath)}
+                disabled={busy}
+                onChange={(event) => updateValue("rootPath", event.target.value)}
+                onPick={() => void handlePickRootPath()}
+                pickLabel={t("source.import.pickDirectory")}
+                picking={pickingRootPath}
+                placeholder={t("source.import.rootPathPlaceholder")}
+                ref={rootPathInputRef}
+                value={values.rootPath}
+              />
               {fieldErrors.rootPath && (
                 <FieldError id={rootPathErrorId}>{t("source.import.error.rootPathRequired")}</FieldError>
               )}

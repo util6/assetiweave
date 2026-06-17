@@ -15,7 +15,9 @@ export function SourceRow({
   expanded,
   expandedAssetIds,
   onDelete,
+  onDeleteAsset,
   onEdit,
+  onEditAsset,
   onAssetReveal,
   onReveal,
   onSetSourceMountProfile,
@@ -32,7 +34,9 @@ export function SourceRow({
   expanded: boolean;
   expandedAssetIds: Set<string>;
   onDelete: () => void;
+  onDeleteAsset: (asset: Asset) => void;
   onEdit: () => void;
+  onEditAsset: (asset: Asset) => void;
   onAssetReveal: (path: string) => void;
   onReveal: () => void;
   onSetSourceMountProfile: (assetIds: string[], profileId: string, enabled: boolean) => void;
@@ -144,6 +148,8 @@ export function SourceRow({
                       asset={asset}
                       expanded={expandedAssetIds.has(asset.id)}
                       key={asset.id}
+                      onDelete={() => onDeleteAsset(asset)}
+                      onEdit={() => onEditAsset(asset)}
                       onRevealPath={onAssetReveal}
                       onToggleExpanded={() => onToggleAsset(asset.id)}
                       onToggleMount={(profileId) => onToggleMount(asset.id, profileId)}

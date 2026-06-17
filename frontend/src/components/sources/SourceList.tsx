@@ -12,7 +12,9 @@ export function SourceList({
   busy,
   expandedAssetIds,
   onDelete,
+  onDeleteAsset,
   onEdit,
+  onEditAsset,
   onAssetReveal,
   onReveal,
   onSetSourceMountProfile,
@@ -28,7 +30,9 @@ export function SourceList({
   busy: boolean;
   expandedAssetIds: Set<string>;
   onDelete: (source: Source) => void;
+  onDeleteAsset: (asset: Asset) => void;
   onEdit: (source: Source) => void;
+  onEditAsset: (asset: Asset) => void;
   onAssetReveal: (path: string) => void;
   onReveal: (path: string) => void;
   onSetSourceMountProfile: (assetIds: string[], profileId: string, enabled: boolean) => void;
@@ -84,7 +88,9 @@ export function SourceList({
         mountStatusesByAssetId={mountStatusesByAssetId}
         onAssetReveal={onAssetReveal}
         onDelete={onDelete}
+        onDeleteAsset={onDeleteAsset}
         onEdit={onEdit}
+        onEditAsset={onEditAsset}
         onReveal={onReveal}
         onSelectSource={setSelectedSourceId}
         onSetSourceMountProfile={onSetSourceMountProfile}
@@ -111,7 +117,9 @@ export function SourceList({
           expandedAssetIds={expandedAssetIds}
           key={source.id}
           onDelete={() => onDelete(source)}
+          onDeleteAsset={onDeleteAsset}
           onEdit={() => onEdit(source)}
+          onEditAsset={onEditAsset}
           onAssetReveal={onAssetReveal}
           onReveal={() => onReveal(source.root_path)}
           onSetSourceMountProfile={onSetSourceMountProfile}

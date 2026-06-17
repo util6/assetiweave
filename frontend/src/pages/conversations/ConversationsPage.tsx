@@ -21,6 +21,7 @@ import {
   ToolbarSearch,
   ToolbarTextButton,
 } from "../../components/common/DataToolbar";
+import { PathPickerInput } from "../../components/common/PathPickerInput";
 import { AppShortcutIconForShortcut } from "../../components/apps/AppShortcutIcon";
 import {
   buildConversationContentBlocks,
@@ -63,6 +64,7 @@ import {
   summarizeConversationSyncTask,
   type ConversationSyncSummaryCounts,
 } from "../../services/conversations";
+import { selectTargetDirectory } from "../../services/catalog";
 import { useConversationSync } from "../../app/backgroundTasks/ConversationSyncProvider";
 import type {
   AppKind,
@@ -696,6 +698,7 @@ export function ConversationsPage({
           onClose={() => setExportDialog(null)}
           onConfirm={handleConfirmExport}
           onOutputRootChange={setOutputRoot}
+          onPickOutputRoot={() => selectTargetDirectory(t("conversation.export.pickOutputRoot"))}
           onVisibilityChange={(type, checked) =>
             setExportVisibility((current) => ({ ...current, [type]: checked }))
           }
@@ -729,6 +732,7 @@ export function ConversationsPage({
           onExport={() => openExportDialog("session")}
           onCopyError={onNotifyError}
           onMerge={webRecordMode ? undefined : handleMerge}
+          onPickOutputRoot={() => selectTargetDirectory(t("conversation.export.pickOutputRoot"))}
           onQuestionSelect={setSelectedQuestionId}
           onQuestionSelectionChange={handleQuestionSelectionChange}
           onSplit={webRecordMode ? undefined : handleSplit}
@@ -912,6 +916,7 @@ export function ConversationExportDialog({
   onClose,
   onConfirm,
   onOutputRootChange,
+  onPickOutputRoot,
   onVisibilityChange,
   outputRoot,
   questionCount,
@@ -924,16 +929,30 @@ export function ConversationExportDialog({
   onClose: () => void;
   onConfirm: () => Promise<void>;
   onOutputRootChange: (value: string) => void;
+  onPickOutputRoot: () => Promise<string | null>;
   onVisibilityChange: (type: keyof ConversationContentVisibility, checked: boolean) => void;
   outputRoot: string;
   questionCount: number;
   t: Translator;
   visibility: ConversationContentVisibility;
 }) {
+  const [pickingOutputRoot, setPickingOutputRoot] = useState(false);
   const scopeLabel =
     mode === "questions"
       ? t("conversation.export.scopeQuestions", { count: questionCount })
       : t("conversation.export.scopeSession", { count: questionCount });
+
+  async function handlePickOutputRoot() {
+    setPickingOutputRoot(true);
+    try {
+      const selected = await onPickOutputRoot();
+      if (selected) {
+        onOutputRootChange(abbreviateHomePath(selected));
+      }
+    } finally {
+      setPickingOutputRoot(false);
+    }
+  }
 
   return (
     <DialogFrame
@@ -968,14 +987,18 @@ export function ConversationExportDialog({
           <span className="text-label-caps text-on-surface-muted">{t("conversation.export.scope")}</span>
           <strong className="text-body-sm text-on-surface">{scopeLabel}</strong>
         </div>
-        <label className="grid gap-2">
+        <div className="grid gap-2">
           <span className="text-label-caps text-on-surface-muted">{t("conversation.session.outputRoot")}</span>
-          <input
-            className="h-10 w-full rounded-xl border border-theme-control-border bg-theme-control/95 px-3 text-body-sm text-on-surface outline-none transition-colors focus:border-primary/60"
+          <PathPickerInput
+            aria-label={t("conversation.session.outputRoot")}
+            disabled={exporting}
             onChange={(event) => onOutputRootChange(event.target.value)}
+            onPick={() => void handlePickOutputRoot()}
+            pickLabel={t("conversation.export.pickOutputRoot")}
+            picking={pickingOutputRoot}
             value={outputRoot}
           />
-        </label>
+        </div>
         <ConversationContentFilter
           colors={contentCardColors}
           onChange={onVisibilityChange}
@@ -1371,6 +1394,7 @@ export function SessionQuestionWorkspace({
   onExport,
   onCopyError,
   onMerge,
+  onPickOutputRoot,
   onQuestionSelect,
   onQuestionSelectionChange,
   onSplit,
@@ -1391,6 +1415,7 @@ export function SessionQuestionWorkspace({
   onExport: () => void;
   onCopyError?: (message: string) => void;
   onMerge?: (previous: ConversationQuestionDetail, current: ConversationQuestionDetail) => Promise<void>;
+  onPickOutputRoot: () => Promise<string | null>;
   onQuestionSelect: (questionId: string) => void;
   onQuestionSelectionChange: (questionId: string, checked: boolean) => void;
   onSplit?: (question: ConversationQuestionDetail, turnId: string) => Promise<void>;
@@ -1464,6 +1489,7 @@ export function SessionQuestionWorkspace({
             contentCardColors={contentCardColors}
             onExport={onExport}
             onCopyError={onCopyError}
+            onPickOutputRoot={onPickOutputRoot}
             onSplit={onSplit}
             outputRoot={outputRoot}
             question={question}
@@ -1502,8 +1528,8 @@ function QuestionListItem({
   const answerPreview = firstLine(question.question.answer_text || question.question.command_text || question.question.code_text, t);
 
   return (
-    <article className={`border-b border-theme-card-border ${selected ? "bg-primary/10" : "hover:bg-theme-card-header/70"}`}>
-      <div className="grid grid-cols-[auto_minmax(0,1fr)]">
+    <article className={`flex h-48 flex-col overflow-hidden border-b border-theme-card-border ${selected ? "bg-primary/10" : "hover:bg-theme-card-header/70"}`}>
+      <div className="grid min-h-0 flex-1 grid-cols-[auto_minmax(0,1fr)]">
         <label className="flex px-4 py-3 pr-3">
           <input
             aria-label={t("conversation.question.selectForExport", { title })}
@@ -1515,18 +1541,19 @@ function QuestionListItem({
         </label>
         <button
           aria-label={t("conversation.question.select", { title })}
-          className="min-w-0 py-3 pr-4 text-left"
+          className="flex min-h-0 min-w-0 flex-col overflow-hidden py-3 pr-4 text-left"
           onClick={onSelect}
+          title={title}
           type="button"
         >
-          <div className="flex items-start justify-between gap-3">
-            <h3 className="min-w-0 text-body-sm font-semibold text-on-surface">{title}</h3>
+          <div className="flex min-w-0 items-start justify-between gap-3">
+            <h3 className="line-clamp-2 min-w-0 break-words text-body-sm font-semibold text-on-surface">{title}</h3>
             <span className="shrink-0 rounded-full bg-theme-control px-2 py-1 text-code-sm text-on-surface-muted">
               {t("conversation.question.turnCount", { count: question.turns.length })}
             </span>
           </div>
           <p className="mt-2 line-clamp-2 text-body-sm text-on-surface-variant">{answerPreview}</p>
-          <p className="mt-2 text-label-caps text-on-surface-muted">{questionOriginLabel(question.question.grouping_origin, t)}</p>
+          <p className="mt-auto pt-2 text-label-caps text-on-surface-muted">{questionOriginLabel(question.question.grouping_origin, t)}</p>
         </button>
       </div>
       {onMergeWithPrevious ? (
@@ -1543,6 +1570,7 @@ export function QuestionPreview({
   contentCardColors,
   onExport,
   onCopyError,
+  onPickOutputRoot,
   onSplit,
   outputRoot,
   question,
@@ -1556,6 +1584,7 @@ export function QuestionPreview({
   contentCardColors?: ConversationContentCardColorSettings;
   onExport: () => void;
   onCopyError?: (message: string) => void;
+  onPickOutputRoot: () => Promise<string | null>;
   onSplit?: (question: ConversationQuestionDetail, turnId: string) => Promise<void>;
   outputRoot: string;
   question: ConversationQuestionDetail;
@@ -1567,6 +1596,7 @@ export function QuestionPreview({
 }) {
   const title = question.question.title || firstLine(question.question.question_text, t);
   const [copiedPromptTurnId, setCopiedPromptTurnId] = useState<string | null>(null);
+  const [pickingOutputRoot, setPickingOutputRoot] = useState(false);
   const copiedPromptResetTimerRef = useRef<number | null>(null);
   const activeBlockId = activeSearchTarget?.questionId === question.question.id ? activeSearchTarget.blockId : null;
 
@@ -1603,6 +1633,18 @@ export function QuestionPreview({
     }
   }
 
+  async function handlePickOutputRoot() {
+    setPickingOutputRoot(true);
+    try {
+      const selected = await onPickOutputRoot();
+      if (selected) {
+        setOutputRoot(abbreviateHomePath(selected));
+      }
+    } finally {
+      setPickingOutputRoot(false);
+    }
+  }
+
   return (
     <div className="conversation-readable flex min-h-full flex-col">
       <header className="border-b border-theme-card-border bg-theme-card/74 px-5 py-4">
@@ -1615,14 +1657,15 @@ export function QuestionPreview({
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <label className="min-w-64">
-              <span className="sr-only">{t("conversation.session.outputRoot")}</span>
-              <input
-                className="h-10 w-full rounded-xl border border-theme-control-border bg-theme-control/95 px-3 text-body-sm text-on-surface outline-none"
-                onChange={(event) => setOutputRoot(event.target.value)}
-                value={outputRoot}
-              />
-            </label>
+            <PathPickerInput
+              aria-label={t("conversation.session.outputRoot")}
+              className="min-w-64"
+              onChange={(event) => setOutputRoot(event.target.value)}
+              onPick={() => void handlePickOutputRoot()}
+              pickLabel={t("conversation.export.pickOutputRoot")}
+              picking={pickingOutputRoot}
+              value={outputRoot}
+            />
             <ToolbarActionButton icon={<Download size={17} />} label={t("conversation.session.exportMarkdown")} onClick={onExport} text={t("toolbar.export")} />
           </div>
         </div>
