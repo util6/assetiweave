@@ -134,6 +134,7 @@ type AuthDetectOptions struct {
 	cookieLoader     func(BrowserProfile, string) ([]BrowserCookie, error)
 	tokenLoader      func(BrowserProfile, []string) ([]BrowserToken, error)
 	keychainPassword func(string) (string, error)
+	profileResolver  func(string, string) ([]BrowserProfile, error)
 }
 
 type AuthCheckResult struct {
@@ -364,7 +365,11 @@ func AuthDetect(options AuthDetectOptions) (AuthDetectResult, error) {
 	if err != nil {
 		return AuthDetectResult{}, err
 	}
-	profiles, err := resolveBrowserProfiles(options.Browser, options.Profile)
+	profileResolver := options.profileResolver
+	if profileResolver == nil {
+		profileResolver = resolveBrowserProfiles
+	}
+	profiles, err := profileResolver(options.Browser, options.Profile)
 	if err != nil {
 		return AuthDetectResult{}, err
 	}

@@ -245,10 +245,11 @@ func TestAuthDetectWritesAuthProbeFromBrowserCookies(t *testing.T) {
 	}
 
 	result, err := AuthDetect(AuthDetectOptions{
-		Directory: root,
-		Browser:   "edge",
-		Profile:   "Default",
-		Domain:    "qianwen.com",
+		Directory:       root,
+		Browser:         "edge",
+		Profile:         "Default",
+		Domain:          "qianwen.com",
+		profileResolver: testBrowserProfileResolver,
 		tokenLoader: func(profile BrowserProfile, origins []string) ([]BrowserToken, error) {
 			return nil, nil
 		},
@@ -307,12 +308,13 @@ func TestAuthDetectPrefersLocalStorageToken(t *testing.T) {
 	cookieLoaderCalled := false
 
 	result, err := AuthDetect(AuthDetectOptions{
-		Directory:  root,
-		Browser:    "edge",
-		Profile:    "Default",
-		Domain:     "qianwen.com",
-		ProbeURL:   "https://chat.qwen.ai/api/v1/auths/",
-		Credential: "token",
+		Directory:       root,
+		Browser:         "edge",
+		Profile:         "Default",
+		Domain:          "qianwen.com",
+		ProbeURL:        "https://chat.qwen.ai/api/v1/auths/",
+		Credential:      "token",
+		profileResolver: testBrowserProfileResolver,
 		tokenLoader: func(profile BrowserProfile, origins []string) ([]BrowserToken, error) {
 			if !slicesContain(origins, "https://chat.qwen.ai") {
 				t.Fatalf("origins = %#v, want chat.qwen.ai", origins)
@@ -363,9 +365,10 @@ func TestAuthDetectReportsMissingBrowserLogin(t *testing.T) {
 	}
 
 	_, err := AuthDetect(AuthDetectOptions{
-		Directory: root,
-		Browser:   "chrome",
-		Domain:    "qianwen.com",
+		Directory:       root,
+		Browser:         "chrome",
+		Domain:          "qianwen.com",
+		profileResolver: testBrowserProfileResolver,
 		tokenLoader: func(profile BrowserProfile, origins []string) ([]BrowserToken, error) {
 			return nil, nil
 		},
@@ -390,9 +393,10 @@ func TestAuthDetectPreservesCookieDecryptFailure(t *testing.T) {
 	}
 
 	_, err := AuthDetect(AuthDetectOptions{
-		Directory: root,
-		Browser:   "edge",
-		Domain:    "qianwen.com",
+		Directory:       root,
+		Browser:         "edge",
+		Domain:          "qianwen.com",
+		profileResolver: testBrowserProfileResolver,
 		tokenLoader: func(profile BrowserProfile, origins []string) ([]BrowserToken, error) {
 			return nil, nil
 		},
@@ -417,9 +421,10 @@ func TestAuthDetectFiltersInvalidCookieHeaderValues(t *testing.T) {
 	}
 
 	result, err := AuthDetect(AuthDetectOptions{
-		Directory: root,
-		Browser:   "edge",
-		Domain:    "qianwen.com",
+		Directory:       root,
+		Browser:         "edge",
+		Domain:          "qianwen.com",
+		profileResolver: testBrowserProfileResolver,
 		tokenLoader: func(profile BrowserProfile, origins []string) ([]BrowserToken, error) {
 			return nil, nil
 		},
@@ -464,6 +469,25 @@ func slicesContain(values []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func testBrowserProfileResolver(browser, profile string) ([]BrowserProfile, error) {
+	browser = strings.TrimSpace(browser)
+	if browser == "" || browser == "auto" {
+		browser = "edge"
+	}
+	profile = strings.TrimSpace(profile)
+	if profile == "" {
+		profile = "Default"
+	}
+	return []BrowserProfile{{
+		Browser:          browser,
+		Profile:          profile,
+		ProfilePath:      filepath.Join("test-browser", browser, profile),
+		CookieDB:         filepath.Join("test-browser", browser, profile, "Cookies"),
+		KeychainService:  "Test Safe Storage",
+		LocalStoragePath: filepath.Join("test-browser", browser, profile, "Local Storage", "leveldb"),
+	}}, nil
 }
 
 func writeRequest(t *testing.T, path string, request HTTPRequestTemplate) {
