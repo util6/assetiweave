@@ -587,7 +587,10 @@ impl AppService {
     }
 
     pub(crate) fn scan_skill_sources(&self) -> AppResult<Vec<CatalogAsset>> {
-        let sources = crate::backend::store::load_skill_sources(&self.conn)?;
+        let pool = self.db.pool().clone();
+        let sources = self
+            .db
+            .block_on(async move { crate::backend::store::load_skill_sources_sqlx(&pool).await })?;
         capabilities::scan_selected_sources(
             &self.conn,
             &self.db,
@@ -2893,6 +2896,54 @@ mod tests {
             .expect_err("delete blocked by deployment state");
 
         assert!(error.contains("managed deployments"));
+        drop(service);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn scan_skill_sources_reads_sqlx_sources() {
+        let root =
+            std::env::temp_dir().join(format!("assetiweave-sqlx-scan-skill-{}", Uuid::new_v4()));
+        let source_root = root.join("skills");
+        let skill_dir = source_root.join("skill-a");
+        fs::create_dir_all(&skill_dir).expect("create skill directory");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: skill-a\n---\n\n# Skill A\n",
+        )
+        .expect("write skill file");
+        let service =
+            AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+        service
+            .conn
+            .execute_batch("DELETE FROM assets; DELETE FROM sources;")
+            .expect("clear seeded catalog");
+        service
+            .add_source(SourceInput {
+                id: Some("sqlx-skill-source".to_string()),
+                name: "SQLx Skill Source".to_string(),
+                kind: SourceKind::Local,
+                root_path: source_root.to_string_lossy().to_string(),
+                scanner_kind: Some(SourceScannerKind::Skill),
+                source_origin: Some(SourceOrigin::LocalFolder),
+                repo_root: None,
+                scan_root: None,
+                origin_app_kind: None,
+                include_globs: vec!["**/SKILL.md".to_string()],
+                exclude_globs: Vec::new(),
+                default_kind: Some(AssetKind::Skill),
+                enabled: true,
+                priority: 0,
+            })
+            .expect("add source through service");
+
+        let assets = service
+            .scan_skill_sources()
+            .expect("scan skill sources through service");
+
+        assert!(assets
+            .iter()
+            .any(|candidate| candidate.asset.name == "skill-a"));
         drop(service);
         fs::remove_dir_all(root).ok();
     }

@@ -29,11 +29,6 @@ pub(crate) async fn load_sources_sqlx(pool: &SqlitePool) -> AppResult<Vec<Source
     rows.iter().map(map_sqlx_source_row).collect()
 }
 
-pub(crate) fn load_skill_sources(conn: &Connection) -> AppResult<Vec<Source>> {
-    let mut stmt = conn.prepare(sql::LIST_SKILL_SOURCES).map_err(db_error)?;
-    load_sources_with_statement(&mut stmt)
-}
-
 pub(crate) async fn load_skill_sources_sqlx(pool: &SqlitePool) -> AppResult<Vec<Source>> {
     let rows = sqlx::query(sql::LIST_SKILL_SOURCES)
         .fetch_all(pool)
