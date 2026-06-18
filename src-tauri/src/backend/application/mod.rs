@@ -492,28 +492,41 @@ impl AppService {
     }
 
     pub(crate) fn list_sources(&self) -> AppResult<Vec<Source>> {
-        crate::backend::store::load_sources(&self.conn)
+        let pool = self.db.pool().clone();
+        self.db
+            .block_on(async move { crate::backend::store::load_sources_sqlx(&pool).await })
     }
 
     pub(crate) fn list_skill_sources(&self) -> AppResult<Vec<Source>> {
-        crate::backend::store::load_skill_sources(&self.conn)
+        let pool = self.db.pool().clone();
+        self.db
+            .block_on(async move { crate::backend::store::load_skill_sources_sqlx(&pool).await })
     }
 
     pub(crate) fn add_source(&self, source: SourceInput) -> AppResult<Source> {
         let source = source_from_input(source);
-        crate::backend::store::upsert_source(&self.conn, &source)?;
+        let pool = self.db.pool().clone();
+        let source_to_save = source.clone();
+        self.db.block_on(async move {
+            crate::backend::store::upsert_source_sqlx(&pool, &source_to_save).await
+        })?;
         Ok(source)
     }
 
     pub(crate) fn update_source(&self, source: Source) -> AppResult<Source> {
         let source = crate::backend::store::normalize_source(&source);
-        if !crate::backend::store::load_sources(&self.conn)?
+        if !self
+            .list_sources()?
             .iter()
             .any(|candidate| candidate.id == source.id)
         {
             return Err(format!("source not found: {}", source.id));
         }
-        crate::backend::store::upsert_source(&self.conn, &source)?;
+        let pool = self.db.pool().clone();
+        let source_to_save = source.clone();
+        self.db.block_on(async move {
+            crate::backend::store::upsert_source_sqlx(&pool, &source_to_save).await
+        })?;
         Ok(source)
     }
 
@@ -531,7 +544,11 @@ impl AppService {
         if params.dry_run {
             return Ok(json!({ "dry_run": true, "source": source }));
         }
-        crate::backend::store::upsert_source(&self.conn, &source)?;
+        let pool = self.db.pool().clone();
+        let source_to_save = source.clone();
+        self.db.block_on(async move {
+            crate::backend::store::upsert_source_sqlx(&pool, &source_to_save).await
+        })?;
         Ok(json!({ "dry_run": false, "source": source }))
     }
 
@@ -539,7 +556,7 @@ impl AppService {
         if !params.dry_run && !params.yes {
             return Err("source.remove requires --yes".to_string());
         }
-        let sources = crate::backend::store::load_sources(&self.conn)?;
+        let sources = self.list_sources()?;
         let source = sources
             .into_iter()
             .find(|source| source.id == params.id)
@@ -552,7 +569,11 @@ impl AppService {
         if params.dry_run {
             return Ok(json!({ "removed": false, "dry_run": true, "source": source }));
         }
-        crate::backend::store::delete_source(&self.conn, &source.id)?;
+        let pool = self.db.pool().clone();
+        let source_id = source.id.clone();
+        self.db.block_on(async move {
+            crate::backend::store::delete_source_sqlx(&pool, &source_id).await
+        })?;
         capabilities::cleanup_orphan_asset_records(&self.conn)?;
         Ok(json!({ "removed": true, "source_id": source.id }))
     }
