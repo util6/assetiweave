@@ -1281,13 +1281,16 @@ fn build_skill_backup_settings(sources: Vec<Source>) -> AppResult<SkillBackupSet
     })
 }
 
-pub(crate) fn catalog_assets(
-    conn: &rusqlite::Connection,
+pub(crate) fn catalog_assets_sqlx(
+    db: &crate::backend::store::Database,
     kind: Option<AssetKind>,
 ) -> AppResult<Vec<CatalogAsset>> {
-    let assets = crate::backend::store::load_assets_by_kind(conn, kind)?;
-    let sources = crate::backend::store::load_sources(conn)?;
-    Ok(build_catalog_assets(assets, &sources))
+    let pool = db.pool().clone();
+    db.block_on(async move {
+        let assets = crate::backend::store::load_assets_sqlx(&pool, kind).await?;
+        let sources = crate::backend::store::load_sources_sqlx(&pool).await?;
+        AppResult::Ok(build_catalog_assets(assets, &sources))
+    })
 }
 
 pub(crate) fn catalog_visible_assets(
@@ -1300,6 +1303,23 @@ pub(crate) fn catalog_visible_assets(
         .into_iter()
         .map(|catalog_asset| catalog_asset.asset)
         .collect())
+}
+
+pub(crate) fn catalog_visible_assets_sqlx(
+    db: &crate::backend::store::Database,
+    kind: Option<AssetKind>,
+) -> AppResult<Vec<Asset>> {
+    let pool = db.pool().clone();
+    db.block_on(async move {
+        let assets = crate::backend::store::load_assets_sqlx(&pool, kind).await?;
+        let sources = crate::backend::store::load_sources_sqlx(&pool).await?;
+        AppResult::Ok(
+            build_catalog_asset_entries(assets, &sources)
+                .into_iter()
+                .map(|catalog_asset| catalog_asset.asset)
+                .collect(),
+        )
+    })
 }
 
 pub(crate) fn build_catalog_assets(assets: Vec<Asset>, sources: &[Source]) -> Vec<CatalogAsset> {

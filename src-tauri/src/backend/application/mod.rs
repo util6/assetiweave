@@ -580,10 +580,10 @@ impl AppService {
 
     pub(crate) fn scan_sources(&self, params: SourceScanParams) -> AppResult<Vec<CatalogAsset>> {
         if params.dry_run {
-            return capabilities::catalog_assets(&self.conn, params.kind);
+            return capabilities::catalog_assets_sqlx(&self.db, params.kind);
         }
         capabilities::refresh_all_sources(&self.conn, &self.db)?;
-        capabilities::catalog_assets(&self.conn, params.kind)
+        capabilities::catalog_assets_sqlx(&self.db, params.kind)
     }
 
     pub(crate) fn scan_skill_sources(&self) -> AppResult<Vec<CatalogAsset>> {
@@ -594,7 +594,7 @@ impl AppService {
             sources,
             crate::backend::scanner::scan_skill_source,
         )?;
-        capabilities::catalog_assets(&self.conn, Some(AssetKind::Skill))
+        capabilities::catalog_assets_sqlx(&self.db, Some(AssetKind::Skill))
     }
 
     pub(crate) fn list_conversation_adapters(&self) -> AppResult<Vec<ConversationAdapter>> {
@@ -1143,7 +1143,7 @@ impl AppService {
     }
 
     pub(crate) fn list_assets(&self, params: ListAssetsParams) -> AppResult<Vec<CatalogAsset>> {
-        capabilities::catalog_assets(&self.conn, params.kind)
+        capabilities::catalog_assets_sqlx(&self.db, params.kind)
     }
 
     pub(crate) fn update_asset_description(
@@ -1230,7 +1230,7 @@ impl AppService {
     }
 
     pub(crate) fn create_plan(&self, profile_id: Option<&str>) -> AppResult<DeploymentPlan> {
-        let assets = capabilities::catalog_visible_assets(&self.conn, None)?;
+        let assets = capabilities::catalog_visible_assets_sqlx(&self.db, None)?;
         let pool = self.db.pool().clone();
         let profile_filter = profile_id.map(str::to_string);
         let profile_filter_for_query = profile_filter.clone();
@@ -1252,7 +1252,7 @@ impl AppService {
     }
 
     pub(crate) fn list_skills(&self) -> AppResult<Vec<CatalogAsset>> {
-        capabilities::catalog_assets(&self.conn, Some(AssetKind::Skill))
+        capabilities::catalog_assets_sqlx(&self.db, Some(AssetKind::Skill))
     }
 
     pub(crate) fn get_skill_backup_settings(&self) -> AppResult<SkillBackupSettings> {
@@ -1407,7 +1407,7 @@ impl AppService {
         })?;
         capabilities::refresh_all_sources(&self.conn, &self.db)?;
 
-        let catalog = capabilities::catalog_assets(&self.conn, Some(AssetKind::Skill))?;
+        let catalog = capabilities::catalog_assets_sqlx(&self.db, Some(AssetKind::Skill))?;
         let mut backed_up_assets = Vec::with_capacity(targets.len());
         for target in targets {
             let target_path = target.target_dir.to_string_lossy();
