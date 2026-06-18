@@ -147,6 +147,14 @@ pub(crate) fn delete_orphan_skill_remote_sources(conn: &Connection) -> AppResult
     Ok(())
 }
 
+pub(crate) async fn delete_orphan_skill_remote_sources_sqlx(pool: &SqlitePool) -> AppResult<()> {
+    sqlx::query(sql::DELETE_ORPHAN_SKILL_REMOTE_SOURCES)
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 fn map_skill_remote_source(row: &Row<'_>) -> rusqlite::Result<SkillRemoteSource> {
     Ok(SkillRemoteSource {
@@ -187,6 +195,7 @@ fn map_sqlx_skill_remote_source(row: &SqliteRow) -> AppResult<SkillRemoteSource>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::models::{Asset, AssetFormat, AssetKind};
     use crate::backend::store::sql;
 
     #[test]
@@ -259,6 +268,58 @@ mod tests {
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn sqlx_deletes_orphan_skill_remote_sources() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-skill-remote-orphan-sqlx-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let asset = test_asset();
+        let retained = test_remote_source();
+        let mut orphan = test_remote_source();
+        orphan.asset_id = "missing-asset".to_string();
+
+        let listed = database
+            .block_on(async {
+                crate::backend::store::replace_source_assets_sqlx(
+                    database.pool(),
+                    &asset.source_id,
+                    std::slice::from_ref(&asset),
+                )
+                .await?;
+                upsert_skill_remote_source_sqlx(database.pool(), &retained).await?;
+                upsert_skill_remote_source_sqlx(database.pool(), &orphan).await?;
+                delete_orphan_skill_remote_sources_sqlx(database.pool()).await?;
+                list_skill_remote_sources_sqlx(database.pool()).await
+            })
+            .expect("delete SQLx orphan remote sources");
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].asset_id, retained.asset_id);
+        drop(database);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    fn test_asset() -> Asset {
+        Asset {
+            id: "asset-a".to_string(),
+            source_id: "source-a".to_string(),
+            name: "Skill A".to_string(),
+            kind: AssetKind::Skill,
+            format: AssetFormat::Directory,
+            relative_path: "skill-a".to_string(),
+            absolute_path: "/tmp/source-a/skill-a".to_string(),
+            entry_file: Some("/tmp/source-a/skill-a/SKILL.md".to_string()),
+            description: None,
+            content_hash: Some("hash-a".to_string()),
+            discovered_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        }
     }
 
     fn test_remote_source() -> SkillRemoteSource {

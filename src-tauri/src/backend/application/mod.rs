@@ -1611,9 +1611,9 @@ impl AppService {
     }
 
     pub(crate) fn list_skill_remote_sources(&self) -> AppResult<Vec<SkillRemoteSource>> {
-        capabilities::cleanup_orphan_asset_records(&self.conn)?;
         let pool = self.db.pool().clone();
         self.db.block_on(async move {
+            crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool).await?;
             crate::backend::store::list_skill_remote_sources_sqlx(&pool).await
         })
     }
@@ -1622,7 +1622,6 @@ impl AppService {
         &self,
         params: SkillRemoteCheckParams,
     ) -> AppResult<Vec<SkillRemoteSource>> {
-        capabilities::cleanup_orphan_asset_records(&self.conn)?;
         let sources = if let Some(asset_id) = params
             .asset_id
             .as_deref()
@@ -1633,6 +1632,7 @@ impl AppService {
             vec![self
                 .db
                 .block_on(async move {
+                    crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool).await?;
                     crate::backend::store::load_skill_remote_source_sqlx(&pool, asset_id).await
                 })?
                 .ok_or_else(|| format!("skill remote source not found: {asset_id}"))?]
@@ -2751,6 +2751,47 @@ mod tests {
     use super::*;
     use crate::backend::models::{AssetFormat, SourceKind};
     use std::fs;
+
+    #[test]
+    fn list_skill_remote_sources_prunes_orphans_through_sqlx_path() {
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-sqlx-skill-remote-cleanup-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create test root");
+        let service =
+            AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+        let orphan = SkillRemoteSource {
+            asset_id: "missing-asset".to_string(),
+            provider: "github".to_string(),
+            source_url: "https://github.com/example/repo/tree/main/skill".to_string(),
+            repo_url: "https://github.com/example/repo.git".to_string(),
+            branch: "main".to_string(),
+            path: Some("skill".to_string()),
+            acquired_at: "2026-01-01T00:00:00Z".to_string(),
+            acquired_tree_sha: None,
+            local_content_hash: None,
+            last_checked_at: None,
+            latest_tree_sha: None,
+            status: "unknown".to_string(),
+            message: None,
+        };
+        let pool = service.db.pool().clone();
+        service
+            .db
+            .block_on(async move {
+                crate::backend::store::upsert_skill_remote_source_sqlx(&pool, &orphan).await
+            })
+            .expect("save orphan remote source");
+
+        assert!(service
+            .list_skill_remote_sources()
+            .expect("list remote sources")
+            .is_empty());
+
+        drop(service);
+        fs::remove_dir_all(root).ok();
+    }
 
     #[test]
     fn disabled_mount_preference_persists_through_sqlx_path() {
