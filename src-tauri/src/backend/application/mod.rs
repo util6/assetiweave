@@ -1334,8 +1334,12 @@ impl AppService {
             return Ok(Vec::new());
         }
 
-        let assets = crate::backend::store::load_assets(&self.conn)?;
-        let sources = crate::backend::store::load_sources(&self.conn)?;
+        let pool = self.db.pool().clone();
+        let (assets, sources) = self.db.block_on(async move {
+            let assets = crate::backend::store::load_assets_sqlx(&pool, None).await?;
+            let sources = crate::backend::store::load_sources_sqlx(&pool).await?;
+            AppResult::Ok((assets, sources))
+        })?;
         let assets_by_id = assets
             .iter()
             .map(|asset| (asset.id.as_str(), asset))
