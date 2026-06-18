@@ -1875,6 +1875,7 @@ impl AppService {
         let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
         capabilities::set_asset_mount_record(
             &self.conn,
+            &self.db,
             asset_id,
             profile_id,
             !matches!(
@@ -1892,7 +1893,9 @@ impl AppService {
         enabled: bool,
         strategy: Option<DeploymentStrategy>,
     ) -> AppResult<AssetMount> {
-        capabilities::set_asset_mount_record(&self.conn, asset_id, profile_id, enabled, strategy)
+        capabilities::set_asset_mount_record(
+            &self.conn, &self.db, asset_id, profile_id, enabled, strategy,
+        )
     }
 
     pub(crate) fn execute_plan(
@@ -2746,8 +2749,104 @@ fn is_web_record_adapter(adapter: Option<&ConversationAdapter>, adapter_id: &str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::models::SourceKind;
+    use crate::backend::models::{AssetFormat, SourceKind};
     use std::fs;
+
+    #[test]
+    fn disabled_mount_preference_persists_through_sqlx_path() {
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-sqlx-disabled-mount-preference-{}",
+            Uuid::new_v4()
+        ));
+        let source_root = root.join("source");
+        let target_root = root.join("target");
+        let skill_root = source_root.join("skill-a");
+        fs::create_dir_all(&skill_root).expect("create skill source");
+        fs::create_dir_all(&target_root).expect("create target root");
+        fs::write(
+            skill_root.join("SKILL.md"),
+            "---\ndescription: Skill A\n---\n",
+        )
+        .expect("write skill");
+
+        let service =
+            AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+        service
+            .conn
+            .execute_batch("DELETE FROM asset_mounts; DELETE FROM deployment_state; DELETE FROM assets; DELETE FROM sources;")
+            .expect("clear seeded catalog");
+        let source = Source {
+            id: "source-a".to_string(),
+            name: "Source A".to_string(),
+            kind: SourceKind::Local,
+            root_path: source_root.to_string_lossy().to_string(),
+            scanner_kind: SourceScannerKind::Skill,
+            source_origin: SourceOrigin::LocalFolder,
+            repo_root: None,
+            scan_root: String::new(),
+            origin_app_kind: None,
+            include_globs: vec!["**/SKILL.md".to_string()],
+            exclude_globs: Vec::new(),
+            default_kind: Some(AssetKind::Skill),
+            enabled: true,
+            priority: 0,
+            last_scanned_at: None,
+            last_scan_status: None,
+        };
+        crate::backend::store::upsert_source(&service.conn, &source).expect("save source");
+
+        let now = Utc::now().to_rfc3339();
+        let asset = Asset {
+            id: "asset-a".to_string(),
+            source_id: source.id.clone(),
+            name: "skill-a".to_string(),
+            kind: AssetKind::Skill,
+            format: AssetFormat::Directory,
+            relative_path: "skill-a".to_string(),
+            absolute_path: skill_root.to_string_lossy().to_string(),
+            entry_file: Some(skill_root.join("SKILL.md").to_string_lossy().to_string()),
+            description: None,
+            content_hash: Some("hash-a".to_string()),
+            discovered_at: now.clone(),
+            updated_at: now,
+        };
+        crate::backend::store::replace_source_assets(&service.conn, &source.id, &[asset.clone()])
+            .expect("save source asset");
+
+        let profile = service
+            .create_profile(TargetProfileInput {
+                id: Some("target-a".to_string()),
+                name: "Target A".to_string(),
+                app_kind: Some(crate::backend::models::AppKind::Custom),
+                target_paths: Some(vec![target_root.to_string_lossy().to_string()]),
+                supported_kinds: None,
+                deployment_strategy: Some(DeploymentStrategy::SymlinkToSource),
+                enabled: Some(true),
+                include: None,
+                exclude: None,
+                safety: None,
+            })
+            .expect("create target profile");
+
+        let mount = service
+            .set_asset_mount(
+                &asset.id,
+                &profile.id,
+                false,
+                Some(DeploymentStrategy::CopyToTarget),
+            )
+            .expect("persist disabled preference");
+        assert!(!mount.enabled);
+        assert_eq!(mount.strategy, DeploymentStrategy::CopyToTarget);
+
+        let saved_mounts = service
+            .list_asset_mounts(Some(&asset.id))
+            .expect("read SQLx mount preference");
+        assert_eq!(saved_mounts, vec![mount]);
+
+        drop(service);
+        fs::remove_dir_all(root).ok();
+    }
 
     #[test]
     fn batch_skill_backup_deduplicates_assets_and_reports_copy_progress() {

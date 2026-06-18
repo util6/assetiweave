@@ -572,6 +572,7 @@ pub(crate) fn asset_group_from_input(
 }
 pub(crate) fn set_asset_mount_record(
     conn: &rusqlite::Connection,
+    db: &crate::backend::store::Database,
     asset_id: &str,
     profile_id: &str,
     enabled: bool,
@@ -591,13 +592,20 @@ pub(crate) fn set_asset_mount_record(
         return unmount_asset_mount_record(conn, asset_id, profile_id).map(|result| result.mount);
     }
 
-    let result = crate::backend::store::set_asset_mount(
-        conn,
-        asset_id,
-        profile_id,
-        enabled,
-        strategy.unwrap_or(default_strategy),
-    );
+    let pool = db.pool().clone();
+    let asset_id_to_save = asset_id.to_string();
+    let profile_id_to_save = profile_id.to_string();
+    let strategy_to_save = strategy.unwrap_or(default_strategy);
+    let result = db.block_on(async move {
+        crate::backend::store::set_asset_mount_sqlx(
+            &pool,
+            &asset_id_to_save,
+            &profile_id_to_save,
+            enabled,
+            strategy_to_save,
+        )
+        .await
+    });
     match &result {
         Ok(_) => {
             let mut fields = mount_log_fields(conn, asset_id, profile_id);

@@ -1898,7 +1898,9 @@ mod tests {
         .expect("insert asset");
         crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
 
-        let mount = set_asset_mount_record(&conn, &asset.id, &profile.id, true, None)
+        let database =
+            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        let mount = set_asset_mount_record(&conn, &database, &asset.id, &profile.id, true, None)
             .expect("set mount enabled");
 
         assert!(mount.enabled);
