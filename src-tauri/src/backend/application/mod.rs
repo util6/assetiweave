@@ -1048,43 +1048,54 @@ impl AppService {
     }
 
     pub(crate) fn list_profiles(&self) -> AppResult<Vec<TargetProfile>> {
-        crate::backend::store::load_profiles(&self.conn)
+        let pool = self.db.pool().clone();
+        self.db
+            .block_on(async move { crate::backend::store::load_profiles_sqlx(&pool).await })
     }
 
     pub(crate) fn create_profile(&self, input: TargetProfileInput) -> AppResult<TargetProfile> {
         let profile = capabilities::target_profile_from_input(input)?;
-        if crate::backend::store::load_profiles(&self.conn)?
+        if self
+            .list_profiles()?
             .iter()
             .any(|candidate| candidate.id == profile.id)
         {
             return Err(format!("profile already exists: {}", profile.id));
         }
-        crate::backend::store::upsert_profile(&self.conn, &profile)?;
+        let pool = self.db.pool().clone();
+        let profile_to_save = profile.clone();
+        self.db.block_on(async move {
+            crate::backend::store::upsert_profile_sqlx(&pool, &profile_to_save).await
+        })?;
         Ok(profile)
     }
 
     pub(crate) fn update_profile(&self, profile: TargetProfile) -> AppResult<TargetProfile> {
         capabilities::validate_target_profile(&profile)?;
-        let existing_profile = crate::backend::store::load_profiles(&self.conn)?
+        let existing_profile = self
+            .list_profiles()?
             .into_iter()
             .find(|candidate| candidate.id == profile.id);
         let Some(existing_profile) = existing_profile else {
             return Err(format!("profile not found: {}", profile.id));
         };
         capabilities::ensure_default_profile_update_is_allowed(&existing_profile, &profile)?;
-        crate::backend::store::upsert_profile(&self.conn, &profile)?;
+        let pool = self.db.pool().clone();
+        let profile_to_save = profile.clone();
+        self.db.block_on(async move {
+            crate::backend::store::upsert_profile_sqlx(&pool, &profile_to_save).await
+        })?;
         Ok(profile)
     }
 
     pub(crate) fn delete_profile(&self, id: String) -> AppResult<()> {
-        if !crate::backend::store::load_profiles(&self.conn)?
-            .iter()
-            .any(|profile| profile.id == id)
-        {
+        if !self.list_profiles()?.iter().any(|profile| profile.id == id) {
             return Err(format!("profile not found: {id}"));
         }
         capabilities::ensure_profile_can_be_deleted(&self.conn, &id)?;
-        crate::backend::store::delete_profile(&self.conn, &id)
+        let pool = self.db.pool().clone();
+        self.db
+            .block_on(async move { crate::backend::store::delete_profile_sqlx(&pool, &id).await })
     }
 
     pub(crate) fn navigation_model(&self) -> AppResult<crate::backend::dto::NavigationModel> {

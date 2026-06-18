@@ -48,8 +48,11 @@ pub(crate) use mount_repo::{
     delete_orphan_asset_mounts, load_asset_mounts, load_enabled_asset_mounts, set_asset_mount,
 };
 pub(crate) use profile_repo::{
-    count_deployment_state_by_profile, delete_profile, load_profiles, upsert_profile,
+    count_deployment_state_by_profile, delete_profile_sqlx, load_profiles, load_profiles_sqlx,
+    upsert_profile_sqlx,
 };
+#[cfg(test)]
+pub(crate) use profile_repo::{delete_profile, upsert_profile};
 pub(crate) use schema::open_initialized;
 pub(crate) use shortcut_repo::{
     load_app_shortcut_settings, load_app_shortcuts, save_app_shortcuts,
