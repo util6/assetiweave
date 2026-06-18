@@ -55,7 +55,7 @@ pub(crate) use profile_repo::{
 pub(crate) use profile_repo::{delete_profile, upsert_profile};
 pub(crate) use schema::open_initialized;
 pub(crate) use shortcut_repo::{
-    load_app_shortcut_settings, load_app_shortcuts, save_app_shortcuts,
+    load_app_shortcut_settings_sqlx, load_app_shortcuts_sqlx, save_app_shortcuts_sqlx,
 };
 pub(crate) use skill_remote_repo::{
     delete_orphan_skill_remote_sources_sqlx, list_skill_remote_sources_sqlx,

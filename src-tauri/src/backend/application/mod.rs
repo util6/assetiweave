@@ -1117,21 +1117,29 @@ impl AppService {
     }
 
     pub(crate) fn list_app_shortcuts(&self) -> AppResult<Vec<crate::backend::dto::AppShortcut>> {
-        crate::backend::store::load_app_shortcuts(&self.conn)
+        let pool = self.db.pool().clone();
+        self.db
+            .block_on(async move { crate::backend::store::load_app_shortcuts_sqlx(&pool).await })
     }
 
     pub(crate) fn list_app_shortcut_settings(
         &self,
     ) -> AppResult<Vec<crate::backend::dto::AppShortcut>> {
-        crate::backend::store::load_app_shortcut_settings(&self.conn)
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            crate::backend::store::load_app_shortcut_settings_sqlx(&pool).await
+        })
     }
 
     pub(crate) fn update_app_shortcuts(
         &self,
         shortcuts: Vec<AppShortcut>,
     ) -> AppResult<Vec<AppShortcut>> {
-        crate::backend::store::save_app_shortcuts(&self.conn, &shortcuts)?;
-        crate::backend::store::load_app_shortcut_settings(&self.conn)
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            crate::backend::store::save_app_shortcuts_sqlx(&pool, &shortcuts).await?;
+            crate::backend::store::load_app_shortcut_settings_sqlx(&pool).await
+        })
     }
 
     pub(crate) fn list_assets(&self, params: ListAssetsParams) -> AppResult<Vec<CatalogAsset>> {
@@ -2775,6 +2783,36 @@ mod tests {
 
         assert_eq!(updated.active_sub_nav_id, "sqlx-updated-sub-nav");
         assert_eq!(updated.rail_items[0].label, "SQLx Rail");
+        drop(service);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn app_shortcuts_update_through_sqlx_path() {
+        let root =
+            std::env::temp_dir().join(format!("assetiweave-sqlx-shortcuts-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("create test root");
+        let service =
+            AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+        let mut settings = service
+            .list_app_shortcut_settings()
+            .expect("load shortcut settings");
+        settings[0].display_icon = "Q".to_string();
+        settings[0].enabled = false;
+        let disabled_profile_id = settings[0].profile_id.clone();
+
+        let updated = service
+            .update_app_shortcuts(settings)
+            .expect("update shortcuts");
+        let enabled = service
+            .list_app_shortcuts()
+            .expect("load enabled shortcuts");
+
+        assert_eq!(updated[0].display_icon, "Q");
+        assert!(!updated[0].enabled);
+        assert!(enabled
+            .iter()
+            .all(|shortcut| shortcut.profile_id != disabled_profile_id));
         drop(service);
         fs::remove_dir_all(root).ok();
     }
