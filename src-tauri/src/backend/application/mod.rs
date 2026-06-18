@@ -1571,7 +1571,12 @@ impl AppService {
                 "Remote source recorded; run skill remote check to detect drift".to_string(),
             ),
         };
-        crate::backend::store::upsert_skill_remote_source(&self.conn, &remote_source)?;
+        let pool = self.db.pool().clone();
+        let remote_source_to_save = remote_source.clone();
+        self.db.block_on(async move {
+            crate::backend::store::upsert_skill_remote_source_sqlx(&pool, &remote_source_to_save)
+                .await
+        })?;
         Ok(json!({
             "dry_run": false,
             "provider": "github",
@@ -1590,7 +1595,10 @@ impl AppService {
 
     pub(crate) fn list_skill_remote_sources(&self) -> AppResult<Vec<SkillRemoteSource>> {
         capabilities::cleanup_orphan_asset_records(&self.conn)?;
-        crate::backend::store::list_skill_remote_sources(&self.conn)
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            crate::backend::store::list_skill_remote_sources_sqlx(&pool).await
+        })
     }
 
     pub(crate) fn check_skill_remote_sources(
@@ -1604,18 +1612,26 @@ impl AppService {
             .map(str::trim)
             .filter(|id| !id.is_empty())
         {
-            vec![
-                crate::backend::store::load_skill_remote_source(&self.conn, asset_id)?
-                    .ok_or_else(|| format!("skill remote source not found: {asset_id}"))?,
-            ]
+            let pool = self.db.pool().clone();
+            vec![self
+                .db
+                .block_on(async move {
+                    crate::backend::store::load_skill_remote_source_sqlx(&pool, asset_id).await
+                })?
+                .ok_or_else(|| format!("skill remote source not found: {asset_id}"))?]
         } else {
-            crate::backend::store::list_skill_remote_sources(&self.conn)?
+            self.list_skill_remote_sources()?
         };
 
         let mut checked = Vec::with_capacity(sources.len());
         for source in sources {
             let source = check_skill_remote_source(source);
-            crate::backend::store::update_skill_remote_check_result(&self.conn, &source)?;
+            let pool = self.db.pool().clone();
+            let source_to_save = source.clone();
+            self.db.block_on(async move {
+                crate::backend::store::update_skill_remote_check_result_sqlx(&pool, &source_to_save)
+                    .await
+            })?;
             checked.push(source);
         }
         Ok(checked)
