@@ -420,6 +420,7 @@ pub(crate) fn sync_asset_mount_observations(
     Ok(statuses)
 }
 
+#[cfg(test)]
 pub(crate) fn scan_asset_mount_statuses(
     conn: &rusqlite::Connection,
     asset_id: Option<&str>,
@@ -1317,6 +1318,7 @@ pub(crate) fn catalog_assets_sqlx(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn catalog_visible_assets(
     conn: &rusqlite::Connection,
     kind: Option<AssetKind>,
@@ -1562,6 +1564,34 @@ pub(crate) fn target_profile_from_input(input: TargetProfileInput) -> AppResult<
     Ok(profile)
 }
 
+pub(crate) fn ensure_profile_can_be_deleted_sqlx(
+    db: &crate::backend::store::Database,
+    profile_id: &str,
+) -> AppResult<()> {
+    if crate::backend::defaults::is_default_app_profile_id(profile_id) {
+        return Err(format!("default app cannot be deleted: {profile_id}"));
+    }
+
+    let deployment_count = db.block_on(async {
+        crate::backend::store::count_deployment_state_by_profile_sqlx(db.pool(), profile_id).await
+    })?;
+    if deployment_count > 0 {
+        return Err(format!("profile has managed deployments: {profile_id}"));
+    }
+
+    if scan_asset_mount_statuses_sqlx(db, None)?
+        .iter()
+        .any(|status| {
+            status.profile_id == profile_id && status.state == PhysicalMountStateDto::Mounted
+        })
+    {
+        return Err(format!("profile has mounted assets: {profile_id}"));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
 pub(crate) fn ensure_profile_can_be_deleted(
     conn: &rusqlite::Connection,
     profile_id: &str,

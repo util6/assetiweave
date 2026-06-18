@@ -1093,7 +1093,7 @@ impl AppService {
         if !self.list_profiles()?.iter().any(|profile| profile.id == id) {
             return Err(format!("profile not found: {id}"));
         }
-        capabilities::ensure_profile_can_be_deleted(&self.conn, &id)?;
+        capabilities::ensure_profile_can_be_deleted_sqlx(&self.db, &id)?;
         let pool = self.db.pool().clone();
         self.db
             .block_on(async move { crate::backend::store::delete_profile_sqlx(&pool, &id).await })
@@ -2791,7 +2791,7 @@ fn is_web_record_adapter(adapter: Option<&ConversationAdapter>, adapter_id: &str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::models::{AssetFormat, AssetGroupRules, SourceKind};
+    use crate::backend::models::{AssetFormat, AssetGroupRules, DeploymentState, SourceKind};
     use std::fs;
 
     #[test]
@@ -2841,6 +2841,58 @@ mod tests {
         assert!(enabled
             .iter()
             .all(|shortcut| shortcut.profile_id != disabled_profile_id));
+        drop(service);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn profile_delete_guard_blocks_sqlx_deployment_state() {
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-sqlx-profile-delete-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create test root");
+        let service =
+            AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+        let profile = service
+            .create_profile(TargetProfileInput {
+                id: Some("team-app".to_string()),
+                name: "Team App".to_string(),
+                app_kind: None,
+                target_paths: Some(vec![root.join("target").to_string_lossy().to_string()]),
+                supported_kinds: None,
+                deployment_strategy: None,
+                enabled: Some(true),
+                include: None,
+                exclude: None,
+                safety: None,
+            })
+            .expect("create profile");
+
+        service
+            .db
+            .block_on(async {
+                crate::backend::store::upsert_deployment_state_sqlx(
+                    service.db.pool(),
+                    &DeploymentState {
+                        profile_id: profile.id.clone(),
+                        asset_id: "asset-a".to_string(),
+                        target_path: "/target/a".to_string(),
+                        strategy: DeploymentStrategy::SymlinkToSource,
+                        source_hash: "hash".to_string(),
+                        deployed_at: "2026-06-18T00:00:00Z".to_string(),
+                        managed_by: "assetiweave".to_string(),
+                    },
+                )
+                .await
+            })
+            .expect("insert deployment state");
+
+        let error = service
+            .delete_profile(profile.id)
+            .expect_err("delete blocked by deployment state");
+
+        assert!(error.contains("managed deployments"));
         drop(service);
         fs::remove_dir_all(root).ok();
     }

@@ -75,6 +75,18 @@ pub(crate) async fn is_managed_deployment_sqlx(
     Ok(managed_by.as_deref() == Some("assetiweave"))
 }
 
+pub(crate) async fn count_deployment_state_by_profile_sqlx(
+    pool: &SqlitePool,
+    profile_id: &str,
+) -> AppResult<usize> {
+    let count: i64 = sqlx::query_scalar(sql::COUNT_DEPLOYMENT_STATE_BY_PROFILE)
+        .bind(profile_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(count as usize)
+}
+
 pub(crate) fn delete_deployment_state(
     conn: &Connection,
     profile_id: &str,
@@ -141,6 +153,11 @@ mod tests {
                     &test_state("profile-a", "asset-b", "/target/b", "other-tool"),
                 )
                 .await?;
+                upsert_deployment_state_sqlx(
+                    database.pool(),
+                    &test_state("profile-b", "asset-a", "/target/c", "assetiweave"),
+                )
+                .await?;
 
                 assert!(
                     is_managed_deployment_sqlx(
@@ -160,6 +177,14 @@ mod tests {
                     )
                     .await?
                 );
+                assert_eq!(
+                    count_deployment_state_by_profile_sqlx(database.pool(), "profile-a").await?,
+                    2
+                );
+                assert_eq!(
+                    count_deployment_state_by_profile_sqlx(database.pool(), "profile-b").await?,
+                    1
+                );
 
                 delete_deployment_state_sqlx(database.pool(), "profile-a", "asset-b", "/target/b")
                     .await?;
@@ -176,7 +201,7 @@ mod tests {
                     .map_err(|error| error.to_string())?;
                 AppResult::Ok(rows)
             })
-            .map(|rows| assert_eq!(rows, 1))
+            .map(|rows| assert_eq!(rows, 2))
             .expect("query SQLx deployment repo");
         drop(database);
         cleanup_database(&db_path);

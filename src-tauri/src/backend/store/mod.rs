@@ -32,8 +32,9 @@ pub(crate) use database::{
     count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx, Database,
 };
 pub(crate) use deployment_repo::{
-    delete_deployment_state, delete_orphan_deployment_state_sqlx, is_managed_deployment,
-    is_managed_deployment_sqlx, upsert_deployment_state, upsert_deployment_state_sqlx,
+    count_deployment_state_by_profile_sqlx, delete_deployment_state,
+    delete_orphan_deployment_state_sqlx, is_managed_deployment, is_managed_deployment_sqlx,
+    upsert_deployment_state, upsert_deployment_state_sqlx,
 };
 pub(crate) use group_repo::{
     delete_asset_group_sqlx, delete_orphan_asset_group_members_sqlx, load_skill_group_detail,
@@ -50,12 +51,11 @@ pub(crate) use mount_repo::{
     delete_orphan_asset_mounts_sqlx, load_asset_mounts, load_asset_mounts_sqlx,
     load_enabled_asset_mounts_sqlx, set_asset_mount, set_asset_mount_sqlx,
 };
-pub(crate) use profile_repo::{
-    count_deployment_state_by_profile, delete_profile_sqlx, load_profiles, load_profiles_sqlx,
-    upsert_profile_sqlx,
-};
 #[cfg(test)]
-pub(crate) use profile_repo::{delete_profile, upsert_profile};
+pub(crate) use profile_repo::{count_deployment_state_by_profile, delete_profile, upsert_profile};
+pub(crate) use profile_repo::{
+    delete_profile_sqlx, load_profiles, load_profiles_sqlx, upsert_profile_sqlx,
+};
 pub(crate) use schema::open_initialized;
 pub(crate) use shortcut_repo::{
     load_app_shortcut_settings_sqlx, load_app_shortcuts_sqlx, save_app_shortcuts_sqlx,

@@ -96,6 +96,7 @@ pub(crate) async fn delete_profile_sqlx(pool: &SqlitePool, profile_id: &str) -> 
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn count_deployment_state_by_profile(
     conn: &Connection,
     profile_id: &str,
