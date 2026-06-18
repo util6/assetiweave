@@ -1100,15 +1100,20 @@ impl AppService {
     }
 
     pub(crate) fn navigation_model(&self) -> AppResult<crate::backend::dto::NavigationModel> {
-        crate::backend::store::load_navigation_model(&self.conn)
+        let pool = self.db.pool().clone();
+        self.db
+            .block_on(async move { crate::backend::store::load_navigation_model_sqlx(&pool).await })
     }
 
     pub(crate) fn update_navigation_model(
         &self,
         model: NavigationModel,
     ) -> AppResult<NavigationModel> {
-        crate::backend::store::save_navigation_model(&self.conn, &model)?;
-        crate::backend::store::load_navigation_model(&self.conn)
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            crate::backend::store::save_navigation_model_sqlx(&pool, &model).await?;
+            crate::backend::store::load_navigation_model_sqlx(&pool).await
+        })
     }
 
     pub(crate) fn list_app_shortcuts(&self) -> AppResult<Vec<crate::backend::dto::AppShortcut>> {
@@ -2752,6 +2757,27 @@ mod tests {
     use super::*;
     use crate::backend::models::{AssetFormat, SourceKind};
     use std::fs;
+
+    #[test]
+    fn navigation_model_updates_through_sqlx_path() {
+        let root =
+            std::env::temp_dir().join(format!("assetiweave-sqlx-navigation-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("create test root");
+        let service =
+            AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+        let mut model = service.navigation_model().expect("load navigation model");
+        model.active_sub_nav_id = "sqlx-updated-sub-nav".to_string();
+        model.rail_items[0].label = "SQLx Rail".to_string();
+
+        let updated = service
+            .update_navigation_model(model)
+            .expect("update navigation model");
+
+        assert_eq!(updated.active_sub_nav_id, "sqlx-updated-sub-nav");
+        assert_eq!(updated.rail_items[0].label, "SQLx Rail");
+        drop(service);
+        fs::remove_dir_all(root).ok();
+    }
 
     #[test]
     fn cleanup_orphan_asset_records_uses_sqlx_for_migrated_tables() {

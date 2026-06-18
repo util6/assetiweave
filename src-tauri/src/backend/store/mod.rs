@@ -39,7 +39,7 @@ pub(crate) use group_repo::{
     delete_asset_group, delete_orphan_asset_group_members, load_skill_group_detail,
     load_skill_group_details, replace_asset_group_members, upsert_asset_group,
 };
-pub(crate) use menu_repo::{load_navigation_model, save_navigation_model};
+pub(crate) use menu_repo::{load_navigation_model_sqlx, save_navigation_model_sqlx};
 #[cfg(test)]
 pub(crate) use mount_observation_repo::load_asset_mount_observations;
 pub(crate) use mount_observation_repo::persist_asset_mount_snapshot_sqlx;
