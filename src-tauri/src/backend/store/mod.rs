@@ -27,6 +27,9 @@ pub(crate) use conversation_repo::{
     search_conversation_cards, seed_builtin_conversation_adapters, split_conversation_question,
     upsert_conversation_adapter, upsert_conversation_source,
 };
+pub(crate) use database::{
+    count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx, Database,
+};
 pub(crate) use deployment_repo::{
     delete_deployment_state, delete_orphan_deployment_state, is_managed_deployment,
     upsert_deployment_state,
@@ -47,7 +50,7 @@ pub(crate) use mount_repo::{
 pub(crate) use profile_repo::{
     count_deployment_state_by_profile, delete_profile, load_profiles, upsert_profile,
 };
-pub(crate) use schema::{count_rows, latest_scan_status, open_initialized};
+pub(crate) use schema::open_initialized;
 pub(crate) use shortcut_repo::{
     load_app_shortcut_settings, load_app_shortcuts, save_app_shortcuts,
 };

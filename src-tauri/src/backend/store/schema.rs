@@ -1,5 +1,5 @@
 use crate::backend::{dto::AppResult, path_utils::ensure_app_library_dirs};
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
@@ -147,16 +147,7 @@ fn legacy_profile_target_paths(profile_id: &str) -> Vec<Vec<String>> {
     paths
 }
 
-pub(crate) fn latest_scan_status(conn: &Connection) -> AppResult<String> {
-    let status: Option<String> = conn
-        .query_row(sql::LATEST_SCAN_STATUS, [], |row| row.get(0))
-        .optional()
-        .map_err(db_error)?
-        .flatten();
-    Ok(status.unwrap_or_else(|| "等待首次扫描".to_string()))
-}
-
-pub(crate) fn count_rows(conn: &Connection, table: &str) -> AppResult<usize> {
+fn count_rows(conn: &Connection, table: &str) -> AppResult<usize> {
     let statement = match table {
         "sources" => sql::COUNT_SOURCES,
         "assets" => sql::COUNT_ASSETS,

@@ -4,24 +4,90 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
     AssertSqlSafe, Row, SqlitePool,
 };
-use std::{path::Path, time::Duration};
+use std::{future::Future, path::Path, time::Duration};
+use tokio::runtime::Runtime;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+
+pub(crate) struct Database {
+    pool: SqlitePool,
+    runtime: Runtime,
+}
+
+impl Database {
+    pub(crate) fn open(db_path: &Path) -> AppResult<Self> {
+        let runtime = build_runtime()?;
+        let pool = runtime.block_on(open_migrated_pool(db_path))?;
+        Ok(Self { pool, runtime })
+    }
+
+    pub(crate) fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
+    pub(crate) fn block_on<F: Future>(&self, future: F) -> F::Output {
+        self.runtime.block_on(future)
+    }
+}
+
+pub(crate) async fn latest_scan_status(pool: &SqlitePool) -> AppResult<String> {
+    let status: Option<String> = sqlx::query_scalar(
+        "SELECT last_scan_status FROM sources ORDER BY last_scanned_at DESC NULLS LAST LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?
+    .flatten();
+    Ok(status.unwrap_or_else(|| "等待首次扫描".to_string()))
+}
+
+pub(crate) async fn count_rows(pool: &SqlitePool, table: &str) -> AppResult<usize> {
+    let count: i64 = match table {
+        "sources" => sqlx::query_scalar("SELECT COUNT(*) FROM sources")
+            .fetch_one(pool)
+            .await
+            .map_err(|error| error.to_string())?,
+        "assets" => sqlx::query_scalar("SELECT COUNT(*) FROM assets")
+            .fetch_one(pool)
+            .await
+            .map_err(|error| error.to_string())?,
+        "profiles" => sqlx::query_scalar("SELECT COUNT(*) FROM profiles")
+            .fetch_one(pool)
+            .await
+            .map_err(|error| error.to_string())?,
+        "navigation_state" => sqlx::query_scalar("SELECT COUNT(*) FROM navigation_state")
+            .fetch_one(pool)
+            .await
+            .map_err(|error| error.to_string())?,
+        "app_shortcut_items" => sqlx::query_scalar("SELECT COUNT(*) FROM app_shortcut_items")
+            .fetch_one(pool)
+            .await
+            .map_err(|error| error.to_string())?,
+        other => return Err(format!("unsupported count table: {other}")),
+    };
+    Ok(count as usize)
+}
 
 pub(crate) fn migrate_database(db_path: &Path) -> AppResult<()> {
     let db_path = db_path.to_path_buf();
     std::thread::spawn(move || {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .map_err(|error| error.to_string())?;
-        runtime.block_on(migrate_database_async(&db_path))
+        let runtime = build_runtime()?;
+        let pool = runtime.block_on(open_migrated_pool(&db_path))?;
+        runtime.block_on(pool.close());
+        Ok(())
     })
     .join()
     .map_err(|_| "SQLx migration worker panicked".to_string())?
 }
 
-async fn migrate_database_async(db_path: &Path) -> AppResult<()> {
+fn build_runtime() -> AppResult<Runtime> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .map_err(|error| error.to_string())
+}
+
+async fn open_migrated_pool(db_path: &Path) -> AppResult<SqlitePool> {
     let options = SqliteConnectOptions::new()
         .filename(db_path)
         .create_if_missing(true)
@@ -42,8 +108,7 @@ async fn migrate_database_async(db_path: &Path) -> AppResult<()> {
         .run(&pool)
         .await
         .map_err(|error| error.to_string())?;
-    pool.close().await;
-    Ok(())
+    Ok(pool)
 }
 
 async fn is_untracked_legacy_database(pool: &SqlitePool) -> AppResult<bool> {
@@ -245,6 +310,24 @@ mod tests {
             )
         );
         assert_eq!(migration_count, 1);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn database_reuses_pool_for_queries_after_migration() {
+        let db_path = temp_database_path("pool");
+        let database = Database::open(&db_path).expect("open database");
+
+        let source_count = database
+            .block_on(async {
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sources")
+                    .fetch_one(database.pool())
+                    .await
+            })
+            .expect("query via SQLx pool");
+
+        assert_eq!(source_count, 0);
+        drop(database);
         cleanup_database(&db_path);
     }
 

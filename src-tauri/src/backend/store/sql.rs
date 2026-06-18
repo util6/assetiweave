@@ -356,9 +356,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS conversation_question_fts USING fts5(
 );
 "#;
 
-pub(crate) const LATEST_SCAN_STATUS: &str =
-    "SELECT last_scan_status FROM sources ORDER BY last_scanned_at DESC NULLS LAST LIMIT 1";
-
 pub(crate) const LIST_SOURCES: &str = r#"
 SELECT id, name, kind, root_path, scanner_kind, source_origin, repo_root, scan_root,
        origin_app_kind, include_globs, exclude_globs, default_kind, enabled, priority,

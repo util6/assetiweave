@@ -27,6 +27,7 @@ use std::{
 use uuid::Uuid;
 
 pub(crate) struct AppService {
+    db: crate::backend::store::Database,
     conn: Connection,
     db_path: PathBuf,
 }
@@ -470,15 +471,19 @@ impl AppService {
 
     pub(crate) fn open_with_db_path(db_path: PathBuf) -> AppResult<Self> {
         let conn = crate::backend::store::open_initialized(&db_path)?;
-        Ok(Self { conn, db_path })
+        let db = crate::backend::store::Database::open(&db_path)?;
+        Ok(Self { db, conn, db_path })
     }
 
     pub(crate) fn overview(&self) -> AppResult<AppOverview> {
-        Ok(AppOverview {
-            source_count: crate::backend::store::count_rows(&self.conn, "sources")?,
-            asset_count: crate::backend::store::count_rows(&self.conn, "assets")?,
-            profile_count: crate::backend::store::count_rows(&self.conn, "profiles")?,
-            last_scan_status: crate::backend::store::latest_scan_status(&self.conn)?,
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            Ok(AppOverview {
+                source_count: crate::backend::store::count_rows_sqlx(&pool, "sources").await?,
+                asset_count: crate::backend::store::count_rows_sqlx(&pool, "assets").await?,
+                profile_count: crate::backend::store::count_rows_sqlx(&pool, "profiles").await?,
+                last_scan_status: crate::backend::store::latest_scan_status_sqlx(&pool).await?,
+            })
         })
     }
 
@@ -1851,6 +1856,10 @@ impl AppService {
 
     pub(crate) fn run_doctor(&self) -> AppResult<Value> {
         let backup_root = capabilities::skill_backup_root(&self.conn)?;
+        let pool = self.db.pool().clone();
+        let source_count = self.db.block_on(async move {
+            crate::backend::store::count_rows_sqlx(&pool, "sources").await
+        })?;
         Ok(json!({
             "checks": [
                 { "name": "database", "status": "pass", "message": self.db_path.to_string_lossy() },
@@ -1862,7 +1871,7 @@ impl AppService {
                 {
                     "name": "sources",
                     "status": "pass",
-                    "message": format!("{} sources", crate::backend::store::count_rows(&self.conn, "sources")?)
+                    "message": format!("{source_count} sources")
                 }
             ]
         }))
