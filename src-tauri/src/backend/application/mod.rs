@@ -1689,10 +1689,12 @@ impl AppService {
             return Err("skill.delete requires --yes".to_string());
         }
         let asset = self.resolve_skill_asset(&params.asset_ref)?;
-        let source = crate::backend::store::load_sources(&self.conn)?
-            .into_iter()
-            .find(|source| source.id == asset.source_id)
-            .ok_or_else(|| format!("source not found: {}", asset.source_id))?;
+        let pool = self.db.pool().clone();
+        let source_id = asset.source_id.clone();
+        let source = self.db.block_on(async move {
+            crate::backend::store::load_source_sqlx(&pool, &source_id).await
+        })?;
+        let source = source.ok_or_else(|| format!("source not found: {}", asset.source_id))?;
         if source.source_origin != SourceOrigin::AssetiweaveLibrary {
             return Err(
                 "only AssetIWeave backup library skills can be deleted; remove the source or unmount the skill instead"

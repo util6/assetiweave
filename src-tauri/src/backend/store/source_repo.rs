@@ -37,6 +37,20 @@ pub(crate) async fn load_skill_sources_sqlx(pool: &SqlitePool) -> AppResult<Vec<
     rows.iter().map(map_sqlx_source_row).collect()
 }
 
+pub(crate) async fn load_source_sqlx(
+    pool: &SqlitePool,
+    source_id: &str,
+) -> AppResult<Option<Source>> {
+    sqlx::query(sql::LOAD_SOURCE)
+        .bind(source_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| error.to_string())?
+        .as_ref()
+        .map(map_sqlx_source_row)
+        .transpose()
+}
+
 fn load_sources_with_statement(stmt: &mut rusqlite::Statement<'_>) -> AppResult<Vec<Source>> {
     let rows = stmt
         .query_map([], |row| {
@@ -258,20 +272,32 @@ mod tests {
         let regular_source = test_source("regular", SourceScannerKind::Mixed);
         let skill_source = test_source("skill", SourceScannerKind::Skill);
 
-        database
+        let (all_sources, skill_sources, loaded_skill_source, missing_source) = database
             .block_on(async {
                 upsert_source_sqlx(database.pool(), &regular_source).await?;
                 upsert_source_sqlx(database.pool(), &skill_source).await?;
                 let all_sources = load_sources_sqlx(database.pool()).await?;
                 let skill_sources = load_skill_sources_sqlx(database.pool()).await?;
-                AppResult::Ok((all_sources, skill_sources))
-            })
-            .map(|(all_sources, skill_sources)| {
-                assert_eq!(all_sources.len(), 2);
-                assert_eq!(skill_sources.len(), 1);
-                assert_eq!(skill_sources[0].id, "skill");
+                let loaded_skill_source =
+                    load_source_sqlx(database.pool(), &skill_source.id).await?;
+                let missing_source = load_source_sqlx(database.pool(), "missing").await?;
+                AppResult::Ok((
+                    all_sources,
+                    skill_sources,
+                    loaded_skill_source,
+                    missing_source,
+                ))
             })
             .expect("query SQLx source repo");
+
+        assert_eq!(all_sources.len(), 2);
+        assert_eq!(skill_sources.len(), 1);
+        assert_eq!(skill_sources[0].id, "skill");
+        assert_eq!(
+            loaded_skill_source.expect("load source by id").id,
+            skill_source.id
+        );
+        assert!(missing_source.is_none());
         drop(database);
         cleanup_database(&db_path);
     }

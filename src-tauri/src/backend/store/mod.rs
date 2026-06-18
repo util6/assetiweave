@@ -66,8 +66,8 @@ pub(crate) use skill_remote_repo::{
     upsert_skill_remote_source_sqlx,
 };
 pub(crate) use source_repo::{
-    delete_source, delete_source_sqlx, load_skill_sources_sqlx, load_sources, load_sources_sqlx,
-    normalize_source, upsert_source, upsert_source_sqlx,
+    delete_source, delete_source_sqlx, load_skill_sources_sqlx, load_source_sqlx, load_sources,
+    load_sources_sqlx, normalize_source, upsert_source, upsert_source_sqlx,
 };
 pub(crate) use web_record_repo::{
     import_web_record_sessions, list_web_record_sessions, load_web_record_session_detail,

@@ -373,6 +373,14 @@ WHERE scanner_kind = 'skill'
 ORDER BY priority ASC, name ASC
 "#;
 
+pub(crate) const LOAD_SOURCE: &str = r#"
+SELECT id, name, kind, root_path, scanner_kind, source_origin, repo_root, scan_root,
+       origin_app_kind, include_globs, exclude_globs, default_kind, enabled, priority,
+       last_scanned_at, last_scan_status
+FROM sources
+WHERE id = ?1
+"#;
+
 pub(crate) const LIST_ASSETS: &str = r#"
 SELECT id, source_id, name, kind, format, relative_path, absolute_path,
        entry_file, description, content_hash, discovered_at, updated_at
