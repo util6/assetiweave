@@ -1,10 +1,16 @@
-import { Archive, Code2, Save } from "lucide-react";
+import { Code2, Save } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  isSkillBackupRunning,
+  SkillBackupButtonContent,
+  SkillBackupInlineProgress,
+} from "../backup/SkillBackupProgress";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { useI18n } from "../../i18n/I18nProvider";
+import type { SkillBackupTaskSnapshot } from "../../services/catalog";
 import { DEFAULT_GROUP_COLOR_HEX } from "../../theme/themes";
 import { isHexColor } from "../../theme/colorValidation";
 import type { Asset, AssetGroup, AssetGroupDetail, AssetGroupIconSvg } from "../../types";
@@ -13,6 +19,7 @@ import { AssetPickerHeader, AssetPickerText, GroupField } from "./SkillGroupForm
 
 interface SkillGroupEditDialogProps {
   assets: Asset[];
+  backupTask?: SkillBackupTaskSnapshot | null;
   busy: boolean;
   detail: AssetGroupDetail | null;
   onBackup?: (assetIds: string[]) => Promise<void>;
@@ -22,6 +29,7 @@ interface SkillGroupEditDialogProps {
 
 export function SkillGroupEditDialog({
   assets,
+  backupTask,
   busy,
   detail,
   onBackup,
@@ -185,16 +193,27 @@ export function SkillGroupEditDialog({
     <>
       <div className="max-[640px]:grid">
         {onBackup && (
-          <Button
-            className="max-[640px]:w-full"
-            disabled={busy || backupAssetCount === 0}
-            onClick={() => void onBackup(backupAssets.map((asset) => asset.id))}
-            type="button"
-            variant="outline"
-          >
-            <Archive size={16} />
-            {backupActionLabel}
-          </Button>
+          <>
+            <Button
+              className="max-[640px]:w-full"
+              disabled={busy || backupAssetCount === 0 || isSkillBackupRunning(backupTask ?? null)}
+              onClick={() => void onBackup(backupAssets.map((asset) => asset.id))}
+              type="button"
+              variant="outline"
+            >
+              <SkillBackupButtonContent
+                assetIds={backupAssets.map((asset) => asset.id)}
+                defaultLabel={backupActionLabel}
+                task={backupTask ?? null}
+                t={t}
+              />
+            </Button>
+            <SkillBackupInlineProgress
+              assetIds={backupAssets.map((asset) => asset.id)}
+              task={backupTask ?? null}
+              t={t}
+            />
+          </>
         )}
       </div>
       <div className="flex items-center justify-end gap-2 max-[640px]:grid max-[640px]:grid-cols-2">

@@ -6,11 +6,11 @@ import { AssetList } from "../../components/assets/AssetList";
 import { AssetToolbar, type AssetViewMode } from "../../components/assets/AssetToolbar";
 import { PageHeader } from "../../components/foundation/PageHeader";
 import { DeploymentPlanPanel } from "../../components/plans/DeploymentPlanPanel";
+import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
 import type { CatalogController } from "../../hooks/catalog/useCatalogController";
 import { useI18n } from "../../i18n/I18nProvider";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import {
-  backupSkill,
   deleteAsset,
   listSkillGroups,
   setSkillGroupManualMembers,
@@ -28,11 +28,15 @@ export function CatalogPage({
   onOpenSettings: () => void;
 }) {
   const { t } = useI18n();
+  const { startBackup, task: backupTask } = useSkillBackup();
   const [assetViewMode, setAssetViewMode] = useState<AssetViewMode>("list");
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const [deletingAsset, setDeletingAsset] = useState<Asset | null>(null);
   const [assetGroups, setAssetGroups] = useState<AssetGroupDetail[]>([]);
   const [assetActionBusy, setAssetActionBusy] = useState(false);
+  const currentEditingAsset = editingAsset
+    ? (catalog.assets.find((asset) => asset.id === editingAsset.id) ?? editingAsset)
+    : null;
 
   useEffect(() => {
     if (!editingAsset) {
@@ -101,22 +105,10 @@ export function CatalogPage({
       return;
     }
 
-    const asset = editingAsset;
-    setAssetActionBusy(true);
     try {
-      await backupSkill(asset.id);
-      await catalog.refreshOverview();
-      catalog.clearDeploymentPlan();
-      catalog.showNotification({
-        tone: "success",
-        messageKey: "backup.notification.completed",
-        messageParams: { name: asset.name },
-      });
-      setEditingAsset(null);
+      await startBackup([editingAsset.id]);
     } catch (error) {
       catalog.showNotification({ tone: "error", message: errorMessage(error) });
-    } finally {
-      setAssetActionBusy(false);
     }
   }
 
@@ -233,7 +225,8 @@ export function CatalogPage({
         viewMode={assetViewMode}
       />
       <AssetEditDialog
-        asset={editingAsset}
+        asset={currentEditingAsset}
+        backupTask={backupTask}
         busy={assetActionBusy}
         groups={assetGroups}
         mountStatuses={catalog.assetMountStatuses}

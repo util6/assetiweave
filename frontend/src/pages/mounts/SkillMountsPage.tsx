@@ -15,12 +15,17 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
 import { AssetToolbar, type AssetToolbarViewMode } from "../../components/assets/AssetToolbar";
 import { MountStatePill } from "../../components/assets/MountStatePill";
 import { QuickMountButtons } from "../../components/assets/QuickMountButtons";
 import { SkillBackupBadge } from "../../components/assets/SkillBackupBadge";
 import { AppShortcutIconForShortcut } from "../../components/apps/AppShortcutIcon";
 import { SkillBackupLibraryDialog } from "../../components/backup/SkillBackupLibraryDialog";
+import {
+  isSkillBackupRunning,
+  SkillBackupButtonContent,
+} from "../../components/backup/SkillBackupProgress";
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
 import { PathPickerInput } from "../../components/common/PathPickerInput";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
@@ -39,10 +44,10 @@ import { useAppSettings } from "../../store/settings/AppSettingsProvider";
 import { DEFAULT_ENTITY_ACCENT_HEX } from "../../theme/themes";
 import {
   createProfile,
-  backupSkill,
   deleteProfile,
   listSkillGroups,
   selectTargetDirectory,
+  type SkillBackupTaskSnapshot,
   updateProfile,
 } from "../../services/catalog";
 import type {
@@ -119,6 +124,7 @@ export function SkillMountsPage({
   sources,
 }: SkillMountsPageProps) {
   const { t } = useI18n();
+  const { startBackup, task: backupTask } = useSkillBackup();
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<SkillMountViewMode>("list");
   const [groups, setGroups] = useState<AssetGroupDetail[]>([]);
@@ -249,15 +255,10 @@ export function SkillMountsPage({
   }
 
   async function handleBackupSkill(asset: Asset) {
-    setBusy(true);
     try {
-      await backupSkill(asset.id);
-      await onCatalogRefresh();
-      await onRefreshMountStatus();
+      await startBackup([asset.id]);
     } catch (error) {
       onNotifyError(errorMessage(error));
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -339,6 +340,7 @@ export function SkillMountsPage({
       ) : viewMode === "columns" && selectedProfile && selectedScope ? (
         <AppMountColumnView
           appShortcuts={appShortcuts}
+          backupTask={backupTask}
           busy={busy}
           mountStatusesByAssetId={mountStatusesByAssetId}
           onEditProfile={(profile) => {
@@ -368,6 +370,7 @@ export function SkillMountsPage({
           {filteredProfiles.map((profile) => (
             <AppMountRow
               appShortcuts={appShortcuts}
+              backupTask={backupTask}
               busy={busy}
               expanded={expandedProfileIds.has(profile.id)}
               key={profile.id}
@@ -461,6 +464,7 @@ export function SkillMountsPage({
 
 function AppMountRow({
   appShortcuts,
+  backupTask,
   busy,
   expanded,
   mountStatusesByAssetId,
@@ -477,6 +481,7 @@ function AppMountRow({
   sourceById,
 }: {
   appShortcuts: AppShortcut[];
+  backupTask: SkillBackupTaskSnapshot | null;
   busy: boolean;
   expanded: boolean;
   mountStatusesByAssetId: Map<string, AssetMountStatus[]>;
@@ -564,6 +569,7 @@ function AppMountRow({
         <div className="border-t border-theme-card-border bg-theme-card-header/35 p-4">
           <AppMountWorkbench
             appShortcuts={appShortcuts}
+            backupTask={backupTask}
             busy={busy}
             mountStatusesByAssetId={mountStatusesByAssetId}
             onBackupSkill={onBackupSkill}
@@ -582,6 +588,7 @@ function AppMountRow({
 
 function AppMountColumnView({
   appShortcuts,
+  backupTask,
   busy,
   mountStatusesByAssetId,
   onBackupSkill,
@@ -600,6 +607,7 @@ function AppMountColumnView({
   sourceById,
 }: {
   appShortcuts: AppShortcut[];
+  backupTask: SkillBackupTaskSnapshot | null;
   busy: boolean;
   mountStatusesByAssetId: Map<string, AssetMountStatus[]>;
   onBackupSkill: (asset: Asset) => Promise<void>;
@@ -730,6 +738,7 @@ function AppMountColumnView({
             />
           </div>
           <SkillScopeAssetList
+            backupTask={backupTask}
             busy={busy}
             mountStatusesByAssetId={mountStatusesByAssetId}
             onBackupSkill={onBackupSkill}
@@ -747,6 +756,7 @@ function AppMountColumnView({
 
 function AppMountWorkbench({
   appShortcuts,
+  backupTask,
   busy,
   mountStatusesByAssetId,
   onBackupSkill,
@@ -758,6 +768,7 @@ function AppMountWorkbench({
   sourceById,
 }: {
   appShortcuts: AppShortcut[];
+  backupTask: SkillBackupTaskSnapshot | null;
   busy: boolean;
   mountStatusesByAssetId: Map<string, AssetMountStatus[]>;
   onBackupSkill: (asset: Asset) => Promise<void>;
@@ -824,6 +835,7 @@ function AppMountWorkbench({
             />
           </div>
           <SkillScopeAssetList
+            backupTask={backupTask}
             busy={busy}
             mountStatusesByAssetId={mountStatusesByAssetId}
             onBackupSkill={onBackupSkill}
@@ -947,6 +959,7 @@ function ScopeBatchActions({
 }
 
 function SkillScopeAssetList({
+  backupTask,
   busy,
   mountStatusesByAssetId,
   onBackupSkill,
@@ -956,6 +969,7 @@ function SkillScopeAssetList({
   skillAssets,
   sourceById,
 }: {
+  backupTask: SkillBackupTaskSnapshot | null;
   busy: boolean;
   mountStatusesByAssetId: Map<string, AssetMountStatus[]>;
   onBackupSkill: (asset: Asset) => Promise<void>;
@@ -1015,13 +1029,17 @@ function SkillScopeAssetList({
               />
               {mountBlocked && (
                 <Button
-                  disabled={busy}
+                  disabled={busy || isSkillBackupRunning(backupTask)}
                   onClick={() => void onBackupSkill(asset)}
                   type="button"
                   variant="outline"
                 >
-                  <Archive size={15} />
-                  {t("backup.action.backup")}
+                  <SkillBackupButtonContent
+                    assetIds={[asset.id]}
+                    defaultLabel={t("backup.action.backup")}
+                    task={backupTask}
+                    t={t}
+                  />
                 </Button>
               )}
             </div>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
 import { Columns3, DatabaseZap, DownloadCloud, FolderPlus, LayoutList, RefreshCw, Settings } from "lucide-react";
 import { AssetDeleteDialog } from "../../components/assets/AssetDeleteDialog";
 import { AssetEditDialog } from "../../components/assets/AssetEditDialog";
@@ -14,8 +15,6 @@ import { useSourcesController } from "../../hooks/sources/useSourcesController";
 import { useI18n } from "../../i18n/I18nProvider";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import {
-  backupSkill,
-  backupSkills,
   deleteAsset,
   listSkillGroups,
   selectSourceDirectory,
@@ -67,6 +66,7 @@ export function SourcesPage({
   refreshingMountStatus: boolean;
 }) {
   const { t } = useI18n();
+  const { startBackup, task: backupTask } = useSkillBackup();
   const sources = useSourcesController(assets, onCatalogRefresh);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [acquireDialogOpen, setAcquireDialogOpen] = useState(false);
@@ -77,6 +77,9 @@ export function SourcesPage({
   const [assetGroups, setAssetGroups] = useState<AssetGroupDetail[]>([]);
   const [assetActionBusy, setAssetActionBusy] = useState(false);
   const [viewMode, setViewMode] = useState<SourceViewMode>("list");
+  const currentEditingAsset = editingAsset
+    ? (assets.find((asset) => asset.id === editingAsset.id) ?? editingAsset)
+    : null;
   const sourceBackupAssets = useMemo(() => {
     if (!editingSource) {
       return [];
@@ -159,16 +162,10 @@ export function SourcesPage({
       return;
     }
 
-    setAssetActionBusy(true);
     try {
-      await backupSkill(editingAsset.id);
-      await onCatalogRefresh();
-      onClearDeploymentPlan();
-      setEditingAsset(null);
+      await startBackup([editingAsset.id]);
     } catch (error) {
       onNotifyError(errorMessage(error));
-    } finally {
-      setAssetActionBusy(false);
     }
   }
 
@@ -177,19 +174,10 @@ export function SourcesPage({
       return;
     }
 
-    setAssetActionBusy(true);
     try {
-      await backupSkills(sourceBackupAssets.map((asset) => asset.id));
+      await startBackup(sourceBackupAssets.map((asset) => asset.id));
     } catch (error) {
       onNotifyError(errorMessage(error));
-    } finally {
-      try {
-        await onCatalogRefresh();
-        onClearDeploymentPlan();
-      } catch (refreshError) {
-        onNotifyError(errorMessage(refreshError));
-      }
-      setAssetActionBusy(false);
     }
   }
 
@@ -340,7 +328,9 @@ export function SourcesPage({
         open={acquireDialogOpen}
       />
       <SourceEditDialog
+        backupAssetIds={sourceBackupAssets.map((asset) => asset.id)}
         backupAssetCount={sourceBackupAssets.length}
+        backupTask={backupTask}
         busy={sources.busy || assetActionBusy}
         onClose={() => setEditingSource(null)}
         onBackup={handleBackupSourceAssets}
@@ -364,7 +354,8 @@ export function SourcesPage({
         </div>
       </ConfirmDialog>
       <AssetEditDialog
-        asset={editingAsset}
+        asset={currentEditingAsset}
+        backupTask={backupTask}
         busy={assetActionBusy}
         groups={assetGroups}
         mountStatuses={assetMountStatuses}

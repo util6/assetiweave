@@ -34,6 +34,21 @@ Use cockpit-tools, VS Code, and Codex App as fast product anchors when starting 
 - Design for power-user workflows: batch selection, bulk mount/unmount, import/export, filtering, syncing, backup, recovery, and review. Avoid single-item-only flows when the domain naturally operates on sets.
 - Important app operations should be coverable by the Go CLI through the Rust Engine. Do not let the frontend become the only surface for a workflow that AI agents or scripts need to drive.
 
+## Long-Running Feature Design
+
+Any feature that can scan directories, copy files, sync external records, refresh large catalogs, import/export batches, run network I/O, or touch many database rows must be designed as a background-capable workflow from the start.
+
+- Do not model long-running work as a normal button click that `await`s the whole operation while a page-level `busy` flag disables unrelated UI.
+- Tauri commands for long-running work should return a task snapshot quickly, run blocking work through a background task, and expose a read command for the current task state.
+- Frontend code should centralize task state in a provider, subscribe to backend events, and use polling as a fallback so missed events do not leave stale progress.
+- Every long-running task needs visible progress in the initiating surface and, when the user can navigate away, a global progress indicator.
+- Batch workflows must deduplicate inputs, load shared data once, avoid per-item full refreshes, and perform one catalog/status refresh after the batch unless correctness requires narrower updates.
+- Backend commands must avoid holding the global app lock while copying files, scanning sources, syncing records, or doing other long-running I/O. Use independent service/database connections and bounded task registries instead.
+- While a background task is running, disable only conflicting actions for that task. Filtering, navigation, settings, viewing details, and unrelated CRUD should remain usable.
+- App close/exit paths must check running background tasks and warn the user before interrupting work that may leave partial files or database state.
+- Engine/CLI contracts must be updated when adding app-visible commands, and CLI-accessible workflows must go through the Rust Engine rather than duplicating persistence or filesystem behavior.
+- Regression tests should prove both behavior and responsiveness: task deduplication, progress updates, event/polling fallback, batch refresh count or equivalent effect, and that unrelated UI controls remain enabled.
+
 ## Testing Guidelines
 
 Name frontend tests `*.test.ts(x)` and Go tests `*_test.go`; keep Rust unit tests near the module under test. Add regression coverage for behavior changes. Use a temporary `ASSETIWEAVE_DB_PATH` for tests that could alter local application state.

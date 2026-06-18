@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
 import {
   ChevronDown,
   ChevronRight,
@@ -30,7 +31,6 @@ import type { TranslationKey } from "../../i18n/messages";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import { useAppSettings } from "../../store/settings/AppSettingsProvider";
 import {
-  backupSkills,
   createSkillGroup,
   deleteSkillGroup,
   listSkillGroups,
@@ -65,8 +65,6 @@ interface SkillGroupsPageProps {
   assetMountStatuses: AssetMountStatus[];
   assets: Asset[];
   expandedAssetIds: Set<string>;
-  onCatalogRefresh: () => Promise<void>;
-  onClearDeploymentPlan: () => void;
   onManualOpen: () => void;
   onNotifyError: (message: string) => void;
   onOpenSettings: () => void;
@@ -90,8 +88,6 @@ export function SkillGroupsPage({
   assetMountStatuses,
   assets,
   expandedAssetIds,
-  onCatalogRefresh,
-  onClearDeploymentPlan,
   onManualOpen,
   onNotifyError,
   onOpenSettings,
@@ -108,6 +104,7 @@ export function SkillGroupsPage({
   sources,
 }: SkillGroupsPageProps) {
   const { t } = useI18n();
+  const { startBackup, task: backupTask } = useSkillBackup();
   const [groups, setGroups] = useState<AssetGroupDetail[]>([]);
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set());
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -255,19 +252,10 @@ export function SkillGroupsPage({
       return;
     }
 
-    setBusy(true);
     try {
-      await backupSkills(assetIds);
+      await startBackup(assetIds);
     } catch (backupError) {
       onNotifyError(errorMessage(backupError));
-    } finally {
-      try {
-        await onCatalogRefresh();
-        onClearDeploymentPlan();
-      } catch (refreshError) {
-        onNotifyError(errorMessage(refreshError));
-      }
-      setBusy(false);
     }
   }
 
@@ -574,6 +562,7 @@ export function SkillGroupsPage({
       />
       <SkillGroupEditDialog
         assets={assets}
+        backupTask={backupTask}
         busy={busy}
         detail={editingGroup}
         onBackup={handleBackupEditingGroupAssets}

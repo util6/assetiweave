@@ -1137,6 +1137,30 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "backup_skills",
+        "skill.backup.batch",
+        "Start or run a batch Skill backup",
+        Write,
+        App,
+        false,
+        crate::backend::application::SkillBackupTaskParams,
+        Service => |service, params| service.backup_skills(params.asset_ids),
+        &[param!("asset_ids", "Asset identifiers", ["assetIds"])],
+        None
+    ),
+    command!(
+        "get_skill_backup_task",
+        "get_skill_backup_task",
+        "Get the current desktop Skill backup background task",
+        Read,
+        App,
+        false,
+        NoParams,
+        System => |_params| Value::Null,
+        &[],
+        None
+    ),
+    command!(
         "search_skills",
         "skill.search",
         "Search internet providers for Skill candidates",

@@ -1,6 +1,7 @@
-import { Archive, FolderCog, Save } from "lucide-react";
+import { FolderCog, Save } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
+import type { SkillBackupTaskSnapshot } from "../../services/catalog";
 import type { Source } from "../../types";
 import {
   deriveSourceName,
@@ -10,6 +11,11 @@ import {
   validateSourceImportForm,
 } from "../../utils/sourceImport";
 import { abbreviateHomePath } from "../../utils/path";
+import {
+  isSkillBackupRunning,
+  SkillBackupButtonContent,
+  SkillBackupInlineProgress,
+} from "../backup/SkillBackupProgress";
 import { PathPickerInput } from "../common/PathPickerInput";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
@@ -17,7 +23,9 @@ import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 
 export function SourceEditDialog({
+  backupAssetIds = [],
   backupAssetCount = 0,
+  backupTask,
   busy,
   onBackup,
   onClose,
@@ -26,7 +34,9 @@ export function SourceEditDialog({
   onSubmit,
   source,
 }: {
+  backupAssetIds?: string[];
   backupAssetCount?: number;
+  backupTask?: SkillBackupTaskSnapshot | null;
   busy: boolean;
   onBackup?: () => Promise<void>;
   onClose: () => void;
@@ -102,16 +112,23 @@ export function SourceEditDialog({
     <>
       <div className="max-[640px]:grid">
         {onBackup && (
-          <Button
-            className="max-[640px]:w-full"
-            disabled={busy || backupAssetCount === 0}
-            onClick={() => void onBackup()}
-            type="button"
-            variant="outline"
-          >
-            <Archive size={16} />
-            {backupActionLabel}
-          </Button>
+          <>
+            <Button
+              className="max-[640px]:w-full"
+              disabled={busy || backupAssetCount === 0 || isSkillBackupRunning(backupTask ?? null)}
+              onClick={() => void onBackup()}
+              type="button"
+              variant="outline"
+            >
+              <SkillBackupButtonContent
+                assetIds={backupAssetIds}
+                defaultLabel={backupActionLabel}
+                task={backupTask ?? null}
+                t={t}
+              />
+            </Button>
+            <SkillBackupInlineProgress assetIds={backupAssetIds} task={backupTask ?? null} t={t} />
+          </>
         )}
       </div>
       <div className="flex items-center justify-end gap-2 max-[640px]:grid max-[640px]:grid-cols-2">

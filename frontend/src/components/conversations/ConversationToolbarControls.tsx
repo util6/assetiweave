@@ -41,7 +41,7 @@ export function ConversationBackgroundTaskIndicator({
   return (
     <section
       aria-live="polite"
-      className="fixed bottom-5 right-5 z-30 flex max-w-sm items-center gap-3 rounded-xl border border-status-update/40 bg-theme-card/95 px-4 py-3 text-on-surface shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.28)] backdrop-blur"
+      className="pointer-events-auto flex w-[min(24rem,calc(100vw-2.5rem))] items-center gap-3 rounded-xl border border-status-update/40 bg-theme-card/95 px-4 py-3 text-on-surface shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.28)] backdrop-blur"
       role="status"
     >
       <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-status-update/15 text-status-update">

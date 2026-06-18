@@ -113,6 +113,70 @@ export async function backupSkills(assetIds: string[]): Promise<Asset[]> {
   return backedUpAssets;
 }
 
+export type SkillBackupTaskStatus = "running" | "completed" | "failed";
+
+export interface SkillBackupTaskError {
+  asset_id: string | null;
+  message: string;
+}
+
+export interface SkillBackupTaskSnapshot {
+  id: string;
+  status: SkillBackupTaskStatus;
+  asset_ids: string[];
+  total_count: number;
+  completed_count: number;
+  failed_count: number;
+  current_asset_id: string | null;
+  started_at: string;
+  finished_at: string | null;
+  assets: Asset[];
+  errors: SkillBackupTaskError[];
+  error: string | null;
+}
+
+export async function startSkillBackupTask(assetIds: string[]): Promise<SkillBackupTaskSnapshot> {
+  const uniqueAssetIds = [...new Set(assetIds.map((assetId) => assetId.trim()).filter(Boolean))];
+  if (uniqueAssetIds.length === 0) {
+    throw new Error("At least one Skill asset id is required");
+  }
+
+  try {
+    return await invoke<SkillBackupTaskSnapshot>("backup_skills", { assetIds: uniqueAssetIds });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    const timestamp = new Date().toISOString();
+    return {
+      id: `browser-skill-backup-${Date.now()}`,
+      status: "completed",
+      asset_ids: uniqueAssetIds,
+      total_count: uniqueAssetIds.length,
+      completed_count: uniqueAssetIds.length,
+      failed_count: 0,
+      current_asset_id: null,
+      started_at: timestamp,
+      finished_at: timestamp,
+      assets: [],
+      errors: [],
+      error: null,
+    };
+  }
+}
+
+export async function getSkillBackupTask(): Promise<SkillBackupTaskSnapshot | null> {
+  try {
+    return await invoke<SkillBackupTaskSnapshot | null>("get_skill_backup_task");
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+    return null;
+  }
+}
+
 export async function searchSkills(query: string, limit = 8, provider = "github"): Promise<SkillSearchResult> {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) {

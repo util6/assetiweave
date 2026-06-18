@@ -2867,6 +2867,57 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "skill.backup.batch",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Start or run a batch Skill backup",
+      "exposure": "app",
+      "method": "backup_skills",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_ids": {
+            "aliases": [
+              "assetIds"
+            ],
+            "description": "Asset identifiers",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "asset_ids"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "get_skill_backup_task",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 2,
+      "deprecated": false,
+      "description": "Get the current desktop Skill backup background task",
+      "exposure": "app",
+      "method": "get_skill_backup_task",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "skill.search",
       "cli": "assetiweave-cli skill search --query <query>",
       "confirmation_required": false,
@@ -6720,6 +6771,8 @@
     "get_skill_backup_settings",
     "update_skill_backup_settings",
     "backup_skill",
+    "backup_skills",
+    "get_skill_backup_task",
     "search_skills",
     "acquire_skill",
     "list_skill_remote_sources",

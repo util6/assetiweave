@@ -1,7 +1,10 @@
 use crate::backend::models::{Asset, AssetFormat, TargetProfile};
-use crate::backend::{dto::AppResult, path_utils::expand_path};
+use crate::backend::{
+    dto::AppResult,
+    path_utils::{expand_path, hash_path},
+};
 use std::{
-    fs,
+    fs::{self, Metadata},
     io::ErrorKind,
     path::{Path, PathBuf},
 };
@@ -58,7 +61,10 @@ pub(crate) fn inspect_mount(profile: &TargetProfile, asset: &Asset) -> AppResult
     };
 
     if !metadata.file_type().is_symlink() {
-        let state = if same_path(&target_path, &source_path) {
+        let state = if same_path(&target_path, &source_path)
+            || target_content_matches_asset_source(asset, &source_path, &target_path, &metadata)
+                .unwrap_or(false)
+        {
             PhysicalMountState::NotMounted
         } else {
             PhysicalMountState::Conflict
@@ -126,6 +132,38 @@ pub(crate) fn canonical_source_path(asset: &Asset) -> AppResult<PathBuf> {
         .map_err(|error| error.to_string())
 }
 
+pub(crate) fn target_is_asset_source(asset: &Asset, target_path: &Path) -> AppResult<bool> {
+    let source_path = canonical_source_path(asset)?;
+    Ok(same_path(target_path, &source_path))
+}
+
+pub(crate) fn target_content_matches_asset(asset: &Asset, target_path: &Path) -> AppResult<bool> {
+    let source_path = canonical_source_path(asset)?;
+    let metadata = fs::symlink_metadata(target_path).map_err(|error| error.to_string())?;
+    target_content_matches_asset_source(asset, &source_path, target_path, &metadata)
+}
+
+fn target_content_matches_asset_source(
+    asset: &Asset,
+    source_path: &Path,
+    target_path: &Path,
+    target_metadata: &Metadata,
+) -> AppResult<bool> {
+    if target_metadata.file_type().is_symlink() {
+        return Ok(false);
+    }
+    if source_path.is_dir() != target_metadata.is_dir() {
+        return Ok(false);
+    }
+
+    let target_hash = hash_path(target_path)?;
+    if let Some(content_hash) = asset.content_hash.as_ref().filter(|hash| !hash.is_empty()) {
+        return Ok(content_hash == &target_hash);
+    }
+
+    Ok(hash_path(source_path)? == target_hash)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,6 +192,12 @@ mod tests {
         fs::create_dir_all(&asset_path).expect("create source skill");
         fs::create_dir_all(target_root.join("code-review-and-quality"))
             .expect("create conflicting target");
+        fs::write(asset_path.join("SKILL.md"), "description: source").expect("write source skill");
+        fs::write(
+            target_root.join("code-review-and-quality").join("SKILL.md"),
+            "description: target",
+        )
+        .expect("write conflicting skill");
         let asset = test_asset("code-review-and-quality", &asset_path);
         let profile = test_profile(&target_root);
 
@@ -162,6 +206,28 @@ mod tests {
         fs::remove_dir_all(&source_root).ok();
         fs::remove_dir_all(&target_root).ok();
         assert_eq!(inspection.state, PhysicalMountState::Conflict);
+        assert_eq!(inspection.linked_source, None);
+    }
+
+    #[test]
+    fn inspect_mount_treats_identical_existing_target_as_not_mounted() {
+        let source_root = unique_temp_dir("assetiweave-identical-source");
+        let target_root = unique_temp_dir("assetiweave-identical-target");
+        let asset_path = source_root.join("code-review-and-quality");
+        let target_path = target_root.join("code-review-and-quality");
+        fs::create_dir_all(&asset_path).expect("create source skill");
+        fs::create_dir_all(&target_path).expect("create target skill");
+        fs::write(asset_path.join("SKILL.md"), "description: same").expect("write source skill");
+        fs::write(target_path.join("SKILL.md"), "description: same").expect("write target skill");
+        let mut asset = test_asset("code-review-and-quality", &asset_path);
+        asset.content_hash = Some(crate::backend::path_utils::hash_path(&asset_path).unwrap());
+        let profile = test_profile(&target_root);
+
+        let inspection = inspect_mount(&profile, &asset).expect("inspect identical target");
+
+        fs::remove_dir_all(&source_root).ok();
+        fs::remove_dir_all(&target_root).ok();
+        assert_eq!(inspection.state, PhysicalMountState::NotMounted);
         assert_eq!(inspection.linked_source, None);
     }
 

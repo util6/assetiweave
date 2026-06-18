@@ -186,6 +186,8 @@ fn execute_deployment_action(
 ) -> Result<(), DeploymentError> {
     let target_path = PathBuf::from(&action.target_path);
     ensure_target_within_profile(profile, &target_path)?;
+    let source_path = crate::backend::targeting::canonical_source_path(asset)
+        .map_err(DeploymentError::Failure)?;
 
     if target_path.exists()
         && !crate::backend::store::is_managed_deployment(
@@ -195,6 +197,8 @@ fn execute_deployment_action(
             &action.target_path,
         )
         .map_err(DeploymentError::Failure)?
+        && !target_can_be_replaced_with_asset(asset, &target_path)
+            .map_err(DeploymentError::Failure)?
     {
         return Err(DeploymentError::Conflict(format!(
             "目标已存在且不是 AssetIWeave 托管文件: {}",
@@ -210,9 +214,6 @@ fn execute_deployment_action(
     if target_path.exists() {
         remove_existing_target(&target_path)?;
     }
-
-    let source_path = crate::backend::targeting::canonical_source_path(asset)
-        .map_err(DeploymentError::Failure)?;
 
     match action.strategy {
         DeploymentStrategy::SymlinkToSource => create_symlink(&source_path, &target_path)?,
@@ -237,6 +238,13 @@ fn execute_deployment_action(
     crate::backend::store::upsert_deployment_state(conn, &state)
         .map_err(DeploymentError::Failure)?;
     Ok(())
+}
+
+fn target_can_be_replaced_with_asset(asset: &Asset, target_path: &Path) -> Result<bool, String> {
+    if crate::backend::targeting::target_is_asset_source(asset, target_path)? {
+        return Ok(false);
+    }
+    crate::backend::targeting::target_content_matches_asset(asset, target_path)
 }
 
 fn ensure_target_within_profile(

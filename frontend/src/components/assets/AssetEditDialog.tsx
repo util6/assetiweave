@@ -1,18 +1,25 @@
 import clsx from "clsx";
-import { Archive, FilePenLine } from "lucide-react";
+import { FilePenLine } from "lucide-react";
 import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
 import { assetKindLabel } from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
+import type { SkillBackupTaskSnapshot } from "../../services/catalog";
 import type { Asset, AssetGroupDetail, AssetMountStatus, Source, TargetProfile } from "../../types";
 import { assetSourceHref, assetSourceLabel } from "../../utils/assetSource";
 import { openExternalLink } from "../../utils/externalLinks";
 import { getMountDisplayState } from "../../utils/mountState";
 import { abbreviateHomePath, displayAssetPath } from "../../utils/path";
+import {
+  isSkillBackupRunning,
+  SkillBackupButtonContent,
+  SkillBackupInlineProgress,
+} from "../backup/SkillBackupProgress";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
 
 export function AssetEditDialog({
   asset,
+  backupTask,
   busy,
   groups,
   mountStatuses,
@@ -25,6 +32,7 @@ export function AssetEditDialog({
   source,
 }: {
   asset: Asset | null;
+  backupTask?: SkillBackupTaskSnapshot | null;
   busy: boolean;
   groups: AssetGroupDetail[];
   mountStatuses: AssetMountStatus[];
@@ -52,6 +60,7 @@ export function AssetEditDialog({
     return null;
   }
   const sourceHref = assetSourceHref(asset);
+  const backupAssetIds = [asset.id];
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -62,16 +71,23 @@ export function AssetEditDialog({
     <>
       <div className="max-[640px]:grid">
         {asset.kind === "skill" && onBackup && (
-          <Button
-            className="max-[640px]:w-full"
-            disabled={busy || Boolean(asset.backup_status)}
-            onClick={() => void onBackup()}
-            type="button"
-            variant="outline"
-          >
-            <Archive size={16} />
-            {asset.backup_status ? t("backup.action.inDirectory") : t("backup.action.backupToDirectory")}
-          </Button>
+          <>
+            <Button
+              className="max-[640px]:w-full"
+              disabled={busy || Boolean(asset.backup_status) || isSkillBackupRunning(backupTask ?? null)}
+              onClick={() => void onBackup()}
+              type="button"
+              variant="outline"
+            >
+              <SkillBackupButtonContent
+                assetIds={backupAssetIds}
+                defaultLabel={asset.backup_status ? t("backup.action.inDirectory") : t("backup.action.backupToDirectory")}
+                task={backupTask ?? null}
+                t={t}
+              />
+            </Button>
+            <SkillBackupInlineProgress assetIds={backupAssetIds} task={backupTask ?? null} t={t} />
+          </>
         )}
       </div>
       <div className="flex items-center justify-end gap-2 max-[640px]:grid max-[640px]:grid-cols-2">

@@ -1,5 +1,7 @@
 use crate::adapters::app_state::AppState;
-use crate::adapters::tauri::background_tasks::ConversationSyncTaskSnapshot;
+use crate::adapters::tauri::background_tasks::{
+    ConversationSyncTaskSnapshot, SkillBackupTaskSnapshot,
+};
 #[cfg(test)]
 use crate::backend::capabilities::{
     apply_skill_group_exclusive_mount_record, apply_skill_group_mount_record,
@@ -143,6 +145,95 @@ pub(crate) fn backup_skill(
         Err(error) => log_error("skill.backup", "备份 Skill 失败", error, &fields),
     }
     result
+}
+
+#[tauri::command]
+pub(crate) fn backup_skills(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    asset_ids: Vec<String>,
+) -> AppResult<SkillBackupTaskSnapshot> {
+    let (snapshot, should_start) = state.background_tasks.begin_skill_backup(asset_ids)?;
+    if !should_start {
+        return Ok(snapshot);
+    }
+
+    let db_path = state.db_path.clone();
+    let background_tasks = state.background_tasks.clone();
+    let task_id = snapshot.id.clone();
+    let task_asset_ids = snapshot.asset_ids.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let progress_app = app.clone();
+        let progress_tasks = background_tasks.clone();
+        let progress_task_id = task_id.clone();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            AppService::open_with_db_path(db_path).and_then(|service| {
+                service.backup_skills_with_progress(
+                    task_asset_ids,
+                    |completed_count, next_asset_id| match progress_tasks
+                        .update_skill_backup_progress(
+                            &progress_task_id,
+                            completed_count,
+                            next_asset_id.map(str::to_string),
+                        ) {
+                        Ok(snapshot) => emit_skill_backup_task(&progress_app, &snapshot),
+                        Err(error) => log_error(
+                            "skill.backup.background",
+                            "更新 Skill 后台备份进度失败",
+                            &error,
+                            &[("task_id", progress_task_id.clone())],
+                        ),
+                    },
+                )
+            })
+        }))
+        .unwrap_or_else(|_| Err("skill backup task panicked".to_string()));
+        match &result {
+            Ok(assets) => log_info(
+                "skill.backup.background",
+                "后台备份 Skill 成功",
+                &[
+                    ("task_id", task_id.clone()),
+                    ("asset_count", assets.len().to_string()),
+                ],
+            ),
+            Err(error) => log_error(
+                "skill.backup.background",
+                "后台备份 Skill 失败",
+                error,
+                &[("task_id", task_id.clone())],
+            ),
+        }
+        match background_tasks.finish_skill_backup(&task_id, result) {
+            Ok(snapshot) => emit_skill_backup_task(&app, &snapshot),
+            Err(error) => log_error(
+                "skill.backup.background",
+                "更新 Skill 后台备份任务状态失败",
+                &error,
+                &[("task_id", task_id)],
+            ),
+        }
+    });
+
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub(crate) fn get_skill_backup_task(
+    state: State<'_, AppState>,
+) -> AppResult<Option<SkillBackupTaskSnapshot>> {
+    state.background_tasks.skill_backup_snapshot()
+}
+
+fn emit_skill_backup_task(app: &AppHandle, snapshot: &SkillBackupTaskSnapshot) {
+    if let Err(error) = app.emit("skill-backup-task-updated", snapshot) {
+        log_error(
+            "skill.backup.background",
+            "推送 Skill 后台备份任务状态失败",
+            &error.to_string(),
+            &[("task_id", snapshot.id.clone())],
+        );
+    }
 }
 
 #[tauri::command]
@@ -1416,6 +1507,8 @@ pub(crate) fn command_handler(
         get_skill_backup_settings,
         update_skill_backup_settings,
         backup_skill,
+        backup_skills,
+        get_skill_backup_task,
         search_skills,
         acquire_skill,
         list_skill_remote_sources,

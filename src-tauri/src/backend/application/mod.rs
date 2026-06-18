@@ -19,7 +19,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     env, fs,
     path::{Path, PathBuf},
     process::Command,
@@ -33,6 +33,13 @@ pub(crate) struct AppService {
 
 const SKILL_REMOTE_SECURITY_NOTICE: &str =
     "Review remote Skill contents before importing; AssetIWeave does not execute or trust remote code automatically.";
+
+#[derive(Debug, Clone)]
+struct SkillBackupCopyTarget {
+    asset: Asset,
+    target_dir: PathBuf,
+    source_is_library: bool,
+}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ListAssetsParams {
@@ -49,6 +56,12 @@ pub(crate) struct AssetIdParams {
 pub(crate) struct RequiredAssetIdParams {
     #[serde(alias = "assetId")]
     pub(crate) asset_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct SkillBackupTaskParams {
+    #[serde(alias = "assetIds")]
+    pub(crate) asset_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1151,7 +1164,7 @@ impl AppService {
     }
 
     pub(crate) fn create_plan(&self, profile_id: Option<&str>) -> AppResult<DeploymentPlan> {
-        let assets = crate::backend::store::load_assets(&self.conn)?;
+        let assets = capabilities::catalog_visible_assets(&self.conn, None)?;
         let profiles = crate::backend::store::load_profiles(&self.conn)?;
         let mounts = crate::backend::store::load_enabled_asset_mounts(&self.conn, profile_id)?;
         Ok(crate::backend::planner::build_plan(
@@ -1210,43 +1223,94 @@ impl AppService {
     }
 
     pub(crate) fn backup_skill(&self, asset_id: String) -> AppResult<CatalogAsset> {
-        let assets = crate::backend::store::load_assets(&self.conn)?;
-        let asset = assets
-            .iter()
-            .find(|candidate| candidate.id == asset_id)
-            .ok_or_else(|| format!("asset not found: {asset_id}"))?;
-        if asset.kind != AssetKind::Skill {
-            return Err("only skill assets can be backed up".to_string());
-        }
-
-        let source = crate::backend::store::load_sources(&self.conn)?
+        self.backup_skills(vec![asset_id])?
             .into_iter()
-            .find(|candidate| candidate.id == asset.source_id)
-            .ok_or_else(|| format!("source not found: {}", asset.source_id))?;
-        if source.source_origin == SourceOrigin::AssetiweaveLibrary {
-            return capabilities::catalog_asset_for_id(&self.conn, &asset.id);
+            .next()
+            .ok_or_else(|| "backed up skill was copied but not found during rescan".to_string())
+    }
+
+    pub(crate) fn backup_skills(&self, asset_ids: Vec<String>) -> AppResult<Vec<CatalogAsset>> {
+        self.backup_skills_with_progress(asset_ids, |_, _| {})
+    }
+
+    pub(crate) fn backup_skills_with_progress<F>(
+        &self,
+        asset_ids: Vec<String>,
+        mut on_progress: F,
+    ) -> AppResult<Vec<CatalogAsset>>
+    where
+        F: FnMut(usize, Option<&str>),
+    {
+        let asset_ids = dedupe_non_empty_strings(asset_ids);
+        if asset_ids.is_empty() {
+            return Ok(Vec::new());
         }
 
-        let origin_bucket = source
-            .origin_app_kind
-            .map(|kind| format!("{kind:?}").to_ascii_lowercase())
-            .unwrap_or_else(|| slug_path_segment(&source.id));
-        let target_dir = capabilities::skill_backup_root(&self.conn)?
-            .join("backed-up")
-            .join(origin_bucket)
-            .join(&asset.name);
-        let source_path = Path::new(&asset.absolute_path);
-        if target_dir.exists() {
-            let source_hash = crate::backend::path_utils::hash_path(source_path)?;
-            let target_hash = crate::backend::path_utils::hash_path(&target_dir)?;
-            if source_hash != target_hash {
-                return Err(format!(
-                    "backup skill target already exists with different content: {}",
-                    target_dir.display()
-                ));
+        let assets = crate::backend::store::load_assets(&self.conn)?;
+        let sources = crate::backend::store::load_sources(&self.conn)?;
+        let assets_by_id = assets
+            .iter()
+            .map(|asset| (asset.id.as_str(), asset))
+            .collect::<HashMap<_, _>>();
+        let sources_by_id = sources
+            .iter()
+            .map(|source| (source.id.as_str(), source))
+            .collect::<HashMap<_, _>>();
+        let backup_root = capabilities::skill_backup_root(&self.conn)?;
+        let mut targets = Vec::with_capacity(asset_ids.len());
+
+        for asset_id in asset_ids {
+            let asset = assets_by_id
+                .get(asset_id.as_str())
+                .ok_or_else(|| format!("asset not found: {asset_id}"))?;
+            if asset.kind != AssetKind::Skill {
+                return Err("only skill assets can be backed up".to_string());
             }
-        } else {
-            capabilities::copy_dir(source_path, &target_dir)?;
+
+            let source = sources_by_id
+                .get(asset.source_id.as_str())
+                .ok_or_else(|| format!("source not found: {}", asset.source_id))?;
+            let source_is_library = source.source_origin == SourceOrigin::AssetiweaveLibrary;
+            let target_dir = if source_is_library {
+                PathBuf::from(&asset.absolute_path)
+            } else {
+                let origin_bucket = source
+                    .origin_app_kind
+                    .map(|kind| format!("{kind:?}").to_ascii_lowercase())
+                    .unwrap_or_else(|| slug_path_segment(&source.id));
+                backup_root
+                    .join("backed-up")
+                    .join(origin_bucket)
+                    .join(&asset.name)
+            };
+            targets.push(SkillBackupCopyTarget {
+                asset: (*asset).clone(),
+                target_dir,
+                source_is_library,
+            });
+        }
+
+        for index in 0..targets.len() {
+            let target = &targets[index];
+            if !target.source_is_library {
+                let source_path = Path::new(&target.asset.absolute_path);
+                if target.target_dir.exists() {
+                    let source_hash = crate::backend::path_utils::hash_path(source_path)?;
+                    let target_hash = crate::backend::path_utils::hash_path(&target.target_dir)?;
+                    if source_hash != target_hash {
+                        return Err(format!(
+                            "backup skill target already exists with different content: {}",
+                            target.target_dir.display()
+                        ));
+                    }
+                } else {
+                    capabilities::copy_dir(source_path, &target.target_dir)?;
+                }
+            }
+            let next_asset_id = targets
+                .get(index + 1)
+                .map(|target| target.asset.id.as_str());
+            on_progress(index + 1, next_asset_id);
         }
 
         let library_source = capabilities::assetiweave_library_source_with_root(
@@ -1255,15 +1319,26 @@ impl AppService {
         crate::backend::store::upsert_source(&self.conn, &library_source)?;
         capabilities::refresh_all_sources(&self.conn)?;
 
-        capabilities::catalog_assets(&self.conn, Some(AssetKind::Skill))?
-            .into_iter()
-            .find(|candidate| {
-                candidate.asset.id == asset.id
-                    || candidate.asset.absolute_path == target_dir.to_string_lossy()
-                    || (asset.content_hash.is_some()
-                        && candidate.asset.content_hash.as_deref() == asset.content_hash.as_deref())
-            })
-            .ok_or_else(|| "backed up skill was copied but not found during rescan".to_string())
+        let catalog = capabilities::catalog_assets(&self.conn, Some(AssetKind::Skill))?;
+        let mut backed_up_assets = Vec::with_capacity(targets.len());
+        for target in targets {
+            let target_path = target.target_dir.to_string_lossy();
+            let backed_up_asset = catalog
+                .iter()
+                .find(|candidate| {
+                    candidate.asset.id == target.asset.id
+                        || candidate.asset.absolute_path == target_path
+                        || (target.asset.content_hash.is_some()
+                            && candidate.asset.content_hash.as_deref()
+                                == target.asset.content_hash.as_deref())
+                })
+                .cloned()
+                .ok_or_else(|| {
+                    "backed up skill was copied but not found during rescan".to_string()
+                })?;
+            backed_up_assets.push(backed_up_asset);
+        }
+        Ok(backed_up_assets)
     }
 
     pub(crate) fn import_skill(&self, params: ImportSkillParams) -> AppResult<Value> {
@@ -2499,6 +2574,18 @@ fn short_uuid() -> String {
     Uuid::new_v4().to_string()[..8].to_string()
 }
 
+fn dedupe_non_empty_strings(values: Vec<String>) -> Vec<String> {
+    let mut deduped = Vec::new();
+    let mut seen = HashSet::new();
+    for value in values {
+        let value = value.trim().to_string();
+        if !value.is_empty() && seen.insert(value.clone()) {
+            deduped.push(value);
+        }
+    }
+    deduped
+}
+
 fn slug_path_segment(value: &str) -> String {
     let mut slug = String::new();
     let mut last_was_separator = false;
@@ -2554,6 +2641,345 @@ fn is_web_record_adapter(adapter: Option<&ConversationAdapter>, adapter_id: &str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::models::SourceKind;
+    use std::fs;
+
+    #[test]
+    fn batch_skill_backup_deduplicates_assets_and_reports_copy_progress() {
+        let root =
+            std::env::temp_dir().join(format!("assetiweave-skill-backup-batch-{}", Uuid::new_v4()));
+        let source_root = root.join("source");
+        let backup_root = root.join("backup");
+        fs::create_dir_all(source_root.join("skill-a")).expect("create first skill");
+        fs::create_dir_all(source_root.join("skill-b")).expect("create second skill");
+        fs::write(
+            source_root.join("skill-a").join("SKILL.md"),
+            "---\ndescription: Skill A\n---\n",
+        )
+        .expect("write first skill");
+        fs::write(
+            source_root.join("skill-b").join("SKILL.md"),
+            "---\ndescription: Skill B\n---\n",
+        )
+        .expect("write second skill");
+
+        let service =
+            AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+        service
+            .conn
+            .execute_batch("DELETE FROM assets; DELETE FROM sources;")
+            .expect("clear seeded catalog");
+        crate::backend::store::upsert_source(
+            &service.conn,
+            &Source {
+                id: "source-a".to_string(),
+                name: "Source A".to_string(),
+                kind: SourceKind::Local,
+                root_path: source_root.to_string_lossy().to_string(),
+                scanner_kind: SourceScannerKind::Skill,
+                source_origin: SourceOrigin::LocalFolder,
+                repo_root: None,
+                scan_root: String::new(),
+                origin_app_kind: None,
+                include_globs: vec!["**/SKILL.md".to_string()],
+                exclude_globs: Vec::new(),
+                default_kind: Some(AssetKind::Skill),
+                enabled: true,
+                priority: 0,
+                last_scanned_at: None,
+                last_scan_status: None,
+            },
+        )
+        .expect("save source");
+        service
+            .update_skill_backup_settings(UpdateSkillBackupSettingsParams {
+                root_path: backup_root.to_string_lossy().to_string(),
+                migrate: false,
+            })
+            .expect("configure backup root");
+
+        let mut source_assets = crate::backend::store::load_assets(&service.conn)
+            .expect("load source assets")
+            .into_iter()
+            .filter(|asset| asset.source_id == "source-a")
+            .collect::<Vec<_>>();
+        source_assets.sort_by(|left, right| left.name.cmp(&right.name));
+        assert_eq!(source_assets.len(), 2);
+
+        let first_id = source_assets[0].id.clone();
+        let second_id = source_assets[1].id.clone();
+        let mut progress = Vec::new();
+        let backed_up = service
+            .backup_skills_with_progress(
+                vec![first_id.clone(), first_id, second_id.clone()],
+                |completed, next_asset_id| {
+                    progress.push((completed, next_asset_id.map(str::to_string)));
+                },
+            )
+            .expect("back up skills");
+
+        assert_eq!(backed_up.len(), 2);
+        assert_eq!(progress, vec![(1, Some(second_id)), (2, None)]);
+        assert!(backup_root
+            .join("backed-up")
+            .join("source-a")
+            .join("skill-a")
+            .join("SKILL.md")
+            .is_file());
+        assert!(backup_root
+            .join("backed-up")
+            .join("source-a")
+            .join("skill-b")
+            .join("SKILL.md")
+            .is_file());
+        assert!(backed_up.iter().all(|asset| asset.backup_status.is_some()));
+
+        drop(service);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-skill-backup-duplicate-plan-{}",
+            Uuid::new_v4()
+        ));
+        let source_root = root.join("source");
+        let backup_root = root.join("backup");
+        let target_root = root.join("target");
+        fs::create_dir_all(source_root.join("skill-a")).expect("create skill");
+        fs::create_dir_all(&target_root).expect("create target root");
+        fs::write(
+            source_root.join("skill-a").join("SKILL.md"),
+            "---\ndescription: Skill A\n---\n",
+        )
+        .expect("write skill");
+
+        let service =
+            AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+        service
+            .conn
+            .execute_batch("DELETE FROM assets; DELETE FROM sources;")
+            .expect("clear seeded catalog");
+        crate::backend::store::upsert_source(
+            &service.conn,
+            &Source {
+                id: "source-a".to_string(),
+                name: "Source A".to_string(),
+                kind: SourceKind::Local,
+                root_path: source_root.to_string_lossy().to_string(),
+                scanner_kind: SourceScannerKind::Skill,
+                source_origin: SourceOrigin::LocalFolder,
+                repo_root: None,
+                scan_root: String::new(),
+                origin_app_kind: None,
+                include_globs: vec!["**/SKILL.md".to_string()],
+                exclude_globs: Vec::new(),
+                default_kind: Some(AssetKind::Skill),
+                enabled: true,
+                priority: 0,
+                last_scanned_at: None,
+                last_scan_status: None,
+            },
+        )
+        .expect("save source");
+        let profile = service
+            .create_profile(TargetProfileInput {
+                id: Some("test-target".to_string()),
+                name: "Test Target".to_string(),
+                app_kind: Some(crate::backend::models::AppKind::Custom),
+                target_paths: Some(vec![target_root.to_string_lossy().to_string()]),
+                supported_kinds: None,
+                deployment_strategy: Some(DeploymentStrategy::SymlinkToSource),
+                enabled: Some(true),
+                include: None,
+                exclude: None,
+                safety: None,
+            })
+            .expect("create target profile");
+        service
+            .update_skill_backup_settings(UpdateSkillBackupSettingsParams {
+                root_path: backup_root.to_string_lossy().to_string(),
+                migrate: false,
+            })
+            .expect("configure backup root");
+
+        let source_asset = crate::backend::store::load_assets(&service.conn)
+            .expect("load source assets")
+            .into_iter()
+            .find(|asset| asset.source_id == "source-a")
+            .expect("source asset");
+        service
+            .backup_skill(source_asset.id.clone())
+            .expect("backup skill");
+
+        let raw_skill_assets = crate::backend::store::load_assets(&service.conn)
+            .expect("load raw assets")
+            .into_iter()
+            .filter(|asset| asset.kind == AssetKind::Skill)
+            .collect::<Vec<_>>();
+        assert_eq!(raw_skill_assets.len(), 2);
+        for asset in &raw_skill_assets {
+            crate::backend::store::set_asset_mount(
+                &service.conn,
+                &asset.id,
+                &profile.id,
+                true,
+                DeploymentStrategy::SymlinkToSource,
+            )
+            .expect("persist legacy mount preference");
+        }
+
+        let catalog = service.list_skills().expect("list catalog");
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].asset.source_id, "source-a");
+        assert_eq!(
+            catalog[0]
+                .backup_status
+                .as_ref()
+                .map(|status| status.hidden_asset_ids.len()),
+            Some(1)
+        );
+
+        let plan = service
+            .create_plan(Some(&profile.id))
+            .expect("create deployment plan");
+        assert_eq!(plan.actions.len(), 1);
+        assert_eq!(
+            plan.actions[0].asset_id.as_deref(),
+            Some(source_asset.id.as_str())
+        );
+        assert_eq!(plan.summary.create_count, 1);
+        assert_eq!(plan.summary.conflict_count, 0);
+
+        let target_statuses = service
+            .list_asset_mount_statuses(None)
+            .expect("list mount statuses")
+            .into_iter()
+            .filter(|status| status.profile_id == profile.id)
+            .collect::<Vec<_>>();
+        assert_eq!(target_statuses.len(), 1);
+        assert_eq!(target_statuses[0].asset_id, source_asset.id);
+
+        drop(service);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-app-target-backup-status-{}",
+            Uuid::new_v4()
+        ));
+        let app_target_root = root.join("codex-skills");
+        let backup_root = root.join("backup");
+        let skill_path = app_target_root.join("browser-testing-with-devtools");
+        fs::create_dir_all(&skill_path).expect("create app target skill");
+        fs::write(
+            skill_path.join("SKILL.md"),
+            "---\ndescription: Browser testing\n---\n",
+        )
+        .expect("write skill");
+
+        let service =
+            AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+        service
+            .conn
+            .execute_batch("DELETE FROM assets; DELETE FROM sources;")
+            .expect("clear seeded catalog");
+        crate::backend::store::upsert_source(
+            &service.conn,
+            &Source {
+                id: "codex-source".to_string(),
+                name: "Codex Source".to_string(),
+                kind: SourceKind::Local,
+                root_path: app_target_root.to_string_lossy().to_string(),
+                scanner_kind: SourceScannerKind::Skill,
+                source_origin: SourceOrigin::AppTarget,
+                repo_root: None,
+                scan_root: String::new(),
+                origin_app_kind: Some(crate::backend::models::AppKind::Codex),
+                include_globs: vec!["**/SKILL.md".to_string()],
+                exclude_globs: Vec::new(),
+                default_kind: Some(AssetKind::Skill),
+                enabled: true,
+                priority: 0,
+                last_scanned_at: None,
+                last_scan_status: None,
+            },
+        )
+        .expect("save app target source");
+        let profile = service
+            .create_profile(TargetProfileInput {
+                id: Some("codex-test".to_string()),
+                name: "Codex Test".to_string(),
+                app_kind: Some(crate::backend::models::AppKind::Codex),
+                target_paths: Some(vec![app_target_root.to_string_lossy().to_string()]),
+                supported_kinds: None,
+                deployment_strategy: Some(DeploymentStrategy::SymlinkToSource),
+                enabled: Some(true),
+                include: None,
+                exclude: None,
+                safety: None,
+            })
+            .expect("create codex target profile");
+        service
+            .update_skill_backup_settings(UpdateSkillBackupSettingsParams {
+                root_path: backup_root.to_string_lossy().to_string(),
+                migrate: false,
+            })
+            .expect("configure backup root");
+
+        let app_asset = crate::backend::store::load_assets(&service.conn)
+            .expect("load assets")
+            .into_iter()
+            .find(|asset| asset.source_id == "codex-source")
+            .expect("app target asset");
+        service
+            .backup_skill(app_asset.id)
+            .expect("backup app target skill");
+
+        let catalog = service.list_skills().expect("list catalog");
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(
+            catalog[0].asset.source_id,
+            capabilities::SKILL_BACKUP_SOURCE_ID
+        );
+
+        let statuses = service
+            .list_asset_mount_statuses(None)
+            .expect("list mount statuses");
+        let status = statuses
+            .iter()
+            .find(|status| status.profile_id == profile.id)
+            .expect("status for profile");
+        assert_eq!(status.asset_id, catalog[0].asset.id);
+        assert_eq!(status.state, PhysicalMountStateDto::NotMounted);
+
+        let plan = service
+            .create_plan(Some(&profile.id))
+            .expect("create deployment plan");
+        assert_eq!(plan.summary.conflict_count, 0);
+
+        let mounted = service
+            .mount_asset_by_id(&catalog[0].asset.id, &profile.id)
+            .expect("mount backup copy over identical app target");
+        assert_eq!(mounted.status.state, PhysicalMountStateDto::Mounted);
+        let target_metadata = fs::symlink_metadata(&skill_path).expect("target metadata");
+        assert!(target_metadata.file_type().is_symlink());
+        assert_eq!(
+            fs::read_link(&skill_path)
+                .expect("read target symlink")
+                .canonicalize()
+                .expect("canonical target symlink"),
+            PathBuf::from(&catalog[0].asset.absolute_path)
+                .canonicalize()
+                .expect("canonical backup path")
+        );
+
+        drop(service);
+        fs::remove_dir_all(root).ok();
+    }
 
     fn github_repo_item() -> Value {
         json!({

@@ -424,7 +424,7 @@ pub(crate) fn scan_asset_mount_statuses(
     conn: &rusqlite::Connection,
     asset_id: Option<&str>,
 ) -> AppResult<Vec<AssetMountStatus>> {
-    let assets = crate::backend::store::load_assets(conn)?;
+    let assets = catalog_visible_assets(conn, None)?;
     let profiles = crate::backend::store::load_profiles(conn)?;
     inspect_asset_mount_statuses(&assets, &profiles, asset_id)
 }
@@ -1017,6 +1017,7 @@ fn create_mount_symlink(
 ) -> AppResult<()> {
     ensure_target_within_profile(profile, target_path)?;
     let source_path = crate::backend::targeting::canonical_source_path(asset)?;
+    prepare_target_for_mount_symlink(asset, target_path)?;
 
     let parent = target_path.parent().ok_or_else(|| {
         format!(
@@ -1028,11 +1029,48 @@ fn create_mount_symlink(
     create_symlink(&source_path, target_path)
 }
 
+fn prepare_target_for_mount_symlink(asset: &Asset, target_path: &Path) -> AppResult<()> {
+    let metadata = match fs::symlink_metadata(target_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(format!(
+            "target symlink already exists: {}",
+            target_path.display()
+        ));
+    }
+    if crate::backend::targeting::target_is_asset_source(asset, target_path)? {
+        return Err(format!(
+            "target path is the asset source path: {}",
+            target_path.display()
+        ));
+    }
+    if !crate::backend::targeting::target_content_matches_asset(asset, target_path)? {
+        return Err(format!(
+            "target exists with different content: {}",
+            target_path.display()
+        ));
+    }
+
+    if metadata.is_dir() {
+        fs::remove_dir_all(target_path).map_err(|error| error.to_string())
+    } else if metadata.is_file() {
+        fs::remove_file(target_path).map_err(|error| error.to_string())
+    } else {
+        Err(format!(
+            "unsupported target type for replacement: {}",
+            target_path.display()
+        ))
+    }
+}
+
 fn repair_ghost_mount_symlinks(
     conn: &rusqlite::Connection,
     asset_id: Option<&str>,
 ) -> AppResult<()> {
-    let assets = crate::backend::store::load_assets(conn)?;
+    let assets = catalog_visible_assets(conn, None)?;
     let profiles = crate::backend::store::load_profiles(conn)?;
     for asset in assets
         .iter()
@@ -1274,17 +1312,25 @@ pub(crate) fn catalog_assets(
     Ok(build_catalog_assets(assets, &sources))
 }
 
-pub(crate) fn catalog_asset_for_id(
+pub(crate) fn catalog_visible_assets(
     conn: &rusqlite::Connection,
-    asset_id: &str,
-) -> AppResult<CatalogAsset> {
-    catalog_assets(conn, None)?
+    kind: Option<AssetKind>,
+) -> AppResult<Vec<Asset>> {
+    let assets = crate::backend::store::load_assets_by_kind(conn, kind)?;
+    let sources = crate::backend::store::load_sources(conn)?;
+    Ok(build_catalog_asset_entries(assets, &sources)
         .into_iter()
-        .find(|asset| asset.asset.id == asset_id)
-        .ok_or_else(|| format!("asset not found in catalog: {asset_id}"))
+        .map(|catalog_asset| catalog_asset.asset)
+        .collect())
 }
 
 pub(crate) fn build_catalog_assets(assets: Vec<Asset>, sources: &[Source]) -> Vec<CatalogAsset> {
+    let mut catalog_assets = build_catalog_asset_entries(assets, sources);
+    attach_git_repository_info(&mut catalog_assets);
+    catalog_assets
+}
+
+fn build_catalog_asset_entries(assets: Vec<Asset>, sources: &[Source]) -> Vec<CatalogAsset> {
     let source_by_id = sources
         .iter()
         .map(|source| (source.id.as_str(), source))
@@ -1371,7 +1417,6 @@ pub(crate) fn build_catalog_assets(assets: Vec<Asset>, sources: &[Source]) -> Ve
         });
     }
 
-    attach_git_repository_info(&mut catalog_assets);
     catalog_assets.sort_by(|left, right| {
         left.asset
             .name

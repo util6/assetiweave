@@ -1,6 +1,8 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { AppUpdateDialog } from "../app/updates/AppUpdateDialog";
 import { useConversationSync } from "../app/backgroundTasks/ConversationSyncProvider";
+import { useSkillBackup } from "../app/backgroundTasks/SkillBackupProvider";
+import { SkillBackupBackgroundTaskIndicator } from "../components/backup/SkillBackupProgress";
 import { ConversationBackgroundTaskIndicator } from "../components/conversations/ConversationToolbarControls";
 import { useCatalogController } from "../hooks/catalog/useCatalogController";
 import { useI18n } from "../i18n/I18nProvider";
@@ -56,7 +58,10 @@ const SourcesPage = lazy(() =>
 export function AppRouter() {
   const { locale, t } = useI18n();
   const { task: conversationSyncTask } = useConversationSync();
+  const { task: skillBackupTask } = useSkillBackup();
   const catalog = useCatalogController();
+  const handledSkillBackupTaskId = useRef<string | null>(null);
+  const runningSkillBackupTaskIds = useRef(new Set<string>());
   const [activeSubNavId, setActiveSubNavId] = useState(catalog.navigationModel.activeSubNavId);
   const [logViewerOpen, setLogViewerOpen] = useState(false);
   const [manualRouteKey, setManualRouteKey] = useState<string | null>(null);
@@ -67,6 +72,57 @@ export function AppRouter() {
     setActiveSubNavId(catalog.navigationModel.activeSubNavId);
     setManualRouteKey(null);
   }, [catalog.navigationModel.activeHeaderTabId, catalog.navigationModel.activeSubNavId]);
+
+  useEffect(() => {
+    if (!skillBackupTask) {
+      return;
+    }
+    if (skillBackupTask.status === "running") {
+      runningSkillBackupTaskIds.current.add(skillBackupTask.id);
+      return;
+    }
+    if (
+      !runningSkillBackupTaskIds.current.has(skillBackupTask.id) ||
+      handledSkillBackupTaskId.current === skillBackupTask.id
+    ) {
+      return;
+    }
+
+    handledSkillBackupTaskId.current = skillBackupTask.id;
+    runningSkillBackupTaskIds.current.delete(skillBackupTask.id);
+    void (async () => {
+      try {
+        await catalog.refreshOverview();
+        catalog.clearDeploymentPlan();
+      } catch (error) {
+        if (skillBackupTask.status === "completed") {
+          catalog.showNotification({
+            tone: "error",
+            messageKey: "backup.notification.failed",
+            messageParams: { message: errorMessage(error) },
+          });
+          return;
+        }
+      }
+
+      if (skillBackupTask.status === "failed") {
+        catalog.showNotification({
+          tone: "error",
+          messageKey: "backup.notification.failed",
+          messageParams: {
+            message: skillBackupTask.error ?? skillBackupTask.errors[0]?.message ?? "Unknown error",
+          },
+        });
+        return;
+      }
+
+      catalog.showNotification({
+        tone: "success",
+        messageKey: "backup.notification.batchCompleted",
+        messageParams: { count: skillBackupTask.completed_count },
+      });
+    })();
+  }, [skillBackupTask?.id, skillBackupTask?.status]);
 
   const routeId = resolveAppRoute(catalog.navigationModel, activeSubNavId);
   const activeHeaderTab = catalog.navigationModel.headerTabs.find((tab) => tab.id === catalog.navigationModel.activeHeaderTabId);
@@ -166,8 +222,6 @@ export function AppRouter() {
               assetMountStatuses={catalog.assetMountStatuses}
               assets={catalog.assets}
               expandedAssetIds={catalog.expandedIds}
-              onCatalogRefresh={catalog.refreshOverview}
-              onClearDeploymentPlan={catalog.clearDeploymentPlan}
               onManualOpen={openCurrentManual}
               onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
               onOpenSettings={() => openSettings("workspace.deployment")}
@@ -221,7 +275,10 @@ export function AppRouter() {
         </Suspense>
       ) : null}
       <AppUpdateDialog />
-      <ConversationBackgroundTaskIndicator task={conversationSyncTask} t={t} />
+      <div className="pointer-events-none fixed bottom-5 right-5 z-30 grid gap-3">
+        <ConversationBackgroundTaskIndicator task={conversationSyncTask} t={t} />
+        <SkillBackupBackgroundTaskIndicator task={skillBackupTask} t={t} />
+      </div>
     </>
   );
 }
@@ -230,4 +287,8 @@ function RouteLoadingState() {
   const { t } = useI18n();
 
   return <div className="grid min-h-[320px] place-items-center text-body-sm text-on-surface-variant">{t("common.loading")}</div>;
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }

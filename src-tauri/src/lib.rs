@@ -66,7 +66,7 @@ pub fn run() {
                     prompt_window
                         .dialog()
                         .message(
-                            "对话记录仍在后台同步。现在退出会中断任务，未完成的写入将回滚。\n\nA conversation sync is still running. Quitting now will interrupt it.",
+                            "仍有后台任务正在运行。现在退出会中断任务，未完成的写入可能不会保存。\n\nA background task is still running. Quitting now will interrupt it.",
                         )
                         .title("后台任务仍在运行 / Background task running")
                         .kind(MessageDialogKind::Warning)
@@ -121,7 +121,7 @@ pub fn run() {
                 prompt_app
                     .dialog()
                     .message(
-                        "对话记录仍在后台同步。现在退出会中断任务，当前未完成的写入将回滚。\n\nA conversation sync is still running. Quitting now will interrupt it.",
+                        "仍有后台任务正在运行。现在退出会中断任务，未完成的写入可能不会保存。\n\nA background task is still running. Quitting now will interrupt it.",
                     )
                     .title("后台任务仍在运行 / Background task running")
                     .kind(MessageDialogKind::Warning)
