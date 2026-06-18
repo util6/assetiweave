@@ -1194,7 +1194,11 @@ impl AppService {
     }
 
     pub(crate) fn list_asset_mounts(&self, asset_id: Option<&str>) -> AppResult<Vec<AssetMount>> {
-        crate::backend::store::load_asset_mounts(&self.conn, asset_id)
+        let pool = self.db.pool().clone();
+        let asset_id = asset_id.map(str::to_string);
+        self.db.block_on(async move {
+            crate::backend::store::load_asset_mounts_sqlx(&pool, asset_id.as_deref()).await
+        })
     }
 
     pub(crate) fn list_asset_mount_statuses(
@@ -1213,10 +1217,23 @@ impl AppService {
 
     pub(crate) fn create_plan(&self, profile_id: Option<&str>) -> AppResult<DeploymentPlan> {
         let assets = capabilities::catalog_visible_assets(&self.conn, None)?;
-        let profiles = crate::backend::store::load_profiles(&self.conn)?;
-        let mounts = crate::backend::store::load_enabled_asset_mounts(&self.conn, profile_id)?;
+        let pool = self.db.pool().clone();
+        let profile_filter = profile_id.map(str::to_string);
+        let profile_filter_for_query = profile_filter.clone();
+        let (profiles, mounts) = self.db.block_on(async move {
+            let profiles = crate::backend::store::load_profiles_sqlx(&pool).await?;
+            let mounts = crate::backend::store::load_enabled_asset_mounts_sqlx(
+                &pool,
+                profile_filter_for_query.as_deref(),
+            )
+            .await?;
+            AppResult::Ok((profiles, mounts))
+        })?;
         Ok(crate::backend::planner::build_plan(
-            &assets, &profiles, &mounts, profile_id,
+            &assets,
+            &profiles,
+            &mounts,
+            profile_filter.as_deref(),
         ))
     }
 
@@ -1653,7 +1670,13 @@ impl AppService {
             );
         }
 
-        let enabled_mounts = crate::backend::store::load_asset_mounts(&self.conn, Some(&asset.id))?
+        let pool = self.db.pool().clone();
+        let asset_id = asset.id.clone();
+        let enabled_mounts = self
+            .db
+            .block_on(async move {
+                crate::backend::store::load_asset_mounts_sqlx(&pool, Some(&asset_id)).await
+            })?
             .into_iter()
             .filter(|mount| mount.enabled)
             .collect::<Vec<_>>();
@@ -1877,15 +1900,19 @@ impl AppService {
         plan: DeploymentPlan,
         action_ids: Option<Vec<String>>,
     ) -> AppResult<ExecutionResult> {
-        let profiles = crate::backend::store::load_profiles(&self.conn)?;
-        let assets = crate::backend::store::load_assets(&self.conn)?;
-        crate::backend::executor::execute_deployment_plan(
-            &self.conn,
-            &profiles,
-            &assets,
-            &plan,
-            action_ids.as_deref(),
-        )
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            let profiles = crate::backend::store::load_profiles_sqlx(&pool).await?;
+            let assets = crate::backend::store::load_assets_sqlx(&pool, None).await?;
+            crate::backend::executor::execute_deployment_plan(
+                &pool,
+                &profiles,
+                &assets,
+                &plan,
+                action_ids.as_deref(),
+            )
+            .await
+        })
     }
 
     pub(crate) fn logs_get_snapshot(

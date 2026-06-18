@@ -6,7 +6,7 @@ use crate::backend::{
     },
 };
 use chrono::Utc;
-use rusqlite::Connection;
+use sqlx::SqlitePool;
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -66,8 +66,8 @@ fn action_log_fields(
     fields
 }
 
-pub(crate) fn execute_deployment_plan(
-    conn: &Connection,
+pub(crate) async fn execute_deployment_plan(
+    pool: &SqlitePool,
     profiles: &[TargetProfile],
     assets: &[Asset],
     plan: &DeploymentPlan,
@@ -139,7 +139,7 @@ pub(crate) fn execute_deployment_plan(
             continue;
         };
 
-        match execute_deployment_action(conn, profile, asset, action) {
+        match execute_deployment_action(pool, profile, asset, action).await {
             Ok(()) => {
                 result.executed_count += 1;
                 log_action_info(
@@ -178,8 +178,8 @@ enum DeploymentError {
     Failure(String),
 }
 
-fn execute_deployment_action(
-    conn: &Connection,
+async fn execute_deployment_action(
+    pool: &SqlitePool,
     profile: &TargetProfile,
     asset: &Asset,
     action: &DeploymentAction,
@@ -190,12 +190,13 @@ fn execute_deployment_action(
         .map_err(DeploymentError::Failure)?;
 
     if target_path.exists()
-        && !crate::backend::store::is_managed_deployment(
-            conn,
+        && !crate::backend::store::is_managed_deployment_sqlx(
+            pool,
             &profile.id,
             &asset.id,
             &action.target_path,
         )
+        .await
         .map_err(DeploymentError::Failure)?
         && !target_can_be_replaced_with_asset(asset, &target_path)
             .map_err(DeploymentError::Failure)?
@@ -235,7 +236,8 @@ fn execute_deployment_action(
         deployed_at: Utc::now().to_rfc3339(),
         managed_by: "assetiweave".to_string(),
     };
-    crate::backend::store::upsert_deployment_state(conn, &state)
+    crate::backend::store::upsert_deployment_state_sqlx(pool, &state)
+        .await
         .map_err(DeploymentError::Failure)?;
     Ok(())
 }

@@ -1,5 +1,8 @@
 use crate::backend::dto::{AppResult, AssetMountObservation};
 use rusqlite::{params, Connection};
+use sqlx::SqlitePool;
+#[cfg(test)]
+use sqlx::{sqlite::SqliteRow, Row as SqlxRow};
 
 #[cfg(test)]
 use super::codec::{decode_enum, to_sql_error};
@@ -30,6 +33,28 @@ pub(crate) fn upsert_asset_mount_observations(
     Ok(())
 }
 
+pub(crate) async fn upsert_asset_mount_observations_sqlx(
+    pool: &SqlitePool,
+    observations: &[AssetMountObservation],
+) -> AppResult<()> {
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    for observation in observations {
+        sqlx::query(sql::UPSERT_ASSET_MOUNT_OBSERVATION)
+            .bind(&observation.asset_id)
+            .bind(&observation.profile_id)
+            .bind(&observation.target_dir)
+            .bind(&observation.target_path)
+            .bind(encode_enum(observation.state)?)
+            .bind(&observation.linked_source)
+            .bind(&observation.observed_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn load_asset_mount_observations(
     conn: &Connection,
@@ -42,9 +67,31 @@ pub(crate) fn load_asset_mount_observations(
     rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
 }
 
+#[cfg(test)]
+pub(crate) async fn load_asset_mount_observations_sqlx(
+    pool: &SqlitePool,
+) -> AppResult<Vec<AssetMountObservation>> {
+    let rows = sqlx::query(sql::LIST_ASSET_MOUNT_OBSERVATIONS)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    rows.iter().map(map_sqlx_observation).collect()
+}
+
 pub(crate) fn delete_orphan_asset_mount_observations(conn: &Connection) -> AppResult<()> {
     conn.execute(sql::DELETE_ORPHAN_ASSET_MOUNT_OBSERVATIONS, [])
         .map_err(db_error)?;
+    Ok(())
+}
+
+pub(crate) async fn delete_orphan_asset_mount_observations_sqlx(
+    pool: &SqlitePool,
+) -> AppResult<()> {
+    sqlx::query(sql::DELETE_ORPHAN_ASSET_MOUNT_OBSERVATIONS)
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -59,4 +106,129 @@ fn decode_observation(row: &rusqlite::Row<'_>) -> rusqlite::Result<AssetMountObs
         linked_source: row.get(5)?,
         observed_at: row.get(6)?,
     })
+}
+
+#[cfg(test)]
+fn map_sqlx_observation(row: &SqliteRow) -> AppResult<AssetMountObservation> {
+    Ok(AssetMountObservation {
+        asset_id: row.try_get(0).map_err(|error| error.to_string())?,
+        profile_id: row.try_get(1).map_err(|error| error.to_string())?,
+        target_dir: row.try_get(2).map_err(|error| error.to_string())?,
+        target_path: row.try_get(3).map_err(|error| error.to_string())?,
+        state: decode_enum(
+            row.try_get::<String, _>(4)
+                .map_err(|error| error.to_string())?,
+        )?,
+        linked_source: row.try_get(5).map_err(|error| error.to_string())?,
+        observed_at: row.try_get(6).map_err(|error| error.to_string())?,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::dto::PhysicalMountStateDto;
+    use uuid::Uuid;
+
+    #[test]
+    fn sqlx_mount_observation_repo_upserts_and_cleans_orphans() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-mount-observation-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+
+        database
+            .block_on(async {
+                insert_asset(database.pool(), "asset-a").await?;
+                upsert_asset_mount_observations_sqlx(
+                    database.pool(),
+                    &[
+                        test_observation(
+                            "asset-a",
+                            "profile-a",
+                            PhysicalMountStateDto::Mounted,
+                            Some("/source/a"),
+                        ),
+                        test_observation(
+                            "asset-b",
+                            "profile-a",
+                            PhysicalMountStateDto::Conflict,
+                            None,
+                        ),
+                    ],
+                )
+                .await?;
+                upsert_asset_mount_observations_sqlx(
+                    database.pool(),
+                    &[test_observation(
+                        "asset-a",
+                        "profile-a",
+                        PhysicalMountStateDto::Broken,
+                        Some("/source/new"),
+                    )],
+                )
+                .await?;
+
+                let before_cleanup = load_asset_mount_observations_sqlx(database.pool()).await?;
+                delete_orphan_asset_mount_observations_sqlx(database.pool()).await?;
+                let after_cleanup = load_asset_mount_observations_sqlx(database.pool()).await?;
+
+                AppResult::Ok((before_cleanup, after_cleanup))
+            })
+            .map(|(before_cleanup, after_cleanup)| {
+                assert_eq!(before_cleanup.len(), 2);
+                let retained = before_cleanup
+                    .iter()
+                    .find(|observation| observation.asset_id == "asset-a")
+                    .expect("retained observation");
+                assert_eq!(retained.state, PhysicalMountStateDto::Broken);
+                assert_eq!(retained.linked_source.as_deref(), Some("/source/new"));
+                assert_eq!(after_cleanup.len(), 1);
+                assert_eq!(after_cleanup[0].asset_id, "asset-a");
+            })
+            .expect("query SQLx mount observation repo");
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    fn test_observation(
+        asset_id: &str,
+        profile_id: &str,
+        state: PhysicalMountStateDto,
+        linked_source: Option<&str>,
+    ) -> AssetMountObservation {
+        AssetMountObservation {
+            asset_id: asset_id.to_string(),
+            profile_id: profile_id.to_string(),
+            target_dir: "/target".to_string(),
+            target_path: format!("/target/{asset_id}"),
+            state,
+            linked_source: linked_source.map(str::to_string),
+            observed_at: "2026-06-18T00:00:00Z".to_string(),
+        }
+    }
+
+    async fn insert_asset(pool: &SqlitePool, asset_id: &str) -> AppResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO assets (
+                id, source_id, name, kind, format, relative_path, absolute_path,
+                entry_file, description, content_hash, discovered_at, updated_at
+            ) VALUES (?1, 'source-a', ?1, 'skill', 'markdown', ?1, ?1, NULL, NULL, NULL, ?2, ?2)
+            "#,
+        )
+        .bind(asset_id)
+        .bind("2026-06-18T00:00:00Z")
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn cleanup_database(db_path: &std::path::Path) {
+        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
 }
