@@ -1137,11 +1137,15 @@ impl AppService {
         asset_id: String,
         description: Option<String>,
     ) -> AppResult<Asset> {
-        let mut asset = crate::backend::store::load_assets(&self.conn)?
+        let pool = self.db.pool().clone();
+        let mut asset = self
+            .db
+            .block_on(async move { crate::backend::store::load_assets_sqlx(&pool, None).await })?
             .into_iter()
             .find(|asset| asset.id == asset_id)
             .ok_or_else(|| format!("asset not found: {asset_id}"))?;
-        if !crate::backend::store::load_sources(&self.conn)?
+        if !self
+            .list_sources()?
             .iter()
             .any(|source| source.id == asset.source_id)
         {
@@ -1160,12 +1164,19 @@ impl AppService {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
         asset.updated_at = Utc::now().to_rfc3339();
-        crate::backend::store::update_asset_description(&self.conn, &asset)?;
+        let pool = self.db.pool().clone();
+        let asset_to_save = asset.clone();
+        self.db.block_on(async move {
+            crate::backend::store::update_asset_description_sqlx(&pool, &asset_to_save).await
+        })?;
         Ok(asset)
     }
 
     pub(crate) fn delete_asset(&self, asset_id: String, unmount: bool) -> AppResult<Asset> {
-        let asset = crate::backend::store::load_assets(&self.conn)?
+        let pool = self.db.pool().clone();
+        let asset = self
+            .db
+            .block_on(async move { crate::backend::store::load_assets_sqlx(&pool, None).await })?
             .into_iter()
             .find(|asset| asset.id == asset_id)
             .ok_or_else(|| format!("asset not found: {asset_id}"))?;
@@ -1430,13 +1441,23 @@ impl AppService {
         let library_source = capabilities::assetiweave_library_source_with_root(
             capabilities::skill_backup_settings(&self.conn)?.root_path,
         );
-        crate::backend::store::upsert_source(&self.conn, &library_source)?;
+        let pool = self.db.pool().clone();
+        let library_source_to_save = library_source.clone();
+        self.db.block_on(async move {
+            crate::backend::store::upsert_source_sqlx(&pool, &library_source_to_save).await
+        })?;
         let library_assets = crate::backend::scanner::scan_skill_source(&library_source)?;
-        crate::backend::store::replace_source_assets(
-            &self.conn,
-            &library_source.id,
-            &library_assets,
-        )?;
+        let pool = self.db.pool().clone();
+        let library_source_id = library_source.id.clone();
+        let library_assets_to_save = library_assets.clone();
+        self.db.block_on(async move {
+            crate::backend::store::replace_source_assets_sqlx(
+                &pool,
+                &library_source_id,
+                &library_assets_to_save,
+            )
+            .await
+        })?;
         let asset = library_assets
             .into_iter()
             .find(|candidate| candidate.absolute_path == target_dir.to_string_lossy())

@@ -16,7 +16,8 @@ mod sql;
 mod web_record_repo;
 
 pub(crate) use asset_repo::{
-    load_assets, load_assets_by_kind, replace_source_assets, update_asset_description,
+    load_assets, load_assets_by_kind, load_assets_sqlx, replace_source_assets,
+    replace_source_assets_sqlx, update_asset_description_sqlx,
 };
 pub(crate) use conversation_repo::{
     delete_conversation_adapter, disable_conversation_source, import_conversation_sessions,
