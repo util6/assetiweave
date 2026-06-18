@@ -1256,7 +1256,7 @@ impl AppService {
     }
 
     pub(crate) fn get_skill_backup_settings(&self) -> AppResult<SkillBackupSettings> {
-        capabilities::skill_backup_settings(&self.conn)
+        capabilities::skill_backup_settings_sqlx(&self.db)
     }
 
     pub(crate) fn update_skill_backup_settings(
@@ -1268,13 +1268,16 @@ impl AppService {
             return Err("skill backup root path is required".to_string());
         }
 
-        let current = capabilities::skill_backup_settings(&self.conn)?;
+        let current = capabilities::skill_backup_settings_sqlx(&self.db)?;
         let current_root = PathBuf::from(&current.expanded_root_path);
         let next_root = crate::backend::path_utils::expand_path(&root_path)?;
         if capabilities::same_path_or_text(&current_root, &next_root) {
             let source = capabilities::assetiweave_library_source_with_root(root_path);
-            crate::backend::store::upsert_source(&self.conn, &source)?;
-            return capabilities::skill_backup_settings(&self.conn);
+            let pool = self.db.pool().clone();
+            self.db.block_on(async move {
+                crate::backend::store::upsert_source_sqlx(&pool, &source).await
+            })?;
+            return capabilities::skill_backup_settings_sqlx(&self.db);
         }
 
         if params.migrate {
@@ -1291,14 +1294,17 @@ impl AppService {
         }
 
         let source = capabilities::assetiweave_library_source_with_root(root_path);
-        crate::backend::store::upsert_source(&self.conn, &source)?;
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            crate::backend::store::upsert_source_sqlx(&pool, &source).await
+        })?;
         capabilities::refresh_all_sources(&self.conn, &self.db)?;
 
         if params.migrate && !current.is_default_root && current_root.exists() {
             fs::remove_dir_all(&current_root).map_err(|error| error.to_string())?;
         }
 
-        capabilities::skill_backup_settings(&self.conn)
+        capabilities::skill_backup_settings_sqlx(&self.db)
     }
 
     pub(crate) fn backup_skill(&self, asset_id: String) -> AppResult<CatalogAsset> {
@@ -1335,7 +1341,7 @@ impl AppService {
             .iter()
             .map(|source| (source.id.as_str(), source))
             .collect::<HashMap<_, _>>();
-        let backup_root = capabilities::skill_backup_root(&self.conn)?;
+        let backup_root = capabilities::skill_backup_root_sqlx(&self.db)?;
         let mut targets = Vec::with_capacity(asset_ids.len());
 
         for asset_id in asset_ids {
@@ -1393,9 +1399,12 @@ impl AppService {
         }
 
         let library_source = capabilities::assetiweave_library_source_with_root(
-            capabilities::skill_backup_settings(&self.conn)?.root_path,
+            capabilities::skill_backup_settings_sqlx(&self.db)?.root_path,
         );
-        crate::backend::store::upsert_source(&self.conn, &library_source)?;
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            crate::backend::store::upsert_source_sqlx(&pool, &library_source).await
+        })?;
         capabilities::refresh_all_sources(&self.conn, &self.db)?;
 
         let catalog = capabilities::catalog_assets(&self.conn, Some(AssetKind::Skill))?;
@@ -1449,7 +1458,7 @@ impl AppService {
                     .map(str::to_string)
             })
             .ok_or_else(|| "skill import name could not be inferred".to_string())?;
-        let target_dir = capabilities::skill_backup_root(&self.conn)?
+        let target_dir = capabilities::skill_backup_root_sqlx(&self.db)?
             .join("downloaded")
             .join(&name);
         if target_dir.exists() {
@@ -1470,7 +1479,7 @@ impl AppService {
 
         capabilities::copy_dir(&source_dir, &target_dir)?;
         let library_source = capabilities::assetiweave_library_source_with_root(
-            capabilities::skill_backup_settings(&self.conn)?.root_path,
+            capabilities::skill_backup_settings_sqlx(&self.db)?.root_path,
         );
         let pool = self.db.pool().clone();
         let library_source_to_save = library_source.clone();
@@ -1544,7 +1553,7 @@ impl AppService {
             .or_else(|| location.skill_name_hint())
             .unwrap_or_else(|| location.repo.clone());
         let name = slug_path_segment(&raw_name);
-        let staging_dir = capabilities::skill_backup_root(&self.conn)?
+        let staging_dir = capabilities::skill_backup_root_sqlx(&self.db)?
             .join("staging")
             .join(format!("{}-{}", slug_path_segment(&name), short_uuid()));
         let skill_path_hint = location.skill_path_hint(&staging_dir);
@@ -1987,7 +1996,7 @@ impl AppService {
     }
 
     pub(crate) fn run_doctor(&self) -> AppResult<Value> {
-        let backup_root = capabilities::skill_backup_root(&self.conn)?;
+        let backup_root = capabilities::skill_backup_root_sqlx(&self.db)?;
         let pool = self.db.pool().clone();
         let source_count = self.db.block_on(async move {
             crate::backend::store::count_rows_sqlx(&pool, "sources").await

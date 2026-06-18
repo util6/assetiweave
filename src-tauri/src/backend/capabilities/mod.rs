@@ -1234,8 +1234,27 @@ pub(crate) fn assetiweave_library_source_with_root(root_path: String) -> Source 
     }
 }
 
-pub(crate) fn skill_backup_root(conn: &rusqlite::Connection) -> AppResult<PathBuf> {
-    let root_path = crate::backend::store::load_sources(conn)?
+pub(crate) fn skill_backup_root_sqlx(db: &crate::backend::store::Database) -> AppResult<PathBuf> {
+    let pool = db.pool().clone();
+    let sources =
+        db.block_on(async move { crate::backend::store::load_sources_sqlx(&pool).await })?;
+    let root_path = skill_backup_root_path(sources);
+    let root = expand_path(&root_path)?;
+    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    Ok(root)
+}
+
+pub(crate) fn skill_backup_settings_sqlx(
+    db: &crate::backend::store::Database,
+) -> AppResult<SkillBackupSettings> {
+    let pool = db.pool().clone();
+    let sources =
+        db.block_on(async move { crate::backend::store::load_sources_sqlx(&pool).await })?;
+    build_skill_backup_settings(sources)
+}
+
+fn skill_backup_root_path(sources: Vec<Source>) -> String {
+    sources
         .into_iter()
         .find(|source| source.id == SKILL_BACKUP_SOURCE_ID)
         .map(|source| source.root_path)
@@ -1243,15 +1262,12 @@ pub(crate) fn skill_backup_root(conn: &rusqlite::Connection) -> AppResult<PathBu
             default_skill_backup_root()
                 .map(|path| path.to_string_lossy().to_string())
                 .unwrap_or_else(|_| "~/.assetiweave/library/skills".to_string())
-        });
-    let root = expand_path(&root_path)?;
-    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-    Ok(root)
+        })
 }
 
-pub(crate) fn skill_backup_settings(conn: &rusqlite::Connection) -> AppResult<SkillBackupSettings> {
+fn build_skill_backup_settings(sources: Vec<Source>) -> AppResult<SkillBackupSettings> {
     let default_root = default_skill_backup_root()?;
-    let source = crate::backend::store::load_sources(conn)?
+    let source = sources
         .into_iter()
         .find(|source| source.id == SKILL_BACKUP_SOURCE_ID)
         .unwrap_or_else(|| assetiweave_library_source());
