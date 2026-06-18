@@ -1,6 +1,7 @@
 mod asset_repo;
 mod codec;
 mod conversation_repo;
+mod database;
 mod deployment_repo;
 mod group_repo;
 mod menu_repo;

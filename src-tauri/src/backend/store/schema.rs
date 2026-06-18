@@ -9,6 +9,7 @@ use std::{
 
 use super::{
     codec::db_error,
+    database::migrate_database,
     menu_repo::{ensure_navigation_model_items, seed_navigation_model},
     profile_repo::{load_profiles, upsert_profile},
     seed_builtin_conversation_adapters,
@@ -20,14 +21,17 @@ use super::{
 static INITIALIZED_DB_PATHS: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
 
 pub(crate) fn open_initialized(db_path: &Path) -> AppResult<Connection> {
-    let conn = Connection::open(db_path).map_err(db_error)?;
-    configure_connection(&conn)?;
     let initialized_paths = INITIALIZED_DB_PATHS.get_or_init(|| Mutex::new(BTreeSet::new()));
     let mut initialized_paths = initialized_paths
         .lock()
         .map_err(|error| error.to_string())?;
     if !initialized_paths.contains(db_path) {
-        init_schema(&conn)?;
+        migrate_database(db_path)?;
+    }
+    let conn = Connection::open(db_path).map_err(db_error)?;
+    configure_connection(&conn)?;
+    if !initialized_paths.contains(db_path) {
+        ensure_app_library_dirs()?;
         seed_defaults(&conn)?;
         initialized_paths.insert(db_path.to_path_buf());
     }
@@ -49,106 +53,6 @@ fn configure_connection(conn: &Connection) -> AppResult<()> {
     conn.pragma_update(None, "foreign_keys", "ON")
         .map_err(db_error)?;
     Ok(())
-}
-
-fn init_schema(conn: &Connection) -> AppResult<()> {
-    conn.execute_batch(sql::INIT_SCHEMA).map_err(db_error)?;
-    migrate_schema(conn)?;
-    ensure_app_library_dirs()?;
-    Ok(())
-}
-
-fn migrate_schema(conn: &Connection) -> AppResult<()> {
-    ensure_column(
-        conn,
-        "sources",
-        "scanner_kind",
-        sql::ADD_SOURCE_SCANNER_KIND,
-    )?;
-    ensure_column(conn, "sources", "source_origin", sql::ADD_SOURCE_ORIGIN)?;
-    ensure_column(conn, "sources", "repo_root", sql::ADD_SOURCE_REPO_ROOT)?;
-    ensure_column(conn, "sources", "scan_root", sql::ADD_SOURCE_SCAN_ROOT)?;
-    ensure_column(
-        conn,
-        "sources",
-        "origin_app_kind",
-        sql::ADD_SOURCE_ORIGIN_APP_KIND,
-    )?;
-    ensure_column(
-        conn,
-        "rail_menu_items",
-        "label_zh",
-        sql::ADD_RAIL_MENU_LABEL_ZH,
-    )?;
-    ensure_column(
-        conn,
-        "rail_menu_items",
-        "label_en",
-        sql::ADD_RAIL_MENU_LABEL_EN,
-    )?;
-    ensure_column(
-        conn,
-        "header_tab_items",
-        "label_zh",
-        sql::ADD_HEADER_TAB_LABEL_ZH,
-    )?;
-    ensure_column(
-        conn,
-        "header_tab_items",
-        "label_en",
-        sql::ADD_HEADER_TAB_LABEL_EN,
-    )?;
-    ensure_column(conn, "sub_nav_items", "label_zh", sql::ADD_SUB_NAV_LABEL_ZH)?;
-    ensure_column(conn, "sub_nav_items", "label_en", sql::ADD_SUB_NAV_LABEL_EN)?;
-    ensure_column(
-        conn,
-        "app_shortcut_items",
-        "icon_svg",
-        sql::ADD_APP_SHORTCUT_ICON_SVG,
-    )?;
-    ensure_column(
-        conn,
-        "asset_groups",
-        "display_icon",
-        sql::ADD_ASSET_GROUP_DISPLAY_ICON,
-    )?;
-    ensure_column(
-        conn,
-        "asset_groups",
-        "icon_svg",
-        sql::ADD_ASSET_GROUP_ICON_SVG,
-    )?;
-    conn.execute_batch(sql::MIGRATE_DEPLOYMENT_STATE_STRATEGY_NAMES)
-        .map_err(db_error)?;
-    conn.execute_batch(sql::MIGRATE_ASSET_MOUNT_STRATEGY_NAMES)
-        .map_err(db_error)?;
-    Ok(())
-}
-
-fn ensure_column(
-    conn: &Connection,
-    table: &str,
-    column: &str,
-    alter_statement: &str,
-) -> AppResult<()> {
-    if table_columns(conn, table)?
-        .iter()
-        .any(|name| name == column)
-    {
-        return Ok(());
-    }
-    conn.execute(alter_statement, []).map_err(db_error)?;
-    Ok(())
-}
-
-fn table_columns(conn: &Connection, table: &str) -> AppResult<Vec<String>> {
-    let mut stmt = conn
-        .prepare(&format!("PRAGMA table_info({table})"))
-        .map_err(db_error)?;
-    let rows = stmt
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(db_error)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
 }
 
 fn seed_defaults(conn: &Connection) -> AppResult<()> {

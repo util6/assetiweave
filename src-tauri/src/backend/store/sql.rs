@@ -1,3 +1,4 @@
+#[cfg(test)]
 pub(crate) const INIT_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS sources (
     id TEXT PRIMARY KEY,
@@ -353,53 +354,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS conversation_question_fts USING fts5(
     code_text,
     command_text
 );
-"#;
-
-pub(crate) const ADD_SOURCE_SCANNER_KIND: &str =
-    "ALTER TABLE sources ADD COLUMN scanner_kind TEXT NOT NULL DEFAULT 'mixed'";
-pub(crate) const ADD_SOURCE_ORIGIN: &str =
-    "ALTER TABLE sources ADD COLUMN source_origin TEXT NOT NULL DEFAULT 'local_folder'";
-pub(crate) const ADD_SOURCE_REPO_ROOT: &str = "ALTER TABLE sources ADD COLUMN repo_root TEXT";
-pub(crate) const ADD_SOURCE_SCAN_ROOT: &str =
-    "ALTER TABLE sources ADD COLUMN scan_root TEXT NOT NULL DEFAULT ''";
-pub(crate) const ADD_SOURCE_ORIGIN_APP_KIND: &str =
-    "ALTER TABLE sources ADD COLUMN origin_app_kind TEXT";
-pub(crate) const ADD_RAIL_MENU_LABEL_ZH: &str =
-    "ALTER TABLE rail_menu_items ADD COLUMN label_zh TEXT";
-pub(crate) const ADD_RAIL_MENU_LABEL_EN: &str =
-    "ALTER TABLE rail_menu_items ADD COLUMN label_en TEXT";
-pub(crate) const ADD_HEADER_TAB_LABEL_ZH: &str =
-    "ALTER TABLE header_tab_items ADD COLUMN label_zh TEXT";
-pub(crate) const ADD_HEADER_TAB_LABEL_EN: &str =
-    "ALTER TABLE header_tab_items ADD COLUMN label_en TEXT";
-pub(crate) const ADD_SUB_NAV_LABEL_ZH: &str = "ALTER TABLE sub_nav_items ADD COLUMN label_zh TEXT";
-pub(crate) const ADD_SUB_NAV_LABEL_EN: &str = "ALTER TABLE sub_nav_items ADD COLUMN label_en TEXT";
-pub(crate) const ADD_APP_SHORTCUT_ICON_SVG: &str =
-    "ALTER TABLE app_shortcut_items ADD COLUMN icon_svg TEXT";
-
-pub(crate) const ADD_ASSET_GROUP_DISPLAY_ICON: &str =
-    "ALTER TABLE asset_groups ADD COLUMN display_icon TEXT";
-pub(crate) const ADD_ASSET_GROUP_ICON_SVG: &str =
-    "ALTER TABLE asset_groups ADD COLUMN icon_svg TEXT";
-
-pub(crate) const MIGRATE_DEPLOYMENT_STATE_STRATEGY_NAMES: &str = r#"
-UPDATE deployment_state
-SET strategy = CASE strategy
-    WHEN 'symlink' THEN 'symlink_to_source'
-    WHEN 'copy' THEN 'copy_to_target'
-    ELSE strategy
-END
-WHERE strategy IN ('symlink', 'copy')
-"#;
-
-pub(crate) const MIGRATE_ASSET_MOUNT_STRATEGY_NAMES: &str = r#"
-UPDATE asset_mounts
-SET strategy = CASE strategy
-    WHEN 'symlink' THEN 'symlink_to_source'
-    WHEN 'copy' THEN 'copy_to_target'
-    ELSE strategy
-END
-WHERE strategy IN ('symlink', 'copy')
 "#;
 
 pub(crate) const LATEST_SCAN_STATUS: &str =
