@@ -411,12 +411,11 @@ fn exclusive_skipped_item(asset: &Asset, reason: String) -> SkillGroupExclusiveM
 }
 
 pub(crate) fn sync_asset_mount_observations(
-    conn: &rusqlite::Connection,
     db: &crate::backend::store::Database,
     asset_id: Option<&str>,
 ) -> AppResult<Vec<AssetMountStatus>> {
-    repair_ghost_mount_symlinks(conn, asset_id)?;
-    let statuses = scan_asset_mount_statuses(conn, asset_id)?;
+    repair_ghost_mount_symlinks_sqlx(db, asset_id)?;
+    let statuses = scan_asset_mount_statuses_sqlx(db, asset_id)?;
     persist_asset_mount_observation_snapshot(db, &statuses)?;
     Ok(statuses)
 }
@@ -428,6 +427,24 @@ pub(crate) fn scan_asset_mount_statuses(
     let assets = catalog_visible_assets(conn, None)?;
     let profiles = crate::backend::store::load_profiles(conn)?;
     inspect_asset_mount_statuses(&assets, &profiles, asset_id)
+}
+
+pub(crate) fn scan_asset_mount_statuses_sqlx(
+    db: &crate::backend::store::Database,
+    asset_id: Option<&str>,
+) -> AppResult<Vec<AssetMountStatus>> {
+    let (assets, profiles) = load_mount_status_inputs_sqlx(db)?;
+    inspect_asset_mount_statuses(&assets, &profiles, asset_id)
+}
+
+fn load_mount_status_inputs_sqlx(
+    db: &crate::backend::store::Database,
+) -> AppResult<(Vec<Asset>, Vec<TargetProfile>)> {
+    let assets = catalog_visible_assets_sqlx(db, None)?;
+    let pool = db.pool().clone();
+    let profiles =
+        db.block_on(async move { crate::backend::store::load_profiles_sqlx(&pool).await })?;
+    Ok((assets, profiles))
 }
 
 fn persist_asset_mount_observation_snapshot(
@@ -1028,12 +1045,19 @@ fn prepare_target_for_mount_symlink(asset: &Asset, target_path: &Path) -> AppRes
     }
 }
 
-fn repair_ghost_mount_symlinks(
-    conn: &rusqlite::Connection,
+fn repair_ghost_mount_symlinks_sqlx(
+    db: &crate::backend::store::Database,
     asset_id: Option<&str>,
 ) -> AppResult<()> {
-    let assets = catalog_visible_assets(conn, None)?;
-    let profiles = crate::backend::store::load_profiles(conn)?;
+    let (assets, profiles) = load_mount_status_inputs_sqlx(db)?;
+    repair_ghost_mount_symlinks_for_assets(&assets, &profiles, asset_id)
+}
+
+fn repair_ghost_mount_symlinks_for_assets(
+    assets: &[Asset],
+    profiles: &[TargetProfile],
+    asset_id: Option<&str>,
+) -> AppResult<()> {
     for asset in assets
         .iter()
         .filter(|asset| asset_id.map(|id| asset.id == id).unwrap_or(true))

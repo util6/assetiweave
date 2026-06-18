@@ -2396,7 +2396,7 @@ mod tests {
         let database =
             crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
-        sync_asset_mount_observations(&conn, &database, None).expect("sync observations");
+        sync_asset_mount_observations(&database, None).expect("sync observations");
 
         let observations =
             crate::backend::store::load_asset_mount_observations(&conn).expect("load observations");
@@ -2460,7 +2460,7 @@ mod tests {
         let database =
             crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
-        sync_asset_mount_observations(&conn, &database, None).expect("sync observations");
+        sync_asset_mount_observations(&database, None).expect("sync observations");
 
         assert_eq!(
             std::fs::read_link(&target_path).expect("read repaired target symlink"),
@@ -2525,7 +2525,7 @@ mod tests {
         let database =
             crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
-        sync_asset_mount_observations(&conn, &database, None).expect("sync observations");
+        sync_asset_mount_observations(&database, None).expect("sync observations");
 
         assert!(
             crate::backend::store::load_asset_mounts(&conn, Some(&asset.id))
