@@ -523,6 +523,9 @@ FROM asset_mounts
 WHERE asset_id = ?1 AND profile_id = ?2
 "#;
 
+pub(crate) const GET_ASSET_MOUNT_CREATED_AT: &str =
+    "SELECT created_at FROM asset_mounts WHERE asset_id = ?1 AND profile_id = ?2";
+
 pub(crate) const UPSERT_ASSET_MOUNT: &str = r#"
 INSERT INTO asset_mounts (
     asset_id, profile_id, enabled, strategy, created_at, updated_at

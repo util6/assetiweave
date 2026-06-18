@@ -34,20 +34,6 @@ pub(crate) async fn load_asset_mounts_sqlx(
     rows.iter().map(map_sqlx_mount).collect()
 }
 
-pub(crate) fn load_enabled_asset_mounts(
-    conn: &Connection,
-    profile_id: Option<&str>,
-) -> AppResult<Vec<AssetMount>> {
-    let mut stmt = conn
-        .prepare(sql::LIST_ENABLED_ASSET_MOUNTS)
-        .map_err(db_error)?;
-    let rows = stmt
-        .query_map(params![profile_id], decode_mount)
-        .map_err(db_error)?;
-
-    rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
-}
-
 pub(crate) async fn load_enabled_asset_mounts_sqlx(
     pool: &SqlitePool,
     profile_id: Option<&str>,

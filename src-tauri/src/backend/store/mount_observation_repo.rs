@@ -1,43 +1,23 @@
-use crate::backend::dto::{AppResult, AssetMountObservation};
-use rusqlite::{params, Connection};
-use sqlx::SqlitePool;
+use crate::backend::{
+    dto::{AppResult, AssetMountObservation, AssetMountStatus, PhysicalMountStateDto},
+    models::{Asset, DeploymentState, TargetProfile},
+};
+use chrono::Utc;
+#[cfg(test)]
+use rusqlite::Connection;
 #[cfg(test)]
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow};
+use sqlx::{SqliteConnection, SqlitePool};
+use std::collections::HashMap;
 
 #[cfg(test)]
-use super::codec::{decode_enum, to_sql_error};
-use super::{
-    codec::{db_error, encode_enum},
-    sql,
-};
+use super::codec::{db_error, decode_enum, to_sql_error};
+use super::{codec::encode_enum, sql};
 
-pub(crate) fn upsert_asset_mount_observations(
-    conn: &Connection,
+async fn upsert_asset_mount_observations_connection(
+    conn: &mut SqliteConnection,
     observations: &[AssetMountObservation],
 ) -> AppResult<()> {
-    for observation in observations {
-        conn.execute(
-            sql::UPSERT_ASSET_MOUNT_OBSERVATION,
-            params![
-                &observation.asset_id,
-                &observation.profile_id,
-                &observation.target_dir,
-                &observation.target_path,
-                encode_enum(observation.state)?,
-                observation.linked_source.as_deref(),
-                &observation.observed_at,
-            ],
-        )
-        .map_err(db_error)?;
-    }
-    Ok(())
-}
-
-pub(crate) async fn upsert_asset_mount_observations_sqlx(
-    pool: &SqlitePool,
-    observations: &[AssetMountObservation],
-) -> AppResult<()> {
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     for observation in observations {
         sqlx::query(sql::UPSERT_ASSET_MOUNT_OBSERVATION)
             .bind(&observation.asset_id)
@@ -47,10 +27,105 @@ pub(crate) async fn upsert_asset_mount_observations_sqlx(
             .bind(encode_enum(observation.state)?)
             .bind(&observation.linked_source)
             .bind(&observation.observed_at)
+            .execute(&mut *conn)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) async fn upsert_asset_mount_observations_sqlx(
+    pool: &SqlitePool,
+    observations: &[AssetMountObservation],
+) -> AppResult<()> {
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    upsert_asset_mount_observations_connection(&mut tx, observations).await?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub(crate) async fn persist_asset_mount_snapshot_sqlx(
+    pool: &SqlitePool,
+    observations: &[AssetMountObservation],
+    assets: &[Asset],
+    profiles: &[TargetProfile],
+    statuses: &[AssetMountStatus],
+) -> AppResult<()> {
+    let asset_by_id = assets
+        .iter()
+        .map(|asset| (asset.id.as_str(), asset))
+        .collect::<HashMap<_, _>>();
+    let profile_by_id = profiles
+        .iter()
+        .map(|profile| (profile.id.as_str(), profile))
+        .collect::<HashMap<_, _>>();
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+
+    upsert_asset_mount_observations_connection(&mut tx, observations).await?;
+    for status in statuses {
+        let asset = asset_by_id
+            .get(status.asset_id.as_str())
+            .ok_or_else(|| format!("asset not found: {}", status.asset_id))?;
+        let profile = profile_by_id
+            .get(status.profile_id.as_str())
+            .ok_or_else(|| format!("profile not found: {}", status.profile_id))?;
+        let enabled = matches!(status.state, PhysicalMountStateDto::Mounted);
+
+        if enabled {
+            let state = DeploymentState {
+                profile_id: profile.id.clone(),
+                asset_id: asset.id.clone(),
+                target_path: status.target_path.clone(),
+                strategy: profile.deployment_strategy,
+                source_hash: asset.content_hash.clone().unwrap_or_default(),
+                deployed_at: Utc::now().to_rfc3339(),
+                managed_by: "assetiweave".to_string(),
+            };
+            sqlx::query(sql::UPSERT_DEPLOYMENT_STATE)
+                .bind(&state.profile_id)
+                .bind(&state.asset_id)
+                .bind(&state.target_path)
+                .bind(encode_enum(state.strategy)?)
+                .bind(&state.source_hash)
+                .bind(&state.deployed_at)
+                .bind(&state.managed_by)
+                .execute(&mut *tx)
+                .await
+                .map_err(|error| error.to_string())?;
+        } else {
+            sqlx::query(sql::DELETE_DEPLOYMENT_STATE)
+                .bind(&profile.id)
+                .bind(&asset.id)
+                .bind(&status.target_path)
+                .execute(&mut *tx)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+
+        let now = Utc::now().to_rfc3339();
+        let created_at: Option<String> = sqlx::query_scalar(sql::GET_ASSET_MOUNT_CREATED_AT)
+            .bind(&asset.id)
+            .bind(&profile.id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?;
+        sqlx::query(sql::UPSERT_ASSET_MOUNT)
+            .bind(&asset.id)
+            .bind(&profile.id)
+            .bind(enabled)
+            .bind(encode_enum(profile.deployment_strategy)?)
+            .bind(created_at.unwrap_or_else(|| now.clone()))
+            .bind(now)
             .execute(&mut *tx)
             .await
             .map_err(|error| error.to_string())?;
     }
+
+    sqlx::query(sql::DELETE_ORPHAN_ASSET_MOUNT_OBSERVATIONS)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
     tx.commit().await.map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -79,12 +154,7 @@ pub(crate) async fn load_asset_mount_observations_sqlx(
     rows.iter().map(map_sqlx_observation).collect()
 }
 
-pub(crate) fn delete_orphan_asset_mount_observations(conn: &Connection) -> AppResult<()> {
-    conn.execute(sql::DELETE_ORPHAN_ASSET_MOUNT_OBSERVATIONS, [])
-        .map_err(db_error)?;
-    Ok(())
-}
-
+#[cfg(test)]
 pub(crate) async fn delete_orphan_asset_mount_observations_sqlx(
     pool: &SqlitePool,
 ) -> AppResult<()> {
@@ -188,6 +258,47 @@ mod tests {
                 assert_eq!(after_cleanup[0].asset_id, "asset-a");
             })
             .expect("query SQLx mount observation repo");
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_mount_snapshot_rolls_back_when_status_references_missing_asset() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-mount-snapshot-rollback-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let observation = test_observation(
+            "missing-asset",
+            "profile-a",
+            PhysicalMountStateDto::Mounted,
+            Some("/source/a"),
+        );
+        let status = AssetMountStatus {
+            asset_id: observation.asset_id.clone(),
+            profile_id: observation.profile_id.clone(),
+            target_dir: observation.target_dir.clone(),
+            target_path: observation.target_path.clone(),
+            state: observation.state,
+            linked_source: observation.linked_source.clone(),
+        };
+
+        let error = database
+            .block_on(persist_asset_mount_snapshot_sqlx(
+                database.pool(),
+                std::slice::from_ref(&observation),
+                &[],
+                &[],
+                std::slice::from_ref(&status),
+            ))
+            .expect_err("missing asset must reject snapshot");
+        let observations = database
+            .block_on(load_asset_mount_observations_sqlx(database.pool()))
+            .expect("load observations after rollback");
+
+        assert!(error.contains("asset not found: missing-asset"));
+        assert!(observations.is_empty());
         drop(database);
         cleanup_database(&db_path);
     }

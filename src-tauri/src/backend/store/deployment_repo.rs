@@ -89,6 +89,7 @@ pub(crate) fn delete_deployment_state(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) async fn delete_deployment_state_sqlx(
     pool: &SqlitePool,
     profile_id: &str,

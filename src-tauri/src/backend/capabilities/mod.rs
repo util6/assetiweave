@@ -412,11 +412,12 @@ fn exclusive_skipped_item(asset: &Asset, reason: String) -> SkillGroupExclusiveM
 
 pub(crate) fn sync_asset_mount_observations(
     conn: &rusqlite::Connection,
+    db: &crate::backend::store::Database,
     asset_id: Option<&str>,
 ) -> AppResult<Vec<AssetMountStatus>> {
     repair_ghost_mount_symlinks(conn, asset_id)?;
     let statuses = scan_asset_mount_statuses(conn, asset_id)?;
-    persist_asset_mount_observation_snapshot(conn, &statuses)?;
+    persist_asset_mount_observation_snapshot(db, &statuses)?;
     Ok(statuses)
 }
 
@@ -430,11 +431,9 @@ pub(crate) fn scan_asset_mount_statuses(
 }
 
 fn persist_asset_mount_observation_snapshot(
-    conn: &rusqlite::Connection,
+    db: &crate::backend::store::Database,
     statuses: &[AssetMountStatus],
 ) -> AppResult<()> {
-    let assets = crate::backend::store::load_assets(conn)?;
-    let profiles = crate::backend::store::load_profiles(conn)?;
     let observed_at = Utc::now().to_rfc3339();
     let observations = statuses
         .iter()
@@ -448,14 +447,18 @@ fn persist_asset_mount_observation_snapshot(
             observed_at: observed_at.clone(),
         })
         .collect::<Vec<_>>();
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|error| error.to_string())?;
-    crate::backend::store::upsert_asset_mount_observations(&tx, &observations)?;
-    sync_asset_mount_snapshot_records(&tx, &assets, &profiles, &statuses)?;
-    crate::backend::store::delete_orphan_asset_mount_observations(&tx)?;
-    tx.commit().map_err(|error| error.to_string())?;
-    Ok(())
+    db.block_on(async {
+        let assets = crate::backend::store::load_assets_sqlx(db.pool(), None).await?;
+        let profiles = crate::backend::store::load_profiles_sqlx(db.pool()).await?;
+        crate::backend::store::persist_asset_mount_snapshot_sqlx(
+            db.pool(),
+            &observations,
+            &assets,
+            &profiles,
+            statuses,
+        )
+        .await
+    })
 }
 
 fn inspect_asset_mount_statuses(
@@ -483,67 +486,6 @@ fn inspect_asset_mount_statuses(
     }
 
     Ok(statuses)
-}
-
-fn sync_asset_mount_snapshot_records(
-    conn: &rusqlite::Connection,
-    assets: &[Asset],
-    profiles: &[TargetProfile],
-    statuses: &[AssetMountStatus],
-) -> AppResult<()> {
-    let asset_by_id = assets
-        .iter()
-        .map(|asset| (asset.id.as_str(), asset))
-        .collect::<HashMap<_, _>>();
-    let profile_by_id = profiles
-        .iter()
-        .map(|profile| (profile.id.as_str(), profile))
-        .collect::<HashMap<_, _>>();
-
-    for status in statuses {
-        let asset = asset_by_id
-            .get(status.asset_id.as_str())
-            .ok_or_else(|| format!("asset not found: {}", status.asset_id))?;
-        let profile = profile_by_id
-            .get(status.profile_id.as_str())
-            .ok_or_else(|| format!("profile not found: {}", status.profile_id))?;
-
-        if matches!(status.state, PhysicalMountStateDto::Mounted) {
-            let state = DeploymentState {
-                profile_id: profile.id.clone(),
-                asset_id: asset.id.clone(),
-                target_path: status.target_path.clone(),
-                strategy: profile.deployment_strategy,
-                source_hash: asset.content_hash.clone().unwrap_or_default(),
-                deployed_at: Utc::now().to_rfc3339(),
-                managed_by: "assetiweave".to_string(),
-            };
-            crate::backend::store::upsert_deployment_state(conn, &state)?;
-            crate::backend::store::set_asset_mount(
-                conn,
-                &asset.id,
-                &profile.id,
-                true,
-                profile.deployment_strategy,
-            )?;
-        } else {
-            crate::backend::store::delete_deployment_state(
-                conn,
-                &profile.id,
-                &asset.id,
-                &status.target_path,
-            )?;
-            crate::backend::store::set_asset_mount(
-                conn,
-                &asset.id,
-                &profile.id,
-                false,
-                profile.deployment_strategy,
-            )?;
-        }
-    }
-
-    Ok(())
 }
 
 pub(crate) fn asset_group_from_input(

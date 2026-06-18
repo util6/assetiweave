@@ -1213,7 +1213,7 @@ impl AppService {
         &self,
         asset_id: Option<&str>,
     ) -> AppResult<Vec<AssetMountStatus>> {
-        capabilities::sync_asset_mount_observations(&self.conn, asset_id)
+        capabilities::sync_asset_mount_observations(&self.conn, &self.db, asset_id)
     }
 
     pub(crate) fn create_plan(&self, profile_id: Option<&str>) -> AppResult<DeploymentPlan> {

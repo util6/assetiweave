@@ -2385,7 +2385,7 @@ mod tests {
         )
         .expect("insert asset");
         crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
-        crate::backend::store::set_asset_mount(
+        let original_mount = crate::backend::store::set_asset_mount(
             &conn,
             &asset.id,
             &profile.id,
@@ -2393,8 +2393,10 @@ mod tests {
             DeploymentStrategy::SymlinkToSource,
         )
         .expect("store disabled intent");
+        let database =
+            crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
-        sync_asset_mount_observations(&conn, None).expect("sync observations");
+        sync_asset_mount_observations(&conn, &database, None).expect("sync observations");
 
         let observations =
             crate::backend::store::load_asset_mount_observations(&conn).expect("load observations");
@@ -2406,9 +2408,12 @@ mod tests {
         assert!(!observation.observed_at.is_empty());
         let mounts =
             crate::backend::store::load_asset_mounts(&conn, Some(&asset.id)).expect("load mounts");
-        assert!(mounts
+        let synced_mount = mounts
             .iter()
-            .any(|mount| mount.profile_id == profile.id && mount.enabled));
+            .find(|mount| mount.profile_id == profile.id)
+            .expect("synced mount");
+        assert!(synced_mount.enabled);
+        assert_eq!(synced_mount.created_at, original_mount.created_at);
         assert!(crate::backend::store::is_managed_deployment(
             &conn,
             &profile.id,
@@ -2452,8 +2457,10 @@ mod tests {
         )
         .expect("insert asset");
         crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
+        let database =
+            crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
-        sync_asset_mount_observations(&conn, None).expect("sync observations");
+        sync_asset_mount_observations(&conn, &database, None).expect("sync observations");
 
         assert_eq!(
             std::fs::read_link(&target_path).expect("read repaired target symlink"),
@@ -2515,8 +2522,10 @@ mod tests {
             DeploymentStrategy::SymlinkToSource,
         )
         .expect("store stale enabled snapshot");
+        let database =
+            crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
-        sync_asset_mount_observations(&conn, None).expect("sync observations");
+        sync_asset_mount_observations(&conn, &database, None).expect("sync observations");
 
         assert!(
             crate::backend::store::load_asset_mounts(&conn, Some(&asset.id))
