@@ -105,12 +105,6 @@ pub(crate) async fn delete_deployment_state_sqlx(
     Ok(())
 }
 
-pub(crate) fn delete_orphan_deployment_state(conn: &Connection) -> AppResult<()> {
-    conn.execute(sql::DELETE_ORPHAN_DEPLOYMENT_STATE, [])
-        .map_err(db_error)?;
-    Ok(())
-}
-
 pub(crate) async fn delete_orphan_deployment_state_sqlx(pool: &SqlitePool) -> AppResult<()> {
     sqlx::query(sql::DELETE_ORPHAN_DEPLOYMENT_STATE)
         .execute(pool)

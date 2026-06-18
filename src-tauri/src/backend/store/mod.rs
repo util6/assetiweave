@@ -32,9 +32,9 @@ pub(crate) use database::{
     count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx, Database,
 };
 pub(crate) use deployment_repo::{
-    delete_deployment_state, delete_deployment_state_sqlx, delete_orphan_deployment_state,
-    delete_orphan_deployment_state_sqlx, is_managed_deployment, is_managed_deployment_sqlx,
-    upsert_deployment_state, upsert_deployment_state_sqlx,
+    delete_deployment_state, delete_deployment_state_sqlx, delete_orphan_deployment_state_sqlx,
+    is_managed_deployment, is_managed_deployment_sqlx, upsert_deployment_state,
+    upsert_deployment_state_sqlx,
 };
 pub(crate) use group_repo::{
     delete_asset_group, delete_orphan_asset_group_members, load_skill_group_detail,
@@ -50,9 +50,9 @@ pub(crate) use mount_observation_repo::{
     load_asset_mount_observations, load_asset_mount_observations_sqlx,
 };
 pub(crate) use mount_repo::{
-    delete_orphan_asset_mounts, delete_orphan_asset_mounts_sqlx, load_asset_mounts,
-    load_asset_mounts_sqlx, load_enabled_asset_mounts, load_enabled_asset_mounts_sqlx,
-    set_asset_mount, set_asset_mount_sqlx,
+    delete_orphan_asset_mounts_sqlx, load_asset_mounts, load_asset_mounts_sqlx,
+    load_enabled_asset_mounts, load_enabled_asset_mounts_sqlx, set_asset_mount,
+    set_asset_mount_sqlx,
 };
 pub(crate) use profile_repo::{
     count_deployment_state_by_profile, delete_profile_sqlx, load_profiles, load_profiles_sqlx,
@@ -65,9 +65,9 @@ pub(crate) use shortcut_repo::{
     load_app_shortcut_settings, load_app_shortcuts, save_app_shortcuts,
 };
 pub(crate) use skill_remote_repo::{
-    delete_orphan_skill_remote_sources, delete_orphan_skill_remote_sources_sqlx,
-    list_skill_remote_sources_sqlx, load_skill_remote_source_sqlx,
-    update_skill_remote_check_result_sqlx, upsert_skill_remote_source_sqlx,
+    delete_orphan_skill_remote_sources_sqlx, list_skill_remote_sources_sqlx,
+    load_skill_remote_source_sqlx, update_skill_remote_check_result_sqlx,
+    upsert_skill_remote_source_sqlx,
 };
 pub(crate) use source_repo::{
     delete_source, delete_source_sqlx, load_skill_sources, load_skill_sources_sqlx, load_sources,

@@ -61,12 +61,6 @@ pub(crate) async fn load_enabled_asset_mounts_sqlx(
     rows.iter().map(map_sqlx_mount).collect()
 }
 
-pub(crate) fn delete_orphan_asset_mounts(conn: &Connection) -> AppResult<()> {
-    conn.execute(sql::DELETE_ORPHAN_ASSET_MOUNTS, [])
-        .map_err(db_error)?;
-    Ok(())
-}
-
 pub(crate) async fn delete_orphan_asset_mounts_sqlx(pool: &SqlitePool) -> AppResult<()> {
     sqlx::query(sql::DELETE_ORPHAN_ASSET_MOUNTS)
         .execute(pool)

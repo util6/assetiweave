@@ -1,10 +1,11 @@
 use crate::backend::dto::{AppResult, SkillRemoteSource};
-use rusqlite::Connection;
 #[cfg(test)]
-use rusqlite::{params, OptionalExtension, Row};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 
-use super::{codec::db_error, sql};
+#[cfg(test)]
+use super::codec::db_error;
+use super::sql;
 
 #[cfg(test)]
 pub(crate) fn list_skill_remote_sources(conn: &Connection) -> AppResult<Vec<SkillRemoteSource>> {
@@ -138,12 +139,6 @@ pub(crate) async fn update_skill_remote_check_result_sqlx(
         .execute(pool)
         .await
         .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-pub(crate) fn delete_orphan_skill_remote_sources(conn: &Connection) -> AppResult<()> {
-    conn.execute(sql::DELETE_ORPHAN_SKILL_REMOTE_SOURCES, [])
-        .map_err(db_error)?;
     Ok(())
 }
 

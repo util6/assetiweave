@@ -623,6 +623,7 @@ pub(crate) fn set_asset_mount_record(
 }
 pub(crate) fn scan_selected_sources(
     conn: &rusqlite::Connection,
+    db: &crate::backend::store::Database,
     sources: Vec<Source>,
     scan: fn(&Source) -> AppResult<Vec<Asset>>,
 ) -> AppResult<Vec<Asset>> {
@@ -682,16 +683,22 @@ pub(crate) fn scan_selected_sources(
         }
     }
 
-    cleanup_orphan_asset_records(conn)?;
+    cleanup_orphan_asset_records(conn, db)?;
     crate::backend::store::load_assets(&conn)
 }
 
-pub(crate) fn refresh_all_sources(conn: &rusqlite::Connection) -> AppResult<Vec<Asset>> {
+pub(crate) fn refresh_all_sources(
+    conn: &rusqlite::Connection,
+    db: &crate::backend::store::Database,
+) -> AppResult<Vec<Asset>> {
     let sources = crate::backend::store::load_sources(conn)?;
-    scan_selected_sources(conn, sources, crate::backend::scanner::scan_source)
+    scan_selected_sources(conn, db, sources, crate::backend::scanner::scan_source)
 }
 
-pub(crate) fn refresh_recorded_assets(conn: &rusqlite::Connection) -> AppResult<Vec<Asset>> {
+pub(crate) fn refresh_recorded_assets(
+    conn: &rusqlite::Connection,
+    db: &crate::backend::store::Database,
+) -> AppResult<Vec<Asset>> {
     let sources = prune_missing_sources(conn, crate::backend::store::load_sources(conn)?)?;
     let source_map: HashMap<&str, &Source> = sources
         .iter()
@@ -757,15 +764,21 @@ pub(crate) fn refresh_recorded_assets(conn: &rusqlite::Connection) -> AppResult<
         crate::backend::store::replace_source_assets(conn, &source_id, &[])?;
     }
 
-    cleanup_orphan_asset_records(conn)?;
+    cleanup_orphan_asset_records(conn, db)?;
     crate::backend::store::load_assets(conn)
 }
 
-pub(crate) fn cleanup_orphan_asset_records(conn: &rusqlite::Connection) -> AppResult<()> {
-    crate::backend::store::delete_orphan_asset_mounts(conn)?;
+pub(crate) fn cleanup_orphan_asset_records(
+    conn: &rusqlite::Connection,
+    db: &crate::backend::store::Database,
+) -> AppResult<()> {
+    let pool = db.pool().clone();
+    db.block_on(async move {
+        crate::backend::store::delete_orphan_asset_mounts_sqlx(&pool).await?;
+        crate::backend::store::delete_orphan_deployment_state_sqlx(&pool).await?;
+        crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool).await
+    })?;
     crate::backend::store::delete_orphan_asset_group_members(conn)?;
-    crate::backend::store::delete_orphan_deployment_state(conn)?;
-    crate::backend::store::delete_orphan_skill_remote_sources(conn)?;
     Ok(())
 }
 

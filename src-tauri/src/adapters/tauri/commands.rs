@@ -1597,8 +1597,10 @@ mod tests {
         let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
         let source = test_missing_source("missing-recorded-source");
         crate::backend::store::upsert_source(&conn, &source).expect("insert source");
+        let database =
+            crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
-        refresh_recorded_assets(&conn).expect("refresh recorded assets");
+        refresh_recorded_assets(&conn, &database).expect("refresh recorded assets");
 
         assert!(!crate::backend::store::load_sources(&conn)
             .expect("load sources")
@@ -1613,9 +1615,12 @@ mod tests {
         let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
         let source = test_missing_source("missing-scan-source");
         crate::backend::store::upsert_source(&conn, &source).expect("insert source");
+        let database =
+            crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
         scan_selected_sources(
             &conn,
+            &database,
             vec![source.clone()],
             crate::backend::scanner::scan_source,
         )
@@ -1757,8 +1762,10 @@ mod tests {
             DeploymentStrategy::SymlinkToSource,
         )
         .expect("insert mount");
+        let database =
+            crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
-        refresh_recorded_assets(&conn).expect("refresh recorded assets");
+        refresh_recorded_assets(&conn, &database).expect("refresh recorded assets");
 
         assert!(crate::backend::store::load_assets(&conn)
             .expect("load assets")

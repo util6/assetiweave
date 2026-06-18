@@ -488,7 +488,7 @@ impl AppService {
     }
 
     pub(crate) fn refresh_recorded_assets(&self) -> AppResult<Vec<Asset>> {
-        capabilities::refresh_recorded_assets(&self.conn)
+        capabilities::refresh_recorded_assets(&self.conn, &self.db)
     }
 
     pub(crate) fn list_sources(&self) -> AppResult<Vec<Source>> {
@@ -574,7 +574,7 @@ impl AppService {
         self.db.block_on(async move {
             crate::backend::store::delete_source_sqlx(&pool, &source_id).await
         })?;
-        capabilities::cleanup_orphan_asset_records(&self.conn)?;
+        capabilities::cleanup_orphan_asset_records(&self.conn, &self.db)?;
         Ok(json!({ "removed": true, "source_id": source.id }))
     }
 
@@ -582,7 +582,7 @@ impl AppService {
         if params.dry_run {
             return capabilities::catalog_assets(&self.conn, params.kind);
         }
-        capabilities::refresh_all_sources(&self.conn)?;
+        capabilities::refresh_all_sources(&self.conn, &self.db)?;
         capabilities::catalog_assets(&self.conn, params.kind)
     }
 
@@ -590,6 +590,7 @@ impl AppService {
         let sources = crate::backend::store::load_skill_sources(&self.conn)?;
         capabilities::scan_selected_sources(
             &self.conn,
+            &self.db,
             sources,
             crate::backend::scanner::scan_skill_source,
         )?;
@@ -1278,7 +1279,7 @@ impl AppService {
 
         let source = capabilities::assetiweave_library_source_with_root(root_path);
         crate::backend::store::upsert_source(&self.conn, &source)?;
-        capabilities::refresh_all_sources(&self.conn)?;
+        capabilities::refresh_all_sources(&self.conn, &self.db)?;
 
         if params.migrate && !current.is_default_root && current_root.exists() {
             fs::remove_dir_all(&current_root).map_err(|error| error.to_string())?;
@@ -1382,7 +1383,7 @@ impl AppService {
             capabilities::skill_backup_settings(&self.conn)?.root_path,
         );
         crate::backend::store::upsert_source(&self.conn, &library_source)?;
-        capabilities::refresh_all_sources(&self.conn)?;
+        capabilities::refresh_all_sources(&self.conn, &self.db)?;
 
         let catalog = capabilities::catalog_assets(&self.conn, Some(AssetKind::Skill))?;
         let mut backed_up_assets = Vec::with_capacity(targets.len());
@@ -1707,7 +1708,7 @@ impl AppService {
                 fs::remove_file(&asset_path).map_err(|error| error.to_string())?;
             }
         }
-        capabilities::refresh_recorded_assets(&self.conn)?;
+        capabilities::refresh_recorded_assets(&self.conn, &self.db)?;
         Ok(json!({ "deleted": true, "asset_id": asset.id }))
     }
 
@@ -1748,14 +1749,14 @@ impl AppService {
     }
 
     pub(crate) fn list_skill_groups(&self) -> AppResult<Vec<AssetGroupDetail>> {
-        capabilities::cleanup_orphan_asset_records(&self.conn)?;
+        capabilities::cleanup_orphan_asset_records(&self.conn, &self.db)?;
         let assets =
             crate::backend::store::load_assets_by_kind(&self.conn, Some(AssetKind::Skill))?;
         crate::backend::store::load_skill_group_details(&self.conn, &assets)
     }
 
     pub(crate) fn get_skill_group(&self, group_id: String) -> AppResult<AssetGroupDetail> {
-        capabilities::cleanup_orphan_asset_records(&self.conn)?;
+        capabilities::cleanup_orphan_asset_records(&self.conn, &self.db)?;
         let assets =
             crate::backend::store::load_assets_by_kind(&self.conn, Some(AssetKind::Skill))?;
         crate::backend::store::load_skill_group_detail(&self.conn, &group_id, &assets)
@@ -2751,6 +2752,75 @@ mod tests {
     use super::*;
     use crate::backend::models::{AssetFormat, SourceKind};
     use std::fs;
+
+    #[test]
+    fn cleanup_orphan_asset_records_uses_sqlx_for_migrated_tables() {
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-sqlx-orphan-cleanup-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create test root");
+        let service =
+            AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+        service
+            .conn
+            .execute_batch(
+                r#"
+                INSERT INTO asset_mounts (
+                    asset_id, profile_id, enabled, strategy, created_at, updated_at
+                ) VALUES (
+                    'orphan-asset', 'codex', 1, 'symlink_to_source',
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+                );
+                INSERT INTO deployment_state (
+                    profile_id, asset_id, target_path, strategy,
+                    source_hash, deployed_at, managed_by
+                ) VALUES (
+                    'codex', 'orphan-asset', '/tmp/orphan-asset', 'symlink_to_source',
+                    'hash', '2026-01-01T00:00:00Z', 'assetiweave'
+                );
+                INSERT INTO skill_remote_sources (
+                    asset_id, provider, source_url, repo_url, branch,
+                    acquired_at, status
+                ) VALUES (
+                    'orphan-asset', 'github',
+                    'https://github.com/example/repo/tree/main/skill',
+                    'https://github.com/example/repo.git',
+                    'main', '2026-01-01T00:00:00Z', 'unknown'
+                );
+                INSERT INTO asset_groups (
+                    id, name, color, asset_kind, enabled, sort_order,
+                    rules_payload, created_at, updated_at
+                ) VALUES (
+                    'orphan-group', 'Orphan Group', '#10b981', 'skill', 1, 0,
+                    '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+                );
+                INSERT INTO asset_group_members (group_id, asset_id, created_at)
+                VALUES ('orphan-group', 'orphan-asset', '2026-01-01T00:00:00Z');
+                "#,
+            )
+            .expect("seed orphan records");
+
+        capabilities::cleanup_orphan_asset_records(&service.conn, &service.db)
+            .expect("cleanup orphan records");
+
+        for table in [
+            "asset_mounts",
+            "deployment_state",
+            "skill_remote_sources",
+            "asset_group_members",
+        ] {
+            let statement = format!("SELECT COUNT(*) FROM {table} WHERE asset_id = 'orphan-asset'");
+            let count: i64 = service
+                .conn
+                .query_row(&statement, [], |row| row.get(0))
+                .expect("count orphan rows");
+            assert_eq!(count, 0, "orphan row remained in {table}");
+        }
+
+        drop(service);
+        fs::remove_dir_all(root).ok();
+    }
 
     #[test]
     fn list_skill_remote_sources_prunes_orphans_through_sqlx_path() {
