@@ -36,9 +36,12 @@ pub(crate) use deployment_repo::{
     is_managed_deployment_sqlx, upsert_deployment_state, upsert_deployment_state_sqlx,
 };
 pub(crate) use group_repo::{
-    delete_asset_group, delete_orphan_asset_group_members, load_skill_group_detail,
-    load_skill_group_details, replace_asset_group_members, upsert_asset_group,
+    delete_asset_group_sqlx, delete_orphan_asset_group_members_sqlx, load_skill_group_detail,
+    load_skill_group_detail_sqlx, load_skill_group_details_sqlx, replace_asset_group_members_sqlx,
+    upsert_asset_group_sqlx,
 };
+#[cfg(test)]
+pub(crate) use group_repo::{replace_asset_group_members, upsert_asset_group};
 pub(crate) use menu_repo::{load_navigation_model_sqlx, save_navigation_model_sqlx};
 #[cfg(test)]
 pub(crate) use mount_observation_repo::load_asset_mount_observations;

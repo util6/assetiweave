@@ -711,17 +711,16 @@ pub(crate) fn refresh_recorded_assets(
 }
 
 pub(crate) fn cleanup_orphan_asset_records(
-    conn: &rusqlite::Connection,
+    _conn: &rusqlite::Connection,
     db: &crate::backend::store::Database,
 ) -> AppResult<()> {
     let pool = db.pool().clone();
     db.block_on(async move {
         crate::backend::store::delete_orphan_asset_mounts_sqlx(&pool).await?;
         crate::backend::store::delete_orphan_deployment_state_sqlx(&pool).await?;
-        crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool).await
-    })?;
-    crate::backend::store::delete_orphan_asset_group_members(conn)?;
-    Ok(())
+        crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool).await?;
+        crate::backend::store::delete_orphan_asset_group_members_sqlx(&pool).await
+    })
 }
 
 fn prune_missing_sources(

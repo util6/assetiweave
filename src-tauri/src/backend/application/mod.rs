@@ -1763,41 +1763,56 @@ impl AppService {
 
     pub(crate) fn list_skill_groups(&self) -> AppResult<Vec<AssetGroupDetail>> {
         capabilities::cleanup_orphan_asset_records(&self.conn, &self.db)?;
-        let assets =
-            crate::backend::store::load_assets_by_kind(&self.conn, Some(AssetKind::Skill))?;
-        crate::backend::store::load_skill_group_details(&self.conn, &assets)
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            let assets =
+                crate::backend::store::load_assets_sqlx(&pool, Some(AssetKind::Skill)).await?;
+            crate::backend::store::load_skill_group_details_sqlx(&pool, &assets).await
+        })
     }
 
     pub(crate) fn get_skill_group(&self, group_id: String) -> AppResult<AssetGroupDetail> {
         capabilities::cleanup_orphan_asset_records(&self.conn, &self.db)?;
-        let assets =
-            crate::backend::store::load_assets_by_kind(&self.conn, Some(AssetKind::Skill))?;
-        crate::backend::store::load_skill_group_detail(&self.conn, &group_id, &assets)
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            let assets =
+                crate::backend::store::load_assets_sqlx(&pool, Some(AssetKind::Skill)).await?;
+            crate::backend::store::load_skill_group_detail_sqlx(&pool, &group_id, &assets).await
+        })
     }
 
     pub(crate) fn create_skill_group(&self, input: AssetGroupInput) -> AppResult<AssetGroupDetail> {
-        let assets =
-            crate::backend::store::load_assets_by_kind(&self.conn, Some(AssetKind::Skill))?;
         let now = Utc::now().to_rfc3339();
         let group = capabilities::asset_group_from_input(input, now.clone(), now);
-        crate::backend::store::upsert_asset_group(&self.conn, &group)?;
-        crate::backend::store::load_skill_group_detail(&self.conn, &group.id, &assets)
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            let assets =
+                crate::backend::store::load_assets_sqlx(&pool, Some(AssetKind::Skill)).await?;
+            crate::backend::store::upsert_asset_group_sqlx(&pool, &group).await?;
+            crate::backend::store::load_skill_group_detail_sqlx(&pool, &group.id, &assets).await
+        })
     }
 
     pub(crate) fn update_skill_group(&self, group: AssetGroup) -> AppResult<AssetGroupDetail> {
-        let assets =
-            crate::backend::store::load_assets_by_kind(&self.conn, Some(AssetKind::Skill))?;
         let mut group = group;
         group.updated_at = Utc::now().to_rfc3339();
-        crate::backend::store::upsert_asset_group(&self.conn, &group)?;
-        crate::backend::store::load_skill_group_detail(&self.conn, &group.id, &assets)
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            let assets =
+                crate::backend::store::load_assets_sqlx(&pool, Some(AssetKind::Skill)).await?;
+            crate::backend::store::upsert_asset_group_sqlx(&pool, &group).await?;
+            crate::backend::store::load_skill_group_detail_sqlx(&pool, &group.id, &assets).await
+        })
     }
 
     pub(crate) fn delete_skill_group(&self, group_id: String) -> AppResult<()> {
-        let assets =
-            crate::backend::store::load_assets_by_kind(&self.conn, Some(AssetKind::Skill))?;
-        crate::backend::store::load_skill_group_detail(&self.conn, &group_id, &assets)?;
-        crate::backend::store::delete_asset_group(&self.conn, &group_id)
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            let assets =
+                crate::backend::store::load_assets_sqlx(&pool, Some(AssetKind::Skill)).await?;
+            crate::backend::store::load_skill_group_detail_sqlx(&pool, &group_id, &assets).await?;
+            crate::backend::store::delete_asset_group_sqlx(&pool, &group_id).await
+        })
     }
 
     pub(crate) fn set_skill_group_manual_members(
@@ -1805,12 +1820,16 @@ impl AppService {
         group_id: String,
         asset_ids: Vec<String>,
     ) -> AppResult<AssetGroupDetail> {
-        let assets =
-            crate::backend::store::load_assets_by_kind(&self.conn, Some(AssetKind::Skill))?;
-        crate::backend::store::replace_asset_group_members(
-            &self.conn, &group_id, &asset_ids, &assets,
-        )?;
-        crate::backend::store::load_skill_group_detail(&self.conn, &group_id, &assets)
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            let assets =
+                crate::backend::store::load_assets_sqlx(&pool, Some(AssetKind::Skill)).await?;
+            crate::backend::store::replace_asset_group_members_sqlx(
+                &pool, &group_id, &asset_ids, &assets,
+            )
+            .await?;
+            crate::backend::store::load_skill_group_detail_sqlx(&pool, &group_id, &assets).await
+        })
     }
 
     pub(crate) fn mount_skill_group(
@@ -1822,13 +1841,13 @@ impl AppService {
             return Err("skill.group.unmount requires --yes".to_string());
         }
         if params.dry_run {
-            let assets =
-                crate::backend::store::load_assets_by_kind(&self.conn, Some(AssetKind::Skill))?;
-            let detail = crate::backend::store::load_skill_group_detail(
-                &self.conn,
-                &params.group_id,
-                &assets,
-            )?;
+            let pool = self.db.pool().clone();
+            let group_id = params.group_id.clone();
+            let detail = self.db.block_on(async move {
+                let assets =
+                    crate::backend::store::load_assets_sqlx(&pool, Some(AssetKind::Skill)).await?;
+                crate::backend::store::load_skill_group_detail_sqlx(&pool, &group_id, &assets).await
+            })?;
             return Ok(json!({
                 "dry_run": true,
                 "group_id": params.group_id,
@@ -2763,7 +2782,7 @@ fn is_web_record_adapter(adapter: Option<&ConversationAdapter>, adapter_id: &str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::models::{AssetFormat, SourceKind};
+    use crate::backend::models::{AssetFormat, AssetGroupRules, SourceKind};
     use std::fs;
 
     #[test]
@@ -2813,6 +2832,142 @@ mod tests {
         assert!(enabled
             .iter()
             .all(|shortcut| shortcut.profile_id != disabled_profile_id));
+        drop(service);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn skill_group_crud_and_members_use_sqlx_path() {
+        let root = std::env::temp_dir().join(format!("assetiweave-sqlx-groups-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("create test root");
+        let service =
+            AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+        service
+            .conn
+            .execute_batch("DELETE FROM asset_group_members; DELETE FROM asset_groups; DELETE FROM assets; DELETE FROM sources;")
+            .expect("clear seeded catalog");
+
+        let source = Source {
+            id: "source-a".to_string(),
+            name: "Source A".to_string(),
+            kind: SourceKind::Local,
+            root_path: root.join("source-a").to_string_lossy().to_string(),
+            scanner_kind: SourceScannerKind::Skill,
+            source_origin: SourceOrigin::LocalFolder,
+            repo_root: None,
+            scan_root: String::new(),
+            origin_app_kind: None,
+            include_globs: vec!["**/SKILL.md".to_string()],
+            exclude_globs: Vec::new(),
+            default_kind: Some(AssetKind::Skill),
+            enabled: true,
+            priority: 0,
+            last_scanned_at: None,
+            last_scan_status: None,
+        };
+        let now = Utc::now().to_rfc3339();
+        let assets = vec![
+            Asset {
+                id: "skill-a".to_string(),
+                source_id: source.id.clone(),
+                name: "Frontend UI".to_string(),
+                kind: AssetKind::Skill,
+                format: AssetFormat::Directory,
+                relative_path: "frontend/ui".to_string(),
+                absolute_path: root
+                    .join("source-a/frontend/ui")
+                    .to_string_lossy()
+                    .to_string(),
+                entry_file: Some("SKILL.md".to_string()),
+                description: None,
+                content_hash: Some("hash-a".to_string()),
+                discovered_at: now.clone(),
+                updated_at: now.clone(),
+            },
+            Asset {
+                id: "skill-b".to_string(),
+                source_id: source.id.clone(),
+                name: "Backend API".to_string(),
+                kind: AssetKind::Skill,
+                format: AssetFormat::Directory,
+                relative_path: "backend/api".to_string(),
+                absolute_path: root
+                    .join("source-a/backend/api")
+                    .to_string_lossy()
+                    .to_string(),
+                entry_file: Some("SKILL.md".to_string()),
+                description: None,
+                content_hash: Some("hash-b".to_string()),
+                discovered_at: now.clone(),
+                updated_at: now,
+            },
+        ];
+        let pool = service.db.pool().clone();
+        service
+            .db
+            .block_on(async move {
+                crate::backend::store::upsert_source_sqlx(&pool, &source).await?;
+                crate::backend::store::replace_source_assets_sqlx(&pool, "source-a", &assets).await
+            })
+            .expect("seed SQLx catalog");
+
+        let created = service
+            .create_skill_group(AssetGroupInput {
+                id: Some("frontend".to_string()),
+                name: "Frontend".to_string(),
+                description: Some(" UI work ".to_string()),
+                color: Some("#10b981".to_string()),
+                display_icon: Some("F".to_string()),
+                icon_svg: None,
+                enabled: Some(true),
+                sort_order: Some(1),
+                rules: Some(AssetGroupRules {
+                    source_ids: vec!["source-a".to_string()],
+                    relative_path_globs: vec!["frontend/**".to_string()],
+                    name_contains: Some("ui".to_string()),
+                }),
+            })
+            .expect("create SQLx group");
+        assert_eq!(created.group.id, "frontend");
+        assert_eq!(created.members.len(), 1);
+        assert_eq!(created.members[0].asset_id, "skill-a");
+
+        let with_manual = service
+            .set_skill_group_manual_members(
+                "frontend".to_string(),
+                vec!["skill-b".to_string(), "skill-b".to_string()],
+            )
+            .expect("save SQLx manual members");
+        assert_eq!(with_manual.manual_asset_ids, vec!["skill-b".to_string()]);
+        assert_eq!(with_manual.members.len(), 2);
+
+        let mut updated_group = with_manual.group.clone();
+        updated_group.name = "Frontend Updated".to_string();
+        let updated = service
+            .update_skill_group(updated_group)
+            .expect("update SQLx group");
+        assert_eq!(updated.group.name, "Frontend Updated");
+        assert_eq!(
+            service
+                .get_skill_group("frontend".to_string())
+                .expect("get SQLx group")
+                .group
+                .name,
+            "Frontend Updated"
+        );
+        assert_eq!(
+            service.list_skill_groups().expect("list SQLx groups").len(),
+            1
+        );
+
+        service
+            .delete_skill_group("frontend".to_string())
+            .expect("delete SQLx group");
+        assert!(service
+            .list_skill_groups()
+            .expect("list after delete")
+            .is_empty());
+
         drop(service);
         fs::remove_dir_all(root).ok();
     }
