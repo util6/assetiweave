@@ -538,12 +538,12 @@ pub(crate) fn set_asset_mount_record(
     enabled: bool,
     strategy: Option<DeploymentStrategy>,
 ) -> AppResult<AssetMount> {
-    let default_strategy = validate_mount_target(conn, asset_id, profile_id)?;
+    let default_strategy = validate_mount_target_sqlx(db, asset_id, profile_id)?;
     if enabled {
         return mount_asset_mount_record(conn, asset_id, profile_id).map(|result| result.mount);
     }
 
-    let (asset, profile) = load_mount_asset_and_profile(conn, asset_id, profile_id)?;
+    let (asset, profile) = load_mount_asset_and_profile_sqlx(db, asset_id, profile_id)?;
     let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
     if matches!(
         inspection.state,
@@ -810,6 +810,27 @@ fn validate_mount_target(
     Ok(profile.deployment_strategy)
 }
 
+fn validate_mount_target_sqlx(
+    db: &crate::backend::store::Database,
+    asset_id: &str,
+    profile_id: &str,
+) -> AppResult<DeploymentStrategy> {
+    let (asset, profile) = load_mount_asset_and_profile_sqlx(db, asset_id, profile_id)?;
+    let pool = db.pool().clone();
+    let source_id = asset.source_id.clone();
+    let source = db
+        .block_on(async move { crate::backend::store::load_source_sqlx(&pool, &source_id).await })?
+        .ok_or_else(|| format!("source not found: {}", asset.source_id))?;
+    if matches!(
+        source.source_origin,
+        SourceOrigin::AppTarget | SourceOrigin::AppLocal
+    ) {
+        return Err("app-local skills must be backed up before mounting".to_string());
+    }
+
+    Ok(profile.deployment_strategy)
+}
+
 pub(crate) fn mount_asset_mount_record(
     conn: &rusqlite::Connection,
     asset_id: &str,
@@ -981,6 +1002,25 @@ fn load_mount_asset_and_profile(
         .ok_or_else(|| format!("profile not found: {profile_id}"))?;
 
     Ok((asset, profile))
+}
+
+fn load_mount_asset_and_profile_sqlx(
+    db: &crate::backend::store::Database,
+    asset_id: &str,
+    profile_id: &str,
+) -> AppResult<(Asset, TargetProfile)> {
+    let pool = db.pool().clone();
+    let asset_id = asset_id.to_string();
+    let profile_id = profile_id.to_string();
+    db.block_on(async move {
+        let asset = crate::backend::store::load_asset_sqlx(&pool, &asset_id)
+            .await?
+            .ok_or_else(|| format!("asset not found: {asset_id}"))?;
+        let profile = crate::backend::store::load_profile_sqlx(&pool, &profile_id)
+            .await?
+            .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+        AppResult::Ok((asset, profile))
+    })
 }
 
 fn validate_immediate_mount_support(asset: &Asset, profile: &TargetProfile) -> AppResult<()> {
