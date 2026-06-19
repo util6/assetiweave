@@ -665,12 +665,11 @@ pub(crate) fn set_asset_mount_record(
     result
 }
 pub(crate) fn scan_selected_sources(
-    conn: &rusqlite::Connection,
     db: &crate::backend::store::Database,
     sources: Vec<Source>,
     scan: fn(&Source) -> AppResult<Vec<Asset>>,
 ) -> AppResult<Vec<Asset>> {
-    for mut source in prune_missing_sources(conn, sources)? {
+    for mut source in prune_missing_sources(db, sources)? {
         if !source.enabled {
             log_info(
                 "source.scan.skip",
@@ -688,10 +687,9 @@ pub(crate) fn scan_selected_sources(
         let now = Utc::now().to_rfc3339();
         match scan(&source) {
             Ok(assets) => {
-                crate::backend::store::replace_source_assets(&conn, &source.id, &assets)?;
                 source.last_scanned_at = Some(now);
                 source.last_scan_status = Some(format!("ok: {} assets", assets.len()));
-                crate::backend::store::upsert_source(&conn, &source)?;
+                persist_source_scan_result_sqlx(db, &source, &assets)?;
                 let mut fields = source_log_fields(&source);
                 fields.push(("asset_count", assets.len().to_string()));
                 log_info("source.scan.success", "扫描来源成功", &fields);
@@ -710,12 +708,12 @@ pub(crate) fn scan_selected_sources(
                     let mut fields = source_log_fields(&source);
                     fields.push(("error", error.clone()));
                     log_warn("source.scan.removed", "来源路径不存在，已移除", &fields);
-                    crate::backend::store::delete_source(conn, &source.id)?;
+                    delete_source_sqlx(db, &source.id)?;
                     continue;
                 }
                 source.last_scanned_at = Some(now);
                 source.last_scan_status = Some(format!("error: {error}"));
-                crate::backend::store::upsert_source(&conn, &source)?;
+                upsert_source_sqlx(db, &source)?;
                 log_error(
                     "source.scan.error",
                     "扫描来源失败",
@@ -726,29 +724,25 @@ pub(crate) fn scan_selected_sources(
         }
     }
 
-    cleanup_orphan_asset_records(conn, db)?;
+    cleanup_orphan_asset_records(db)?;
     let pool = db.pool().clone();
     db.block_on(async move { crate::backend::store::load_assets_sqlx(&pool, None).await })
 }
 
-pub(crate) fn refresh_all_sources(
-    conn: &rusqlite::Connection,
-    db: &crate::backend::store::Database,
-) -> AppResult<Vec<Asset>> {
+pub(crate) fn refresh_all_sources(db: &crate::backend::store::Database) -> AppResult<Vec<Asset>> {
     let pool = db.pool().clone();
     let sources =
         db.block_on(async move { crate::backend::store::load_sources_sqlx(&pool).await })?;
-    scan_selected_sources(conn, db, sources, crate::backend::scanner::scan_source)
+    scan_selected_sources(db, sources, crate::backend::scanner::scan_source)
 }
 
 pub(crate) fn refresh_recorded_assets(
-    conn: &rusqlite::Connection,
     db: &crate::backend::store::Database,
 ) -> AppResult<Vec<Asset>> {
     let pool = db.pool().clone();
     let sources =
         db.block_on(async move { crate::backend::store::load_sources_sqlx(&pool).await })?;
-    let sources = prune_missing_sources(conn, sources)?;
+    let sources = prune_missing_sources(db, sources)?;
     let source_map: HashMap<&str, &Source> = sources
         .iter()
         .map(|source| (source.id.as_str(), source))
@@ -798,7 +792,6 @@ pub(crate) fn refresh_recorded_assets(
     for source in sources {
         let retained_assets = assets_by_source.remove(&source.id).unwrap_or_default();
         let retained_count = retained_assets.len();
-        crate::backend::store::replace_source_assets(conn, &source.id, &retained_assets)?;
 
         let removed_count = removed_by_source.get(&source.id).copied().unwrap_or(0);
         let updated_count = updated_by_source.get(&source.id).copied().unwrap_or(0);
@@ -807,24 +800,21 @@ pub(crate) fn refresh_recorded_assets(
         source.last_scan_status = Some(format!(
             "validated: {retained_count} assets, {removed_count} removed, {updated_count} updated"
         ));
-        crate::backend::store::upsert_source(conn, &source)?;
+        persist_source_scan_result_sqlx(db, &source, &retained_assets)?;
     }
 
     orphan_source_ids.sort();
     orphan_source_ids.dedup();
     for source_id in orphan_source_ids {
-        crate::backend::store::replace_source_assets(conn, &source_id, &[])?;
+        replace_source_assets_sqlx(db, &source_id, &[])?;
     }
 
-    cleanup_orphan_asset_records(conn, db)?;
+    cleanup_orphan_asset_records(db)?;
     let pool = db.pool().clone();
     db.block_on(async move { crate::backend::store::load_assets_sqlx(&pool, None).await })
 }
 
-pub(crate) fn cleanup_orphan_asset_records(
-    _conn: &rusqlite::Connection,
-    db: &crate::backend::store::Database,
-) -> AppResult<()> {
+pub(crate) fn cleanup_orphan_asset_records(db: &crate::backend::store::Database) -> AppResult<()> {
     let pool = db.pool().clone();
     db.block_on(async move {
         crate::backend::store::delete_orphan_asset_mounts_sqlx(&pool).await?;
@@ -835,10 +825,11 @@ pub(crate) fn cleanup_orphan_asset_records(
 }
 
 fn prune_missing_sources(
-    conn: &rusqlite::Connection,
+    db: &crate::backend::store::Database,
     sources: Vec<Source>,
 ) -> AppResult<Vec<Source>> {
     let mut retained_sources = Vec::new();
+    let mut missing_source_ids = Vec::new();
     for source in sources {
         if source_root_is_missing(&source) {
             log_warn(
@@ -846,12 +837,56 @@ fn prune_missing_sources(
                 "来源路径不存在，已从索引移除",
                 &source_log_fields(&source),
             );
-            crate::backend::store::delete_source(conn, &source.id)?;
+            missing_source_ids.push(source.id);
         } else {
             retained_sources.push(source);
         }
     }
+    for source_id in missing_source_ids {
+        delete_source_sqlx(db, &source_id)?;
+    }
     Ok(retained_sources)
+}
+
+fn persist_source_scan_result_sqlx(
+    db: &crate::backend::store::Database,
+    source: &Source,
+    assets: &[Asset],
+) -> AppResult<()> {
+    let pool = db.pool().clone();
+    let source_id = source.id.clone();
+    let source_to_save = source.clone();
+    let assets_to_save = assets.to_vec();
+    db.block_on(async move {
+        crate::backend::store::replace_source_assets_sqlx(&pool, &source_id, &assets_to_save)
+            .await?;
+        crate::backend::store::upsert_source_sqlx(&pool, &source_to_save).await
+    })
+}
+
+fn replace_source_assets_sqlx(
+    db: &crate::backend::store::Database,
+    source_id: &str,
+    assets: &[Asset],
+) -> AppResult<()> {
+    let pool = db.pool().clone();
+    let source_id = source_id.to_string();
+    let assets = assets.to_vec();
+    db.block_on(async move {
+        crate::backend::store::replace_source_assets_sqlx(&pool, &source_id, &assets).await
+    })
+}
+
+fn upsert_source_sqlx(db: &crate::backend::store::Database, source: &Source) -> AppResult<()> {
+    let pool = db.pool().clone();
+    let source = source.clone();
+    db.block_on(async move { crate::backend::store::upsert_source_sqlx(&pool, &source).await })
+}
+
+fn delete_source_sqlx(db: &crate::backend::store::Database, source_id: &str) -> AppResult<()> {
+    let pool = db.pool().clone();
+    let source_id = source_id.to_string();
+    db.block_on(async move { crate::backend::store::delete_source_sqlx(&pool, &source_id).await })
 }
 
 fn source_root_is_missing(source: &Source) -> bool {

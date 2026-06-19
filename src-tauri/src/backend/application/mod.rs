@@ -488,7 +488,7 @@ impl AppService {
     }
 
     pub(crate) fn refresh_recorded_assets(&self) -> AppResult<Vec<Asset>> {
-        capabilities::refresh_recorded_assets(&self.conn, &self.db)
+        capabilities::refresh_recorded_assets(&self.db)
     }
 
     pub(crate) fn list_sources(&self) -> AppResult<Vec<Source>> {
@@ -574,7 +574,7 @@ impl AppService {
         self.db.block_on(async move {
             crate::backend::store::delete_source_sqlx(&pool, &source_id).await
         })?;
-        capabilities::cleanup_orphan_asset_records(&self.conn, &self.db)?;
+        capabilities::cleanup_orphan_asset_records(&self.db)?;
         Ok(json!({ "removed": true, "source_id": source.id }))
     }
 
@@ -582,7 +582,7 @@ impl AppService {
         if params.dry_run {
             return capabilities::catalog_assets_sqlx(&self.db, params.kind);
         }
-        capabilities::refresh_all_sources(&self.conn, &self.db)?;
+        capabilities::refresh_all_sources(&self.db)?;
         capabilities::catalog_assets_sqlx(&self.db, params.kind)
     }
 
@@ -592,7 +592,6 @@ impl AppService {
             .db
             .block_on(async move { crate::backend::store::load_skill_sources_sqlx(&pool).await })?;
         capabilities::scan_selected_sources(
-            &self.conn,
             &self.db,
             sources,
             crate::backend::scanner::scan_skill_source,
@@ -1301,7 +1300,7 @@ impl AppService {
         self.db.block_on(async move {
             crate::backend::store::upsert_source_sqlx(&pool, &source).await
         })?;
-        capabilities::refresh_all_sources(&self.conn, &self.db)?;
+        capabilities::refresh_all_sources(&self.db)?;
 
         if params.migrate && !current.is_default_root && current_root.exists() {
             fs::remove_dir_all(&current_root).map_err(|error| error.to_string())?;
@@ -1412,7 +1411,7 @@ impl AppService {
         self.db.block_on(async move {
             crate::backend::store::upsert_source_sqlx(&pool, &library_source).await
         })?;
-        capabilities::refresh_all_sources(&self.conn, &self.db)?;
+        capabilities::refresh_all_sources(&self.db)?;
 
         let catalog = capabilities::catalog_assets_sqlx(&self.db, Some(AssetKind::Skill))?;
         let mut backed_up_assets = Vec::with_capacity(targets.len());
@@ -1739,7 +1738,7 @@ impl AppService {
                 fs::remove_file(&asset_path).map_err(|error| error.to_string())?;
             }
         }
-        capabilities::refresh_recorded_assets(&self.conn, &self.db)?;
+        capabilities::refresh_recorded_assets(&self.db)?;
         Ok(json!({ "deleted": true, "asset_id": asset.id }))
     }
 
@@ -1781,7 +1780,7 @@ impl AppService {
     }
 
     pub(crate) fn list_skill_groups(&self) -> AppResult<Vec<AssetGroupDetail>> {
-        capabilities::cleanup_orphan_asset_records(&self.conn, &self.db)?;
+        capabilities::cleanup_orphan_asset_records(&self.db)?;
         let pool = self.db.pool().clone();
         self.db.block_on(async move {
             let assets =
@@ -1791,7 +1790,7 @@ impl AppService {
     }
 
     pub(crate) fn get_skill_group(&self, group_id: String) -> AppResult<AssetGroupDetail> {
-        capabilities::cleanup_orphan_asset_records(&self.conn, &self.db)?;
+        capabilities::cleanup_orphan_asset_records(&self.db)?;
         let pool = self.db.pool().clone();
         self.db.block_on(async move {
             let assets =
@@ -3140,8 +3139,7 @@ mod tests {
             )
             .expect("seed orphan records");
 
-        capabilities::cleanup_orphan_asset_records(&service.conn, &service.db)
-            .expect("cleanup orphan records");
+        capabilities::cleanup_orphan_asset_records(&service.db).expect("cleanup orphan records");
 
         for table in [
             "asset_mounts",

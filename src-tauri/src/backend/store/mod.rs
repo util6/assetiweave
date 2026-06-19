@@ -16,11 +16,10 @@ mod sql;
 mod web_record_repo;
 
 pub(crate) use asset_repo::{
-    load_asset_sqlx, load_assets_sqlx, replace_source_assets, replace_source_assets_sqlx,
-    update_asset_description_sqlx,
+    load_asset_sqlx, load_assets_sqlx, replace_source_assets_sqlx, update_asset_description_sqlx,
 };
 #[cfg(test)]
-pub(crate) use asset_repo::{load_assets, load_assets_by_kind};
+pub(crate) use asset_repo::{load_assets, load_assets_by_kind, replace_source_assets};
 pub(crate) use conversation_repo::{
     delete_conversation_adapter, disable_conversation_source, import_conversation_sessions,
     list_conversation_adapters, list_conversation_question_details, list_conversation_sessions,
@@ -77,9 +76,11 @@ pub(crate) use skill_remote_repo::{
 };
 #[cfg(test)]
 pub(crate) use source_repo::load_sources;
+#[cfg(test)]
+pub(crate) use source_repo::upsert_source;
 pub(crate) use source_repo::{
-    delete_source, delete_source_sqlx, load_skill_sources_sqlx, load_source_sqlx,
-    load_sources_sqlx, normalize_source, upsert_source, upsert_source_sqlx,
+    delete_source_sqlx, load_skill_sources_sqlx, load_source_sqlx, load_sources_sqlx,
+    normalize_source, upsert_source_sqlx,
 };
 pub(crate) use web_record_repo::{
     import_web_record_sessions, list_web_record_sessions, load_web_record_session_detail,

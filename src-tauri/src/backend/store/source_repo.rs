@@ -235,14 +235,6 @@ fn is_skill_like_source(source: &Source) -> bool {
             .any(|glob| glob.to_ascii_lowercase().contains("skill.md"))
 }
 
-pub(crate) fn delete_source(conn: &Connection, id: &str) -> AppResult<()> {
-    conn.execute(sql::DELETE_ASSETS_BY_SOURCE, params![id])
-        .map_err(db_error)?;
-    conn.execute(sql::DELETE_SOURCE, params![id])
-        .map_err(db_error)?;
-    Ok(())
-}
-
 pub(crate) async fn delete_source_sqlx(pool: &SqlitePool, id: &str) -> AppResult<()> {
     sqlx::query(sql::DELETE_ASSETS_BY_SOURCE)
         .bind(id)

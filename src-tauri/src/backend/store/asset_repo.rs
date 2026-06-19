@@ -1,14 +1,13 @@
 use crate::backend::dto::AppResult;
 use crate::backend::models::{Asset, AssetFormat, AssetKind};
 #[cfg(test)]
-use rusqlite::Row;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, Row};
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 
 #[cfg(test)]
-use super::codec::to_sql_error;
+use super::codec::{db_error, to_sql_error};
 use super::{
-    codec::{db_error, decode_enum, encode_enum},
+    codec::{decode_enum, encode_enum},
     sql,
 };
 
@@ -113,6 +112,7 @@ fn map_asset_row(row: &Row<'_>) -> rusqlite::Result<Asset> {
     })
 }
 
+#[cfg(test)]
 pub(crate) fn replace_source_assets(
     conn: &Connection,
     source_id: &str,

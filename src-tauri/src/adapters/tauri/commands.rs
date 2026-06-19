@@ -1600,7 +1600,7 @@ mod tests {
         let database =
             crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
-        refresh_recorded_assets(&conn, &database).expect("refresh recorded assets");
+        refresh_recorded_assets(&database).expect("refresh recorded assets");
 
         assert!(!crate::backend::store::load_sources(&conn)
             .expect("load sources")
@@ -1619,7 +1619,6 @@ mod tests {
             crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
         scan_selected_sources(
-            &conn,
             &database,
             vec![source.clone()],
             crate::backend::scanner::scan_source,
@@ -1767,7 +1766,7 @@ mod tests {
         let database =
             crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
-        refresh_recorded_assets(&conn, &database).expect("refresh recorded assets");
+        refresh_recorded_assets(&database).expect("refresh recorded assets");
 
         assert!(crate::backend::store::load_assets(&conn)
             .expect("load assets")
