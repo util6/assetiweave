@@ -15,8 +15,10 @@ mod source_repo;
 mod sql;
 mod web_record_repo;
 
+#[cfg(test)]
+pub(crate) use asset_repo::load_assets_by_kind;
 pub(crate) use asset_repo::{
-    load_asset_sqlx, load_assets, load_assets_by_kind, load_assets_sqlx, replace_source_assets,
+    load_asset_sqlx, load_assets, load_assets_sqlx, replace_source_assets,
     replace_source_assets_sqlx, update_asset_description_sqlx,
 };
 pub(crate) use conversation_repo::{

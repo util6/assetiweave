@@ -51,12 +51,17 @@ pub(crate) fn mount_log_fields(
 
 pub(crate) fn apply_skill_group_mount_record(
     conn: &rusqlite::Connection,
+    db: &crate::backend::store::Database,
     group_id: &str,
     profile_id: &str,
     enabled: bool,
 ) -> AppResult<ApplyAssetGroupMountResult> {
-    let assets = crate::backend::store::load_assets_by_kind(&conn, Some(AssetKind::Skill))?;
-    let detail = crate::backend::store::load_skill_group_detail(conn, group_id, &assets)?;
+    let pool = db.pool().clone();
+    let group_id_to_load = group_id.to_string();
+    let detail = db.block_on(async move {
+        let assets = crate::backend::store::load_assets_sqlx(&pool, Some(AssetKind::Skill)).await?;
+        crate::backend::store::load_skill_group_detail_sqlx(&pool, &group_id_to_load, &assets).await
+    })?;
     if !detail.group.enabled {
         return Err(format!("asset group is disabled: {}", detail.group.name));
     }

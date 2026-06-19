@@ -1954,8 +1954,10 @@ mod tests {
             &assets,
         )
         .expect("insert group members");
+        let database =
+            crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
-        let result = apply_skill_group_mount_record(&conn, &group.id, &profile.id, true)
+        let result = apply_skill_group_mount_record(&conn, &database, &group.id, &profile.id, true)
             .expect("apply group");
 
         assert_eq!(result.requested_count, 1);

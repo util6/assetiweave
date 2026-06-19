@@ -1885,7 +1885,9 @@ impl AppService {
         profile_id: &str,
         enabled: bool,
     ) -> AppResult<ApplyAssetGroupMountResult> {
-        capabilities::apply_skill_group_mount_record(&self.conn, group_id, profile_id, enabled)
+        capabilities::apply_skill_group_mount_record(
+            &self.conn, &self.db, group_id, profile_id, enabled,
+        )
     }
 
     pub(crate) fn preview_skill_group_exclusive_mount(
