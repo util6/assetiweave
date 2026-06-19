@@ -23,11 +23,12 @@ pub(crate) use asset_repo::{load_assets, load_assets_by_kind, replace_source_ass
 pub(crate) use conversation_repo::{
     delete_conversation_adapter_sqlx, disable_conversation_source_sqlx,
     import_conversation_sessions_sqlx, list_conversation_adapters_sqlx,
-    list_conversation_question_details, list_conversation_sessions, list_conversation_sources_sqlx,
-    load_conversation_adapter_sqlx, load_conversation_question_detail,
-    load_conversation_session_detail, load_conversation_source_sqlx, merge_conversation_questions,
-    render_session_markdown_for_questions_with_filter, render_session_markdown_with_filter,
-    search_conversation_cards, seed_builtin_conversation_adapters, split_conversation_question,
+    list_conversation_question_details_sqlx, list_conversation_sessions_sqlx,
+    list_conversation_sources_sqlx, load_conversation_adapter_sqlx,
+    load_conversation_question_detail_sqlx, load_conversation_session_detail_sqlx,
+    load_conversation_source_sqlx, merge_conversation_questions,
+    render_conversation_detail_markdown_with_filter, search_conversation_cards,
+    seed_builtin_conversation_adapters, split_conversation_question,
     upsert_conversation_adapter_sqlx, upsert_conversation_source_sqlx,
 };
 pub(crate) use database::{

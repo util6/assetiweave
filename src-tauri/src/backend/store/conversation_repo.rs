@@ -507,6 +507,299 @@ pub(crate) async fn import_conversation_sessions_sqlx(
     })
 }
 
+pub(crate) async fn list_conversation_sessions_sqlx(
+    pool: &SqlitePool,
+    adapter_id: Option<&str>,
+    source_id: Option<&str>,
+    query: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> AppResult<Vec<ConversationSessionListItem>> {
+    let needle = normalize_query(query);
+    let rows = sqlx::query(
+        r#"
+        SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
+               s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
+               s.missing, s.created_at, s.imported_at,
+               (
+                   SELECT COUNT(*)
+                   FROM conversation_questions q
+                   WHERE q.session_id = s.id
+               ) AS question_count,
+               (
+                   SELECT COUNT(*)
+                   FROM conversation_turns t
+                   WHERE t.session_id = s.id
+               ) AS turn_count
+        FROM conversation_sessions s
+        WHERE (?1 IS NULL OR s.adapter_id = ?1)
+          AND (?2 IS NULL OR s.source_id = ?2)
+          AND (
+              ?3 IS NULL
+              OR instr(lower(s.title), ?3) > 0
+              OR instr(lower(COALESCE(s.project_path, '')), ?3) > 0
+              OR instr(lower(s.external_id), ?3) > 0
+              OR EXISTS (
+                  SELECT 1
+                  FROM conversation_questions q
+                  WHERE q.session_id = s.id
+                    AND (
+                        instr(lower(q.question_text), ?3) > 0
+                        OR instr(lower(q.answer_text), ?3) > 0
+                        OR instr(lower(q.code_text), ?3) > 0
+                        OR instr(lower(q.command_text), ?3) > 0
+                    )
+              )
+          )
+        ORDER BY COALESCE(s.updated_at, s.imported_at) DESC, s.title ASC
+        LIMIT ?4 OFFSET ?5
+        "#,
+    )
+    .bind(adapter_id)
+    .bind(source_id)
+    .bind(needle.as_deref())
+    .bind(i64::try_from(limit).map_err(|_| format!("invalid conversation limit: {limit}"))?)
+    .bind(i64::try_from(offset).map_err(|_| format!("invalid conversation offset: {offset}"))?)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+
+    rows.iter()
+        .map(|row| {
+            let question_count = usize::try_from(
+                row.try_get::<i64, _>(13)
+                    .map_err(|error| error.to_string())?,
+            )
+            .map_err(|_| "invalid conversation question count".to_string())?;
+            let turn_count = usize::try_from(
+                row.try_get::<i64, _>(14)
+                    .map_err(|error| error.to_string())?,
+            )
+            .map_err(|_| "invalid conversation turn count".to_string())?;
+            Ok(ConversationSessionListItem {
+                session: map_sqlx_conversation_session(row)?,
+                question_count,
+                turn_count,
+            })
+        })
+        .collect()
+}
+
+pub(crate) async fn load_conversation_session_detail_sqlx(
+    pool: &SqlitePool,
+    session_id: &str,
+) -> AppResult<ConversationSessionDetail> {
+    let session_row = sqlx::query(
+        r#"
+        SELECT id, source_id, adapter_id, external_id, title, project_path,
+               started_at, updated_at, source_locator, source_fingerprint,
+               missing, created_at, imported_at
+        FROM conversation_sessions
+        WHERE id = ?1
+        "#,
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| format!("conversation session not found: {session_id}"))?;
+    let session = map_sqlx_conversation_session(&session_row)?;
+    let questions = load_conversation_question_details_for_session_sqlx(pool, session_id).await?;
+    Ok(ConversationSessionDetail { session, questions })
+}
+
+pub(crate) async fn list_conversation_question_details_sqlx(
+    pool: &SqlitePool,
+    session_id: &str,
+    query: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> AppResult<Vec<ConversationQuestionDetail>> {
+    let needle = normalize_query(query);
+    let details = load_conversation_question_details_for_session_sqlx(pool, session_id).await?;
+    Ok(details
+        .into_iter()
+        .filter(|detail| {
+            needle.as_ref().is_none_or(|needle| {
+                let question = &detail.question;
+                format!(
+                    "{}\n{}\n{}\n{}",
+                    question.question_text,
+                    question.answer_text,
+                    question.code_text,
+                    question.command_text
+                )
+                .to_lowercase()
+                .contains(needle)
+            })
+        })
+        .skip(offset)
+        .take(limit)
+        .collect())
+}
+
+pub(crate) async fn load_conversation_question_detail_sqlx(
+    pool: &SqlitePool,
+    question_id: &str,
+) -> AppResult<ConversationQuestionDetail> {
+    let question_row = sqlx::query(
+        r#"
+        SELECT id, session_id, question_index, title, question_text, answer_text,
+               code_text, command_text, grouping_origin, created_at, updated_at
+        FROM conversation_questions
+        WHERE id = ?1
+        "#,
+    )
+    .bind(question_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| format!("conversation question not found: {question_id}"))?;
+    let question = map_sqlx_conversation_question(&question_row)?;
+
+    let turn_rows = sqlx::query(
+        r#"
+        SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
+               t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at
+        FROM conversation_question_turns qt
+        JOIN conversation_turns t ON t.id = qt.turn_id
+        WHERE qt.question_id = ?1
+        ORDER BY qt.turn_order ASC, t.turn_index ASC
+        "#,
+    )
+    .bind(question_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    let turns = turn_rows
+        .iter()
+        .map(map_sqlx_conversation_turn)
+        .collect::<AppResult<Vec<_>>>()?;
+
+    let part_rows = sqlx::query(
+        r#"
+        SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
+               p.command, p.cwd, p.status, p.exit_code, p.metadata_json
+        FROM conversation_parts p
+        JOIN conversation_question_turns qt ON qt.turn_id = p.turn_id
+        WHERE qt.question_id = ?1
+        ORDER BY qt.turn_order ASC, p.part_index ASC
+        "#,
+    )
+    .bind(question_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    let parts = part_rows
+        .iter()
+        .map(map_sqlx_conversation_part)
+        .collect::<AppResult<Vec<_>>>()?;
+    Ok(ConversationQuestionDetail {
+        question,
+        turns,
+        parts,
+    })
+}
+
+pub(crate) fn render_conversation_detail_markdown_with_filter(
+    detail: &ConversationSessionDetail,
+    question_ids: &[String],
+    content_filter: &ConversationExportContentFilter,
+) -> AppResult<String> {
+    let selection = (!question_ids.is_empty()).then_some(question_ids);
+    render_session_detail_markdown(detail, selection, content_filter)
+}
+
+async fn load_conversation_question_details_for_session_sqlx(
+    pool: &SqlitePool,
+    session_id: &str,
+) -> AppResult<Vec<ConversationQuestionDetail>> {
+    let question_rows = sqlx::query(
+        r#"
+        SELECT id, session_id, question_index, title, question_text, answer_text,
+               code_text, command_text, grouping_origin, created_at, updated_at
+        FROM conversation_questions
+        WHERE session_id = ?1
+        ORDER BY question_index ASC
+        "#,
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    let questions = question_rows
+        .iter()
+        .map(map_sqlx_conversation_question)
+        .collect::<AppResult<Vec<_>>>()?;
+
+    let turn_rows = sqlx::query(
+        r#"
+        SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
+               t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at,
+               qt.question_id
+        FROM conversation_question_turns qt
+        JOIN conversation_turns t ON t.id = qt.turn_id
+        JOIN conversation_questions q ON q.id = qt.question_id
+        WHERE q.session_id = ?1
+        ORDER BY q.question_index ASC, qt.turn_order ASC, t.turn_index ASC
+        "#,
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    let mut turns_by_question = BTreeMap::<String, Vec<ConversationTurn>>::new();
+    for row in &turn_rows {
+        let question_id = row
+            .try_get::<String, _>(11)
+            .map_err(|error| error.to_string())?;
+        turns_by_question
+            .entry(question_id)
+            .or_default()
+            .push(map_sqlx_conversation_turn(row)?);
+    }
+
+    let part_rows = sqlx::query(
+        r#"
+        SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
+               p.command, p.cwd, p.status, p.exit_code, p.metadata_json
+        FROM conversation_parts p
+        JOIN conversation_turns t ON t.id = p.turn_id
+        WHERE t.session_id = ?1
+        ORDER BY t.turn_index ASC, p.part_index ASC
+        "#,
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    let mut parts_by_turn = BTreeMap::<String, Vec<ConversationPart>>::new();
+    for row in &part_rows {
+        let part = map_sqlx_conversation_part(row)?;
+        parts_by_turn
+            .entry(part.turn_id.clone())
+            .or_default()
+            .push(part);
+    }
+
+    Ok(questions
+        .into_iter()
+        .map(|question| {
+            let turns = turns_by_question.remove(&question.id).unwrap_or_default();
+            let mut parts = Vec::new();
+            for turn in &turns {
+                parts.extend(parts_by_turn.remove(&turn.id).unwrap_or_default());
+            }
+            ConversationQuestionDetail {
+                question,
+                turns,
+                parts,
+            }
+        })
+        .collect())
+}
+
+#[cfg(test)]
 pub(crate) fn list_conversation_sessions(
     conn: &Connection,
     adapter_id: Option<&str>,
@@ -561,6 +854,7 @@ pub(crate) fn list_conversation_sessions(
     Ok(items.into_iter().skip(offset).take(limit).collect())
 }
 
+#[cfg(test)]
 pub(crate) fn load_conversation_session_detail(
     conn: &Connection,
     session_id: &str,
@@ -571,6 +865,7 @@ pub(crate) fn load_conversation_session_detail(
     Ok(ConversationSessionDetail { session, questions })
 }
 
+#[cfg(test)]
 pub(crate) fn list_conversation_question_details(
     conn: &Connection,
     session_id: &str,
@@ -911,15 +1206,7 @@ pub(crate) fn split_conversation_question(
     })
 }
 
-pub(crate) fn render_session_markdown_with_filter(
-    conn: &Connection,
-    session_id: &str,
-    content_filter: &ConversationExportContentFilter,
-) -> AppResult<String> {
-    let detail = load_conversation_session_detail(conn, session_id)?;
-    render_session_detail_markdown(&detail, None, content_filter)
-}
-
+#[cfg(test)]
 pub(crate) fn render_session_markdown_for_questions_with_filter(
     conn: &Connection,
     session_id: &str,
@@ -2362,6 +2649,7 @@ async fn renumber_questions_for_session_sqlx_tx(
     Ok(())
 }
 
+#[cfg(test)]
 fn load_conversation_session(
     conn: &Connection,
     session_id: &str,
@@ -2943,6 +3231,7 @@ fn ensure_question_ids_are_adjacent(
     Ok(())
 }
 
+#[cfg(test)]
 fn count_session_questions(conn: &Connection, session_id: &str) -> AppResult<usize> {
     let count: i64 = conn
         .query_row(
@@ -2954,6 +3243,7 @@ fn count_session_questions(conn: &Connection, session_id: &str) -> AppResult<usi
     Ok(count as usize)
 }
 
+#[cfg(test)]
 fn count_session_turns(conn: &Connection, session_id: &str) -> AppResult<usize> {
     let count: i64 = conn
         .query_row(
@@ -2965,6 +3255,7 @@ fn count_session_turns(conn: &Connection, session_id: &str) -> AppResult<usize> 
     Ok(count as usize)
 }
 
+#[cfg(test)]
 fn session_has_question_match(conn: &Connection, session_id: &str, query: &str) -> AppResult<bool> {
     let count: i64 = conn
         .query_row(
@@ -3562,6 +3853,81 @@ mod tests {
             .expect("import unchanged fingerprinted session through SQLx");
 
         assert_eq!(imported_at, "preserved");
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_conversation_reads_filter_questions_and_render_markdown() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-read-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let adapter = test_conversation_adapter(
+            "read-external",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let source = test_conversation_source(&adapter.id);
+
+        let (sessions, detail, filtered_questions, question, markdown) = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), &adapter).await?;
+                upsert_conversation_source_sqlx(database.pool(), &source).await?;
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    &source,
+                    &[fixture_session("v2")],
+                    false,
+                )
+                .await?;
+                let sessions = list_conversation_sessions_sqlx(
+                    database.pool(),
+                    None,
+                    Some(&source.id),
+                    Some("answer for t3"),
+                    20,
+                    0,
+                )
+                .await?;
+                let detail =
+                    load_conversation_session_detail_sqlx(database.pool(), &sessions[0].session.id)
+                        .await?;
+                let filtered_questions = list_conversation_question_details_sqlx(
+                    database.pool(),
+                    &sessions[0].session.id,
+                    Some("answer for t3"),
+                    20,
+                    0,
+                )
+                .await?;
+                let question = load_conversation_question_detail_sqlx(
+                    database.pool(),
+                    &filtered_questions[0].question.id,
+                )
+                .await?;
+                let markdown = render_conversation_detail_markdown_with_filter(
+                    &detail,
+                    &[question.question.id.clone()],
+                    &ConversationExportContentFilter::default(),
+                )?;
+                AppResult::Ok((sessions, detail, filtered_questions, question, markdown))
+            })
+            .expect("read conversations through SQLx");
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].question_count, 2);
+        assert_eq!(sessions[0].turn_count, 3);
+        assert_eq!(detail.questions.len(), 2);
+        assert_eq!(filtered_questions.len(), 1);
+        assert_eq!(filtered_questions[0].question.question_text, "Export it");
+        assert_eq!(question.turns.len(), 1);
+        assert_eq!(question.parts.len(), 1);
+        assert!(markdown.contains("## 1. Export it"));
+        assert!(markdown.contains("answer for t3"));
+        assert!(!markdown.contains("How does sync work?"));
 
         drop(database);
         cleanup_database(&db_path);
