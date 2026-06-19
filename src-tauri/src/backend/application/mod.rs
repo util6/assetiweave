@@ -782,27 +782,34 @@ impl AppService {
             let adapter = self.db.block_on(async move {
                 crate::backend::store::load_conversation_adapter_sqlx(&pool, &adapter_id).await
             })?;
-            match crate::backend::conversations::read_source_sessions_with_adapter(
+            let sync_result = match crate::backend::conversations::read_source_sessions_with_adapter(
                 adapter.as_ref(),
                 &source,
-            )
-            .and_then(|sessions| {
-                if is_web_record_adapter(adapter.as_ref(), &source.adapter_id) {
+            ) {
+                Ok(sessions) if is_web_record_adapter(adapter.as_ref(), &source.adapter_id) => {
                     crate::backend::store::import_web_record_sessions(
                         &self.conn,
                         &source,
                         &sessions,
                         params.dry_run,
                     )
-                } else {
-                    crate::backend::store::import_conversation_sessions(
-                        &self.conn,
-                        &source,
-                        &sessions,
-                        params.dry_run,
-                    )
                 }
-            }) {
+                Ok(sessions) => {
+                    let pool = self.db.pool().clone();
+                    let import_source = source.clone();
+                    self.db.block_on(async move {
+                        crate::backend::store::import_conversation_sessions_sqlx(
+                            &pool,
+                            &import_source,
+                            &sessions,
+                            params.dry_run,
+                        )
+                        .await
+                    })
+                }
+                Err(error) => Err(error),
+            };
+            match sync_result {
                 Ok(result) => results.push(json!(result)),
                 Err(error) if params.source_id.is_some() => return Err(error),
                 Err(error) => errors.push(json!({

@@ -22,7 +22,7 @@ pub(crate) use asset_repo::{
 pub(crate) use asset_repo::{load_assets, load_assets_by_kind, replace_source_assets};
 pub(crate) use conversation_repo::{
     delete_conversation_adapter_sqlx, disable_conversation_source_sqlx,
-    import_conversation_sessions, list_conversation_adapters_sqlx,
+    import_conversation_sessions_sqlx, list_conversation_adapters_sqlx,
     list_conversation_question_details, list_conversation_sessions, list_conversation_sources_sqlx,
     load_conversation_adapter_sqlx, load_conversation_question_detail,
     load_conversation_session_detail, load_conversation_source_sqlx, merge_conversation_questions,
