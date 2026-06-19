@@ -787,12 +787,17 @@ impl AppService {
                 &source,
             ) {
                 Ok(sessions) if is_web_record_adapter(adapter.as_ref(), &source.adapter_id) => {
-                    crate::backend::store::import_web_record_sessions(
-                        &self.conn,
-                        &source,
-                        &sessions,
-                        params.dry_run,
-                    )
+                    let pool = self.db.pool().clone();
+                    let import_source = source.clone();
+                    self.db.block_on(async move {
+                        crate::backend::store::import_web_record_sessions_sqlx(
+                            &pool,
+                            &import_source,
+                            &sessions,
+                            params.dry_run,
+                        )
+                        .await
+                    })
                 }
                 Ok(sessions) => {
                     let pool = self.db.pool().clone();
