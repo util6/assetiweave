@@ -54,7 +54,7 @@ pub(crate) use mount_repo::{
 #[cfg(test)]
 pub(crate) use profile_repo::{count_deployment_state_by_profile, delete_profile, upsert_profile};
 pub(crate) use profile_repo::{
-    delete_profile_sqlx, load_profiles, load_profiles_sqlx, upsert_profile_sqlx,
+    delete_profile_sqlx, load_profile_sqlx, load_profiles, load_profiles_sqlx, upsert_profile_sqlx,
 };
 pub(crate) use schema::open_initialized;
 pub(crate) use shortcut_repo::{

@@ -1750,10 +1750,11 @@ impl AppService {
             .ok_or_else(|| "profile_id is required".to_string())?;
         let asset = self.resolve_skill_asset(&params.asset_ref)?;
         if params.dry_run {
-            let profile = crate::backend::store::load_profiles(&self.conn)?
-                .into_iter()
-                .find(|profile| profile.id == profile_id)
-                .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+            let pool = self.db.pool().clone();
+            let profile = self.db.block_on(async move {
+                crate::backend::store::load_profile_sqlx(&pool, profile_id).await
+            })?;
+            let profile = profile.ok_or_else(|| format!("profile not found: {profile_id}"))?;
             let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
             return Ok(json!({
                 "dry_run": true,
@@ -3291,6 +3292,106 @@ mod tests {
             .list_asset_mounts(Some(&asset.id))
             .expect("read SQLx mount preference");
         assert_eq!(saved_mounts, vec![mount]);
+
+        drop(service);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn mount_skill_dry_run_reads_profile_through_sqlx_path() {
+        let root =
+            std::env::temp_dir().join(format!("assetiweave-sqlx-mount-dry-run-{}", Uuid::new_v4()));
+        let source_root = root.join("source");
+        let target_root = root.join("target");
+        let skill_root = source_root.join("skill-a");
+        fs::create_dir_all(&skill_root).expect("create skill source");
+        fs::create_dir_all(&target_root).expect("create target root");
+        fs::write(
+            skill_root.join("SKILL.md"),
+            "---\ndescription: Skill A\n---\n",
+        )
+        .expect("write skill");
+
+        let service =
+            AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+        service
+            .conn
+            .execute_batch("DELETE FROM asset_mounts; DELETE FROM deployment_state; DELETE FROM assets; DELETE FROM sources;")
+            .expect("clear seeded catalog");
+        let source = Source {
+            id: "source-a".to_string(),
+            name: "Source A".to_string(),
+            kind: SourceKind::Local,
+            root_path: source_root.to_string_lossy().to_string(),
+            scanner_kind: SourceScannerKind::Skill,
+            source_origin: SourceOrigin::LocalFolder,
+            repo_root: None,
+            scan_root: String::new(),
+            origin_app_kind: None,
+            include_globs: vec!["**/SKILL.md".to_string()],
+            exclude_globs: Vec::new(),
+            default_kind: Some(AssetKind::Skill),
+            enabled: true,
+            priority: 0,
+            last_scanned_at: None,
+            last_scan_status: None,
+        };
+        crate::backend::store::upsert_source(&service.conn, &source).expect("save source");
+
+        let now = Utc::now().to_rfc3339();
+        let asset = Asset {
+            id: "asset-a".to_string(),
+            source_id: source.id.clone(),
+            name: "skill-a".to_string(),
+            kind: AssetKind::Skill,
+            format: AssetFormat::Directory,
+            relative_path: "skill-a".to_string(),
+            absolute_path: skill_root.to_string_lossy().to_string(),
+            entry_file: Some(skill_root.join("SKILL.md").to_string_lossy().to_string()),
+            description: None,
+            content_hash: Some("hash-a".to_string()),
+            discovered_at: now.clone(),
+            updated_at: now,
+        };
+        crate::backend::store::replace_source_assets(&service.conn, &source.id, &[asset.clone()])
+            .expect("save source asset");
+
+        let profile = service
+            .create_profile(TargetProfileInput {
+                id: Some("target-a".to_string()),
+                name: "Target A".to_string(),
+                app_kind: Some(crate::backend::models::AppKind::Custom),
+                target_paths: Some(vec![target_root.to_string_lossy().to_string()]),
+                supported_kinds: None,
+                deployment_strategy: Some(DeploymentStrategy::SymlinkToSource),
+                enabled: Some(true),
+                include: None,
+                exclude: None,
+                safety: None,
+            })
+            .expect("create target profile");
+
+        let preview = service
+            .mount_skill(
+                AssetRefParams {
+                    asset_ref: asset.id.clone(),
+                    profile_id: Some(profile.id.clone()),
+                    dry_run: true,
+                    yes: false,
+                    unmount: false,
+                },
+                true,
+            )
+            .expect("dry-run mount skill");
+
+        assert_eq!(preview["dry_run"], json!(true));
+        assert_eq!(preview["profile_id"], json!(profile.id));
+        assert_eq!(preview["status"]["state"], json!("not_mounted"));
+        assert!(!target_root.join("skill-a").exists());
+        assert!(service
+            .list_asset_mounts(Some(&asset.id))
+            .expect("load mounts after dry-run")
+            .is_empty());
 
         drop(service);
         fs::remove_dir_all(root).ok();

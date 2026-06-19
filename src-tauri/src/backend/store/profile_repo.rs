@@ -28,6 +28,19 @@ pub(crate) async fn load_profiles_sqlx(pool: &SqlitePool) -> AppResult<Vec<Targe
     payloads.into_iter().map(decode_json).collect()
 }
 
+pub(crate) async fn load_profile_sqlx(
+    pool: &SqlitePool,
+    profile_id: &str,
+) -> AppResult<Option<TargetProfile>> {
+    sqlx::query_scalar::<_, String>(sql::LOAD_PROFILE)
+        .bind(profile_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| error.to_string())?
+        .map(decode_json)
+        .transpose()
+}
+
 pub(crate) fn upsert_profile(conn: &Connection, profile: &TargetProfile) -> AppResult<()> {
     conn.execute(
         sql::UPSERT_PROFILE,
@@ -126,34 +139,44 @@ mod tests {
         let database = Database::open(&db_path).expect("open database");
         let profile = test_profile("profile-a");
 
-        database
-            .block_on(async {
-                upsert_profile_sqlx(database.pool(), &profile).await?;
-                sqlx::query(
-                    "INSERT INTO app_shortcut_items (
+        let (profiles, loaded_profile, missing_profile, remaining_profiles, shortcut_count) =
+            database
+                .block_on(async {
+                    upsert_profile_sqlx(database.pool(), &profile).await?;
+                    sqlx::query(
+                        "INSERT INTO app_shortcut_items (
                         profile_id, display_icon, accent_color, enabled, sort_order
                     ) VALUES (?1, 'C', '#000000', 1, 0)",
-                )
-                .bind(&profile.id)
-                .execute(database.pool())
-                .await
-                .map_err(|error| error.to_string())?;
-                let profiles = load_profiles_sqlx(database.pool()).await?;
-                delete_profile_sqlx(database.pool(), &profile.id).await?;
-                let remaining_profiles = load_profiles_sqlx(database.pool()).await?;
-                let shortcut_count: i64 =
-                    sqlx::query_scalar("SELECT COUNT(*) FROM app_shortcut_items")
-                        .fetch_one(database.pool())
-                        .await
-                        .map_err(|error| error.to_string())?;
-                AppResult::Ok((profiles, remaining_profiles, shortcut_count))
-            })
-            .map(|(profiles, remaining_profiles, shortcut_count)| {
-                assert_eq!(profiles, vec![profile]);
-                assert!(remaining_profiles.is_empty());
-                assert_eq!(shortcut_count, 0);
-            })
-            .expect("query SQLx profile repo");
+                    )
+                    .bind(&profile.id)
+                    .execute(database.pool())
+                    .await
+                    .map_err(|error| error.to_string())?;
+                    let profiles = load_profiles_sqlx(database.pool()).await?;
+                    let loaded_profile = load_profile_sqlx(database.pool(), &profile.id).await?;
+                    let missing_profile = load_profile_sqlx(database.pool(), "missing").await?;
+                    delete_profile_sqlx(database.pool(), &profile.id).await?;
+                    let remaining_profiles = load_profiles_sqlx(database.pool()).await?;
+                    let shortcut_count: i64 =
+                        sqlx::query_scalar("SELECT COUNT(*) FROM app_shortcut_items")
+                            .fetch_one(database.pool())
+                            .await
+                            .map_err(|error| error.to_string())?;
+                    AppResult::Ok((
+                        profiles,
+                        loaded_profile,
+                        missing_profile,
+                        remaining_profiles,
+                        shortcut_count,
+                    ))
+                })
+                .expect("query SQLx profile repo");
+
+        assert_eq!(profiles, vec![profile.clone()]);
+        assert_eq!(loaded_profile.expect("load profile by id").id, profile.id);
+        assert!(missing_profile.is_none());
+        assert!(remaining_profiles.is_empty());
+        assert_eq!(shortcut_count, 0);
         drop(database);
         cleanup_database(&db_path);
     }

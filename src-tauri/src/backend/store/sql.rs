@@ -397,6 +397,7 @@ ORDER BY name ASC
 "#;
 
 pub(crate) const LIST_PROFILES: &str = "SELECT payload FROM profiles ORDER BY id ASC";
+pub(crate) const LOAD_PROFILE: &str = "SELECT payload FROM profiles WHERE id = ?1";
 
 pub(crate) const COUNT_SOURCES: &str = "SELECT COUNT(*) FROM sources";
 pub(crate) const COUNT_ASSETS: &str = "SELECT COUNT(*) FROM assets";
