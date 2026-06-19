@@ -2029,15 +2029,19 @@ impl AppService {
     }
 
     fn resolve_skill_asset(&self, asset_ref: &str) -> AppResult<Asset> {
-        let needle = asset_ref.trim();
+        let needle = asset_ref.trim().to_string();
         if needle.is_empty() {
             return Err("asset ref is required".to_string());
         }
-        let matches =
-            crate::backend::store::load_assets_by_kind(&self.conn, Some(AssetKind::Skill))?
-                .into_iter()
-                .filter(|asset| asset.id == needle || asset.name == needle)
-                .collect::<Vec<_>>();
+        let pool = self.db.pool().clone();
+        let matches = self
+            .db
+            .block_on(async move {
+                crate::backend::store::load_assets_sqlx(&pool, Some(AssetKind::Skill)).await
+            })?
+            .into_iter()
+            .filter(|asset| asset.id == needle || asset.name == needle)
+            .collect::<Vec<_>>();
         match matches.as_slice() {
             [asset] => Ok(asset.clone()),
             [] => Err(format!("skill not found: {needle}")),
