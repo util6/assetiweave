@@ -644,14 +644,17 @@ pub(crate) fn scan_selected_sources(
     }
 
     cleanup_orphan_asset_records(conn, db)?;
-    crate::backend::store::load_assets(&conn)
+    let pool = db.pool().clone();
+    db.block_on(async move { crate::backend::store::load_assets_sqlx(&pool, None).await })
 }
 
 pub(crate) fn refresh_all_sources(
     conn: &rusqlite::Connection,
     db: &crate::backend::store::Database,
 ) -> AppResult<Vec<Asset>> {
-    let sources = crate::backend::store::load_sources(conn)?;
+    let pool = db.pool().clone();
+    let sources =
+        db.block_on(async move { crate::backend::store::load_sources_sqlx(&pool).await })?;
     scan_selected_sources(conn, db, sources, crate::backend::scanner::scan_source)
 }
 
@@ -659,7 +662,10 @@ pub(crate) fn refresh_recorded_assets(
     conn: &rusqlite::Connection,
     db: &crate::backend::store::Database,
 ) -> AppResult<Vec<Asset>> {
-    let sources = prune_missing_sources(conn, crate::backend::store::load_sources(conn)?)?;
+    let pool = db.pool().clone();
+    let sources =
+        db.block_on(async move { crate::backend::store::load_sources_sqlx(&pool).await })?;
+    let sources = prune_missing_sources(conn, sources)?;
     let source_map: HashMap<&str, &Source> = sources
         .iter()
         .map(|source| (source.id.as_str(), source))
@@ -673,7 +679,10 @@ pub(crate) fn refresh_recorded_assets(
     let mut orphan_source_ids = Vec::new();
     let now = Utc::now().to_rfc3339();
 
-    for asset in crate::backend::store::load_assets(conn)? {
+    let pool = db.pool().clone();
+    let assets =
+        db.block_on(async move { crate::backend::store::load_assets_sqlx(&pool, None).await })?;
+    for asset in assets {
         let Some(source) = source_map.get(asset.source_id.as_str()) else {
             orphan_source_ids.push(asset.source_id.clone());
             continue;
@@ -725,7 +734,8 @@ pub(crate) fn refresh_recorded_assets(
     }
 
     cleanup_orphan_asset_records(conn, db)?;
-    crate::backend::store::load_assets(conn)
+    let pool = db.pool().clone();
+    db.block_on(async move { crate::backend::store::load_assets_sqlx(&pool, None).await })
 }
 
 pub(crate) fn cleanup_orphan_asset_records(
