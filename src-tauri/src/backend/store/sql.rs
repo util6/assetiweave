@@ -396,6 +396,13 @@ WHERE kind = ?1
 ORDER BY name ASC
 "#;
 
+pub(crate) const LOAD_ASSET: &str = r#"
+SELECT id, source_id, name, kind, format, relative_path, absolute_path,
+       entry_file, description, content_hash, discovered_at, updated_at
+FROM assets
+WHERE id = ?1
+"#;
+
 pub(crate) const LIST_PROFILES: &str = "SELECT payload FROM profiles ORDER BY id ASC";
 pub(crate) const LOAD_PROFILE: &str = "SELECT payload FROM profiles WHERE id = ?1";
 

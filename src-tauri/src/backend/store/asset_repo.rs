@@ -31,6 +31,17 @@ pub(crate) async fn load_assets_sqlx(
     rows.iter().map(map_sqlx_asset_row).collect()
 }
 
+pub(crate) async fn load_asset_sqlx(pool: &SqlitePool, asset_id: &str) -> AppResult<Option<Asset>> {
+    sqlx::query(sql::LOAD_ASSET)
+        .bind(asset_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| error.to_string())?
+        .as_ref()
+        .map(map_sqlx_asset_row)
+        .transpose()
+}
+
 pub(crate) fn load_assets_by_kind(
     conn: &Connection,
     kind: Option<AssetKind>,
@@ -213,14 +224,18 @@ mod tests {
                     .await?;
                 let scoped_assets =
                     load_assets_sqlx(database.pool(), Some(AssetKind::Skill)).await?;
+                let loaded_skill = load_asset_sqlx(database.pool(), &skill.id).await?;
+                let missing_asset = load_asset_sqlx(database.pool(), "missing").await?;
                 skill.description = Some("Updated".to_string());
                 update_asset_description_sqlx(database.pool(), &skill).await?;
                 let all_assets = load_assets_sqlx(database.pool(), None).await?;
-                AppResult::Ok((scoped_assets, all_assets))
+                AppResult::Ok((scoped_assets, loaded_skill, missing_asset, all_assets))
             })
-            .map(|(scoped_assets, all_assets)| {
+            .map(|(scoped_assets, loaded_skill, missing_asset, all_assets)| {
                 assert_eq!(scoped_assets.len(), 1);
                 assert_eq!(scoped_assets[0].name, "skill-a");
+                assert_eq!(loaded_skill.expect("load asset by id").id, skill.id);
+                assert!(missing_asset.is_none());
                 let updated = all_assets
                     .iter()
                     .find(|asset| asset.id == "asset-skill-a")

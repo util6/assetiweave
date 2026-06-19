@@ -1923,7 +1923,7 @@ impl AppService {
         asset_id: &str,
         profile_id: &str,
     ) -> AppResult<AssetMount> {
-        let (asset, profile) = load_mount_asset_and_profile(&self.conn, asset_id, profile_id)?;
+        let (asset, profile) = load_mount_asset_and_profile(&self.db, asset_id, profile_id)?;
         let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
         capabilities::set_asset_mount_record(
             &self.conn,
@@ -3939,20 +3939,22 @@ fn engine_db_path() -> AppResult<PathBuf> {
 }
 
 fn load_mount_asset_and_profile(
-    conn: &Connection,
+    db: &crate::backend::store::Database,
     asset_id: &str,
     profile_id: &str,
 ) -> AppResult<(Asset, TargetProfile)> {
-    let asset = crate::backend::store::load_assets(conn)?
-        .into_iter()
-        .find(|asset| asset.id == asset_id)
-        .ok_or_else(|| format!("asset not found: {asset_id}"))?;
-    let profile = crate::backend::store::load_profiles(conn)?
-        .into_iter()
-        .find(|profile| profile.id == profile_id)
-        .ok_or_else(|| format!("profile not found: {profile_id}"))?;
-
-    Ok((asset, profile))
+    let pool = db.pool().clone();
+    let asset_id = asset_id.to_string();
+    let profile_id = profile_id.to_string();
+    db.block_on(async move {
+        let asset = crate::backend::store::load_asset_sqlx(&pool, &asset_id)
+            .await?
+            .ok_or_else(|| format!("asset not found: {asset_id}"))?;
+        let profile = crate::backend::store::load_profile_sqlx(&pool, &profile_id)
+            .await?
+            .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+        AppResult::Ok((asset, profile))
+    })
 }
 
 fn source_from_input(source: SourceInput) -> Source {
