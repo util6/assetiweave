@@ -14,11 +14,88 @@ use crate::backend::models::{
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use sha2::{Digest, Sha256};
+use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::codec::{db_error, decode_enum, decode_json, encode_enum, encode_json, to_sql_error};
 
 pub(super) const CONVERSATION_IMPORT_BATCH_SIZE: usize = 8;
+
+const LIST_CONVERSATION_ADAPTERS_SQL: &str = r#"
+    SELECT id, name, kind, version, enabled, manifest_path, executable_path,
+           content_hash, trusted_hash, trust_state, protocol_version,
+           capabilities, input_kinds, created_at, updated_at
+    FROM conversation_adapters
+    ORDER BY kind ASC, name ASC
+    "#;
+
+const LOAD_CONVERSATION_ADAPTER_SQL: &str = r#"
+    SELECT id, name, kind, version, enabled, manifest_path, executable_path,
+           content_hash, trusted_hash, trust_state, protocol_version,
+           capabilities, input_kinds, created_at, updated_at
+    FROM conversation_adapters
+    WHERE id = ?1
+    "#;
+
+const UPSERT_CONVERSATION_ADAPTER_SQL: &str = r#"
+    INSERT INTO conversation_adapters (
+        id, name, kind, version, enabled, manifest_path, executable_path,
+        content_hash, trusted_hash, trust_state, protocol_version,
+        capabilities, input_kinds, created_at, updated_at
+    )
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+    ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        kind = excluded.kind,
+        version = excluded.version,
+        enabled = excluded.enabled,
+        manifest_path = excluded.manifest_path,
+        executable_path = excluded.executable_path,
+        content_hash = excluded.content_hash,
+        trusted_hash = excluded.trusted_hash,
+        trust_state = excluded.trust_state,
+        protocol_version = excluded.protocol_version,
+        capabilities = excluded.capabilities,
+        input_kinds = excluded.input_kinds,
+        updated_at = excluded.updated_at
+    "#;
+
+const DELETE_CONVERSATION_ADAPTER_SQL: &str = "DELETE FROM conversation_adapters WHERE id = ?1";
+
+const DISABLE_CONVERSATION_SOURCES_BY_ADAPTER_SQL: &str =
+    "UPDATE conversation_sources SET enabled = 0, updated_at = ?1 WHERE adapter_id = ?2";
+
+const LIST_CONVERSATION_SOURCES_SQL: &str = r#"
+    SELECT id, adapter_id, name, kind, location, config_json, enabled,
+           last_synced_at, last_sync_status, created_at, updated_at
+    FROM conversation_sources
+    ORDER BY adapter_id ASC, name ASC
+    "#;
+
+const LOAD_CONVERSATION_SOURCE_SQL: &str = r#"
+    SELECT id, adapter_id, name, kind, location, config_json, enabled,
+           last_synced_at, last_sync_status, created_at, updated_at
+    FROM conversation_sources
+    WHERE id = ?1
+    "#;
+
+const UPSERT_CONVERSATION_SOURCE_SQL: &str = r#"
+    INSERT INTO conversation_sources (
+        id, adapter_id, name, kind, location, config_json, enabled,
+        last_synced_at, last_sync_status, created_at, updated_at
+    )
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+    ON CONFLICT(id) DO UPDATE SET
+        adapter_id = excluded.adapter_id,
+        name = excluded.name,
+        kind = excluded.kind,
+        location = excluded.location,
+        config_json = excluded.config_json,
+        enabled = excluded.enabled,
+        last_synced_at = excluded.last_synced_at,
+        last_sync_status = excluded.last_sync_status,
+        updated_at = excluded.updated_at
+    "#;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct ConversationImportResult {
@@ -45,22 +122,14 @@ pub(crate) fn seed_builtin_conversation_adapters(conn: &Connection) -> AppResult
     Ok(())
 }
 
-pub(crate) fn list_conversation_adapters(conn: &Connection) -> AppResult<Vec<ConversationAdapter>> {
-    let mut stmt = conn
-        .prepare(
-            r#"
-            SELECT id, name, kind, version, enabled, manifest_path, executable_path,
-                   content_hash, trusted_hash, trust_state, protocol_version,
-                   capabilities, input_kinds, created_at, updated_at
-            FROM conversation_adapters
-            ORDER BY kind ASC, name ASC
-            "#,
-        )
-        .map_err(db_error)?;
-    let rows = stmt
-        .query_map([], map_conversation_adapter)
-        .map_err(db_error)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
+pub(crate) async fn list_conversation_adapters_sqlx(
+    pool: &SqlitePool,
+) -> AppResult<Vec<ConversationAdapter>> {
+    let rows = sqlx::query(LIST_CONVERSATION_ADAPTERS_SQL)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    rows.iter().map(map_sqlx_conversation_adapter).collect()
 }
 
 pub(crate) fn upsert_conversation_adapter(
@@ -68,28 +137,7 @@ pub(crate) fn upsert_conversation_adapter(
     adapter: &ConversationAdapter,
 ) -> AppResult<()> {
     conn.execute(
-        r#"
-        INSERT INTO conversation_adapters (
-            id, name, kind, version, enabled, manifest_path, executable_path,
-            content_hash, trusted_hash, trust_state, protocol_version,
-            capabilities, input_kinds, created_at, updated_at
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
-        ON CONFLICT(id) DO UPDATE SET
-            name = excluded.name,
-            kind = excluded.kind,
-            version = excluded.version,
-            enabled = excluded.enabled,
-            manifest_path = excluded.manifest_path,
-            executable_path = excluded.executable_path,
-            content_hash = excluded.content_hash,
-            trusted_hash = excluded.trusted_hash,
-            trust_state = excluded.trust_state,
-            protocol_version = excluded.protocol_version,
-            capabilities = excluded.capabilities,
-            input_kinds = excluded.input_kinds,
-            updated_at = excluded.updated_at
-        "#,
+        UPSERT_CONVERSATION_ADAPTER_SQL,
         params![
             adapter.id,
             adapter.name,
@@ -112,62 +160,80 @@ pub(crate) fn upsert_conversation_adapter(
     Ok(())
 }
 
-pub(crate) fn delete_conversation_adapter(
-    conn: &Connection,
+pub(crate) async fn upsert_conversation_adapter_sqlx(
+    pool: &SqlitePool,
+    adapter: &ConversationAdapter,
+) -> AppResult<()> {
+    sqlx::query(UPSERT_CONVERSATION_ADAPTER_SQL)
+        .bind(&adapter.id)
+        .bind(&adapter.name)
+        .bind(encode_enum(adapter.kind)?)
+        .bind(&adapter.version)
+        .bind(if adapter.enabled { 1 } else { 0 })
+        .bind(&adapter.manifest_path)
+        .bind(&adapter.executable_path)
+        .bind(&adapter.content_hash)
+        .bind(&adapter.trusted_hash)
+        .bind(encode_enum(adapter.trust_state)?)
+        .bind(adapter.protocol_version.map(i64::from))
+        .bind(encode_json(&adapter.capabilities)?)
+        .bind(encode_json(&adapter.input_kinds)?)
+        .bind(&adapter.created_at)
+        .bind(&adapter.updated_at)
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub(crate) async fn delete_conversation_adapter_sqlx(
+    pool: &SqlitePool,
     adapter_id: &str,
 ) -> AppResult<ConversationAdapter> {
-    let adapter = load_conversation_adapter(conn, adapter_id)?
+    let adapter = load_conversation_adapter_sqlx(pool, adapter_id)
+        .await?
         .ok_or_else(|| format!("conversation adapter not found: {adapter_id}"))?;
     if adapter.kind != ConversationAdapterKind::External {
         return Err("built-in conversation adapters cannot be unregistered".to_string());
     }
-    conn.execute(
-        "DELETE FROM conversation_adapters WHERE id = ?1",
-        params![adapter_id],
-    )
-    .map_err(db_error)?;
-    conn.execute(
-        "UPDATE conversation_sources SET enabled = 0, updated_at = ?1 WHERE adapter_id = ?2",
-        params![Utc::now().to_rfc3339(), adapter_id],
-    )
-    .map_err(db_error)?;
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    sqlx::query(DELETE_CONVERSATION_ADAPTER_SQL)
+        .bind(adapter_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    sqlx::query(DISABLE_CONVERSATION_SOURCES_BY_ADAPTER_SQL)
+        .bind(Utc::now().to_rfc3339())
+        .bind(adapter_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    tx.commit().await.map_err(|error| error.to_string())?;
     Ok(adapter)
 }
 
-pub(crate) fn load_conversation_adapter(
-    conn: &Connection,
+pub(crate) async fn load_conversation_adapter_sqlx(
+    pool: &SqlitePool,
     adapter_id: &str,
 ) -> AppResult<Option<ConversationAdapter>> {
-    conn.query_row(
-        r#"
-        SELECT id, name, kind, version, enabled, manifest_path, executable_path,
-               content_hash, trusted_hash, trust_state, protocol_version,
-               capabilities, input_kinds, created_at, updated_at
-        FROM conversation_adapters
-        WHERE id = ?1
-        "#,
-        params![adapter_id],
-        map_conversation_adapter,
-    )
-    .optional()
-    .map_err(db_error)
+    sqlx::query(LOAD_CONVERSATION_ADAPTER_SQL)
+        .bind(adapter_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| error.to_string())?
+        .as_ref()
+        .map(map_sqlx_conversation_adapter)
+        .transpose()
 }
 
-pub(crate) fn list_conversation_sources(conn: &Connection) -> AppResult<Vec<ConversationSource>> {
-    let mut stmt = conn
-        .prepare(
-            r#"
-            SELECT id, adapter_id, name, kind, location, config_json, enabled,
-                   last_synced_at, last_sync_status, created_at, updated_at
-            FROM conversation_sources
-            ORDER BY adapter_id ASC, name ASC
-            "#,
-        )
-        .map_err(db_error)?;
-    let rows = stmt
-        .query_map([], map_conversation_source)
-        .map_err(db_error)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
+pub(crate) async fn list_conversation_sources_sqlx(
+    pool: &SqlitePool,
+) -> AppResult<Vec<ConversationSource>> {
+    let rows = sqlx::query(LIST_CONVERSATION_SOURCES_SQL)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    rows.iter().map(map_sqlx_conversation_source).collect()
 }
 
 pub(crate) fn load_conversation_source(
@@ -175,12 +241,7 @@ pub(crate) fn load_conversation_source(
     source_id: &str,
 ) -> AppResult<Option<ConversationSource>> {
     conn.query_row(
-        r#"
-        SELECT id, adapter_id, name, kind, location, config_json, enabled,
-               last_synced_at, last_sync_status, created_at, updated_at
-        FROM conversation_sources
-        WHERE id = ?1
-        "#,
+        LOAD_CONVERSATION_SOURCE_SQL,
         params![source_id],
         map_conversation_source,
     )
@@ -188,28 +249,26 @@ pub(crate) fn load_conversation_source(
     .map_err(db_error)
 }
 
+pub(crate) async fn load_conversation_source_sqlx(
+    pool: &SqlitePool,
+    source_id: &str,
+) -> AppResult<Option<ConversationSource>> {
+    sqlx::query(LOAD_CONVERSATION_SOURCE_SQL)
+        .bind(source_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| error.to_string())?
+        .as_ref()
+        .map(map_sqlx_conversation_source)
+        .transpose()
+}
+
 pub(crate) fn upsert_conversation_source(
     conn: &Connection,
     source: &ConversationSource,
 ) -> AppResult<()> {
     conn.execute(
-        r#"
-        INSERT INTO conversation_sources (
-            id, adapter_id, name, kind, location, config_json, enabled,
-            last_synced_at, last_sync_status, created_at, updated_at
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-        ON CONFLICT(id) DO UPDATE SET
-            adapter_id = excluded.adapter_id,
-            name = excluded.name,
-            kind = excluded.kind,
-            location = excluded.location,
-            config_json = excluded.config_json,
-            enabled = excluded.enabled,
-            last_synced_at = excluded.last_synced_at,
-            last_sync_status = excluded.last_sync_status,
-            updated_at = excluded.updated_at
-        "#,
+        UPSERT_CONVERSATION_SOURCE_SQL,
         params![
             source.id,
             source.adapter_id,
@@ -228,15 +287,38 @@ pub(crate) fn upsert_conversation_source(
     Ok(())
 }
 
-pub(crate) fn disable_conversation_source(
-    conn: &Connection,
+pub(crate) async fn upsert_conversation_source_sqlx(
+    pool: &SqlitePool,
+    source: &ConversationSource,
+) -> AppResult<()> {
+    sqlx::query(UPSERT_CONVERSATION_SOURCE_SQL)
+        .bind(&source.id)
+        .bind(&source.adapter_id)
+        .bind(&source.name)
+        .bind(encode_enum(source.kind)?)
+        .bind(&source.location)
+        .bind(&source.config_json)
+        .bind(if source.enabled { 1 } else { 0 })
+        .bind(&source.last_synced_at)
+        .bind(&source.last_sync_status)
+        .bind(&source.created_at)
+        .bind(&source.updated_at)
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub(crate) async fn disable_conversation_source_sqlx(
+    pool: &SqlitePool,
     source_id: &str,
 ) -> AppResult<ConversationSource> {
-    let mut source = load_conversation_source(conn, source_id)?
+    let mut source = load_conversation_source_sqlx(pool, source_id)
+        .await?
         .ok_or_else(|| format!("conversation source not found: {source_id}"))?;
     source.enabled = false;
     source.updated_at = Utc::now().to_rfc3339();
-    upsert_conversation_source(conn, &source)?;
+    upsert_conversation_source_sqlx(pool, &source).await?;
     Ok(source)
 }
 
@@ -939,23 +1021,43 @@ fn builtin_sources(now: &str) -> Vec<ConversationSource> {
     ]
 }
 
-fn map_conversation_adapter(row: &Row<'_>) -> rusqlite::Result<ConversationAdapter> {
+fn map_sqlx_conversation_adapter(row: &SqliteRow) -> AppResult<ConversationAdapter> {
+    let protocol_version = row
+        .try_get::<Option<i64>, _>(10)
+        .map_err(|error| error.to_string())?
+        .map(|value| u32::try_from(value).map_err(|_| format!("invalid protocol_version: {value}")))
+        .transpose()?;
     Ok(ConversationAdapter {
-        id: row.get(0)?,
-        name: row.get(1)?,
-        kind: decode_enum(row.get::<_, String>(2)?).map_err(to_sql_error)?,
-        version: row.get(3)?,
-        enabled: row.get::<_, i64>(4)? == 1,
-        manifest_path: row.get(5)?,
-        executable_path: row.get(6)?,
-        content_hash: row.get(7)?,
-        trusted_hash: row.get(8)?,
-        trust_state: decode_enum(row.get::<_, String>(9)?).map_err(to_sql_error)?,
-        protocol_version: row.get(10)?,
-        capabilities: decode_json(row.get::<_, String>(11)?).map_err(to_sql_error)?,
-        input_kinds: decode_json(row.get::<_, String>(12)?).map_err(to_sql_error)?,
-        created_at: row.get(13)?,
-        updated_at: row.get(14)?,
+        id: row.try_get(0).map_err(|error| error.to_string())?,
+        name: row.try_get(1).map_err(|error| error.to_string())?,
+        kind: decode_enum(
+            row.try_get::<String, _>(2)
+                .map_err(|error| error.to_string())?,
+        )?,
+        version: row.try_get(3).map_err(|error| error.to_string())?,
+        enabled: row
+            .try_get::<i64, _>(4)
+            .map_err(|error| error.to_string())?
+            == 1,
+        manifest_path: row.try_get(5).map_err(|error| error.to_string())?,
+        executable_path: row.try_get(6).map_err(|error| error.to_string())?,
+        content_hash: row.try_get(7).map_err(|error| error.to_string())?,
+        trusted_hash: row.try_get(8).map_err(|error| error.to_string())?,
+        trust_state: decode_enum(
+            row.try_get::<String, _>(9)
+                .map_err(|error| error.to_string())?,
+        )?,
+        protocol_version,
+        capabilities: decode_json(
+            row.try_get::<String, _>(11)
+                .map_err(|error| error.to_string())?,
+        )?,
+        input_kinds: decode_json(
+            row.try_get::<String, _>(12)
+                .map_err(|error| error.to_string())?,
+        )?,
+        created_at: row.try_get(13).map_err(|error| error.to_string())?,
+        updated_at: row.try_get(14).map_err(|error| error.to_string())?,
     })
 }
 
@@ -972,6 +1074,28 @@ fn map_conversation_source(row: &Row<'_>) -> rusqlite::Result<ConversationSource
         last_sync_status: row.get(8)?,
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
+    })
+}
+
+fn map_sqlx_conversation_source(row: &SqliteRow) -> AppResult<ConversationSource> {
+    Ok(ConversationSource {
+        id: row.try_get(0).map_err(|error| error.to_string())?,
+        adapter_id: row.try_get(1).map_err(|error| error.to_string())?,
+        name: row.try_get(2).map_err(|error| error.to_string())?,
+        kind: decode_enum(
+            row.try_get::<String, _>(3)
+                .map_err(|error| error.to_string())?,
+        )?,
+        location: row.try_get(4).map_err(|error| error.to_string())?,
+        config_json: row.try_get(5).map_err(|error| error.to_string())?,
+        enabled: row
+            .try_get::<i64, _>(6)
+            .map_err(|error| error.to_string())?
+            == 1,
+        last_synced_at: row.try_get(7).map_err(|error| error.to_string())?,
+        last_sync_status: row.try_get(8).map_err(|error| error.to_string())?,
+        created_at: row.try_get(9).map_err(|error| error.to_string())?,
+        updated_at: row.try_get(10).map_err(|error| error.to_string())?,
     })
 }
 
@@ -2458,6 +2582,95 @@ mod tests {
     use crate::backend::models::{
         ConversationPartRole, NormalizedConversationPart, NormalizedConversationTurn,
     };
+    use crate::backend::store::Database;
+    use uuid::Uuid;
+
+    #[test]
+    fn sqlx_conversation_metadata_round_trips_and_disables_sources() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-metadata-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let builtin_adapter = test_conversation_adapter(
+            "metadata-builtin",
+            ConversationAdapterKind::Codex,
+            ConversationAdapterTrustState::BuiltIn,
+        );
+        let external_adapter = test_conversation_adapter(
+            "metadata-external",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let source = test_conversation_source(&external_adapter.id);
+
+        let (
+            adapters,
+            loaded_adapter,
+            sources,
+            loaded_source,
+            disabled_source,
+            builtin_delete_error,
+            deleted_adapter,
+            source_after_adapter_delete,
+            missing_adapter,
+        ) = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), &builtin_adapter).await?;
+                upsert_conversation_adapter_sqlx(database.pool(), &external_adapter).await?;
+                upsert_conversation_source_sqlx(database.pool(), &source).await?;
+
+                let adapters = list_conversation_adapters_sqlx(database.pool()).await?;
+                let loaded_adapter =
+                    load_conversation_adapter_sqlx(database.pool(), &external_adapter.id).await?;
+                let sources = list_conversation_sources_sqlx(database.pool()).await?;
+                let loaded_source =
+                    load_conversation_source_sqlx(database.pool(), &source.id).await?;
+                let disabled_source =
+                    disable_conversation_source_sqlx(database.pool(), &source.id).await?;
+                upsert_conversation_source_sqlx(database.pool(), &source).await?;
+                let builtin_delete_error =
+                    delete_conversation_adapter_sqlx(database.pool(), &builtin_adapter.id)
+                        .await
+                        .expect_err("built-in adapter delete should fail");
+                let deleted_adapter =
+                    delete_conversation_adapter_sqlx(database.pool(), &external_adapter.id).await?;
+                let source_after_adapter_delete =
+                    load_conversation_source_sqlx(database.pool(), &source.id)
+                        .await?
+                        .expect("source is retained after adapter delete");
+                let missing_adapter =
+                    load_conversation_adapter_sqlx(database.pool(), &external_adapter.id).await?;
+
+                AppResult::Ok((
+                    adapters,
+                    loaded_adapter,
+                    sources,
+                    loaded_source,
+                    disabled_source,
+                    builtin_delete_error,
+                    deleted_adapter,
+                    source_after_adapter_delete,
+                    missing_adapter,
+                ))
+            })
+            .expect("query SQLx conversation metadata repo");
+
+        assert!(adapters.iter().any(|adapter| adapter == &external_adapter));
+        assert_eq!(loaded_adapter.as_ref(), Some(&external_adapter));
+        assert!(sources.iter().any(|candidate| candidate == &source));
+        assert_eq!(loaded_source.as_ref(), Some(&source));
+        assert_eq!(disabled_source.id, source.id);
+        assert!(!disabled_source.enabled);
+        assert!(builtin_delete_error.contains("built-in conversation adapters"));
+        assert_eq!(deleted_adapter, external_adapter);
+        assert_eq!(source_after_adapter_delete.id, source.id);
+        assert!(!source_after_adapter_delete.enabled);
+        assert!(missing_adapter.is_none());
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
 
     #[test]
     fn imports_turns_and_preserves_manual_grouping_across_resync() {
@@ -2844,5 +3057,51 @@ mod tests {
                 metadata_json: None,
             }],
         }
+    }
+
+    fn test_conversation_adapter(
+        id: &str,
+        kind: ConversationAdapterKind,
+        trust_state: ConversationAdapterTrustState,
+    ) -> ConversationAdapter {
+        ConversationAdapter {
+            id: id.to_string(),
+            name: id.to_string(),
+            kind,
+            version: "1.0.0".to_string(),
+            enabled: true,
+            manifest_path: Some(format!("/tmp/{id}/manifest.json")),
+            executable_path: Some(format!("/tmp/{id}/adapter")),
+            content_hash: Some(format!("{id}-hash")),
+            trusted_hash: Some(format!("{id}-hash")),
+            trust_state,
+            protocol_version: Some(1),
+            capabilities: vec!["read".to_string()],
+            input_kinds: vec![ConversationSourceKind::Directory],
+            created_at: "2026-06-19T00:00:00Z".to_string(),
+            updated_at: "2026-06-19T00:00:00Z".to_string(),
+        }
+    }
+
+    fn test_conversation_source(adapter_id: &str) -> ConversationSource {
+        ConversationSource {
+            id: format!("{adapter_id}-source"),
+            adapter_id: adapter_id.to_string(),
+            name: format!("{adapter_id} source"),
+            kind: ConversationSourceKind::Directory,
+            location: format!("/tmp/{adapter_id}/sessions"),
+            config_json: Some("{\"mode\":\"test\"}".to_string()),
+            enabled: true,
+            last_synced_at: None,
+            last_sync_status: None,
+            created_at: "2026-06-19T00:00:00Z".to_string(),
+            updated_at: "2026-06-19T00:00:00Z".to_string(),
+        }
+    }
+
+    fn cleanup_database(db_path: &std::path::Path) {
+        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
     }
 }

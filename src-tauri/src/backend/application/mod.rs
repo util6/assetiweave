@@ -600,7 +600,10 @@ impl AppService {
     }
 
     pub(crate) fn list_conversation_adapters(&self) -> AppResult<Vec<ConversationAdapter>> {
-        crate::backend::store::list_conversation_adapters(&self.conn)
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            crate::backend::store::list_conversation_adapters_sqlx(&pool).await
+        })
     }
 
     pub(crate) fn scaffold_conversation_adapter(
@@ -626,7 +629,10 @@ impl AppService {
         if !dry_run {
             let adapter =
                 crate::backend::conversations::adapter_from_registration_preview(preview.clone())?;
-            crate::backend::store::upsert_conversation_adapter(&self.conn, &adapter)?;
+            let pool = self.db.pool().clone();
+            self.db.block_on(async move {
+                crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &adapter).await
+            })?;
         }
         Ok(preview)
     }
@@ -638,9 +644,14 @@ impl AppService {
         if !params.dry_run && !params.yes {
             return Err("conversation.adapter.unregister requires --yes".to_string());
         }
-        let adapter =
-            crate::backend::store::load_conversation_adapter(&self.conn, &params.adapter_id)?
-                .ok_or_else(|| format!("conversation adapter not found: {}", params.adapter_id))?;
+        let pool = self.db.pool().clone();
+        let adapter_id = params.adapter_id.clone();
+        let adapter = self
+            .db
+            .block_on(async move {
+                crate::backend::store::load_conversation_adapter_sqlx(&pool, &adapter_id).await
+            })?
+            .ok_or_else(|| format!("conversation adapter not found: {}", params.adapter_id))?;
         if params.dry_run {
             return Ok(json!({
                 "dry_run": true,
@@ -648,8 +659,11 @@ impl AppService {
                 "adapter": adapter
             }));
         }
-        let adapter =
-            crate::backend::store::delete_conversation_adapter(&self.conn, &params.adapter_id)?;
+        let pool = self.db.pool().clone();
+        let adapter_id = params.adapter_id.clone();
+        let adapter = self.db.block_on(async move {
+            crate::backend::store::delete_conversation_adapter_sqlx(&pool, &adapter_id).await
+        })?;
         Ok(json!({
             "dry_run": false,
             "unregistered": true,
@@ -665,14 +679,23 @@ impl AppService {
     }
 
     pub(crate) fn list_conversation_sources(&self) -> AppResult<Vec<ConversationSource>> {
-        crate::backend::store::list_conversation_sources(&self.conn)
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            crate::backend::store::list_conversation_sources_sqlx(&pool).await
+        })
     }
 
     pub(crate) fn upsert_conversation_source(
         &self,
         params: ConversationSourceUpsertParams,
     ) -> AppResult<Value> {
-        if crate::backend::store::load_conversation_adapter(&self.conn, &params.source.adapter_id)?
+        let pool = self.db.pool().clone();
+        let adapter_id = params.source.adapter_id.clone();
+        if self
+            .db
+            .block_on(async move {
+                crate::backend::store::load_conversation_adapter_sqlx(&pool, &adapter_id).await
+            })?
             .is_none()
         {
             return Err(format!(
@@ -686,7 +709,11 @@ impl AppService {
                 "source": params.source
             }));
         }
-        crate::backend::store::upsert_conversation_source(&self.conn, &params.source)?;
+        let pool = self.db.pool().clone();
+        let source = params.source.clone();
+        self.db.block_on(async move {
+            crate::backend::store::upsert_conversation_source_sqlx(&pool, &source).await
+        })?;
         Ok(json!({
             "dry_run": false,
             "source": params.source
@@ -697,7 +724,13 @@ impl AppService {
         &self,
         params: ConversationSourceDisableParams,
     ) -> AppResult<Value> {
-        let source = crate::backend::store::load_conversation_source(&self.conn, &params.id)?
+        let pool = self.db.pool().clone();
+        let source_id = params.id.clone();
+        let source = self
+            .db
+            .block_on(async move {
+                crate::backend::store::load_conversation_source_sqlx(&pool, &source_id).await
+            })?
             .ok_or_else(|| format!("conversation source not found: {}", params.id))?;
         if params.dry_run {
             return Ok(json!({
@@ -706,7 +739,11 @@ impl AppService {
                 "source": source
             }));
         }
-        let source = crate::backend::store::disable_conversation_source(&self.conn, &params.id)?;
+        let pool = self.db.pool().clone();
+        let source_id = params.id.clone();
+        let source = self.db.block_on(async move {
+            crate::backend::store::disable_conversation_source_sqlx(&pool, &source_id).await
+        })?;
         Ok(json!({
             "dry_run": false,
             "disabled": true,
@@ -715,7 +752,12 @@ impl AppService {
     }
 
     pub(crate) fn sync_conversations(&self, params: ConversationSyncParams) -> AppResult<Value> {
-        let sources = crate::backend::store::list_conversation_sources(&self.conn)?
+        let pool = self.db.pool().clone();
+        let sources = self
+            .db
+            .block_on(
+                async move { crate::backend::store::list_conversation_sources_sqlx(&pool).await },
+            )?
             .into_iter()
             .filter(|source| params.source_id.as_deref().is_none_or(|id| id == source.id))
             .filter(|source| {
@@ -735,8 +777,11 @@ impl AppService {
         let mut results = Vec::new();
         let mut errors = Vec::new();
         for source in sources {
-            let adapter =
-                crate::backend::store::load_conversation_adapter(&self.conn, &source.adapter_id)?;
+            let pool = self.db.pool().clone();
+            let adapter_id = source.adapter_id.clone();
+            let adapter = self.db.block_on(async move {
+                crate::backend::store::load_conversation_adapter_sqlx(&pool, &adapter_id).await
+            })?;
             match crate::backend::conversations::read_source_sessions_with_adapter(
                 adapter.as_ref(),
                 &source,

@@ -21,13 +21,14 @@ pub(crate) use asset_repo::{
 #[cfg(test)]
 pub(crate) use asset_repo::{load_assets, load_assets_by_kind, replace_source_assets};
 pub(crate) use conversation_repo::{
-    delete_conversation_adapter, disable_conversation_source, import_conversation_sessions,
-    list_conversation_adapters, list_conversation_question_details, list_conversation_sessions,
-    list_conversation_sources, load_conversation_adapter, load_conversation_question_detail,
-    load_conversation_session_detail, load_conversation_source, merge_conversation_questions,
+    delete_conversation_adapter_sqlx, disable_conversation_source_sqlx,
+    import_conversation_sessions, list_conversation_adapters_sqlx,
+    list_conversation_question_details, list_conversation_sessions, list_conversation_sources_sqlx,
+    load_conversation_adapter_sqlx, load_conversation_question_detail,
+    load_conversation_session_detail, load_conversation_source_sqlx, merge_conversation_questions,
     render_session_markdown_for_questions_with_filter, render_session_markdown_with_filter,
     search_conversation_cards, seed_builtin_conversation_adapters, split_conversation_question,
-    upsert_conversation_adapter, upsert_conversation_source,
+    upsert_conversation_adapter_sqlx, upsert_conversation_source_sqlx,
 };
 pub(crate) use database::{
     count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx, Database,
