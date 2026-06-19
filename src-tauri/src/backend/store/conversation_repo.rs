@@ -1259,7 +1259,28 @@ pub(super) fn map_conversation_question(row: &Row<'_>) -> rusqlite::Result<Conve
     })
 }
 
-fn map_sqlx_conversation_turn(row: &SqliteRow) -> AppResult<ConversationTurn> {
+pub(super) fn map_sqlx_conversation_session(row: &SqliteRow) -> AppResult<ConversationSession> {
+    Ok(ConversationSession {
+        id: row.try_get(0).map_err(|error| error.to_string())?,
+        source_id: row.try_get(1).map_err(|error| error.to_string())?,
+        adapter_id: row.try_get(2).map_err(|error| error.to_string())?,
+        external_id: row.try_get(3).map_err(|error| error.to_string())?,
+        title: row.try_get(4).map_err(|error| error.to_string())?,
+        project_path: row.try_get(5).map_err(|error| error.to_string())?,
+        started_at: row.try_get(6).map_err(|error| error.to_string())?,
+        updated_at: row.try_get(7).map_err(|error| error.to_string())?,
+        source_locator: row.try_get(8).map_err(|error| error.to_string())?,
+        source_fingerprint: row.try_get(9).map_err(|error| error.to_string())?,
+        missing: row
+            .try_get::<i64, _>(10)
+            .map_err(|error| error.to_string())?
+            == 1,
+        created_at: row.try_get(11).map_err(|error| error.to_string())?,
+        imported_at: row.try_get(12).map_err(|error| error.to_string())?,
+    })
+}
+
+pub(super) fn map_sqlx_conversation_turn(row: &SqliteRow) -> AppResult<ConversationTurn> {
     Ok(ConversationTurn {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         session_id: row.try_get(1).map_err(|error| error.to_string())?,
@@ -1278,7 +1299,7 @@ fn map_sqlx_conversation_turn(row: &SqliteRow) -> AppResult<ConversationTurn> {
     })
 }
 
-fn map_sqlx_conversation_part(row: &SqliteRow) -> AppResult<ConversationPart> {
+pub(super) fn map_sqlx_conversation_part(row: &SqliteRow) -> AppResult<ConversationPart> {
     Ok(ConversationPart {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         turn_id: row.try_get(1).map_err(|error| error.to_string())?,
@@ -1301,7 +1322,7 @@ fn map_sqlx_conversation_part(row: &SqliteRow) -> AppResult<ConversationPart> {
     })
 }
 
-fn map_sqlx_conversation_question(row: &SqliteRow) -> AppResult<ConversationQuestion> {
+pub(super) fn map_sqlx_conversation_question(row: &SqliteRow) -> AppResult<ConversationQuestion> {
     Ok(ConversationQuestion {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         session_id: row.try_get(1).map_err(|error| error.to_string())?,

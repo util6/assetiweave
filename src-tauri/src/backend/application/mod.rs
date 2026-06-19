@@ -856,21 +856,34 @@ impl AppService {
         &self,
         params: ConversationSessionListParams,
     ) -> AppResult<Vec<crate::backend::dto::ConversationSessionListItem>> {
-        crate::backend::store::list_web_record_sessions(
-            &self.conn,
-            params.adapter_id.as_deref(),
-            params.source_id.as_deref(),
-            params.query.as_deref(),
-            params.limit.unwrap_or(50).clamp(1, 500),
-            params.offset.unwrap_or(0),
-        )
+        let pool = self.db.pool().clone();
+        let adapter_id = params.adapter_id;
+        let source_id = params.source_id;
+        let query = params.query;
+        let limit = params.limit.unwrap_or(50).clamp(1, 500);
+        let offset = params.offset.unwrap_or(0);
+        self.db.block_on(async move {
+            crate::backend::store::list_web_record_sessions_sqlx(
+                &pool,
+                adapter_id.as_deref(),
+                source_id.as_deref(),
+                query.as_deref(),
+                limit,
+                offset,
+            )
+            .await
+        })
     }
 
     pub(crate) fn get_web_record_session(
         &self,
         params: ConversationSessionGetParams,
     ) -> AppResult<crate::backend::dto::ConversationSessionDetail> {
-        crate::backend::store::load_web_record_session_detail(&self.conn, &params.session_id)
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            crate::backend::store::load_web_record_session_detail_sqlx(&pool, &params.session_id)
+                .await
+        })
     }
 
     pub(crate) fn search_conversation_records(
@@ -1001,8 +1014,11 @@ impl AppService {
         &self,
         params: ConversationSessionExportParams,
     ) -> AppResult<Value> {
-        let detail =
-            crate::backend::store::load_web_record_session_detail(&self.conn, &params.session_id)?;
+        let pool = self.db.pool().clone();
+        let session_id = params.session_id.clone();
+        let detail = self.db.block_on(async move {
+            crate::backend::store::load_web_record_session_detail_sqlx(&pool, &session_id).await
+        })?;
         let output_root = crate::backend::path_utils::expand_path(&params.output_root)?;
         let project_segment = detail
             .session
@@ -1034,9 +1050,8 @@ impl AppService {
             .join(sanitize_path_segment(&detail.session.adapter_id))
             .join(sanitize_path_segment(project_segment))
             .join(format!("{file_stem}-{short_id}.md"));
-        let content = crate::backend::store::render_web_record_markdown_with_filter(
-            &self.conn,
-            &params.session_id,
+        let content = crate::backend::store::render_web_record_detail_markdown_with_filter(
+            &detail,
             &params.question_ids,
             &params.content_filter,
         )?;

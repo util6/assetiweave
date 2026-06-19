@@ -4,24 +4,34 @@ use crate::backend::dto::{
 };
 use crate::backend::models::{
     conversation_turn_fingerprint, group_turn_ids_by_question, ConversationPart,
-    ConversationPartKind, ConversationPartRole, ConversationQuestion, ConversationSession,
-    ConversationSource, ConversationSyncRun, ConversationSyncStatus, ConversationTurn,
-    NormalizedConversationSession,
+    ConversationPartKind, ConversationPartRole, ConversationSession, ConversationSource,
+    ConversationSyncRun, ConversationSyncStatus, ConversationTurn, NormalizedConversationSession,
 };
 use chrono::Utc;
+#[cfg(test)]
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
-use sqlx::{sqlite::SqliteRow, Row as SqlxRow, Sqlite, SqlitePool, Transaction};
-use std::collections::BTreeSet;
+use sqlx::{Row as SqlxRow, Sqlite, SqlitePool, Transaction};
+use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg(test)]
 use super::{
-    codec::{db_error, decode_enum, encode_enum},
+    codec::db_error,
     conversation_repo::{
         map_conversation_part, map_conversation_question, map_conversation_session,
-        map_conversation_turn, render_session_detail_markdown, ConversationImportResult,
+        map_conversation_turn,
+    },
+};
+use super::{
+    codec::encode_enum,
+    conversation_repo::{
+        map_sqlx_conversation_part, map_sqlx_conversation_question, map_sqlx_conversation_session,
+        map_sqlx_conversation_turn, render_session_detail_markdown, ConversationImportResult,
         CONVERSATION_IMPORT_BATCH_SIZE,
     },
 };
+#[cfg(test)]
+use crate::backend::models::ConversationQuestion;
 
 #[cfg(test)]
 pub(crate) fn import_web_record_sessions(
@@ -235,6 +245,201 @@ pub(crate) async fn import_web_record_sessions_sqlx(
     })
 }
 
+pub(crate) async fn list_web_record_sessions_sqlx(
+    pool: &SqlitePool,
+    adapter_id: Option<&str>,
+    source_id: Option<&str>,
+    query: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> AppResult<Vec<ConversationSessionListItem>> {
+    let needle = normalize_query(query);
+    let rows = sqlx::query(
+        r#"
+        SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
+               s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
+               s.missing, s.created_at, s.imported_at,
+               (
+                   SELECT COUNT(*)
+                   FROM web_record_questions q
+                   WHERE q.session_id = s.id
+               ) AS question_count,
+               (
+                   SELECT COUNT(*)
+                   FROM web_record_turns t
+                   WHERE t.session_id = s.id
+               ) AS turn_count
+        FROM web_record_sessions s
+        WHERE (?1 IS NULL OR s.adapter_id = ?1)
+          AND (?2 IS NULL OR s.source_id = ?2)
+          AND (
+              ?3 IS NULL
+              OR instr(lower(s.title), ?3) > 0
+              OR instr(lower(COALESCE(s.project_path, '')), ?3) > 0
+              OR instr(lower(s.external_id), ?3) > 0
+              OR EXISTS (
+                  SELECT 1
+                  FROM web_record_questions q
+                  WHERE q.session_id = s.id
+                    AND (
+                        instr(lower(q.question_text), ?3) > 0
+                        OR instr(lower(q.answer_text), ?3) > 0
+                        OR instr(lower(q.code_text), ?3) > 0
+                        OR instr(lower(q.command_text), ?3) > 0
+                    )
+              )
+          )
+        ORDER BY COALESCE(s.updated_at, s.imported_at) DESC, s.title ASC
+        LIMIT ?4 OFFSET ?5
+        "#,
+    )
+    .bind(adapter_id)
+    .bind(source_id)
+    .bind(needle.as_deref())
+    .bind(i64::try_from(limit).map_err(|_| format!("invalid web record limit: {limit}"))?)
+    .bind(i64::try_from(offset).map_err(|_| format!("invalid web record offset: {offset}"))?)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+
+    rows.iter()
+        .map(|row| {
+            let question_count = usize::try_from(
+                row.try_get::<i64, _>(13)
+                    .map_err(|error| error.to_string())?,
+            )
+            .map_err(|_| "invalid web record question count".to_string())?;
+            let turn_count = usize::try_from(
+                row.try_get::<i64, _>(14)
+                    .map_err(|error| error.to_string())?,
+            )
+            .map_err(|_| "invalid web record turn count".to_string())?;
+            Ok(ConversationSessionListItem {
+                session: map_sqlx_conversation_session(row)?,
+                question_count,
+                turn_count,
+            })
+        })
+        .collect()
+}
+
+pub(crate) async fn load_web_record_session_detail_sqlx(
+    pool: &SqlitePool,
+    session_id: &str,
+) -> AppResult<ConversationSessionDetail> {
+    let session_row = sqlx::query(
+        r#"
+        SELECT id, source_id, adapter_id, external_id, title, project_path,
+               started_at, updated_at, source_locator, source_fingerprint,
+               missing, created_at, imported_at
+        FROM web_record_sessions
+        WHERE id = ?1
+        "#,
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| format!("web record session not found: {session_id}"))?;
+    let session = map_sqlx_conversation_session(&session_row)?;
+
+    let question_rows = sqlx::query(
+        r#"
+        SELECT id, session_id, question_index, title, question_text, answer_text,
+               code_text, command_text, grouping_origin, created_at, updated_at
+        FROM web_record_questions
+        WHERE session_id = ?1
+        ORDER BY question_index ASC
+        "#,
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    let questions = question_rows
+        .iter()
+        .map(map_sqlx_conversation_question)
+        .collect::<AppResult<Vec<_>>>()?;
+
+    let turn_rows = sqlx::query(
+        r#"
+        SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
+               t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at,
+               qt.question_id
+        FROM web_record_question_turns qt
+        JOIN web_record_turns t ON t.id = qt.turn_id
+        JOIN web_record_questions q ON q.id = qt.question_id
+        WHERE q.session_id = ?1
+        ORDER BY q.question_index ASC, qt.turn_order ASC, t.turn_index ASC
+        "#,
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    let mut turns_by_question = BTreeMap::<String, Vec<ConversationTurn>>::new();
+    for row in &turn_rows {
+        let question_id = row.try_get(11).map_err(|error| error.to_string())?;
+        turns_by_question
+            .entry(question_id)
+            .or_default()
+            .push(map_sqlx_conversation_turn(row)?);
+    }
+
+    let part_rows = sqlx::query(
+        r#"
+        SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
+               p.command, p.cwd, p.status, p.exit_code, p.metadata_json
+        FROM web_record_parts p
+        JOIN web_record_turns t ON t.id = p.turn_id
+        WHERE t.session_id = ?1
+        ORDER BY t.turn_index ASC, p.part_index ASC
+        "#,
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    let mut parts_by_turn = BTreeMap::<String, Vec<ConversationPart>>::new();
+    for row in &part_rows {
+        let part = map_sqlx_conversation_part(row)?;
+        parts_by_turn
+            .entry(part.turn_id.clone())
+            .or_default()
+            .push(part);
+    }
+
+    let question_details = questions
+        .into_iter()
+        .map(|question| {
+            let turns = turns_by_question.remove(&question.id).unwrap_or_default();
+            let mut parts = Vec::new();
+            for turn in &turns {
+                parts.extend(parts_by_turn.remove(&turn.id).unwrap_or_default());
+            }
+            ConversationQuestionDetail {
+                question,
+                turns,
+                parts,
+            }
+        })
+        .collect();
+    Ok(ConversationSessionDetail {
+        session,
+        questions: question_details,
+    })
+}
+
+pub(crate) fn render_web_record_detail_markdown_with_filter(
+    detail: &ConversationSessionDetail,
+    question_ids: &[String],
+    content_filter: &ConversationExportContentFilter,
+) -> AppResult<String> {
+    let selection = (!question_ids.is_empty()).then_some(question_ids);
+    render_session_detail_markdown(detail, selection, content_filter)
+}
+
+#[cfg(test)]
 pub(crate) fn list_web_record_sessions(
     conn: &Connection,
     adapter_id: Option<&str>,
@@ -290,6 +495,7 @@ pub(crate) fn list_web_record_sessions(
     Ok(items.into_iter().skip(offset).take(limit).collect())
 }
 
+#[cfg(test)]
 pub(crate) fn load_web_record_session_detail(
     conn: &Connection,
     session_id: &str,
@@ -298,17 +504,6 @@ pub(crate) fn load_web_record_session_detail(
         .ok_or_else(|| format!("web record session not found: {session_id}"))?;
     let questions = list_web_record_question_details(conn, session_id)?;
     Ok(ConversationSessionDetail { session, questions })
-}
-
-pub(crate) fn render_web_record_markdown_with_filter(
-    conn: &Connection,
-    session_id: &str,
-    question_ids: &[String],
-    content_filter: &ConversationExportContentFilter,
-) -> AppResult<String> {
-    let detail = load_web_record_session_detail(conn, session_id)?;
-    let selection = (!question_ids.is_empty()).then_some(question_ids);
-    render_session_detail_markdown(&detail, selection, content_filter)
 }
 
 #[cfg(test)]
@@ -772,6 +967,7 @@ fn load_web_record_parts_tx(
     rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
 }
 
+#[cfg(test)]
 fn list_web_record_question_details(
     conn: &Connection,
     session_id: &str,
@@ -797,6 +993,7 @@ fn list_web_record_question_details(
         .collect()
 }
 
+#[cfg(test)]
 fn load_web_record_question_detail(
     conn: &Connection,
     question: ConversationQuestion,
@@ -842,6 +1039,7 @@ fn load_web_record_question_detail(
     })
 }
 
+#[cfg(test)]
 fn load_web_record_session(
     conn: &Connection,
     session_id: &str,
@@ -861,6 +1059,7 @@ fn load_web_record_session(
     .map_err(db_error)
 }
 
+#[cfg(test)]
 fn count_web_record_questions(conn: &Connection, session_id: &str) -> AppResult<usize> {
     let count: i64 = conn
         .query_row(
@@ -872,6 +1071,7 @@ fn count_web_record_questions(conn: &Connection, session_id: &str) -> AppResult<
     Ok(count as usize)
 }
 
+#[cfg(test)]
 fn count_web_record_turns(conn: &Connection, session_id: &str) -> AppResult<usize> {
     let count: i64 = conn
         .query_row(
@@ -883,6 +1083,7 @@ fn count_web_record_turns(conn: &Connection, session_id: &str) -> AppResult<usiz
     Ok(count as usize)
 }
 
+#[cfg(test)]
 fn web_record_session_has_question_match(
     conn: &Connection,
     session_id: &str,
@@ -1335,29 +1536,6 @@ async fn load_web_record_parts_sqlx_tx(
     rows.iter().map(map_sqlx_conversation_part).collect()
 }
 
-fn map_sqlx_conversation_part(row: &SqliteRow) -> AppResult<ConversationPart> {
-    Ok(ConversationPart {
-        id: row.try_get(0).map_err(|error| error.to_string())?,
-        turn_id: row.try_get(1).map_err(|error| error.to_string())?,
-        part_index: row.try_get(2).map_err(|error| error.to_string())?,
-        role: decode_enum(
-            row.try_get::<String, _>(3)
-                .map_err(|error| error.to_string())?,
-        )?,
-        kind: decode_enum(
-            row.try_get::<String, _>(4)
-                .map_err(|error| error.to_string())?,
-        )?,
-        text: row.try_get(5).map_err(|error| error.to_string())?,
-        language: row.try_get(6).map_err(|error| error.to_string())?,
-        command: row.try_get(7).map_err(|error| error.to_string())?,
-        cwd: row.try_get(8).map_err(|error| error.to_string())?,
-        status: row.try_get(9).map_err(|error| error.to_string())?,
-        exit_code: row.try_get(10).map_err(|error| error.to_string())?,
-        metadata_json: row.try_get(11).map_err(|error| error.to_string())?,
-    })
-}
-
 async fn insert_sync_run_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     run: &ConversationSyncRun,
@@ -1628,6 +1806,67 @@ mod tests {
             .expect("import unchanged fingerprinted web session through SQLx");
 
         assert_eq!(imported_at, "preserved");
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_web_record_reads_filter_detail_and_render_markdown() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-web-record-read-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let source = fixture_source();
+        let first = fixture_session();
+        let mut second = fixture_session();
+        second.external_id = "web-session-2".to_string();
+        second.title = Some("SQLx migration notes".to_string());
+        second.project_path = Some("/tmp/sqlx-project".to_string());
+        second.turns[0].external_id = "turn-2".to_string();
+        second.turns[0].user_text = "How is the read path migrated?".to_string();
+        second.turns[0].parts[0].text = Some("Loaded through SQLx answer".to_string());
+
+        let (sessions, detail, markdown) = database
+            .block_on(async {
+                super::super::conversation_repo::upsert_conversation_source_sqlx(
+                    database.pool(),
+                    &source,
+                )
+                .await?;
+                import_web_record_sessions_sqlx(database.pool(), &source, &[first, second], false)
+                    .await?;
+                let sessions = list_web_record_sessions_sqlx(
+                    database.pool(),
+                    None,
+                    Some(&source.id),
+                    Some("sqlx answer"),
+                    20,
+                    0,
+                )
+                .await?;
+                let detail =
+                    load_web_record_session_detail_sqlx(database.pool(), &sessions[0].session.id)
+                        .await?;
+                let markdown = render_web_record_detail_markdown_with_filter(
+                    &detail,
+                    &[detail.questions[0].question.id.clone()],
+                    &ConversationExportContentFilter::default(),
+                )?;
+                AppResult::Ok((sessions, detail, markdown))
+            })
+            .expect("read web records through SQLx");
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session.title, "SQLx migration notes");
+        assert_eq!(sessions[0].question_count, 1);
+        assert_eq!(sessions[0].turn_count, 1);
+        assert_eq!(detail.questions.len(), 1);
+        assert_eq!(detail.questions[0].turns.len(), 1);
+        assert_eq!(detail.questions[0].parts.len(), 1);
+        assert!(markdown.contains("## 1. How is the read path migrated?"));
+        assert!(markdown.contains("Loaded through SQLx answer"));
 
         drop(database);
         cleanup_database(&db_path);

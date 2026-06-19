@@ -84,6 +84,6 @@ pub(crate) use source_repo::{
     normalize_source, upsert_source_sqlx,
 };
 pub(crate) use web_record_repo::{
-    import_web_record_sessions_sqlx, list_web_record_sessions, load_web_record_session_detail,
-    render_web_record_markdown_with_filter,
+    import_web_record_sessions_sqlx, list_web_record_sessions_sqlx,
+    load_web_record_session_detail_sqlx, render_web_record_detail_markdown_with_filter,
 };
