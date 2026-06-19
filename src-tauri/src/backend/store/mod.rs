@@ -40,9 +40,9 @@ pub(crate) use deployment_repo::{
     upsert_deployment_state_sqlx,
 };
 pub(crate) use group_repo::{
-    delete_asset_group_sqlx, delete_orphan_asset_group_members_sqlx, load_skill_group_detail,
-    load_skill_group_detail_sqlx, load_skill_group_details_by_ids_sqlx,
-    load_skill_group_details_sqlx, replace_asset_group_members_sqlx, upsert_asset_group_sqlx,
+    delete_asset_group_sqlx, delete_orphan_asset_group_members_sqlx, load_skill_group_detail_sqlx,
+    load_skill_group_details_by_ids_sqlx, load_skill_group_details_sqlx,
+    replace_asset_group_members_sqlx, upsert_asset_group_sqlx,
 };
 #[cfg(test)]
 pub(crate) use group_repo::{replace_asset_group_members, upsert_asset_group};
@@ -50,9 +50,11 @@ pub(crate) use menu_repo::{load_navigation_model_sqlx, save_navigation_model_sql
 #[cfg(test)]
 pub(crate) use mount_observation_repo::load_asset_mount_observations;
 pub(crate) use mount_observation_repo::persist_asset_mount_snapshot_sqlx;
+#[cfg(test)]
+pub(crate) use mount_repo::load_asset_mounts;
 pub(crate) use mount_repo::{
-    delete_orphan_asset_mounts_sqlx, load_asset_mounts, load_asset_mounts_sqlx,
-    load_enabled_asset_mounts_sqlx, set_asset_mount, set_asset_mount_sqlx,
+    delete_orphan_asset_mounts_sqlx, load_asset_mounts_sqlx, load_enabled_asset_mounts_sqlx,
+    set_asset_mount, set_asset_mount_sqlx,
 };
 #[cfg(test)]
 pub(crate) use profile_repo::{count_deployment_state_by_profile, delete_profile, upsert_profile};

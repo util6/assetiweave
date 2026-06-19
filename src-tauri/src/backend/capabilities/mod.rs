@@ -102,25 +102,29 @@ pub(crate) fn apply_skill_group_mount_record(
 }
 pub(crate) fn apply_skill_group_exclusive_mount_record(
     conn: &rusqlite::Connection,
+    db: &crate::backend::store::Database,
     input: &SkillGroupExclusiveMountInput,
 ) -> AppResult<ApplySkillGroupExclusiveMountResult> {
-    let preview = build_skill_group_exclusive_mount_preview(conn, input)?;
-    let assets = crate::backend::store::load_assets(conn)?;
+    let preview = build_skill_group_exclusive_mount_preview_sqlx(db, input)?;
+    let pool = db.pool().clone();
+    let profile_id = preview.profile_id.clone();
+    let (assets, profile) = db.block_on(async move {
+        let assets = crate::backend::store::load_assets_sqlx(&pool, Some(AssetKind::Skill)).await?;
+        let profile = crate::backend::store::load_profile_sqlx(&pool, &profile_id)
+            .await?
+            .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+        AppResult::Ok((assets, profile))
+    })?;
     let asset_by_id = assets
         .iter()
         .map(|asset| (asset.id.as_str(), asset))
         .collect::<HashMap<_, _>>();
-    let profiles = crate::backend::store::load_profiles(conn)?;
-    let profile = profiles
-        .iter()
-        .find(|profile| profile.id == preview.profile_id)
-        .ok_or_else(|| format!("profile not found: {}", preview.profile_id))?;
     let mut statuses = Vec::new();
     let mut errors = Vec::new();
 
     for item in &preview.keep {
         if let Some(asset) = asset_by_id.get(item.asset_id.as_str()) {
-            let inspection = crate::backend::targeting::inspect_mount(profile, asset)?;
+            let inspection = crate::backend::targeting::inspect_mount(&profile, asset)?;
             statuses.push(asset_mount_status(&asset.id, &profile.id, inspection));
         }
     }
@@ -152,37 +156,6 @@ pub(crate) fn apply_skill_group_exclusive_mount_record(
         statuses,
         errors,
     })
-}
-
-pub(crate) fn build_skill_group_exclusive_mount_preview(
-    conn: &rusqlite::Connection,
-    input: &SkillGroupExclusiveMountInput,
-) -> AppResult<SkillGroupExclusiveMountPreview> {
-    let profiles = crate::backend::store::load_profiles(conn)?;
-    let profile = profiles
-        .iter()
-        .find(|profile| profile.id == input.profile_id)
-        .ok_or_else(|| format!("profile not found: {}", input.profile_id))?;
-    let assets = crate::backend::store::load_assets(conn)?;
-    let skill_assets = assets
-        .iter()
-        .filter(|asset| asset.kind == AssetKind::Skill)
-        .cloned()
-        .collect::<Vec<_>>();
-    let sources = crate::backend::store::load_sources(conn)?;
-    let enabled_mounts = crate::backend::store::load_asset_mounts(conn, None)?;
-    let profile_id = profile.id.clone();
-    build_skill_group_exclusive_mount_preview_with_loaders(
-        input,
-        profile,
-        skill_assets,
-        sources,
-        enabled_mounts,
-        |group_id, assets| crate::backend::store::load_skill_group_detail(conn, group_id, assets),
-        |asset_id, target_path| {
-            crate::backend::store::is_managed_deployment(conn, &profile_id, asset_id, target_path)
-        },
-    )
 }
 
 pub(crate) fn build_skill_group_exclusive_mount_preview_sqlx(

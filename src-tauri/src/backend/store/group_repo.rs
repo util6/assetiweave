@@ -5,12 +5,15 @@ use crate::backend::models::{
 };
 use chrono::Utc;
 use globset::{Glob, GlobSet, GlobSetBuilder};
+#[cfg(test)]
 use rusqlite::{params, Connection, OptionalExtension, Row as RusqliteRow};
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg(test)]
+use super::codec::{db_error, to_sql_error};
 use super::{
-    codec::{db_error, decode_enum, decode_json, encode_enum, encode_json, to_sql_error},
+    codec::{decode_enum, decode_json, encode_enum, encode_json},
     sql,
 };
 
@@ -41,20 +44,6 @@ pub(crate) async fn load_skill_group_details_by_ids_sqlx(
         .into_iter()
         .map(|group| build_group_detail(group, assets, &manual_members))
         .collect()
-}
-
-pub(crate) fn load_skill_group_detail(
-    conn: &Connection,
-    group_id: &str,
-    assets: &[Asset],
-) -> AppResult<AssetGroupDetail> {
-    let group = load_asset_group(conn, group_id)?
-        .ok_or_else(|| format!("asset group not found: {group_id}"))?;
-    if group.asset_kind != AssetKind::Skill {
-        return Err("only skill groups are supported".to_string());
-    }
-    let manual_members = load_group_members(conn)?;
-    build_group_detail(group, assets, &manual_members)
 }
 
 pub(crate) async fn load_skill_group_detail_sqlx(
@@ -343,6 +332,7 @@ async fn load_asset_groups_by_kind_sqlx(
     rows.iter().map(map_sqlx_asset_group_row).collect()
 }
 
+#[cfg(test)]
 fn load_asset_group(conn: &Connection, group_id: &str) -> AppResult<Option<AssetGroup>> {
     conn.query_row(sql::GET_ASSET_GROUP, params![group_id], map_asset_group_row)
         .optional()
@@ -356,26 +346,6 @@ async fn load_asset_group_sqlx(pool: &SqlitePool, group_id: &str) -> AppResult<O
         .await
         .map_err(|error| error.to_string())?;
     row.as_ref().map(map_sqlx_asset_group_row).transpose()
-}
-
-fn load_group_members(conn: &Connection) -> AppResult<BTreeMap<String, BTreeSet<String>>> {
-    let mut stmt = conn
-        .prepare(sql::LIST_ASSET_GROUP_MEMBERS)
-        .map_err(db_error)?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(db_error)?;
-    let mut grouped = BTreeMap::new();
-    for row in rows {
-        let (group_id, asset_id) = row.map_err(db_error)?;
-        grouped
-            .entry(group_id)
-            .or_insert_with(BTreeSet::new)
-            .insert(asset_id);
-    }
-    Ok(grouped)
 }
 
 async fn load_group_members_sqlx(
@@ -401,6 +371,7 @@ async fn load_group_members_sqlx(
     Ok(grouped)
 }
 
+#[cfg(test)]
 fn map_asset_group_row(row: &RusqliteRow<'_>) -> rusqlite::Result<AssetGroup> {
     let rules_payload: String = row.get(9)?;
     Ok(AssetGroup {

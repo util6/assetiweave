@@ -1901,7 +1901,7 @@ impl AppService {
         &self,
         input: SkillGroupExclusiveMountInput,
     ) -> AppResult<ApplySkillGroupExclusiveMountResult> {
-        capabilities::apply_skill_group_exclusive_mount_record(&self.conn, &input)
+        capabilities::apply_skill_group_exclusive_mount_record(&self.conn, &self.db, &input)
     }
 
     pub(crate) fn mount_asset_by_id(

@@ -2169,9 +2169,12 @@ mod tests {
             DeploymentStrategy::SymlinkToSource,
         )
         .expect("store prompt mount");
+        let database =
+            crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
         let result = apply_skill_group_exclusive_mount_record(
             &conn,
+            &database,
             &SkillGroupExclusiveMountInput {
                 group_ids: vec![
                     group_a.id.clone(),
@@ -2270,9 +2273,12 @@ mod tests {
             &assets,
         )
         .expect("insert group members");
+        let database =
+            crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
         let result = apply_skill_group_exclusive_mount_record(
             &conn,
+            &database,
             &SkillGroupExclusiveMountInput {
                 group_ids: vec![group.id.clone()],
                 profile_id: profile.id.clone(),

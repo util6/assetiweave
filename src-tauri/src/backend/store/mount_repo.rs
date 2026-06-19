@@ -9,6 +9,7 @@ use super::{
     sql,
 };
 
+#[cfg(test)]
 pub(crate) fn load_asset_mounts(
     conn: &Connection,
     asset_id: Option<&str>,
