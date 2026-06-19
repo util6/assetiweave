@@ -1,7 +1,7 @@
 use crate::backend::dto::AppResult;
 use crate::backend::models::DeploymentState;
 use rusqlite::{params, Connection, OptionalExtension};
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 
 use super::{
     codec::{db_error, encode_enum},
@@ -85,6 +85,25 @@ pub(crate) async fn count_deployment_state_by_profile_sqlx(
         .await
         .map_err(|error| error.to_string())?;
     Ok(count as usize)
+}
+
+pub(crate) async fn load_managed_deployment_targets_by_profile_sqlx(
+    pool: &SqlitePool,
+    profile_id: &str,
+) -> AppResult<Vec<(String, String)>> {
+    let rows = sqlx::query(sql::LIST_MANAGED_DEPLOYMENT_TARGETS_BY_PROFILE)
+        .bind(profile_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    rows.into_iter()
+        .map(|row| {
+            Ok((
+                row.try_get(0).map_err(|error| error.to_string())?,
+                row.try_get(1).map_err(|error| error.to_string())?,
+            ))
+        })
+        .collect()
 }
 
 pub(crate) fn delete_deployment_state(
@@ -184,6 +203,11 @@ mod tests {
                 assert_eq!(
                     count_deployment_state_by_profile_sqlx(database.pool(), "profile-b").await?,
                     1
+                );
+                assert_eq!(
+                    load_managed_deployment_targets_by_profile_sqlx(database.pool(), "profile-a")
+                        .await?,
+                    vec![("asset-a".to_string(), "/target/a".to_string())]
                 );
 
                 delete_deployment_state_sqlx(database.pool(), "profile-a", "asset-b", "/target/b")

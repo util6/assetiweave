@@ -1894,7 +1894,7 @@ impl AppService {
         &self,
         input: SkillGroupExclusiveMountInput,
     ) -> AppResult<SkillGroupExclusiveMountPreview> {
-        capabilities::build_skill_group_exclusive_mount_preview(&self.conn, &input)
+        capabilities::build_skill_group_exclusive_mount_preview_sqlx(&self.db, &input)
     }
 
     pub(crate) fn apply_skill_group_exclusive_mount(

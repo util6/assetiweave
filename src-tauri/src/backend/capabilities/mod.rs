@@ -8,9 +8,9 @@ use crate::backend::{
         SkillGroupExclusiveMountPreview, SkillGroupExclusiveMountSkippedItem, TargetProfileInput,
     },
     models::{
-        AppKind, Asset, AssetGroup, AssetGroupRules, AssetKind, AssetMount, DeploymentState,
-        DeploymentStrategy, ProfileSafety, RuleSet, Source, SourceKind, SourceOrigin,
-        SourceScannerKind, TargetProfile,
+        AppKind, Asset, AssetGroup, AssetGroupDetail, AssetGroupRules, AssetKind, AssetMount,
+        DeploymentState, DeploymentStrategy, ProfileSafety, RuleSet, Source, SourceKind,
+        SourceOrigin, SourceScannerKind, TargetProfile,
     },
     operation_log::{
         asset_log_fields, log_error, log_info, log_warn, profile_log_fields, source_log_fields,
@@ -23,7 +23,7 @@ use crate::backend::{
 };
 use chrono::Utc;
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -158,33 +158,138 @@ pub(crate) fn build_skill_group_exclusive_mount_preview(
     conn: &rusqlite::Connection,
     input: &SkillGroupExclusiveMountInput,
 ) -> AppResult<SkillGroupExclusiveMountPreview> {
-    if !input.mount_selected {
-        return Err("exclusive skill group mount requires mount_selected=true".to_string());
-    }
-    let _dry_run_requested = input.dry_run;
-
     let profiles = crate::backend::store::load_profiles(conn)?;
     let profile = profiles
         .iter()
         .find(|profile| profile.id == input.profile_id)
         .ok_or_else(|| format!("profile not found: {}", input.profile_id))?;
-    validate_exclusive_skill_profile(profile)?;
-
     let assets = crate::backend::store::load_assets(conn)?;
     let skill_assets = assets
         .iter()
         .filter(|asset| asset.kind == AssetKind::Skill)
         .cloned()
         .collect::<Vec<_>>();
+    let sources = crate::backend::store::load_sources(conn)?;
+    let enabled_mounts = crate::backend::store::load_asset_mounts(conn, None)?;
+    let profile_id = profile.id.clone();
+    build_skill_group_exclusive_mount_preview_with_loaders(
+        input,
+        profile,
+        skill_assets,
+        sources,
+        enabled_mounts,
+        |group_id, assets| crate::backend::store::load_skill_group_detail(conn, group_id, assets),
+        |asset_id, target_path| {
+            crate::backend::store::is_managed_deployment(conn, &profile_id, asset_id, target_path)
+        },
+    )
+}
+
+pub(crate) fn build_skill_group_exclusive_mount_preview_sqlx(
+    db: &crate::backend::store::Database,
+    input: &SkillGroupExclusiveMountInput,
+) -> AppResult<SkillGroupExclusiveMountPreview> {
+    let pool = db.pool().clone();
+    let profile_id = input.profile_id.clone();
+    let requested_group_ids = input
+        .group_ids
+        .iter()
+        .map(|group_id| group_id.trim())
+        .filter(|group_id| !group_id.is_empty())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
+    let (profile, skill_assets, sources, enabled_mounts, group_details, managed_targets) = db
+        .block_on(async move {
+            let profile = crate::backend::store::load_profile_sqlx(&pool, &profile_id)
+                .await?
+                .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+            let skill_assets =
+                crate::backend::store::load_assets_sqlx(&pool, Some(AssetKind::Skill)).await?;
+            let sources = crate::backend::store::load_sources_sqlx(&pool).await?;
+            let enabled_mounts =
+                crate::backend::store::load_enabled_asset_mounts_sqlx(&pool, Some(&profile_id))
+                    .await?;
+            let group_details = crate::backend::store::load_skill_group_details_by_ids_sqlx(
+                &pool,
+                &requested_group_ids,
+                &skill_assets,
+            )
+            .await?;
+            let managed_targets =
+                crate::backend::store::load_managed_deployment_targets_by_profile_sqlx(
+                    &pool,
+                    &profile_id,
+                )
+                .await?;
+            AppResult::Ok((
+                profile,
+                skill_assets,
+                sources,
+                enabled_mounts,
+                group_details,
+                managed_targets,
+            ))
+        })?;
+    let group_details_by_id = group_details
+        .into_iter()
+        .map(|detail| (detail.group.id.clone(), detail))
+        .collect::<HashMap<_, _>>();
+    let mut managed_targets_by_asset = HashMap::<String, HashSet<String>>::new();
+    for (asset_id, target_path) in managed_targets {
+        managed_targets_by_asset
+            .entry(asset_id)
+            .or_default()
+            .insert(target_path);
+    }
+
+    build_skill_group_exclusive_mount_preview_with_loaders(
+        input,
+        &profile,
+        skill_assets,
+        sources,
+        enabled_mounts,
+        move |group_id, _| {
+            group_details_by_id
+                .get(group_id)
+                .cloned()
+                .ok_or_else(|| format!("asset group not found: {group_id}"))
+        },
+        move |asset_id, target_path| {
+            Ok(managed_targets_by_asset
+                .get(asset_id)
+                .is_some_and(|targets| targets.contains(target_path)))
+        },
+    )
+}
+
+fn build_skill_group_exclusive_mount_preview_with_loaders<LoadGroup, IsManaged>(
+    input: &SkillGroupExclusiveMountInput,
+    profile: &TargetProfile,
+    skill_assets: Vec<Asset>,
+    sources: Vec<Source>,
+    enabled_mounts: Vec<AssetMount>,
+    mut load_group: LoadGroup,
+    mut is_managed_deployment: IsManaged,
+) -> AppResult<SkillGroupExclusiveMountPreview>
+where
+    LoadGroup: FnMut(&str, &[Asset]) -> AppResult<AssetGroupDetail>,
+    IsManaged: FnMut(&str, &str) -> AppResult<bool>,
+{
+    if !input.mount_selected {
+        return Err("exclusive skill group mount requires mount_selected=true".to_string());
+    }
+    let _dry_run_requested = input.dry_run;
+    validate_exclusive_skill_profile(profile)?;
+
     let skill_asset_by_id = skill_assets
         .iter()
         .map(|asset| (asset.id.clone(), asset.clone()))
         .collect::<BTreeMap<_, _>>();
-    let source_by_id = crate::backend::store::load_sources(conn)?
+    let source_by_id = sources
         .into_iter()
         .map(|source| (source.id.clone(), source))
         .collect::<HashMap<_, _>>();
-    let enabled_mount_asset_ids = crate::backend::store::load_asset_mounts(conn, None)?
+    let enabled_mount_asset_ids = enabled_mounts
         .into_iter()
         .filter(|mount| mount.profile_id == profile.id && mount.enabled)
         .map(|mount| mount.asset_id)
@@ -203,7 +308,7 @@ pub(crate) fn build_skill_group_exclusive_mount_preview(
             continue;
         }
 
-        let detail = crate::backend::store::load_skill_group_detail(conn, group_id, &skill_assets)?;
+        let detail = load_group(group_id, &skill_assets)?;
         if !detail.group.enabled {
             continue;
         }
@@ -259,12 +364,7 @@ pub(crate) fn build_skill_group_exclusive_mount_preview(
         let inspection = crate::backend::targeting::inspect_mount(profile, asset)?;
         match inspection.state {
             crate::backend::targeting::PhysicalMountState::Mounted => {
-                if crate::backend::store::is_managed_deployment(
-                    conn,
-                    &profile.id,
-                    &asset.id,
-                    &inspection.target_path,
-                )? {
+                if is_managed_deployment(&asset.id, &inspection.target_path)? {
                     unmount.push(exclusive_item(asset));
                 } else {
                     skipped.push(exclusive_skipped_item(

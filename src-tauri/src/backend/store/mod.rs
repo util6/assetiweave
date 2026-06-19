@@ -36,12 +36,13 @@ pub(crate) use database::{
 pub(crate) use deployment_repo::{
     count_deployment_state_by_profile_sqlx, delete_deployment_state,
     delete_orphan_deployment_state_sqlx, is_managed_deployment, is_managed_deployment_sqlx,
-    upsert_deployment_state, upsert_deployment_state_sqlx,
+    load_managed_deployment_targets_by_profile_sqlx, upsert_deployment_state,
+    upsert_deployment_state_sqlx,
 };
 pub(crate) use group_repo::{
     delete_asset_group_sqlx, delete_orphan_asset_group_members_sqlx, load_skill_group_detail,
-    load_skill_group_detail_sqlx, load_skill_group_details_sqlx, replace_asset_group_members_sqlx,
-    upsert_asset_group_sqlx,
+    load_skill_group_detail_sqlx, load_skill_group_details_by_ids_sqlx,
+    load_skill_group_details_sqlx, replace_asset_group_members_sqlx, upsert_asset_group_sqlx,
 };
 #[cfg(test)]
 pub(crate) use group_repo::{replace_asset_group_members, upsert_asset_group};

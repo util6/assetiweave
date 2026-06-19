@@ -26,6 +26,23 @@ pub(crate) async fn load_skill_group_details_sqlx(
         .collect()
 }
 
+pub(crate) async fn load_skill_group_details_by_ids_sqlx(
+    pool: &SqlitePool,
+    group_ids: &BTreeSet<String>,
+    assets: &[Asset],
+) -> AppResult<Vec<AssetGroupDetail>> {
+    let groups = load_asset_groups_by_kind_sqlx(pool, AssetKind::Skill)
+        .await?
+        .into_iter()
+        .filter(|group| group_ids.contains(&group.id))
+        .collect::<Vec<_>>();
+    let manual_members = load_group_members_sqlx(pool).await?;
+    groups
+        .into_iter()
+        .map(|group| build_group_detail(group, assets, &manual_members))
+        .collect()
+}
+
 pub(crate) fn load_skill_group_detail(
     conn: &Connection,
     group_id: &str,

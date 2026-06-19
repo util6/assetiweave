@@ -762,6 +762,12 @@ ON CONFLICT(profile_id, asset_id, target_path) DO UPDATE SET
 pub(crate) const GET_MANAGED_DEPLOYMENT: &str =
     "SELECT managed_by FROM deployment_state WHERE profile_id = ?1 AND asset_id = ?2 AND target_path = ?3";
 
+pub(crate) const LIST_MANAGED_DEPLOYMENT_TARGETS_BY_PROFILE: &str = r#"
+SELECT asset_id, target_path
+FROM deployment_state
+WHERE profile_id = ?1 AND managed_by = 'assetiweave'
+"#;
+
 pub(crate) const DELETE_DEPLOYMENT_STATE: &str =
     "DELETE FROM deployment_state WHERE profile_id = ?1 AND asset_id = ?2 AND target_path = ?3";
 

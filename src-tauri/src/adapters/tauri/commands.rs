@@ -6,7 +6,7 @@ use crate::adapters::tauri::background_tasks::{
 use crate::backend::capabilities::{
     apply_skill_group_exclusive_mount_record, apply_skill_group_mount_record,
     assetiweave_library_source_with_root, build_catalog_assets,
-    build_skill_group_exclusive_mount_preview, ensure_profile_can_be_deleted, exclusive_item,
+    build_skill_group_exclusive_mount_preview_sqlx, ensure_profile_can_be_deleted, exclusive_item,
     mount_asset_mount_record, refresh_recorded_assets, scan_asset_mount_statuses,
     scan_selected_sources, set_asset_mount_record, sync_asset_mount_observations,
     target_profile_from_input, unmount_asset_mount_record,
@@ -2043,9 +2043,11 @@ mod tests {
         mount_asset_mount_record(&conn, &asset_a.id, &codex.id).expect("mount skill a");
         mount_asset_mount_record(&conn, &asset_c.id, &codex.id).expect("mount skill c");
         mount_asset_mount_record(&conn, &asset_c.id, &cursor.id).expect("mount skill c cursor");
+        let database =
+            crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
-        let preview = build_skill_group_exclusive_mount_preview(
-            &conn,
+        let preview = build_skill_group_exclusive_mount_preview_sqlx(
+            &database,
             &SkillGroupExclusiveMountInput {
                 group_ids: vec![
                     group_a.id.clone(),
