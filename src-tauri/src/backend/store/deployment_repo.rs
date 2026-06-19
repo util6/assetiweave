@@ -1,31 +1,12 @@
 use crate::backend::dto::AppResult;
 use crate::backend::models::DeploymentState;
 #[cfg(test)]
-use rusqlite::OptionalExtension;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use sqlx::{Row, SqlitePool};
 
-use super::{
-    codec::{db_error, encode_enum},
-    sql,
-};
-
-pub(crate) fn upsert_deployment_state(conn: &Connection, state: &DeploymentState) -> AppResult<()> {
-    conn.execute(
-        sql::UPSERT_DEPLOYMENT_STATE,
-        params![
-            state.profile_id,
-            state.asset_id,
-            state.target_path,
-            encode_enum(state.strategy)?,
-            state.source_hash,
-            state.deployed_at,
-            state.managed_by,
-        ],
-    )
-    .map_err(db_error)?;
-    Ok(())
-}
+#[cfg(test)]
+use super::codec::db_error;
+use super::{codec::encode_enum, sql};
 
 pub(crate) async fn upsert_deployment_state_sqlx(
     pool: &SqlitePool,
@@ -107,20 +88,6 @@ pub(crate) async fn load_managed_deployment_targets_by_profile_sqlx(
             ))
         })
         .collect()
-}
-
-pub(crate) fn delete_deployment_state(
-    conn: &Connection,
-    profile_id: &str,
-    asset_id: &str,
-    target_path: &str,
-) -> AppResult<()> {
-    conn.execute(
-        sql::DELETE_DEPLOYMENT_STATE,
-        params![profile_id, asset_id, target_path],
-    )
-    .map_err(db_error)?;
-    Ok(())
 }
 
 #[cfg(test)]

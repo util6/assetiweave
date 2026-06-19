@@ -1728,12 +1728,7 @@ impl AppService {
         }
 
         for mount in enabled_mounts {
-            capabilities::unmount_asset_mount_record(
-                &self.conn,
-                &self.db,
-                &asset.id,
-                &mount.profile_id,
-            )?;
+            capabilities::unmount_asset_mount_record(&self.db, &asset.id, &mount.profile_id)?;
         }
         let asset_path = PathBuf::from(&asset.absolute_path);
         if asset_path.exists() {
@@ -1890,9 +1885,7 @@ impl AppService {
         profile_id: &str,
         enabled: bool,
     ) -> AppResult<ApplyAssetGroupMountResult> {
-        capabilities::apply_skill_group_mount_record(
-            &self.conn, &self.db, group_id, profile_id, enabled,
-        )
+        capabilities::apply_skill_group_mount_record(&self.db, group_id, profile_id, enabled)
     }
 
     pub(crate) fn preview_skill_group_exclusive_mount(
@@ -1906,7 +1899,7 @@ impl AppService {
         &self,
         input: SkillGroupExclusiveMountInput,
     ) -> AppResult<ApplySkillGroupExclusiveMountResult> {
-        capabilities::apply_skill_group_exclusive_mount_record(&self.conn, &self.db, &input)
+        capabilities::apply_skill_group_exclusive_mount_record(&self.db, &input)
     }
 
     pub(crate) fn mount_asset_by_id(
@@ -1914,7 +1907,7 @@ impl AppService {
         asset_id: &str,
         profile_id: &str,
     ) -> AppResult<AssetMountUpdateResult> {
-        capabilities::mount_asset_mount_record(&self.conn, &self.db, asset_id, profile_id)
+        capabilities::mount_asset_mount_record(&self.db, asset_id, profile_id)
     }
 
     pub(crate) fn unmount_asset_by_id(
@@ -1922,7 +1915,7 @@ impl AppService {
         asset_id: &str,
         profile_id: &str,
     ) -> AppResult<AssetMountUpdateResult> {
-        capabilities::unmount_asset_mount_record(&self.conn, &self.db, asset_id, profile_id)
+        capabilities::unmount_asset_mount_record(&self.db, asset_id, profile_id)
     }
 
     pub(crate) fn toggle_asset_mount(
@@ -1933,7 +1926,6 @@ impl AppService {
         let (asset, profile) = load_mount_asset_and_profile(&self.db, asset_id, profile_id)?;
         let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
         capabilities::set_asset_mount_record(
-            &self.conn,
             &self.db,
             asset_id,
             profile_id,
@@ -1952,9 +1944,7 @@ impl AppService {
         enabled: bool,
         strategy: Option<DeploymentStrategy>,
     ) -> AppResult<AssetMount> {
-        capabilities::set_asset_mount_record(
-            &self.conn, &self.db, asset_id, profile_id, enabled, strategy,
-        )
+        capabilities::set_asset_mount_record(&self.db, asset_id, profile_id, enabled, strategy)
     }
 
     pub(crate) fn execute_plan(

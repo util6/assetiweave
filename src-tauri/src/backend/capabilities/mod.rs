@@ -50,7 +50,6 @@ pub(crate) fn mount_log_fields(
 }
 
 pub(crate) fn apply_skill_group_mount_record(
-    conn: &rusqlite::Connection,
     db: &crate::backend::store::Database,
     group_id: &str,
     profile_id: &str,
@@ -71,9 +70,9 @@ pub(crate) fn apply_skill_group_mount_record(
     let mut errors = Vec::new();
     for member in &detail.members {
         let result = if enabled {
-            mount_asset_mount_record(conn, db, &member.asset_id, profile_id)
+            mount_asset_mount_record(db, &member.asset_id, profile_id)
         } else {
-            unmount_asset_mount_record(conn, db, &member.asset_id, profile_id)
+            unmount_asset_mount_record(db, &member.asset_id, profile_id)
         };
 
         match result {
@@ -101,7 +100,6 @@ pub(crate) fn apply_skill_group_mount_record(
     })
 }
 pub(crate) fn apply_skill_group_exclusive_mount_record(
-    conn: &rusqlite::Connection,
     db: &crate::backend::store::Database,
     input: &SkillGroupExclusiveMountInput,
 ) -> AppResult<ApplySkillGroupExclusiveMountResult> {
@@ -130,7 +128,7 @@ pub(crate) fn apply_skill_group_exclusive_mount_record(
     }
 
     for item in &preview.mount {
-        match mount_asset_mount_record(conn, db, &item.asset_id, &preview.profile_id) {
+        match mount_asset_mount_record(db, &item.asset_id, &preview.profile_id) {
             Ok(update) => statuses.push(update.status),
             Err(message) => errors.push(SkillGroupExclusiveMountError {
                 asset_id: item.asset_id.clone(),
@@ -141,7 +139,7 @@ pub(crate) fn apply_skill_group_exclusive_mount_record(
     }
 
     for item in &preview.unmount {
-        match unmount_exclusive_skill_mount_record(conn, db, &item.asset_id, &preview.profile_id) {
+        match unmount_exclusive_skill_mount_record(db, &item.asset_id, &preview.profile_id) {
             Ok(update) => statuses.push(update.status),
             Err(message) => errors.push(SkillGroupExclusiveMountError {
                 asset_id: item.asset_id.clone(),
@@ -440,7 +438,6 @@ fn validate_exclusive_mount_candidate(
 }
 
 fn unmount_exclusive_skill_mount_record(
-    conn: &rusqlite::Connection,
     db: &crate::backend::store::Database,
     asset_id: &str,
     profile_id: &str,
@@ -479,7 +476,7 @@ fn unmount_exclusive_skill_mount_record(
         }
     }
 
-    unmount_asset_mount_record(conn, db, asset_id, profile_id)
+    unmount_asset_mount_record(db, asset_id, profile_id)
 }
 
 pub(crate) fn exclusive_item(asset: &Asset) -> SkillGroupExclusiveMountItem {
@@ -618,7 +615,6 @@ pub(crate) fn asset_group_from_input(
     }
 }
 pub(crate) fn set_asset_mount_record(
-    conn: &rusqlite::Connection,
     db: &crate::backend::store::Database,
     asset_id: &str,
     profile_id: &str,
@@ -626,7 +622,7 @@ pub(crate) fn set_asset_mount_record(
     strategy: Option<DeploymentStrategy>,
 ) -> AppResult<AssetMount> {
     if enabled {
-        return mount_asset_mount_record(conn, db, asset_id, profile_id).map(|result| result.mount);
+        return mount_asset_mount_record(db, asset_id, profile_id).map(|result| result.mount);
     }
 
     let (asset, source, profile) = load_mount_target_sqlx(db, asset_id, profile_id)?;
@@ -636,8 +632,7 @@ pub(crate) fn set_asset_mount_record(
         inspection.state,
         crate::backend::targeting::PhysicalMountState::Mounted
     ) {
-        return unmount_asset_mount_record(conn, db, asset_id, profile_id)
-            .map(|result| result.mount);
+        return unmount_asset_mount_record(db, asset_id, profile_id).map(|result| result.mount);
     }
 
     let pool = db.pool().clone();
@@ -884,7 +879,6 @@ fn validate_mount_target(
 }
 
 pub(crate) fn mount_asset_mount_record(
-    conn: &rusqlite::Connection,
     db: &crate::backend::store::Database,
     asset_id: &str,
     profile_id: &str,
@@ -903,7 +897,7 @@ pub(crate) fn mount_asset_mount_record(
                 let inspection =
                     repair_mounted_symlink_to_real_source(&asset, &profile, inspection)?;
                 let mount = persist_verified_mount(
-                    conn,
+                    db,
                     &asset,
                     &profile,
                     &inspection.target_path,
@@ -939,8 +933,7 @@ pub(crate) fn mount_asset_mount_record(
         }
 
         let mount =
-            match persist_verified_mount(conn, &asset, &profile, &inspection.target_path, strategy)
-            {
+            match persist_verified_mount(db, &asset, &profile, &inspection.target_path, strategy) {
                 Ok(mount) => mount,
                 Err(error) => {
                     remove_created_mount_symlink(&target_path).ok();
@@ -971,7 +964,6 @@ pub(crate) fn mount_asset_mount_record(
 }
 
 pub(crate) fn unmount_asset_mount_record(
-    conn: &rusqlite::Connection,
     db: &crate::backend::store::Database,
     asset_id: &str,
     profile_id: &str,
@@ -1010,7 +1002,7 @@ pub(crate) fn unmount_asset_mount_record(
             ));
         }
 
-        match persist_verified_unmount(conn, &asset, &profile, &inspection.target_path) {
+        match persist_verified_unmount(db, &asset, &profile, &inspection.target_path) {
             Ok(mount) => Ok(AssetMountUpdateResult {
                 mount,
                 status: asset_mount_status(&asset.id, &profile.id, inspection),
@@ -1231,15 +1223,12 @@ fn repair_mounted_symlink_to_real_source(
 }
 
 fn persist_verified_mount(
-    conn: &rusqlite::Connection,
+    db: &crate::backend::store::Database,
     asset: &Asset,
     profile: &TargetProfile,
     target_path: &str,
     strategy: DeploymentStrategy,
 ) -> AppResult<AssetMount> {
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|error| error.to_string())?;
     let state = DeploymentState {
         profile_id: profile.id.clone(),
         asset_id: asset.id.clone(),
@@ -1249,32 +1238,27 @@ fn persist_verified_mount(
         deployed_at: Utc::now().to_rfc3339(),
         managed_by: "assetiweave".to_string(),
     };
-    crate::backend::store::upsert_deployment_state(&tx, &state)?;
-    let mount =
-        crate::backend::store::set_asset_mount(&tx, &asset.id, &profile.id, true, strategy)?;
-    tx.commit().map_err(|error| error.to_string())?;
-    Ok(mount)
+    db.block_on(async {
+        crate::backend::store::persist_verified_mount_sqlx(db.pool(), &state, strategy).await
+    })
 }
 
 fn persist_verified_unmount(
-    conn: &rusqlite::Connection,
+    db: &crate::backend::store::Database,
     asset: &Asset,
     profile: &TargetProfile,
     target_path: &str,
 ) -> AppResult<AssetMount> {
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|error| error.to_string())?;
-    crate::backend::store::delete_deployment_state(&tx, &profile.id, &asset.id, target_path)?;
-    let mount = crate::backend::store::set_asset_mount(
-        &tx,
-        &asset.id,
-        &profile.id,
-        false,
-        profile.deployment_strategy,
-    )?;
-    tx.commit().map_err(|error| error.to_string())?;
-    Ok(mount)
+    db.block_on(async {
+        crate::backend::store::persist_verified_unmount_sqlx(
+            db.pool(),
+            &asset.id,
+            &profile.id,
+            target_path,
+            profile.deployment_strategy,
+        )
+        .await
+    })
 }
 
 fn ensure_target_within_profile(profile: &TargetProfile, target_path: &Path) -> AppResult<()> {

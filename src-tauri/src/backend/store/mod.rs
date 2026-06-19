@@ -36,9 +36,8 @@ pub(crate) use database::{
 #[cfg(test)]
 pub(crate) use deployment_repo::is_managed_deployment;
 pub(crate) use deployment_repo::{
-    count_deployment_state_by_profile_sqlx, delete_deployment_state,
-    delete_orphan_deployment_state_sqlx, is_managed_deployment_sqlx,
-    load_managed_deployment_targets_by_profile_sqlx, upsert_deployment_state,
+    count_deployment_state_by_profile_sqlx, delete_orphan_deployment_state_sqlx,
+    is_managed_deployment_sqlx, load_managed_deployment_targets_by_profile_sqlx,
     upsert_deployment_state_sqlx,
 };
 pub(crate) use group_repo::{
@@ -54,9 +53,11 @@ pub(crate) use mount_observation_repo::load_asset_mount_observations;
 pub(crate) use mount_observation_repo::persist_asset_mount_snapshot_sqlx;
 #[cfg(test)]
 pub(crate) use mount_repo::load_asset_mounts;
+#[cfg(test)]
+pub(crate) use mount_repo::set_asset_mount;
 pub(crate) use mount_repo::{
     delete_orphan_asset_mounts_sqlx, load_asset_mounts_sqlx, load_enabled_asset_mounts_sqlx,
-    set_asset_mount, set_asset_mount_sqlx,
+    persist_verified_mount_sqlx, persist_verified_unmount_sqlx, set_asset_mount_sqlx,
 };
 #[cfg(test)]
 pub(crate) use profile_repo::{
