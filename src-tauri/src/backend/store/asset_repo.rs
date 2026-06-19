@@ -1,13 +1,18 @@
 use crate::backend::dto::AppResult;
 use crate::backend::models::{Asset, AssetFormat, AssetKind};
-use rusqlite::{params, Connection, Row};
+#[cfg(test)]
+use rusqlite::Row;
+use rusqlite::{params, Connection};
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 
+#[cfg(test)]
+use super::codec::to_sql_error;
 use super::{
-    codec::{db_error, decode_enum, encode_enum, to_sql_error},
+    codec::{db_error, decode_enum, encode_enum},
     sql,
 };
 
+#[cfg(test)]
 pub(crate) fn load_assets(conn: &Connection) -> AppResult<Vec<Asset>> {
     load_assets_by_kind(conn, None)
 }
@@ -42,6 +47,7 @@ pub(crate) async fn load_asset_sqlx(pool: &SqlitePool, asset_id: &str) -> AppRes
         .transpose()
 }
 
+#[cfg(test)]
 pub(crate) fn load_assets_by_kind(
     conn: &Connection,
     kind: Option<AssetKind>,
@@ -81,6 +87,7 @@ fn map_sqlx_asset_row(row: &SqliteRow) -> AppResult<Asset> {
     })
 }
 
+#[cfg(test)]
 fn load_all_assets(conn: &Connection) -> AppResult<Vec<Asset>> {
     let mut stmt = conn.prepare(sql::LIST_ASSETS).map_err(db_error)?;
     let rows = stmt.query_map([], map_asset_row).map_err(db_error)?;
@@ -88,6 +95,7 @@ fn load_all_assets(conn: &Connection) -> AppResult<Vec<Asset>> {
     rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
 }
 
+#[cfg(test)]
 fn map_asset_row(row: &Row<'_>) -> rusqlite::Result<Asset> {
     Ok(Asset {
         id: row.get(0)?,

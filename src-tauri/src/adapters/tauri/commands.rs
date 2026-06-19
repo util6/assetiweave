@@ -1729,7 +1729,9 @@ mod tests {
         )
         .expect("insert asset");
         crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
-        mount_asset_mount_record(&conn, &asset.id, &profile.id).expect("mount asset");
+        let database =
+            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        mount_asset_mount_record(&conn, &database, &asset.id, &profile.id).expect("mount asset");
 
         let error = ensure_profile_can_be_deleted(&conn, &profile.id).expect_err("delete blocked");
 
@@ -1803,8 +1805,11 @@ mod tests {
         )
         .expect("insert asset");
         crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
+        let database =
+            crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
-        let result = mount_asset_mount_record(&conn, &asset.id, &profile.id).expect("mount");
+        let result =
+            mount_asset_mount_record(&conn, &database, &asset.id, &profile.id).expect("mount");
 
         let metadata = std::fs::symlink_metadata(&target_path).expect("target metadata");
         assert!(metadata.file_type().is_symlink());
@@ -1855,8 +1860,11 @@ mod tests {
         )
         .expect("insert asset");
         crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
+        let database =
+            crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
-        let result = mount_asset_mount_record(&conn, &asset.id, &profile.id).expect("mount");
+        let result =
+            mount_asset_mount_record(&conn, &database, &asset.id, &profile.id).expect("mount");
 
         assert_eq!(
             std::fs::read_link(&target_path).expect("read target symlink"),
@@ -2040,11 +2048,12 @@ mod tests {
             &skill_assets,
         )
         .expect("insert disabled group members");
-        mount_asset_mount_record(&conn, &asset_a.id, &codex.id).expect("mount skill a");
-        mount_asset_mount_record(&conn, &asset_c.id, &codex.id).expect("mount skill c");
-        mount_asset_mount_record(&conn, &asset_c.id, &cursor.id).expect("mount skill c cursor");
         let database =
             crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        mount_asset_mount_record(&conn, &database, &asset_a.id, &codex.id).expect("mount skill a");
+        mount_asset_mount_record(&conn, &database, &asset_c.id, &codex.id).expect("mount skill c");
+        mount_asset_mount_record(&conn, &database, &asset_c.id, &cursor.id)
+            .expect("mount skill c cursor");
 
         let preview = build_skill_group_exclusive_mount_preview_sqlx(
             &database,
@@ -2157,9 +2166,12 @@ mod tests {
             &skill_assets,
         )
         .expect("insert disabled group members");
-        mount_asset_mount_record(&conn, &asset_a.id, &codex.id).expect("mount skill a");
-        mount_asset_mount_record(&conn, &asset_c.id, &codex.id).expect("mount skill c");
-        mount_asset_mount_record(&conn, &asset_c.id, &cursor.id).expect("mount skill c cursor");
+        let database =
+            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        mount_asset_mount_record(&conn, &database, &asset_a.id, &codex.id).expect("mount skill a");
+        mount_asset_mount_record(&conn, &database, &asset_c.id, &codex.id).expect("mount skill c");
+        mount_asset_mount_record(&conn, &database, &asset_c.id, &cursor.id)
+            .expect("mount skill c cursor");
         std::os::unix::fs::symlink(&prompt_path, &prompt_target).expect("create prompt symlink");
         crate::backend::store::set_asset_mount(
             &conn,
@@ -2169,8 +2181,6 @@ mod tests {
             DeploymentStrategy::SymlinkToSource,
         )
         .expect("store prompt mount");
-        let database =
-            crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
         let result = apply_skill_group_exclusive_mount_record(
             &conn,
@@ -2587,8 +2597,11 @@ mod tests {
             DeploymentStrategy::SymlinkToSource,
         )
         .expect("enable mount");
+        let database =
+            crate::backend::store::Database::open(&db_path).expect("open migrated database");
 
-        let result = unmount_asset_mount_record(&conn, &asset.id, &profile.id).expect("unmount");
+        let result =
+            unmount_asset_mount_record(&conn, &database, &asset.id, &profile.id).expect("unmount");
 
         assert!(!target_path.exists());
         assert!(!std::fs::symlink_metadata(&target_path).is_ok());

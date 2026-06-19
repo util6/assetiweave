@@ -1,6 +1,8 @@
 use crate::backend::dto::AppResult;
 use crate::backend::models::DeploymentState;
-use rusqlite::{params, Connection, OptionalExtension};
+#[cfg(test)]
+use rusqlite::OptionalExtension;
+use rusqlite::{params, Connection};
 use sqlx::{Row, SqlitePool};
 
 use super::{
@@ -43,6 +45,7 @@ pub(crate) async fn upsert_deployment_state_sqlx(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn is_managed_deployment(
     conn: &Connection,
     profile_id: &str,

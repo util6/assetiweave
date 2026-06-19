@@ -15,12 +15,12 @@ mod source_repo;
 mod sql;
 mod web_record_repo;
 
-#[cfg(test)]
-pub(crate) use asset_repo::load_assets_by_kind;
 pub(crate) use asset_repo::{
-    load_asset_sqlx, load_assets, load_assets_sqlx, replace_source_assets,
-    replace_source_assets_sqlx, update_asset_description_sqlx,
+    load_asset_sqlx, load_assets_sqlx, replace_source_assets, replace_source_assets_sqlx,
+    update_asset_description_sqlx,
 };
+#[cfg(test)]
+pub(crate) use asset_repo::{load_assets, load_assets_by_kind};
 pub(crate) use conversation_repo::{
     delete_conversation_adapter, disable_conversation_source, import_conversation_sessions,
     list_conversation_adapters, list_conversation_question_details, list_conversation_sessions,
@@ -33,9 +33,11 @@ pub(crate) use conversation_repo::{
 pub(crate) use database::{
     count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx, Database,
 };
+#[cfg(test)]
+pub(crate) use deployment_repo::is_managed_deployment;
 pub(crate) use deployment_repo::{
     count_deployment_state_by_profile_sqlx, delete_deployment_state,
-    delete_orphan_deployment_state_sqlx, is_managed_deployment, is_managed_deployment_sqlx,
+    delete_orphan_deployment_state_sqlx, is_managed_deployment_sqlx,
     load_managed_deployment_targets_by_profile_sqlx, upsert_deployment_state,
     upsert_deployment_state_sqlx,
 };
@@ -57,9 +59,11 @@ pub(crate) use mount_repo::{
     set_asset_mount, set_asset_mount_sqlx,
 };
 #[cfg(test)]
-pub(crate) use profile_repo::{count_deployment_state_by_profile, delete_profile, upsert_profile};
 pub(crate) use profile_repo::{
-    delete_profile_sqlx, load_profile_sqlx, load_profiles, load_profiles_sqlx, upsert_profile_sqlx,
+    count_deployment_state_by_profile, delete_profile, load_profiles, upsert_profile,
+};
+pub(crate) use profile_repo::{
+    delete_profile_sqlx, load_profile_sqlx, load_profiles_sqlx, upsert_profile_sqlx,
 };
 pub(crate) use schema::open_initialized;
 pub(crate) use shortcut_repo::{
@@ -70,8 +74,10 @@ pub(crate) use skill_remote_repo::{
     load_skill_remote_source_sqlx, update_skill_remote_check_result_sqlx,
     upsert_skill_remote_source_sqlx,
 };
+#[cfg(test)]
+pub(crate) use source_repo::load_sources;
 pub(crate) use source_repo::{
-    delete_source, delete_source_sqlx, load_skill_sources_sqlx, load_source_sqlx, load_sources,
+    delete_source, delete_source_sqlx, load_skill_sources_sqlx, load_source_sqlx,
     load_sources_sqlx, normalize_source, upsert_source, upsert_source_sqlx,
 };
 pub(crate) use web_record_repo::{

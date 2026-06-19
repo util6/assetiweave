@@ -33,11 +33,11 @@ use walkdir::WalkDir;
 pub(crate) const SKILL_BACKUP_SOURCE_ID: &str = "assetiweave-library-skills";
 
 pub(crate) fn mount_log_fields(
-    conn: &rusqlite::Connection,
+    db: &crate::backend::store::Database,
     asset_id: &str,
     profile_id: &str,
 ) -> Vec<LogField> {
-    if let Ok((asset, profile)) = load_mount_asset_and_profile(conn, asset_id, profile_id) {
+    if let Ok((asset, profile)) = load_mount_asset_and_profile_sqlx(db, asset_id, profile_id) {
         let mut fields = asset_log_fields(&asset);
         fields.extend(profile_log_fields(&profile));
         return fields;
@@ -71,9 +71,9 @@ pub(crate) fn apply_skill_group_mount_record(
     let mut errors = Vec::new();
     for member in &detail.members {
         let result = if enabled {
-            mount_asset_mount_record(conn, &member.asset_id, profile_id)
+            mount_asset_mount_record(conn, db, &member.asset_id, profile_id)
         } else {
-            unmount_asset_mount_record(conn, &member.asset_id, profile_id)
+            unmount_asset_mount_record(conn, db, &member.asset_id, profile_id)
         };
 
         match result {
@@ -130,7 +130,7 @@ pub(crate) fn apply_skill_group_exclusive_mount_record(
     }
 
     for item in &preview.mount {
-        match mount_asset_mount_record(conn, &item.asset_id, &preview.profile_id) {
+        match mount_asset_mount_record(conn, db, &item.asset_id, &preview.profile_id) {
             Ok(update) => statuses.push(update.status),
             Err(message) => errors.push(SkillGroupExclusiveMountError {
                 asset_id: item.asset_id.clone(),
@@ -141,7 +141,7 @@ pub(crate) fn apply_skill_group_exclusive_mount_record(
     }
 
     for item in &preview.unmount {
-        match unmount_exclusive_skill_mount_record(conn, &item.asset_id, &preview.profile_id) {
+        match unmount_exclusive_skill_mount_record(conn, db, &item.asset_id, &preview.profile_id) {
             Ok(update) => statuses.push(update.status),
             Err(message) => errors.push(SkillGroupExclusiveMountError {
                 asset_id: item.asset_id.clone(),
@@ -441,19 +441,28 @@ fn validate_exclusive_mount_candidate(
 
 fn unmount_exclusive_skill_mount_record(
     conn: &rusqlite::Connection,
+    db: &crate::backend::store::Database,
     asset_id: &str,
     profile_id: &str,
 ) -> AppResult<AssetMountUpdateResult> {
-    let (asset, profile) = load_mount_asset_and_profile(conn, asset_id, profile_id)?;
+    let (asset, profile) = load_mount_asset_and_profile_sqlx(db, asset_id, profile_id)?;
     let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
     match inspection.state {
         crate::backend::targeting::PhysicalMountState::Mounted => {
-            if !crate::backend::store::is_managed_deployment(
-                conn,
-                &profile.id,
-                &asset.id,
-                &inspection.target_path,
-            )? {
+            let pool = db.pool().clone();
+            let profile_id = profile.id.clone();
+            let asset_id = asset.id.clone();
+            let target_path = inspection.target_path.clone();
+            let is_managed = db.block_on(async move {
+                crate::backend::store::is_managed_deployment_sqlx(
+                    &pool,
+                    &profile_id,
+                    &asset_id,
+                    &target_path,
+                )
+                .await
+            })?;
+            if !is_managed {
                 return Err(format!(
                     "target is mounted but not managed by AssetIWeave: {}",
                     inspection.target_path
@@ -470,7 +479,7 @@ fn unmount_exclusive_skill_mount_record(
         }
     }
 
-    unmount_asset_mount_record(conn, asset_id, profile_id)
+    unmount_asset_mount_record(conn, db, asset_id, profile_id)
 }
 
 pub(crate) fn exclusive_item(asset: &Asset) -> SkillGroupExclusiveMountItem {
@@ -616,18 +625,19 @@ pub(crate) fn set_asset_mount_record(
     enabled: bool,
     strategy: Option<DeploymentStrategy>,
 ) -> AppResult<AssetMount> {
-    let default_strategy = validate_mount_target_sqlx(db, asset_id, profile_id)?;
     if enabled {
-        return mount_asset_mount_record(conn, asset_id, profile_id).map(|result| result.mount);
+        return mount_asset_mount_record(conn, db, asset_id, profile_id).map(|result| result.mount);
     }
 
-    let (asset, profile) = load_mount_asset_and_profile_sqlx(db, asset_id, profile_id)?;
+    let (asset, source, profile) = load_mount_target_sqlx(db, asset_id, profile_id)?;
+    let default_strategy = validate_mount_target(&source, &profile)?;
     let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
     if matches!(
         inspection.state,
         crate::backend::targeting::PhysicalMountState::Mounted
     ) {
-        return unmount_asset_mount_record(conn, asset_id, profile_id).map(|result| result.mount);
+        return unmount_asset_mount_record(conn, db, asset_id, profile_id)
+            .map(|result| result.mount);
     }
 
     let pool = db.pool().clone();
@@ -646,7 +656,7 @@ pub(crate) fn set_asset_mount_record(
     });
     match &result {
         Ok(_) => {
-            let mut fields = mount_log_fields(conn, asset_id, profile_id);
+            let mut fields = mount_log_fields(db, asset_id, profile_id);
             fields.push(("enabled", enabled.to_string()));
             log_info("skill.mount.preference", "更新 skill 挂载关系成功", &fields);
         }
@@ -654,7 +664,7 @@ pub(crate) fn set_asset_mount_record(
             "skill.mount.preference",
             "更新 skill 挂载关系失败",
             error,
-            &mount_log_fields(conn, asset_id, profile_id),
+            &mount_log_fields(db, asset_id, profile_id),
         ),
     }
     result
@@ -860,45 +870,9 @@ fn should_remove_source_on_scan_error(error: &str) -> bool {
 }
 
 fn validate_mount_target(
-    conn: &rusqlite::Connection,
-    asset_id: &str,
-    profile_id: &str,
+    source: &Source,
+    profile: &TargetProfile,
 ) -> AppResult<DeploymentStrategy> {
-    let asset = crate::backend::store::load_assets(conn)?
-        .iter()
-        .find(|asset| asset.id == asset_id)
-        .cloned()
-        .ok_or_else(|| format!("asset not found: {asset_id}"))?;
-    let source = crate::backend::store::load_sources(conn)?
-        .into_iter()
-        .find(|source| source.id == asset.source_id)
-        .ok_or_else(|| format!("source not found: {}", asset.source_id))?;
-    if matches!(
-        source.source_origin,
-        SourceOrigin::AppTarget | SourceOrigin::AppLocal
-    ) {
-        return Err("app-local skills must be backed up before mounting".to_string());
-    }
-
-    let profile = crate::backend::store::load_profiles(conn)?
-        .into_iter()
-        .find(|profile| profile.id == profile_id)
-        .ok_or_else(|| format!("profile not found: {profile_id}"))?;
-
-    Ok(profile.deployment_strategy)
-}
-
-fn validate_mount_target_sqlx(
-    db: &crate::backend::store::Database,
-    asset_id: &str,
-    profile_id: &str,
-) -> AppResult<DeploymentStrategy> {
-    let (asset, profile) = load_mount_asset_and_profile_sqlx(db, asset_id, profile_id)?;
-    let pool = db.pool().clone();
-    let source_id = asset.source_id.clone();
-    let source = db
-        .block_on(async move { crate::backend::store::load_source_sqlx(&pool, &source_id).await })?
-        .ok_or_else(|| format!("source not found: {}", asset.source_id))?;
     if matches!(
         source.source_origin,
         SourceOrigin::AppTarget | SourceOrigin::AppLocal
@@ -911,15 +885,16 @@ fn validate_mount_target_sqlx(
 
 pub(crate) fn mount_asset_mount_record(
     conn: &rusqlite::Connection,
+    db: &crate::backend::store::Database,
     asset_id: &str,
     profile_id: &str,
 ) -> AppResult<AssetMountUpdateResult> {
     let result = (|| {
-        let strategy = validate_mount_target(conn, asset_id, profile_id)?;
+        let (asset, source, profile) = load_mount_target_sqlx(db, asset_id, profile_id)?;
+        let strategy = validate_mount_target(&source, &profile)?;
         if !matches!(strategy, DeploymentStrategy::SymlinkToSource) {
             return Err("immediate mount only supports symlink_to_source profiles".to_string());
         }
-        let (asset, profile) = load_mount_asset_and_profile(conn, asset_id, profile_id)?;
         validate_immediate_mount_support(&asset, &profile)?;
 
         let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
@@ -980,7 +955,7 @@ pub(crate) fn mount_asset_mount_record(
 
     match &result {
         Ok(update) => {
-            let mut fields = mount_log_fields(conn, asset_id, profile_id);
+            let mut fields = mount_log_fields(db, asset_id, profile_id);
             fields.push(("target_path", update.status.target_path.clone()));
             fields.push(("state", format!("{:?}", update.status.state)));
             log_info("skill.mount.success", "skill 挂载成功", &fields);
@@ -989,7 +964,7 @@ pub(crate) fn mount_asset_mount_record(
             "skill.mount.error",
             "skill 挂载失败",
             error,
-            &mount_log_fields(conn, asset_id, profile_id),
+            &mount_log_fields(db, asset_id, profile_id),
         ),
     }
     result
@@ -997,11 +972,12 @@ pub(crate) fn mount_asset_mount_record(
 
 pub(crate) fn unmount_asset_mount_record(
     conn: &rusqlite::Connection,
+    db: &crate::backend::store::Database,
     asset_id: &str,
     profile_id: &str,
 ) -> AppResult<AssetMountUpdateResult> {
     let result = (|| {
-        let (asset, profile) = load_mount_asset_and_profile(conn, asset_id, profile_id)?;
+        let (asset, profile) = load_mount_asset_and_profile_sqlx(db, asset_id, profile_id)?;
         let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
         let target_path = PathBuf::from(&inspection.target_path);
         let removed_link = matches!(
@@ -1050,7 +1026,7 @@ pub(crate) fn unmount_asset_mount_record(
 
     match &result {
         Ok(update) => {
-            let mut fields = mount_log_fields(conn, asset_id, profile_id);
+            let mut fields = mount_log_fields(db, asset_id, profile_id);
             fields.push(("target_path", update.status.target_path.clone()));
             fields.push(("state", format!("{:?}", update.status.state)));
             log_info("skill.unmount.success", "skill 卸载成功", &fields);
@@ -1059,27 +1035,10 @@ pub(crate) fn unmount_asset_mount_record(
             "skill.unmount.error",
             "skill 卸载失败",
             error,
-            &mount_log_fields(conn, asset_id, profile_id),
+            &mount_log_fields(db, asset_id, profile_id),
         ),
     }
     result
-}
-
-fn load_mount_asset_and_profile(
-    conn: &rusqlite::Connection,
-    asset_id: &str,
-    profile_id: &str,
-) -> AppResult<(Asset, TargetProfile)> {
-    let asset = crate::backend::store::load_assets(conn)?
-        .into_iter()
-        .find(|asset| asset.id == asset_id)
-        .ok_or_else(|| format!("asset not found: {asset_id}"))?;
-    let profile = crate::backend::store::load_profiles(conn)?
-        .into_iter()
-        .find(|profile| profile.id == profile_id)
-        .ok_or_else(|| format!("profile not found: {profile_id}"))?;
-
-    Ok((asset, profile))
 }
 
 fn load_mount_asset_and_profile_sqlx(
@@ -1098,6 +1057,28 @@ fn load_mount_asset_and_profile_sqlx(
             .await?
             .ok_or_else(|| format!("profile not found: {profile_id}"))?;
         AppResult::Ok((asset, profile))
+    })
+}
+
+fn load_mount_target_sqlx(
+    db: &crate::backend::store::Database,
+    asset_id: &str,
+    profile_id: &str,
+) -> AppResult<(Asset, Source, TargetProfile)> {
+    let pool = db.pool().clone();
+    let asset_id = asset_id.to_string();
+    let profile_id = profile_id.to_string();
+    db.block_on(async move {
+        let asset = crate::backend::store::load_asset_sqlx(&pool, &asset_id)
+            .await?
+            .ok_or_else(|| format!("asset not found: {asset_id}"))?;
+        let source = crate::backend::store::load_source_sqlx(&pool, &asset.source_id)
+            .await?
+            .ok_or_else(|| format!("source not found: {}", asset.source_id))?;
+        let profile = crate::backend::store::load_profile_sqlx(&pool, &profile_id)
+            .await?
+            .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+        AppResult::Ok((asset, source, profile))
     })
 }
 

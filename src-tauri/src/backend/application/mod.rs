@@ -1728,7 +1728,12 @@ impl AppService {
         }
 
         for mount in enabled_mounts {
-            capabilities::unmount_asset_mount_record(&self.conn, &asset.id, &mount.profile_id)?;
+            capabilities::unmount_asset_mount_record(
+                &self.conn,
+                &self.db,
+                &asset.id,
+                &mount.profile_id,
+            )?;
         }
         let asset_path = PathBuf::from(&asset.absolute_path);
         if asset_path.exists() {
@@ -1909,7 +1914,7 @@ impl AppService {
         asset_id: &str,
         profile_id: &str,
     ) -> AppResult<AssetMountUpdateResult> {
-        capabilities::mount_asset_mount_record(&self.conn, asset_id, profile_id)
+        capabilities::mount_asset_mount_record(&self.conn, &self.db, asset_id, profile_id)
     }
 
     pub(crate) fn unmount_asset_by_id(
@@ -1917,7 +1922,7 @@ impl AppService {
         asset_id: &str,
         profile_id: &str,
     ) -> AppResult<AssetMountUpdateResult> {
-        capabilities::unmount_asset_mount_record(&self.conn, asset_id, profile_id)
+        capabilities::unmount_asset_mount_record(&self.conn, &self.db, asset_id, profile_id)
     }
 
     pub(crate) fn toggle_asset_mount(
