@@ -14,8 +14,6 @@ use crate::backend::{
     },
 };
 use chrono::Utc;
-#[cfg(test)]
-use rusqlite::Connection;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -29,8 +27,6 @@ use uuid::Uuid;
 
 pub(crate) struct AppService {
     db: crate::backend::store::Database,
-    #[cfg(test)]
-    conn: Connection,
     db_path: PathBuf,
 }
 
@@ -473,14 +469,7 @@ impl AppService {
 
     pub(crate) fn open_with_db_path(db_path: PathBuf) -> AppResult<Self> {
         let db = crate::backend::store::Database::open_initialized(&db_path)?;
-        #[cfg(test)]
-        let conn = Connection::open(&db_path).map_err(|error| error.to_string())?;
-        Ok(Self {
-            db,
-            #[cfg(test)]
-            conn,
-            db_path,
-        })
+        Ok(Self { db, db_path })
     }
 
     pub(crate) fn overview(&self) -> AppResult<AppOverview> {
@@ -2923,7 +2912,99 @@ fn is_web_record_adapter(adapter: Option<&ConversationAdapter>, adapter_id: &str
 mod tests {
     use super::*;
     use crate::backend::models::{AssetFormat, AssetGroupRules, DeploymentState, SourceKind};
+    use sqlx::AssertSqlSafe;
     use std::fs;
+
+    fn execute_test_sql(service: &AppService, sql: &str) -> AppResult<()> {
+        let pool = service.db.pool().clone();
+        service.db.block_on(async move {
+            for statement in sql.split(';').map(str::trim).filter(|sql| !sql.is_empty()) {
+                sqlx::query(AssertSqlSafe(statement.to_string()))
+                    .execute(&pool)
+                    .await
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(())
+        })
+    }
+
+    fn clear_test_tables(service: &AppService, tables: &[&str]) {
+        let pool = service.db.pool().clone();
+        service
+            .db
+            .block_on(async move {
+                for table in tables {
+                    let statement = format!("DELETE FROM {table}");
+                    sqlx::query(AssertSqlSafe(statement))
+                        .execute(&pool)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                }
+                AppResult::Ok(())
+            })
+            .expect("clear test tables");
+    }
+
+    fn upsert_test_source(service: &AppService, source: &Source) {
+        let pool = service.db.pool().clone();
+        service
+            .db
+            .block_on(async move { crate::backend::store::upsert_source_sqlx(&pool, source).await })
+            .expect("save source");
+    }
+
+    fn replace_test_source_assets(service: &AppService, source_id: &str, assets: &[Asset]) {
+        let pool = service.db.pool().clone();
+        service
+            .db
+            .block_on(async move {
+                crate::backend::store::replace_source_assets_sqlx(&pool, source_id, assets).await
+            })
+            .expect("save source assets");
+    }
+
+    fn load_test_assets(service: &AppService) -> Vec<Asset> {
+        let pool = service.db.pool().clone();
+        service
+            .db
+            .block_on(async move { crate::backend::store::load_assets_sqlx(&pool, None).await })
+            .expect("load assets")
+    }
+
+    fn set_test_asset_mount(
+        service: &AppService,
+        asset_id: &str,
+        profile_id: &str,
+        enabled: bool,
+        strategy: DeploymentStrategy,
+    ) {
+        let pool = service.db.pool().clone();
+        service
+            .db
+            .block_on(async move {
+                crate::backend::store::set_asset_mount_sqlx(
+                    &pool, asset_id, profile_id, enabled, strategy,
+                )
+                .await
+            })
+            .expect("persist mount preference");
+    }
+
+    fn count_asset_rows(service: &AppService, table: &str, asset_id: &str) -> i64 {
+        let pool = service.db.pool().clone();
+        let statement = format!("SELECT COUNT(*) FROM {table} WHERE asset_id = ?");
+        let asset_id = asset_id.to_string();
+        service
+            .db
+            .block_on(async move {
+                sqlx::query_scalar::<_, i64>(AssertSqlSafe(statement))
+                    .bind(asset_id)
+                    .fetch_one(&pool)
+                    .await
+                    .map_err(|error| error.to_string())
+            })
+            .expect("count asset rows")
+    }
 
     #[test]
     fn navigation_model_updates_through_sqlx_path() {
@@ -3042,10 +3123,7 @@ mod tests {
         .expect("write skill file");
         let service =
             AppService::open_with_db_path(root.join("app.db")).expect("open application service");
-        service
-            .conn
-            .execute_batch("DELETE FROM assets; DELETE FROM sources;")
-            .expect("clear seeded catalog");
+        clear_test_tables(&service, &["assets", "sources"]);
         service
             .add_source(SourceInput {
                 id: Some("sqlx-skill-source".to_string()),
@@ -3082,10 +3160,10 @@ mod tests {
         fs::create_dir_all(&root).expect("create test root");
         let service =
             AppService::open_with_db_path(root.join("app.db")).expect("open application service");
-        service
-            .conn
-            .execute_batch("DELETE FROM asset_group_members; DELETE FROM asset_groups; DELETE FROM assets; DELETE FROM sources;")
-            .expect("clear seeded catalog");
+        clear_test_tables(
+            &service,
+            &["asset_group_members", "asset_groups", "assets", "sources"],
+        );
 
         let source = Source {
             id: "source-a".to_string(),
@@ -3221,10 +3299,9 @@ mod tests {
         fs::create_dir_all(&root).expect("create test root");
         let service =
             AppService::open_with_db_path(root.join("app.db")).expect("open application service");
-        service
-            .conn
-            .execute_batch(
-                r#"
+        execute_test_sql(
+            &service,
+            r#"
                 INSERT INTO asset_mounts (
                     asset_id, profile_id, enabled, strategy, created_at, updated_at
                 ) VALUES (
@@ -3257,8 +3334,8 @@ mod tests {
                 INSERT INTO asset_group_members (group_id, asset_id, created_at)
                 VALUES ('orphan-group', 'orphan-asset', '2026-01-01T00:00:00Z');
                 "#,
-            )
-            .expect("seed orphan records");
+        )
+        .expect("seed orphan records");
 
         capabilities::cleanup_orphan_asset_records(&service.db).expect("cleanup orphan records");
 
@@ -3268,11 +3345,7 @@ mod tests {
             "skill_remote_sources",
             "asset_group_members",
         ] {
-            let statement = format!("SELECT COUNT(*) FROM {table} WHERE asset_id = 'orphan-asset'");
-            let count: i64 = service
-                .conn
-                .query_row(&statement, [], |row| row.get(0))
-                .expect("count orphan rows");
+            let count = count_asset_rows(&service, table, "orphan-asset");
             assert_eq!(count, 0, "orphan row remained in {table}");
         }
 
@@ -3340,10 +3413,10 @@ mod tests {
 
         let service =
             AppService::open_with_db_path(root.join("app.db")).expect("open application service");
-        service
-            .conn
-            .execute_batch("DELETE FROM asset_mounts; DELETE FROM deployment_state; DELETE FROM assets; DELETE FROM sources;")
-            .expect("clear seeded catalog");
+        clear_test_tables(
+            &service,
+            &["asset_mounts", "deployment_state", "assets", "sources"],
+        );
         let source = Source {
             id: "source-a".to_string(),
             name: "Source A".to_string(),
@@ -3362,7 +3435,7 @@ mod tests {
             last_scanned_at: None,
             last_scan_status: None,
         };
-        crate::backend::store::upsert_source(&service.conn, &source).expect("save source");
+        upsert_test_source(&service, &source);
 
         let now = Utc::now().to_rfc3339();
         let asset = Asset {
@@ -3379,8 +3452,7 @@ mod tests {
             discovered_at: now.clone(),
             updated_at: now,
         };
-        crate::backend::store::replace_source_assets(&service.conn, &source.id, &[asset.clone()])
-            .expect("save source asset");
+        replace_test_source_assets(&service, &source.id, &[asset.clone()]);
 
         let profile = service
             .create_profile(TargetProfileInput {
@@ -3434,10 +3506,10 @@ mod tests {
 
         let service =
             AppService::open_with_db_path(root.join("app.db")).expect("open application service");
-        service
-            .conn
-            .execute_batch("DELETE FROM asset_mounts; DELETE FROM deployment_state; DELETE FROM assets; DELETE FROM sources;")
-            .expect("clear seeded catalog");
+        clear_test_tables(
+            &service,
+            &["asset_mounts", "deployment_state", "assets", "sources"],
+        );
         let source = Source {
             id: "source-a".to_string(),
             name: "Source A".to_string(),
@@ -3456,7 +3528,7 @@ mod tests {
             last_scanned_at: None,
             last_scan_status: None,
         };
-        crate::backend::store::upsert_source(&service.conn, &source).expect("save source");
+        upsert_test_source(&service, &source);
 
         let now = Utc::now().to_rfc3339();
         let asset = Asset {
@@ -3473,8 +3545,7 @@ mod tests {
             discovered_at: now.clone(),
             updated_at: now,
         };
-        crate::backend::store::replace_source_assets(&service.conn, &source.id, &[asset.clone()])
-            .expect("save source asset");
+        replace_test_source_assets(&service, &source.id, &[asset.clone()]);
 
         let profile = service
             .create_profile(TargetProfileInput {
@@ -3538,32 +3609,26 @@ mod tests {
 
         let service =
             AppService::open_with_db_path(root.join("app.db")).expect("open application service");
-        service
-            .conn
-            .execute_batch("DELETE FROM assets; DELETE FROM sources;")
-            .expect("clear seeded catalog");
-        crate::backend::store::upsert_source(
-            &service.conn,
-            &Source {
-                id: "source-a".to_string(),
-                name: "Source A".to_string(),
-                kind: SourceKind::Local,
-                root_path: source_root.to_string_lossy().to_string(),
-                scanner_kind: SourceScannerKind::Skill,
-                source_origin: SourceOrigin::LocalFolder,
-                repo_root: None,
-                scan_root: String::new(),
-                origin_app_kind: None,
-                include_globs: vec!["**/SKILL.md".to_string()],
-                exclude_globs: Vec::new(),
-                default_kind: Some(AssetKind::Skill),
-                enabled: true,
-                priority: 0,
-                last_scanned_at: None,
-                last_scan_status: None,
-            },
-        )
-        .expect("save source");
+        clear_test_tables(&service, &["assets", "sources"]);
+        let source = Source {
+            id: "source-a".to_string(),
+            name: "Source A".to_string(),
+            kind: SourceKind::Local,
+            root_path: source_root.to_string_lossy().to_string(),
+            scanner_kind: SourceScannerKind::Skill,
+            source_origin: SourceOrigin::LocalFolder,
+            repo_root: None,
+            scan_root: String::new(),
+            origin_app_kind: None,
+            include_globs: vec!["**/SKILL.md".to_string()],
+            exclude_globs: Vec::new(),
+            default_kind: Some(AssetKind::Skill),
+            enabled: true,
+            priority: 0,
+            last_scanned_at: None,
+            last_scan_status: None,
+        };
+        upsert_test_source(&service, &source);
         service
             .update_skill_backup_settings(UpdateSkillBackupSettingsParams {
                 root_path: backup_root.to_string_lossy().to_string(),
@@ -3571,8 +3636,7 @@ mod tests {
             })
             .expect("configure backup root");
 
-        let mut source_assets = crate::backend::store::load_assets(&service.conn)
-            .expect("load source assets")
+        let mut source_assets = load_test_assets(&service)
             .into_iter()
             .filter(|asset| asset.source_id == "source-a")
             .collect::<Vec<_>>();
@@ -3630,32 +3694,26 @@ mod tests {
 
         let service =
             AppService::open_with_db_path(root.join("app.db")).expect("open application service");
-        service
-            .conn
-            .execute_batch("DELETE FROM assets; DELETE FROM sources;")
-            .expect("clear seeded catalog");
-        crate::backend::store::upsert_source(
-            &service.conn,
-            &Source {
-                id: "source-a".to_string(),
-                name: "Source A".to_string(),
-                kind: SourceKind::Local,
-                root_path: source_root.to_string_lossy().to_string(),
-                scanner_kind: SourceScannerKind::Skill,
-                source_origin: SourceOrigin::LocalFolder,
-                repo_root: None,
-                scan_root: String::new(),
-                origin_app_kind: None,
-                include_globs: vec!["**/SKILL.md".to_string()],
-                exclude_globs: Vec::new(),
-                default_kind: Some(AssetKind::Skill),
-                enabled: true,
-                priority: 0,
-                last_scanned_at: None,
-                last_scan_status: None,
-            },
-        )
-        .expect("save source");
+        clear_test_tables(&service, &["assets", "sources"]);
+        let source = Source {
+            id: "source-a".to_string(),
+            name: "Source A".to_string(),
+            kind: SourceKind::Local,
+            root_path: source_root.to_string_lossy().to_string(),
+            scanner_kind: SourceScannerKind::Skill,
+            source_origin: SourceOrigin::LocalFolder,
+            repo_root: None,
+            scan_root: String::new(),
+            origin_app_kind: None,
+            include_globs: vec!["**/SKILL.md".to_string()],
+            exclude_globs: Vec::new(),
+            default_kind: Some(AssetKind::Skill),
+            enabled: true,
+            priority: 0,
+            last_scanned_at: None,
+            last_scan_status: None,
+        };
+        upsert_test_source(&service, &source);
         let profile = service
             .create_profile(TargetProfileInput {
                 id: Some("test-target".to_string()),
@@ -3677,8 +3735,7 @@ mod tests {
             })
             .expect("configure backup root");
 
-        let source_asset = crate::backend::store::load_assets(&service.conn)
-            .expect("load source assets")
+        let source_asset = load_test_assets(&service)
             .into_iter()
             .find(|asset| asset.source_id == "source-a")
             .expect("source asset");
@@ -3686,21 +3743,19 @@ mod tests {
             .backup_skill(source_asset.id.clone())
             .expect("backup skill");
 
-        let raw_skill_assets = crate::backend::store::load_assets(&service.conn)
-            .expect("load raw assets")
+        let raw_skill_assets = load_test_assets(&service)
             .into_iter()
             .filter(|asset| asset.kind == AssetKind::Skill)
             .collect::<Vec<_>>();
         assert_eq!(raw_skill_assets.len(), 2);
         for asset in &raw_skill_assets {
-            crate::backend::store::set_asset_mount(
-                &service.conn,
+            set_test_asset_mount(
+                &service,
                 &asset.id,
                 &profile.id,
                 true,
                 DeploymentStrategy::SymlinkToSource,
-            )
-            .expect("persist legacy mount preference");
+            );
         }
 
         let catalog = service.list_skills().expect("list catalog");
@@ -3756,32 +3811,26 @@ mod tests {
 
         let service =
             AppService::open_with_db_path(root.join("app.db")).expect("open application service");
-        service
-            .conn
-            .execute_batch("DELETE FROM assets; DELETE FROM sources;")
-            .expect("clear seeded catalog");
-        crate::backend::store::upsert_source(
-            &service.conn,
-            &Source {
-                id: "codex-source".to_string(),
-                name: "Codex Source".to_string(),
-                kind: SourceKind::Local,
-                root_path: app_target_root.to_string_lossy().to_string(),
-                scanner_kind: SourceScannerKind::Skill,
-                source_origin: SourceOrigin::AppTarget,
-                repo_root: None,
-                scan_root: String::new(),
-                origin_app_kind: Some(crate::backend::models::AppKind::Codex),
-                include_globs: vec!["**/SKILL.md".to_string()],
-                exclude_globs: Vec::new(),
-                default_kind: Some(AssetKind::Skill),
-                enabled: true,
-                priority: 0,
-                last_scanned_at: None,
-                last_scan_status: None,
-            },
-        )
-        .expect("save app target source");
+        clear_test_tables(&service, &["assets", "sources"]);
+        let source = Source {
+            id: "codex-source".to_string(),
+            name: "Codex Source".to_string(),
+            kind: SourceKind::Local,
+            root_path: app_target_root.to_string_lossy().to_string(),
+            scanner_kind: SourceScannerKind::Skill,
+            source_origin: SourceOrigin::AppTarget,
+            repo_root: None,
+            scan_root: String::new(),
+            origin_app_kind: Some(crate::backend::models::AppKind::Codex),
+            include_globs: vec!["**/SKILL.md".to_string()],
+            exclude_globs: Vec::new(),
+            default_kind: Some(AssetKind::Skill),
+            enabled: true,
+            priority: 0,
+            last_scanned_at: None,
+            last_scan_status: None,
+        };
+        upsert_test_source(&service, &source);
         let profile = service
             .create_profile(TargetProfileInput {
                 id: Some("codex-test".to_string()),
@@ -3803,8 +3852,7 @@ mod tests {
             })
             .expect("configure backup root");
 
-        let app_asset = crate::backend::store::load_assets(&service.conn)
-            .expect("load assets")
+        let app_asset = load_test_assets(&service)
             .into_iter()
             .find(|asset| asset.source_id == "codex-source")
             .expect("app target asset");
