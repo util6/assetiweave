@@ -1123,23 +1123,31 @@ impl AppService {
         &self,
         params: ConversationQuestionMergeParams,
     ) -> AppResult<crate::backend::dto::ConversationMutationResult> {
-        crate::backend::store::merge_conversation_questions(
-            &self.conn,
-            &params.question_ids,
-            params.dry_run,
-        )
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            crate::backend::store::merge_conversation_questions_sqlx(
+                &pool,
+                &params.question_ids,
+                params.dry_run,
+            )
+            .await
+        })
     }
 
     pub(crate) fn split_conversation_question(
         &self,
         params: ConversationQuestionSplitParams,
     ) -> AppResult<crate::backend::dto::ConversationMutationResult> {
-        crate::backend::store::split_conversation_question(
-            &self.conn,
-            &params.question_id,
-            &params.before_turn_id,
-            params.dry_run,
-        )
+        let pool = self.db.pool().clone();
+        self.db.block_on(async move {
+            crate::backend::store::split_conversation_question_sqlx(
+                &pool,
+                &params.question_id,
+                &params.before_turn_id,
+                params.dry_run,
+            )
+            .await
+        })
     }
 
     pub(crate) fn list_profiles(&self) -> AppResult<Vec<TargetProfile>> {

@@ -701,6 +701,192 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
     })
 }
 
+pub(crate) async fn merge_conversation_questions_sqlx(
+    pool: &SqlitePool,
+    question_ids: &[String],
+    dry_run: bool,
+) -> AppResult<ConversationMutationResult> {
+    if question_ids.len() < 2 {
+        return Err("at least two question ids are required".to_string());
+    }
+
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut questions = Vec::with_capacity(question_ids.len());
+    for question_id in question_ids {
+        questions.push(
+            load_conversation_question_sqlx_tx(&mut tx, question_id)
+                .await?
+                .ok_or_else(|| format!("conversation question not found: {question_id}"))?,
+        );
+    }
+    let session_id = questions[0].session_id.clone();
+    if questions
+        .iter()
+        .any(|question| question.session_id != session_id)
+    {
+        return Err("questions must belong to the same session".to_string());
+    }
+    ensure_question_ids_are_adjacent_sqlx_tx(&mut tx, &session_id, question_ids).await?;
+
+    if dry_run {
+        tx.rollback().await.map_err(|error| error.to_string())?;
+        let mut details = Vec::with_capacity(question_ids.len());
+        for question_id in question_ids {
+            details.push(load_conversation_question_detail_sqlx(pool, question_id).await?);
+        }
+        return Ok(ConversationMutationResult {
+            dry_run: true,
+            session_id,
+            affected_question_ids: question_ids.to_vec(),
+            questions: details,
+        });
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let survivor_id = question_ids[0].clone();
+    for question_id in &question_ids[1..] {
+        let next_order = max_question_turn_order_sqlx_tx(&mut tx, &survivor_id).await? + 1;
+        let turn_ids = load_question_turn_ids_sqlx_tx(&mut tx, question_id).await?;
+        for (offset, turn_id) in turn_ids.iter().enumerate() {
+            sqlx::query(
+                r#"
+                UPDATE conversation_question_turns
+                SET question_id = ?1, turn_order = ?2
+                WHERE question_id = ?3 AND turn_id = ?4
+                "#,
+            )
+            .bind(&survivor_id)
+            .bind(next_order + offset as i64)
+            .bind(question_id)
+            .bind(turn_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?;
+        }
+        sqlx::query("DELETE FROM conversation_questions WHERE id = ?1")
+            .bind(question_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?;
+        sqlx::query("DELETE FROM conversation_question_fts WHERE question_id = ?1")
+            .bind(question_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    sqlx::query(
+        "UPDATE conversation_questions SET grouping_origin = ?1, updated_at = ?2 WHERE id = ?3",
+    )
+    .bind(encode_enum(ConversationGroupingOrigin::Manual)?)
+    .bind(&now)
+    .bind(&survivor_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    renumber_questions_for_session_sqlx_tx(&mut tx, &session_id).await?;
+    rebuild_session_question_aggregates_sqlx_tx(&mut tx, &session_id, &now).await?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+
+    Ok(ConversationMutationResult {
+        dry_run: false,
+        session_id,
+        affected_question_ids: question_ids.to_vec(),
+        questions: vec![load_conversation_question_detail_sqlx(pool, &survivor_id).await?],
+    })
+}
+
+pub(crate) async fn split_conversation_question_sqlx(
+    pool: &SqlitePool,
+    question_id: &str,
+    before_turn_id: &str,
+    dry_run: bool,
+) -> AppResult<ConversationMutationResult> {
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let question = load_conversation_question_sqlx_tx(&mut tx, question_id)
+        .await?
+        .ok_or_else(|| format!("conversation question not found: {question_id}"))?;
+    let turns = load_question_turns_sqlx_tx(&mut tx, question_id).await?;
+    let split_index = turns
+        .iter()
+        .position(|turn| turn.id == before_turn_id)
+        .ok_or_else(|| format!("turn is not in question: {before_turn_id}"))?;
+    if split_index == 0 {
+        return Err("split turn must not be the first turn in the question".to_string());
+    }
+
+    if dry_run {
+        tx.rollback().await.map_err(|error| error.to_string())?;
+        return Ok(ConversationMutationResult {
+            dry_run: true,
+            session_id: question.session_id,
+            affected_question_ids: vec![question_id.to_string()],
+            questions: vec![load_conversation_question_detail_sqlx(pool, question_id).await?],
+        });
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let new_question_id = stable_id(
+        "conversation-question",
+        &[question_id, before_turn_id, &now],
+    );
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_questions (
+            id, session_id, question_index, title, question_text, answer_text,
+            code_text, command_text, grouping_origin, created_at, updated_at
+        )
+        VALUES (?1, ?2, ?3, NULL, '', '', '', '', ?4, ?5, ?5)
+        "#,
+    )
+    .bind(&new_question_id)
+    .bind(&question.session_id)
+    .bind(question.question_index + 1)
+    .bind(encode_enum(ConversationGroupingOrigin::Manual)?)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    for (order, turn) in turns.iter().skip(split_index).enumerate() {
+        sqlx::query(
+            r#"
+            UPDATE conversation_question_turns
+            SET question_id = ?1, turn_order = ?2
+            WHERE question_id = ?3 AND turn_id = ?4
+            "#,
+        )
+        .bind(&new_question_id)
+        .bind(order as i64)
+        .bind(question_id)
+        .bind(&turn.id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+    sqlx::query(
+        "UPDATE conversation_questions SET grouping_origin = ?1, updated_at = ?2 WHERE id = ?3",
+    )
+    .bind(encode_enum(ConversationGroupingOrigin::Manual)?)
+    .bind(&now)
+    .bind(question_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    renumber_question_turns_sqlx_tx(&mut tx, question_id).await?;
+    renumber_questions_for_session_sqlx_tx(&mut tx, &question.session_id).await?;
+    rebuild_session_question_aggregates_sqlx_tx(&mut tx, &question.session_id, &now).await?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+
+    Ok(ConversationMutationResult {
+        dry_run: false,
+        session_id: question.session_id,
+        affected_question_ids: vec![question_id.to_string(), new_question_id.clone()],
+        questions: vec![
+            load_conversation_question_detail_sqlx(pool, question_id).await?,
+            load_conversation_question_detail_sqlx(pool, &new_question_id).await?,
+        ],
+    })
+}
+
 pub(crate) fn render_conversation_detail_markdown_with_filter(
     detail: &ConversationSessionDetail,
     question_ids: &[String],
@@ -1009,6 +1195,7 @@ pub(crate) fn search_conversation_cards(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn load_conversation_question_detail(
     conn: &Connection,
     question_id: &str,
@@ -1027,6 +1214,7 @@ pub(crate) fn load_conversation_question_detail(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn merge_conversation_questions(
     conn: &Connection,
     question_ids: &[String],
@@ -1119,6 +1307,7 @@ pub(crate) fn merge_conversation_questions(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn split_conversation_question(
     conn: &Connection,
     question_id: &str,
@@ -1919,6 +2108,7 @@ fn ensure_question_groups_for_session_tx(
     Ok(())
 }
 
+#[cfg(test)]
 fn rebuild_session_question_aggregates_tx(
     tx: &rusqlite::Transaction<'_>,
     session_id: &str,
@@ -1931,6 +2121,7 @@ fn rebuild_session_question_aggregates_tx(
     Ok(())
 }
 
+#[cfg(test)]
 fn rebuild_question_aggregate_tx(
     tx: &rusqlite::Transaction<'_>,
     question_id: &str,
@@ -2610,6 +2801,79 @@ async fn question_ids_for_session_sqlx_tx(
     .map_err(|error| error.to_string())
 }
 
+async fn load_question_turn_ids_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    question_id: &str,
+) -> AppResult<Vec<String>> {
+    sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT turn_id
+        FROM conversation_question_turns
+        WHERE question_id = ?1
+        ORDER BY turn_order ASC
+        "#,
+    )
+    .bind(question_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())
+}
+
+async fn renumber_question_turns_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    question_id: &str,
+) -> AppResult<()> {
+    let turn_ids = load_question_turn_ids_sqlx_tx(tx, question_id).await?;
+    for (index, turn_id) in turn_ids.iter().enumerate() {
+        sqlx::query(
+            r#"
+            UPDATE conversation_question_turns
+            SET turn_order = ?1
+            WHERE question_id = ?2 AND turn_id = ?3
+            "#,
+        )
+        .bind(index as i64)
+        .bind(question_id)
+        .bind(turn_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+async fn ensure_question_ids_are_adjacent_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    session_id: &str,
+    question_ids: &[String],
+) -> AppResult<()> {
+    let ordered = question_ids_for_session_sqlx_tx(tx, session_id).await?;
+    let selected = question_ids.iter().collect::<BTreeSet<_>>();
+    let positions = ordered
+        .iter()
+        .enumerate()
+        .filter_map(|(index, id)| selected.contains(id).then_some(index))
+        .collect::<Vec<_>>();
+    if positions.len() != question_ids.len() {
+        return Err("all questions must exist in the session".to_string());
+    }
+    if positions
+        .windows(2)
+        .any(|window| window[1] != window[0] + 1)
+    {
+        return Err("questions must be adjacent".to_string());
+    }
+    if positions
+        .iter()
+        .map(|index| &ordered[*index])
+        .zip(question_ids.iter())
+        .any(|(actual, requested)| actual != requested)
+    {
+        return Err("question ids must be supplied in session order".to_string());
+    }
+    Ok(())
+}
+
 async fn renumber_questions_for_session_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     session_id: &str,
@@ -2669,6 +2933,7 @@ fn load_conversation_session(
     .map_err(db_error)
 }
 
+#[cfg(test)]
 fn list_conversation_questions(
     conn: &Connection,
     session_id: &str,
@@ -2885,6 +3150,7 @@ fn count_record_rows(conn: &Connection, table: &str, session_id: &str) -> AppRes
     Ok(count as usize)
 }
 
+#[cfg(test)]
 fn load_conversation_question(
     conn: &Connection,
     question_id: &str,
@@ -2922,6 +3188,7 @@ fn load_conversation_question_tx(
     .map_err(db_error)
 }
 
+#[cfg(test)]
 fn load_question_turns(conn: &Connection, question_id: &str) -> AppResult<Vec<ConversationTurn>> {
     let mut stmt = conn
         .prepare(
@@ -2941,6 +3208,7 @@ fn load_question_turns(conn: &Connection, question_id: &str) -> AppResult<Vec<Co
     rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
 }
 
+#[cfg(test)]
 fn load_turn_parts(conn: &Connection, turn_id: &str) -> AppResult<Vec<ConversationPart>> {
     let mut stmt = conn
         .prepare(
@@ -2981,6 +3249,7 @@ fn load_session_turns_tx(
     rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
 }
 
+#[cfg(test)]
 fn load_question_turns_tx(
     tx: &rusqlite::Transaction<'_>,
     question_id: &str,
@@ -3003,6 +3272,7 @@ fn load_question_turns_tx(
     rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
 }
 
+#[cfg(test)]
 fn load_turn_parts_tx(
     tx: &rusqlite::Transaction<'_>,
     turn_id: &str,
@@ -3089,6 +3359,7 @@ fn next_question_index_tx(tx: &rusqlite::Transaction<'_>, session_id: &str) -> A
     Ok(max_index.unwrap_or(-1) + 1)
 }
 
+#[cfg(test)]
 fn max_question_turn_order_tx(tx: &rusqlite::Transaction<'_>, question_id: &str) -> AppResult<i64> {
     let max_order: Option<i64> = tx
         .query_row(
@@ -3100,6 +3371,7 @@ fn max_question_turn_order_tx(tx: &rusqlite::Transaction<'_>, question_id: &str)
     Ok(max_order.unwrap_or(-1))
 }
 
+#[cfg(test)]
 fn load_question_turn_ids_tx(
     tx: &rusqlite::Transaction<'_>,
     question_id: &str,
@@ -3120,6 +3392,7 @@ fn load_question_turn_ids_tx(
     rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
 }
 
+#[cfg(test)]
 fn question_ids_for_session_tx(
     tx: &rusqlite::Transaction<'_>,
     session_id: &str,
@@ -3140,6 +3413,7 @@ fn question_ids_for_session_tx(
     rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
 }
 
+#[cfg(test)]
 fn renumber_question_turns_tx(tx: &rusqlite::Transaction<'_>, question_id: &str) -> AppResult<()> {
     let turn_ids = load_question_turn_ids_tx(tx, question_id)?;
     for (index, turn_id) in turn_ids.iter().enumerate() {
@@ -3156,6 +3430,7 @@ fn renumber_question_turns_tx(tx: &rusqlite::Transaction<'_>, question_id: &str)
     Ok(())
 }
 
+#[cfg(test)]
 fn renumber_questions_for_session_tx(
     tx: &rusqlite::Transaction<'_>,
     session_id: &str,
@@ -3196,6 +3471,7 @@ fn renumber_questions_for_session_tx(
     Ok(())
 }
 
+#[cfg(test)]
 fn ensure_question_ids_are_adjacent(
     conn: &Connection,
     session_id: &str,
@@ -3928,6 +4204,91 @@ mod tests {
         assert!(markdown.contains("## 1. Export it"));
         assert!(markdown.contains("answer for t3"));
         assert!(!markdown.contains("How does sync work?"));
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_merge_and_split_conversation_questions_preserve_grouping() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-mutation-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let adapter = test_conversation_adapter(
+            "mutation-external",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let source = test_conversation_source(&adapter.id);
+
+        let detail = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), &adapter).await?;
+                upsert_conversation_source_sqlx(database.pool(), &source).await?;
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    &source,
+                    &[fixture_session("v1")],
+                    false,
+                )
+                .await?;
+                let detail = load_conversation_session_detail_sqlx(
+                    database.pool(),
+                    &stable_id("conversation-session", &[&source.id, "session-1"]),
+                )
+                .await?;
+                let question_ids = detail
+                    .questions
+                    .iter()
+                    .map(|question| question.question.id.clone())
+                    .collect::<Vec<_>>();
+                let dry_run =
+                    merge_conversation_questions_sqlx(database.pool(), &question_ids, true).await?;
+                assert!(dry_run.dry_run);
+                assert_eq!(
+                    load_conversation_session_detail_sqlx(database.pool(), &detail.session.id)
+                        .await?
+                        .questions
+                        .len(),
+                    2
+                );
+                let merged =
+                    merge_conversation_questions_sqlx(database.pool(), &question_ids, false)
+                        .await?;
+                let first_turn_error = split_conversation_question_sqlx(
+                    database.pool(),
+                    &merged.questions[0].question.id,
+                    &merged.questions[0].turns[0].id,
+                    false,
+                )
+                .await
+                .expect_err("split at first turn should fail");
+                assert!(first_turn_error.contains("must not be the first turn"));
+                let split_turn_id = merged.questions[0].turns[2].id.clone();
+                split_conversation_question_sqlx(
+                    database.pool(),
+                    &merged.questions[0].question.id,
+                    &split_turn_id,
+                    false,
+                )
+                .await?;
+                load_conversation_session_detail_sqlx(database.pool(), &detail.session.id).await
+            })
+            .expect("merge and split through SQLx");
+
+        assert_eq!(detail.questions.len(), 2);
+        assert_eq!(detail.questions[0].turns.len(), 2);
+        assert_eq!(detail.questions[1].turns.len(), 1);
+        assert!(detail.questions.iter().all(|question| {
+            question.question.grouping_origin == ConversationGroupingOrigin::Manual
+        }));
+        assert_eq!(
+            detail.questions[0].question.question_text,
+            "How does sync work?\n\n继续"
+        );
+        assert_eq!(detail.questions[1].question.question_text, "Export it");
 
         drop(database);
         cleanup_database(&db_path);
