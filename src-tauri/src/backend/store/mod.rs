@@ -8,6 +8,7 @@ mod menu_repo;
 mod mount_observation_repo;
 mod mount_repo;
 mod profile_repo;
+#[cfg(test)]
 mod schema;
 mod shortcut_repo;
 mod skill_remote_repo;
@@ -20,6 +21,8 @@ pub(crate) use asset_repo::{
 };
 #[cfg(test)]
 pub(crate) use asset_repo::{load_assets, load_assets_by_kind, replace_source_assets};
+#[cfg(test)]
+pub(crate) use conversation_repo::seed_builtin_conversation_adapters;
 pub(crate) use conversation_repo::{
     delete_conversation_adapter_sqlx, disable_conversation_source_sqlx,
     import_conversation_sessions_sqlx, list_conversation_adapters_sqlx,
@@ -28,8 +31,8 @@ pub(crate) use conversation_repo::{
     load_conversation_question_detail_sqlx, load_conversation_session_detail_sqlx,
     load_conversation_source_sqlx, merge_conversation_questions_sqlx,
     render_conversation_detail_markdown_with_filter, search_conversation_cards_sqlx,
-    seed_builtin_conversation_adapters, split_conversation_question_sqlx,
-    upsert_conversation_adapter_sqlx, upsert_conversation_source_sqlx,
+    split_conversation_question_sqlx, upsert_conversation_adapter_sqlx,
+    upsert_conversation_source_sqlx,
 };
 pub(crate) use database::{
     count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx, Database,
@@ -67,6 +70,7 @@ pub(crate) use profile_repo::{
 pub(crate) use profile_repo::{
     delete_profile_sqlx, load_profile_sqlx, load_profiles_sqlx, upsert_profile_sqlx,
 };
+#[cfg(test)]
 pub(crate) use schema::open_initialized;
 pub(crate) use shortcut_repo::{
     load_app_shortcut_settings_sqlx, load_app_shortcuts_sqlx, save_app_shortcuts_sqlx,

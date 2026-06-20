@@ -1,13 +1,20 @@
-use crate::backend::dto::AppResult;
+use crate::backend::{dto::AppResult, path_utils::ensure_app_library_dirs};
 use sqlx::{
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
     AssertSqlSafe, Row, SqlitePool,
 };
-use std::{future::Future, path::Path, time::Duration};
+use std::{
+    collections::BTreeSet,
+    future::Future,
+    path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
+    time::Duration,
+};
 use tokio::runtime::Runtime;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+static INITIALIZED_DB_PATHS: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
 
 pub(crate) struct Database {
     pool: SqlitePool,
@@ -15,9 +22,25 @@ pub(crate) struct Database {
 }
 
 impl Database {
+    #[cfg(test)]
     pub(crate) fn open(db_path: &Path) -> AppResult<Self> {
         let runtime = build_runtime()?;
         let pool = runtime.block_on(open_migrated_pool(db_path))?;
+        Ok(Self { pool, runtime })
+    }
+
+    pub(crate) fn open_initialized(db_path: &Path) -> AppResult<Self> {
+        let runtime = build_runtime()?;
+        let pool = runtime.block_on(open_migrated_pool(db_path))?;
+        let initialized_paths = INITIALIZED_DB_PATHS.get_or_init(|| Mutex::new(BTreeSet::new()));
+        let mut initialized_paths = initialized_paths
+            .lock()
+            .map_err(|error| error.to_string())?;
+        if !initialized_paths.contains(db_path) {
+            ensure_app_library_dirs()?;
+            runtime.block_on(seed_defaults_sqlx(&pool))?;
+            initialized_paths.insert(db_path.to_path_buf());
+        }
         Ok(Self { pool, runtime })
     }
 
@@ -68,6 +91,7 @@ pub(crate) async fn count_rows(pool: &SqlitePool, table: &str) -> AppResult<usiz
     Ok(count as usize)
 }
 
+#[cfg(test)]
 pub(crate) fn migrate_database(db_path: &Path) -> AppResult<()> {
     let db_path = db_path.to_path_buf();
     std::thread::spawn(move || {
@@ -109,6 +133,100 @@ async fn open_migrated_pool(db_path: &Path) -> AppResult<SqlitePool> {
         .await
         .map_err(|error| error.to_string())?;
     Ok(pool)
+}
+
+async fn seed_defaults_sqlx(pool: &SqlitePool) -> AppResult<()> {
+    if count_rows(pool, "sources").await? == 0 {
+        for source in crate::backend::defaults::default_sources() {
+            super::source_repo::upsert_source_sqlx(pool, &source).await?;
+        }
+    }
+    ensure_library_source_sqlx(pool).await?;
+    normalize_existing_sources_sqlx(pool).await?;
+
+    if count_rows(pool, "profiles").await? == 0 {
+        for profile in crate::backend::defaults::default_profiles() {
+            super::profile_repo::upsert_profile_sqlx(pool, &profile).await?;
+        }
+    }
+    normalize_default_profiles_sqlx(pool).await?;
+
+    super::conversation_repo::seed_builtin_conversation_adapters_sqlx(pool).await?;
+
+    let default_navigation_model = crate::backend::defaults::default_navigation_model();
+    if count_rows(pool, "navigation_state").await? == 0 {
+        super::menu_repo::seed_navigation_model_sqlx(pool, &default_navigation_model).await?;
+    } else {
+        super::menu_repo::ensure_navigation_model_items_sqlx(pool, &default_navigation_model)
+            .await?;
+    }
+
+    if count_rows(pool, "app_shortcut_items").await? == 0 {
+        super::shortcut_repo::seed_app_shortcuts_sqlx(
+            pool,
+            &crate::backend::defaults::default_app_shortcuts(),
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn ensure_library_source_sqlx(pool: &SqlitePool) -> AppResult<()> {
+    if super::source_repo::load_source_sqlx(pool, "assetiweave-library-skills")
+        .await?
+        .is_some()
+    {
+        return Ok(());
+    }
+    if let Some(source) = crate::backend::defaults::default_sources()
+        .into_iter()
+        .find(|source| source.id == "assetiweave-library-skills")
+    {
+        super::source_repo::upsert_source_sqlx(pool, &source).await?;
+    }
+    Ok(())
+}
+
+async fn normalize_existing_sources_sqlx(pool: &SqlitePool) -> AppResult<()> {
+    for source in super::source_repo::load_sources_sqlx(pool).await? {
+        super::source_repo::upsert_source_sqlx(pool, &source).await?;
+    }
+    Ok(())
+}
+
+async fn normalize_default_profiles_sqlx(pool: &SqlitePool) -> AppResult<()> {
+    let defaults = crate::backend::defaults::default_profiles();
+    for mut profile in super::profile_repo::load_profiles_sqlx(pool).await? {
+        let Some(default_profile) = defaults.iter().find(|candidate| candidate.id == profile.id)
+        else {
+            continue;
+        };
+        if legacy_profile_target_paths(&profile.id).contains(&profile.target_paths) {
+            profile.target_paths = default_profile.target_paths.clone();
+            super::profile_repo::upsert_profile_sqlx(pool, &profile).await?;
+        }
+    }
+    Ok(())
+}
+
+fn legacy_profile_target_paths(profile_id: &str) -> Vec<Vec<String>> {
+    let legacy_path = match profile_id {
+        "codex" => "~/.codex/assetiweave",
+        "claude" => "~/.claude/assetiweave",
+        "cursor" => "~/Library/Application Support/Cursor/assetiweave",
+        "opencode" => "~/.opencode/assetiweave",
+        "gemini" => "~/.gemini/assetiweave",
+        "antigravity" => "~/.antigravity/assetiweave",
+        "openclaw" => "~/.openclaw/assetiweave",
+        "custom" => "~/assetiweave-target",
+        _ => return Vec::new(),
+    };
+    let mut paths = vec![vec![legacy_path.to_string()]];
+    if profile_id == "opencode" {
+        paths.push(vec!["~/.opencode/skills".to_string()]);
+    }
+    paths
 }
 
 async fn is_untracked_legacy_database(pool: &SqlitePool) -> AppResult<bool> {
@@ -328,6 +446,71 @@ mod tests {
 
         assert_eq!(source_count, 0);
         drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn initialized_database_seeds_defaults_without_reseeding() {
+        let db_path = temp_database_path("initialized");
+        let database = Database::open_initialized(&db_path).expect("open initialized database");
+
+        let (source_count, profile_count, navigation_count, shortcut_count) = database
+            .block_on(async {
+                let source_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sources")
+                    .fetch_one(database.pool())
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let profile_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM profiles")
+                    .fetch_one(database.pool())
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let navigation_count =
+                    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM navigation_state")
+                        .fetch_one(database.pool())
+                        .await
+                        .map_err(|error| error.to_string())?;
+                let shortcut_count =
+                    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_shortcut_items")
+                        .fetch_one(database.pool())
+                        .await
+                        .map_err(|error| error.to_string())?;
+                AppResult::Ok((
+                    source_count,
+                    profile_count,
+                    navigation_count,
+                    shortcut_count,
+                ))
+            })
+            .expect("query seeded defaults");
+
+        assert!(source_count > 0);
+        assert!(profile_count > 0);
+        assert_eq!(navigation_count, 1);
+        assert!(shortcut_count > 0);
+        drop(database);
+
+        let conn = Connection::open(&db_path).expect("open seeded database");
+        conn.execute(
+            "UPDATE conversation_adapters SET name = 'preserved' WHERE id = 'codex'",
+            [],
+        )
+        .expect("customize seeded adapter");
+        drop(conn);
+
+        let reopened = Database::open_initialized(&db_path).expect("reopen initialized database");
+        let codex_name = reopened
+            .block_on(async {
+                sqlx::query_scalar::<_, String>(
+                    "SELECT name FROM conversation_adapters WHERE id = 'codex'",
+                )
+                .fetch_one(reopened.pool())
+                .await
+                .map_err(|error| error.to_string())
+            })
+            .expect("query preserved adapter");
+
+        assert_eq!(codex_name, "preserved");
+        drop(reopened);
         cleanup_database(&db_path);
     }
 

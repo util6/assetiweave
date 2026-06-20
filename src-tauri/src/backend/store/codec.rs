@@ -30,10 +30,12 @@ pub(super) fn decode_optional_enum<T: DeserializeOwned>(
     value.map(decode_enum).transpose()
 }
 
+#[cfg(test)]
 pub(super) fn db_error(error: rusqlite::Error) -> String {
     error.to_string()
 }
 
+#[cfg(test)]
 pub(super) fn to_sql_error(error: String) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(error.into())
 }

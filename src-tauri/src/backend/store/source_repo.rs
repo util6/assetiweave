@@ -5,17 +5,21 @@ use crate::backend::{
         detect_app_target, expand_path, find_git_root, is_app_library_path, normalize_relative_path,
     },
 };
+#[cfg(test)]
 use rusqlite::{params, Connection};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
+#[cfg(test)]
+use super::codec::{db_error, to_sql_error};
 use super::{
     codec::{
-        db_error, decode_enum, decode_json, decode_optional_enum, encode_enum, encode_json,
-        encode_optional_enum, to_sql_error,
+        decode_enum, decode_json, decode_optional_enum, encode_enum, encode_json,
+        encode_optional_enum,
     },
     sql,
 };
 
+#[cfg(test)]
 pub(crate) fn load_sources(conn: &Connection) -> AppResult<Vec<Source>> {
     let mut stmt = conn.prepare(sql::LIST_SOURCES).map_err(db_error)?;
     load_sources_with_statement(&mut stmt)
@@ -51,6 +55,7 @@ pub(crate) async fn load_source_sqlx(
         .transpose()
 }
 
+#[cfg(test)]
 fn load_sources_with_statement(stmt: &mut rusqlite::Statement<'_>) -> AppResult<Vec<Source>> {
     let rows = stmt
         .query_map([], |row| {
@@ -120,6 +125,7 @@ fn map_sqlx_source_row(row: &SqliteRow) -> AppResult<Source> {
     })
 }
 
+#[cfg(test)]
 pub(crate) fn upsert_source(conn: &Connection, source: &Source) -> AppResult<()> {
     let source = normalize_source(source);
     conn.execute(

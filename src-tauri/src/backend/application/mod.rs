@@ -472,11 +472,9 @@ impl AppService {
     }
 
     pub(crate) fn open_with_db_path(db_path: PathBuf) -> AppResult<Self> {
+        let db = crate::backend::store::Database::open_initialized(&db_path)?;
         #[cfg(test)]
-        let conn = crate::backend::store::open_initialized(&db_path)?;
-        #[cfg(not(test))]
-        crate::backend::store::open_initialized(&db_path)?;
-        let db = crate::backend::store::Database::open(&db_path)?;
+        let conn = Connection::open(&db_path).map_err(|error| error.to_string())?;
         Ok(Self {
             db,
             #[cfg(test)]

@@ -1,12 +1,16 @@
 use crate::backend::dto::{
     HeaderTabItem, LocalizedNavigationLabels, NavigationModel, RailMenuItem, SubNavItem,
 };
+#[cfg(test)]
 use rusqlite::{params, Connection};
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 use std::collections::BTreeMap;
 
-use super::{codec::db_error, sql};
+#[cfg(test)]
+use super::codec::db_error;
+use super::sql;
 
+#[cfg(test)]
 pub(crate) fn seed_navigation_model(
     conn: &Connection,
     model: &NavigationModel,
@@ -14,6 +18,14 @@ pub(crate) fn seed_navigation_model(
     save_navigation_model(conn, model)
 }
 
+pub(crate) async fn seed_navigation_model_sqlx(
+    pool: &SqlitePool,
+    model: &NavigationModel,
+) -> Result<(), String> {
+    save_navigation_model_sqlx(pool, model).await
+}
+
+#[cfg(test)]
 pub(crate) fn ensure_navigation_model_items(
     conn: &Connection,
     defaults: &NavigationModel,
@@ -54,6 +66,47 @@ pub(crate) fn ensure_navigation_model_items(
     save_navigation_model(conn, &current)
 }
 
+pub(crate) async fn ensure_navigation_model_items_sqlx(
+    pool: &SqlitePool,
+    defaults: &NavigationModel,
+) -> Result<(), String> {
+    let mut current = load_navigation_model_sqlx(pool).await?;
+    for item in &defaults.rail_items {
+        if !current
+            .rail_items
+            .iter()
+            .any(|candidate| candidate.id == item.id)
+        {
+            current.rail_items.push(item.clone());
+        }
+    }
+    for tab in &defaults.header_tabs {
+        if !current
+            .header_tabs
+            .iter()
+            .any(|candidate| candidate.id == tab.id)
+        {
+            current.header_tabs.push(tab.clone());
+        }
+    }
+    for (parent_id, default_items) in &defaults.sub_nav_items {
+        let current_items = current
+            .sub_nav_items
+            .entry(parent_id.clone())
+            .or_insert_with(Vec::new);
+        for item in default_items {
+            if !current_items
+                .iter()
+                .any(|candidate| candidate.id == item.id)
+            {
+                current_items.push(item.clone());
+            }
+        }
+    }
+    save_navigation_model_sqlx(pool, &current).await
+}
+
+#[cfg(test)]
 pub(crate) fn save_navigation_model(
     conn: &Connection,
     model: &NavigationModel,
@@ -188,6 +241,7 @@ pub(crate) async fn save_navigation_model_sqlx(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn load_navigation_model(conn: &Connection) -> Result<NavigationModel, String> {
     let (active_rail_id, active_header_tab_id, active_sub_nav_id) = conn
         .query_row(sql::GET_NAVIGATION_STATE, [], |row| {
@@ -245,6 +299,7 @@ pub(crate) async fn load_navigation_model_sqlx(
     })
 }
 
+#[cfg(test)]
 fn load_rail_items(conn: &Connection) -> Result<Vec<RailMenuItem>, String> {
     let mut stmt = conn.prepare(sql::LIST_RAIL_MENU_ITEMS).map_err(db_error)?;
     let rows = stmt
@@ -264,6 +319,7 @@ fn load_rail_items(conn: &Connection) -> Result<Vec<RailMenuItem>, String> {
     rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
 }
 
+#[cfg(test)]
 fn load_header_tabs(conn: &Connection) -> Result<Vec<HeaderTabItem>, String> {
     let mut stmt = conn.prepare(sql::LIST_HEADER_TAB_ITEMS).map_err(db_error)?;
     let rows = stmt
@@ -281,6 +337,7 @@ fn load_header_tabs(conn: &Connection) -> Result<Vec<HeaderTabItem>, String> {
     rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
 }
 
+#[cfg(test)]
 fn load_sub_nav_items(conn: &Connection) -> Result<BTreeMap<String, Vec<SubNavItem>>, String> {
     let mut stmt = conn.prepare(sql::LIST_SUB_NAV_ITEMS).map_err(db_error)?;
     let rows = stmt

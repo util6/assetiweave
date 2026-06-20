@@ -12,12 +12,15 @@ use crate::backend::models::{
     ConversationSyncStatus, ConversationTurn, NormalizedConversationSession,
 };
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
+#[cfg(test)]
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use sha2::{Digest, Sha256};
 use sqlx::{sqlite::SqliteRow, AssertSqlSafe, Row as SqlxRow, Sqlite, SqlitePool, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::codec::{db_error, decode_enum, decode_json, encode_enum, encode_json, to_sql_error};
+#[cfg(test)]
+use super::codec::{db_error, to_sql_error};
+use super::codec::{decode_enum, decode_json, encode_enum, encode_json};
 
 pub(super) const CONVERSATION_IMPORT_BATCH_SIZE: usize = 8;
 
@@ -109,6 +112,7 @@ pub(crate) struct ConversationImportResult {
     pub(crate) warnings: Vec<String>,
 }
 
+#[cfg(test)]
 pub(crate) fn seed_builtin_conversation_adapters(conn: &Connection) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     for adapter in builtin_adapters(&now) {
@@ -117,6 +121,22 @@ pub(crate) fn seed_builtin_conversation_adapters(conn: &Connection) -> AppResult
     for source in builtin_sources(&now) {
         if load_conversation_source(conn, &source.id)?.is_none() {
             upsert_conversation_source(conn, &source)?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) async fn seed_builtin_conversation_adapters_sqlx(pool: &SqlitePool) -> AppResult<()> {
+    let now = Utc::now().to_rfc3339();
+    for adapter in builtin_adapters(&now) {
+        upsert_conversation_adapter_sqlx(pool, &adapter).await?;
+    }
+    for source in builtin_sources(&now) {
+        if load_conversation_source_sqlx(pool, &source.id)
+            .await?
+            .is_none()
+        {
+            upsert_conversation_source_sqlx(pool, &source).await?;
         }
     }
     Ok(())
@@ -132,6 +152,7 @@ pub(crate) async fn list_conversation_adapters_sqlx(
     rows.iter().map(map_sqlx_conversation_adapter).collect()
 }
 
+#[cfg(test)]
 pub(crate) fn upsert_conversation_adapter(
     conn: &Connection,
     adapter: &ConversationAdapter,
@@ -236,6 +257,7 @@ pub(crate) async fn list_conversation_sources_sqlx(
     rows.iter().map(map_sqlx_conversation_source).collect()
 }
 
+#[cfg(test)]
 pub(crate) fn load_conversation_source(
     conn: &Connection,
     source_id: &str,
@@ -263,6 +285,7 @@ pub(crate) async fn load_conversation_source_sqlx(
         .transpose()
 }
 
+#[cfg(test)]
 pub(crate) fn upsert_conversation_source(
     conn: &Connection,
     source: &ConversationSource,
@@ -1740,6 +1763,7 @@ fn map_sqlx_conversation_adapter(row: &SqliteRow) -> AppResult<ConversationAdapt
     })
 }
 
+#[cfg(test)]
 fn map_conversation_source(row: &Row<'_>) -> rusqlite::Result<ConversationSource> {
     Ok(ConversationSource {
         id: row.get(0)?,
