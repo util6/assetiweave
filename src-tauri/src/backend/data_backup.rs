@@ -4,15 +4,19 @@ use crate::backend::{
     path_utils::{default_database_backup_root, expand_path},
 };
 use chrono::Utc;
-use rusqlite::{params, Connection};
 use serde::Serialize;
 use serde_json::Value;
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    SqlitePool,
+};
 use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     time::Duration,
 };
+use tokio::runtime::Runtime;
 use uuid::Uuid;
 
 const DATA_BACKUP_SETTINGS_KEY: &str = "dataBackup";
@@ -162,28 +166,55 @@ fn snapshot_sqlite_database(db_path: &Path, target_path: &Path) -> AppResult<()>
 }
 
 fn vacuum_into(db_path: &Path, target_path: &Path) -> AppResult<()> {
-    let conn = open_backup_connection(db_path)?;
     let target = target_path.to_string_lossy().to_string();
-    conn.execute("VACUUM main INTO ?", params![target])
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    let runtime = build_backup_runtime()?;
+    runtime.block_on(async move {
+        let pool = open_backup_pool(db_path).await?;
+        let result = sqlx::query("VACUUM main INTO ?")
+            .bind(target)
+            .execute(&pool)
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string());
+        pool.close().await;
+        result
+    })
 }
 
 fn checkpoint_and_copy(db_path: &Path, target_path: &Path) -> AppResult<()> {
-    let conn = open_backup_connection(db_path)?;
-    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
-        .map_err(|error| error.to_string())?;
-    drop(conn);
+    let runtime = build_backup_runtime()?;
+    runtime.block_on(async move {
+        let pool = open_backup_pool(db_path).await?;
+        let result = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&pool)
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string());
+        pool.close().await;
+        result
+    })?;
     fs::copy(db_path, target_path)
         .map(|_| ())
         .map_err(|error| error.to_string())
 }
 
-fn open_backup_connection(db_path: &Path) -> AppResult<Connection> {
-    let conn = Connection::open(db_path).map_err(|error| error.to_string())?;
-    conn.busy_timeout(Duration::from_secs(10))
-        .map_err(|error| error.to_string())?;
-    Ok(conn)
+async fn open_backup_pool(db_path: &Path) -> AppResult<SqlitePool> {
+    let options = SqliteConnectOptions::new()
+        .filename(db_path)
+        .create_if_missing(false)
+        .busy_timeout(Duration::from_secs(10));
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+fn build_backup_runtime() -> AppResult<Runtime> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .map_err(|error| error.to_string())
 }
 
 fn backup_file_name() -> String {
