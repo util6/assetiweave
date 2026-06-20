@@ -6,10 +6,10 @@ use crate::adapters::tauri::background_tasks::{
 use crate::backend::capabilities::{
     apply_skill_group_exclusive_mount_record, apply_skill_group_mount_record,
     assetiweave_library_source_with_root, build_catalog_assets,
-    build_skill_group_exclusive_mount_preview_sqlx, ensure_profile_can_be_deleted, exclusive_item,
-    mount_asset_mount_record, refresh_recorded_assets, scan_asset_mount_statuses,
-    scan_selected_sources, set_asset_mount_record, sync_asset_mount_observations,
-    target_profile_from_input, unmount_asset_mount_record,
+    build_skill_group_exclusive_mount_preview_sqlx, ensure_profile_can_be_deleted_sqlx,
+    exclusive_item, mount_asset_mount_record, refresh_recorded_assets,
+    scan_asset_mount_statuses_sqlx, scan_selected_sources, set_asset_mount_record,
+    sync_asset_mount_observations, target_profile_from_input, unmount_asset_mount_record,
 };
 use crate::{
     backend::application::{
@@ -1591,19 +1591,149 @@ mod tests {
     };
     use uuid::Uuid;
 
+    fn open_test_database(db_path: &Path) -> crate::backend::store::Database {
+        crate::backend::store::Database::open_initialized(db_path).expect("open initialized db")
+    }
+
+    fn upsert_test_source(db: &crate::backend::store::Database, source: &Source) {
+        db.block_on(
+            async move { crate::backend::store::upsert_source_sqlx(db.pool(), source).await },
+        )
+        .expect("insert source");
+    }
+
+    fn upsert_test_profile(db: &crate::backend::store::Database, profile: &TargetProfile) {
+        db.block_on(
+            async move { crate::backend::store::upsert_profile_sqlx(db.pool(), profile).await },
+        )
+        .expect("insert profile");
+    }
+
+    fn delete_test_profile(db: &crate::backend::store::Database, profile_id: &str) {
+        db.block_on(async move {
+            crate::backend::store::delete_profile_sqlx(db.pool(), profile_id).await
+        })
+        .expect("delete profile");
+    }
+
+    fn replace_test_source_assets(
+        db: &crate::backend::store::Database,
+        source_id: &str,
+        assets: &[Asset],
+    ) {
+        db.block_on(async move {
+            crate::backend::store::replace_source_assets_sqlx(db.pool(), source_id, assets).await
+        })
+        .expect("insert assets");
+    }
+
+    fn set_test_asset_mount(
+        db: &crate::backend::store::Database,
+        asset_id: &str,
+        profile_id: &str,
+        enabled: bool,
+        strategy: DeploymentStrategy,
+    ) -> AssetMount {
+        db.block_on(async move {
+            crate::backend::store::set_asset_mount_sqlx(
+                db.pool(),
+                asset_id,
+                profile_id,
+                enabled,
+                strategy,
+            )
+            .await
+        })
+        .expect("insert mount")
+    }
+
+    fn upsert_test_group(db: &crate::backend::store::Database, group: &AssetGroup) {
+        db.block_on(async move {
+            crate::backend::store::upsert_asset_group_sqlx(db.pool(), group).await
+        })
+        .expect("insert group");
+    }
+
+    fn replace_test_group_members(
+        db: &crate::backend::store::Database,
+        group_id: &str,
+        asset_ids: &[String],
+        assets: &[Asset],
+    ) {
+        db.block_on(async move {
+            crate::backend::store::replace_asset_group_members_sqlx(
+                db.pool(),
+                group_id,
+                asset_ids,
+                assets,
+            )
+            .await
+        })
+        .expect("insert group members");
+    }
+
+    fn load_test_sources(db: &crate::backend::store::Database) -> Vec<Source> {
+        db.block_on(async move { crate::backend::store::load_sources_sqlx(db.pool()).await })
+            .expect("load sources")
+    }
+
+    fn load_test_profiles(db: &crate::backend::store::Database) -> Vec<TargetProfile> {
+        db.block_on(async move { crate::backend::store::load_profiles_sqlx(db.pool()).await })
+            .expect("load profiles")
+    }
+
+    fn load_test_assets(db: &crate::backend::store::Database) -> Vec<Asset> {
+        db.block_on(async move { crate::backend::store::load_assets_sqlx(db.pool(), None).await })
+            .expect("load assets")
+    }
+
+    fn load_test_mounts(
+        db: &crate::backend::store::Database,
+        asset_id: Option<&str>,
+    ) -> Vec<AssetMount> {
+        db.block_on(async move {
+            crate::backend::store::load_asset_mounts_sqlx(db.pool(), asset_id).await
+        })
+        .expect("load mounts")
+    }
+
+    fn load_test_mount_observations(
+        db: &crate::backend::store::Database,
+    ) -> Vec<crate::backend::dto::AssetMountObservation> {
+        db.block_on(async move {
+            crate::backend::store::load_asset_mount_observations_sqlx(db.pool()).await
+        })
+        .expect("load observations")
+    }
+
+    fn is_test_managed_deployment(
+        db: &crate::backend::store::Database,
+        profile_id: &str,
+        asset_id: &str,
+        target_path: &str,
+    ) -> bool {
+        db.block_on(async move {
+            crate::backend::store::is_managed_deployment_sqlx(
+                db.pool(),
+                profile_id,
+                asset_id,
+                target_path,
+            )
+            .await
+        })
+        .expect("deployment state")
+    }
+
     #[test]
     fn refresh_recorded_assets_prunes_missing_sources() {
         let db_path = unique_temp_path("assetiweave-refresh-recorded");
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let source = test_missing_source("missing-recorded-source");
-        crate::backend::store::upsert_source(&conn, &source).expect("insert source");
-        let database =
-            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        upsert_test_source(&database, &source);
 
         refresh_recorded_assets(&database).expect("refresh recorded assets");
 
-        assert!(!crate::backend::store::load_sources(&conn)
-            .expect("load sources")
+        assert!(!load_test_sources(&database)
             .iter()
             .any(|candidate| candidate.id == source.id));
         std::fs::remove_file(db_path).ok();
@@ -1612,11 +1742,9 @@ mod tests {
     #[test]
     fn source_scan_prunes_missing_sources_without_error_row() {
         let db_path = unique_temp_path("assetiweave-scan-missing-source");
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let source = test_missing_source("missing-scan-source");
-        crate::backend::store::upsert_source(&conn, &source).expect("insert source");
-        let database =
-            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        upsert_test_source(&database, &source);
 
         scan_selected_sources(
             &database,
@@ -1625,8 +1753,7 @@ mod tests {
         )
         .expect("scan selected sources");
 
-        assert!(!crate::backend::store::load_sources(&conn)
-            .expect("load sources")
+        assert!(!load_test_sources(&database)
             .iter()
             .any(|candidate| candidate.id == source.id));
         std::fs::remove_file(db_path).ok();
@@ -1662,7 +1789,7 @@ mod tests {
     #[test]
     fn target_profile_can_be_persisted_updated_and_deleted() {
         let db_path = unique_temp_path("assetiweave-profile-crud-db");
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let mut profile = target_profile_from_input(TargetProfileInput {
             id: Some("team-app".to_string()),
             name: "Team App".to_string(),
@@ -1677,19 +1804,17 @@ mod tests {
         })
         .expect("build profile");
 
-        crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
+        upsert_test_profile(&database, &profile);
         profile.name = "Team App Edited".to_string();
-        crate::backend::store::upsert_profile(&conn, &profile).expect("update profile");
+        upsert_test_profile(&database, &profile);
 
-        assert!(crate::backend::store::load_profiles(&conn)
-            .expect("load profiles")
+        assert!(load_test_profiles(&database)
             .iter()
             .any(|candidate| candidate.id == profile.id && candidate.name == "Team App Edited"));
 
-        ensure_profile_can_be_deleted(&conn, &profile.id).expect("profile delete guard");
-        crate::backend::store::delete_profile(&conn, &profile.id).expect("delete profile");
-        assert!(!crate::backend::store::load_profiles(&conn)
-            .expect("load profiles")
+        ensure_profile_can_be_deleted_sqlx(&database, &profile.id).expect("profile delete guard");
+        delete_test_profile(&database, &profile.id);
+        assert!(!load_test_profiles(&database)
             .iter()
             .any(|candidate| candidate.id == profile.id));
         std::fs::remove_file(db_path).ok();
@@ -1698,9 +1823,10 @@ mod tests {
     #[test]
     fn default_app_profile_delete_is_blocked() {
         let db_path = unique_temp_path("assetiweave-default-profile-delete-db");
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
 
-        let error = ensure_profile_can_be_deleted(&conn, "codex").expect_err("delete blocked");
+        let error =
+            ensure_profile_can_be_deleted_sqlx(&database, "codex").expect_err("delete blocked");
 
         assert!(error.contains("default app cannot be deleted"));
         std::fs::remove_file(db_path).ok();
@@ -1716,23 +1842,17 @@ mod tests {
         std::fs::create_dir_all(&asset_path).expect("create asset dir");
         std::fs::create_dir_all(&target_root).expect("create target dir");
 
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let source = test_source("profile-delete-source", source_root.clone());
         let profile = test_profile("team-app", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        crate::backend::store::upsert_source(&conn, &source).expect("insert source");
-        crate::backend::store::replace_source_assets(
-            &conn,
-            &source.id,
-            std::slice::from_ref(&asset),
-        )
-        .expect("insert asset");
-        crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
-        let database =
-            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        upsert_test_source(&database, &source);
+        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
+        upsert_test_profile(&database, &profile);
         mount_asset_mount_record(&database, &asset.id, &profile.id).expect("mount asset");
 
-        let error = ensure_profile_can_be_deleted(&conn, &profile.id).expect_err("delete blocked");
+        let error =
+            ensure_profile_can_be_deleted_sqlx(&database, &profile.id).expect_err("delete blocked");
 
         assert!(error.contains("managed deployments") || error.contains("mounted assets"));
         std::fs::remove_dir_all(source_root).ok();
@@ -1745,38 +1865,25 @@ mod tests {
         let db_path = unique_temp_path("assetiweave-refresh-deleted-mount");
         let source_root = unique_temp_path("assetiweave-existing-source");
         std::fs::create_dir_all(&source_root).expect("create source root");
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let source = test_source("source-with-deleted-asset", source_root.clone());
         let asset = test_asset(&source, "deleted-asset", source_root.join("deleted-asset"));
-        crate::backend::store::upsert_source(&conn, &source).expect("insert source");
-        crate::backend::store::replace_source_assets(
-            &conn,
-            &source.id,
-            std::slice::from_ref(&asset),
-        )
-        .expect("insert asset");
-        crate::backend::store::set_asset_mount(
-            &conn,
+        upsert_test_source(&database, &source);
+        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
+        set_test_asset_mount(
+            &database,
             &asset.id,
             "codex",
             true,
             DeploymentStrategy::SymlinkToSource,
-        )
-        .expect("insert mount");
-        let database =
-            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        );
 
         refresh_recorded_assets(&database).expect("refresh recorded assets");
 
-        assert!(crate::backend::store::load_assets(&conn)
-            .expect("load assets")
+        assert!(load_test_assets(&database)
             .iter()
             .all(|candidate| candidate.id != asset.id));
-        assert!(
-            crate::backend::store::load_asset_mounts(&conn, Some(&asset.id))
-                .expect("load mounts")
-                .is_empty()
-        );
+        assert!(load_test_mounts(&database, Some(&asset.id)).is_empty());
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_file(db_path).ok();
     }
@@ -1792,20 +1899,13 @@ mod tests {
         std::fs::create_dir_all(&asset_path).expect("create asset dir");
         std::fs::create_dir_all(&target_root).expect("create target dir");
 
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let source = test_source("source-with-unmounted-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path.clone());
-        crate::backend::store::upsert_source(&conn, &source).expect("insert source");
-        crate::backend::store::replace_source_assets(
-            &conn,
-            &source.id,
-            std::slice::from_ref(&asset),
-        )
-        .expect("insert asset");
-        crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
-        let database =
-            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        upsert_test_source(&database, &source);
+        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
+        upsert_test_profile(&database, &profile);
 
         let result = mount_asset_mount_record(&database, &asset.id, &profile.id).expect("mount");
 
@@ -1817,13 +1917,12 @@ mod tests {
         );
         assert!(result.mount.enabled);
         assert_eq!(result.status.state, PhysicalMountStateDto::Mounted);
-        assert!(crate::backend::store::is_managed_deployment(
-            &conn,
+        assert!(is_test_managed_deployment(
+            &database,
             &profile.id,
             &asset.id,
             &target_path.to_string_lossy()
-        )
-        .expect("deployment state"));
+        ));
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();
@@ -1846,20 +1945,13 @@ mod tests {
         std::os::unix::fs::symlink(&real_asset_path, &alias_asset_path)
             .expect("create alias asset symlink");
 
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let source = test_source("source-with-aliased-asset", alias_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", alias_asset_path.clone());
-        crate::backend::store::upsert_source(&conn, &source).expect("insert source");
-        crate::backend::store::replace_source_assets(
-            &conn,
-            &source.id,
-            std::slice::from_ref(&asset),
-        )
-        .expect("insert asset");
-        crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
-        let database =
-            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        upsert_test_source(&database, &source);
+        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
+        upsert_test_profile(&database, &profile);
 
         let result = mount_asset_mount_record(&database, &asset.id, &profile.id).expect("mount");
 
@@ -1897,21 +1989,13 @@ mod tests {
         std::fs::create_dir_all(&asset_path).expect("create asset dir");
         std::fs::create_dir_all(&target_root).expect("create target dir");
 
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let source = test_source("source-with-set-mounted-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        crate::backend::store::upsert_source(&conn, &source).expect("insert source");
-        crate::backend::store::replace_source_assets(
-            &conn,
-            &source.id,
-            std::slice::from_ref(&asset),
-        )
-        .expect("insert asset");
-        crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
-
-        let database =
-            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        upsert_test_source(&database, &source);
+        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
+        upsert_test_profile(&database, &profile);
         let mount = set_asset_mount_record(&database, &asset.id, &profile.id, true, None)
             .expect("set mount enabled");
 
@@ -1940,27 +2024,18 @@ mod tests {
         std::fs::create_dir_all(&asset_path_b).expect("create asset dir b");
         std::fs::create_dir_all(&target_root).expect("create target dir");
 
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let source = test_source("source-with-group-assets", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset_a = test_asset(&source, "skill-a", asset_path_a.clone());
         let asset_b = test_asset(&source, "skill-b", asset_path_b);
         let assets = vec![asset_a.clone(), asset_b.clone()];
         let group = test_group("frontend");
-        crate::backend::store::upsert_source(&conn, &source).expect("insert source");
-        crate::backend::store::replace_source_assets(&conn, &source.id, &assets)
-            .expect("insert assets");
-        crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
-        crate::backend::store::upsert_asset_group(&conn, &group).expect("insert group");
-        crate::backend::store::replace_asset_group_members(
-            &conn,
-            &group.id,
-            &[asset_a.id.clone()],
-            &assets,
-        )
-        .expect("insert group members");
-        let database =
-            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        upsert_test_source(&database, &source);
+        replace_test_source_assets(&database, &source.id, &assets);
+        upsert_test_profile(&database, &profile);
+        upsert_test_group(&database, &group);
+        replace_test_group_members(&database, &group.id, &[asset_a.id.clone()], &assets);
 
         let result = apply_skill_group_mount_record(&database, &group.id, &profile.id, true)
             .expect("apply group");
@@ -1977,11 +2052,7 @@ mod tests {
             asset_path_a.canonicalize().expect("canonical asset path a")
         );
         assert!(!target_path_b.exists());
-        assert!(
-            crate::backend::store::load_asset_mounts(&conn, Some(&asset_b.id))
-                .expect("load unrelated mounts")
-                .is_empty()
-        );
+        assert!(load_test_mounts(&database, Some(&asset_b.id)).is_empty());
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();
@@ -2004,7 +2075,7 @@ mod tests {
         std::fs::create_dir_all(&codex_target).expect("create codex target");
         std::fs::create_dir_all(&cursor_target).expect("create cursor target");
 
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let source = test_source("source-with-exclusive-preview-assets", source_root.clone());
         let codex = test_profile("codex", codex_target.clone());
         let cursor = test_profile("cursor", cursor_target.clone());
@@ -2016,37 +2087,26 @@ mod tests {
         let group_b = test_group("automation");
         let mut disabled_group = test_group("disabled");
         disabled_group.enabled = false;
-        crate::backend::store::upsert_source(&conn, &source).expect("insert source");
-        crate::backend::store::replace_source_assets(&conn, &source.id, &skill_assets)
-            .expect("insert assets");
-        crate::backend::store::upsert_profile(&conn, &codex).expect("insert codex profile");
-        crate::backend::store::upsert_profile(&conn, &cursor).expect("insert cursor profile");
+        upsert_test_source(&database, &source);
+        replace_test_source_assets(&database, &source.id, &skill_assets);
+        upsert_test_profile(&database, &codex);
+        upsert_test_profile(&database, &cursor);
         for group in [&group_a, &group_b, &disabled_group] {
-            crate::backend::store::upsert_asset_group(&conn, group).expect("insert group");
+            upsert_test_group(&database, group);
         }
-        crate::backend::store::replace_asset_group_members(
-            &conn,
+        replace_test_group_members(
+            &database,
             &group_a.id,
             &[asset_a.id.clone(), asset_b.id.clone()],
             &skill_assets,
-        )
-        .expect("insert group a members");
-        crate::backend::store::replace_asset_group_members(
-            &conn,
-            &group_b.id,
-            &[asset_b.id.clone()],
-            &skill_assets,
-        )
-        .expect("insert group b members");
-        crate::backend::store::replace_asset_group_members(
-            &conn,
+        );
+        replace_test_group_members(&database, &group_b.id, &[asset_b.id.clone()], &skill_assets);
+        replace_test_group_members(
+            &database,
             &disabled_group.id,
             &[asset_c.id.clone()],
             &skill_assets,
-        )
-        .expect("insert disabled group members");
-        let database =
-            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        );
         mount_asset_mount_record(&database, &asset_a.id, &codex.id).expect("mount skill a");
         mount_asset_mount_record(&database, &asset_c.id, &codex.id).expect("mount skill c");
         mount_asset_mount_record(&database, &asset_c.id, &cursor.id).expect("mount skill c cursor");
@@ -2081,12 +2141,9 @@ mod tests {
         assert_eq!(preview.skipped_count, 0);
         assert!(codex_target.join("skill-c").exists());
         assert!(cursor_target.join("skill-c").exists());
-        assert!(
-            crate::backend::store::load_asset_mounts(&conn, Some(&asset_c.id))
-                .expect("load skill c mounts")
-                .iter()
-                .any(|mount| mount.profile_id == codex.id && mount.enabled)
-        );
+        assert!(load_test_mounts(&database, Some(&asset_c.id))
+            .iter()
+            .any(|mount| mount.profile_id == codex.id && mount.enabled));
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(codex_target).ok();
@@ -2113,7 +2170,7 @@ mod tests {
         std::fs::create_dir_all(&codex_target).expect("create codex target");
         std::fs::create_dir_all(&cursor_target).expect("create cursor target");
 
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let source = test_source("source-with-exclusive-apply-assets", source_root.clone());
         let codex = test_profile("codex", codex_target.clone());
         let cursor = test_profile("cursor", cursor_target.clone());
@@ -2133,49 +2190,37 @@ mod tests {
         let group_b = test_group("automation");
         let mut disabled_group = test_group("disabled");
         disabled_group.enabled = false;
-        crate::backend::store::upsert_source(&conn, &source).expect("insert source");
-        crate::backend::store::replace_source_assets(&conn, &source.id, &all_assets)
-            .expect("insert assets");
-        crate::backend::store::upsert_profile(&conn, &codex).expect("insert codex profile");
-        crate::backend::store::upsert_profile(&conn, &cursor).expect("insert cursor profile");
+        upsert_test_source(&database, &source);
+        replace_test_source_assets(&database, &source.id, &all_assets);
+        upsert_test_profile(&database, &codex);
+        upsert_test_profile(&database, &cursor);
         for group in [&group_a, &group_b, &disabled_group] {
-            crate::backend::store::upsert_asset_group(&conn, group).expect("insert group");
+            upsert_test_group(&database, group);
         }
-        crate::backend::store::replace_asset_group_members(
-            &conn,
+        replace_test_group_members(
+            &database,
             &group_a.id,
             &[asset_a.id.clone(), asset_b.id.clone()],
             &skill_assets,
-        )
-        .expect("insert group a members");
-        crate::backend::store::replace_asset_group_members(
-            &conn,
-            &group_b.id,
-            &[asset_b.id.clone()],
-            &skill_assets,
-        )
-        .expect("insert group b members");
-        crate::backend::store::replace_asset_group_members(
-            &conn,
+        );
+        replace_test_group_members(&database, &group_b.id, &[asset_b.id.clone()], &skill_assets);
+        replace_test_group_members(
+            &database,
             &disabled_group.id,
             &[asset_c.id.clone()],
             &skill_assets,
-        )
-        .expect("insert disabled group members");
-        let database =
-            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        );
         mount_asset_mount_record(&database, &asset_a.id, &codex.id).expect("mount skill a");
         mount_asset_mount_record(&database, &asset_c.id, &codex.id).expect("mount skill c");
         mount_asset_mount_record(&database, &asset_c.id, &cursor.id).expect("mount skill c cursor");
         std::os::unix::fs::symlink(&prompt_path, &prompt_target).expect("create prompt symlink");
-        crate::backend::store::set_asset_mount(
-            &conn,
+        set_test_asset_mount(
+            &database,
             &prompt.id,
             &codex.id,
             true,
             DeploymentStrategy::SymlinkToSource,
-        )
-        .expect("store prompt mount");
+        );
 
         let result = apply_skill_group_exclusive_mount_record(
             &database,
@@ -2202,20 +2247,16 @@ mod tests {
         assert!(!codex_target.join("skill-c").exists());
         assert!(cursor_target.join("skill-c").exists());
         assert!(prompt_target.exists());
-        let skill_c_mounts = crate::backend::store::load_asset_mounts(&conn, Some(&asset_c.id))
-            .expect("load skill c mounts");
+        let skill_c_mounts = load_test_mounts(&database, Some(&asset_c.id));
         assert!(skill_c_mounts
             .iter()
             .any(|mount| mount.profile_id == codex.id && !mount.enabled));
         assert!(skill_c_mounts
             .iter()
             .any(|mount| mount.profile_id == cursor.id && mount.enabled));
-        assert!(
-            crate::backend::store::load_asset_mounts(&conn, Some(&prompt.id))
-                .expect("load prompt mounts")
-                .iter()
-                .any(|mount| mount.profile_id == codex.id && mount.enabled)
-        );
+        assert!(load_test_mounts(&database, Some(&prompt.id))
+            .iter()
+            .any(|mount| mount.profile_id == codex.id && mount.enabled));
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(codex_target).ok();
@@ -2239,7 +2280,7 @@ mod tests {
         std::os::unix::fs::symlink(&external_asset_path, &external_target)
             .expect("create unmanaged external symlink");
 
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let external_source = test_source("external-source", external_root.clone());
         let app_local_source = test_source_with_origin(
             "app-local-source",
@@ -2252,33 +2293,13 @@ mod tests {
             test_asset(&app_local_source, "app-local-skill", app_local_asset_path);
         let assets = vec![external_asset.clone(), app_local_asset.clone()];
         let group = test_group("selected-app-local");
-        crate::backend::store::upsert_source(&conn, &external_source)
-            .expect("insert external source");
-        crate::backend::store::upsert_source(&conn, &app_local_source)
-            .expect("insert app local source");
-        crate::backend::store::replace_source_assets(
-            &conn,
-            &external_source.id,
-            &[external_asset.clone()],
-        )
-        .expect("insert external asset");
-        crate::backend::store::replace_source_assets(
-            &conn,
-            &app_local_source.id,
-            &[app_local_asset.clone()],
-        )
-        .expect("insert app local asset");
-        crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
-        crate::backend::store::upsert_asset_group(&conn, &group).expect("insert group");
-        crate::backend::store::replace_asset_group_members(
-            &conn,
-            &group.id,
-            &[app_local_asset.id.clone()],
-            &assets,
-        )
-        .expect("insert group members");
-        let database =
-            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        upsert_test_source(&database, &external_source);
+        upsert_test_source(&database, &app_local_source);
+        replace_test_source_assets(&database, &external_source.id, &[external_asset.clone()]);
+        replace_test_source_assets(&database, &app_local_source.id, &[app_local_asset.clone()]);
+        upsert_test_profile(&database, &profile);
+        upsert_test_group(&database, &group);
+        replace_test_group_members(&database, &group.id, &[app_local_asset.id.clone()], &assets);
 
         let result = apply_skill_group_exclusive_mount_record(
             &database,
@@ -2327,47 +2348,37 @@ mod tests {
         std::fs::create_dir_all(&target_root).expect("create target dir");
         std::os::unix::fs::symlink(&asset_path, &target_path).expect("create physical symlink");
 
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let source = test_source("source-with-scanned-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        crate::backend::store::upsert_source(&conn, &source).expect("insert source");
-        crate::backend::store::replace_source_assets(
-            &conn,
-            &source.id,
-            std::slice::from_ref(&asset),
-        )
-        .expect("insert asset");
-        crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
-        crate::backend::store::set_asset_mount(
-            &conn,
+        upsert_test_source(&database, &source);
+        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
+        upsert_test_profile(&database, &profile);
+        set_test_asset_mount(
+            &database,
             &asset.id,
             &profile.id,
             false,
             DeploymentStrategy::SymlinkToSource,
-        )
-        .expect("store disabled snapshot");
+        );
 
-        let statuses = scan_asset_mount_statuses(&conn, None).expect("scan statuses");
+        let statuses = scan_asset_mount_statuses_sqlx(&database, None).expect("scan statuses");
 
         assert!(statuses.iter().any(|status| {
             status.asset_id == asset.id
                 && status.profile_id == profile.id
                 && status.state == PhysicalMountStateDto::Mounted
         }));
-        assert!(
-            crate::backend::store::load_asset_mounts(&conn, Some(&asset.id))
-                .expect("load mounts")
-                .iter()
-                .all(|mount| !mount.enabled)
-        );
-        assert!(!crate::backend::store::is_managed_deployment(
-            &conn,
+        assert!(load_test_mounts(&database, Some(&asset.id))
+            .iter()
+            .all(|mount| !mount.enabled));
+        assert!(!is_test_managed_deployment(
+            &database,
             &profile.id,
             &asset.id,
             &target_path.to_string_lossy()
-        )
-        .expect("deployment state"));
+        ));
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();
@@ -2386,54 +2397,43 @@ mod tests {
         std::fs::create_dir_all(&target_root).expect("create target dir");
         std::os::unix::fs::symlink(&asset_path, &target_path).expect("create physical symlink");
 
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let source = test_source("source-with-observed-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        crate::backend::store::upsert_source(&conn, &source).expect("insert source");
-        crate::backend::store::replace_source_assets(
-            &conn,
-            &source.id,
-            std::slice::from_ref(&asset),
-        )
-        .expect("insert asset");
-        crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
-        let original_mount = crate::backend::store::set_asset_mount(
-            &conn,
+        upsert_test_source(&database, &source);
+        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
+        upsert_test_profile(&database, &profile);
+        let original_mount = set_test_asset_mount(
+            &database,
             &asset.id,
             &profile.id,
             false,
             DeploymentStrategy::SymlinkToSource,
-        )
-        .expect("store disabled intent");
-        let database =
-            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        );
 
         sync_asset_mount_observations(&database, None).expect("sync observations");
 
-        let observations =
-            crate::backend::store::load_asset_mount_observations(&conn).expect("load observations");
+        let observations = load_test_mount_observations(&database);
         let observation = observations
             .iter()
             .find(|candidate| candidate.asset_id == asset.id && candidate.profile_id == profile.id)
             .expect("asset/profile observation");
         assert_eq!(observation.state, PhysicalMountStateDto::Mounted);
         assert!(!observation.observed_at.is_empty());
-        let mounts =
-            crate::backend::store::load_asset_mounts(&conn, Some(&asset.id)).expect("load mounts");
+        let mounts = load_test_mounts(&database, Some(&asset.id));
         let synced_mount = mounts
             .iter()
             .find(|mount| mount.profile_id == profile.id)
             .expect("synced mount");
         assert!(synced_mount.enabled);
         assert_eq!(synced_mount.created_at, original_mount.created_at);
-        assert!(crate::backend::store::is_managed_deployment(
-            &conn,
+        assert!(is_test_managed_deployment(
+            &database,
             &profile.id,
             &asset.id,
             &target_path.to_string_lossy()
-        )
-        .expect("deployment state"));
+        ));
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();
@@ -2458,20 +2458,13 @@ mod tests {
         std::os::unix::fs::symlink(&alias_asset_path, &target_path)
             .expect("create ghost target symlink");
 
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let source = test_source("source-with-ghost-asset", alias_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", alias_asset_path);
-        crate::backend::store::upsert_source(&conn, &source).expect("insert source");
-        crate::backend::store::replace_source_assets(
-            &conn,
-            &source.id,
-            std::slice::from_ref(&asset),
-        )
-        .expect("insert asset");
-        crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
-        let database =
-            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        upsert_test_source(&database, &source);
+        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
+        upsert_test_profile(&database, &profile);
 
         sync_asset_mount_observations(&database, None).expect("sync observations");
 
@@ -2481,8 +2474,7 @@ mod tests {
                 .canonicalize()
                 .expect("canonical real asset")
         );
-        let observations =
-            crate::backend::store::load_asset_mount_observations(&conn).expect("load observations");
+        let observations = load_test_mount_observations(&database);
         let observation = observations
             .iter()
             .find(|candidate| candidate.asset_id == asset.id && candidate.profile_id == profile.id)
@@ -2515,44 +2507,32 @@ mod tests {
         std::fs::create_dir_all(&asset_path).expect("create asset dir");
         std::fs::create_dir_all(&target_root).expect("create target dir");
 
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let source = test_source("source-with-missing-observed-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        crate::backend::store::upsert_source(&conn, &source).expect("insert source");
-        crate::backend::store::replace_source_assets(
-            &conn,
-            &source.id,
-            std::slice::from_ref(&asset),
-        )
-        .expect("insert asset");
-        crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
-        crate::backend::store::set_asset_mount(
-            &conn,
+        upsert_test_source(&database, &source);
+        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
+        upsert_test_profile(&database, &profile);
+        set_test_asset_mount(
+            &database,
             &asset.id,
             &profile.id,
             true,
             DeploymentStrategy::SymlinkToSource,
-        )
-        .expect("store stale enabled snapshot");
-        let database =
-            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        );
 
         sync_asset_mount_observations(&database, None).expect("sync observations");
 
-        assert!(
-            crate::backend::store::load_asset_mounts(&conn, Some(&asset.id))
-                .expect("load mounts")
-                .iter()
-                .all(|mount| !mount.enabled)
-        );
-        assert!(!crate::backend::store::is_managed_deployment(
-            &conn,
+        assert!(load_test_mounts(&database, Some(&asset.id))
+            .iter()
+            .all(|mount| !mount.enabled));
+        assert!(!is_test_managed_deployment(
+            &database,
             &profile.id,
             &asset.id,
             &target_path.to_string_lossy()
-        )
-        .expect("deployment state"));
+        ));
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();
@@ -2571,27 +2551,20 @@ mod tests {
         std::fs::create_dir_all(&target_root).expect("create target dir");
         std::os::unix::fs::symlink(&asset_path, &target_path).expect("create mounted symlink");
 
-        let conn = crate::backend::store::open_initialized(&db_path).expect("open initialized db");
+        let database = open_test_database(&db_path);
         let source = test_source("source-with-mounted-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        crate::backend::store::replace_source_assets(
-            &conn,
-            &source.id,
-            std::slice::from_ref(&asset),
-        )
-        .expect("insert asset");
-        crate::backend::store::upsert_profile(&conn, &profile).expect("insert profile");
-        crate::backend::store::set_asset_mount(
-            &conn,
+        upsert_test_source(&database, &source);
+        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
+        upsert_test_profile(&database, &profile);
+        set_test_asset_mount(
+            &database,
             &asset.id,
             &profile.id,
             true,
             DeploymentStrategy::SymlinkToSource,
-        )
-        .expect("enable mount");
-        let database =
-            crate::backend::store::Database::open(&db_path).expect("open migrated database");
+        );
 
         let result =
             unmount_asset_mount_record(&database, &asset.id, &profile.id).expect("unmount");
@@ -2600,12 +2573,9 @@ mod tests {
         assert!(!std::fs::symlink_metadata(&target_path).is_ok());
         assert!(!result.mount.enabled);
         assert_eq!(result.status.state, PhysicalMountStateDto::NotMounted);
-        assert!(
-            crate::backend::store::load_asset_mounts(&conn, Some(&asset.id))
-                .expect("load mounts")
-                .iter()
-                .all(|mount| !mount.enabled)
-        );
+        assert!(load_test_mounts(&database, Some(&asset.id))
+            .iter()
+            .all(|mount| !mount.enabled));
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();

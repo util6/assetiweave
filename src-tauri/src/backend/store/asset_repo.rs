@@ -11,11 +11,6 @@ use super::{
     sql,
 };
 
-#[cfg(test)]
-pub(crate) fn load_assets(conn: &Connection) -> AppResult<Vec<Asset>> {
-    load_assets_by_kind(conn, None)
-}
-
 pub(crate) async fn load_assets_sqlx(
     pool: &SqlitePool,
     kind: Option<AssetKind>,

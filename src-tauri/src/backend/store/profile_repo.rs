@@ -68,26 +68,6 @@ pub(crate) async fn upsert_profile_sqlx(
     Ok(())
 }
 
-#[cfg(test)]
-pub(crate) fn delete_profile(conn: &Connection, profile_id: &str) -> AppResult<()> {
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|error| error.to_string())?;
-    tx.execute(sql::DELETE_APP_SHORTCUT_BY_PROFILE, params![profile_id])
-        .map_err(db_error)?;
-    tx.execute(
-        sql::DELETE_ASSET_MOUNT_OBSERVATIONS_BY_PROFILE,
-        params![profile_id],
-    )
-    .map_err(db_error)?;
-    tx.execute(sql::DELETE_ASSET_MOUNTS_BY_PROFILE, params![profile_id])
-        .map_err(db_error)?;
-    tx.execute(sql::DELETE_PROFILE, params![profile_id])
-        .map_err(db_error)?;
-    tx.commit().map_err(|error| error.to_string())?;
-    Ok(())
-}
-
 pub(crate) async fn delete_profile_sqlx(pool: &SqlitePool, profile_id: &str) -> AppResult<()> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     sqlx::query(sql::DELETE_APP_SHORTCUT_BY_PROFILE)
@@ -112,20 +92,6 @@ pub(crate) async fn delete_profile_sqlx(pool: &SqlitePool, profile_id: &str) -> 
         .map_err(|error| error.to_string())?;
     tx.commit().await.map_err(|error| error.to_string())?;
     Ok(())
-}
-
-#[cfg(test)]
-pub(crate) fn count_deployment_state_by_profile(
-    conn: &Connection,
-    profile_id: &str,
-) -> AppResult<usize> {
-    conn.query_row(
-        sql::COUNT_DEPLOYMENT_STATE_BY_PROFILE,
-        params![profile_id],
-        |row| row.get::<_, i64>(0),
-    )
-    .map(|count| count as usize)
-    .map_err(db_error)
 }
 
 #[cfg(test)]

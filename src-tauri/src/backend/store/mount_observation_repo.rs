@@ -4,14 +4,12 @@ use crate::backend::{
 };
 use chrono::Utc;
 #[cfg(test)]
-use rusqlite::Connection;
-#[cfg(test)]
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow};
 use sqlx::{SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 
 #[cfg(test)]
-use super::codec::{db_error, decode_enum, to_sql_error};
+use super::codec::decode_enum;
 use super::{codec::encode_enum, sql};
 
 async fn upsert_asset_mount_observations_connection(
@@ -131,18 +129,6 @@ pub(crate) async fn persist_asset_mount_snapshot_sqlx(
 }
 
 #[cfg(test)]
-pub(crate) fn load_asset_mount_observations(
-    conn: &Connection,
-) -> AppResult<Vec<AssetMountObservation>> {
-    let mut stmt = conn
-        .prepare(sql::LIST_ASSET_MOUNT_OBSERVATIONS)
-        .map_err(db_error)?;
-    let rows = stmt.query_map([], decode_observation).map_err(db_error)?;
-
-    rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
-}
-
-#[cfg(test)]
 pub(crate) async fn load_asset_mount_observations_sqlx(
     pool: &SqlitePool,
 ) -> AppResult<Vec<AssetMountObservation>> {
@@ -163,19 +149,6 @@ pub(crate) async fn delete_orphan_asset_mount_observations_sqlx(
         .await
         .map_err(|error| error.to_string())?;
     Ok(())
-}
-
-#[cfg(test)]
-fn decode_observation(row: &rusqlite::Row<'_>) -> rusqlite::Result<AssetMountObservation> {
-    Ok(AssetMountObservation {
-        asset_id: row.get(0)?,
-        profile_id: row.get(1)?,
-        target_dir: row.get(2)?,
-        target_path: row.get(3)?,
-        state: decode_enum(row.get::<_, String>(4)?).map_err(to_sql_error)?,
-        linked_source: row.get(5)?,
-        observed_at: row.get(6)?,
-    })
 }
 
 #[cfg(test)]

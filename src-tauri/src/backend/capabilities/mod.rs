@@ -504,16 +504,6 @@ pub(crate) fn sync_asset_mount_observations(
     Ok(statuses)
 }
 
-#[cfg(test)]
-pub(crate) fn scan_asset_mount_statuses(
-    conn: &rusqlite::Connection,
-    asset_id: Option<&str>,
-) -> AppResult<Vec<AssetMountStatus>> {
-    let assets = catalog_visible_assets(conn, None)?;
-    let profiles = crate::backend::store::load_profiles(conn)?;
-    inspect_asset_mount_statuses(&assets, &profiles, asset_id)
-}
-
 pub(crate) fn scan_asset_mount_statuses_sqlx(
     db: &crate::backend::store::Database,
     asset_id: Option<&str>,
@@ -1446,19 +1436,6 @@ pub(crate) fn catalog_assets_sqlx(
     })
 }
 
-#[cfg(test)]
-pub(crate) fn catalog_visible_assets(
-    conn: &rusqlite::Connection,
-    kind: Option<AssetKind>,
-) -> AppResult<Vec<Asset>> {
-    let assets = crate::backend::store::load_assets_by_kind(conn, kind)?;
-    let sources = crate::backend::store::load_sources(conn)?;
-    Ok(build_catalog_asset_entries(assets, &sources)
-        .into_iter()
-        .map(|catalog_asset| catalog_asset.asset)
-        .collect())
-}
-
 pub(crate) fn catalog_visible_assets_sqlx(
     db: &crate::backend::store::Database,
     kind: Option<AssetKind>,
@@ -1713,28 +1690,6 @@ pub(crate) fn ensure_profile_can_be_deleted_sqlx(
             status.profile_id == profile_id && status.state == PhysicalMountStateDto::Mounted
         })
     {
-        return Err(format!("profile has mounted assets: {profile_id}"));
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-pub(crate) fn ensure_profile_can_be_deleted(
-    conn: &rusqlite::Connection,
-    profile_id: &str,
-) -> AppResult<()> {
-    if crate::backend::defaults::is_default_app_profile_id(profile_id) {
-        return Err(format!("default app cannot be deleted: {profile_id}"));
-    }
-
-    if crate::backend::store::count_deployment_state_by_profile(conn, profile_id)? > 0 {
-        return Err(format!("profile has managed deployments: {profile_id}"));
-    }
-
-    if scan_asset_mount_statuses(conn, None)?.iter().any(|status| {
-        status.profile_id == profile_id && status.state == PhysicalMountStateDto::Mounted
-    }) {
         return Err(format!("profile has mounted assets: {profile_id}"));
     }
 

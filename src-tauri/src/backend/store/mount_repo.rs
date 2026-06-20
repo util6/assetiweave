@@ -1,29 +1,12 @@
 use crate::backend::dto::AppResult;
 use crate::backend::models::{AssetMount, DeploymentState, DeploymentStrategy};
 use chrono::Utc;
-#[cfg(test)]
-use rusqlite::{params, Connection, OptionalExtension};
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, Sqlite, SqlitePool, Transaction};
 
-#[cfg(test)]
-use super::codec::{db_error, to_sql_error};
 use super::{
     codec::{decode_enum, encode_enum},
     sql,
 };
-
-#[cfg(test)]
-pub(crate) fn load_asset_mounts(
-    conn: &Connection,
-    asset_id: Option<&str>,
-) -> AppResult<Vec<AssetMount>> {
-    let mut stmt = conn.prepare(sql::LIST_ASSET_MOUNTS).map_err(db_error)?;
-    let rows = stmt
-        .query_map(params![asset_id], decode_mount)
-        .map_err(db_error)?;
-
-    rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
-}
 
 pub(crate) async fn load_asset_mounts_sqlx(
     pool: &SqlitePool,
@@ -57,30 +40,6 @@ pub(crate) async fn delete_orphan_asset_mounts_sqlx(pool: &SqlitePool) -> AppRes
         .await
         .map_err(|error| error.to_string())?;
     Ok(())
-}
-
-#[cfg(test)]
-pub(crate) fn set_asset_mount(
-    conn: &Connection,
-    asset_id: &str,
-    profile_id: &str,
-    enabled: bool,
-    strategy: DeploymentStrategy,
-) -> AppResult<AssetMount> {
-    let now = Utc::now().to_rfc3339();
-    let created_at = load_asset_mount(conn, asset_id, profile_id)?
-        .map(|mount| mount.created_at)
-        .unwrap_or_else(|| now.clone());
-    let mount = AssetMount {
-        asset_id: asset_id.to_string(),
-        profile_id: profile_id.to_string(),
-        enabled,
-        strategy,
-        created_at,
-        updated_at: now,
-    };
-    upsert_asset_mount(conn, &mount)?;
-    Ok(mount)
 }
 
 pub(crate) async fn set_asset_mount_sqlx(
@@ -134,21 +93,6 @@ pub(crate) async fn persist_verified_unmount_sqlx(
     Ok(mount)
 }
 
-#[cfg(test)]
-fn load_asset_mount(
-    conn: &Connection,
-    asset_id: &str,
-    profile_id: &str,
-) -> AppResult<Option<AssetMount>> {
-    conn.query_row(
-        sql::GET_ASSET_MOUNT,
-        params![asset_id, profile_id],
-        decode_mount,
-    )
-    .optional()
-    .map_err(db_error)
-}
-
 async fn load_asset_mount_sqlx(
     pool: &SqlitePool,
     asset_id: &str,
@@ -177,23 +121,6 @@ async fn load_asset_mount_tx(
         .map_err(|error| error.to_string())?
         .map(|row| map_sqlx_mount(&row))
         .transpose()
-}
-
-#[cfg(test)]
-fn upsert_asset_mount(conn: &Connection, mount: &AssetMount) -> AppResult<()> {
-    conn.execute(
-        sql::UPSERT_ASSET_MOUNT,
-        params![
-            mount.asset_id,
-            mount.profile_id,
-            if mount.enabled { 1 } else { 0 },
-            encode_enum(mount.strategy)?,
-            mount.created_at,
-            mount.updated_at,
-        ],
-    )
-    .map_err(db_error)?;
-    Ok(())
 }
 
 async fn set_asset_mount_tx(
@@ -283,18 +210,6 @@ async fn delete_deployment_state_tx(
         .await
         .map_err(|error| error.to_string())?;
     Ok(())
-}
-
-#[cfg(test)]
-fn decode_mount(row: &rusqlite::Row<'_>) -> rusqlite::Result<AssetMount> {
-    Ok(AssetMount {
-        asset_id: row.get(0)?,
-        profile_id: row.get(1)?,
-        enabled: row.get::<_, i64>(2)? == 1,
-        strategy: decode_enum(row.get::<_, String>(3)?).map_err(to_sql_error)?,
-        created_at: row.get(4)?,
-        updated_at: row.get(5)?,
-    })
 }
 
 fn map_sqlx_mount(row: &SqliteRow) -> AppResult<AssetMount> {

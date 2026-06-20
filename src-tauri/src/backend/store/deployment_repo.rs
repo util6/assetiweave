@@ -1,11 +1,7 @@
 use crate::backend::dto::AppResult;
 use crate::backend::models::DeploymentState;
-#[cfg(test)]
-use rusqlite::{params, Connection, OptionalExtension};
 use sqlx::{Row, SqlitePool};
 
-#[cfg(test)]
-use super::codec::db_error;
 use super::{codec::encode_enum, sql};
 
 pub(crate) async fn upsert_deployment_state_sqlx(
@@ -24,23 +20,6 @@ pub(crate) async fn upsert_deployment_state_sqlx(
         .await
         .map_err(|error| error.to_string())?;
     Ok(())
-}
-
-#[cfg(test)]
-pub(crate) fn is_managed_deployment(
-    conn: &Connection,
-    profile_id: &str,
-    asset_id: &str,
-    target_path: &str,
-) -> AppResult<bool> {
-    conn.query_row(
-        sql::GET_MANAGED_DEPLOYMENT,
-        params![profile_id, asset_id, target_path],
-        |row| row.get::<_, String>(0),
-    )
-    .optional()
-    .map(|managed_by| managed_by.as_deref() == Some("assetiweave"))
-    .map_err(db_error)
 }
 
 pub(crate) async fn is_managed_deployment_sqlx(

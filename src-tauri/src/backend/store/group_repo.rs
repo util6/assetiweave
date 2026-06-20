@@ -5,13 +5,9 @@ use crate::backend::models::{
 };
 use chrono::Utc;
 use globset::{Glob, GlobSet, GlobSetBuilder};
-#[cfg(test)]
-use rusqlite::{params, Connection, OptionalExtension, Row as RusqliteRow};
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[cfg(test)]
-use super::codec::{db_error, to_sql_error};
 use super::{
     codec::{decode_enum, decode_json, encode_enum, encode_json},
     sql,
@@ -59,41 +55,6 @@ pub(crate) async fn load_skill_group_detail_sqlx(
     }
     let manual_members = load_group_members_sqlx(pool).await?;
     build_group_detail(group, assets, &manual_members)
-}
-
-#[cfg(test)]
-pub(crate) fn upsert_asset_group(conn: &Connection, group: &AssetGroup) -> AppResult<()> {
-    validate_asset_group(group)?;
-    conn.execute(
-        sql::UPSERT_ASSET_GROUP,
-        params![
-            group.id,
-            group.name.trim(),
-            group
-                .description
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty()),
-            group.color.trim(),
-            encode_enum(group.asset_kind)?,
-            group
-                .display_icon
-                .as_deref()
-                .map(str::trim)
-                .filter(|v| !v.is_empty()),
-            group
-                .icon_svg
-                .as_ref()
-                .and_then(|svg| encode_json(svg).ok()),
-            if group.enabled { 1 } else { 0 },
-            group.sort_order,
-            encode_json(&normalize_rules(&group.rules))?,
-            group.created_at,
-            group.updated_at,
-        ],
-    )
-    .map_err(db_error)?;
-    Ok(())
 }
 
 pub(crate) async fn upsert_asset_group_sqlx(
@@ -146,56 +107,6 @@ pub(crate) async fn delete_asset_group_sqlx(pool: &SqlitePool, group_id: &str) -
         .await
         .map_err(|error| error.to_string())?;
     tx.commit().await.map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-#[cfg(test)]
-pub(crate) fn replace_asset_group_members(
-    conn: &Connection,
-    group_id: &str,
-    asset_ids: &[String],
-    assets: &[Asset],
-) -> AppResult<()> {
-    let group = load_asset_group(conn, group_id)?
-        .ok_or_else(|| format!("asset group not found: {group_id}"))?;
-    if group.asset_kind != AssetKind::Skill {
-        return Err("only skill groups are supported".to_string());
-    }
-
-    let skill_asset_ids = assets
-        .iter()
-        .filter(|asset| asset.kind == AssetKind::Skill)
-        .map(|asset| asset.id.as_str())
-        .collect::<BTreeSet<_>>();
-    let deduped = asset_ids
-        .iter()
-        .map(|asset_id| asset_id.trim())
-        .filter(|asset_id| !asset_id.is_empty())
-        .collect::<BTreeSet<_>>();
-
-    if let Some(missing_or_invalid) = deduped
-        .iter()
-        .find(|asset_id| !skill_asset_ids.contains(**asset_id))
-    {
-        return Err(format!(
-            "asset is not a scanned skill: {missing_or_invalid}"
-        ));
-    }
-
-    let now = Utc::now().to_rfc3339();
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|error| error.to_string())?;
-    tx.execute(sql::DELETE_ASSET_GROUP_MEMBERS, params![group_id])
-        .map_err(db_error)?;
-    for asset_id in deduped {
-        tx.execute(
-            sql::INSERT_ASSET_GROUP_MEMBER,
-            params![group_id, asset_id, now],
-        )
-        .map_err(db_error)?;
-    }
-    tx.commit().map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -332,13 +243,6 @@ async fn load_asset_groups_by_kind_sqlx(
     rows.iter().map(map_sqlx_asset_group_row).collect()
 }
 
-#[cfg(test)]
-fn load_asset_group(conn: &Connection, group_id: &str) -> AppResult<Option<AssetGroup>> {
-    conn.query_row(sql::GET_ASSET_GROUP, params![group_id], map_asset_group_row)
-        .optional()
-        .map_err(db_error)
-}
-
 async fn load_asset_group_sqlx(pool: &SqlitePool, group_id: &str) -> AppResult<Option<AssetGroup>> {
     let row = sqlx::query(sql::GET_ASSET_GROUP)
         .bind(group_id)
@@ -369,27 +273,6 @@ async fn load_group_members_sqlx(
             .insert(asset_id);
     }
     Ok(grouped)
-}
-
-#[cfg(test)]
-fn map_asset_group_row(row: &RusqliteRow<'_>) -> rusqlite::Result<AssetGroup> {
-    let rules_payload: String = row.get(9)?;
-    Ok(AssetGroup {
-        id: row.get(0)?,
-        name: row.get(1)?,
-        description: row.get(2)?,
-        color: row.get(3)?,
-        asset_kind: decode_enum(row.get::<_, String>(4)?).map_err(to_sql_error)?,
-        display_icon: row.get::<_, Option<String>>(5)?,
-        icon_svg: row
-            .get::<_, Option<String>>(6)?
-            .and_then(|payload| decode_json(payload).ok()),
-        enabled: row.get::<_, i64>(7)? == 1,
-        sort_order: row.get(8)?,
-        rules: decode_json(rules_payload).map_err(to_sql_error)?,
-        created_at: row.get(10)?,
-        updated_at: row.get(11)?,
-    })
 }
 
 fn map_sqlx_asset_group_row(row: &SqliteRow) -> AppResult<AssetGroup> {
