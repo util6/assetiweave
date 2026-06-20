@@ -27,7 +27,7 @@ pub(crate) use conversation_repo::{
     list_conversation_sources_sqlx, load_conversation_adapter_sqlx,
     load_conversation_question_detail_sqlx, load_conversation_session_detail_sqlx,
     load_conversation_source_sqlx, merge_conversation_questions_sqlx,
-    render_conversation_detail_markdown_with_filter, search_conversation_cards,
+    render_conversation_detail_markdown_with_filter, search_conversation_cards_sqlx,
     seed_builtin_conversation_adapters, split_conversation_question_sqlx,
     upsert_conversation_adapter_sqlx, upsert_conversation_source_sqlx,
 };

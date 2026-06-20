@@ -14,7 +14,7 @@ use crate::backend::models::{
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use sha2::{Digest, Sha256};
-use sqlx::{sqlite::SqliteRow, Row as SqlxRow, Sqlite, SqlitePool, Transaction};
+use sqlx::{sqlite::SqliteRow, AssertSqlSafe, Row as SqlxRow, Sqlite, SqlitePool, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::codec::{db_error, decode_enum, decode_json, encode_enum, encode_json, to_sql_error};
@@ -1081,6 +1081,116 @@ pub(crate) fn list_conversation_question_details(
     Ok(details.into_iter().skip(offset).take(limit).collect())
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn search_conversation_cards_sqlx(
+    pool: &SqlitePool,
+    record_kind: ConversationRecordKind,
+    adapter_id: Option<&str>,
+    source_id: Option<&str>,
+    project_path: Option<&str>,
+    query: &str,
+    content_types: &[ConversationSearchCardType],
+    since: Option<&str>,
+    until: Option<&str>,
+    timeline: bool,
+    limit: usize,
+    offset: usize,
+) -> AppResult<ConversationSearchPage> {
+    let needle = normalize_query(Some(query))
+        .ok_or_else(|| "conversation search query is required".to_string())?;
+    let project_path = normalize_project_path(project_path);
+    let since = parse_search_time_bound(since, SearchTimeBound::Since)?;
+    let until = parse_search_time_bound(until, SearchTimeBound::Until)?;
+    let allowed_types = content_types.iter().copied().collect::<BTreeSet<_>>();
+    let tables = record_kind.tables();
+    let mut sessions = load_search_sessions_sqlx(pool, tables, adapter_id, source_id).await?;
+    if timeline {
+        sessions.sort_by(|left, right| {
+            conversation_session_search_time(&left.session)
+                .cmp(&conversation_session_search_time(&right.session))
+                .then_with(|| left.session.title.cmp(&right.session.title))
+        });
+    }
+    let mut questions_by_session =
+        load_search_questions_sqlx(pool, tables, adapter_id, source_id).await?;
+    let mut turns_by_question = load_search_turns_sqlx(pool, tables, adapter_id, source_id).await?;
+    let mut parts_by_turn = load_search_parts_sqlx(pool, tables, adapter_id, source_id).await?;
+    let mut hits = Vec::new();
+
+    for session_item in sessions {
+        let session = &session_item.session;
+        if let Some(project_path) = project_path.as_deref() {
+            let session_project = normalize_project_path(session.project_path.as_deref());
+            if session_project.as_deref() != Some(project_path) {
+                continue;
+            }
+        }
+        if since.is_some() || until.is_some() {
+            let Some(session_time) = conversation_session_search_time(session) else {
+                continue;
+            };
+            if let Some(since) = since.as_ref() {
+                if &session_time < since {
+                    continue;
+                }
+            }
+            if let Some(until) = until.as_ref() {
+                if &session_time > until {
+                    continue;
+                }
+            }
+        }
+
+        for question in questions_by_session.remove(&session.id).unwrap_or_default() {
+            let question_title = question
+                .title
+                .clone()
+                .filter(|title| !title.trim().is_empty())
+                .unwrap_or_else(|| first_line(&question.question_text));
+            for turn in turns_by_question.remove(&question.id).unwrap_or_default() {
+                push_search_hit_if_matching(
+                    &mut hits,
+                    &needle,
+                    &allowed_types,
+                    &session_item,
+                    &question,
+                    &question_title,
+                    Some(turn.id.clone()),
+                    None,
+                    format!("{}-question", turn.id),
+                    ConversationSearchCardType::Question,
+                    &turn.user_text,
+                );
+
+                for part in parts_by_turn.remove(&turn.id).unwrap_or_default() {
+                    for entry in search_entries_for_part(&part) {
+                        push_search_hit_if_matching(
+                            &mut hits,
+                            &needle,
+                            &allowed_types,
+                            &session_item,
+                            &question,
+                            &question_title,
+                            Some(turn.id.clone()),
+                            Some(part.id.clone()),
+                            entry.block_id,
+                            entry.card_type,
+                            &entry.text,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    let total_count = hits.len();
+    Ok(ConversationSearchPage {
+        total_count,
+        hits: hits.into_iter().skip(offset).take(limit).collect(),
+    })
+}
+
+#[cfg(test)]
 pub(crate) fn search_conversation_cards(
     conn: &Connection,
     record_kind: ConversationRecordKind,
@@ -1668,6 +1778,7 @@ fn map_sqlx_conversation_source(row: &SqliteRow) -> AppResult<ConversationSource
     })
 }
 
+#[cfg(test)]
 pub(super) fn map_conversation_session(row: &Row<'_>) -> rusqlite::Result<ConversationSession> {
     Ok(ConversationSession {
         id: row.get(0)?,
@@ -1686,6 +1797,7 @@ pub(super) fn map_conversation_session(row: &Row<'_>) -> rusqlite::Result<Conver
     })
 }
 
+#[cfg(test)]
 pub(super) fn map_conversation_turn(row: &Row<'_>) -> rusqlite::Result<ConversationTurn> {
     Ok(ConversationTurn {
         id: row.get(0)?,
@@ -1702,6 +1814,7 @@ pub(super) fn map_conversation_turn(row: &Row<'_>) -> rusqlite::Result<Conversat
     })
 }
 
+#[cfg(test)]
 pub(super) fn map_conversation_part(row: &Row<'_>) -> rusqlite::Result<ConversationPart> {
     Ok(ConversationPart {
         id: row.get(0)?,
@@ -1719,6 +1832,7 @@ pub(super) fn map_conversation_part(row: &Row<'_>) -> rusqlite::Result<Conversat
     })
 }
 
+#[cfg(test)]
 pub(super) fn map_conversation_question(row: &Row<'_>) -> rusqlite::Result<ConversationQuestion> {
     Ok(ConversationQuestion {
         id: row.get(0)?,
@@ -2985,12 +3099,186 @@ impl ConversationRecordKind {
     }
 }
 
+async fn load_search_sessions_sqlx(
+    pool: &SqlitePool,
+    tables: ConversationRecordTables,
+    adapter_id: Option<&str>,
+    source_id: Option<&str>,
+) -> AppResult<Vec<ConversationSessionListItem>> {
+    let query = format!(
+        r#"
+        SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
+               s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
+               s.missing, s.created_at, s.imported_at,
+               (
+                   SELECT COUNT(*)
+                   FROM {questions} q
+                   WHERE q.session_id = s.id
+               ) AS question_count,
+               (
+                   SELECT COUNT(*)
+                   FROM {turns} t
+                   WHERE t.session_id = s.id
+               ) AS turn_count
+        FROM {sessions} s
+        WHERE (?1 IS NULL OR s.adapter_id = ?1)
+          AND (?2 IS NULL OR s.source_id = ?2)
+        ORDER BY COALESCE(s.updated_at, s.imported_at) DESC, s.title ASC
+        "#,
+        sessions = tables.sessions,
+        questions = tables.questions,
+        turns = tables.turns,
+    );
+    let rows = sqlx::query(AssertSqlSafe(query))
+        .bind(adapter_id)
+        .bind(source_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    rows.iter()
+        .map(|row| {
+            let question_count = usize::try_from(
+                row.try_get::<i64, _>(13)
+                    .map_err(|error| error.to_string())?,
+            )
+            .map_err(|_| "invalid conversation search question count".to_string())?;
+            let turn_count = usize::try_from(
+                row.try_get::<i64, _>(14)
+                    .map_err(|error| error.to_string())?,
+            )
+            .map_err(|_| "invalid conversation search turn count".to_string())?;
+            Ok(ConversationSessionListItem {
+                session: map_sqlx_conversation_session(row)?,
+                question_count,
+                turn_count,
+            })
+        })
+        .collect()
+}
+
+async fn load_search_questions_sqlx(
+    pool: &SqlitePool,
+    tables: ConversationRecordTables,
+    adapter_id: Option<&str>,
+    source_id: Option<&str>,
+) -> AppResult<BTreeMap<String, Vec<ConversationQuestion>>> {
+    let query = format!(
+        r#"
+        SELECT q.id, q.session_id, q.question_index, q.title, q.question_text,
+               q.answer_text, q.code_text, q.command_text, q.grouping_origin,
+               q.created_at, q.updated_at
+        FROM {questions} q
+        JOIN {sessions} s ON s.id = q.session_id
+        WHERE (?1 IS NULL OR s.adapter_id = ?1)
+          AND (?2 IS NULL OR s.source_id = ?2)
+        ORDER BY q.session_id ASC, q.question_index ASC
+        "#,
+        questions = tables.questions,
+        sessions = tables.sessions,
+    );
+    let rows = sqlx::query(AssertSqlSafe(query))
+        .bind(adapter_id)
+        .bind(source_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut questions_by_session = BTreeMap::<String, Vec<ConversationQuestion>>::new();
+    for row in &rows {
+        let question = map_sqlx_conversation_question(row)?;
+        questions_by_session
+            .entry(question.session_id.clone())
+            .or_default()
+            .push(question);
+    }
+    Ok(questions_by_session)
+}
+
+async fn load_search_turns_sqlx(
+    pool: &SqlitePool,
+    tables: ConversationRecordTables,
+    adapter_id: Option<&str>,
+    source_id: Option<&str>,
+) -> AppResult<BTreeMap<String, Vec<ConversationTurn>>> {
+    let query = format!(
+        r#"
+        SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
+               t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at,
+               qt.question_id
+        FROM {turns} t
+        JOIN {question_turns} qt ON qt.turn_id = t.id
+        JOIN {sessions} s ON s.id = t.session_id
+        WHERE (?1 IS NULL OR s.adapter_id = ?1)
+          AND (?2 IS NULL OR s.source_id = ?2)
+        ORDER BY qt.question_id ASC, qt.turn_order ASC, t.turn_index ASC
+        "#,
+        turns = tables.turns,
+        question_turns = tables.question_turns,
+        sessions = tables.sessions,
+    );
+    let rows = sqlx::query(AssertSqlSafe(query))
+        .bind(adapter_id)
+        .bind(source_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut turns_by_question = BTreeMap::<String, Vec<ConversationTurn>>::new();
+    for row in &rows {
+        let question_id = row
+            .try_get::<String, _>(11)
+            .map_err(|error| error.to_string())?;
+        turns_by_question
+            .entry(question_id)
+            .or_default()
+            .push(map_sqlx_conversation_turn(row)?);
+    }
+    Ok(turns_by_question)
+}
+
+async fn load_search_parts_sqlx(
+    pool: &SqlitePool,
+    tables: ConversationRecordTables,
+    adapter_id: Option<&str>,
+    source_id: Option<&str>,
+) -> AppResult<BTreeMap<String, Vec<ConversationPart>>> {
+    let query = format!(
+        r#"
+        SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
+               p.command, p.cwd, p.status, p.exit_code, p.metadata_json
+        FROM {parts} p
+        JOIN {turns} t ON t.id = p.turn_id
+        JOIN {sessions} s ON s.id = t.session_id
+        WHERE (?1 IS NULL OR s.adapter_id = ?1)
+          AND (?2 IS NULL OR s.source_id = ?2)
+        ORDER BY p.turn_id ASC, p.part_index ASC
+        "#,
+        parts = tables.parts,
+        turns = tables.turns,
+        sessions = tables.sessions,
+    );
+    let rows = sqlx::query(AssertSqlSafe(query))
+        .bind(adapter_id)
+        .bind(source_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut parts_by_turn = BTreeMap::<String, Vec<ConversationPart>>::new();
+    for row in &rows {
+        let part = map_sqlx_conversation_part(row)?;
+        parts_by_turn
+            .entry(part.turn_id.clone())
+            .or_default()
+            .push(part);
+    }
+    Ok(parts_by_turn)
+}
+
 struct ConversationSearchEntry {
     card_type: ConversationSearchCardType,
     block_id: String,
     text: String,
 }
 
+#[cfg(test)]
 fn load_record_sessions(
     conn: &Connection,
     tables: ConversationRecordTables,
@@ -3059,6 +3347,7 @@ fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
         .map(|value| value.with_timezone(&Utc))
 }
 
+#[cfg(test)]
 fn list_record_questions(
     conn: &Connection,
     tables: ConversationRecordTables,
@@ -3081,6 +3370,7 @@ fn list_record_questions(
     rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
 }
 
+#[cfg(test)]
 fn load_record_question_turns(
     conn: &Connection,
     tables: ConversationRecordTables,
@@ -3104,6 +3394,7 @@ fn load_record_question_turns(
     rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
 }
 
+#[cfg(test)]
 fn load_record_turn_parts(
     conn: &Connection,
     tables: ConversationRecordTables,
@@ -3126,6 +3417,7 @@ fn load_record_turn_parts(
     rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
 }
 
+#[cfg(test)]
 fn count_record_questions(
     conn: &Connection,
     tables: ConversationRecordTables,
@@ -3134,6 +3426,7 @@ fn count_record_questions(
     count_record_rows(conn, tables.questions, session_id)
 }
 
+#[cfg(test)]
 fn count_record_turns(
     conn: &Connection,
     tables: ConversationRecordTables,
@@ -3142,6 +3435,7 @@ fn count_record_turns(
     count_record_rows(conn, tables.turns, session_id)
 }
 
+#[cfg(test)]
 fn count_record_rows(conn: &Connection, table: &str, session_id: &str) -> AppResult<usize> {
     let query = format!("SELECT COUNT(*) FROM {table} WHERE session_id = ?1");
     let count: i64 = conn
@@ -4289,6 +4583,106 @@ mod tests {
             "How does sync work?\n\n继续"
         );
         assert_eq!(detail.questions[1].question.question_text, "Export it");
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_searches_session_and_web_conversation_cards() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-search-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let session_adapter = test_conversation_adapter(
+            "search-session-external",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let web_adapter = test_conversation_adapter(
+            "search-web-external",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let session_source = test_conversation_source(&session_adapter.id);
+        let mut web_source = test_conversation_source(&web_adapter.id);
+        web_source.id = "search-web-source".to_string();
+        let mut session = fixture_session("v1");
+        session.started_at = Some("2026-03-02T10:00:00Z".to_string());
+        let mut web_session = fixture_session("v1");
+        web_session.external_id = "web-session".to_string();
+        web_session.started_at = Some("2026-04-02T10:00:00Z".to_string());
+
+        let (session_page, web_page) = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), &session_adapter).await?;
+                upsert_conversation_adapter_sqlx(database.pool(), &web_adapter).await?;
+                upsert_conversation_source_sqlx(database.pool(), &session_source).await?;
+                upsert_conversation_source_sqlx(database.pool(), &web_source).await?;
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    &session_source,
+                    &[session],
+                    false,
+                )
+                .await?;
+                super::super::web_record_repo::import_web_record_sessions_sqlx(
+                    database.pool(),
+                    &web_source,
+                    &[web_session],
+                    false,
+                )
+                .await?;
+                let session_page = search_conversation_cards_sqlx(
+                    database.pool(),
+                    ConversationRecordKind::Session,
+                    Some(&session_adapter.id),
+                    Some(&session_source.id),
+                    Some("/tmp/project"),
+                    "answer for t1",
+                    &[ConversationSearchCardType::Answer],
+                    Some("2026-03-01"),
+                    Some("2026-03-31"),
+                    true,
+                    20,
+                    0,
+                )
+                .await?;
+                let web_page = search_conversation_cards_sqlx(
+                    database.pool(),
+                    ConversationRecordKind::Web,
+                    Some(&web_adapter.id),
+                    Some(&web_source.id),
+                    None,
+                    "answer for t3",
+                    &[ConversationSearchCardType::Answer],
+                    None,
+                    None,
+                    false,
+                    20,
+                    0,
+                )
+                .await?;
+                AppResult::Ok((session_page, web_page))
+            })
+            .expect("search session and web records through SQLx");
+
+        assert_eq!(session_page.total_count, 1);
+        assert_eq!(
+            session_page.hits[0].session.session.source_id,
+            session_source.id
+        );
+        assert_eq!(
+            session_page.hits[0].card_type,
+            ConversationSearchCardType::Answer
+        );
+        assert_eq!(web_page.total_count, 1);
+        assert_eq!(web_page.hits[0].session.session.source_id, web_source.id);
+        assert_eq!(
+            web_page.hits[0].card_type,
+            ConversationSearchCardType::Answer
+        );
 
         drop(database);
         cleanup_database(&db_path);

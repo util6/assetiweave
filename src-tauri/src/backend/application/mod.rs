@@ -14,6 +14,7 @@ use crate::backend::{
     },
 };
 use chrono::Utc;
+#[cfg(test)]
 use rusqlite::Connection;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,7 @@ use uuid::Uuid;
 
 pub(crate) struct AppService {
     db: crate::backend::store::Database,
+    #[cfg(test)]
     conn: Connection,
     db_path: PathBuf,
 }
@@ -470,9 +472,17 @@ impl AppService {
     }
 
     pub(crate) fn open_with_db_path(db_path: PathBuf) -> AppResult<Self> {
+        #[cfg(test)]
         let conn = crate::backend::store::open_initialized(&db_path)?;
+        #[cfg(not(test))]
+        crate::backend::store::open_initialized(&db_path)?;
         let db = crate::backend::store::Database::open(&db_path)?;
-        Ok(Self { db, conn, db_path })
+        Ok(Self {
+            db,
+            #[cfg(test)]
+            conn,
+            db_path,
+        })
     }
 
     pub(crate) fn overview(&self) -> AppResult<AppOverview> {
@@ -911,20 +921,33 @@ impl AppService {
             normalize_conversation_record_kind(params.record_kind.as_deref())?;
         let limit = params.limit.unwrap_or(50).clamp(1, 500);
         let offset = params.offset.unwrap_or(0);
-        let page = crate::backend::store::search_conversation_cards(
-            &self.conn,
-            record_kind,
-            params.adapter_id.as_deref(),
-            params.source_id.as_deref(),
-            params.project_path.as_deref(),
-            query,
-            &params.content_types,
-            params.since.as_deref(),
-            params.until.as_deref(),
-            params.timeline,
-            limit,
-            offset,
-        )?;
+        let pool = self.db.pool().clone();
+        let adapter_id = params.adapter_id.clone();
+        let source_id = params.source_id.clone();
+        let project_path = params.project_path.clone();
+        let query = query.to_string();
+        let search_query = query.clone();
+        let content_types = params.content_types.clone();
+        let since = params.since.clone();
+        let until = params.until.clone();
+        let timeline = params.timeline;
+        let page = self.db.block_on(async move {
+            crate::backend::store::search_conversation_cards_sqlx(
+                &pool,
+                record_kind,
+                adapter_id.as_deref(),
+                source_id.as_deref(),
+                project_path.as_deref(),
+                &search_query,
+                &content_types,
+                since.as_deref(),
+                until.as_deref(),
+                timeline,
+                limit,
+                offset,
+            )
+            .await
+        })?;
         Ok(ConversationSearchResult {
             query: query.to_string(),
             record_kind: record_kind_label.clone(),
