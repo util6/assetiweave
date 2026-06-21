@@ -406,17 +406,6 @@ WHERE id = ?1
 pub(crate) const LIST_PROFILES: &str = "SELECT payload FROM profiles ORDER BY id ASC";
 pub(crate) const LOAD_PROFILE: &str = "SELECT payload FROM profiles WHERE id = ?1";
 
-#[cfg(test)]
-pub(crate) const COUNT_SOURCES: &str = "SELECT COUNT(*) FROM sources";
-#[cfg(test)]
-pub(crate) const COUNT_ASSETS: &str = "SELECT COUNT(*) FROM assets";
-#[cfg(test)]
-pub(crate) const COUNT_PROFILES: &str = "SELECT COUNT(*) FROM profiles";
-#[cfg(test)]
-pub(crate) const COUNT_NAVIGATION_STATE: &str = "SELECT COUNT(*) FROM navigation_state";
-#[cfg(test)]
-pub(crate) const COUNT_APP_SHORTCUTS: &str = "SELECT COUNT(*) FROM app_shortcut_items";
-
 pub(crate) const GET_NAVIGATION_STATE: &str = r#"
 SELECT active_rail_id, active_header_tab_id, active_sub_nav_id
 FROM navigation_state

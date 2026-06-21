@@ -8,8 +8,6 @@ mod menu_repo;
 mod mount_observation_repo;
 mod mount_repo;
 mod profile_repo;
-#[cfg(test)]
-mod schema;
 mod shortcut_repo;
 mod skill_remote_repo;
 mod source_repo;
@@ -19,8 +17,6 @@ mod web_record_repo;
 pub(crate) use asset_repo::{
     load_asset_sqlx, load_assets_sqlx, replace_source_assets_sqlx, update_asset_description_sqlx,
 };
-#[cfg(test)]
-pub(crate) use conversation_repo::seed_builtin_conversation_adapters;
 pub(crate) use conversation_repo::{
     delete_conversation_adapter_sqlx, disable_conversation_source_sqlx,
     import_conversation_sessions_sqlx, list_conversation_adapters_sqlx,

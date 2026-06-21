@@ -1,39 +1,11 @@
 use crate::backend::dto::{AppResult, AppShortcut, AppShortcutIconSvg};
 use crate::backend::models::TargetProfile;
-#[cfg(test)]
-use rusqlite::{params, Connection};
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 
-#[cfg(test)]
-use super::codec::db_error;
 use super::{
     codec::{decode_json, encode_enum, encode_json},
     sql,
 };
-
-#[cfg(test)]
-pub(crate) fn seed_app_shortcuts(
-    conn: &Connection,
-    shortcuts: &[(&str, &str, &str, bool)],
-) -> AppResult<()> {
-    for (sort_order, (profile_id, display_icon, accent_color, enabled)) in
-        shortcuts.iter().enumerate()
-    {
-        conn.execute(
-            sql::UPSERT_APP_SHORTCUT,
-            params![
-                profile_id,
-                display_icon,
-                Option::<String>::None,
-                accent_color,
-                if *enabled { 1 } else { 0 },
-                sort_order as i32
-            ],
-        )
-        .map_err(db_error)?;
-    }
-    Ok(())
-}
 
 pub(crate) async fn seed_app_shortcuts_sqlx(
     pool: &SqlitePool,
