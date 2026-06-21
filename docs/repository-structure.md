@@ -17,7 +17,7 @@ React frontend
   -> Tauri commands
   -> src-tauri/src/service.rs
   -> scanner / planner / executor / conversations / store
-  -> SQLite and local filesystem
+  -> SQLx-managed SQLite and local filesystem
 
 Go CLI
   -> Rust JSON-RPC engine
@@ -29,6 +29,7 @@ Go CLI
 核心约束：
 
 - 前端和 Go CLI 都不能直接写 SQLite，也不能各自实现挂载规则。
+- App 自有数据库 schema 只能通过 `src-tauri/migrations/` 中的 SQLx migration 演进。
 - `AppService` 是桌面命令与 Engine 共用的应用服务入口。
 - 文件扫描、挂载判断、计划和执行规则以 Rust 实现为准。
 - Go CLI 负责命令体验、插件、策略接入和自更新，不复制 Rust 业务逻辑。
@@ -131,7 +132,7 @@ Go CLI
 | `planner/` | 根据 mount/profile 生成可解释部署计划 |
 | `targeting.rs` | 目标路径计算和真实挂载状态判断 |
 | `executor/` | 执行计划、文件系统安全边界和部署状态写入 |
-| `store/` | SQLite schema、SQL、codec 和各领域 repository |
+| `store/` | SQLx database 初始化、migration、SQL 常量、codec 和各领域 repository |
 | `conversations/` | Conversation adapter、解析和标准化 |
 | `defaults.rs` | 内置 Source、Profile、导航等默认值 |
 | `path_utils.rs` | 路径展开、Git 路径和 hash 等共享工具 |
@@ -238,7 +239,7 @@ src-tauri/src/command_registry.rs
 3. **是否是 Rust 业务规则？**
    - 纯共享模型/算法放 core；
    - 应用工作流放 `service.rs` 或拆出的领域 service；
-   - SQLite 放 `store/`；
+   - App 自有 SQLite 读写放 `store/`，schema 变化放 `src-tauri/migrations/`；
    - 文件扫描/计划/执行放现有领域模块。
 4. **是否是 CLI 特有体验？**
    - 放 `cli/`；

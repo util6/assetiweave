@@ -29,7 +29,7 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - 前端样式：Tailwind CSS，设计 token 统一放在 `frontend/tailwind.config.ts`，页面组件优先使用 Tailwind utility classes，`frontend/src/styles/index.css` 仅保留 Tailwind layers、全局背景和少量工具类。
 - 图标：`lucide-react`。
 - 后端核心：单一 Rust package `src-tauri`，桌面 App 和 stdio Engine 共享同一个 library，后端代码按模型、存储、服务和接口模块组织。
-- 本地存储：SQLite 主存储，后续提供 JSON 导出/导入。
+- 本地存储：SQLx 管理的 SQLite 主存储，schema 通过 `src-tauri/migrations/` 演进，后续提供 JSON 导出/导入。
 - 包管理与构建：pnpm、Cargo。
 
 ### 3.2 Tauri 后端模块边界
@@ -37,7 +37,7 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 `src-tauri` 不把所有职责堆在 `lib.rs`。入口文件只负责装配 Tauri builder、插件、状态和命令注册；业务按以下边界拆分：
 
 - `commands.rs`：Tauri command 层，类似 Controller，只做参数接收、状态锁定和调用下层服务。
-- `store/`：SQLite repository 模块目录。`mod.rs` 只导出门面；`schema.rs` 负责建表和 seed；`sql.rs` 集中 SQL 常量；`source_repo.rs`、`asset_repo.rs`、`profile_repo.rs`、`deployment_repo.rs` 分别承载对应聚合的读写；`codec.rs` 负责 JSON/enum 编解码和 SQLite 错误转换。
+- `store/`：SQLx-backed SQLite repository 模块目录。`mod.rs` 只导出门面；`database.rs` 负责数据库打开、migration 和默认数据 seed；`sql.rs` 集中 SQL 常量；`source_repo.rs`、`asset_repo.rs`、`profile_repo.rs`、`deployment_repo.rs` 等领域 repository 承载对应聚合的读写；`codec.rs` 负责 JSON/enum 编解码。
 - `scanner/`：资产扫描与分类模块目录，负责 Source 目录遍历、include/exclude glob、`SKILL.md` 目录识别和资产描述提取。后续按规模继续拆分为 walker、classifier、extractor。
 - `planner/`：部署计划生成模块目录，负责 create/skip/conflict 决策和解释文本。后续按 Profile 匹配、目标路径解析、冲突判断继续拆分。
 - `executor/`：部署执行模块目录，负责 `symlink_to_source`、`copy_to_target`、安全边界、非托管文件冲突和 deployment state 记录。后续按 filesystem、strategy、state recorder 继续拆分。
@@ -54,7 +54,7 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - Tauri 2 + React + TypeScript + Vite + Tailwind CSS + shadcn/ui  应用框架。
 - 单一 `src-tauri` Rust 后端包，以及其内部共享模型模块。
 - 前端采用组件化思想，页面元素首先考虑组件化。
-- SQLite 主存储，包含 Source、Asset、Profile、DeploymentState、Navigation、App Shortcut 等基础表。
+- SQLx-managed SQLite 主存储，包含 Source、Asset、Profile、DeploymentState、Navigation、App Shortcut 等基础表。
 - Source seed、Profile seed、Navigation seed、App Shortcut seed 和 `asset_mounts` 持久化。
 - 真实目录扫描、`SKILL.md` 目录识别、基础资产分类、描述提取。
 - Catalog 页面：搜索、指标、部署计划预览、资产行默认展示路径/描述/来源。
@@ -731,7 +731,7 @@ manage_login_item()
 
 ## 10. 存储设计
 
-当前使用 SQLite 作为主存储，原因是：
+当前使用 SQLx-managed SQLite 作为主存储，原因是：
 
 - 桌面 App 查询和过滤更方便。
 - 部署状态需要可靠记录。
