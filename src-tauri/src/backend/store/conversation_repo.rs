@@ -4350,7 +4350,7 @@ mod tests {
         );
         let source = test_conversation_source(&adapter.id);
 
-        database
+        let (initial_question_count, initial_first_question_turn_count, detail) = database
             .block_on(async {
                 upsert_conversation_adapter_sqlx(database.pool(), &adapter).await?;
                 upsert_conversation_source_sqlx(database.pool(), &source).await?;
@@ -4361,26 +4361,26 @@ mod tests {
                     false,
                 )
                 .await?;
-                AppResult::Ok(())
-            })
-            .expect("import v1 through SQLx");
-
-        let conn = Connection::open(&db_path).expect("open rusqlite verification connection");
-        let sessions =
-            list_conversation_sessions(&conn, None, Some(&source.id), None, 20, 0).unwrap();
-        let detail = load_conversation_session_detail(&conn, &sessions[0].session.id).unwrap();
-        assert_eq!(detail.questions.len(), 2);
-        assert_eq!(detail.questions[0].turns.len(), 2);
-
-        let question_ids = detail
-            .questions
-            .iter()
-            .map(|question| question.question.id.clone())
-            .collect::<Vec<_>>();
-        merge_conversation_questions(&conn, &question_ids, false).unwrap();
-
-        database
-            .block_on(async {
+                let sessions = list_conversation_sessions_sqlx(
+                    database.pool(),
+                    None,
+                    Some(&source.id),
+                    None,
+                    20,
+                    0,
+                )
+                .await?;
+                let detail =
+                    load_conversation_session_detail_sqlx(database.pool(), &sessions[0].session.id)
+                        .await?;
+                let initial_question_count = detail.questions.len();
+                let initial_first_question_turn_count = detail.questions[0].turns.len();
+                let question_ids = detail
+                    .questions
+                    .iter()
+                    .map(|question| question.question.id.clone())
+                    .collect::<Vec<_>>();
+                merge_conversation_questions_sqlx(database.pool(), &question_ids, false).await?;
                 import_conversation_sessions_sqlx(
                     database.pool(),
                     &source,
@@ -4388,11 +4388,19 @@ mod tests {
                     false,
                 )
                 .await?;
-                AppResult::Ok(())
+                let detail =
+                    load_conversation_session_detail_sqlx(database.pool(), &sessions[0].session.id)
+                        .await?;
+                AppResult::Ok((
+                    initial_question_count,
+                    initial_first_question_turn_count,
+                    detail,
+                ))
             })
-            .expect("import v2 through SQLx");
+            .expect("import and merge through SQLx");
 
-        let detail = load_conversation_session_detail(&conn, &sessions[0].session.id).unwrap();
+        assert_eq!(initial_question_count, 2);
+        assert_eq!(initial_first_question_turn_count, 2);
         assert_eq!(detail.questions.len(), 1);
         assert_eq!(detail.questions[0].turns.len(), 3);
         assert_eq!(
@@ -4400,7 +4408,6 @@ mod tests {
             ConversationGroupingOrigin::Manual
         );
 
-        drop(conn);
         drop(database);
         cleanup_database(&db_path);
     }
