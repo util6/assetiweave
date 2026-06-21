@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.4
+
+- Migrate the Rust backend persistence layer to SQLx migrations, repositories, and application services while removing legacy store/service paths.
+- Add SQLx-backed regression coverage for asset catalogs, mount operations, skill groups, backups, web records, and conversation workflows.
+- Expand CLI and Engine coverage for conversation and web harvester workflows, including bundled Gemini and Qwen web harvester templates.
+- Improve background task progress handling, dialog/tooling consistency, conversation navigation, source/group workflows, and update/release validation.
+- Require Rust 1.96 for the backend toolchain.
+
 ## v0.1.3
 
 - Fix CLI release archive builds so `scripts/build-cli.js` resolves custom output paths from the repository root before running from the `cli/` package.
