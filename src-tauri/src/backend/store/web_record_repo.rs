@@ -840,7 +840,6 @@ mod tests {
         ConversationSourceKind, NormalizedConversationPart, NormalizedConversationTurn,
     };
     use crate::backend::store::Database;
-    use rusqlite::Connection;
     use uuid::Uuid;
 
     #[test]
@@ -852,63 +851,31 @@ mod tests {
         let database = Database::open(&db_path).expect("open database");
         let source = fixture_source();
 
-        database
+        let (legacy_count_before_import, legacy_count_after_import, sessions, detail) = database
             .block_on(async {
                 super::super::conversation_repo::upsert_conversation_source_sqlx(
                     database.pool(),
                     &source,
                 )
-                .await
-            })
-            .expect("upsert source through SQLx");
-
-        let conn = Connection::open(&db_path).expect("open rusqlite verification connection");
-        super::super::conversation_repo::import_conversation_sessions(
-            &conn,
-            &source,
-            &[fixture_session()],
-            false,
-        )
-        .unwrap();
-        assert_eq!(
-            super::super::conversation_repo::list_conversation_sessions(
-                &conn,
-                None,
-                Some(&source.id),
-                None,
-                20,
-                0,
-            )
-            .unwrap()
-            .len(),
-            1
-        );
-
-        database
-            .block_on(async {
+                .await?;
+                super::super::conversation_repo::import_conversation_sessions_sqlx(
+                    database.pool(),
+                    &source,
+                    &[fixture_session()],
+                    false,
+                )
+                .await?;
+                let legacy_count_before_import =
+                    count_legacy_conversation_sessions_sqlx(database.pool(), &source.id).await?;
                 import_web_record_sessions_sqlx(
                     database.pool(),
                     &source,
                     &[fixture_session()],
                     false,
                 )
-                .await
-            })
-            .expect("import web records through SQLx");
-
-        assert!(super::super::conversation_repo::list_conversation_sessions(
-            &conn,
-            None,
-            Some(&source.id),
-            None,
-            20,
-            0,
-        )
-        .unwrap()
-        .is_empty());
-
-        let (sessions, detail) = database
-            .block_on(async {
+                .await?;
+                let legacy_count_after_import =
+                    count_legacy_conversation_sessions_sqlx(database.pool(), &source.id).await?;
                 let sessions = list_web_record_sessions_sqlx(
                     database.pool(),
                     None,
@@ -921,10 +888,17 @@ mod tests {
                 let detail =
                     load_web_record_session_detail_sqlx(database.pool(), &sessions[0].session.id)
                         .await?;
-                AppResult::Ok((sessions, detail))
+                AppResult::Ok((
+                    legacy_count_before_import,
+                    legacy_count_after_import,
+                    sessions,
+                    detail,
+                ))
             })
-            .expect("read imported web records through SQLx");
+            .expect("import and read web records through SQLx");
 
+        assert_eq!(legacy_count_before_import, 1);
+        assert_eq!(legacy_count_after_import, 0);
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].question_count, 1);
         assert_eq!(sessions[0].turn_count, 1);
@@ -932,7 +906,6 @@ mod tests {
         assert_eq!(detail.questions[0].turns[0].user_text, "Hello from the web");
         assert_eq!(detail.questions[0].question.answer_text, "Web answer");
 
-        drop(conn);
         drop(database);
         cleanup_database(&db_path);
     }
@@ -1046,6 +1019,19 @@ mod tests {
 
         drop(database);
         cleanup_database(&db_path);
+    }
+
+    async fn count_legacy_conversation_sessions_sqlx(
+        pool: &SqlitePool,
+        source_id: &str,
+    ) -> AppResult<i64> {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM conversation_sessions WHERE source_id = ?1",
+        )
+        .bind(source_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|error| error.to_string())
     }
 
     fn fixture_source() -> ConversationSource {
