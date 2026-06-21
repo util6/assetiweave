@@ -4472,18 +4472,25 @@ mod tests {
             ConversationAdapterTrustState::Trusted,
         );
         let source = test_conversation_source(&adapter.id);
+        let mut session = fixture_session("v2");
+        session.turns[2].parts.push(NormalizedConversationPart {
+            role: ConversationPartRole::Tool,
+            kind: ConversationPartKind::Command,
+            text: Some("tests passed".to_string()),
+            language: None,
+            command: Some("assetiweave-cli conversation session export".to_string()),
+            cwd: Some("/tmp/project".to_string()),
+            status: Some("completed".to_string()),
+            exit_code: Some(0),
+            metadata_json: None,
+        });
 
-        let (sessions, detail, filtered_questions, question, markdown) = database
+        let (sessions, detail, filtered_questions, question, markdown, command_markdown) = database
             .block_on(async {
                 upsert_conversation_adapter_sqlx(database.pool(), &adapter).await?;
                 upsert_conversation_source_sqlx(database.pool(), &source).await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    &source,
-                    &[fixture_session("v2")],
-                    false,
-                )
-                .await?;
+                import_conversation_sessions_sqlx(database.pool(), &source, &[session], false)
+                    .await?;
                 let sessions = list_conversation_sessions_sqlx(
                     database.pool(),
                     None,
@@ -4514,7 +4521,25 @@ mod tests {
                     &[question.question.id.clone()],
                     &ConversationExportContentFilter::default(),
                 )?;
-                AppResult::Ok((sessions, detail, filtered_questions, question, markdown))
+                let command_markdown = render_conversation_detail_markdown_with_filter(
+                    &detail,
+                    &[question.question.id.clone()],
+                    &ConversationExportContentFilter {
+                        answer: false,
+                        tool: false,
+                        command: true,
+                        code: false,
+                        result: true,
+                    },
+                )?;
+                AppResult::Ok((
+                    sessions,
+                    detail,
+                    filtered_questions,
+                    question,
+                    markdown,
+                    command_markdown,
+                ))
             })
             .expect("read conversations through SQLx");
 
@@ -4525,10 +4550,16 @@ mod tests {
         assert_eq!(filtered_questions.len(), 1);
         assert_eq!(filtered_questions[0].question.question_text, "Export it");
         assert_eq!(question.turns.len(), 1);
-        assert_eq!(question.parts.len(), 1);
+        assert_eq!(question.parts.len(), 2);
         assert!(markdown.contains("## 1. Export it"));
         assert!(markdown.contains("answer for t3"));
         assert!(!markdown.contains("How does sync work?"));
+        assert!(command_markdown.contains("### Command"));
+        assert!(command_markdown.contains("assetiweave-cli conversation session export"));
+        assert!(command_markdown.contains("### Result"));
+        assert!(command_markdown.contains("tests passed"));
+        assert!(!command_markdown.contains("answer for t3"));
+        assert!(!command_markdown.contains("cargo test"));
 
         drop(database);
         cleanup_database(&db_path);
