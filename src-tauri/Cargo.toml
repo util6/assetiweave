@@ -5,7 +5,7 @@ description = "Local-first AI file asset management desktop app"
 authors = ["AssetIWeave"]
 license = "MIT"
 edition = "2021"
-rust-version = "1.94.0"
+rust-version = "1.96.0"
 default-run = "assetiweave"
 
 [lib]
