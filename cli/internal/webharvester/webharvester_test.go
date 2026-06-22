@@ -358,6 +358,57 @@ func TestAuthDetectPrefersLocalStorageToken(t *testing.T) {
 	}
 }
 
+func TestAuthDetectUsesChatGPTSessionProbeByDefault(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "chatgpt-web")
+	if _, err := Scaffold(ScaffoldOptions{Directory: root, SiteID: "chatgpt-web"}); err != nil {
+		t.Fatalf("Scaffold() error = %v", err)
+	}
+	tokenLoaderCalled := false
+
+	result, err := AuthDetect(AuthDetectOptions{
+		Directory:       root,
+		Browser:         "edge",
+		Profile:         "Default",
+		Domain:          "chatgpt.com",
+		profileResolver: testBrowserProfileResolver,
+		tokenLoader: func(profile BrowserProfile, origins []string) ([]BrowserToken, error) {
+			tokenLoaderCalled = true
+			return nil, nil
+		},
+		cookieLoader: func(profile BrowserProfile, domain string) ([]BrowserCookie, error) {
+			if profile.Browser != "edge" || domain != "chatgpt.com" {
+				t.Fatalf("cookie loader profile=%#v domain=%s", profile, domain)
+			}
+			return []BrowserCookie{
+				{Host: ".chatgpt.com", Name: "__Secure-next-auth.session-token", Value: "secret-session"},
+			}, nil
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("AuthDetect() error = %v", err)
+	}
+	if result.Credential != "cookie" || result.CookieCount != 1 {
+		t.Fatalf("result credential = %s cookies = %d, want cookie with one value", result.Credential, result.CookieCount)
+	}
+	if tokenLoaderCalled {
+		t.Fatal("token loader was called before ChatGPT session cookies")
+	}
+	template, err := readRequestTemplate(filepath.Join(root, "requests", "auth-probe.json"), nil)
+	if err != nil {
+		t.Fatalf("read auth probe template: %v", err)
+	}
+	if template.URL != "https://chatgpt.com/api/auth/session" {
+		t.Fatalf("template URL = %s", template.URL)
+	}
+	if template.Method != http.MethodGet {
+		t.Fatalf("template method = %s", template.Method)
+	}
+	if template.Headers["Cookie"] != "__Secure-next-auth.session-token=secret-session" {
+		t.Fatalf("template cookie header = %q", template.Headers["Cookie"])
+	}
+}
+
 func TestAuthDetectReportsMissingBrowserLogin(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "qwen-web")
 	if _, err := Scaffold(ScaffoldOptions{Directory: root, SiteID: "qwen-web"}); err != nil {

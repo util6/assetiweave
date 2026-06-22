@@ -1030,6 +1030,8 @@ func tokenPriority(token BrowserToken) int {
 	key := strings.ToLower(strings.TrimSpace(token.Key))
 	origin := strings.ToLower(strings.TrimSpace(token.Origin))
 	switch {
+	case origin == "https://chatgpt.com" && (key == "access_token" || key == "accesstoken" || key == "token"):
+		return 0
 	case key == "token" && origin == "https://chat.qwen.ai":
 		return 0
 	case key == "token":
@@ -1348,7 +1350,7 @@ func credentialOrder(credential, domain string) ([]string, error) {
 	case "token":
 		return []string{"token"}, nil
 	case "auto":
-		if domain == "qianwen.com" || strings.HasSuffix(domain, ".qianwen.com") {
+		if isQwenDomain(domain) || isChatGPTDomain(domain) {
 			return []string{"cookie", "token"}, nil
 		}
 		return []string{"token", "cookie"}, nil
@@ -1382,24 +1384,41 @@ func authProbeTemplate(probeURL, credentialKind, credentialValue string) HTTPReq
 }
 
 func defaultProbeURLForDomain(domain string) string {
-	if domain == "qianwen.com" || strings.HasSuffix(domain, ".qianwen.com") {
+	if isQwenDomain(domain) {
 		return "https://api.qianwen.com/growth/user/benefit/user/member/info"
 	}
 	if domain == "qwen.ai" || strings.HasSuffix(domain, ".qwen.ai") {
 		return "https://chat.qwen.ai/api/v1/auths/"
 	}
+	if isChatGPTDomain(domain) {
+		return "https://chatgpt.com/api/auth/session"
+	}
 	return "https://" + domain + "/"
 }
 
 func tokenOriginsForDomain(domain string) []string {
-	if domain == "qianwen.com" || strings.HasSuffix(domain, ".qianwen.com") {
+	if isQwenDomain(domain) {
 		return []string{
 			"https://chat.qwen.ai",
 			"https://www.qianwen.com",
 			"https://qianwen.com",
 		}
 	}
+	if isChatGPTDomain(domain) {
+		return []string{
+			"https://chatgpt.com",
+			"https://chat.openai.com",
+		}
+	}
 	return []string{"https://" + domain}
+}
+
+func isQwenDomain(domain string) bool {
+	return domain == "qianwen.com" || strings.HasSuffix(domain, ".qianwen.com")
+}
+
+func isChatGPTDomain(domain string) bool {
+	return domain == "chatgpt.com" || strings.HasSuffix(domain, ".chatgpt.com")
 }
 
 func originForURL(value string) string {
