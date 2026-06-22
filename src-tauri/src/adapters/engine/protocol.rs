@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 pub(crate) const PROTOCOL_VERSION: u32 = 1;
-pub(crate) const CONTRACT_VERSION: u32 = 2;
+pub(crate) const CONTRACT_VERSION: u32 = 3;
 
 const CAPABILITIES: &[&str] = &[
     "command-contract-v1",

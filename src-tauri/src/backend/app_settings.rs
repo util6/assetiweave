@@ -2,7 +2,7 @@ use crate::backend::dto::AppResult;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
 };
 
@@ -52,6 +52,10 @@ pub(crate) fn read_app_settings_value() -> AppResult<Value> {
     Ok(read_settings_document(&paths.config_path)?.settings)
 }
 
+pub(crate) fn conversation_adapter_dir() -> AppResult<PathBuf> {
+    Ok(app_settings_paths()?.conversation_adapter_dir)
+}
+
 struct AppSettingsPaths {
     config_dir: PathBuf,
     config_path: PathBuf,
@@ -70,13 +74,23 @@ impl AppSettingsPaths {
 }
 
 fn app_settings_paths() -> AppResult<AppSettingsPaths> {
-    let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
-    let config_dir = home.join(CONFIG_DIR_NAME);
+    let config_dir = app_config_dir()?;
     Ok(AppSettingsPaths {
         config_path: config_dir.join(CONFIG_FILE_NAME),
         conversation_adapter_dir: config_dir.join(CONVERSATION_ADAPTER_DIR_NAME),
         config_dir,
     })
+}
+
+fn app_config_dir() -> AppResult<PathBuf> {
+    if let Ok(home) = env::var("ASSETIWEAVE_HOME") {
+        let home = home.trim();
+        if !home.is_empty() {
+            return Ok(PathBuf::from(home));
+        }
+    }
+    let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+    Ok(home.join(CONFIG_DIR_NAME))
 }
 
 fn ensure_settings_dirs(paths: &AppSettingsPaths) -> AppResult<()> {

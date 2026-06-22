@@ -16,6 +16,7 @@ import (
 
 func newCmdConversation(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{Use: "conversation", Short: "Manage normalized conversation records"}
+	cmd.AddCommand(newCmdConversationAdd(f))
 	cmd.AddCommand(newCmdConversationAdapter(f))
 	cmd.AddCommand(newCmdConversationSource(f))
 	cmd.AddCommand(newCmdConversationSync(f))
@@ -24,6 +25,76 @@ func newCmdConversation(f *cmdutil.Factory) *cobra.Command {
 	cmd.AddCommand(newCmdConversationWebRecord(f))
 	cmd.AddCommand(newCmdConversationQuestion(f))
 	cmd.AddCommand(newCmdConversationWeb(f))
+	return cmd
+}
+
+func newCmdConversationAdd(f *cmdutil.Factory) *cobra.Command {
+	var pluginPath, pluginID, manifestPath, sourceID, sourceName, sourceKind, location, configJSON, recordKind string
+	var dryRun, yes, noSync bool
+	cmd := &cobra.Command{
+		Use:   "add",
+		Short: "Add a conversation source from an external adapter plugin",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			pluginPath = strings.TrimSpace(pluginPath)
+			manifestPath = strings.TrimSpace(manifestPath)
+			if pluginPath == "" && manifestPath == "" {
+				return fmt.Errorf("conversation add requires --plugin <directory> (or --manifest <file> for advanced registration)")
+			}
+			if pluginPath != "" && manifestPath != "" {
+				return fmt.Errorf("conversation add accepts either --plugin or --manifest, not both")
+			}
+			if !dryRun {
+				if err := requireYes(yes, "conversation add"); err != nil {
+					return err
+				}
+			}
+			params := map[string]any{
+				"plugin_path":    nil,
+				"plugin_id":      nil,
+				"manifest_path":  nil,
+				"source_id":      nil,
+				"source_name":    sourceName,
+				"source_kind":    sourceKind,
+				"location":       location,
+				"config_json":    nil,
+				"record_kind":    recordKind,
+				"dry_run":        dryRun,
+				"yes":            yes,
+				"sync_after_add": !noSync,
+			}
+			if pluginPath != "" {
+				params["plugin_path"] = pluginPath
+			}
+			if strings.TrimSpace(pluginID) != "" {
+				params["plugin_id"] = strings.TrimSpace(pluginID)
+			}
+			if manifestPath != "" {
+				params["manifest_path"] = manifestPath
+			}
+			if sourceID != "" {
+				params["source_id"] = sourceID
+			}
+			if configJSON != "" {
+				params["config_json"] = configJSON
+			}
+			return callAndPrint(cmd, f, schema.MethodConversationEntryAdd, params)
+		},
+	}
+	cmd.Flags().StringVar(&pluginPath, "plugin", "", "external conversation adapter plugin directory")
+	cmd.Flags().StringVar(&pluginID, "plugin-id", "", "installed plugin directory id; generated from adapter id when omitted")
+	cmd.Flags().StringVar(&manifestPath, "manifest", "", "advanced external conversation adapter manifest path")
+	cmd.Flags().StringVar(&sourceID, "source-id", "", "conversation source id; generated when omitted")
+	cmd.Flags().StringVar(&sourceName, "source-name", "", "conversation source display name")
+	cmd.Flags().StringVar(&sourceKind, "kind", "directory", "source kind: live, file, directory, sqlite, custom")
+	cmd.Flags().StringVar(&location, "location", "", "source location passed to the adapter")
+	cmd.Flags().StringVar(&configJSON, "config-json", "", "optional source adapter config JSON string")
+	cmd.Flags().StringVar(&recordKind, "record-kind", "session", "record kind: session or web")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without registering, adding, or syncing")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm trusting and executing the external adapter")
+	cmd.Flags().BoolVar(&noSync, "no-sync", false, "add the adapter and source without running sync")
+	_ = cmd.MarkFlagRequired("source-name")
+	_ = cmd.MarkFlagRequired("location")
 	return cmd
 }
 

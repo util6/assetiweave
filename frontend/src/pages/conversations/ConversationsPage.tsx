@@ -9,6 +9,7 @@ import {
   Folder,
   GitMerge,
   Layers3,
+  Plus,
   RefreshCw,
   Scissors,
   Settings,
@@ -36,6 +37,10 @@ import {
   ConversationSyncProgress,
   type ConversationSyncProgressState,
 } from "../../components/conversations/ConversationToolbarControls";
+import {
+  ConversationEntryAddDialog,
+  type ConversationEntryAddFormValues,
+} from "../../components/conversations/ConversationEntryAddDialog";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { PageHeader } from "../../components/foundation/PageHeader";
@@ -51,6 +56,7 @@ import {
   type SettingsPanelId,
 } from "../../store/settings/AppSettingsProvider";
 import {
+  addConversationEntry,
   exportConversationSession,
   exportWebRecordSession,
   getConversationSession,
@@ -150,6 +156,8 @@ export function ConversationsPage({
   const [exportVisibility, setExportVisibility] = useState<ConversationContentVisibility>({
     ...DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
   });
+  const [entryDialogOpen, setEntryDialogOpen] = useState(false);
+  const [addingEntry, setAddingEntry] = useState(false);
   const [syncProgress, setSyncProgress] = useState<ConversationSyncProgressState | null>(null);
   const [syncProgressDismissed, setSyncProgressDismissed] = useState(false);
   const [query, setQuery] = useState("");
@@ -160,6 +168,7 @@ export function ConversationsPage({
   const [exporting, setExporting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const handledSyncTaskIdRef = useRef<string | null>(null);
+  const syncTaskSourceLabelsRef = useRef<Map<string, string>>(new Map());
   const syncRunning = syncTask?.status === "running";
   const [contentQuery, setContentQuery] = useState("");
   const [contentSearchResult, setContentSearchResult] = useState<ConversationSearchResultState | null>(null);
@@ -205,6 +214,7 @@ export function ConversationsPage({
     setContentQuery("");
     setContentSearchResult(null);
     setActiveSearchTarget(null);
+    setEntryDialogOpen(false);
     setOutputRoot(
       webRecordMode ? "~/Desktop/assetiweave-web-records" : "~/Desktop/assetiweave-conversations",
     );
@@ -337,7 +347,7 @@ export function ConversationsPage({
       return;
     }
 
-    const sourceLabel = t("conversation.sync.allSources");
+    const sourceLabel = syncTaskSourceLabelsRef.current.get(syncTask.id) ?? t("conversation.sync.allSources");
     if (syncTask.status === "running") {
       setSyncProgressDismissed(false);
       setSyncProgress({ phase: "importing", sourceLabel });
@@ -426,6 +436,7 @@ export function ConversationsPage({
 
     try {
       const task = await startSync({ source_id: null, dry_run: false });
+      syncTaskSourceLabelsRef.current.set(task.id, sourceLabel);
       const summary = formatConversationSyncSummary(summarizeConversationSyncTask(task), t);
       setSyncProgress({
         failedStep: task.status === "failed" ? 2 : undefined,
@@ -441,6 +452,53 @@ export function ConversationsPage({
     } catch (error) {
       setSyncProgress({ failedStep: 1, phase: "failed", sourceLabel });
       onNotifyError(errorMessage(error));
+    }
+  }
+
+  async function handleAddEntry(values: ConversationEntryAddFormValues) {
+    const sourceName = values.sourceName.trim();
+    setAddingEntry(true);
+    setStatus(null);
+    setSyncProgressDismissed(false);
+    setSyncProgress({ phase: "preparing", sourceLabel: sourceName });
+
+    try {
+      const result = await addConversationEntry({
+        config_json: values.configJson.trim() || null,
+        dry_run: false,
+        location: values.location.trim(),
+        plugin_path: values.pluginPath.trim(),
+        record_kind: webRecordMode ? "web" : "session",
+        source_id: values.sourceId.trim() || null,
+        source_kind: values.sourceKind,
+        source_name: sourceName,
+        sync_after_add: false,
+        yes: true,
+      });
+      setEntryDialogOpen(false);
+      const sourceLabel = result.source.name;
+      const task = await startSync({
+        adapter_id: result.adapter.id,
+        dry_run: false,
+        source_id: result.source.id,
+      });
+      syncTaskSourceLabelsRef.current.set(task.id, sourceLabel);
+      setSyncProgress({
+        failedStep: task.status === "failed" ? 2 : undefined,
+        phase:
+          task.status === "failed"
+            ? "failed"
+            : task.status === "completed"
+              ? "refreshing"
+              : "importing",
+        sourceLabel,
+        summary: formatConversationSyncSummary(summarizeConversationSyncTask(task), t),
+      });
+    } catch (error) {
+      setSyncProgress({ failedStep: 1, phase: "failed", sourceLabel: sourceName });
+      onNotifyError(errorMessage(error));
+    } finally {
+      setAddingEntry(false);
     }
   }
 
@@ -566,6 +624,12 @@ export function ConversationsPage({
                 label={t("toolbar.settings")}
                 onClick={() => onOpenSettings("conversations.sessions")}
               />
+              <ToolbarTextButton
+                disabled={addingEntry || syncRunning}
+                icon={<Plus size={16} />}
+                label={t("conversation.toolbar.addEntry")}
+                onClick={() => setEntryDialogOpen(true)}
+              />
               <ToolbarActionButton
                 disabled={syncRunning}
                 icon={<RefreshCw size={17} />}
@@ -687,6 +751,17 @@ export function ConversationsPage({
           loading={contentSearchLoading}
           onOpenHit={handleOpenSearchHit}
           result={contentSearchResult}
+          t={t}
+        />
+      ) : null}
+      {entryDialogOpen ? (
+        <ConversationEntryAddDialog
+          busy={addingEntry}
+          onClose={() => setEntryDialogOpen(false)}
+          onPickLocation={() => selectTargetDirectory(t("conversation.add.pickLocation"))}
+          onPickPlugin={() => selectTargetDirectory(t("conversation.add.pickPlugin"))}
+          onSubmit={handleAddEntry}
+          recordKind={webRecordMode ? "web" : "session"}
           t={t}
         />
       ) : null}

@@ -13,10 +13,10 @@ use crate::backend::capabilities::{
 };
 use crate::{
     backend::application::{
-        AppService, ConversationAdapterUnregisterParams, ConversationQuestionGetParams,
-        ConversationQuestionListParams, ConversationQuestionMergeParams,
-        ConversationQuestionSplitParams, ConversationSearchParams, ConversationSearchResult,
-        ConversationSessionExportParams, ConversationSessionGetParams,
+        AppService, ConversationAdapterUnregisterParams, ConversationEntryAddParams,
+        ConversationQuestionGetParams, ConversationQuestionListParams,
+        ConversationQuestionMergeParams, ConversationQuestionSplitParams, ConversationSearchParams,
+        ConversationSearchResult, ConversationSessionExportParams, ConversationSessionGetParams,
         ConversationSessionListParams, ConversationSourceDisableParams,
         ConversationSourceUpsertParams, ConversationSyncParams, ListAssetsParams,
         SkillAcquireParams, SkillRemoteCheckParams, SkillSearchParams, SkillSearchResult,
@@ -1221,6 +1221,15 @@ pub(crate) fn disable_conversation_source(
 }
 
 #[tauri::command]
+pub(crate) fn add_conversation_entry(
+    state: State<'_, AppState>,
+    params: ConversationEntryAddParams,
+) -> AppResult<crate::backend::application::ConversationEntryAddResult> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.add_conversation_entry_source(params)
+}
+
+#[tauri::command]
 pub(crate) fn sync_conversations(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -1555,6 +1564,7 @@ pub(crate) fn command_handler(
         list_conversation_sources,
         upsert_conversation_source,
         disable_conversation_source,
+        add_conversation_entry,
         sync_conversations,
         get_conversation_sync_task,
         list_conversation_sessions,

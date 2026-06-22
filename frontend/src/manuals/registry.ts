@@ -455,24 +455,23 @@ export const manualDocuments = [
           body: "这里的 aICLI 指外部 AI 工具、Skill 或人工脚本通过 assetiweave-cli 调用 AssetIWeave 的对话能力；UI 只负责浏览和同步，来源与适配器配置主要走 CLI。",
           outcomes: [
             "用命令查看当前 adapter 和 source 状态。",
-            "按 scaffold、validate、register、try-run 的顺序接入外部解析器。",
-            "用 source add/update/disable 和 sync 控制哪些记录进入对话库。",
+            "按 scaffold、validate、try-run、add --plugin 的顺序接入外部解析器。",
+            "用 add --plugin、source update/disable 和 sync 控制哪些记录进入对话库。",
           ],
           items: [
             "先列出现有适配器：assetiweave-cli conversation adapter list。",
             "创建外部适配器骨架：assetiweave-cli conversation adapter scaffold --directory ~/.assetiweave/conversation-adapters/my-adapter --id my-app --name \"My App\"。",
             "校验 manifest：assetiweave-cli conversation adapter validate ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json。",
-            "确认信任并注册：assetiweave-cli conversation adapter register ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json --yes。",
             "试运行读取能力：assetiweave-cli conversation adapter try-run ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json --method read_session --location ~/my-app-records --yes。",
-            "新增来源：assetiweave-cli conversation source add --id my-app-live --adapter my-app --name \"My App Live\" --kind directory --location ~/my-app-records。",
+            "安装插件并新增来源：assetiweave-cli conversation add --plugin ~/.assetiweave/conversation-adapters/my-adapter --source-id my-app-live --source-name \"My App Live\" --kind directory --location ~/my-app-records --yes。",
             "预览同步：assetiweave-cli conversation sync --adapter my-app --dry-run；确认后去掉 --dry-run 正式导入。",
           ],
           cautions: [
-            "register 和 try-run 会信任或执行外部脚本，确认来源可信后再加 --yes。",
+            "add --plugin 和 try-run 会信任或执行外部脚本，确认来源可信后再加 --yes。",
             "kind 只能使用 live、file、directory、sqlite 或 custom，且要匹配 adapter manifest 支持的 input_kinds。",
             "开发中的 adapter 建议先用测试目录和 --dry-run 验证，避免污染正式对话库。",
           ],
-          keywords: ["aICLI", "assetiweave-cli", "scaffold", "validate", "register", "try-run", "source add", "sync"],
+          keywords: ["aICLI", "assetiweave-cli", "scaffold", "validate", "try-run", "add --plugin", "sync"],
         },
       ],
     },
@@ -545,24 +544,23 @@ export const manualDocuments = [
           body: "Here aICLI means an external AI tool, Skill, or human script calling AssetIWeave through assetiweave-cli. The UI handles browsing and sync, while source and adapter setup primarily happens through the CLI.",
           outcomes: [
             "Inspect current adapter and source state with commands.",
-            "Connect an external parser through scaffold, validate, register, and try-run.",
-            "Use source add/update/disable and sync to control what enters the conversation library.",
+            "Connect an external parser through scaffold, validate, try-run, and add --plugin.",
+            "Use add --plugin, source update/disable, and sync to control what enters the conversation library.",
           ],
           items: [
             "List adapters: assetiweave-cli conversation adapter list.",
             "Create a skeleton: assetiweave-cli conversation adapter scaffold --directory ~/.assetiweave/conversation-adapters/my-adapter --id my-app --name \"My App\".",
             "Validate the manifest: assetiweave-cli conversation adapter validate ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json.",
-            "Trust and register it: assetiweave-cli conversation adapter register ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json --yes.",
             "Try a read method: assetiweave-cli conversation adapter try-run ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json --method read_session --location ~/my-app-records --yes.",
-            "Add a source: assetiweave-cli conversation source add --id my-app-live --adapter my-app --name \"My App Live\" --kind directory --location ~/my-app-records.",
+            "Install the plugin and add a source: assetiweave-cli conversation add --plugin ~/.assetiweave/conversation-adapters/my-adapter --source-id my-app-live --source-name \"My App Live\" --kind directory --location ~/my-app-records --yes.",
             "Preview sync: assetiweave-cli conversation sync --adapter my-app --dry-run; remove --dry-run to import.",
           ],
           cautions: [
-            "register and try-run trust or execute external scripts; use --yes only after reviewing the source.",
+            "add --plugin and try-run trust or execute external scripts; use --yes only after reviewing the source.",
             "kind must be live, file, directory, sqlite, or custom, and must match adapter manifest input_kinds.",
             "Validate development adapters against test folders and --dry-run before touching the production conversation library.",
           ],
-          keywords: ["aICLI", "assetiweave-cli", "scaffold", "validate", "register", "try-run", "source add", "sync"],
+          keywords: ["aICLI", "assetiweave-cli", "scaffold", "validate", "try-run", "add --plugin", "sync"],
         },
       ],
     },
@@ -577,7 +575,7 @@ export const manualDocuments = [
         {
           heading: "采集链路",
           items: [
-            "网页 harvester 和 adapter 位于 ~/.assetiweave/harvesters，应用代码不包含站点私有解析细节。",
+            "网页 adapter 插件位于 ~/.assetiweave/conversation-adapters，应用代码不包含站点私有解析细节。",
             "adapter manifest 通过 web_records capability 声明数据应进入网页记录仓储。",
             "同步前必须先由采集脚本确认浏览器登录状态，并生成标准化对话数据。",
           ],
@@ -597,7 +595,8 @@ export const manualDocuments = [
         {
           heading: "CLI",
           items: [
-            "同步网页来源：assetiweave-cli conversation sync --adapter qwen-web。",
+            "安装网页插件来源：assetiweave-cli conversation add --plugin ~/.assetiweave/conversation-adapters/chatgpt-web --source-name \"ChatGPT Web\" --kind directory --location ~/.assetiweave/conversation-adapters/chatgpt-web/output/normalized --record-kind web --yes。",
+            "同步网页来源：assetiweave-cli conversation sync --adapter chatgpt-web。",
             "列出网页记录：assetiweave-cli conversation web-record list。",
             "查看或导出：assetiweave-cli conversation web-record get <record-id>；assetiweave-cli conversation web-record export <record-id> --output-root <dir>。",
           ],
@@ -612,7 +611,7 @@ export const manualDocuments = [
         {
           heading: "Harvest pipeline",
           items: [
-            "Web harvesters and adapters live under ~/.assetiweave/harvesters, outside application code.",
+            "Web adapter plugins live under ~/.assetiweave/conversation-adapters, outside application code.",
             "The adapter manifest declares web_records so sync selects the independent web record repository.",
             "The harvester must verify browser login state before producing normalized conversation data.",
           ],
@@ -632,7 +631,8 @@ export const manualDocuments = [
         {
           heading: "CLI",
           items: [
-            "Sync a web adapter: assetiweave-cli conversation sync --adapter qwen-web.",
+            "Install a web plugin source: assetiweave-cli conversation add --plugin ~/.assetiweave/conversation-adapters/chatgpt-web --source-name \"ChatGPT Web\" --kind directory --location ~/.assetiweave/conversation-adapters/chatgpt-web/output/normalized --record-kind web --yes.",
+            "Sync a web adapter: assetiweave-cli conversation sync --adapter chatgpt-web.",
             "List records: assetiweave-cli conversation web-record list.",
             "Inspect or export: assetiweave-cli conversation web-record get <record-id>; assetiweave-cli conversation web-record export <record-id> --output-root <dir>.",
           ],

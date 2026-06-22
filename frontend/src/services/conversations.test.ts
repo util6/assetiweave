@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  addConversationEntry,
   getConversationSyncTask,
+  listConversationAdapters,
+  listWebRecordSessions,
   mergeConversationQuestions,
   searchConversationRecords,
   summarizeConversationSyncTask,
@@ -39,6 +42,23 @@ describe("conversation services", () => {
     });
   });
 
+  it("shows ChatGPT as a web record fallback source in non-Tauri previews", async () => {
+    vi.stubGlobal("window", {});
+    invokeMock.mockRejectedValue(new Error("preview backend missing"));
+
+    const adapters = await listConversationAdapters();
+    const webSessions = await listWebRecordSessions({});
+
+    expect(adapters.find((adapter) => adapter.id === "chatgpt-web")).toMatchObject({
+      name: "ChatGPT Web",
+      capabilities: expect.arrayContaining(["web_records"]),
+    });
+    expect(webSessions.find((session) => session.adapter_id === "chatgpt-web")).toMatchObject({
+      source_id: "chatgpt-web-export",
+      title: "ChatGPT web conversation",
+    });
+  });
+
   it("starts sync as a background task", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
     invokeMock.mockResolvedValueOnce({
@@ -59,6 +79,72 @@ describe("conversation services", () => {
     });
     expect(invokeMock).toHaveBeenCalledWith("sync_conversations", {
       params: { source_id: null, dry_run: false },
+    });
+  });
+
+  it("adds a conversation entry through the plugin source command", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValueOnce({
+      dry_run: false,
+      record_kind: "web",
+      adapter: {
+        id: "plugin-web",
+        name: "Plugin Web",
+        kind: "external",
+        version: "0.1.0",
+        enabled: true,
+        trust_state: "trusted",
+        capabilities: ["read_session", "web_records"],
+        input_kinds: ["directory"],
+        created_at: "2026-06-15T00:00:00Z",
+        updated_at: "2026-06-15T00:00:00Z",
+      },
+      source: {
+        id: "plugin-web-export",
+        adapter_id: "plugin-web",
+        name: "Plugin Web Export",
+        kind: "directory",
+        location: "/tmp/plugin/export",
+        config_json: null,
+        enabled: true,
+        created_at: "2026-06-15T00:00:00Z",
+        updated_at: "2026-06-15T00:00:00Z",
+      },
+      plugin_directory: "/tmp/assetiweave/conversation-adapters/plugin-web",
+      manifest_path: "/tmp/assetiweave/conversation-adapters/plugin-web/conversation-adapter.json",
+      sync_result: null,
+    });
+
+    await expect(
+      addConversationEntry({
+        plugin_path: "/tmp/plugin",
+        source_id: "plugin-web-export",
+        source_name: "Plugin Web Export",
+        source_kind: "directory",
+        location: "/tmp/plugin/export",
+        config_json: null,
+        record_kind: "web",
+        dry_run: false,
+        yes: true,
+        sync_after_add: false,
+      }),
+    ).resolves.toMatchObject({
+      adapter: { id: "plugin-web" },
+      source: { id: "plugin-web-export" },
+    });
+    expect(invokeMock).toHaveBeenCalledWith("add_conversation_entry", {
+      params: {
+        plugin_path: "/tmp/plugin",
+        source_id: "plugin-web-export",
+        source_name: "Plugin Web Export",
+        source_kind: "directory",
+        location: "/tmp/plugin/export",
+        config_json: null,
+        record_kind: "web",
+        dry_run: false,
+        yes: true,
+        sync_after_add: false,
+      },
     });
   });
 

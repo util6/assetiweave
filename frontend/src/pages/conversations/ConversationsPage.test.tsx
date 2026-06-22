@@ -13,6 +13,7 @@ import {
   ConversationContentFilter,
   ConversationSyncProgress,
 } from "../../components/conversations/ConversationToolbarControls";
+import { ConversationEntryAddDialog } from "../../components/conversations/ConversationEntryAddDialog";
 import type { Translator } from "../../i18n/I18nProvider";
 import { messages, type TranslationParams } from "../../i18n/messages";
 import type {
@@ -717,6 +718,46 @@ describe("MarkdownContent", () => {
     expect(html).toContain("后台同步对话记录");
     expect(html).toContain("可继续使用其他功能");
     expect(html).not.toContain("disabled");
+  });
+
+  it("submits plugin-backed web record sources from the add dialog", async () => {
+    const onSubmit = vi.fn(async () => undefined);
+    render(
+      <ConversationEntryAddDialog
+        busy={false}
+        onClose={vi.fn()}
+        onPickLocation={async () => "/tmp/web-export"}
+        onPickPlugin={async () => "/tmp/plugin"}
+        onSubmit={onSubmit}
+        recordKind="web"
+        t={t}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("插件目录"), {
+      target: { value: "/tmp/plugin" },
+    });
+    fireEvent.change(screen.getByLabelText("来源名称"), {
+      target: { value: "Plugin Web Export" },
+    });
+    fireEvent.change(screen.getByLabelText("来源位置"), {
+      target: { value: "/tmp/web-export" },
+    });
+    fireEvent.change(screen.getByLabelText("配置 JSON"), {
+      target: { value: "{\"space\":\"default\"}" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "添加来源" }));
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith({
+        configJson: "{\"space\":\"default\"}",
+        location: "/tmp/web-export",
+        pluginPath: "/tmp/plugin",
+        sourceId: "",
+        sourceKind: "directory",
+        sourceName: "Plugin Web Export",
+      });
+    });
   });
 });
 

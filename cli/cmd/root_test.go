@@ -52,7 +52,7 @@ func TestOverviewWritesSuccessEnvelopeToStdout(t *testing.T) {
 			data: json.RawMessage(`{"source_count":1}`),
 			meta: &protocol.EngineMeta{
 				ProtocolVersion: 1,
-				ContractVersion: 2,
+				ContractVersion: protocol.ContractVersion,
 				EngineVersion:   "0.1.1",
 				Invocation: &protocol.InvocationMeta{
 					Method:     "overview.get",
@@ -86,7 +86,7 @@ func TestVersionReportsCLIAndEngineCompatibility(t *testing.T) {
 			"product": "AssetIWeave",
 			"engine_version": "0.1.1",
 			"protocol_version": 1,
-			"contract_version": 2,
+			"contract_version": 3,
 			"capabilities": ["command-contract-v1"]
 		}`),
 	}
@@ -142,7 +142,7 @@ func TestVersionCanCheckRemoteUpdatesWithoutBlockingCompatibilityReport(t *testi
 			"product": "AssetIWeave",
 			"engine_version": "0.1.1",
 			"protocol_version": 1,
-			"contract_version": 2,
+			"contract_version": 3,
 			"capabilities": []
 		}`),
 	}
@@ -224,7 +224,7 @@ func TestGlobalEngineFlagStoresBootstrapOverride(t *testing.T) {
 				"product": "AssetIWeave",
 				"engine_version": "0.1.1",
 				"protocol_version": 1,
-				"contract_version": 2,
+				"contract_version": 3,
 				"capabilities": []
 			}`),
 		},
@@ -248,7 +248,7 @@ func TestVersionReportsIncompatibleEngineWithoutBlockingDiagnostics(t *testing.T
 			"product": "AssetIWeave",
 			"engine_version": "99.0.0",
 			"protocol_version": 99,
-			"contract_version": 2,
+			"contract_version": 3,
 			"capabilities": []
 		}`)},
 	}

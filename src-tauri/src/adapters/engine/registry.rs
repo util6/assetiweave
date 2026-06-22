@@ -790,6 +790,31 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli conversation source disable <source-id>")
     ),
     command!(
+        "conversation.entry.add",
+        "conversation.entry.add",
+        "Add a conversation record source from an external adapter plugin",
+        HighRiskWrite,
+        Friendly,
+        true,
+        crate::backend::application::ConversationEntryAddParams,
+        Service => |service, params| service.add_conversation_entry_source(params),
+        &[
+            param!("plugin_path", "Adapter plugin directory", ["pluginPath"]),
+            param!("plugin_id", "Optional installed plugin directory id", ["pluginId"]),
+            param!("manifest_path", "Advanced adapter manifest path", ["manifestPath"]),
+            param!("source_id", "Optional conversation source identifier", ["sourceId"]),
+            param!("source_name", "Conversation source display name", ["sourceName"]),
+            param!("source_kind", "Conversation source kind", ["sourceKind"]),
+            param!("location", "Source location passed to the external adapter"),
+            param!("config_json", "Optional source adapter config JSON string", ["configJson"]),
+            param!("record_kind", "Target record kind: session or web", ["recordKind"]),
+            param!("sync_after_add", "Run conversation sync after adding the source", ["syncAfterAdd"]),
+            param!("dry_run", "Preview without persisting", ["dryRun"]),
+            param!("yes", "Confirm trusting and optionally executing this adapter"),
+        ],
+        Some("assetiweave-cli conversation add --plugin <plugin-dir> --source-name <name> --location <path> --yes")
+    ),
+    command!(
         "conversation.sync",
         "conversation.sync",
         "Synchronize conversation sources",
@@ -1779,6 +1804,31 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         &[
             param!("id", "Conversation source identifier"),
             param!("dry_run", "Preview without disabling", ["dryRun"]),
+        ],
+        None
+    ),
+    command!(
+        "add_conversation_entry",
+        "conversation.entry.add",
+        "Add a conversation record source from an external adapter plugin",
+        HighRiskWrite,
+        App,
+        false,
+        crate::backend::application::ConversationEntryAddParams,
+        Service => |service, params| service.add_conversation_entry_source(params),
+        &[
+            param!("plugin_path", "Adapter plugin directory", ["pluginPath"]),
+            param!("plugin_id", "Optional installed plugin directory id", ["pluginId"]),
+            param!("manifest_path", "Advanced adapter manifest path", ["manifestPath"]),
+            param!("source_id", "Optional conversation source identifier", ["sourceId"]),
+            param!("source_name", "Conversation source display name", ["sourceName"]),
+            param!("source_kind", "Conversation source kind", ["sourceKind"]),
+            param!("location", "Source location passed to the external adapter"),
+            param!("config_json", "Optional source adapter config JSON string", ["configJson"]),
+            param!("record_kind", "Target record kind: session or web", ["recordKind"]),
+            param!("sync_after_add", "Run conversation sync after adding the source", ["syncAfterAdd"]),
+            param!("dry_run", "Preview without persisting", ["dryRun"]),
+            param!("yes", "Confirm trusting and optionally executing this adapter"),
         ],
         None
     ),

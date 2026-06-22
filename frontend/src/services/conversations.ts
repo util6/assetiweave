@@ -50,6 +50,31 @@ export interface ConversationExportContentFilter {
   result: boolean;
 }
 
+export interface ConversationEntryAddParams {
+  plugin_path?: string | null;
+  plugin_id?: string | null;
+  manifest_path?: string | null;
+  source_id?: string | null;
+  source_name: string;
+  source_kind: "live" | "file" | "directory" | "sqlite" | "custom";
+  location: string;
+  config_json?: string | null;
+  record_kind: ConversationRecordKind;
+  dry_run?: boolean;
+  yes?: boolean;
+  sync_after_add?: boolean;
+}
+
+export interface ConversationEntryAddResult {
+  dry_run: boolean;
+  record_kind: ConversationRecordKind;
+  plugin_directory?: string | null;
+  manifest_path: string;
+  adapter: ConversationAdapter;
+  source: ConversationSource;
+  sync_result?: unknown | null;
+}
+
 export type ConversationSyncTaskStatus = "running" | "completed" | "failed";
 
 export interface ConversationSyncTaskSnapshot {
@@ -146,6 +171,62 @@ export async function listConversationSources(): Promise<ConversationSource[]> {
     }
 
     return fallbackSources;
+  }
+}
+
+export async function addConversationEntry(
+  params: ConversationEntryAddParams,
+): Promise<ConversationEntryAddResult> {
+  try {
+    return await invoke<ConversationEntryAddResult>("add_conversation_entry", { params });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    const now = new Date().toISOString();
+    const manifestPath = params.manifest_path
+      ?? (params.plugin_path ? `${params.plugin_path.replace(/\/$/, "")}/conversation-adapter.json` : null)
+      ?? "/tmp/plugin/conversation-adapter.json";
+    return {
+      dry_run: Boolean(params.dry_run),
+      record_kind: params.record_kind,
+      plugin_directory: params.plugin_path ?? null,
+      manifest_path: manifestPath,
+      adapter: {
+        id: "preview-plugin",
+        name: "Preview Plugin",
+        kind: "external",
+        version: "0.1.0",
+        enabled: true,
+        manifest_path: manifestPath,
+        executable_path: null,
+        content_hash: null,
+        trusted_hash: null,
+        trust_state: "trusted",
+        protocol_version: 1,
+        capabilities: params.record_kind === "web"
+          ? ["read_session", "web_records"]
+          : ["read_session"],
+        input_kinds: [params.source_kind],
+        created_at: now,
+        updated_at: now,
+      },
+      source: {
+        id: params.source_id || "preview-plugin-source",
+        adapter_id: "preview-plugin",
+        name: params.source_name,
+        kind: params.source_kind,
+        location: params.location,
+        config_json: params.config_json ?? null,
+        enabled: true,
+        last_synced_at: null,
+        last_sync_status: null,
+        created_at: now,
+        updated_at: now,
+      },
+      sync_result: null,
+    };
   }
 }
 
@@ -253,7 +334,7 @@ export async function getWebRecordSession(sessionId: string): Promise<Conversati
       throw error;
     }
 
-    return fallbackWebSessionDetail;
+    return fallbackWebSessionDetails.get(sessionId) ?? fallbackWebSessionDetail;
   }
 }
 
@@ -436,14 +517,16 @@ export async function exportWebRecordSession(
       dry_run: dryRun,
       session_id: sessionId,
       question_ids: questionIds,
-      output_path: `${outputRoot}/qwen-web/web/preview-web-record.md`,
+      output_path: `${outputRoot}/${fallbackWebSessionSiteId(sessionId)}/web/preview-web-record.md`,
     };
   }
 }
 
 function fallbackConversationSearch(params: Required<Pick<ConversationSearchParams, "query" | "record_kind" | "content_types" | "limit" | "offset" | "timeline">> & ConversationSearchParams): ConversationSearchResult {
-  const detail = params.record_kind === "web" ? fallbackWebSessionDetail : fallbackSessionDetail;
-  const session = params.record_kind === "web" ? fallbackWebSessions[0] : fallbackSessions[0];
+  const session = params.record_kind === "web" ? fallbackWebSearchSession(params) : fallbackSessions[0];
+  const detail = params.record_kind === "web"
+    ? fallbackWebSessionDetails.get(session.id) ?? fallbackWebSessionDetail
+    : fallbackSessionDetail;
   const needle = params.query.trim().toLowerCase();
   if (params.project_path && session.project_path !== params.project_path) {
     return {
@@ -508,6 +591,18 @@ function fallbackConversationSearch(params: Required<Pick<ConversationSearchPara
     total_count: hits.length,
     hits: hits.slice(params.offset, params.offset + params.limit),
   };
+}
+
+function fallbackWebSearchSession(params: ConversationSearchParams) {
+  return (
+    fallbackWebSessions.find((session) => params.adapter_id && session.adapter_id === params.adapter_id) ??
+    fallbackWebSessions.find((session) => params.source_id && session.source_id === params.source_id) ??
+    fallbackWebSessions[0]
+  );
+}
+
+function fallbackWebSessionSiteId(sessionId: string) {
+  return fallbackWebSessions.find((session) => session.id === sessionId)?.adapter_id ?? "qwen-web";
 }
 
 function conversationSearchScope(params: Required<Pick<ConversationSearchParams, "query" | "record_kind" | "content_types" | "limit" | "offset" | "timeline">> & ConversationSearchParams): ConversationSearchScope {
@@ -688,16 +783,27 @@ const fallbackAdapters: ConversationAdapter[] = [
   {
     id: "qwen-web",
     name: "Qwen Web",
+    ...fallbackWebAdapterFields("0.1.1"),
+  },
+  {
+    id: "chatgpt-web",
+    name: "ChatGPT Web",
+    ...fallbackWebAdapterFields("0.1.0"),
+  },
+];
+
+function fallbackWebAdapterFields(version: string): Omit<ConversationAdapter, "id" | "name"> {
+  return {
     kind: "external",
-    version: "0.1.0",
+    version,
     enabled: true,
     trust_state: "trusted",
     capabilities: ["probe", "read_session", "web_records"],
     input_kinds: ["directory"],
     created_at: now,
     updated_at: now,
-  },
-];
+  };
+}
 
 const fallbackSources: ConversationSource[] = [
   {
@@ -836,26 +942,43 @@ const fallbackWebSessions: ConversationSessionListItem[] = [
     title: "Qwen web conversation",
     project_path: null,
   },
+  {
+    ...fallbackSessions[0],
+    id: "preview-chatgpt-web-record",
+    source_id: "chatgpt-web-export",
+    adapter_id: "chatgpt-web",
+    external_id: "chatgpt-preview",
+    title: "ChatGPT web conversation",
+    project_path: null,
+  },
 ];
 
-const fallbackWebSessionDetail: ConversationSessionDetail = {
-  session: fallbackWebSessions[0],
-  questions: fallbackSessionDetail.questions.map((detail, questionIndex) => ({
-    ...detail,
-    question: {
-      ...detail.question,
-      id: `preview-web-question-${questionIndex + 1}`,
-      session_id: fallbackWebSessions[0].id,
-    },
-    turns: detail.turns.map((turn, turnIndex) => ({
-      ...turn,
-      id: `preview-web-turn-${questionIndex + 1}-${turnIndex + 1}`,
-      session_id: fallbackWebSessions[0].id,
+const fallbackWebSessionDetails = new Map(
+  fallbackWebSessions.map((session) => [session.id, buildFallbackWebSessionDetail(session)]),
+);
+
+const fallbackWebSessionDetail = fallbackWebSessionDetails.get(fallbackWebSessions[0].id) ?? buildFallbackWebSessionDetail(fallbackWebSessions[0]);
+
+function buildFallbackWebSessionDetail(session: ConversationSessionListItem): ConversationSessionDetail {
+  return {
+    session,
+    questions: fallbackSessionDetail.questions.map((detail, questionIndex) => ({
+      ...detail,
+      question: {
+        ...detail.question,
+        id: `${session.id}-question-${questionIndex + 1}`,
+        session_id: session.id,
+      },
+      turns: detail.turns.map((turn, turnIndex) => ({
+        ...turn,
+        id: `${session.id}-turn-${questionIndex + 1}-${turnIndex + 1}`,
+        session_id: session.id,
+      })),
+      parts: detail.parts.map((part, partIndex) => ({
+        ...part,
+        id: `${session.id}-part-${questionIndex + 1}-${partIndex + 1}`,
+        turn_id: `${session.id}-turn-${questionIndex + 1}-${Math.min(partIndex + 1, detail.turns.length)}`,
+      })),
     })),
-    parts: detail.parts.map((part, partIndex) => ({
-      ...part,
-      id: `preview-web-part-${questionIndex + 1}-${partIndex + 1}`,
-      turn_id: `preview-web-turn-${questionIndex + 1}-${Math.min(partIndex + 1, detail.turns.length)}`,
-    })),
-  })),
-};
+  };
+}

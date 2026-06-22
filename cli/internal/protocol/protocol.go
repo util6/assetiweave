@@ -2,7 +2,7 @@ package protocol
 
 const (
 	Version         = 1
-	ContractVersion = 2
+	ContractVersion = 3
 )
 
 // CLI release fields are replaced by the build scripts for distributable binaries.

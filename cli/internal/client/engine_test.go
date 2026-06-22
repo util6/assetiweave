@@ -34,7 +34,7 @@ func TestDecodeResponseAcceptsMatchingCompatibilityMeta(t *testing.T) {
 		"data": {"profiles": []},
 		"meta": {
 			"protocol_version": 1,
-			"contract_version": 2,
+			"contract_version": 3,
 			"engine_version": "0.1.1",
 			"invocation": {
 				"method": "profile.list",
@@ -72,7 +72,7 @@ func TestDecodeResponseRejectsMismatchedProtocol(t *testing.T) {
 		"data": {},
 		"meta": {
 			"protocol_version": 99,
-			"contract_version": 2,
+			"contract_version": 3,
 			"engine_version": "99.0.0"
 		}
 	}`))
@@ -116,11 +116,11 @@ func TestDecodeVersionResponseAllowsMismatchedProtocolForDiagnostics(t *testing.
 		"data": {
 			"engine_version": "99.0.0",
 			"protocol_version": 99,
-			"contract_version": 2
+			"contract_version": 3
 		},
 		"meta": {
 			"protocol_version": 99,
-			"contract_version": 2,
+			"contract_version": 3,
 			"engine_version": "99.0.0"
 		}
 	}`))
@@ -137,7 +137,7 @@ func TestDecodeResponsePromotesConfirmationAndPreservesAgentProtocol(t *testing.
 		"ok": false,
 		"meta": {
 			"protocol_version": 1,
-			"contract_version": 2,
+			"contract_version": 3,
 			"engine_version": "0.1.1"
 		},
 		"error": {
@@ -159,7 +159,7 @@ func TestDecodeResponsePromotesCommandDenialAndPreservesAgentProtocol(t *testing
 		"ok": false,
 		"meta": {
 			"protocol_version": 1,
-			"contract_version": 2,
+			"contract_version": 3,
 			"engine_version": "0.1.1",
 			"invocation": {
 				"method": "delete_source",
@@ -190,7 +190,7 @@ func TestDecodeResponsePromotesValidationByErrorCode(t *testing.T) {
 		"ok": false,
 		"meta": {
 			"protocol_version": 1,
-			"contract_version": 2,
+			"contract_version": 3,
 			"engine_version": "0.1.1"
 		},
 		"error": {
@@ -215,7 +215,7 @@ func TestDecodeResponsePromotesAppBusinessError(t *testing.T) {
 		"ok": false,
 		"meta": {
 			"protocol_version": 1,
-			"contract_version": 2,
+			"contract_version": 3,
 			"engine_version": "0.1.1"
 		},
 		"error": {
@@ -236,7 +236,7 @@ func TestDecodeResponsePromotesUnknownEngineErrorWithoutChangingWireType(t *test
 		"ok": false,
 		"meta": {
 			"protocol_version": 1,
-			"contract_version": 2,
+			"contract_version": 3,
 			"engine_version": "0.1.1"
 		},
 		"error": {

@@ -733,6 +733,23 @@ export async function selectSourceDirectory(title: string): Promise<string | nul
   }
 }
 
+export async function selectFilePath(
+  title: string,
+  filters?: { name: string; extensions: string[] }[],
+): Promise<string | null> {
+  try {
+    const selected = await open({
+      directory: false,
+      filters,
+      multiple: false,
+      title,
+    });
+    return Array.isArray(selected) ? (selected[0] ?? null) : selected;
+  } catch {
+    return null;
+  }
+}
+
 export async function selectTargetDirectory(title: string): Promise<string | null> {
   return selectSourceDirectory(title);
 }

@@ -9,8 +9,8 @@ use crate::backend::{
     },
     models::{
         Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
-        ConversationSource, DeploymentPlan, DeploymentStrategy, Source, SourceOrigin,
-        SourceScannerKind, TargetProfile,
+        ConversationSource, ConversationSourceKind, DeploymentPlan, DeploymentStrategy, Source,
+        SourceOrigin, SourceScannerKind, TargetProfile,
     },
 };
 use chrono::Utc;
@@ -33,12 +33,21 @@ pub(crate) struct AppService {
 
 const SKILL_REMOTE_SECURITY_NOTICE: &str =
     "Review remote Skill contents before importing; AssetIWeave does not execute or trust remote code automatically.";
+const CONVERSATION_ADAPTER_MANIFEST_FILE: &str = "conversation-adapter.json";
+const MAX_CONVERSATION_PLUGIN_FILES: usize = 2048;
 
 #[derive(Debug, Clone)]
 struct SkillBackupCopyTarget {
     asset: Asset,
     target_dir: PathBuf,
     source_is_library: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ConversationEntryAdapterInstall {
+    registration_manifest_path: String,
+    result_manifest_path: String,
+    plugin_directory: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -342,6 +351,44 @@ pub(crate) struct ConversationSourceDisableParams {
     pub(crate) id: String,
     #[serde(default, alias = "dryRun")]
     pub(crate) dry_run: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct ConversationEntryAddParams {
+    #[serde(default, alias = "pluginPath")]
+    pub(crate) plugin_path: Option<String>,
+    #[serde(default, alias = "pluginId")]
+    pub(crate) plugin_id: Option<String>,
+    #[serde(default, alias = "manifestPath")]
+    pub(crate) manifest_path: Option<String>,
+    #[serde(default, alias = "sourceId")]
+    pub(crate) source_id: Option<String>,
+    #[serde(alias = "sourceName")]
+    pub(crate) source_name: String,
+    #[serde(default = "default_conversation_source_kind", alias = "sourceKind")]
+    pub(crate) source_kind: ConversationSourceKind,
+    pub(crate) location: String,
+    #[serde(default, alias = "configJson")]
+    pub(crate) config_json: Option<String>,
+    #[serde(default, alias = "recordKind")]
+    pub(crate) record_kind: Option<String>,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+    #[serde(default)]
+    pub(crate) yes: bool,
+    #[serde(default, alias = "syncAfterAdd")]
+    pub(crate) sync_after_add: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ConversationEntryAddResult {
+    pub(crate) dry_run: bool,
+    pub(crate) record_kind: String,
+    pub(crate) plugin_directory: Option<String>,
+    pub(crate) manifest_path: String,
+    pub(crate) adapter: ConversationAdapter,
+    pub(crate) source: ConversationSource,
+    pub(crate) sync_result: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -683,6 +730,94 @@ impl AppService {
             "disabled": true,
             "source": source
         }))
+    }
+
+    pub(crate) fn add_conversation_entry_source(
+        &self,
+        params: ConversationEntryAddParams,
+    ) -> AppResult<ConversationEntryAddResult> {
+        if !params.dry_run && !params.yes {
+            return Err("conversation.entry.add requires --yes".to_string());
+        }
+        let (record_kind, _) = normalize_conversation_record_kind(params.record_kind.as_deref())?;
+        let adapter_install = prepare_conversation_entry_adapter(&params)?;
+        let preview = self.register_conversation_adapter(
+            crate::backend::conversations::ExternalAdapterRegisterParams {
+                manifest_path: adapter_install.registration_manifest_path.clone(),
+                yes: params.yes,
+                dry_run: params.dry_run,
+            },
+        )?;
+        let adapter =
+            crate::backend::conversations::adapter_from_registration_preview(preview.clone())?;
+        validate_conversation_entry_adapter(&adapter, &record_kind, params.source_kind)?;
+        let source_name = clean_non_empty_string(&params.source_name)
+            .ok_or_else(|| "conversation source name is required".to_string())?;
+        let location = clean_non_empty_string(&params.location)
+            .ok_or_else(|| "conversation source location is required".to_string())?;
+        let config_json = params
+            .config_json
+            .as_deref()
+            .and_then(clean_non_empty_string)
+            .map(|text| {
+                serde_json::from_str::<Value>(&text)
+                    .map(|_| text)
+                    .map_err(|error| {
+                        format!("conversation source config_json is invalid JSON: {error}")
+                    })
+            })
+            .transpose()?;
+        let now = Utc::now().to_rfc3339();
+        let source = ConversationSource {
+            id: params
+                .source_id
+                .as_deref()
+                .and_then(clean_non_empty_string)
+                .unwrap_or_else(|| format!("{}-{}", slug_path_segment(&adapter.id), short_uuid())),
+            adapter_id: adapter.id.clone(),
+            name: source_name,
+            kind: params.source_kind,
+            location,
+            config_json,
+            enabled: true,
+            last_synced_at: None,
+            last_sync_status: None,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        if params.dry_run {
+            return Ok(ConversationEntryAddResult {
+                dry_run: true,
+                record_kind,
+                plugin_directory: adapter_install.plugin_directory.clone(),
+                manifest_path: adapter_install.result_manifest_path.clone(),
+                adapter,
+                source,
+                sync_result: None,
+            });
+        }
+
+        crate::backend::store::upsert_conversation_source(&self.conn, &source)?;
+        let sync_result = if params.sync_after_add {
+            Some(self.sync_conversations(ConversationSyncParams {
+                source_id: Some(source.id.clone()),
+                adapter_id: Some(adapter.id.clone()),
+                dry_run: false,
+            })?)
+        } else {
+            None
+        };
+
+        Ok(ConversationEntryAddResult {
+            dry_run: false,
+            record_kind,
+            plugin_directory: adapter_install.plugin_directory,
+            manifest_path: adapter_install.result_manifest_path,
+            adapter,
+            source,
+            sync_result,
+        })
     }
 
     pub(crate) fn sync_conversations(&self, params: ConversationSyncParams) -> AppResult<Value> {
@@ -1917,6 +2052,274 @@ fn normalize_conversation_record_kind(
     }
 }
 
+fn default_conversation_source_kind() -> ConversationSourceKind {
+    ConversationSourceKind::Directory
+}
+
+fn prepare_conversation_entry_adapter(
+    params: &ConversationEntryAddParams,
+) -> AppResult<ConversationEntryAdapterInstall> {
+    let plugin_path = params
+        .plugin_path
+        .as_deref()
+        .and_then(clean_non_empty_string);
+    let manifest_path = params
+        .manifest_path
+        .as_deref()
+        .and_then(clean_non_empty_string);
+
+    match (plugin_path, manifest_path) {
+        (Some(_), Some(_)) => {
+            Err("conversation.entry.add accepts either plugin_path or manifest_path, not both"
+                .to_string())
+        }
+        (Some(plugin_path), None) => install_conversation_entry_plugin(
+            &plugin_path,
+            params.plugin_id.as_deref(),
+            params.dry_run,
+        ),
+        (None, Some(manifest_path)) => {
+            let manifest = crate::backend::path_utils::expand_path(&manifest_path)?;
+            let manifest = manifest.to_string_lossy().to_string();
+            Ok(ConversationEntryAdapterInstall {
+                registration_manifest_path: manifest.clone(),
+                result_manifest_path: manifest,
+                plugin_directory: None,
+            })
+        }
+        (None, None) => Err(
+            "conversation plugin directory is required; pass plugin_path (or manifest_path for advanced registration)"
+                .to_string(),
+        ),
+    }
+}
+
+fn install_conversation_entry_plugin(
+    plugin_path: &str,
+    plugin_id: Option<&str>,
+    dry_run: bool,
+) -> AppResult<ConversationEntryAdapterInstall> {
+    let source_dir = crate::backend::path_utils::expand_path(plugin_path)?;
+    let source_metadata = fs::symlink_metadata(&source_dir)
+        .map_err(|error| format!("conversation plugin directory not found: {error}"))?;
+    if source_metadata.file_type().is_symlink() {
+        return Err(format!(
+            "conversation plugin directory cannot be a symlink: {}",
+            source_dir.display()
+        ));
+    }
+    if !source_metadata.is_dir() {
+        return Err(format!(
+            "conversation plugin path is not a directory: {}",
+            source_dir.display()
+        ));
+    }
+    let source_dir = source_dir
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let source_manifest = source_dir.join(CONVERSATION_ADAPTER_MANIFEST_FILE);
+    validate_regular_plugin_file(&source_manifest, "conversation adapter manifest")?;
+    let validation = crate::backend::conversations::validate_external_adapter(
+        crate::backend::conversations::ExternalAdapterValidateParams {
+            manifest_path: source_manifest.to_string_lossy().to_string(),
+        },
+    )?;
+    validate_plugin_local_command(&source_dir, &validation.manifest.command[0])?;
+
+    let requested_id = plugin_id
+        .and_then(clean_non_empty_string)
+        .unwrap_or_else(|| validation.manifest.id.clone());
+    let target_segment = slug_path_segment(&requested_id);
+    let target_root = crate::backend::app_settings::conversation_adapter_dir()?;
+    fs::create_dir_all(&target_root).map_err(|error| error.to_string())?;
+    let target_root = target_root
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let target_dir = target_root.join(&target_segment);
+    let target_manifest = target_dir.join(CONVERSATION_ADAPTER_MANIFEST_FILE);
+
+    if target_dir.exists() {
+        let target_dir = target_dir
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        if target_dir == source_dir {
+            validate_plugin_local_command(&target_dir, &validation.manifest.command[0])?;
+            return Ok(ConversationEntryAdapterInstall {
+                registration_manifest_path: target_manifest.to_string_lossy().to_string(),
+                result_manifest_path: target_manifest.to_string_lossy().to_string(),
+                plugin_directory: Some(target_dir.to_string_lossy().to_string()),
+            });
+        }
+        return Err(format!(
+            "conversation adapter plugin already exists: {}",
+            target_dir.display()
+        ));
+    }
+
+    if path_contains(&source_dir, &target_dir) {
+        return Err(format!(
+            "conversation plugin install target cannot be inside the source directory: {}",
+            target_dir.display()
+        ));
+    }
+
+    if dry_run {
+        return Ok(ConversationEntryAdapterInstall {
+            registration_manifest_path: source_manifest.to_string_lossy().to_string(),
+            result_manifest_path: target_manifest.to_string_lossy().to_string(),
+            plugin_directory: Some(target_dir.to_string_lossy().to_string()),
+        });
+    }
+
+    let staging_dir = target_root.join(format!(".install-{}-{}", target_segment, short_uuid()));
+    if staging_dir.exists() {
+        return Err(format!(
+            "conversation plugin staging path already exists: {}",
+            staging_dir.display()
+        ));
+    }
+    if let Err(error) = copy_conversation_plugin_dir(&source_dir, &staging_dir) {
+        fs::remove_dir_all(&staging_dir).ok();
+        return Err(error);
+    }
+    let staging_manifest = staging_dir.join(CONVERSATION_ADAPTER_MANIFEST_FILE);
+    let installed_validation = crate::backend::conversations::validate_external_adapter(
+        crate::backend::conversations::ExternalAdapterValidateParams {
+            manifest_path: staging_manifest.to_string_lossy().to_string(),
+        },
+    );
+    if let Err(error) = installed_validation.and_then(|validation| {
+        validate_plugin_local_command(&staging_dir, &validation.manifest.command[0])
+    }) {
+        fs::remove_dir_all(&staging_dir).ok();
+        return Err(error);
+    }
+    fs::rename(&staging_dir, &target_dir).map_err(|error| {
+        fs::remove_dir_all(&staging_dir).ok();
+        error.to_string()
+    })?;
+
+    Ok(ConversationEntryAdapterInstall {
+        registration_manifest_path: target_manifest.to_string_lossy().to_string(),
+        result_manifest_path: target_manifest.to_string_lossy().to_string(),
+        plugin_directory: Some(target_dir.to_string_lossy().to_string()),
+    })
+}
+
+fn validate_regular_plugin_file(path: &Path, label: &str) -> AppResult<()> {
+    let metadata =
+        fs::symlink_metadata(path).map_err(|error| format!("{label} not found: {error}"))?;
+    if metadata.file_type().is_symlink() {
+        return Err(format!("{label} cannot be a symlink: {}", path.display()));
+    }
+    if !metadata.is_file() {
+        return Err(format!("{label} is not a file: {}", path.display()));
+    }
+    Ok(())
+}
+
+fn validate_plugin_local_command(plugin_dir: &Path, command: &str) -> AppResult<()> {
+    let command_path = Path::new(command);
+    if command_path.is_absolute() {
+        return Err(format!(
+            "conversation plugin command must be relative to the plugin directory: {command}"
+        ));
+    }
+    if command_path.components().any(|component| {
+        !matches!(
+            component,
+            std::path::Component::Normal(_) | std::path::Component::CurDir
+        )
+    }) {
+        return Err(format!(
+            "conversation plugin command cannot escape the plugin directory: {command}"
+        ));
+    }
+    let executable = plugin_dir.join(command_path);
+    validate_regular_plugin_file(&executable, "conversation plugin executable")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions = fs::metadata(&executable)
+            .map_err(|error| error.to_string())?
+            .permissions();
+        if permissions.mode() & 0o111 == 0 {
+            return Err(format!(
+                "conversation plugin executable is not executable: {}",
+                executable.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn copy_conversation_plugin_dir(source: &Path, target: &Path) -> AppResult<()> {
+    let mut file_count = 0usize;
+    for entry in walkdir::WalkDir::new(source).follow_links(false) {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let relative = entry
+            .path()
+            .strip_prefix(source)
+            .map_err(|error| error.to_string())?;
+        let destination = target.join(relative);
+        let metadata = fs::symlink_metadata(entry.path()).map_err(|error| error.to_string())?;
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "conversation plugin symlinks are not supported: {}",
+                relative.display()
+            ));
+        }
+        if metadata.is_dir() {
+            fs::create_dir_all(&destination).map_err(|error| error.to_string())?;
+            continue;
+        }
+        if !metadata.is_file() {
+            return Err(format!(
+                "conversation plugin special files are not supported: {}",
+                relative.display()
+            ));
+        }
+        file_count += 1;
+        if file_count > MAX_CONVERSATION_PLUGIN_FILES {
+            return Err(format!(
+                "conversation plugin has too many files: {file_count}"
+            ));
+        }
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::copy(entry.path(), &destination).map_err(|error| error.to_string())?;
+        fs::set_permissions(&destination, metadata.permissions())
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn validate_conversation_entry_adapter(
+    adapter: &ConversationAdapter,
+    record_kind: &str,
+    source_kind: ConversationSourceKind,
+) -> AppResult<()> {
+    if !adapter.input_kinds.iter().any(|kind| *kind == source_kind) {
+        return Err(format!(
+            "conversation adapter {} does not support source kind {:?}",
+            adapter.id, source_kind
+        ));
+    }
+    let is_web_adapter = is_web_record_adapter(Some(adapter), &adapter.id);
+    match (record_kind, is_web_adapter) {
+        ("web", false) => Err(format!(
+            "conversation adapter {} does not declare web_records",
+            adapter.id
+        )),
+        ("session", true) => Err(format!(
+            "conversation adapter {} declares web_records and must be added as record_kind web",
+            adapter.id
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn path_contains(parent: &Path, child: &Path) -> bool {
     let normalized_parent = parent
         .canonicalize()
@@ -2641,8 +3044,10 @@ fn is_web_record_adapter(adapter: Option<&ConversationAdapter>, adapter_id: &str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::models::SourceKind;
+    use crate::backend::models::{ConversationSourceKind, SourceKind};
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn batch_skill_backup_deduplicates_assets_and_reports_copy_progress() {
@@ -3173,6 +3578,135 @@ mod tests {
             skill_candidate_score(&skill_candidate, &terms)
                 > skill_candidate_score(&repo_candidate, &terms)
         );
+    }
+
+    #[test]
+    fn conversation_entry_add_installs_plugin_source_and_syncs_web_records() {
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-entry-add-{}",
+            Uuid::new_v4()
+        ));
+        let app_home = root.join("app-home");
+        let previous_home = env::var_os("ASSETIWEAVE_HOME");
+        env::set_var("ASSETIWEAVE_HOME", &app_home);
+        let source_root = root.join("web-export");
+        fs::create_dir_all(&source_root).expect("create source root");
+        let plugin_root = root.join("plugin-package");
+        fs::create_dir_all(&plugin_root).expect("create plugin root");
+        let adapter_script = plugin_root.join("adapter.sh");
+        fs::write(
+            &adapter_script,
+            [
+                "#!/bin/sh",
+                "printf '%s\\n' '{\"type\":\"item\",\"item\":{\"kind\":\"session\",\"session\":{\"external_id\":\"web-1\",\"title\":\"Plugin Web Session\",\"project_path\":\"https://example.test\",\"started_at\":\"2026-06-01T00:00:00Z\",\"updated_at\":\"2026-06-01T00:01:00Z\",\"source_locator\":null,\"source_fingerprint\":\"fingerprint-1\",\"turns\":[{\"external_id\":\"turn-1\",\"turn_index\":0,\"user_text\":\"What did the plugin import?\",\"title\":null,\"started_at\":\"2026-06-01T00:00:00Z\",\"ended_at\":\"2026-06-01T00:01:00Z\",\"parts\":[{\"role\":\"assistant\",\"kind\":\"text\",\"text\":\"The external script imported this record.\",\"language\":null,\"command\":null,\"cwd\":null,\"status\":null,\"exit_code\":null,\"metadata_json\":null}] }]}}}'",
+                "printf '%s\\n' '{\"type\":\"complete\",\"item\":{\"session_count\":1,\"turn_count\":1}}'",
+                "",
+            ]
+            .join("\n"),
+        )
+        .expect("write adapter script");
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(&adapter_script)
+                .expect("adapter script metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&adapter_script, permissions)
+                .expect("mark adapter script executable");
+        }
+        let manifest_path = plugin_root.join("conversation-adapter.json");
+        fs::write(
+            &manifest_path,
+            serde_json::json!({
+                "schema_version": 1,
+                "id": "plugin-web",
+                "name": "Plugin Web",
+                "version": "0.1.0",
+                "protocol_version": 1,
+                "command": ["adapter.sh"],
+                "capabilities": ["read_session", "web_records"],
+                "input_kinds": ["directory"]
+            })
+            .to_string(),
+        )
+        .expect("write adapter manifest");
+
+        let service =
+            AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+        let result = service
+            .add_conversation_entry_source(ConversationEntryAddParams {
+                plugin_path: Some(plugin_root.to_string_lossy().to_string()),
+                plugin_id: None,
+                manifest_path: None,
+                source_id: Some("plugin-web-export".to_string()),
+                source_name: "Plugin Web Export".to_string(),
+                source_kind: ConversationSourceKind::Directory,
+                location: source_root.to_string_lossy().to_string(),
+                config_json: None,
+                record_kind: Some("web".to_string()),
+                dry_run: false,
+                yes: true,
+                sync_after_add: true,
+            })
+            .expect("add conversation entry source");
+
+        let canonical_app_home = app_home.canonicalize().unwrap_or_else(|_| app_home.clone());
+        let installed_manifest = canonical_app_home
+            .join("conversation-adapters")
+            .join("plugin-web")
+            .join("conversation-adapter.json");
+        let installed_plugin_dir = installed_manifest
+            .parent()
+            .expect("installed manifest parent")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(result.record_kind, "web");
+        assert_eq!(
+            result.manifest_path,
+            installed_manifest.to_string_lossy().to_string()
+        );
+        assert_eq!(
+            result.plugin_directory.as_deref(),
+            Some(installed_plugin_dir.as_str())
+        );
+        assert!(installed_manifest.is_file());
+        assert_eq!(result.adapter.id, "plugin-web");
+        assert_eq!(result.source.id, "plugin-web-export");
+        assert!(result.sync_result.is_some());
+        let stored_adapter =
+            crate::backend::store::load_conversation_adapter(&service.conn, "plugin-web")
+                .expect("load adapter")
+                .expect("adapter exists");
+        assert_eq!(
+            stored_adapter.manifest_path.as_deref(),
+            Some(installed_manifest.to_string_lossy().as_ref())
+        );
+        assert!(crate::backend::store::load_conversation_source(
+            &service.conn,
+            "plugin-web-export"
+        )
+        .expect("load source")
+        .is_some());
+
+        let records = service
+            .list_web_record_sessions(ConversationSessionListParams {
+                adapter_id: Some("plugin-web".to_string()),
+                source_id: Some("plugin-web-export".to_string()),
+                query: None,
+                limit: Some(10),
+                offset: Some(0),
+            })
+            .expect("list web records");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].session.title, "Plugin Web Session");
+
+        drop(service);
+        fs::remove_dir_all(root).ok();
+        if let Some(previous_home) = previous_home {
+            env::set_var("ASSETIWEAVE_HOME", previous_home);
+        } else {
+            env::remove_var("ASSETIWEAVE_HOME");
+        }
     }
 }
 
