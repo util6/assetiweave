@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../../i18n/I18nProvider";
 import type { HeaderTabItem, RailMenuItem } from "../../../router/types";
@@ -42,14 +43,67 @@ describe("SideRail", () => {
     expect(html).toContain(">技能<");
     expect(html).toContain(">日志<");
   });
+
+  it("turns the collapsed brand icon into a regular intro button", () => {
+    const html = renderSideRail(false, {
+      ariaLabel: "查看当前版本功能介绍",
+      label: "AssetIWeave",
+      onClick: vi.fn(),
+      tone: "neutral",
+    });
+
+    expect(html).toContain('aria-label="查看当前版本功能介绍"');
+    expect(html).toContain('type="button"');
+    expect(html.indexOf('aria-label="查看当前版本功能介绍"')).toBeLessThan(html.indexOf("展开侧边栏"));
+  });
+
+  it("turns the expanded brand text into a regular intro button", () => {
+    const html = renderSideRail(true, {
+      ariaLabel: "查看当前版本功能介绍",
+      label: "AssetIWeave",
+      onClick: vi.fn(),
+      tone: "neutral",
+    });
+
+    expect(html).toContain(">AssetIWeave<");
+    expect(html).toContain('aria-label="查看当前版本功能介绍"');
+    expect(html.indexOf("AssetIWeave")).toBeLessThan(html.indexOf(">技能<"));
+  });
+
+  it("turns the collapsed brand icon into an update button when an update is available", () => {
+    const html = renderSideRail(false, {
+      ariaLabel: "发现新版本 v0.2.0",
+      label: "发现新版本 v0.2.0",
+      onClick: vi.fn(),
+      tone: "update",
+    });
+
+    expect(html).toContain('aria-label="发现新版本 v0.2.0"');
+    expect(html).toContain('type="button"');
+    expect(html.indexOf('aria-label="发现新版本 v0.2.0"')).toBeLessThan(html.indexOf("展开侧边栏"));
+  });
+
+  it("turns the expanded brand text into an update button when an update is available", () => {
+    const html = renderSideRail(true, {
+      ariaLabel: "发现新版本 v0.2.0",
+      label: "发现新版本 v0.2.0",
+      onClick: vi.fn(),
+      tone: "update",
+    });
+
+    expect(html).toContain(">发现新版本 v0.2.0<");
+    expect(html).toContain('aria-label="发现新版本 v0.2.0"');
+    expect(html.indexOf("发现新版本 v0.2.0")).toBeLessThan(html.indexOf(">技能<"));
+  });
 });
 
-function renderSideRail(expanded: boolean) {
+function renderSideRail(expanded: boolean, brandAction?: ComponentProps<typeof SideRail>["brandAction"]) {
   return renderToStaticMarkup(
     <I18nProvider>
       <SideRail
         activeHeaderTabId="skills"
         activeId="logs"
+        brandAction={brandAction}
         expanded={expanded}
         headerTabs={headerTabs}
         items={railItems}

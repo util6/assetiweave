@@ -22,6 +22,7 @@ const AUTO_CHECK_DELAY_MS = 5000;
 const AUTO_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 export type AppUpdateSource = "auto" | "manual";
+export type AppUpdateDialogMode = "intro" | "update";
 export type AppUpdateStatus = "idle" | "checking" | "available" | "upToDate" | "downloading" | "installing" | "ready" | "error";
 
 export interface AppUpdateState {
@@ -40,9 +41,10 @@ export interface AppUpdateState {
 interface AppUpdateContextValue {
   checkForUpdates: (source?: AppUpdateSource) => Promise<void>;
   closeDialog: () => void;
+  dialogMode: AppUpdateDialogMode;
   dialogOpen: boolean;
   downloadAndInstall: () => Promise<void>;
-  openDialog: () => void;
+  openDialog: (mode?: AppUpdateDialogMode) => void;
   openReleases: () => Promise<void>;
   restartApp: () => Promise<void>;
   state: AppUpdateState;
@@ -61,6 +63,7 @@ function createInitialState(): AppUpdateState {
 }
 
 export function AppUpdateProvider({ children }: { children: ReactNode }) {
+  const [dialogMode, setDialogMode] = useState<AppUpdateDialogMode>("update");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [state, setStateValue] = useState<AppUpdateState>(() => createInitialState());
   const stateRef = useRef(state);
@@ -103,6 +106,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       const requestId = requestIdRef.current + 1;
       requestIdRef.current = requestId;
       if (source === "manual") {
+        setDialogMode("update");
         setDialogOpen(true);
       }
       setState((previous) => ({
@@ -169,6 +173,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           source,
           status: "available",
         }));
+        setDialogMode("update");
         setDialogOpen(true);
       } catch (error) {
         if (requestIdRef.current !== requestId) {
@@ -185,6 +190,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           status: "error",
         }));
         if (source === "manual") {
+          setDialogMode("update");
           setDialogOpen(true);
         }
       }
@@ -200,6 +206,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
+    setDialogMode("update");
     setDialogOpen(true);
     setState((previous) => ({
       ...previous,
@@ -294,6 +301,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         retryTotal: undefined,
         status: "error",
       }));
+      setDialogMode("update");
       setDialogOpen(true);
     }
   }, [setState]);
@@ -346,14 +354,18 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     () => ({
       checkForUpdates,
       closeDialog: () => setDialogOpen(false),
+      dialogMode,
       dialogOpen,
       downloadAndInstall,
-      openDialog: () => setDialogOpen(true),
+      openDialog: (mode: AppUpdateDialogMode = "update") => {
+        setDialogMode(mode);
+        setDialogOpen(true);
+      },
       openReleases: openReleasePage,
       restartApp,
       state,
     }),
-    [checkForUpdates, dialogOpen, downloadAndInstall, restartApp, state],
+    [checkForUpdates, dialogMode, dialogOpen, downloadAndInstall, restartApp, state],
   );
 
   return <AppUpdateContext.Provider value={value}>{children}</AppUpdateContext.Provider>;

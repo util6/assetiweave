@@ -1,13 +1,25 @@
 import clsx from "clsx";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import type { ReactNode } from "react";
 import { useI18n } from "../../../i18n/I18nProvider";
 import { headerTabLabel, railLabel } from "../../../i18n/navigation";
 import { MenuIcon } from "../../../router/icons";
 import type { HeaderTabItem, NavigationIcon, RailMenuItem } from "../../../router/types";
 
+export interface SideRailBrandAction {
+  ariaLabel: string;
+  busy?: boolean;
+  icon?: ReactNode;
+  label: string;
+  onClick: () => void;
+  title?: string;
+  tone?: "error" | "neutral" | "ready" | "update";
+}
+
 export function SideRail({
   activeId,
   activeHeaderTabId,
+  brandAction,
   expanded,
   headerTabs,
   items,
@@ -17,6 +29,7 @@ export function SideRail({
 }: {
   activeId: string;
   activeHeaderTabId: string;
+  brandAction?: SideRailBrandAction;
   expanded: boolean;
   headerTabs: HeaderTabItem[];
   items: RailMenuItem[];
@@ -41,20 +54,7 @@ export function SideRail({
     >
       <div className={clsx("flex w-full flex-col gap-2", expanded ? "items-stretch" : "items-center")}>
         <div className={clsx("mb-4 flex w-full items-center gap-2", expanded ? "justify-between" : "flex-col")}>
-          <div
-            className={clsx(
-              "flex h-10 items-center rounded-xl border border-theme-nav-active-border bg-theme-nav-active text-theme-nav-active-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.26)]",
-              expanded ? "min-w-0 flex-1 gap-3 px-3" : "size-10 justify-center",
-            )}
-            title="AssetIWeave"
-          >
-            <MenuIcon name="rocket" size={22} />
-            {expanded ? (
-              <span className="min-w-0 truncate text-body-md font-semibold" data-side-rail-label="">
-                AssetIWeave
-              </span>
-            ) : null}
-          </div>
+          <BrandIdentity action={brandAction} expanded={expanded} />
           <button
             className="grid size-10 shrink-0 place-items-center rounded-xl border border-transparent text-on-surface-variant/75 transition-all hover:border-theme-nav-active-border hover:bg-theme-nav-hover hover:text-theme-nav-active-fg active:scale-95"
             aria-expanded={expanded}
@@ -69,9 +69,110 @@ export function SideRail({
         <HeaderTabRailGroup activeId={activeHeaderTabId} expanded={expanded} tabs={enabledHeaderTabs} onSelect={onHeaderTabSelect} />
       </div>
 
-      <RailGroup activeId={activeId} expanded={expanded} items={secondaryItems} onItemSelect={onItemSelect} />
+      <div className={clsx("flex w-full flex-col gap-2", expanded ? "items-stretch" : "items-center")}>
+        <RailGroup activeId={activeId} expanded={expanded} items={secondaryItems} onItemSelect={onItemSelect} />
+      </div>
     </aside>
   );
+}
+
+function BrandIdentity({
+  action,
+  expanded,
+}: {
+  action?: SideRailBrandAction;
+  expanded: boolean;
+}) {
+  const toneClassName = getBrandActionToneClassName(action?.tone);
+  const brandClassName = clsx(
+    "flex h-10 items-center rounded-xl border border-theme-nav-active-border bg-theme-nav-active text-theme-nav-active-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.26)]",
+    expanded ? "min-w-0 flex-1 gap-3 px-3" : "size-10 justify-center",
+    action && !expanded && toneClassName,
+  );
+
+  if (!expanded && action) {
+    return (
+      <button
+        aria-label={action.ariaLabel}
+        className={clsx(brandClassName, "relative transition-colors hover:bg-theme-nav-hover active:scale-95")}
+        onClick={action.onClick}
+        title={action.title ?? action.ariaLabel}
+        type="button"
+      >
+        <MenuIcon name="rocket" size={22} />
+        {action.icon ? (
+          <span
+            className={clsx(
+              "absolute -right-1 -top-1 grid size-4 place-items-center rounded-full border border-theme-nav bg-theme-card shadow-[0_4px_10px_rgb(var(--theme-panel-shadow)/0.2)]",
+              getBrandActionIconToneClassName(action.tone),
+              action.busy && "animate-spin",
+            )}
+          >
+            {action.icon}
+          </span>
+        ) : null}
+      </button>
+    );
+  }
+
+  return (
+    <div className={brandClassName} title="AssetIWeave">
+      <MenuIcon name="rocket" size={22} />
+      {expanded ? (
+        action ? (
+          <button
+            aria-label={action.ariaLabel}
+            className={clsx(
+              "flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-1.5 py-1 text-left text-body-sm font-semibold transition-colors hover:bg-theme-nav-hover active:scale-[0.98]",
+              toneClassName,
+            )}
+            onClick={action.onClick}
+            title={action.title ?? action.ariaLabel}
+            type="button"
+          >
+            {action.icon ? (
+              <span className={clsx("grid size-4 shrink-0 place-items-center", action.busy && "animate-spin")}>
+                {action.icon}
+              </span>
+            ) : null}
+            <span className="min-w-0 truncate" data-side-rail-label="">
+              {action.label}
+            </span>
+          </button>
+        ) : (
+          <span className="min-w-0 truncate text-body-md font-semibold" data-side-rail-label="">
+            AssetIWeave
+          </span>
+        )
+      ) : null}
+    </div>
+  );
+}
+
+function getBrandActionToneClassName(tone: SideRailBrandAction["tone"] | undefined) {
+  if (!tone || tone === "neutral") {
+    return "";
+  }
+  if (tone === "error") {
+    return "border-status-remove/45 bg-status-remove/15 text-status-remove hover:text-status-remove";
+  }
+  if (tone === "ready") {
+    return "border-status-create/45 bg-status-create/15 text-status-create hover:text-status-create";
+  }
+  return "border-status-update/45 bg-status-update/15 text-status-update hover:text-status-update";
+}
+
+function getBrandActionIconToneClassName(tone: SideRailBrandAction["tone"] | undefined) {
+  if (!tone || tone === "neutral") {
+    return "text-theme-nav-active-fg";
+  }
+  if (tone === "error") {
+    return "text-status-remove";
+  }
+  if (tone === "ready") {
+    return "text-status-create";
+  }
+  return "text-status-update";
 }
 
 function HeaderTabRailGroup({

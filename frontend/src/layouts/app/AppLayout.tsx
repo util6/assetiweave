@@ -1,9 +1,12 @@
 import { lazy, Suspense, useState, type CSSProperties, type ReactNode } from "react";
+import { AlertCircle, CheckCircle2, DownloadCloud, RefreshCw } from "lucide-react";
+import { useAppUpdater, type AppUpdateDialogMode, type AppUpdateStatus } from "../../app/updates/AppUpdateProvider";
 import { NotificationBanner, type NotificationMessage } from "../../components/notifications/NotificationBanner";
+import { useI18n } from "../../i18n/I18nProvider";
 import type { HeaderTabItem, NavigationModel, RailMenuItem } from "../../router/types";
 import type { SettingsPanelId } from "../../store/settings/AppSettingsProvider";
 import type { AppShortcut } from "../../types";
-import { SideRail } from "./navigation/SideRail";
+import { SideRail, type SideRailBrandAction } from "./navigation/SideRail";
 import { SubNavigation } from "./navigation/SubNavigation";
 
 const GlobalSettingsDialog = lazy(() =>
@@ -49,9 +52,12 @@ export function AppLayout({
   settingsPanel: SettingsPanelId;
   settingsOpen: boolean;
 }) {
+  const { t } = useI18n();
+  const { openDialog: openUpdateDialog, state: updateState } = useAppUpdater();
   const [sideRailExpanded, setSideRailExpanded] = useState(false);
   const activeSubNavItems = navigationModel.subNavItems[navigationModel.activeHeaderTabId] ?? [];
   const railItems = ensureLogRailItem(navigationModel.railItems).filter(isSupportedRailItem);
+  const updateBrandAction = getUpdateBrandAction(updateState, openUpdateDialog, t);
   const layoutStyle = {
     "--app-sidebar-width": sideRailExpanded ? "216px" : "64px",
     "--app-notification-offset": notification ? "78px" : "0px",
@@ -73,6 +79,7 @@ export function AppLayout({
       <SideRail
         activeId={logViewerOpen ? "logs" : settingsOpen ? "settings" : navigationModel.activeRailId}
         activeHeaderTabId={navigationModel.activeHeaderTabId}
+        brandAction={updateBrandAction}
         expanded={sideRailExpanded}
         headerTabs={navigationModel.headerTabs}
         items={railItems}
@@ -103,6 +110,93 @@ export function AppLayout({
       ) : null}
     </div>
   );
+}
+
+type UpdateLabelKey =
+  | "app.title"
+  | "update.button.available"
+  | "update.button.downloading"
+  | "update.button.error"
+  | "update.button.installing"
+  | "update.button.ready"
+  | "update.intro.open";
+
+function getUpdateBrandAction(
+  state: {
+    info: { version: string } | null;
+    status: AppUpdateStatus;
+    supported: boolean;
+  },
+  openDialog: (mode?: AppUpdateDialogMode) => void,
+  t: (key: UpdateLabelKey) => string,
+): SideRailBrandAction | undefined {
+  if (!state.supported) {
+    return undefined;
+  }
+
+  if (!state.info) {
+    const label = t("app.title");
+    return {
+      ariaLabel: t("update.intro.open"),
+      label,
+      onClick: () => openDialog("intro"),
+      title: t("update.intro.open"),
+      tone: "neutral",
+    };
+  }
+
+  const statusLabel = getUpdateBrandLabel(state.status, t);
+  const label = `${statusLabel} v${state.info.version}`;
+  const Icon = getUpdateBrandIcon(state.status);
+
+  return {
+    ariaLabel: label,
+    busy: state.status === "downloading" || state.status === "installing",
+    icon: <Icon size={12} />,
+    label,
+    onClick: () => openDialog("update"),
+    title: label,
+    tone: getUpdateBrandTone(state.status),
+  };
+}
+
+function getUpdateBrandLabel(status: AppUpdateStatus, t: (key: UpdateLabelKey) => string) {
+  if (status === "downloading") {
+    return t("update.button.downloading");
+  }
+  if (status === "installing") {
+    return t("update.button.installing");
+  }
+  if (status === "ready") {
+    return t("update.button.ready");
+  }
+  if (status === "error") {
+    return t("update.button.error");
+  }
+  return t("update.button.available");
+}
+
+function getUpdateBrandIcon(status: AppUpdateStatus) {
+  if (status === "ready") {
+    return CheckCircle2;
+  }
+  if (status === "error") {
+    return AlertCircle;
+  }
+  if (status === "downloading" || status === "installing") {
+    return RefreshCw;
+  }
+  return DownloadCloud;
+}
+
+function getUpdateBrandTone(status: AppUpdateStatus): SideRailBrandAction["tone"] {
+  if (status === "ready") {
+    return "ready";
+  }
+  if (status === "error") {
+    return "error";
+  }
+  return "update";
 }
 
 const logRailItem: RailMenuItem = {

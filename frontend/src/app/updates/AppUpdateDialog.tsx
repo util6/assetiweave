@@ -7,14 +7,15 @@ import { useAppUpdater } from "./AppUpdateProvider";
 
 export function AppUpdateDialog() {
   const { locale, t } = useI18n();
-  const { checkForUpdates, closeDialog, dialogOpen, downloadAndInstall, openReleases, restartApp, state } = useAppUpdater();
+  const { checkForUpdates, closeDialog, dialogMode, dialogOpen, downloadAndInstall, openReleases, restartApp, state } = useAppUpdater();
 
   if (!dialogOpen || !state.supported) {
     return null;
   }
 
-  const busy = state.status === "checking" || state.status === "downloading" || state.status === "installing";
-  const canClose = state.status !== "installing";
+  const introMode = dialogMode === "intro";
+  const busy = !introMode && (state.status === "checking" || state.status === "downloading" || state.status === "installing");
+  const canClose = introMode || state.status !== "installing";
   const hasUpdate = Boolean(state.info);
   const retryText = state.retryAttempt && state.retryTotal
     ? t("update.retrying", { attempt: state.retryAttempt, total: state.retryTotal })
@@ -31,9 +32,14 @@ export function AppUpdateDialog() {
       busy={!canClose}
       closeLabel={t("common.close")}
       contentClassName="space-y-4"
-      description={t("update.dialog.description")}
+      description={introMode ? t("update.intro.description") : t("update.dialog.description")}
       footer={
-        <>
+        introMode ? (
+          <Button onClick={handleClose} type="button">
+            {t("update.action.acknowledge")}
+          </Button>
+        ) : (
+          <>
           <Button disabled={!canClose} onClick={handleClose} type="button" variant="outline">
             {state.status === "ready" ? t("update.action.later") : t("common.close")}
           </Button>
@@ -66,19 +72,23 @@ export function AppUpdateDialog() {
               {state.status === "downloading" ? t("update.action.downloading") : state.status === "installing" ? t("update.action.installing") : t("update.action.checking")}
             </Button>
           )}
-        </>
+          </>
+        )
       }
-      icon={getDialogIcon(state.status)}
+      icon={introMode ? <CheckCircle2 size={20} /> : getDialogIcon(state.status)}
       iconClassName={cn(
         "border-status-update/30 bg-status-update/15 text-status-update",
-        state.status === "ready" && "border-status-create/30 bg-status-create/15 text-status-create",
-        state.status === "error" && "border-status-remove/30 bg-status-remove/15 text-status-remove",
+        (introMode || state.status === "ready") && "border-status-create/30 bg-status-create/15 text-status-create",
+        !introMode && state.status === "error" && "border-status-remove/30 bg-status-remove/15 text-status-remove",
       )}
       onClose={handleClose}
       size="md"
-      title={t("update.dialog.title")}
+      title={introMode ? t("update.intro.title") : t("update.dialog.title")}
     >
-      <div className="space-y-3">
+      {introMode ? (
+        <CurrentVersionIntro currentVersion={state.currentVersion} />
+      ) : (
+        <div className="space-y-3">
         <div className="rounded-lg border border-theme-card-border bg-theme-card/75 p-3">
           <p className="text-body-md font-semibold text-on-surface">{getStatusTitle(state.status, t)}</p>
           <p className="mt-1 text-body-sm text-on-surface-variant">{getStatusDescription(state.status, t)}</p>
@@ -134,8 +144,46 @@ export function AppUpdateDialog() {
           </div>
         )}
       </div>
+      )}
       {busy && <span className="sr-only">{t("common.loading")}</span>}
     </DialogFrame>
+  );
+}
+
+function CurrentVersionIntro({ currentVersion }: { currentVersion?: string }) {
+  const { t } = useI18n();
+  const highlights = [
+    t("update.intro.highlight.navigation"),
+    t("update.intro.highlight.updater"),
+    t("update.intro.highlight.backgroundTasks"),
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-theme-card-border bg-theme-card/75 p-3">
+        <p className="text-body-md font-semibold text-on-surface">{t("update.intro.currentTitle")}</p>
+        <p className="mt-1 text-body-sm text-on-surface-variant">{t("update.intro.currentDescription")}</p>
+      </div>
+
+      <div className="grid gap-2 rounded-lg border border-theme-card-border bg-theme-panel/70 p-3 text-body-sm">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-on-surface-variant">{t("update.currentVersion")}</span>
+          <span className="font-semibold text-status-create">{currentVersion ? `v${currentVersion}` : t("common.none")}</span>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-theme-card-border bg-theme-panel/70 p-3">
+        <h3 className="text-body-sm font-semibold text-on-surface">{t("update.intro.highlights")}</h3>
+        <ul className="mt-2 grid gap-2 text-body-sm leading-6 text-on-surface-variant">
+          {highlights.map((highlight) => (
+            <li className="flex gap-2" key={highlight}>
+              <CheckCircle2 className="mt-0.5 shrink-0 text-status-create" size={15} />
+              <span>{highlight}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
   );
 }
 
