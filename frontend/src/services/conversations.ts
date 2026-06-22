@@ -757,18 +757,6 @@ const fallbackAdapters: ConversationAdapter[] = [
     updated_at: now,
   },
   {
-    id: "claude-code",
-    name: "Claude Code",
-    kind: "claude_code",
-    version: "1",
-    enabled: true,
-    trust_state: "built_in",
-    capabilities: ["probe", "list_sessions", "read_session"],
-    input_kinds: ["live", "directory", "file"],
-    created_at: now,
-    updated_at: now,
-  },
-  {
     id: "opencode",
     name: "OpenCode",
     kind: "opencode",

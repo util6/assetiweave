@@ -896,10 +896,10 @@ const adapters: ConversationAdapter[] = [
   {
     id: "claude-code",
     name: "Claude Code",
-    kind: "claude_code",
-    version: "1",
+    kind: "external",
+    version: "1.0.0",
     enabled: true,
-    trust_state: "built_in",
+    trust_state: "trusted",
     capabilities: [],
     input_kinds: ["directory"],
     created_at: now,

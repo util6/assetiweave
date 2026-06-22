@@ -434,12 +434,12 @@ export const manualDocuments = [
           body: "对话来源和适配器不再作为独立页面展示，它们是同步链路里的配置层：来源定义读哪里，适配器定义怎么把外部记录解析成 Session、Turn 和 Part。",
           outcomes: [
             "理解 source、adapter、Session 三者的关系，避免把同步失败误判成浏览页面问题。",
-            "知道内置 Codex、Claude Code、OpenCode adapter 可以直接参与同步。",
+            "知道 Codex 和 OpenCode 保留内置兜底；Claude Code、ZCode 等来源通过外部插件参与同步。",
             "知道新增外部 adapter 后，需要让来源绑定正确的 adapter_id 才能导入数据。",
           ],
           items: [
             "来源包含 id、adapter_id、name、kind、location、config_json 和 enabled 等字段。",
-            "adapter_id 必须指向一个已存在且可用的内置或外部适配器。",
+            "adapter_id 必须指向一个已存在且可用的适配器；除 Codex/OpenCode 兜底外，应优先走外部插件。",
             "Session 浏览页点击同步时，会读取已启用来源；禁用来源不会导入新记录。",
             "外部适配器需要通过 manifest 声明协议版本、命令入口、能力和输入来源类型。",
           ],
@@ -523,12 +523,12 @@ export const manualDocuments = [
           body: "Conversation sources and adapters are no longer separate screens. They are the configuration layer of sync: sources define where to read, and adapters define how external records become sessions, turns, and parts.",
           outcomes: [
             "Understand the source, adapter, and session relationship before debugging sync.",
-            "Know that built-in Codex, Claude Code, and OpenCode adapters can sync directly.",
+            "Know that Codex and OpenCode keep built-in fallback, while sources such as Claude Code and ZCode sync through external plugins.",
             "Know that each new external adapter needs sources bound to the correct adapter_id.",
           ],
           items: [
             "A source includes id, adapter_id, name, kind, location, config_json, and enabled fields.",
-            "adapter_id must point to an existing built-in or external adapter.",
+            "adapter_id must point to an existing usable adapter; except for Codex/OpenCode fallback, prefer external plugins.",
             "The Sync action reads enabled sources; disabled sources do not import new records.",
             "An external adapter manifest declares protocol version, command entry, capabilities, and supported input kinds.",
           ],
