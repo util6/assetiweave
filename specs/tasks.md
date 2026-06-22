@@ -272,11 +272,11 @@
 - [X] 17.1 定义 Conversation 核心模型：Adapter、Source、Session、Turn、Part、Question、QuestionTurn、SyncRun
 - [X] 17.2 实现 Markdown 文本/代码块拆分和简单确认回复自动合并规则
 - [X] 17.3 新增 SQLite Conversation 表和 FTS5 搜索表
-- [X] 17.4 Seed 内置 Codex、Claude Code、OpenCode adapter 和默认 live source
+- [X] 17.4 Seed 内置 Codex、OpenCode adapter 和默认 live source
 - [X] 17.5 实现标准化导入、幂等同步、Question Group 初始化和聚合字段重建
 - [X] 17.6 实现人工合并相邻 Question 和按 Turn 拆分 Question
 - [X] 17.7 实现 Session Markdown 导出，每个 Session 一个文件
-- [X] 17.8 实现 Codex、Claude Code、OpenCode 内置适配器入口
+- [X] 17.8 实现 Codex、OpenCode 内置兜底适配器入口
 - [X] 17.9 实现外部 adapter manifest scaffold/validate/register/unregister/try-run
 - [X] 17.10 Engine 注册 `conversation.*` 方法并重新生成 CLI Contract
 - [X] 17.11 Go CLI 新增 `conversation adapter/source/sync/session/question` 命令树
@@ -284,7 +284,7 @@
 - [X] 17.13 前端新增顶层 Conversations tab 和 Session-first 页面
 - [X] 17.14 导航 seed 支持补缺 Conversations tab，不覆盖已有用户菜单配置
 - [X] 17.15 为 Core 分组规则和存储层 merge/split/idempotent sync 添加测试
-- [X] 17.16 补充 Codex/Claude Code/OpenCode 脱敏 fixture 测试
+- [X] 17.16 补充 Codex/OpenCode 和外部适配器脱敏 fixture 测试
 - [X] 17.17 补充外部 adapter 协议错误、超时、输出上限和 hash 变化测试
 - [X] 17.18 使用真实本机三类来源做手工同步验收
 - [X] 17.19 使用浏览器/桌面窗口验收 Conversations 页面交互和控制台错误

@@ -41,7 +41,7 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - `scanner/`：资产扫描与分类模块目录，负责 Source 目录遍历、include/exclude glob、`SKILL.md` 目录识别和资产描述提取。后续按规模继续拆分为 walker、classifier、extractor。
 - `planner/`：部署计划生成模块目录，负责 create/skip/conflict 决策和解释文本。后续按 Profile 匹配、目标路径解析、冲突判断继续拆分。
 - `executor/`：部署执行模块目录，负责 `symlink_to_source`、`copy_to_target`、安全边界、非托管文件冲突和 deployment state 记录。后续按 filesystem、strategy、state recorder 继续拆分。
-- `conversations/`：对话记录适配器模块，负责内置 Codex/Claude Code/OpenCode 解析、外部适配器 manifest 校验、可信注册、NDJSON try-run 和标准化 Session/Turn/Part 输出。
+- `conversations/`：对话记录适配器模块，负责外部适配器 manifest 校验、可信注册、NDJSON try-run、标准化 Session/Turn/Part 输出，以及 Codex/OpenCode 的内置兜底解析。
 - `defaults.rs`：默认 Source/Profile 模板。
 - `path_utils.rs`：路径展开、相对路径归一化、hash 等跨模块工具。
 - `platform.rs`：平台集成，例如在文件管理器中显示路径。
@@ -291,8 +291,8 @@ source repo asset
 对话记录页面挂在顶层 `Conversations` tab 下，采用 Session-first 信息架构：
 
 - `Sessions`：先搜索/选择 Session，再浏览该 Session 中的 Question Group。
-- `Sources`：查看 Codex、Claude Code、OpenCode 和手动/外部来源，并触发同步。
-- `Adapters`：查看内置与外部适配器、信任状态和 CLI 开发工作流。
+- `Sources`：查看 Codex、OpenCode 和通过外部插件注册的来源，并触发同步。
+- `Adapters`：查看 Codex/OpenCode 兜底适配器、外部适配器、信任状态和 CLI 开发工作流。
 
 页面不嵌入 AI API。需要 AI 辅助整理时，UI 提供 CLI 指令，引导外部 Agent/Skill 调用 `assetiweave-cli conversation ...` 完成同步、检查、merge/split 和导出。
 
