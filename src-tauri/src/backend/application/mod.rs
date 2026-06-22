@@ -9,8 +9,9 @@ use crate::backend::{
     },
     models::{
         Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
-        ConversationSource, ConversationSourceKind, DeploymentPlan, DeploymentStrategy, Source,
-        SourceOrigin, SourceScannerKind, TargetProfile,
+        ConversationAdapterKind, ConversationAdapterTrustState, ConversationSource,
+        ConversationSourceKind, DeploymentPlan, DeploymentStrategy, Source, SourceOrigin,
+        SourceScannerKind, TargetProfile,
     },
 };
 use chrono::Utc;
@@ -35,6 +36,40 @@ const SKILL_REMOTE_SECURITY_NOTICE: &str =
     "Review remote Skill contents before importing; AssetIWeave does not execute or trust remote code automatically.";
 const CONVERSATION_ADAPTER_MANIFEST_FILE: &str = "conversation-adapter.json";
 const MAX_CONVERSATION_PLUGIN_FILES: usize = 2048;
+const LEGACY_EXTERNAL_CONVERSATION_ADAPTER_IDS: &[&str] = &["claude-code", "zcode"];
+
+struct DefaultConversationAdapterAsset {
+    id: &'static str,
+    kind: ConversationAdapterKind,
+    trust_state: ConversationAdapterTrustState,
+    directory: &'static str,
+    manifest: &'static str,
+    executable_name: &'static str,
+    executable: &'static str,
+}
+
+const DEFAULT_CONVERSATION_ADAPTERS: &[DefaultConversationAdapterAsset] = &[
+    DefaultConversationAdapterAsset {
+        id: "codex",
+        kind: ConversationAdapterKind::Codex,
+        trust_state: ConversationAdapterTrustState::BuiltIn,
+        directory: "codex",
+        manifest: include_str!("../default_conversation_adapters/codex/conversation-adapter.json"),
+        executable_name: "adapter.mjs",
+        executable: include_str!("../default_conversation_adapters/codex/adapter.mjs"),
+    },
+    DefaultConversationAdapterAsset {
+        id: "opencode",
+        kind: ConversationAdapterKind::OpenCode,
+        trust_state: ConversationAdapterTrustState::BuiltIn,
+        directory: "opencode",
+        manifest: include_str!(
+            "../default_conversation_adapters/opencode/conversation-adapter.json"
+        ),
+        executable_name: "adapter.mjs",
+        executable: include_str!("../default_conversation_adapters/opencode/adapter.mjs"),
+    },
+];
 
 #[derive(Debug, Clone)]
 struct SkillBackupCopyTarget {
@@ -517,6 +552,9 @@ impl AppService {
 
     pub(crate) fn open_with_db_path(db_path: PathBuf) -> AppResult<Self> {
         let conn = crate::backend::store::open_initialized(&db_path)?;
+        ensure_default_conversation_adapters(&conn)?;
+        migrate_legacy_conversation_adapters_to_plugin_dir(&conn)?;
+        register_external_conversation_adapters_from_dir(&conn)?;
         Ok(Self { conn, db_path })
     }
 
@@ -2094,6 +2132,297 @@ fn prepare_conversation_entry_adapter(
     }
 }
 
+fn ensure_default_conversation_adapters(conn: &Connection) -> AppResult<()> {
+    let target_root = crate::backend::app_settings::conversation_adapter_dir()?;
+    fs::create_dir_all(&target_root).map_err(|error| error.to_string())?;
+
+    for asset in DEFAULT_CONVERSATION_ADAPTERS {
+        let target_dir = target_root.join(asset.directory);
+        let manifest_path = target_dir.join(CONVERSATION_ADAPTER_MANIFEST_FILE);
+        let mut validation = default_adapter_files_match(asset, &manifest_path)
+            .then(|| validate_existing_default_adapter(asset, &manifest_path).ok())
+            .flatten();
+        if validation.is_none() {
+            fs::create_dir_all(&target_dir).map_err(|error| error.to_string())?;
+            fs::write(&manifest_path, asset.manifest).map_err(|error| error.to_string())?;
+            let executable_path = target_dir.join(asset.executable_name);
+            fs::write(&executable_path, asset.executable).map_err(|error| error.to_string())?;
+            set_executable_permission(&executable_path)?;
+            validation = Some(crate::backend::conversations::validate_external_adapter(
+                crate::backend::conversations::ExternalAdapterValidateParams {
+                    manifest_path: manifest_path.to_string_lossy().to_string(),
+                },
+            )?);
+            validate_plugin_local_command(&target_dir, asset.executable_name)?;
+        }
+
+        let validation = validation.expect("default adapter validation is set");
+        let now = Utc::now().to_rfc3339();
+        let existing = crate::backend::store::load_conversation_adapter(conn, asset.id)?;
+        let created_at = existing
+            .as_ref()
+            .map(|adapter| adapter.created_at.clone())
+            .unwrap_or_else(|| now.clone());
+        let enabled = existing
+            .as_ref()
+            .map(|adapter| adapter.enabled)
+            .unwrap_or(true);
+        crate::backend::store::upsert_conversation_adapter(
+            conn,
+            &ConversationAdapter {
+                id: validation.manifest.id.clone(),
+                name: validation.manifest.name.clone(),
+                kind: asset.kind,
+                version: validation.manifest.version.clone(),
+                enabled,
+                manifest_path: Some(validation.manifest_path.clone()),
+                executable_path: Some(validation.executable_path.clone()),
+                content_hash: validation.executable_hash.clone(),
+                trusted_hash: validation
+                    .executable_hash
+                    .clone()
+                    .or(Some(validation.manifest_hash.clone())),
+                trust_state: asset.trust_state,
+                protocol_version: Some(validation.manifest.protocol_version),
+                capabilities: validation.manifest.capabilities.clone(),
+                input_kinds: validation.manifest.input_kinds.clone(),
+                created_at,
+                updated_at: now,
+            },
+        )?;
+    }
+
+    Ok(())
+}
+
+fn default_adapter_files_match(
+    asset: &DefaultConversationAdapterAsset,
+    manifest_path: &Path,
+) -> bool {
+    let Some(target_dir) = manifest_path.parent() else {
+        return false;
+    };
+    let executable_path = target_dir.join(asset.executable_name);
+    fs::read_to_string(manifest_path).is_ok_and(|content| content == asset.manifest)
+        && fs::read_to_string(executable_path).is_ok_and(|content| content == asset.executable)
+}
+
+fn register_external_conversation_adapters_from_dir(conn: &Connection) -> AppResult<()> {
+    let root = crate::backend::app_settings::conversation_adapter_dir()?;
+    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let entries = fs::read_dir(&root).map_err(|error| error.to_string())?;
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                eprintln!("failed to read conversation adapter directory entry: {error}");
+                continue;
+            }
+        };
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                eprintln!(
+                    "failed to inspect conversation adapter directory {}: {error}",
+                    entry.path().display()
+                );
+                continue;
+            }
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let manifest_path = entry.path().join(CONVERSATION_ADAPTER_MANIFEST_FILE);
+        if !manifest_path.is_file() {
+            continue;
+        }
+        if let Err(error) = register_external_conversation_adapter_manifest(conn, &manifest_path) {
+            eprintln!(
+                "failed to register external conversation adapter {}: {error}",
+                manifest_path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn migrate_legacy_conversation_adapters_to_plugin_dir(conn: &Connection) -> AppResult<()> {
+    for adapter_id in LEGACY_EXTERNAL_CONVERSATION_ADAPTER_IDS {
+        if let Err(error) = migrate_legacy_conversation_adapter_to_plugin_dir(conn, adapter_id) {
+            eprintln!("failed to migrate conversation adapter {adapter_id}: {error}");
+        }
+    }
+    Ok(())
+}
+
+fn migrate_legacy_conversation_adapter_to_plugin_dir(
+    conn: &Connection,
+    adapter_id: &str,
+) -> AppResult<()> {
+    let Some(adapter) = crate::backend::store::load_conversation_adapter(conn, adapter_id)? else {
+        return Ok(());
+    };
+    let Some(manifest_path) = adapter.manifest_path.as_deref() else {
+        return Ok(());
+    };
+    let source_manifest = crate::backend::path_utils::expand_path(manifest_path)?;
+    if !source_manifest.is_file() {
+        return Ok(());
+    }
+    let target_root = crate::backend::app_settings::conversation_adapter_dir()?;
+    fs::create_dir_all(&target_root).map_err(|error| error.to_string())?;
+    if path_contains(&target_root, &source_manifest) {
+        return Ok(());
+    }
+    let source_dir = source_manifest
+        .parent()
+        .ok_or_else(|| format!("{adapter_id} adapter manifest has no parent directory"))?;
+    validate_legacy_conversation_adapter_manifest(adapter_id, &source_manifest, source_dir)?;
+    let target_dir = target_root.join(slug_path_segment(adapter_id));
+    let target_manifest = target_dir.join(CONVERSATION_ADAPTER_MANIFEST_FILE);
+    if target_manifest.is_file() {
+        let target_dir = target_manifest
+            .parent()
+            .ok_or_else(|| format!("{adapter_id} adapter manifest has no parent directory"))?;
+        validate_legacy_conversation_adapter_manifest(adapter_id, &target_manifest, target_dir)?;
+        return register_external_conversation_adapter_manifest(conn, &target_manifest);
+    }
+    if target_dir.exists() {
+        return Ok(());
+    }
+    let staging_dir = target_root.join(format!(
+        ".migration-{}-{}",
+        slug_path_segment(adapter_id),
+        short_uuid()
+    ));
+    if let Err(error) = copy_conversation_plugin_dir(source_dir, &staging_dir) {
+        fs::remove_dir_all(&staging_dir).ok();
+        return Err(error);
+    }
+    let staging_manifest = staging_dir.join(CONVERSATION_ADAPTER_MANIFEST_FILE);
+    if let Err(error) =
+        validate_legacy_conversation_adapter_manifest(adapter_id, &staging_manifest, &staging_dir)
+    {
+        fs::remove_dir_all(&staging_dir).ok();
+        return Err(error);
+    }
+    fs::rename(&staging_dir, &target_dir).map_err(|error| {
+        fs::remove_dir_all(&staging_dir).ok();
+        error.to_string()
+    })?;
+    register_external_conversation_adapter_manifest(conn, &target_manifest)
+}
+
+fn validate_legacy_conversation_adapter_manifest(
+    adapter_id: &str,
+    manifest_path: &Path,
+    plugin_dir: &Path,
+) -> AppResult<()> {
+    let validation = crate::backend::conversations::validate_external_adapter(
+        crate::backend::conversations::ExternalAdapterValidateParams {
+            manifest_path: manifest_path.to_string_lossy().to_string(),
+        },
+    )?;
+    if validation.manifest.id != adapter_id {
+        return Err(format!(
+            "legacy conversation adapter id mismatch: expected {}, got {}",
+            adapter_id, validation.manifest.id
+        ));
+    }
+    validate_plugin_local_command(plugin_dir, &validation.manifest.command[0])
+}
+
+fn register_external_conversation_adapter_manifest(
+    conn: &Connection,
+    manifest_path: &Path,
+) -> AppResult<()> {
+    let validation = crate::backend::conversations::validate_external_adapter(
+        crate::backend::conversations::ExternalAdapterValidateParams {
+            manifest_path: manifest_path.to_string_lossy().to_string(),
+        },
+    )?;
+    if matches!(validation.manifest.id.as_str(), "codex" | "opencode") {
+        return Ok(());
+    }
+    let manifest_dir = manifest_path
+        .parent()
+        .ok_or_else(|| "conversation adapter manifest has no parent directory".to_string())?;
+    validate_plugin_local_command(manifest_dir, &validation.manifest.command[0])?;
+    let now = Utc::now().to_rfc3339();
+    let existing = crate::backend::store::load_conversation_adapter(conn, &validation.manifest.id)?;
+    let created_at = existing
+        .as_ref()
+        .map(|adapter| adapter.created_at.clone())
+        .unwrap_or_else(|| now.clone());
+    let enabled = existing
+        .as_ref()
+        .map(|adapter| adapter.enabled)
+        .unwrap_or(true);
+    crate::backend::store::upsert_conversation_adapter(
+        conn,
+        &ConversationAdapter {
+            id: validation.manifest.id.clone(),
+            name: validation.manifest.name.clone(),
+            kind: ConversationAdapterKind::External,
+            version: validation.manifest.version.clone(),
+            enabled,
+            manifest_path: Some(validation.manifest_path.clone()),
+            executable_path: Some(validation.executable_path.clone()),
+            content_hash: validation.executable_hash.clone(),
+            trusted_hash: validation
+                .executable_hash
+                .clone()
+                .or(Some(validation.manifest_hash.clone())),
+            trust_state: ConversationAdapterTrustState::Trusted,
+            protocol_version: Some(validation.manifest.protocol_version),
+            capabilities: validation.manifest.capabilities.clone(),
+            input_kinds: validation.manifest.input_kinds.clone(),
+            created_at,
+            updated_at: now,
+        },
+    )
+}
+
+fn validate_existing_default_adapter(
+    asset: &DefaultConversationAdapterAsset,
+    manifest_path: &Path,
+) -> AppResult<crate::backend::conversations::ExternalAdapterValidationResult> {
+    let validation = crate::backend::conversations::validate_external_adapter(
+        crate::backend::conversations::ExternalAdapterValidateParams {
+            manifest_path: manifest_path.to_string_lossy().to_string(),
+        },
+    )?;
+    if validation.manifest.id != asset.id {
+        return Err(format!(
+            "default conversation adapter manifest id mismatch: expected {}, got {}",
+            asset.id, validation.manifest.id
+        ));
+    }
+    let manifest_dir = manifest_path
+        .parent()
+        .ok_or_else(|| "default conversation adapter manifest has no parent".to_string())?;
+    validate_plugin_local_command(manifest_dir, &validation.manifest.command[0])?;
+    Ok(validation)
+}
+
+fn set_executable_permission(path: &Path) -> AppResult<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(path)
+            .map_err(|error| error.to_string())?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
 fn install_conversation_entry_plugin(
     plugin_path: &str,
     plugin_id: Option<&str>,
@@ -3048,6 +3377,9 @@ mod tests {
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::Mutex;
+
+    static ASSETIWEAVE_HOME_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn batch_skill_backup_deduplicates_assets_and_reports_copy_progress() {
@@ -3581,7 +3913,273 @@ mod tests {
     }
 
     #[test]
+    fn open_service_installs_default_conversation_adapter_plugins() {
+        let _env_lock = ASSETIWEAVE_HOME_TEST_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-default-conversation-adapters-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create test root");
+        let app_home = root.join("app-home");
+        let previous_home = env::var_os("ASSETIWEAVE_HOME");
+        env::set_var("ASSETIWEAVE_HOME", &app_home);
+        let zcode_plugin = app_home.join("conversation-adapters").join("zcode");
+        fs::create_dir_all(&zcode_plugin).expect("create zcode plugin");
+        fs::write(
+            zcode_plugin.join("conversation-adapter.json"),
+            serde_json::json!({
+                "schema_version": 1,
+                "id": "zcode",
+                "name": "ZCode",
+                "version": "0.1.0",
+                "protocol_version": 1,
+                "command": ["adapter.sh"],
+                "capabilities": ["probe", "list_sessions", "read_session"],
+                "input_kinds": ["sqlite"]
+            })
+            .to_string(),
+        )
+        .expect("write zcode manifest");
+        let zcode_script = zcode_plugin.join("adapter.sh");
+        fs::write(
+            &zcode_script,
+            "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"session_count\":0}}'\n",
+        )
+        .expect("write zcode script");
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(&zcode_script)
+                .expect("zcode script metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&zcode_script, permissions).expect("mark zcode script executable");
+        }
+
+        let service =
+            AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+        let adapter_root = app_home.join("conversation-adapters");
+        let codex_manifest = adapter_root.join("codex").join("conversation-adapter.json");
+        let opencode_manifest = adapter_root
+            .join("opencode")
+            .join("conversation-adapter.json");
+        let zcode_manifest = adapter_root.join("zcode").join("conversation-adapter.json");
+
+        assert!(codex_manifest.is_file());
+        assert!(opencode_manifest.is_file());
+        assert!(zcode_manifest.is_file());
+        let codex = crate::backend::store::load_conversation_adapter(&service.conn, "codex")
+            .expect("load codex adapter")
+            .expect("codex adapter exists");
+        let opencode = crate::backend::store::load_conversation_adapter(&service.conn, "opencode")
+            .expect("load opencode adapter")
+            .expect("opencode adapter exists");
+        let zcode = crate::backend::store::load_conversation_adapter(&service.conn, "zcode")
+            .expect("load zcode adapter")
+            .expect("zcode adapter exists");
+        assert_eq!(codex.kind, ConversationAdapterKind::Codex);
+        assert_eq!(opencode.kind, ConversationAdapterKind::OpenCode);
+        assert_eq!(zcode.kind, ConversationAdapterKind::External);
+        assert_eq!(codex.trust_state, ConversationAdapterTrustState::BuiltIn);
+        assert_eq!(opencode.trust_state, ConversationAdapterTrustState::BuiltIn);
+        assert_eq!(zcode.trust_state, ConversationAdapterTrustState::Trusted);
+        assert_eq!(
+            codex.manifest_path.as_deref(),
+            Some(codex_manifest.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            opencode.manifest_path.as_deref(),
+            Some(opencode_manifest.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            zcode.manifest_path.as_deref(),
+            Some(zcode_manifest.to_string_lossy().as_ref())
+        );
+        assert!(
+            crate::backend::store::load_conversation_adapter(&service.conn, "claude-code")
+                .expect("load claude-code adapter")
+                .is_none()
+        );
+        assert!(
+            crate::backend::store::load_conversation_source(&service.conn, "claude-code-live")
+                .expect("load claude-code source")
+                .is_none()
+        );
+        assert!(
+            crate::backend::store::load_conversation_source(&service.conn, "zcode-live")
+                .expect("load zcode source")
+                .is_none()
+        );
+
+        drop(service);
+        fs::remove_dir_all(root).ok();
+        if let Some(previous_home) = previous_home {
+            env::set_var("ASSETIWEAVE_HOME", previous_home);
+        } else {
+            env::remove_var("ASSETIWEAVE_HOME");
+        }
+    }
+
+    #[test]
+    fn open_service_refreshes_changed_default_conversation_adapter_plugin() {
+        let _env_lock = ASSETIWEAVE_HOME_TEST_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-refresh-default-conversation-adapters-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create test root");
+        let app_home = root.join("app-home");
+        let previous_home = env::var_os("ASSETIWEAVE_HOME");
+        env::set_var("ASSETIWEAVE_HOME", &app_home);
+        let codex_plugin = app_home.join("conversation-adapters").join("codex");
+        fs::create_dir_all(&codex_plugin).expect("create codex plugin");
+        fs::write(
+            codex_plugin.join("conversation-adapter.json"),
+            serde_json::json!({
+                "schema_version": 1,
+                "id": "codex",
+                "name": "Codex",
+                "version": "0.9.0",
+                "protocol_version": 1,
+                "command": ["adapter.mjs"],
+                "capabilities": ["probe", "list_sessions", "read_session"],
+                "input_kinds": ["live", "file"]
+            })
+            .to_string(),
+        )
+        .expect("write stale codex manifest");
+        let codex_script = codex_plugin.join("adapter.mjs");
+        fs::write(
+            &codex_script,
+            "#!/usr/bin/env node\nprocess.stdout.write('{\"type\":\"complete\",\"item\":{}}\\n');\n",
+        )
+        .expect("write stale codex script");
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(&codex_script)
+                .expect("codex script metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&codex_script, permissions).expect("mark codex script executable");
+        }
+
+        let service =
+            AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+        let refreshed_script = fs::read_to_string(&codex_script).expect("read codex script");
+
+        assert_eq!(
+            refreshed_script,
+            include_str!("../default_conversation_adapters/codex/adapter.mjs")
+        );
+
+        drop(service);
+        fs::remove_dir_all(root).ok();
+        if let Some(previous_home) = previous_home {
+            env::set_var("ASSETIWEAVE_HOME", previous_home);
+        } else {
+            env::remove_var("ASSETIWEAVE_HOME");
+        }
+    }
+
+    #[test]
+    fn open_service_migrates_existing_zcode_adapter_to_plugin_dir() {
+        let _env_lock = ASSETIWEAVE_HOME_TEST_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-zcode-adapter-migration-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create test root");
+        let app_home = root.join("app-home");
+        let previous_home = env::var_os("ASSETIWEAVE_HOME");
+        env::set_var("ASSETIWEAVE_HOME", &app_home);
+        let legacy_plugin = root.join("legacy-zcode-plugin");
+        fs::create_dir_all(&legacy_plugin).expect("create legacy plugin");
+        let legacy_manifest = legacy_plugin.join("conversation-adapter.json");
+        fs::write(
+            &legacy_manifest,
+            serde_json::json!({
+                "schema_version": 1,
+                "id": "zcode",
+                "name": "ZCode",
+                "version": "0.1.0",
+                "protocol_version": 1,
+                "command": ["adapter.sh"],
+                "capabilities": ["probe", "list_sessions", "read_session"],
+                "input_kinds": ["sqlite"]
+            })
+            .to_string(),
+        )
+        .expect("write legacy manifest");
+        let legacy_script = legacy_plugin.join("adapter.sh");
+        fs::write(
+            &legacy_script,
+            "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"session_count\":0}}'\n",
+        )
+        .expect("write legacy script");
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(&legacy_script)
+                .expect("legacy script metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&legacy_script, permissions)
+                .expect("mark legacy script executable");
+        }
+
+        let db_path = root.join("app.db");
+        let conn = crate::backend::store::open_initialized(&db_path).expect("open db");
+        let now = Utc::now().to_rfc3339();
+        crate::backend::store::upsert_conversation_adapter(
+            &conn,
+            &ConversationAdapter {
+                id: "zcode".to_string(),
+                name: "ZCode".to_string(),
+                kind: ConversationAdapterKind::External,
+                version: "0.1.0".to_string(),
+                enabled: true,
+                manifest_path: Some(legacy_manifest.to_string_lossy().to_string()),
+                executable_path: Some(legacy_script.to_string_lossy().to_string()),
+                content_hash: None,
+                trusted_hash: None,
+                trust_state: ConversationAdapterTrustState::Trusted,
+                protocol_version: Some(1),
+                capabilities: vec!["read_session".to_string()],
+                input_kinds: vec![ConversationSourceKind::Sqlite],
+                created_at: now.clone(),
+                updated_at: now,
+            },
+        )
+        .expect("seed legacy zcode adapter");
+        drop(conn);
+
+        let service = AppService::open_with_db_path(db_path).expect("open application service");
+        let migrated_manifest = app_home
+            .join("conversation-adapters")
+            .join("zcode")
+            .join("conversation-adapter.json");
+        let zcode = crate::backend::store::load_conversation_adapter(&service.conn, "zcode")
+            .expect("load zcode adapter")
+            .expect("zcode adapter exists");
+
+        assert!(migrated_manifest.is_file());
+        assert_eq!(zcode.kind, ConversationAdapterKind::External);
+        assert_eq!(zcode.trust_state, ConversationAdapterTrustState::Trusted);
+        assert_eq!(
+            zcode.manifest_path.as_deref(),
+            Some(migrated_manifest.to_string_lossy().as_ref())
+        );
+
+        drop(service);
+        fs::remove_dir_all(root).ok();
+        if let Some(previous_home) = previous_home {
+            env::set_var("ASSETIWEAVE_HOME", previous_home);
+        } else {
+            env::remove_var("ASSETIWEAVE_HOME");
+        }
+    }
+
+    #[test]
     fn conversation_entry_add_installs_plugin_source_and_syncs_web_records() {
+        let _env_lock = ASSETIWEAVE_HOME_TEST_LOCK.lock().unwrap();
         let root = std::env::temp_dir().join(format!(
             "assetiweave-conversation-entry-add-{}",
             Uuid::new_v4()

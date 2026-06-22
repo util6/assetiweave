@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "opencode",
+  "name": "OpenCode",
+  "version": "1.0.0",
+  "protocol_version": 1,
+  "command": ["adapter.mjs"],
+  "capabilities": ["probe", "list_sessions", "read_session"],
+  "input_kinds": ["live", "sqlite"]
+}

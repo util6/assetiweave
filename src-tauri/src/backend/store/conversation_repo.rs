@@ -118,8 +118,14 @@ pub(crate) fn delete_conversation_adapter(
 ) -> AppResult<ConversationAdapter> {
     let adapter = load_conversation_adapter(conn, adapter_id)?
         .ok_or_else(|| format!("conversation adapter not found: {adapter_id}"))?;
-    if adapter.kind != ConversationAdapterKind::External {
-        return Err("built-in conversation adapters cannot be unregistered".to_string());
+    let protected_builtin = matches!(
+        (&adapter.id[..], adapter.kind),
+        ("codex", ConversationAdapterKind::Codex) | ("opencode", ConversationAdapterKind::OpenCode)
+    );
+    if protected_builtin {
+        return Err(
+            "Codex and OpenCode fallback conversation adapters cannot be unregistered".to_string(),
+        );
     }
     conn.execute(
         "DELETE FROM conversation_adapters WHERE id = ?1",
@@ -847,31 +853,6 @@ fn builtin_adapters(now: &str) -> Vec<ConversationAdapter> {
             updated_at: now.to_string(),
         },
         ConversationAdapter {
-            id: "claude-code".to_string(),
-            name: "Claude Code".to_string(),
-            kind: ConversationAdapterKind::ClaudeCode,
-            version: "1".to_string(),
-            enabled: true,
-            manifest_path: None,
-            executable_path: None,
-            content_hash: None,
-            trusted_hash: None,
-            trust_state: ConversationAdapterTrustState::BuiltIn,
-            protocol_version: None,
-            capabilities: vec![
-                "probe".to_string(),
-                "list_sessions".to_string(),
-                "read_session".to_string(),
-            ],
-            input_kinds: vec![
-                ConversationSourceKind::Live,
-                ConversationSourceKind::Directory,
-                ConversationSourceKind::File,
-            ],
-            created_at: now.to_string(),
-            updated_at: now.to_string(),
-        },
-        ConversationAdapter {
             id: "opencode".to_string(),
             name: "OpenCode".to_string(),
             kind: ConversationAdapterKind::OpenCode,
@@ -903,19 +884,6 @@ fn builtin_sources(now: &str) -> Vec<ConversationSource> {
             name: "Codex local sessions".to_string(),
             kind: ConversationSourceKind::Live,
             location: "~/.codex".to_string(),
-            config_json: None,
-            enabled: true,
-            last_synced_at: None,
-            last_sync_status: None,
-            created_at: now.to_string(),
-            updated_at: now.to_string(),
-        },
-        ConversationSource {
-            id: "claude-code-live".to_string(),
-            adapter_id: "claude-code".to_string(),
-            name: "Claude Code local sessions".to_string(),
-            kind: ConversationSourceKind::Live,
-            location: "~/.claude/projects".to_string(),
             config_json: None,
             enabled: true,
             last_synced_at: None,
@@ -2458,6 +2426,70 @@ mod tests {
     use crate::backend::models::{
         ConversationPartRole, NormalizedConversationPart, NormalizedConversationTurn,
     };
+
+    #[test]
+    fn unregister_protects_codex_opencode_but_allows_legacy_adapter_kinds() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(crate::backend::store::sql::INIT_SCHEMA)
+            .unwrap();
+        seed_builtin_conversation_adapters(&conn).unwrap();
+
+        let error = delete_conversation_adapter(&conn, "codex").unwrap_err();
+        assert!(error.contains("Codex and OpenCode"));
+
+        let now = Utc::now().to_rfc3339();
+        upsert_conversation_adapter(
+            &conn,
+            &ConversationAdapter {
+                id: "claude-code".to_string(),
+                name: "Claude Code".to_string(),
+                kind: ConversationAdapterKind::ClaudeCode,
+                version: "1".to_string(),
+                enabled: true,
+                manifest_path: None,
+                executable_path: None,
+                content_hash: None,
+                trusted_hash: None,
+                trust_state: ConversationAdapterTrustState::BuiltIn,
+                protocol_version: None,
+                capabilities: vec!["read_session".to_string()],
+                input_kinds: vec![ConversationSourceKind::Directory],
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            },
+        )
+        .unwrap();
+        upsert_conversation_source(
+            &conn,
+            &ConversationSource {
+                id: "claude-code-live".to_string(),
+                adapter_id: "claude-code".to_string(),
+                name: "Claude Code local sessions".to_string(),
+                kind: ConversationSourceKind::Directory,
+                location: "~/.claude/projects".to_string(),
+                config_json: None,
+                enabled: true,
+                last_synced_at: None,
+                last_sync_status: None,
+                created_at: now.clone(),
+                updated_at: now,
+            },
+        )
+        .unwrap();
+
+        let removed = delete_conversation_adapter(&conn, "claude-code").unwrap();
+
+        assert_eq!(removed.kind, ConversationAdapterKind::ClaudeCode);
+        assert!(load_conversation_adapter(&conn, "claude-code")
+            .unwrap()
+            .is_none());
+        assert!(
+            !load_conversation_source(&conn, "claude-code-live")
+                .unwrap()
+                .unwrap()
+                .enabled
+        );
+    }
 
     #[test]
     fn imports_turns_and_preserves_manual_grouping_across_resync() {

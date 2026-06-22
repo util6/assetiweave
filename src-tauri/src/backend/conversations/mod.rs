@@ -126,7 +126,6 @@ pub(crate) fn read_source_sessions(
 ) -> AppResult<Vec<NormalizedConversationSession>> {
     match source.adapter_id.as_str() {
         "codex" => read_codex_sessions(source),
-        "claude-code" => read_claude_code_sessions(source),
         "opencode" => read_opencode_sessions(source),
         _ => Err(format!(
             "external adapter sync is only available through conversation.adapter.try-run in this build: {}",
@@ -139,13 +138,25 @@ pub(crate) fn read_source_sessions_with_adapter(
     adapter: Option<&ConversationAdapter>,
     source: &ConversationSource,
 ) -> AppResult<Vec<NormalizedConversationSession>> {
-    match source.adapter_id.as_str() {
-        "codex" | "claude-code" | "opencode" => read_source_sessions(source),
-        _ => {
-            let adapter = adapter
-                .ok_or_else(|| format!("conversation adapter not found: {}", source.adapter_id))?;
-            read_external_adapter_sessions(adapter, source)
+    let Some(adapter) = adapter else {
+        return read_source_sessions(source);
+    };
+    if should_try_external_adapter_first(adapter) {
+        match read_external_adapter_sessions(adapter, source) {
+            Ok(sessions) => return Ok(sessions),
+            Err(error) if should_fallback_to_builtin(adapter, &source.adapter_id) => {
+                eprintln!(
+                    "conversation adapter {} failed; falling back to built-in reader: {error}",
+                    adapter.id
+                );
+                return read_source_sessions(source);
+            }
+            Err(error) => return Err(error),
         }
+    }
+    match source.adapter_id.as_str() {
+        "codex" | "opencode" => read_source_sessions(source),
+        _ => read_external_adapter_sessions(adapter, source),
     }
 }
 
@@ -153,16 +164,19 @@ fn read_external_adapter_sessions(
     adapter: &ConversationAdapter,
     source: &ConversationSource,
 ) -> AppResult<Vec<NormalizedConversationSession>> {
-    if adapter.kind != ConversationAdapterKind::External {
+    if !is_external_runnable_adapter(adapter) {
         return Err(format!(
-            "conversation adapter {} is not a built-in or external adapter",
+            "conversation adapter {} is not a trusted external adapter",
             adapter.id
         ));
     }
     if !adapter.enabled {
         return Err(format!("conversation adapter is disabled: {}", adapter.id));
     }
-    if adapter.trust_state != ConversationAdapterTrustState::Trusted {
+    if !matches!(
+        adapter.trust_state,
+        ConversationAdapterTrustState::Trusted | ConversationAdapterTrustState::BuiltIn
+    ) {
         return Err(format!(
             "external conversation adapter is not trusted: {}",
             adapter.id
@@ -212,6 +226,35 @@ fn read_external_adapter_sessions(
         Duration::from_millis(DEFAULT_READ_TIMEOUT_MS),
     )?
     .sessions)
+}
+
+fn should_try_external_adapter_first(adapter: &ConversationAdapter) -> bool {
+    adapter.manifest_path.is_some()
+        && matches!(
+            adapter.kind,
+            ConversationAdapterKind::External
+                | ConversationAdapterKind::Codex
+                | ConversationAdapterKind::OpenCode
+        )
+}
+
+fn should_fallback_to_builtin(adapter: &ConversationAdapter, source_adapter_id: &str) -> bool {
+    adapter.trust_state == ConversationAdapterTrustState::BuiltIn
+        && adapter.id == source_adapter_id
+        && matches!(source_adapter_id, "codex" | "opencode")
+}
+
+fn is_external_runnable_adapter(adapter: &ConversationAdapter) -> bool {
+    match adapter.kind {
+        ConversationAdapterKind::External => {
+            adapter.trust_state == ConversationAdapterTrustState::Trusted
+        }
+        ConversationAdapterKind::Codex | ConversationAdapterKind::OpenCode => {
+            adapter.trust_state == ConversationAdapterTrustState::BuiltIn
+                && adapter.manifest_path.is_some()
+        }
+        ConversationAdapterKind::ClaudeCode => false,
+    }
 }
 
 pub(crate) fn scaffold_external_adapter(
@@ -664,14 +707,15 @@ fn read_codex_sessions(
             continue;
         }
         let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-        let turns = parse_jsonl_conversation(&text, ParserFlavor::Codex)?;
+        let turns = parse_jsonl_conversation(&text)?;
         if turns.is_empty() {
             continue;
         }
         sessions.push(NormalizedConversationSession {
             external_id,
             title,
-            project_path: infer_project_path_from_turns(&turns),
+            project_path: infer_project_path_from_jsonl(&text)
+                .or_else(|| infer_project_path_from_turns(&turns)),
             started_at: turns.first().and_then(|turn| turn.started_at.clone()),
             updated_at,
             source_locator: Some(path.to_string_lossy().to_string()),
@@ -682,46 +726,23 @@ fn read_codex_sessions(
     Ok(sessions)
 }
 
-fn read_claude_code_sessions(
-    source: &ConversationSource,
-) -> AppResult<Vec<NormalizedConversationSession>> {
-    let root = crate::backend::path_utils::expand_path(&source.location)?;
-    if !root.exists() {
-        return Ok(Vec::new());
-    }
-    let files = if root.is_file() {
-        vec![root]
-    } else {
-        collect_files_with_extension(&root, "jsonl", 1000)?
-    };
-    let mut sessions = Vec::new();
-    for path in files {
-        let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-        let turns = parse_jsonl_conversation(&text, ParserFlavor::ClaudeCode)?;
-        if turns.is_empty() {
+fn infer_project_path_from_jsonl(text: &str) -> Option<String> {
+    for line in text.lines() {
+        if line.trim().is_empty() {
             continue;
         }
-        let external_id = path
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .unwrap_or("claude-session")
-            .to_string();
-        sessions.push(NormalizedConversationSession {
-            external_id,
-            title: path
-                .parent()
-                .and_then(|parent| parent.file_name())
-                .and_then(|name| name.to_str())
-                .map(|name| name.replace('-', "/")),
-            project_path: infer_project_path_from_turns(&turns),
-            started_at: turns.first().and_then(|turn| turn.started_at.clone()),
-            updated_at: turns.last().and_then(|turn| turn.ended_at.clone()),
-            source_locator: Some(path.to_string_lossy().to_string()),
-            source_fingerprint: Some(hash_bytes(text.as_bytes())),
-            turns,
-        });
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if let Some(cwd) = cwd_from_value(&value) {
+            return Some(cwd);
+        }
+        let payload = event_payload(&value);
+        if let Some(cwd) = cwd_from_value(payload) {
+            return Some(cwd);
+        }
     }
-    Ok(sessions)
+    None
 }
 
 fn read_opencode_sessions(
@@ -744,7 +765,7 @@ fn read_opencode_sessions(
     let session_title_col = pick_column(&session_columns, &["title", "name"]);
     let project_col = pick_column(
         &session_columns,
-        &["project", "project_path", "cwd", "path"],
+        &["project", "project_path", "cwd", "directory", "path"],
     );
     let updated_col = pick_column(
         &session_columns,
@@ -1030,16 +1051,7 @@ fn normalize_opencode_parts(
     parts
 }
 
-#[derive(Clone, Copy)]
-enum ParserFlavor {
-    Codex,
-    ClaudeCode,
-}
-
-fn parse_jsonl_conversation(
-    text: &str,
-    flavor: ParserFlavor,
-) -> AppResult<Vec<NormalizedConversationTurn>> {
+fn parse_jsonl_conversation(text: &str) -> AppResult<Vec<NormalizedConversationTurn>> {
     let mut turns = Vec::new();
     let mut current: Option<NormalizedConversationTurn> = None;
 
@@ -1052,27 +1064,6 @@ fn parse_jsonl_conversation(
             Err(_) => continue,
         };
         let timestamp = string_field_any(&value, &["timestamp", "created_at", "updated_at"]);
-        if matches!(flavor, ParserFlavor::ClaudeCode)
-            && value.get("isSidechain").and_then(Value::as_bool) == Some(true)
-        {
-            if let Some(turn) = current.as_mut() {
-                let text = extract_text(event_payload(&value));
-                if !text.trim().is_empty() {
-                    turn.parts.push(NormalizedConversationPart {
-                        role: ConversationPartRole::Assistant,
-                        kind: ConversationPartKind::Subagent,
-                        text: Some(text),
-                        language: None,
-                        command: None,
-                        cwd: None,
-                        status: None,
-                        exit_code: None,
-                        metadata_json: Some(compact_json(&value)),
-                    });
-                }
-            }
-            continue;
-        }
         let payload = event_payload(&value);
         let role = role_of(payload).or_else(|| role_of(&value));
         let record_type = string_field_any(payload, &["type"])
@@ -1080,7 +1071,7 @@ fn parse_jsonl_conversation(
             .unwrap_or_default();
 
         if let Some(user_text) =
-            real_user_text_for_event(&value, payload, flavor, role.as_deref(), &record_type)
+            real_user_text_for_event(&value, payload, role.as_deref(), &record_type)
         {
             if let Some(turn) = current.take() {
                 turns.push(turn);
@@ -1102,13 +1093,6 @@ fn parse_jsonl_conversation(
         let Some(turn) = current.as_mut() else {
             continue;
         };
-        if matches!(flavor, ParserFlavor::ClaudeCode) && is_user_tool_result_message(payload) {
-            if let Some(part) = tool_part_from_event(payload) {
-                turn.parts.push(part);
-            }
-            turn.ended_at = timestamp;
-            continue;
-        }
         if role.as_deref() == Some("assistant") {
             let text = extract_text(payload);
             if !text.trim().is_empty() {
@@ -1238,26 +1222,13 @@ fn role_of(value: &Value) -> Option<String> {
 fn real_user_text_for_event(
     value: &Value,
     payload: &Value,
-    flavor: ParserFlavor,
     role: Option<&str>,
     record_type: &str,
 ) -> Option<String> {
     if is_synthetic_user_event(value) || is_synthetic_user_event(payload) {
         return None;
     }
-    if matches!(flavor, ParserFlavor::ClaudeCode) && is_user_tool_result_message(payload) {
-        return None;
-    }
-
-    let is_user_boundary = match flavor {
-        ParserFlavor::Codex => {
-            role == Some("user") && is_message_like_payload(payload, record_type)
-        }
-        ParserFlavor::ClaudeCode => {
-            (record_type == "user" && value.get("content").is_some())
-                || (role == Some("user") && is_message_like_payload(payload, record_type))
-        }
-    };
+    let is_user_boundary = role == Some("user") && is_message_like_payload(payload, record_type);
     if !is_user_boundary {
         return None;
     }
@@ -1374,27 +1345,6 @@ fn collect_user_content_text(value: &Value, texts: &mut Vec<String>) {
             }
         }
         _ => {}
-    }
-}
-
-fn is_user_tool_result_message(value: &Value) -> bool {
-    value
-        .get("content")
-        .is_some_and(|content| value_contains_type(content, "tool_result"))
-}
-
-fn value_contains_type(value: &Value, expected_type: &str) -> bool {
-    match value {
-        Value::Array(items) => items
-            .iter()
-            .any(|item| value_contains_type(item, expected_type)),
-        Value::Object(object) => {
-            object.get("type").and_then(Value::as_str) == Some(expected_type)
-                || object
-                    .get("content")
-                    .is_some_and(|content| value_contains_type(content, expected_type))
-        }
-        _ => false,
     }
 }
 
@@ -1843,45 +1793,6 @@ fn optional_cell_string(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<
     }
 }
 
-fn collect_files_with_extension(
-    root: &Path,
-    extension: &str,
-    limit: usize,
-) -> AppResult<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    collect_files_with_extension_inner(root, extension, limit, &mut files)?;
-    files.sort();
-    Ok(files)
-}
-
-fn collect_files_with_extension_inner(
-    root: &Path,
-    extension: &str,
-    limit: usize,
-    files: &mut Vec<PathBuf>,
-) -> AppResult<()> {
-    if files.len() >= limit {
-        return Ok(());
-    }
-    for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_files_with_extension_inner(&path, extension, limit, files)?;
-        } else if path
-            .extension()
-            .and_then(|value| value.to_str())
-            .is_some_and(|value| value.eq_ignore_ascii_case(extension))
-        {
-            files.push(path);
-            if files.len() >= limit {
-                return Ok(());
-            }
-        }
-    }
-    Ok(())
-}
-
 fn resolve_command_path(manifest_dir: &Path, command: &str) -> PathBuf {
     let path = PathBuf::from(command);
     if path.is_absolute() {
@@ -2026,6 +1937,53 @@ mod tests {
             .iter()
             .any(|part| part.kind == ConversationPartKind::Command
                 && part.command.as_deref() == Some("cargo test")));
+    }
+
+    #[test]
+    fn codex_adapter_preserves_project_path_from_session_meta() {
+        let fixture = TempFixture::new("assetiweave-codex-session-meta-fixture");
+        let rollout_path = fixture.path().join("rollout.jsonl");
+        fs::write(
+            &rollout_path,
+            [
+                r#"{"timestamp":"2026-01-01T00:00:00Z","type":"session_meta","payload":{"id":"codex-meta-session","cwd":"/tmp/session-meta-project"}}"#,
+                r#"{"timestamp":"2026-01-01T00:00:01Z","type":"response_item","payload":{"id":"u1","type":"message","role":"user","content":[{"type":"input_text","text":"Explain this project"}]}}"#,
+                r#"{"timestamp":"2026-01-01T00:00:02Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"This project is ready."}]}}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let db_path = fixture.path().join("state_5.sqlite");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT, updated_at INTEGER);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                "codex-meta-session",
+                rollout_path.to_string_lossy().as_ref(),
+                "Codex Meta Fixture",
+                1_767_225_604i64
+            ],
+        )
+        .unwrap();
+        drop(conn);
+
+        let sessions = read_source_sessions(&source_fixture(
+            "codex",
+            ConversationSourceKind::File,
+            db_path.to_string_lossy().as_ref(),
+        ))
+        .unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            sessions[0].project_path.as_deref(),
+            Some("/tmp/session-meta-project")
+        );
     }
 
     #[test]
@@ -2250,187 +2208,31 @@ mod tests {
     }
 
     #[test]
-    fn claude_code_adapter_uses_real_user_boundaries_and_keeps_sidechain_output() {
-        let fixture = TempFixture::new("assetiweave-claude-fixture");
-        let project_dir = fixture.path().join("Users-util6-project");
-        fs::create_dir_all(&project_dir).unwrap();
-        let session_path = project_dir.join("claude-session.jsonl");
-        fs::write(
-            &session_path,
-            [
-                r#"{"timestamp":"2026-01-01T00:00:00Z","message":{"id":"u1","role":"user","content":"Plan the import"}}"#,
-                r#"{"timestamp":"2026-01-01T00:00:01Z","message":{"role":"assistant","content":"Import as turns."}}"#,
-                r#"{"timestamp":"2026-01-01T00:00:02Z","isSidechain":true,"message":{"role":"assistant","content":"Subagent checked fixture shape."}}"#,
-                r#"{"timestamp":"2026-01-01T00:00:03Z","message":{"id":"u2","role":"user","content":"Now export"}}"#,
-                r#"{"timestamp":"2026-01-01T00:00:04Z","message":{"role":"assistant","content":"Exported."}}"#,
-            ]
-            .join("\n"),
-        )
-        .unwrap();
-
-        let sessions = read_source_sessions(&source_fixture(
+    fn claude_code_requires_external_adapter_manifest() {
+        let source = source_fixture(
             "claude-code",
             ConversationSourceKind::Directory,
-            fixture.path().to_string_lossy().as_ref(),
-        ))
-        .unwrap();
+            "/tmp/claude-projects",
+        );
 
-        assert_eq!(sessions.len(), 1);
-        let session = &sessions[0];
-        assert_eq!(session.external_id, "claude-session");
-        assert_eq!(session.title.as_deref(), Some("Users/util6/project"));
-        assert_eq!(session.turns.len(), 2);
-        assert_eq!(session.turns[0].user_text, "Plan the import");
-        assert!(session.turns[0].parts.iter().any(|part| part.kind
-            == ConversationPartKind::Subagent
-            && part
-                .text
-                .as_deref()
-                .is_some_and(|text| text.contains("Subagent checked"))));
+        let error = read_source_sessions(&source).unwrap_err();
+
+        assert!(error.contains("external adapter sync"));
+        assert!(error.contains("claude-code"));
     }
 
     #[test]
-    fn claude_code_adapter_uses_top_level_user_events_only_as_boundaries() {
-        let fixture = TempFixture::new("assetiweave-claude-top-level-fixture");
-        let session_path = fixture.path().join("claude-top-level.jsonl");
-        fs::write(
-            &session_path,
-            [
-                r#"{"timestamp":"2026-01-01T00:00:00Z","type":"user","content":"Plan the import"}"#,
-                r#"{"timestamp":"2026-01-01T00:00:01Z","type":"tool_use","tool_name":"read","tool_input":{"filePath":"/tmp/project/input.jsonl"}}"#,
-                r#"{"timestamp":"2026-01-01T00:00:02Z","type":"tool_result","tool_name":"read","tool_output":{"preview":"fixture rows","truncated":false}}"#,
-                r#"{"timestamp":"2026-01-01T00:00:03Z","type":"user","content":"Now export it"}"#,
-            ]
-            .join("\n"),
-        )
-        .unwrap();
+    fn zcode_requires_external_adapter_manifest() {
+        let source = source_fixture(
+            "zcode",
+            ConversationSourceKind::Sqlite,
+            "/tmp/zcode/db.sqlite",
+        );
 
-        let sessions = read_source_sessions(&source_fixture(
-            "claude-code",
-            ConversationSourceKind::File,
-            session_path.to_string_lossy().as_ref(),
-        ))
-        .unwrap();
+        let error = read_source_sessions(&source).unwrap_err();
 
-        assert_eq!(sessions.len(), 1);
-        let turns = &sessions[0].turns;
-        assert_eq!(turns.len(), 2);
-        assert_eq!(turns[0].user_text, "Plan the import");
-        assert_eq!(turns[1].user_text, "Now export it");
-        assert!(turns[0].parts.iter().any(|part| {
-            part.role == ConversationPartRole::Tool
-                && part
-                    .metadata_json
-                    .as_deref()
-                    .is_some_and(|metadata| metadata.contains("tool_use"))
-        }));
-    }
-
-    #[test]
-    fn claude_code_adapter_filters_tool_result_user_wrappers_and_classifies_tools() {
-        let fixture = TempFixture::new("assetiweave-claude-tool-wrapper-fixture");
-        let session_path = fixture.path().join("claude-tool-wrapper.jsonl");
-        fs::write(
-            &session_path,
-            [
-                json!({
-                    "timestamp": "2026-01-01T00:00:00Z",
-                    "type": "user",
-                    "content": "Inspect the project"
-                })
-                .to_string(),
-                json!({
-                    "timestamp": "2026-01-01T00:00:01Z",
-                    "message": {
-                        "role": "assistant",
-                        "content": [{"type": "text", "text": "I will inspect it.\n```ts\nconst ok = true;\n```"}]
-                    }
-                })
-                .to_string(),
-                json!({
-                    "timestamp": "2026-01-01T00:00:02Z",
-                    "type": "user",
-                    "message": {
-                        "role": "user",
-                        "content": [{
-                            "type": "tool_result",
-                            "tool_use_id": "toolu_1",
-                            "content": "tool result wrapper output"
-                        }]
-                    }
-                })
-                .to_string(),
-                json!({
-                    "timestamp": "2026-01-01T00:00:03Z",
-                    "type": "tool_use",
-                    "tool_name": "Bash",
-                    "tool_input": {"command": "ls -la"}
-                })
-                .to_string(),
-                json!({
-                    "timestamp": "2026-01-01T00:00:04Z",
-                    "type": "tool_result",
-                    "tool_name": "Bash",
-                    "tool_output": {"stdout": "listed files", "stderr": ""}
-                })
-                .to_string(),
-                json!({
-                    "timestamp": "2026-01-01T00:00:05Z",
-                    "type": "result",
-                    "subtype": "success",
-                    "result": "bookkeeping success"
-                })
-                .to_string(),
-                json!({
-                    "timestamp": "2026-01-01T00:00:06Z",
-                    "type": "user",
-                    "content": [{"type": "text", "text": "Now summarize"}]
-                })
-                .to_string(),
-            ]
-            .join("\n"),
-        )
-        .unwrap();
-
-        let sessions = read_source_sessions(&source_fixture(
-            "claude-code",
-            ConversationSourceKind::File,
-            session_path.to_string_lossy().as_ref(),
-        ))
-        .unwrap();
-
-        let turns = &sessions[0].turns;
-        assert_eq!(turns.len(), 2);
-        assert_eq!(turns[0].user_text, "Inspect the project");
-        assert_eq!(turns[1].user_text, "Now summarize");
-        assert!(turns[0].parts.iter().any(|part| {
-            part.kind == ConversationPartKind::CodeBlock
-                && part.language.as_deref() == Some("ts")
-                && part.text.as_deref() == Some("const ok = true;")
-        }));
-        assert!(turns[0].parts.iter().any(|part| {
-            part.kind == ConversationPartKind::Command && part.command.as_deref() == Some("ls -la")
-        }));
-        assert!(turns[0].parts.iter().any(|part| {
-            part.kind == ConversationPartKind::Tool
-                && part
-                    .text
-                    .as_deref()
-                    .is_some_and(|text| text.contains("listed files"))
-        }));
-        assert!(turns[0].parts.iter().any(|part| {
-            part.kind == ConversationPartKind::Tool
-                && part
-                    .text
-                    .as_deref()
-                    .is_some_and(|text| text.contains("tool result wrapper output"))
-        }));
-        assert!(turns[0].parts.iter().all(|part| {
-            !part
-                .text
-                .as_deref()
-                .is_some_and(|text| text.contains("bookkeeping success"))
-        }));
+        assert!(error.contains("external adapter sync"));
+        assert!(error.contains("zcode"));
     }
 
     #[test]
@@ -2932,6 +2734,539 @@ printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
 
     #[cfg(unix)]
     #[test]
+    fn builtin_codex_adapter_prefers_external_manifest() {
+        let fixture = TempFixture::new("assetiweave-builtin-codex-external-fixture");
+        write_executable_script(
+            fixture.path(),
+            "adapter.sh",
+            r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"external-codex-session","title":"External Codex","project_path":null,"started_at":null,"updated_at":null,"source_locator":"fixture://external-codex-session","source_fingerprint":"fixture-hash","turns":[{"external_id":"turn-1","turn_index":0,"user_text":"External Codex question","title":null,"started_at":null,"ended_at":null,"parts":[{"role":"assistant","kind":"text","text":"External Codex answer","language":null,"command":null,"cwd":null,"status":null,"exit_code":null,"metadata_json":null}]}]}}}'
+printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+"#,
+        );
+        let manifest = write_manifest_with_id(
+            fixture.path(),
+            "codex",
+            "Codex",
+            vec!["adapter.sh".to_string()],
+            vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+        );
+        let adapter = ConversationAdapter {
+            id: "codex".to_string(),
+            name: "Codex".to_string(),
+            kind: ConversationAdapterKind::Codex,
+            version: "1".to_string(),
+            enabled: true,
+            manifest_path: Some(manifest.to_string_lossy().to_string()),
+            executable_path: Some(
+                fixture
+                    .path()
+                    .join("adapter.sh")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            content_hash: None,
+            trusted_hash: None,
+            trust_state: ConversationAdapterTrustState::BuiltIn,
+            protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+            capabilities: vec!["read_session".to_string()],
+            input_kinds: vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let source = source_fixture(
+            "codex",
+            ConversationSourceKind::Live,
+            fixture.path().to_string_lossy().as_ref(),
+        );
+
+        let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].external_id, "external-codex-session");
+        assert_eq!(sessions[0].turns[0].user_text, "External Codex question");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_codex_external_adapter_preserves_project_path_from_cwd() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = TempFixture::new("assetiweave-default-codex-external-fixture");
+        let adapter_script = fixture.path().join("adapter.mjs");
+        fs::write(
+            &adapter_script,
+            include_str!("../default_conversation_adapters/codex/adapter.mjs"),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&adapter_script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&adapter_script, permissions).unwrap();
+        let manifest = write_manifest_with_id(
+            fixture.path(),
+            "codex",
+            "Codex",
+            vec!["adapter.mjs".to_string()],
+            vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+        );
+        let rollout_path = fixture.path().join("rollout.jsonl");
+        fs::write(
+            &rollout_path,
+            r#"{"timestamp":"2026-01-01T00:00:00Z","type":"response_item","payload":{"id":"u1","type":"message","role":"user","content":[{"type":"input_text","text":"Run tests"}]}}
+{"timestamp":"2026-01-01T00:00:01Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Running."}]}}
+{"timestamp":"2026-01-01T00:00:02Z","type":"response_item","payload":{"type":"function_call","command":"cargo test","cwd":"/tmp/project","status":"completed","exit_code":0}}"#,
+        )
+        .unwrap();
+        let db_path = fixture.path().join("state_5.sqlite");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT, updated_at TEXT);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                "codex-default-session",
+                rollout_path.to_string_lossy(),
+                "Default Codex",
+                "2026-01-01T00:00:02Z"
+            ],
+        )
+        .unwrap();
+        drop(conn);
+        let adapter = ConversationAdapter {
+            id: "codex".to_string(),
+            name: "Codex".to_string(),
+            kind: ConversationAdapterKind::Codex,
+            version: "1".to_string(),
+            enabled: true,
+            manifest_path: Some(manifest.to_string_lossy().to_string()),
+            executable_path: Some(adapter_script.to_string_lossy().to_string()),
+            content_hash: None,
+            trusted_hash: None,
+            trust_state: ConversationAdapterTrustState::BuiltIn,
+            protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+            capabilities: vec!["read_session".to_string()],
+            input_kinds: vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let source = source_fixture(
+            "codex",
+            ConversationSourceKind::File,
+            db_path.to_string_lossy().as_ref(),
+        );
+
+        let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].project_path.as_deref(), Some("/tmp/project"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_codex_external_adapter_preserves_project_path_from_session_meta() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = TempFixture::new("assetiweave-default-codex-session-meta-fixture");
+        let adapter_script = fixture.path().join("adapter.mjs");
+        fs::write(
+            &adapter_script,
+            include_str!("../default_conversation_adapters/codex/adapter.mjs"),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&adapter_script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&adapter_script, permissions).unwrap();
+        let manifest = write_manifest_with_id(
+            fixture.path(),
+            "codex",
+            "Codex",
+            vec!["adapter.mjs".to_string()],
+            vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+        );
+        let rollout_path = fixture.path().join("rollout.jsonl");
+        fs::write(
+            &rollout_path,
+            r#"{"timestamp":"2026-01-01T00:00:00Z","type":"session_meta","payload":{"id":"codex-meta-session","cwd":"/tmp/session-meta-project"}}
+{"timestamp":"2026-01-01T00:00:01Z","type":"response_item","payload":{"id":"u1","type":"message","role":"user","content":[{"type":"input_text","text":"Explain this project"}]}}
+{"timestamp":"2026-01-01T00:00:02Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"This project is ready."}]}}"#,
+        )
+        .unwrap();
+        let db_path = fixture.path().join("state_5.sqlite");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT, updated_at TEXT);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                "codex-meta-session",
+                rollout_path.to_string_lossy(),
+                "Default Codex Meta",
+                "2026-01-01T00:00:02Z"
+            ],
+        )
+        .unwrap();
+        drop(conn);
+        let adapter = ConversationAdapter {
+            id: "codex".to_string(),
+            name: "Codex".to_string(),
+            kind: ConversationAdapterKind::Codex,
+            version: "1".to_string(),
+            enabled: true,
+            manifest_path: Some(manifest.to_string_lossy().to_string()),
+            executable_path: Some(adapter_script.to_string_lossy().to_string()),
+            content_hash: None,
+            trusted_hash: None,
+            trust_state: ConversationAdapterTrustState::BuiltIn,
+            protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+            capabilities: vec!["read_session".to_string()],
+            input_kinds: vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let source = source_fixture(
+            "codex",
+            ConversationSourceKind::File,
+            db_path.to_string_lossy().as_ref(),
+        );
+
+        let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            sessions[0].project_path.as_deref(),
+            Some("/tmp/session-meta-project")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_opencode_external_adapter_preserves_project_path_from_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = TempFixture::new("assetiweave-default-opencode-external-fixture");
+        let adapter_script = fixture.path().join("adapter.mjs");
+        fs::write(
+            &adapter_script,
+            include_str!("../default_conversation_adapters/opencode/adapter.mjs"),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&adapter_script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&adapter_script, permissions).unwrap();
+        let manifest = write_manifest_with_id(
+            fixture.path(),
+            "opencode",
+            "OpenCode",
+            vec!["adapter.mjs".to_string()],
+            vec![ConversationSourceKind::Live, ConversationSourceKind::Sqlite],
+        );
+        let db_path = fixture.path().join("opencode.sqlite");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE session (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                directory TEXT,
+                path TEXT,
+                time_updated INTEGER
+            );
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                time_created INTEGER,
+                data TEXT
+            );
+            CREATE TABLE part (
+                session_id TEXT,
+                message_id TEXT,
+                data TEXT
+            );
+            "#,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session (id, title, directory, path, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                "opencode-default-session",
+                "Default OpenCode",
+                "/tmp/opencode-project",
+                Option::<String>::None,
+                1_767_225_604i64
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                "m1",
+                "opencode-default-session",
+                1_767_225_600i64,
+                json!({ "role": "user", "time": 1_767_225_600i64 }).to_string()
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO part (session_id, message_id, data) VALUES (?1, ?2, ?3)",
+            params![
+                "opencode-default-session",
+                "m1",
+                json!({ "type": "text", "text": "Read project path" }).to_string()
+            ],
+        )
+        .unwrap();
+        drop(conn);
+        let adapter = ConversationAdapter {
+            id: "opencode".to_string(),
+            name: "OpenCode".to_string(),
+            kind: ConversationAdapterKind::OpenCode,
+            version: "1".to_string(),
+            enabled: true,
+            manifest_path: Some(manifest.to_string_lossy().to_string()),
+            executable_path: Some(adapter_script.to_string_lossy().to_string()),
+            content_hash: None,
+            trusted_hash: None,
+            trust_state: ConversationAdapterTrustState::BuiltIn,
+            protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+            capabilities: vec!["read_session".to_string()],
+            input_kinds: vec![ConversationSourceKind::Live, ConversationSourceKind::Sqlite],
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let source = source_fixture(
+            "opencode",
+            ConversationSourceKind::Sqlite,
+            db_path.to_string_lossy().as_ref(),
+        );
+
+        let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            sessions[0].project_path.as_deref(),
+            Some("/tmp/opencode-project")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_opencode_external_adapter_tolerates_large_filtered_parts() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = TempFixture::new("assetiweave-default-opencode-large-part-fixture");
+        let adapter_script = fixture.path().join("adapter.mjs");
+        fs::write(
+            &adapter_script,
+            include_str!("../default_conversation_adapters/opencode/adapter.mjs"),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&adapter_script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&adapter_script, permissions).unwrap();
+        let manifest = write_manifest_with_id(
+            fixture.path(),
+            "opencode",
+            "OpenCode",
+            vec!["adapter.mjs".to_string()],
+            vec![ConversationSourceKind::Live, ConversationSourceKind::Sqlite],
+        );
+        let db_path = fixture.path().join("opencode.sqlite");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE session (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                directory TEXT,
+                path TEXT,
+                time_updated INTEGER
+            );
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                time_created INTEGER,
+                data TEXT
+            );
+            CREATE TABLE part (
+                session_id TEXT,
+                message_id TEXT,
+                data TEXT
+            );
+            "#,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session (id, title, directory, path, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                "opencode-large-session",
+                "Large OpenCode",
+                "/tmp/opencode-large",
+                Option::<String>::None,
+                1_767_225_604i64
+            ],
+        )
+        .unwrap();
+        for (id, role, timestamp) in [
+            ("m1", "user", 1_767_225_600i64),
+            ("m2", "assistant", 1_767_225_601i64),
+        ] {
+            conn.execute(
+                "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    id,
+                    "opencode-large-session",
+                    timestamp,
+                    json!({ "role": role, "time": timestamp }).to_string()
+                ],
+            )
+            .unwrap();
+        }
+        let large_reasoning = "x".repeat(1_200_000);
+        for (message_id, data) in [
+            (
+                "m1",
+                json!({ "type": "text", "text": "Read a large session" }),
+            ),
+            (
+                "m2",
+                json!({ "type": "reasoning", "text": large_reasoning.clone() }),
+            ),
+            (
+                "m2",
+                json!({
+                    "type": "tool",
+                    "state": {
+                        "status": "completed",
+                        "input": {"command": "pnpm test"},
+                        "output": "tests passed",
+                        "metadata": {"exit": 0}
+                    }
+                }),
+            ),
+            ("m2", json!({ "type": "text", "text": "Visible answer" })),
+        ] {
+            conn.execute(
+                "INSERT INTO part (session_id, message_id, data) VALUES (?1, ?2, ?3)",
+                params!["opencode-large-session", message_id, data.to_string()],
+            )
+            .unwrap();
+        }
+        drop(conn);
+
+        let result = try_run_external_adapter(ExternalAdapterTryRunParams {
+            manifest_path: manifest.to_string_lossy().to_string(),
+            method: "read_session".to_string(),
+            location: Some(db_path.to_string_lossy().to_string()),
+            session_id: Some("opencode-large-session".to_string()),
+            yes: true,
+        })
+        .unwrap();
+
+        assert_eq!(result.item_count, 1);
+        assert_eq!(
+            result.sessions[0].project_path.as_deref(),
+            Some("/tmp/opencode-large")
+        );
+        assert!(result.sessions[0].turns[0]
+            .parts
+            .iter()
+            .all(|part| part.text.as_deref() != Some(large_reasoning.as_str())));
+        assert!(result.sessions[0].turns[0].parts.iter().any(|part| {
+            part.kind == ConversationPartKind::Tool
+                && part.command.as_deref() == Some("pnpm test")
+                && part.text.as_deref() == Some("tests passed")
+                && part.status.as_deref() == Some("completed")
+                && part.exit_code == Some(0)
+                && part.metadata_json.is_none()
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn builtin_codex_adapter_falls_back_when_external_manifest_fails() {
+        let fixture = TempFixture::new("assetiweave-builtin-codex-fallback-fixture");
+        let rollout_path = fixture.path().join("rollout.jsonl");
+        fs::write(
+            &rollout_path,
+            r#"{"timestamp":"2026-01-01T00:00:00Z","type":"response_item","payload":{"id":"u1","type":"message","role":"user","content":[{"type":"input_text","text":"Fallback question"}]}}
+{"timestamp":"2026-01-01T00:00:01Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Fallback answer"}]}}"#,
+        )
+        .unwrap();
+        let db_path = fixture.path().join("state_5.sqlite");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT, updated_at TEXT);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                "fallback-codex-session",
+                rollout_path.to_string_lossy(),
+                "Fallback Codex",
+                "2026-01-01T00:00:01Z"
+            ],
+        )
+        .unwrap();
+        write_executable_script(
+            fixture.path(),
+            "adapter.sh",
+            r#"#!/bin/sh
+cat >/dev/null
+echo "broken external adapter" >&2
+exit 2
+"#,
+        );
+        let manifest = write_manifest_with_id(
+            fixture.path(),
+            "codex",
+            "Codex",
+            vec!["adapter.sh".to_string()],
+            vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+        );
+        let adapter = ConversationAdapter {
+            id: "codex".to_string(),
+            name: "Codex".to_string(),
+            kind: ConversationAdapterKind::Codex,
+            version: "1".to_string(),
+            enabled: true,
+            manifest_path: Some(manifest.to_string_lossy().to_string()),
+            executable_path: Some(
+                fixture
+                    .path()
+                    .join("adapter.sh")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            content_hash: None,
+            trusted_hash: None,
+            trust_state: ConversationAdapterTrustState::BuiltIn,
+            protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+            capabilities: vec!["read_session".to_string()],
+            input_kinds: vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let source = source_fixture(
+            "codex",
+            ConversationSourceKind::Live,
+            fixture.path().to_string_lossy().as_ref(),
+        );
+
+        let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].external_id, "fallback-codex-session");
+        assert_eq!(sessions[0].turns[0].user_text, "Fallback question");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn external_adapter_run_times_out() {
         let fixture = TempFixture::new("assetiweave-adapter-timeout-fixture");
         write_executable_script(
@@ -2992,10 +3327,27 @@ printf '%s\n' '{"type":"complete","item":{}}'
 
     #[cfg(unix)]
     fn write_manifest(dir: &Path, command: Vec<String>) -> PathBuf {
+        write_manifest_with_id(
+            dir,
+            "fixture-external",
+            "Fixture External",
+            command,
+            vec![ConversationSourceKind::Directory],
+        )
+    }
+
+    #[cfg(unix)]
+    fn write_manifest_with_id(
+        dir: &Path,
+        id: &str,
+        name: &str,
+        command: Vec<String>,
+        input_kinds: Vec<ConversationSourceKind>,
+    ) -> PathBuf {
         let manifest = ConversationAdapterManifest {
             schema_version: 1,
-            id: "fixture-external".to_string(),
-            name: "Fixture External".to_string(),
+            id: id.to_string(),
+            name: name.to_string(),
             version: "0.1.0".to_string(),
             protocol_version: EXTERNAL_ADAPTER_PROTOCOL_VERSION,
             command,
@@ -3004,7 +3356,7 @@ printf '%s\n' '{"type":"complete","item":{}}'
                 "list_sessions".to_string(),
                 "read_session".to_string(),
             ],
-            input_kinds: vec![ConversationSourceKind::Directory],
+            input_kinds,
         };
         let path = dir.join("conversation-adapter.json");
         fs::write(&path, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
