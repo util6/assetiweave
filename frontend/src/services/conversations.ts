@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ConversationAdapter,
+  ConversationSourceKind,
   ConversationMutationResult,
   ConversationQuestionDetail,
   ConversationRecordKind,
@@ -50,30 +51,57 @@ export interface ConversationExportContentFilter {
   result: boolean;
 }
 
-export interface ConversationEntryAddParams {
-  plugin_path?: string | null;
-  plugin_id?: string | null;
-  manifest_path?: string | null;
-  source_id?: string | null;
-  source_name: string;
-  source_kind: "live" | "file" | "directory" | "sqlite" | "custom";
-  location: string;
-  config_json?: string | null;
-  record_kind: ConversationRecordKind;
-  dry_run?: boolean;
-  yes?: boolean;
-  sync_after_add?: boolean;
+export interface ConversationAdapterManifest {
+  schema_version: number;
+  id: string;
+  name: string;
+  version: string;
+  protocol_version: number;
+  command: string[];
+  capabilities: string[];
+  input_kinds: ConversationSourceKind[];
 }
 
-export interface ConversationEntryAddResult {
-  dry_run: boolean;
-  record_kind: ConversationRecordKind;
-  plugin_directory?: string | null;
+export interface ConversationAdapterValidationResult {
+  valid: boolean;
   manifest_path: string;
+  manifest_hash: string;
+  executable_path: string;
+  executable_hash: string | null;
+  manifest: ConversationAdapterManifest;
+  warnings: string[];
+}
+
+export interface ConversationAdapterRegisterResult {
+  dry_run: boolean;
+  adapter: ConversationAdapter;
+  validation: ConversationAdapterValidationResult;
+}
+
+export interface ConversationSourceUpsertResult {
+  dry_run: boolean;
+  source: ConversationSource;
+}
+
+export interface ImportConversationSourceParams {
+  config_json?: string | null;
+  manifest_path: string;
+  record_kind?: ConversationRecordKind;
+  source_id?: string | null;
+  source_kind: ConversationSourceKind;
+  source_location: string;
+  source_name: string;
+}
+
+export interface ImportConversationSourceResult {
   adapter: ConversationAdapter;
   source: ConversationSource;
-  sync_result?: unknown | null;
+  task: ConversationSyncTaskSnapshot;
+  validation: ConversationAdapterValidationResult;
 }
+
+export type ImportConversationSourceProgress = "validating" | "source" | "sync";
+export type StartConversationSync = typeof syncConversations;
 
 export type ConversationSyncTaskStatus = "running" | "completed" | "failed";
 
@@ -154,12 +182,189 @@ export async function listConversationAdapters(): Promise<ConversationAdapter[]>
   }
 }
 
+export async function validateConversationAdapter(
+  manifestPath: string,
+): Promise<ConversationAdapterValidationResult> {
+  try {
+    return await invoke<ConversationAdapterValidationResult>("validate_conversation_adapter", {
+      params: { manifest_path: manifestPath },
+    });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return fallbackConversationAdapterValidation(manifestPath);
+  }
+}
+
+export async function registerConversationAdapter(
+  manifestPath: string,
+  dryRun = false,
+): Promise<ConversationAdapterRegisterResult> {
+  try {
+    return await invoke<ConversationAdapterRegisterResult>("register_conversation_adapter", {
+      params: { dry_run: dryRun, manifest_path: manifestPath, yes: true },
+    });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    const validation = fallbackConversationAdapterValidation(manifestPath);
+    return {
+      dry_run: dryRun,
+      adapter: conversationAdapterFromValidation(validation),
+      validation,
+    };
+  }
+}
+
+export async function upsertConversationSource(
+  source: ConversationSource,
+  dryRun = false,
+): Promise<ConversationSourceUpsertResult> {
+  try {
+    return await invoke<ConversationSourceUpsertResult>("upsert_conversation_source", {
+      params: { dry_run: dryRun, source },
+    });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return { dry_run: dryRun, source };
+  }
+}
+
+export async function importConversationSource(
+  params: ImportConversationSourceParams,
+  onProgress?: (step: ImportConversationSourceProgress) => void,
+  startSync: StartConversationSync = syncConversations,
+): Promise<ImportConversationSourceResult> {
+  onProgress?.("validating");
+  const validation = await validateConversationAdapter(params.manifest_path);
+  if (!validation.manifest.capabilities.includes("read_session")) {
+    throw new Error("conversation adapter must declare read_session");
+  }
+  if (params.record_kind === "web" && !validation.manifest.capabilities.includes("web_records")) {
+    throw new Error("web record imports require an adapter with web_records capability");
+  }
+  if (params.record_kind !== "web" && validation.manifest.capabilities.includes("web_records")) {
+    throw new Error("web record adapters must be imported from the web records page");
+  }
+  if (!validation.manifest.input_kinds.includes(params.source_kind)) {
+    throw new Error(`conversation adapter does not support source kind: ${params.source_kind}`);
+  }
+
+  onProgress?.("source");
+  const registration = await registerConversationAdapter(validation.manifest_path, false);
+  const nowIso = new Date().toISOString();
+  const source: ConversationSource = {
+    id:
+      params.source_id?.trim() ||
+      conversationSourceId(registration.adapter.id, params.source_location),
+    adapter_id: registration.adapter.id,
+    name: params.source_name.trim() || registration.adapter.name,
+    kind: params.source_kind,
+    location: params.source_location.trim(),
+    config_json: normalizeOptionalJson(params.config_json),
+    enabled: true,
+    created_at: nowIso,
+    updated_at: nowIso,
+  };
+
+  const upsert = await upsertConversationSource(source, false);
+  onProgress?.("sync");
+  const task = await startSync({
+    dry_run: false,
+    record_kind: params.record_kind ?? "session",
+    source_id: upsert.source.id,
+  });
+
+  return {
+    adapter: registration.adapter,
+    source: upsert.source,
+    task,
+    validation,
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function numberValue(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function normalizeOptionalJson(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  JSON.parse(trimmed);
+  return trimmed;
+}
+
+function conversationSourceId(adapterId: string, location: string) {
+  const locationSlug = location
+    .trim()
+    .toLowerCase()
+    .replace(/^~\//, "home/")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return [adapterId, locationSlug || "source"].join("-");
+}
+
+function fallbackConversationAdapterValidation(
+  manifestPath: string,
+): ConversationAdapterValidationResult {
+  const webLike = /web|browser|qwen|chatgpt/i.test(manifestPath);
+  return {
+    valid: true,
+    manifest_path: manifestPath,
+    manifest_hash: "preview-manifest-hash",
+    executable_path: `${manifestPath.replace(/\/[^/]*$/, "")}/adapter`,
+    executable_hash: "preview-executable-hash",
+    manifest: {
+      schema_version: 1,
+      id: webLike ? "preview-web-adapter" : "preview-conversation-adapter",
+      name: webLike ? "Preview Web Adapter" : "Preview Conversation Adapter",
+      version: "0.1.0",
+      protocol_version: 1,
+      command: ["adapter"],
+      capabilities: webLike
+        ? ["probe", "read_session", "web_records"]
+        : ["probe", "read_session"],
+      input_kinds: ["directory", "file", "sqlite"],
+    },
+    warnings: [],
+  };
+}
+
+function conversationAdapterFromValidation(
+  validation: ConversationAdapterValidationResult,
+): ConversationAdapter {
+  const nowIso = new Date().toISOString();
+  return {
+    id: validation.manifest.id,
+    name: validation.manifest.name,
+    kind: "external",
+    version: validation.manifest.version,
+    enabled: true,
+    manifest_path: validation.manifest_path,
+    executable_path: validation.executable_path,
+    content_hash: validation.executable_hash,
+    trusted_hash: validation.executable_hash ?? validation.manifest_hash,
+    trust_state: "trusted",
+    protocol_version: validation.manifest.protocol_version,
+    capabilities: validation.manifest.capabilities,
+    input_kinds: validation.manifest.input_kinds,
+    created_at: nowIso,
+    updated_at: nowIso,
+  };
 }
 
 export async function listConversationSources(): Promise<ConversationSource[]> {
@@ -174,68 +379,12 @@ export async function listConversationSources(): Promise<ConversationSource[]> {
   }
 }
 
-export async function addConversationEntry(
-  params: ConversationEntryAddParams,
-): Promise<ConversationEntryAddResult> {
-  try {
-    return await invoke<ConversationEntryAddResult>("add_conversation_entry", { params });
-  } catch (error) {
-    if (isTauriRuntime()) {
-      throw error;
-    }
-
-    const now = new Date().toISOString();
-    const manifestPath = params.manifest_path
-      ?? (params.plugin_path ? `${params.plugin_path.replace(/\/$/, "")}/conversation-adapter.json` : null)
-      ?? "/tmp/plugin/conversation-adapter.json";
-    return {
-      dry_run: Boolean(params.dry_run),
-      record_kind: params.record_kind,
-      plugin_directory: params.plugin_path ?? null,
-      manifest_path: manifestPath,
-      adapter: {
-        id: "preview-plugin",
-        name: "Preview Plugin",
-        kind: "external",
-        version: "0.1.0",
-        enabled: true,
-        manifest_path: manifestPath,
-        executable_path: null,
-        content_hash: null,
-        trusted_hash: null,
-        trust_state: "trusted",
-        protocol_version: 1,
-        capabilities: params.record_kind === "web"
-          ? ["read_session", "web_records"]
-          : ["read_session"],
-        input_kinds: [params.source_kind],
-        created_at: now,
-        updated_at: now,
-      },
-      source: {
-        id: params.source_id || "preview-plugin-source",
-        adapter_id: "preview-plugin",
-        name: params.source_name,
-        kind: params.source_kind,
-        location: params.location,
-        config_json: params.config_json ?? null,
-        enabled: true,
-        last_synced_at: null,
-        last_sync_status: null,
-        created_at: now,
-        updated_at: now,
-      },
-      sync_result: null,
-    };
-  }
-}
-
 export async function syncConversations(
   params: {
     source_id?: string | null;
     adapter_id?: string | null;
-    record_kind?: ConversationRecordKind | null;
     dry_run?: boolean;
+    record_kind?: ConversationRecordKind | null;
   },
 ): Promise<ConversationSyncTaskSnapshot> {
   try {
@@ -245,6 +394,7 @@ export async function syncConversations(
       throw error;
     }
 
+    const recordKind = params.record_kind ?? "session";
     return {
       id: "preview-conversation-sync",
       status: "completed",
@@ -261,6 +411,7 @@ export async function syncConversations(
             source_id: "codex-live",
             adapter_id: "codex",
             dry_run: Boolean(params.dry_run),
+            record_kind: recordKind,
             session_count: fallbackSessions.length,
             skipped_session_count: 0,
             turn_count: fallbackSessions.reduce((total, session) => total + session.turn_count, 0),
@@ -339,7 +490,7 @@ export async function getWebRecordSession(sessionId: string): Promise<Conversati
       throw error;
     }
 
-    return fallbackWebSessionDetails.get(sessionId) ?? fallbackWebSessionDetail;
+    return fallbackWebSessionDetail;
   }
 }
 
@@ -522,16 +673,14 @@ export async function exportWebRecordSession(
       dry_run: dryRun,
       session_id: sessionId,
       question_ids: questionIds,
-      output_path: `${outputRoot}/${fallbackWebSessionSiteId(sessionId)}/web/preview-web-record.md`,
+      output_path: `${outputRoot}/qwen-web/web/preview-web-record.md`,
     };
   }
 }
 
 function fallbackConversationSearch(params: Required<Pick<ConversationSearchParams, "query" | "record_kind" | "content_types" | "limit" | "offset" | "timeline">> & ConversationSearchParams): ConversationSearchResult {
-  const session = params.record_kind === "web" ? fallbackWebSearchSession(params) : fallbackSessions[0];
-  const detail = params.record_kind === "web"
-    ? fallbackWebSessionDetails.get(session.id) ?? fallbackWebSessionDetail
-    : fallbackSessionDetail;
+  const detail = params.record_kind === "web" ? fallbackWebSessionDetail : fallbackSessionDetail;
+  const session = params.record_kind === "web" ? fallbackWebSessions[0] : fallbackSessions[0];
   const needle = params.query.trim().toLowerCase();
   if (params.project_path && session.project_path !== params.project_path) {
     return {
@@ -596,18 +745,6 @@ function fallbackConversationSearch(params: Required<Pick<ConversationSearchPara
     total_count: hits.length,
     hits: hits.slice(params.offset, params.offset + params.limit),
   };
-}
-
-function fallbackWebSearchSession(params: ConversationSearchParams) {
-  return (
-    fallbackWebSessions.find((session) => params.adapter_id && session.adapter_id === params.adapter_id) ??
-    fallbackWebSessions.find((session) => params.source_id && session.source_id === params.source_id) ??
-    fallbackWebSessions[0]
-  );
-}
-
-function fallbackWebSessionSiteId(sessionId: string) {
-  return fallbackWebSessions.find((session) => session.id === sessionId)?.adapter_id ?? "qwen-web";
 }
 
 function conversationSearchScope(params: Required<Pick<ConversationSearchParams, "query" | "record_kind" | "content_types" | "limit" | "offset" | "timeline">> & ConversationSearchParams): ConversationSearchScope {
@@ -676,8 +813,21 @@ function pushFallbackHit(
 }
 
 function fallbackEntriesForPart(part: ConversationQuestionDetail["parts"][number]) {
-  const declaredEntry = fallbackEntryForDeclaredPart(part);
-  if (declaredEntry.length > 0) return declaredEntry;
+  const declaredCard = declaredContentCard(part.metadata_json);
+  if (declaredCard) {
+    const cardType = declaredCard.type;
+    const primaryText = cardType === "command"
+      ? part.command ?? part.text
+      : part.text ?? part.command ?? part.metadata_json;
+    const entries = fallbackEntry(part.id, cardType, primaryText, cardType);
+    if (cardType === "command") {
+      return [
+        ...entries,
+        ...fallbackEntry(part.id, "result", commandResultText(part), "result"),
+      ];
+    }
+    return entries;
+  }
 
   if (part.kind === "code_block") {
     return fallbackEntry(part.id, "code", part.text);
@@ -695,62 +845,18 @@ function fallbackEntriesForPart(part: ConversationQuestionDetail["parts"][number
     return fallbackEntry(part.id, cardType, part.text);
   }
 
-  return fallbackEntry(part.id, "tool", part.text ?? part.metadata_json);
-}
-
-function fallbackEntryForDeclaredPart(part: ConversationQuestionDetail["parts"][number]) {
-  const card = declaredContentCard(part.metadata_json);
-  if (!card) return [];
-  const cardType = searchCardTypeValue(card.type);
-  if (!cardType) return [];
-  const text = stringValue(card.text) ?? declaredCardDefaultText(part, cardType);
-  return fallbackEntry(part.id, cardType, text, stringValue(card.suffix) ?? cardType);
+  const cardType = isResultPart(part) ? "result" : "tool";
+  return fallbackEntry(part.id, cardType, part.text ?? part.metadata_json);
 }
 
 function fallbackEntry(
   partId: string,
   cardType: ConversationSearchCardType,
   text?: string | null,
-  suffix: string = cardType,
+  suffix = cardType,
 ) {
   const trimmedText = text?.trim();
   return trimmedText ? [{ blockId: `${partId}-${suffix}`, cardType, text: trimmedText }] : [];
-}
-
-function declaredContentCard(value?: string | null) {
-  if (!value?.trim()) return null;
-  try {
-    const metadata = JSON.parse(value) as unknown;
-    if (!isRecord(metadata)) return null;
-    const card = metadata.content_card ?? metadata.contentCard;
-    return isRecord(card) ? card : null;
-  } catch {
-    return null;
-  }
-}
-
-function searchCardTypeValue(value: unknown): ConversationSearchCardType | null {
-  return value === "answer" ||
-    value === "tool" ||
-    value === "command" ||
-    value === "code" ||
-    value === "result"
-    ? value
-    : null;
-}
-
-function declaredCardDefaultText(
-  part: ConversationQuestionDetail["parts"][number],
-  cardType: ConversationSearchCardType,
-) {
-  if (cardType === "command") {
-    return part.command?.trim() || part.text;
-  }
-  return part.text ?? part.command ?? part.metadata_json;
-}
-
-function stringValue(value: unknown) {
-  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function commandResultText(part: ConversationQuestionDetail["parts"][number]) {
@@ -759,6 +865,38 @@ function commandResultText(part: ConversationQuestionDetail["parts"][number]) {
   if (part.status) return part.status;
   if (part.exit_code != null) return `Exit code ${part.exit_code}`;
   return null;
+}
+
+function isResultPart(part: ConversationQuestionDetail["parts"][number]) {
+  const card = declaredContentCard(part.metadata_json);
+  if (card) return card.type === "result";
+  return part.role === "tool" && part.kind === "text";
+}
+
+interface DeclaredContentCard {
+  type: ConversationSearchCardType;
+}
+
+function declaredContentCard(metadataJson?: string | null): DeclaredContentCard | null {
+  const metadata = parseMetadata(metadataJson);
+  if (!metadata) return null;
+  const card = metadata.content_card ?? metadata.contentCard;
+  if (!isRecord(card)) return null;
+  const type = card.type;
+  if (type === "answer" || type === "tool" || type === "command" || type === "code" || type === "result") {
+    return { type };
+  }
+  return null;
+}
+
+function parseMetadata(metadataJson?: string | null): Record<string, unknown> | null {
+  if (!metadataJson?.trim()) return null;
+  try {
+    const parsed = JSON.parse(metadataJson);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function fallbackSnippet(text: string, needle: string) {
@@ -794,6 +932,18 @@ const fallbackAdapters: ConversationAdapter[] = [
     updated_at: now,
   },
   {
+    id: "claude-code",
+    name: "Claude Code",
+    kind: "claude_code",
+    version: "1",
+    enabled: true,
+    trust_state: "built_in",
+    capabilities: ["probe", "list_sessions", "read_session"],
+    input_kinds: ["live", "directory", "file"],
+    created_at: now,
+    updated_at: now,
+  },
+  {
     id: "opencode",
     name: "OpenCode",
     kind: "opencode",
@@ -808,27 +958,16 @@ const fallbackAdapters: ConversationAdapter[] = [
   {
     id: "qwen-web",
     name: "Qwen Web",
-    ...fallbackWebAdapterFields("0.1.1"),
-  },
-  {
-    id: "chatgpt-web",
-    name: "ChatGPT Web",
-    ...fallbackWebAdapterFields("0.1.0"),
-  },
-];
-
-function fallbackWebAdapterFields(version: string): Omit<ConversationAdapter, "id" | "name"> {
-  return {
     kind: "external",
-    version,
+    version: "0.1.0",
     enabled: true,
     trust_state: "trusted",
     capabilities: ["probe", "read_session", "web_records"],
     input_kinds: ["directory"],
     created_at: now,
     updated_at: now,
-  };
-}
+  },
+];
 
 const fallbackSources: ConversationSource[] = [
   {
@@ -967,43 +1106,26 @@ const fallbackWebSessions: ConversationSessionListItem[] = [
     title: "Qwen web conversation",
     project_path: null,
   },
-  {
-    ...fallbackSessions[0],
-    id: "preview-chatgpt-web-record",
-    source_id: "chatgpt-web-export",
-    adapter_id: "chatgpt-web",
-    external_id: "chatgpt-preview",
-    title: "ChatGPT web conversation",
-    project_path: null,
-  },
 ];
 
-const fallbackWebSessionDetails = new Map(
-  fallbackWebSessions.map((session) => [session.id, buildFallbackWebSessionDetail(session)]),
-);
-
-const fallbackWebSessionDetail = fallbackWebSessionDetails.get(fallbackWebSessions[0].id) ?? buildFallbackWebSessionDetail(fallbackWebSessions[0]);
-
-function buildFallbackWebSessionDetail(session: ConversationSessionListItem): ConversationSessionDetail {
-  return {
-    session,
-    questions: fallbackSessionDetail.questions.map((detail, questionIndex) => ({
-      ...detail,
-      question: {
-        ...detail.question,
-        id: `${session.id}-question-${questionIndex + 1}`,
-        session_id: session.id,
-      },
-      turns: detail.turns.map((turn, turnIndex) => ({
-        ...turn,
-        id: `${session.id}-turn-${questionIndex + 1}-${turnIndex + 1}`,
-        session_id: session.id,
-      })),
-      parts: detail.parts.map((part, partIndex) => ({
-        ...part,
-        id: `${session.id}-part-${questionIndex + 1}-${partIndex + 1}`,
-        turn_id: `${session.id}-turn-${questionIndex + 1}-${Math.min(partIndex + 1, detail.turns.length)}`,
-      })),
+const fallbackWebSessionDetail: ConversationSessionDetail = {
+  session: fallbackWebSessions[0],
+  questions: fallbackSessionDetail.questions.map((detail, questionIndex) => ({
+    ...detail,
+    question: {
+      ...detail.question,
+      id: `preview-web-question-${questionIndex + 1}`,
+      session_id: fallbackWebSessions[0].id,
+    },
+    turns: detail.turns.map((turn, turnIndex) => ({
+      ...turn,
+      id: `preview-web-turn-${questionIndex + 1}-${turnIndex + 1}`,
+      session_id: fallbackWebSessions[0].id,
     })),
-  };
-}
+    parts: detail.parts.map((part, partIndex) => ({
+      ...part,
+      id: `preview-web-part-${questionIndex + 1}-${partIndex + 1}`,
+      turn_id: `preview-web-turn-${questionIndex + 1}-${Math.min(partIndex + 1, detail.turns.length)}`,
+    })),
+  })),
+};

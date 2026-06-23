@@ -13,7 +13,8 @@ import {
   ConversationContentFilter,
   ConversationSyncProgress,
 } from "../../components/conversations/ConversationToolbarControls";
-import { ConversationEntryAddDialog } from "../../components/conversations/ConversationEntryAddDialog";
+import { ConversationImportDialog } from "../../components/conversations/ConversationImportDialog";
+import { I18nProvider } from "../../i18n/I18nProvider";
 import type { Translator } from "../../i18n/I18nProvider";
 import { messages, type TranslationParams } from "../../i18n/messages";
 import type {
@@ -33,6 +34,7 @@ import {
 
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.restoreAllMocks();
 });
 
@@ -418,7 +420,7 @@ describe("MarkdownContent", () => {
     expect(html).toContain("ring-2 ring-primary/70");
   });
 
-  it("renders command result previews without synthesizing line breaks", () => {
+  it("preserves and restores line breaks in command result previews", () => {
     const html = renderToStaticMarkup(
       <ConversationContentCards
         blocks={[
@@ -447,10 +449,9 @@ describe("MarkdownContent", () => {
 
     expect(html).toContain("<pre");
     expect(html).toContain("whitespace-pre-wrap");
-    expect(html).toContain("Output: ./specs/design.md:69");
-    expect(html).not.toContain("Output:\n./specs/design.md:69");
-    expect(html).not.toContain("\n./cli/internal/errlint/legacy_exit_test.go:23");
-    expect(html).not.toContain("\n./src-tauri/src/path_utils.rs:166");
+    expect(html).toContain("Output:\n./specs/design.md:69");
+    expect(html).toContain("\n./cli/internal/errlint/legacy_exit_test.go:23");
+    expect(html).toContain("\n./src-tauri/src/path_utils.rs:166");
   });
 
   it("collapses long command result previews with an expand-all action", () => {
@@ -697,6 +698,44 @@ describe("MarkdownContent", () => {
     expect(html).toContain("关闭同步进度");
   });
 
+  it("collects adapter manifest and source details before importing", async () => {
+    const onImport = vi.fn(async () => undefined);
+    const onPickManifest = vi.fn(async () => "/tmp/adapter/conversation-adapter.json");
+    const onPickSourceLocation = vi.fn(async () => "/tmp/web-records");
+    localStorage.setItem("assetiweave.locale", "zh");
+
+    render(
+      <I18nProvider>
+        <ConversationImportDialog
+          onClose={vi.fn()}
+          onImport={onImport}
+          onPickManifest={onPickManifest}
+          onPickSourceLocation={onPickSourceLocation}
+          recordKind="web"
+        />
+      </I18nProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "选择插件 manifest" }));
+    await waitFor(() => expect(onPickManifest).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "选择来源目录" }));
+    await waitFor(() => expect(onPickSourceLocation).toHaveBeenCalledWith("directory"));
+    fireEvent.change(screen.getByLabelText("来源名称"), {
+      target: { value: "医保网页记录" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "开始导入" }));
+
+    await waitFor(() => {
+      expect(onImport).toHaveBeenCalledWith({
+        config_json: null,
+        manifest_path: "/tmp/adapter/conversation-adapter.json",
+        source_kind: "directory",
+        source_location: "/tmp/web-records",
+        source_name: "医保网页记录",
+      });
+    });
+  });
+
   it("renders a global background sync indicator without blocking other controls", () => {
     const html = renderToStaticMarkup(
       <ConversationBackgroundTaskIndicator
@@ -719,46 +758,6 @@ describe("MarkdownContent", () => {
     expect(html).toContain("后台同步对话记录");
     expect(html).toContain("可继续使用其他功能");
     expect(html).not.toContain("disabled");
-  });
-
-  it("submits plugin-backed web record sources from the add dialog", async () => {
-    const onSubmit = vi.fn(async () => undefined);
-    render(
-      <ConversationEntryAddDialog
-        busy={false}
-        onClose={vi.fn()}
-        onPickLocation={async () => "/tmp/web-export"}
-        onPickPlugin={async () => "/tmp/plugin"}
-        onSubmit={onSubmit}
-        recordKind="web"
-        t={t}
-      />,
-    );
-
-    fireEvent.change(screen.getByLabelText("插件目录"), {
-      target: { value: "/tmp/plugin" },
-    });
-    fireEvent.change(screen.getByLabelText("来源名称"), {
-      target: { value: "Plugin Web Export" },
-    });
-    fireEvent.change(screen.getByLabelText("来源位置"), {
-      target: { value: "/tmp/web-export" },
-    });
-    fireEvent.change(screen.getByLabelText("配置 JSON"), {
-      target: { value: "{\"space\":\"default\"}" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "添加来源" }));
-
-    await waitFor(() => {
-      expect(onSubmit).toHaveBeenCalledWith({
-        configJson: "{\"space\":\"default\"}",
-        location: "/tmp/web-export",
-        pluginPath: "/tmp/plugin",
-        sourceId: "",
-        sourceKind: "directory",
-        sourceName: "Plugin Web Export",
-      });
-    });
   });
 });
 
@@ -897,10 +896,10 @@ const adapters: ConversationAdapter[] = [
   {
     id: "claude-code",
     name: "Claude Code",
-    kind: "external",
-    version: "1.0.0",
+    kind: "claude_code",
+    version: "1",
     enabled: true,
-    trust_state: "trusted",
+    trust_state: "built_in",
     capabilities: [],
     input_kinds: ["directory"],
     created_at: now,

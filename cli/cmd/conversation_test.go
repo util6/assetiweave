@@ -75,39 +75,24 @@ func TestConversationSearchCanUseCurrentProject(t *testing.T) {
 	}
 }
 
-func TestConversationAddBuildsPluginEntryParams(t *testing.T) {
+func TestConversationSyncBuildsRecordKindParams(t *testing.T) {
 	client := &recordingClient{}
 	err := executeSkillGroupTestCommand(t, client,
-		"conversation", "add",
-		"--plugin", "/tmp/plugin",
-		"--plugin-id", "chatgpt-web",
-		"--source-id", "plugin-web-export",
-		"--source-name", "Plugin Web Export",
-		"--kind", "directory",
-		"--location", "/tmp/plugin/export",
+		"conversation", "sync",
+		"--adapter", "qwen-web",
 		"--record-kind", "web",
-		"--config-json", `{"space":"default"}`,
-		"--no-sync",
-		"--yes",
+		"--dry-run",
 	)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if client.method != "conversation.entry.add" {
-		t.Fatalf("method = %q, want conversation.entry.add", client.method)
+	if client.method != "conversation.sync" {
+		t.Fatalf("method = %q, want conversation.sync", client.method)
 	}
 	params := recordedSkillGroupParams(t, client)
-	if params["plugin_path"] != "/tmp/plugin" ||
-		params["plugin_id"] != "chatgpt-web" ||
-		params["manifest_path"] != nil ||
-		params["source_id"] != "plugin-web-export" ||
-		params["source_name"] != "Plugin Web Export" ||
-		params["source_kind"] != "directory" ||
-		params["location"] != "/tmp/plugin/export" ||
+	if params["adapter_id"] != "qwen-web" ||
 		params["record_kind"] != "web" ||
-		params["config_json"] != `{"space":"default"}` ||
-		params["sync_after_add"] != false ||
-		params["yes"] != true {
+		params["dry_run"] != true {
 		t.Fatalf("params = %#v", params)
 	}
 }

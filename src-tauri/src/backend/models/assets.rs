@@ -144,19 +144,6 @@ pub struct Asset {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct MetadataOverlay {
-    pub asset_id: String,
-    pub display_name: Option<String>,
-    pub kind_override: Option<AssetKind>,
-    pub tags: Vec<String>,
-    pub groups: Vec<String>,
-    pub enabled: bool,
-    pub notes: Option<String>,
-    pub explicit_profiles_include: Vec<String>,
-    pub explicit_profiles_exclude: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RuleSet {
     pub kinds: Vec<AssetKind>,
     pub tags: Vec<String>,

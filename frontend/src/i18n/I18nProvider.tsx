@@ -18,7 +18,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
-    localStorage.setItem(STORAGE_KEY, locale);
+    writeStoredLocale(locale);
   }, [locale]);
 
   const value = useMemo<I18nContextValue>(() => {
@@ -43,12 +43,40 @@ export function useI18n() {
 }
 
 function getInitialLocale(): Locale {
-  const stored = localStorage.getItem(STORAGE_KEY);
+  const stored = readStoredLocale();
   if (stored === "zh" || stored === "en") {
     return stored;
   }
 
+  if (typeof navigator === "undefined") {
+    return "zh";
+  }
+
   return navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
+}
+
+function readStoredLocale(): string | null {
+  if (typeof localStorage === "undefined") {
+    return null;
+  }
+
+  try {
+    return localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredLocale(locale: Locale): void {
+  if (typeof localStorage === "undefined") {
+    return;
+  }
+
+  try {
+    localStorage.setItem(STORAGE_KEY, locale);
+  } catch {
+    // Ignore restricted storage environments, such as browser privacy modes and Node tests.
+  }
 }
 
 function interpolate(template: string, params?: TranslationParams) {

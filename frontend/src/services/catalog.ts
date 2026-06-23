@@ -733,14 +733,20 @@ export async function selectSourceDirectory(title: string): Promise<string | nul
   }
 }
 
+export async function selectTargetDirectory(title: string): Promise<string | null> {
+  return selectSourceDirectory(title);
+}
+
 export async function selectFilePath(
   title: string,
-  filters?: { name: string; extensions: string[] }[],
+  extensions?: string[],
 ): Promise<string | null> {
   try {
     const selected = await open({
       directory: false,
-      filters,
+      filters: extensions?.length
+        ? [{ extensions, name: extensions.join(", ").toUpperCase() }]
+        : undefined,
       multiple: false,
       title,
     });
@@ -748,10 +754,6 @@ export async function selectFilePath(
   } catch {
     return null;
   }
-}
-
-export async function selectTargetDirectory(title: string): Promise<string | null> {
-  return selectSourceDirectory(title);
 }
 
 const FALLBACK_NAVIGATION_STORAGE_KEY = "assetiweave.preview.navigation";

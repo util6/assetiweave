@@ -29,11 +29,3 @@ pub(super) fn decode_optional_enum<T: DeserializeOwned>(
 ) -> AppResult<Option<T>> {
     value.map(decode_enum).transpose()
 }
-
-pub(super) fn db_error(error: rusqlite::Error) -> String {
-    error.to_string()
-}
-
-pub(super) fn to_sql_error(error: String) -> rusqlite::Error {
-    rusqlite::Error::ToSqlConversionFailure(error.into())
-}

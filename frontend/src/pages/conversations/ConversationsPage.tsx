@@ -9,10 +9,10 @@ import {
   Folder,
   GitMerge,
   Layers3,
-  Plus,
   RefreshCw,
   Scissors,
   Settings,
+  UploadCloud,
   X,
 } from "lucide-react";
 import {
@@ -38,9 +38,10 @@ import {
   type ConversationSyncProgressState,
 } from "../../components/conversations/ConversationToolbarControls";
 import {
-  ConversationEntryAddDialog,
-  type ConversationEntryAddFormValues,
-} from "../../components/conversations/ConversationEntryAddDialog";
+  ConversationImportDialog,
+  type ConversationImportFormValues,
+  type ConversationImportStep,
+} from "../../components/conversations/ConversationImportDialog";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { PageHeader } from "../../components/foundation/PageHeader";
@@ -56,11 +57,11 @@ import {
   type SettingsPanelId,
 } from "../../store/settings/AppSettingsProvider";
 import {
-  addConversationEntry,
   exportConversationSession,
   exportWebRecordSession,
   getConversationSession,
   getWebRecordSession,
+  importConversationSource,
   listConversationAdapters,
   listConversationSessions,
   listWebRecordSessions,
@@ -70,13 +71,14 @@ import {
   summarizeConversationSyncTask,
   type ConversationSyncSummaryCounts,
 } from "../../services/conversations";
-import { selectTargetDirectory } from "../../services/catalog";
+import { selectFilePath, selectTargetDirectory } from "../../services/catalog";
 import { useConversationSync } from "../../app/backgroundTasks/ConversationSyncProvider";
 import type {
   AppKind,
   AppShortcut,
   ConversationAdapter,
   ConversationQuestionDetail,
+  ConversationSourceKind,
   ConversationSearchCardType,
   ConversationSearchHit,
   ConversationSessionDetail,
@@ -156,8 +158,9 @@ export function ConversationsPage({
   const [exportVisibility, setExportVisibility] = useState<ConversationContentVisibility>({
     ...DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
   });
-  const [entryDialogOpen, setEntryDialogOpen] = useState(false);
-  const [addingEntry, setAddingEntry] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importStep, setImportStep] = useState<ConversationImportStep>("idle");
+  const [importing, setImporting] = useState(false);
   const [syncProgress, setSyncProgress] = useState<ConversationSyncProgressState | null>(null);
   const [syncProgressDismissed, setSyncProgressDismissed] = useState(false);
   const [query, setQuery] = useState("");
@@ -168,12 +171,12 @@ export function ConversationsPage({
   const [exporting, setExporting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const handledSyncTaskIdRef = useRef<string | null>(null);
-  const syncTaskSourceLabelsRef = useRef<Map<string, string>>(new Map());
   const syncRunning = syncTask?.status === "running";
   const [contentQuery, setContentQuery] = useState("");
   const [contentSearchResult, setContentSearchResult] = useState<ConversationSearchResultState | null>(null);
   const [contentSearchLoading, setContentSearchLoading] = useState(false);
   const [activeSearchTarget, setActiveSearchTarget] = useState<ConversationSearchTarget | null>(null);
+  const importedSourceNamesRef = useRef<Map<string, string>>(new Map());
 
   const sessionQuestionCount = useMemo(() => sessions.reduce((total, session) => total + session.question_count, 0), [sessions]);
   const appGroups = useMemo(() => groupConversationSessionsByApp(adapters, sessions), [adapters, sessions]);
@@ -214,7 +217,9 @@ export function ConversationsPage({
     setContentQuery("");
     setContentSearchResult(null);
     setActiveSearchTarget(null);
-    setEntryDialogOpen(false);
+    setImportDialogOpen(false);
+    setImportStep("idle");
+    setImporting(false);
     setOutputRoot(
       webRecordMode ? "~/Desktop/assetiweave-web-records" : "~/Desktop/assetiweave-conversations",
     );
@@ -347,7 +352,7 @@ export function ConversationsPage({
       return;
     }
 
-    const sourceLabel = syncTaskSourceLabelsRef.current.get(syncTask.id) ?? t("conversation.sync.allSources");
+    const sourceLabel = syncSourceLabel(syncTask.source_id);
     if (syncTask.status === "running") {
       setSyncProgressDismissed(false);
       setSyncProgress({ phase: "importing", sourceLabel });
@@ -392,7 +397,14 @@ export function ConversationsPage({
     return () => {
       cancelled = true;
     };
-  }, [syncTask?.id, syncTask?.status]);
+  }, [syncTask?.id, syncTask?.source_id, syncTask?.status]);
+
+  function syncSourceLabel(sourceId: string | null | undefined) {
+    if (!sourceId) {
+      return t("conversation.sync.allSources");
+    }
+    return importedSourceNamesRef.current.get(sourceId) ?? sourceId;
+  }
 
   async function refreshCatalog(options: { rethrow?: boolean } = {}) {
     try {
@@ -440,7 +452,6 @@ export function ConversationsPage({
         record_kind: webRecordMode ? "web" : "session",
         source_id: null,
       });
-      syncTaskSourceLabelsRef.current.set(task.id, sourceLabel);
       const summary = formatConversationSyncSummary(summarizeConversationSyncTask(task), t);
       setSyncProgress({
         failedStep: task.status === "failed" ? 2 : undefined,
@@ -459,52 +470,61 @@ export function ConversationsPage({
     }
   }
 
-  async function handleAddEntry(values: ConversationEntryAddFormValues) {
-    const sourceName = values.sourceName.trim();
-    setAddingEntry(true);
+  async function handleImport(values: ConversationImportFormValues) {
     setStatus(null);
-    setSyncProgressDismissed(false);
-    setSyncProgress({ phase: "preparing", sourceLabel: sourceName });
-
+    setImporting(true);
+    setImportStep("validating");
     try {
-      const result = await addConversationEntry({
-        config_json: values.configJson.trim() || null,
-        dry_run: false,
-        location: values.location.trim(),
-        plugin_path: values.pluginPath.trim(),
-        record_kind: webRecordMode ? "web" : "session",
-        source_id: values.sourceId.trim() || null,
-        source_kind: values.sourceKind,
-        source_name: sourceName,
-        sync_after_add: false,
-        yes: true,
-      });
-      setEntryDialogOpen(false);
+      const result = await importConversationSource(
+        {
+          config_json: values.config_json,
+          manifest_path: values.manifest_path,
+          record_kind: webRecordMode ? "web" : "session",
+          source_kind: values.source_kind,
+          source_location: values.source_location,
+          source_name: values.source_name,
+        },
+        (step) => setImportStep(step === "validating" ? "validating" : step === "source" ? "source" : "sync"),
+        startSync,
+      );
+      importedSourceNamesRef.current.set(result.source.id, result.source.name);
       const sourceLabel = result.source.name;
-      const task = await startSync({
-        adapter_id: result.adapter.id,
-        dry_run: false,
-        record_kind: webRecordMode ? "web" : "session",
-        source_id: result.source.id,
-      });
-      syncTaskSourceLabelsRef.current.set(task.id, sourceLabel);
+      const summary = formatConversationSyncSummary(summarizeConversationSyncTask(result.task), t);
+      setSyncProgressDismissed(false);
       setSyncProgress({
-        failedStep: task.status === "failed" ? 2 : undefined,
+        failedStep: result.task.status === "failed" ? 3 : undefined,
         phase:
-          task.status === "failed"
+          result.task.status === "failed"
             ? "failed"
-            : task.status === "completed"
+            : result.task.status === "completed"
               ? "refreshing"
               : "importing",
         sourceLabel,
-        summary: formatConversationSyncSummary(summarizeConversationSyncTask(task), t),
+        summary,
       });
+      setStatus(t("conversation.status.importStarted", { source: result.source.name }));
+      setImportDialogOpen(false);
+      setImportStep("idle");
     } catch (error) {
-      setSyncProgress({ failedStep: 1, phase: "failed", sourceLabel: sourceName });
+      setImportStep("failed");
       onNotifyError(errorMessage(error));
     } finally {
-      setAddingEntry(false);
+      setImporting(false);
     }
+  }
+
+  async function pickImportManifest() {
+    return selectFilePath(t("conversation.import.pickManifest"), ["json"]);
+  }
+
+  async function pickImportSourceLocation(kind: ConversationSourceKind) {
+    if (kind === "directory" || kind === "custom") {
+      return selectTargetDirectory(t("conversation.import.pickSourceDirectory"));
+    }
+    return selectFilePath(
+      t("conversation.import.pickSourceFile"),
+      kind === "sqlite" ? ["db", "sqlite", "sqlite3"] : undefined,
+    );
   }
 
   async function handleMerge(previous: ConversationQuestionDetail, current: ConversationQuestionDetail) {
@@ -629,14 +649,18 @@ export function ConversationsPage({
                 label={t("toolbar.settings")}
                 onClick={() => onOpenSettings("conversations.sessions")}
               />
-              <ToolbarTextButton
-                disabled={addingEntry || syncRunning}
-                icon={<Plus size={16} />}
-                label={t("conversation.toolbar.addEntry")}
-                onClick={() => setEntryDialogOpen(true)}
+              <ToolbarActionButton
+                disabled={syncRunning || importing}
+                icon={<UploadCloud size={17} />}
+                label={t("conversation.toolbar.import")}
+                onClick={() => {
+                  setImportStep("idle");
+                  setImportDialogOpen(true);
+                }}
+                text={t("conversation.toolbar.import")}
               />
               <ToolbarActionButton
-                disabled={syncRunning}
+                disabled={syncRunning || importing}
                 icon={<RefreshCw size={17} />}
                 label={syncRunning ? t("conversation.toolbar.syncing") : t("conversation.toolbar.sync")}
                 onClick={() => void handleSync()}
@@ -711,7 +735,17 @@ export function ConversationsPage({
                   onClick={() => onOpenSettings("conversations.sessions")}
                 />
                 <ToolbarActionButton
-                  disabled={syncRunning}
+                  disabled={syncRunning || importing}
+                  icon={<UploadCloud size={17} />}
+                  label={t("conversation.toolbar.import")}
+                  onClick={() => {
+                    setImportStep("idle");
+                    setImportDialogOpen(true);
+                  }}
+                  text={t("conversation.toolbar.import")}
+                />
+                <ToolbarActionButton
+                  disabled={syncRunning || importing}
                   icon={<RefreshCw size={17} />}
                   label={syncRunning ? t("conversation.toolbar.syncing") : t("conversation.toolbar.sync")}
                   onClick={() => void handleSync()}
@@ -759,17 +793,6 @@ export function ConversationsPage({
           t={t}
         />
       ) : null}
-      {entryDialogOpen ? (
-        <ConversationEntryAddDialog
-          busy={addingEntry}
-          onClose={() => setEntryDialogOpen(false)}
-          onPickLocation={() => selectTargetDirectory(t("conversation.add.pickLocation"))}
-          onPickPlugin={() => selectTargetDirectory(t("conversation.add.pickPlugin"))}
-          onSubmit={handleAddEntry}
-          recordKind={webRecordMode ? "web" : "session"}
-          t={t}
-        />
-      ) : null}
       {exportDialog ? (
         <ConversationExportDialog
           contentCardColors={appSettings.conversations.contentCardColors}
@@ -790,6 +813,21 @@ export function ConversationsPage({
           }
           t={t}
           visibility={exportVisibility}
+        />
+      ) : null}
+
+      {importDialogOpen ? (
+        <ConversationImportDialog
+          busy={importing}
+          onClose={() => {
+            setImportDialogOpen(false);
+            setImportStep("idle");
+          }}
+          onImport={handleImport}
+          onPickManifest={pickImportManifest}
+          onPickSourceLocation={pickImportSourceLocation}
+          recordKind={webRecordMode ? "web" : "session"}
+          step={importStep}
         />
       ) : null}
 

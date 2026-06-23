@@ -1895,142 +1895,6 @@
       "supports_dry_run": true
     },
     {
-      "canonical_method": "conversation.entry.add",
-      "cli": "assetiweave-cli conversation add --plugin <plugin-dir> --source-name <name> --location <path> --yes",
-      "confirmation_required": true,
-      "contract_version": 3,
-      "deprecated": false,
-      "description": "Add a conversation record source from an external adapter plugin",
-      "exposure": "friendly",
-      "method": "conversation.entry.add",
-      "params_schema": {
-        "additionalProperties": false,
-        "properties": {
-          "config_json": {
-            "aliases": [
-              "configJson"
-            ],
-            "default": null,
-            "description": "Optional source adapter config JSON string",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "dry_run": {
-            "aliases": [
-              "dryRun"
-            ],
-            "default": false,
-            "description": "Preview without persisting",
-            "type": "boolean"
-          },
-          "location": {
-            "description": "Source location passed to the external adapter",
-            "type": "string"
-          },
-          "manifest_path": {
-            "aliases": [
-              "manifestPath"
-            ],
-            "default": null,
-            "description": "Advanced adapter manifest path",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "plugin_id": {
-            "aliases": [
-              "pluginId"
-            ],
-            "default": null,
-            "description": "Optional installed plugin directory id",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "plugin_path": {
-            "aliases": [
-              "pluginPath"
-            ],
-            "default": null,
-            "description": "Adapter plugin directory",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "record_kind": {
-            "aliases": [
-              "recordKind"
-            ],
-            "default": null,
-            "description": "Target record kind: session or web",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "source_id": {
-            "aliases": [
-              "sourceId"
-            ],
-            "default": null,
-            "description": "Optional conversation source identifier",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "source_kind": {
-            "aliases": [
-              "sourceKind"
-            ],
-            "default": "directory",
-            "description": "Conversation source kind",
-            "enum": [
-              "live",
-              "file",
-              "directory",
-              "sqlite",
-              "custom"
-            ],
-            "type": "string"
-          },
-          "source_name": {
-            "aliases": [
-              "sourceName"
-            ],
-            "description": "Conversation source display name",
-            "type": "string"
-          },
-          "sync_after_add": {
-            "aliases": [
-              "syncAfterAdd"
-            ],
-            "default": false,
-            "description": "Run conversation sync after adding the source",
-            "type": "boolean"
-          },
-          "yes": {
-            "default": false,
-            "description": "Confirm trusting and optionally executing this adapter",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "source_name",
-          "location"
-        ],
-        "type": "object"
-      },
-      "risk": "high-risk-write",
-      "since": "0.1.0",
-      "supports_dry_run": true
-    },
-    {
       "canonical_method": "conversation.sync",
       "cli": "assetiweave-cli conversation sync",
       "confirmation_required": false,
@@ -5803,142 +5667,6 @@
       "supports_dry_run": false
     },
     {
-      "canonical_method": "conversation.entry.add",
-      "cli": null,
-      "confirmation_required": true,
-      "contract_version": 3,
-      "deprecated": false,
-      "description": "Add a conversation record source from an external adapter plugin",
-      "exposure": "app",
-      "method": "add_conversation_entry",
-      "params_schema": {
-        "additionalProperties": false,
-        "properties": {
-          "config_json": {
-            "aliases": [
-              "configJson"
-            ],
-            "default": null,
-            "description": "Optional source adapter config JSON string",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "dry_run": {
-            "aliases": [
-              "dryRun"
-            ],
-            "default": false,
-            "description": "Preview without persisting",
-            "type": "boolean"
-          },
-          "location": {
-            "description": "Source location passed to the external adapter",
-            "type": "string"
-          },
-          "manifest_path": {
-            "aliases": [
-              "manifestPath"
-            ],
-            "default": null,
-            "description": "Advanced adapter manifest path",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "plugin_id": {
-            "aliases": [
-              "pluginId"
-            ],
-            "default": null,
-            "description": "Optional installed plugin directory id",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "plugin_path": {
-            "aliases": [
-              "pluginPath"
-            ],
-            "default": null,
-            "description": "Adapter plugin directory",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "record_kind": {
-            "aliases": [
-              "recordKind"
-            ],
-            "default": null,
-            "description": "Target record kind: session or web",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "source_id": {
-            "aliases": [
-              "sourceId"
-            ],
-            "default": null,
-            "description": "Optional conversation source identifier",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "source_kind": {
-            "aliases": [
-              "sourceKind"
-            ],
-            "default": "directory",
-            "description": "Conversation source kind",
-            "enum": [
-              "live",
-              "file",
-              "directory",
-              "sqlite",
-              "custom"
-            ],
-            "type": "string"
-          },
-          "source_name": {
-            "aliases": [
-              "sourceName"
-            ],
-            "description": "Conversation source display name",
-            "type": "string"
-          },
-          "sync_after_add": {
-            "aliases": [
-              "syncAfterAdd"
-            ],
-            "default": false,
-            "description": "Run conversation sync after adding the source",
-            "type": "boolean"
-          },
-          "yes": {
-            "default": false,
-            "description": "Confirm trusting and optionally executing this adapter",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "source_name",
-          "location"
-        ],
-        "type": "object"
-      },
-      "risk": "high-risk-write",
-      "since": "0.1.0",
-      "supports_dry_run": false
-    },
-    {
       "canonical_method": "conversation.sync",
       "cli": null,
       "confirmation_required": false,
@@ -7003,7 +6731,7 @@
     }
   ],
   "contract_version": 3,
-  "engine_version": "0.1.3",
+  "engine_version": "0.1.4",
   "methods": [
     "overview.get",
     "source.list",
@@ -7042,7 +6770,6 @@
     "conversation.source.add",
     "conversation.source.update",
     "conversation.source.disable",
-    "conversation.entry.add",
     "conversation.sync",
     "conversation.session.list",
     "conversation.search",
@@ -7114,7 +6841,6 @@
     "list_conversation_sources",
     "upsert_conversation_source",
     "disable_conversation_source",
-    "add_conversation_entry",
     "sync_conversations",
     "get_conversation_sync_task",
     "list_conversation_sessions",

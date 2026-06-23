@@ -1,9 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  addConversationEntry,
   getConversationSyncTask,
-  listConversationAdapters,
-  listWebRecordSessions,
+  importConversationSource,
   mergeConversationQuestions,
   searchConversationRecords,
   summarizeConversationSyncTask,
@@ -42,23 +40,6 @@ describe("conversation services", () => {
     });
   });
 
-  it("shows ChatGPT as a web record fallback source in non-Tauri previews", async () => {
-    vi.stubGlobal("window", {});
-    invokeMock.mockRejectedValue(new Error("preview backend missing"));
-
-    const adapters = await listConversationAdapters();
-    const webSessions = await listWebRecordSessions({});
-
-    expect(adapters.find((adapter) => adapter.id === "chatgpt-web")).toMatchObject({
-      name: "ChatGPT Web",
-      capabilities: expect.arrayContaining(["web_records"]),
-    });
-    expect(webSessions.find((session) => session.adapter_id === "chatgpt-web")).toMatchObject({
-      source_id: "chatgpt-web-export",
-      title: "ChatGPT web conversation",
-    });
-  });
-
   it("starts sync as a background task", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
     invokeMock.mockResolvedValueOnce({
@@ -82,69 +63,114 @@ describe("conversation services", () => {
     });
   });
 
-  it("adds a conversation entry through the plugin source command", async () => {
+  it("imports a conversation source by validating the adapter, adding the source, then starting background sync", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
-    invokeMock.mockResolvedValueOnce({
-      dry_run: false,
-      record_kind: "web",
-      adapter: {
-        id: "plugin-web",
-        name: "Plugin Web",
-        kind: "external",
-        version: "0.1.0",
-        enabled: true,
-        trust_state: "trusted",
-        capabilities: ["read_session", "web_records"],
-        input_kinds: ["directory"],
-        created_at: "2026-06-15T00:00:00Z",
-        updated_at: "2026-06-15T00:00:00Z",
-      },
-      source: {
-        id: "plugin-web-export",
-        adapter_id: "plugin-web",
-        name: "Plugin Web Export",
-        kind: "directory",
-        location: "/tmp/plugin/export",
-        config_json: null,
-        enabled: true,
-        created_at: "2026-06-15T00:00:00Z",
-        updated_at: "2026-06-15T00:00:00Z",
-      },
-      plugin_directory: "/tmp/assetiweave/conversation-adapters/plugin-web",
-      manifest_path: "/tmp/assetiweave/conversation-adapters/plugin-web/conversation-adapter.json",
-      sync_result: null,
-    });
+    invokeMock
+      .mockResolvedValueOnce({
+        valid: true,
+        manifest_path: "/tmp/adapter/conversation-adapter.json",
+        manifest_hash: "manifest-hash",
+        executable_path: "/tmp/adapter/run",
+        executable_hash: "exe-hash",
+        manifest: {
+          schema_version: 1,
+          id: "medical-web",
+          name: "Medical Web",
+          version: "0.1.0",
+          protocol_version: 1,
+          command: ["run"],
+          capabilities: ["read_session", "web_records"],
+          input_kinds: ["directory"],
+        },
+        warnings: [],
+      })
+      .mockResolvedValueOnce({
+        dry_run: false,
+        adapter: {
+          id: "medical-web",
+          name: "Medical Web",
+          kind: "external",
+          version: "0.1.0",
+          enabled: true,
+          manifest_path: "/tmp/adapter/conversation-adapter.json",
+          executable_path: "/tmp/adapter/run",
+          content_hash: "exe-hash",
+          trusted_hash: "exe-hash",
+          trust_state: "trusted",
+          protocol_version: 1,
+          capabilities: ["read_session", "web_records"],
+          input_kinds: ["directory"],
+          created_at: "2026-06-15T00:00:00Z",
+          updated_at: "2026-06-15T00:00:00Z",
+        },
+        validation: {},
+      })
+      .mockImplementationOnce(async (_command, payload) => ({
+        dry_run: false,
+        source: payload.params.source,
+      }))
+      .mockResolvedValueOnce({
+        id: "sync-1",
+        status: "running",
+        source_id: "medical-web-export",
+        adapter_id: null,
+        dry_run: false,
+        started_at: "2026-06-15T00:00:00Z",
+        finished_at: null,
+        result: null,
+        error: null,
+      });
+    const progress: string[] = [];
 
     await expect(
-      addConversationEntry({
-        plugin_path: "/tmp/plugin",
-        source_id: "plugin-web-export",
-        source_name: "Plugin Web Export",
-        source_kind: "directory",
-        location: "/tmp/plugin/export",
-        config_json: null,
-        record_kind: "web",
-        dry_run: false,
-        yes: true,
-        sync_after_add: false,
-      }),
+      importConversationSource(
+        {
+          manifest_path: "/tmp/adapter/conversation-adapter.json",
+          record_kind: "web",
+          source_id: "medical-web-export",
+          source_kind: "directory",
+          source_location: "/tmp/export",
+          source_name: "医保网页记录",
+        },
+        (step) => progress.push(step),
+      ),
     ).resolves.toMatchObject({
-      adapter: { id: "plugin-web" },
-      source: { id: "plugin-web-export" },
-    });
-    expect(invokeMock).toHaveBeenCalledWith("add_conversation_entry", {
-      params: {
-        plugin_path: "/tmp/plugin",
-        source_id: "plugin-web-export",
-        source_name: "Plugin Web Export",
-        source_kind: "directory",
-        location: "/tmp/plugin/export",
-        config_json: null,
-        record_kind: "web",
-        dry_run: false,
-        yes: true,
-        sync_after_add: false,
+      source: {
+        id: "medical-web-export",
+        adapter_id: "medical-web",
+        name: "医保网页记录",
       },
+      task: { id: "sync-1", status: "running" },
+    });
+
+    expect(progress).toEqual(["validating", "source", "sync"]);
+    expect(invokeMock.mock.calls.map(([command]) => command)).toEqual([
+      "validate_conversation_adapter",
+      "register_conversation_adapter",
+      "upsert_conversation_source",
+      "sync_conversations",
+    ]);
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "register_conversation_adapter", {
+      params: {
+        dry_run: false,
+        manifest_path: "/tmp/adapter/conversation-adapter.json",
+        yes: true,
+      },
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "upsert_conversation_source", {
+      params: {
+        dry_run: false,
+        source: expect.objectContaining({
+          adapter_id: "medical-web",
+          id: "medical-web-export",
+          kind: "directory",
+          location: "/tmp/export",
+          name: "医保网页记录",
+        }),
+      },
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(4, "sync_conversations", {
+      params: { dry_run: false, record_kind: "web", source_id: "medical-web-export" },
     });
   });
 
@@ -184,27 +210,6 @@ describe("conversation services", () => {
         limit: 25,
         offset: 0,
       },
-    });
-  });
-
-  it("does not create synthetic search cards in non-Tauri fallback search", async () => {
-    vi.stubGlobal("window", {});
-    invokeMock.mockRejectedValueOnce(new Error("preview backend missing"));
-
-    await expect(
-      searchConversationRecords({
-        query: "codex-live",
-        content_types: ["command", "result", "code"],
-      }),
-    ).resolves.toMatchObject({
-      total_count: 1,
-      hits: [
-        {
-          block_id: "preview-part-2-command",
-          card_type: "command",
-          part_id: "preview-part-2",
-        },
-      ],
     });
   });
 
