@@ -13,7 +13,10 @@ pub(super) fn read_external_adapter_sessions(
     if !adapter.enabled {
         return Err(format!("conversation adapter is disabled: {}", adapter.id));
     }
-    if adapter.trust_state != ConversationAdapterTrustState::Trusted {
+    if !matches!(
+        adapter.trust_state,
+        ConversationAdapterTrustState::Trusted | ConversationAdapterTrustState::BuiltIn
+    ) {
         return Err(format!(
             "external conversation adapter is not trusted: {}",
             adapter.id

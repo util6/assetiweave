@@ -11,7 +11,7 @@ import { messages, type TranslationParams } from "../../i18n/messages";
 import type { ConversationPart } from "../../types";
 
 describe("ConversationContentCards", () => {
-  it("keeps explicit function calls as tool cards", () => {
+  it("does not infer card types for undeclared parts", () => {
     const blocks = buildConversationContentBlocks([
       {
         id: "part-tool-call",
@@ -27,12 +27,7 @@ describe("ConversationContentCards", () => {
       },
     ]);
 
-    expect(blocks).toHaveLength(1);
-    expect(blocks[0]).toMatchObject({
-      id: "part-tool-call-tool",
-      text: "function_call: update_plan",
-      type: "tool",
-    });
+    expect(blocks).toEqual([]);
   });
 
   it("uses adapter-declared content card metadata", () => {
@@ -79,9 +74,10 @@ describe("ConversationContentCards", () => {
     expect(html).toContain("Declared result");
   });
 
-  it("keeps command output as one plain result unless the adapter declares structure", () => {
+  it("keeps adapter-declared command output as one plain result", () => {
     const blocks = buildConversationContentBlocks([
-      commandPart([
+      commandPart(),
+      resultPart([
         "Chunk ID: 0e43bd",
         "Wall time: 0.0000 seconds",
         "Process exited with code 0",
@@ -108,9 +104,10 @@ describe("ConversationContentCards", () => {
     expect(blocks[1].text).toContain('import { invoke } from "@tauri-apps/api/core";');
   });
 
-  it("does not infer markdown formatting from command output", () => {
+  it("does not infer markdown formatting from declared plain command output", () => {
     const blocks = buildConversationContentBlocks([
-      commandPart([
+      commandPart(),
+      resultPart([
         "Chunk ID: 089b2c",
         "Wall time: 0.0000 seconds",
         "Process exited with code 0",
@@ -131,7 +128,7 @@ describe("ConversationContentCards", () => {
 
     expect(blocks.map((block) => block.type)).toEqual(["command", "result"]);
     expect(blocks[1]).toMatchObject({
-      format: undefined,
+      format: "plain",
       id: "part-command-result",
       type: "result",
     });
@@ -166,7 +163,7 @@ function interpolate(template: string, params?: TranslationParams) {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => String(params[key] ?? ""));
 }
 
-function commandPart(text: string): ConversationPart {
+function commandPart(): ConversationPart {
   return {
     id: "part-command",
     turn_id: "turn-1",
@@ -174,8 +171,30 @@ function commandPart(text: string): ConversationPart {
     role: "tool",
     kind: "command",
     command: "sed -n '1,120p' frontend/src/services/conversations.ts",
-    text,
     status: "completed",
     exit_code: 0,
+    metadata_json: JSON.stringify({
+      content_card: {
+        type: "command",
+      },
+    }),
+  };
+}
+
+function resultPart(text: string): ConversationPart {
+  return {
+    id: "part-command",
+    turn_id: "turn-1",
+    part_index: 1,
+    role: "tool",
+    kind: "tool",
+    text,
+    metadata_json: JSON.stringify({
+      content_card: {
+        type: "result",
+        format: "plain",
+        suffix: "result",
+      },
+    }),
   };
 }

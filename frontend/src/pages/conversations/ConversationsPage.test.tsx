@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ConversationContentCards,
   buildConversationContentBlocks,
@@ -32,10 +32,15 @@ import {
   SessionQuestionWorkspace,
 } from "./ConversationsPage";
 
+beforeEach(() => {
+  vi.stubGlobal("localStorage", createMockLocalStorage());
+});
+
 afterEach(() => {
   cleanup();
-  localStorage.clear();
+  globalThis.localStorage?.clear();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("MarkdownContent", () => {
@@ -428,11 +433,14 @@ describe("MarkdownContent", () => {
             id: "result-with-file-matches",
             role: "tool",
             text: [
-              "Chunk ID: 5b951a Wall time: 0.0000 seconds Process exited with code 0 Output:",
+              "Chunk ID: 5b951a",
+              "Wall time: 0.0000 seconds",
+              "Process exited with code 0",
+              "Output:",
               "./specs/design.md:69:- App 快捷入口支持真实应用图标",
               "./cli/internal/errlint/legacy_exit_test.go:23: got := summarizeBySymbol(violations)",
               "./src-tauri/src/path_utils.rs:166: &[\"symbolic-ref\", \"--short\"]",
-            ].join(" "),
+            ].join("\n"),
             type: "result",
           },
         ]}
@@ -770,6 +778,24 @@ function interpolate(template: string, params?: TranslationParams) {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => String(params[key] ?? ""));
 }
 
+function createMockLocalStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: vi.fn(() => values.clear()),
+    getItem: vi.fn((key: string) => values.get(key) ?? null),
+    key: vi.fn((index: number) => Array.from(values.keys())[index] ?? null),
+    removeItem: vi.fn((key: string) => {
+      values.delete(key);
+    }),
+    setItem: vi.fn((key: string, value: string) => {
+      values.set(key, value);
+    }),
+  };
+}
+
 const questionDetail: ConversationQuestionDetail = {
   question: {
     id: "question-1",
@@ -814,6 +840,9 @@ const questionDetail: ConversationQuestionDetail = {
       role: "assistant",
       kind: "text",
       text: ["# 同步流程", "", "- 按 Session 导入", "- 按用户问题预览"].join("\n"),
+      metadata_json: JSON.stringify({
+        content_card: { type: "answer", format: "markdown" },
+      }),
     },
     {
       id: "part-2",
@@ -821,10 +850,23 @@ const questionDetail: ConversationQuestionDetail = {
       part_index: 0,
       role: "tool",
       kind: "command",
-      text: "tests passed",
       command: "assetiweave-cli conversation sync --dry-run",
       status: "completed",
       exit_code: 0,
+      metadata_json: JSON.stringify({
+        content_card: { type: "command" },
+      }),
+    },
+    {
+      id: "part-2-result",
+      turn_id: "turn-2",
+      part_index: 1,
+      role: "tool",
+      kind: "tool",
+      text: "tests passed",
+      metadata_json: JSON.stringify({
+        content_card: { type: "result", format: "plain", suffix: "result" },
+      }),
     },
   ],
 };
@@ -841,6 +883,9 @@ const richQuestionDetail: ConversationQuestionDetail = {
       kind: "code_block",
       language: "ts",
       text: "const synced = true;",
+      metadata_json: JSON.stringify({
+        content_card: { type: "code", language: "ts" },
+      }),
     },
     {
       id: "part-4",
@@ -849,6 +894,9 @@ const richQuestionDetail: ConversationQuestionDetail = {
       role: "tool",
       kind: "tool",
       text: "Read project files",
+      metadata_json: JSON.stringify({
+        content_card: { type: "tool" },
+      }),
     },
   ],
 };
@@ -872,9 +920,11 @@ const adapters: ConversationAdapter[] = [
   {
     id: "codex",
     name: "Codex",
-    kind: "codex",
-    version: "1",
+    kind: "external",
+    version: "1.0.0",
     enabled: true,
+    manifest_path: "~/.assetiweave/conversation-adapters/codex/conversation-adapter.json",
+    executable_path: "~/.assetiweave/conversation-adapters/codex/adapter.mjs",
     trust_state: "built_in",
     capabilities: [],
     input_kinds: ["live"],
@@ -884,9 +934,11 @@ const adapters: ConversationAdapter[] = [
   {
     id: "opencode",
     name: "OpenCode",
-    kind: "opencode",
-    version: "1",
+    kind: "external",
+    version: "1.0.0",
     enabled: true,
+    manifest_path: "~/.assetiweave/conversation-adapters/opencode/conversation-adapter.json",
+    executable_path: "~/.assetiweave/conversation-adapters/opencode/adapter.mjs",
     trust_state: "built_in",
     capabilities: [],
     input_kinds: ["sqlite"],
@@ -896,9 +948,11 @@ const adapters: ConversationAdapter[] = [
   {
     id: "claude-code",
     name: "Claude Code",
-    kind: "claude_code",
-    version: "1",
+    kind: "external",
+    version: "1.0.0",
     enabled: true,
+    manifest_path: "~/.assetiweave/conversation-adapters/claude-code/conversation-adapter.json",
+    executable_path: "~/.assetiweave/conversation-adapters/claude-code/adapter.mjs",
     trust_state: "built_in",
     capabilities: [],
     input_kinds: ["directory"],

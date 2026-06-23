@@ -69,6 +69,62 @@ function metadata(contentCard, extra = {}) {
   });
 }
 
+function textPart(role, text) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed) return null;
+  return {
+    role,
+    kind: "text",
+    text: trimmed,
+    language: null,
+    command: null,
+    cwd: null,
+    status: null,
+    exit_code: null,
+    metadata_json: role === "assistant" ? metadata({ type: "answer", format: "markdown" }) : null,
+  };
+}
+
+function splitMarkdownParts(role, text) {
+  const parts = [];
+  let remaining = String(text ?? "");
+  while (remaining.includes("```")) {
+    const start = remaining.indexOf("```");
+    const beforePart = textPart(role, remaining.slice(0, start));
+    if (beforePart) parts.push(beforePart);
+
+    const fenceBody = remaining.slice(start + 3);
+    const end = fenceBody.indexOf("```");
+    if (end < 0) {
+      const trailing = textPart(role, fenceBody);
+      if (trailing) parts.push(trailing);
+      return parts;
+    }
+
+    const fenced = fenceBody.slice(0, end);
+    const firstNewline = fenced.indexOf("\n");
+    const language = firstNewline < 0 ? null : fenced.slice(0, firstNewline).trim() || null;
+    const code = (firstNewline < 0 ? fenced : fenced.slice(firstNewline + 1)).trimEnd();
+    if (code.trim()) {
+      parts.push({
+        role,
+        kind: "code_block",
+        text: code,
+        language,
+        command: null,
+        cwd: null,
+        status: null,
+        exit_code: null,
+        metadata_json: metadata({ type: "code", ...(language ? { language } : {}) }),
+      });
+    }
+    remaining = fenceBody.slice(end + 3);
+  }
+  const tail = textPart(role, remaining);
+  if (tail) parts.push(tail);
+  return parts;
+}
+
 function valueText(value, keys) {
   for (const key of keys) {
     const candidate = value?.[key];
@@ -136,6 +192,9 @@ function normalizePart(row, role) {
     : normalizedKind === "tool" || normalizedKind === "command"
       ? "tool"
       : "assistant";
+  if (normalizedKind === "text") {
+    return splitMarkdownParts(normalizedRole, text);
+  }
   const contentCard = normalizedKind === "command" || command
     ? { type: "command" }
     : normalizedKind === "tool" || normalizedKind === "file_change" || normalizedKind === "subagent"
@@ -221,7 +280,7 @@ function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
       ? messageKey(sessionId, String(message.id))
       : String(message.id);
     const parts = (partsByMessage.get(partKey) ?? [])
-      .map((row) => normalizePart(row, role))
+      .flatMap((row) => normalizePart(row, role) ?? [])
       .filter(Boolean);
     if (String(role).toLowerCase() === "user") {
       const userText = parts

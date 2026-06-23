@@ -110,7 +110,7 @@ pub(crate) struct ConversationImportResult {
 
 pub(crate) async fn seed_builtin_conversation_adapters_sqlx(pool: &SqlitePool) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    for adapter in builtin_adapters(&now) {
+    for adapter in crate::backend::conversations::ensure_official_conversation_adapters()? {
         upsert_conversation_adapter_sqlx(pool, &adapter).await?;
     }
     for source in builtin_sources(&now) {
@@ -167,8 +167,11 @@ pub(crate) async fn delete_conversation_adapter_sqlx(
     let adapter = load_conversation_adapter_sqlx(pool, adapter_id)
         .await?
         .ok_or_else(|| format!("conversation adapter not found: {adapter_id}"))?;
-    if adapter.kind != ConversationAdapterKind::External {
+    if adapter.trust_state == ConversationAdapterTrustState::BuiltIn {
         return Err("built-in conversation adapters cannot be unregistered".to_string());
+    }
+    if adapter.kind != ConversationAdapterKind::External {
+        return Err("only external conversation adapters can be unregistered".to_string());
     }
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     sqlx::query(DELETE_CONVERSATION_ADAPTER_SQL)
@@ -1004,78 +1007,6 @@ pub(super) fn render_session_detail_markdown(
         }
     }
     Ok(output)
-}
-
-fn builtin_adapters(now: &str) -> Vec<ConversationAdapter> {
-    vec![
-        ConversationAdapter {
-            id: "codex".to_string(),
-            name: "Codex".to_string(),
-            kind: ConversationAdapterKind::Codex,
-            version: "1".to_string(),
-            enabled: true,
-            manifest_path: None,
-            executable_path: None,
-            content_hash: None,
-            trusted_hash: None,
-            trust_state: ConversationAdapterTrustState::BuiltIn,
-            protocol_version: None,
-            capabilities: vec![
-                "probe".to_string(),
-                "list_sessions".to_string(),
-                "read_session".to_string(),
-            ],
-            input_kinds: vec![ConversationSourceKind::Live, ConversationSourceKind::File],
-            created_at: now.to_string(),
-            updated_at: now.to_string(),
-        },
-        ConversationAdapter {
-            id: "claude-code".to_string(),
-            name: "Claude Code".to_string(),
-            kind: ConversationAdapterKind::ClaudeCode,
-            version: "1".to_string(),
-            enabled: true,
-            manifest_path: None,
-            executable_path: None,
-            content_hash: None,
-            trusted_hash: None,
-            trust_state: ConversationAdapterTrustState::BuiltIn,
-            protocol_version: None,
-            capabilities: vec![
-                "probe".to_string(),
-                "list_sessions".to_string(),
-                "read_session".to_string(),
-            ],
-            input_kinds: vec![
-                ConversationSourceKind::Live,
-                ConversationSourceKind::Directory,
-                ConversationSourceKind::File,
-            ],
-            created_at: now.to_string(),
-            updated_at: now.to_string(),
-        },
-        ConversationAdapter {
-            id: "opencode".to_string(),
-            name: "OpenCode".to_string(),
-            kind: ConversationAdapterKind::OpenCode,
-            version: "1".to_string(),
-            enabled: true,
-            manifest_path: None,
-            executable_path: None,
-            content_hash: None,
-            trusted_hash: None,
-            trust_state: ConversationAdapterTrustState::BuiltIn,
-            protocol_version: None,
-            capabilities: vec![
-                "probe".to_string(),
-                "list_sessions".to_string(),
-                "read_session".to_string(),
-            ],
-            input_kinds: vec![ConversationSourceKind::Live, ConversationSourceKind::Sqlite],
-            created_at: now.to_string(),
-            updated_at: now.to_string(),
-        },
-    ]
 }
 
 fn builtin_sources(now: &str) -> Vec<ConversationSource> {
@@ -2626,7 +2557,7 @@ mod tests {
         let database = Database::open(&db_path).expect("open database");
         let builtin_adapter = test_conversation_adapter(
             "metadata-builtin",
-            ConversationAdapterKind::Codex,
+            ConversationAdapterKind::External,
             ConversationAdapterTrustState::BuiltIn,
         );
         let external_adapter = test_conversation_adapter(

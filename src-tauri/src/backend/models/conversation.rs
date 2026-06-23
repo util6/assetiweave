@@ -5,10 +5,13 @@ use sha2::{Digest, Sha256};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConversationAdapterKind {
-    Codex,
-    ClaudeCode,
-    #[serde(rename = "opencode", alias = "open_code")]
-    OpenCode,
+    #[serde(
+        rename = "external",
+        alias = "codex",
+        alias = "claude_code",
+        alias = "opencode",
+        alias = "open_code"
+    )]
     External,
 }
 
@@ -246,47 +249,6 @@ pub struct ConversationGroupSeed {
     pub origin: ConversationGroupingOrigin,
 }
 
-pub fn split_markdown_text_parts(
-    role: ConversationPartRole,
-    text: &str,
-) -> Vec<NormalizedConversationPart> {
-    let mut parts = Vec::new();
-    let mut remaining = text;
-
-    while let Some(start) = remaining.find("```") {
-        let before = &remaining[..start];
-        push_text_part(&mut parts, role, before);
-
-        let fence_body = &remaining[start + 3..];
-        let Some(end) = fence_body.find("```") else {
-            push_text_part(&mut parts, role, &remaining[start..]);
-            return parts;
-        };
-
-        let fenced = &fence_body[..end];
-        let (language, code) = split_fenced_block(fenced);
-        let trimmed_code = code.trim_matches('\n').to_string();
-        if !trimmed_code.trim().is_empty() {
-            parts.push(NormalizedConversationPart {
-                role,
-                kind: ConversationPartKind::CodeBlock,
-                text: Some(trimmed_code),
-                language,
-                command: None,
-                cwd: None,
-                status: None,
-                exit_code: None,
-                metadata_json: None,
-            });
-        }
-
-        remaining = &fence_body[end + 3..];
-    }
-
-    push_text_part(&mut parts, role, remaining);
-    parts
-}
-
 pub fn should_auto_merge_acknowledgement(user_text: &str) -> bool {
     let normalized = user_text.trim().to_ascii_lowercase();
     if normalized.is_empty()
@@ -365,71 +327,9 @@ pub fn conversation_turn_fingerprint(turn: &NormalizedConversationTurn) -> Strin
     format!("{:x}", hasher.finalize())
 }
 
-fn push_text_part(
-    parts: &mut Vec<NormalizedConversationPart>,
-    role: ConversationPartRole,
-    text: &str,
-) {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return;
-    }
-    parts.push(NormalizedConversationPart {
-        role,
-        kind: ConversationPartKind::Text,
-        text: Some(trimmed.to_string()),
-        language: None,
-        command: None,
-        cwd: None,
-        status: None,
-        exit_code: None,
-        metadata_json: None,
-    });
-}
-
-fn split_fenced_block(fenced: &str) -> (Option<String>, &str) {
-    let Some(first_newline) = fenced.find('\n') else {
-        return (None, fenced);
-    };
-    let first_line = fenced[..first_newline].trim();
-    let code = &fenced[first_newline + 1..];
-    let language = if first_line.is_empty() {
-        None
-    } else {
-        Some(first_line.to_string())
-    };
-    (language, code)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn splits_markdown_text_and_code_parts_in_order() {
-        let parts = split_markdown_text_parts(
-            ConversationPartRole::Assistant,
-            "Use this:\n```ts\nconst x = 1;\n```\nThen run it.",
-        );
-
-        assert_eq!(parts.len(), 3);
-        assert_eq!(parts[0].kind, ConversationPartKind::Text);
-        assert_eq!(parts[0].text.as_deref(), Some("Use this:"));
-        assert_eq!(parts[1].kind, ConversationPartKind::CodeBlock);
-        assert_eq!(parts[1].language.as_deref(), Some("ts"));
-        assert_eq!(parts[1].text.as_deref(), Some("const x = 1;"));
-        assert_eq!(parts[2].text.as_deref(), Some("Then run it."));
-    }
-
-    #[test]
-    fn keeps_unclosed_fence_as_text() {
-        let parts =
-            split_markdown_text_parts(ConversationPartRole::Assistant, "Broken:\n```sh\necho nope");
-
-        assert_eq!(parts.len(), 2);
-        assert_eq!(parts[1].kind, ConversationPartKind::Text);
-        assert_eq!(parts[1].text.as_deref(), Some("```sh\necho nope"));
-    }
 
     #[test]
     fn only_merges_exact_simple_acknowledgements() {

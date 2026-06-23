@@ -52,35 +52,7 @@ const icons: Record<ConversationContentType, ReactNode> = {
 };
 
 export function buildConversationContentBlocks(parts: ConversationPart[]): ConversationContentBlock[] {
-  return parts.flatMap((part) => {
-    const declaredBlock = createDeclaredContentBlock(part);
-    if (declaredBlock.length > 0) {
-      return declaredBlock;
-    }
-
-    if (part.kind === "code_block") {
-      return createBlock(part, "code", part.text);
-    }
-
-    if (part.kind === "command") {
-      const command = part.command?.trim() || part.text?.trim();
-      const output = commandOutput(part);
-      return [
-        ...createBlock(part, "command", command, "command", "command"),
-        ...createBlock(part, "result", output, "result", "result"),
-      ];
-    }
-
-    if (part.kind === "tool") {
-      return createBlock(part, "tool", part.text);
-    }
-
-    if (part.kind === "text") {
-      return createBlock(part, part.role === "tool" ? "result" : "answer", part.text);
-    }
-
-    return createBlock(part, "tool", part.text ?? part.metadata_json);
-  });
+  return parts.flatMap(createDeclaredContentBlock);
 }
 
 export function ConversationContentCards({
@@ -358,6 +330,8 @@ function createBlock(
 ): ConversationContentBlock[] {
   const text = value?.trim();
   if (!text) return [];
+  const hasOverride = (key: keyof ConversationContentBlock) =>
+    Object.prototype.hasOwnProperty.call(overrides, key);
 
   return [
     {
@@ -366,10 +340,26 @@ function createBlock(
       role: part.role,
       text,
       format: overrides.format,
-      language: overrides.language ?? (metadataMode === "result" ? null : part.language),
-      cwd: overrides.cwd ?? (metadataMode === "result" ? null : part.cwd),
-      status: overrides.status ?? (metadataMode === "command" ? null : part.status),
-      exitCode: overrides.exitCode ?? (metadataMode === "command" ? null : part.exit_code),
+      language: hasOverride("language")
+        ? overrides.language
+        : metadataMode === "result"
+          ? null
+          : part.language,
+      cwd: hasOverride("cwd")
+        ? overrides.cwd
+        : metadataMode === "result"
+          ? null
+          : part.cwd,
+      status: hasOverride("status")
+        ? overrides.status
+        : metadataMode === "command"
+          ? null
+          : part.status,
+      exitCode: hasOverride("exitCode")
+        ? overrides.exitCode
+        : metadataMode === "command"
+          ? null
+          : part.exit_code,
     },
   ];
 }
@@ -387,10 +377,10 @@ function createDeclaredContentBlock(part: ConversationPart): ConversationContent
 
   return createBlock(part, type, text, suffix, "all", {
     format,
-    language: stringValue(card.language) ?? part.language,
-    cwd: stringValue(card.cwd) ?? part.cwd,
-    status: stringValue(card.status) ?? part.status,
-    exitCode: numberValue(card.exit_code) ?? numberValue(card.exitCode) ?? part.exit_code,
+    language: stringValue(card.language),
+    cwd: stringValue(card.cwd),
+    status: stringValue(card.status),
+    exitCode: numberValue(card.exit_code) ?? numberValue(card.exitCode),
   });
 }
 
@@ -441,12 +431,4 @@ function numberValue(value: unknown) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function commandOutput(part: ConversationPart) {
-  const text = part.text?.trim();
-  if (text && text !== part.command?.trim()) return text;
-  if (part.status) return part.status;
-  if (part.exit_code != null) return `Exit code ${part.exit_code}`;
-  return null;
 }

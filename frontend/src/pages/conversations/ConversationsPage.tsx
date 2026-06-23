@@ -956,7 +956,7 @@ export function groupConversationSessionsByApp(
   const groups = adapters.map((adapter) =>
     createAppSessionGroup(
       {
-        appKind: conversationAdapterKindToAppKind(adapter.kind),
+        appKind: inferAppKindFromAdapterId(adapter.id),
         id: adapter.id,
         name: adapter.name,
       },
@@ -1442,19 +1442,6 @@ function findConversationAppShortcut(shortcuts: AppShortcut[], app: Conversation
     shortcuts.find((shortcut) => app.appKind !== "custom" && shortcut.appKind === app.appKind) ??
     null
   );
-}
-
-function conversationAdapterKindToAppKind(kind: ConversationAdapter["kind"]): AppKind {
-  switch (kind) {
-    case "codex":
-      return "codex";
-    case "claude_code":
-      return "claude";
-    case "opencode":
-      return "opencode";
-    case "external":
-      return "custom";
-  }
 }
 
 function isWebRecordAdapter(adapter: ConversationAdapter) {

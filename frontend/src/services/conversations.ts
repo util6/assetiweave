@@ -814,39 +814,13 @@ function pushFallbackHit(
 
 function fallbackEntriesForPart(part: ConversationQuestionDetail["parts"][number]) {
   const declaredCard = declaredContentCard(part.metadata_json);
-  if (declaredCard) {
-    const cardType = declaredCard.type;
-    const primaryText = cardType === "command"
-      ? part.command ?? part.text
-      : part.text ?? part.command ?? part.metadata_json;
-    const entries = fallbackEntry(part.id, cardType, primaryText, cardType);
-    if (cardType === "command") {
-      return [
-        ...entries,
-        ...fallbackEntry(part.id, "result", commandResultText(part), "result"),
-      ];
-    }
-    return entries;
-  }
+  if (!declaredCard) return [];
 
-  if (part.kind === "code_block") {
-    return fallbackEntry(part.id, "code", part.text);
-  }
-  if (part.kind === "command") {
-    const command = part.command?.trim() || part.text?.trim();
-    const output = commandResultText(part);
-    return [
-      ...fallbackEntry(part.id, "command", command, "command"),
-      ...fallbackEntry(part.id, "result", output, "result"),
-    ];
-  }
-  if (part.kind === "text") {
-    const cardType = part.role === "tool" ? "result" : "answer";
-    return fallbackEntry(part.id, cardType, part.text);
-  }
-
-  const cardType = isResultPart(part) ? "result" : "tool";
-  return fallbackEntry(part.id, cardType, part.text ?? part.metadata_json);
+  const cardType = declaredCard.type;
+  const primaryText = cardType === "command"
+    ? part.command ?? part.text
+    : part.text ?? part.command ?? part.metadata_json;
+  return fallbackEntry(part.id, cardType, primaryText, cardType);
 }
 
 function fallbackEntry(
@@ -857,20 +831,6 @@ function fallbackEntry(
 ) {
   const trimmedText = text?.trim();
   return trimmedText ? [{ blockId: `${partId}-${suffix}`, cardType, text: trimmedText }] : [];
-}
-
-function commandResultText(part: ConversationQuestionDetail["parts"][number]) {
-  const text = part.text?.trim();
-  if (text && text !== part.command?.trim()) return text;
-  if (part.status) return part.status;
-  if (part.exit_code != null) return `Exit code ${part.exit_code}`;
-  return null;
-}
-
-function isResultPart(part: ConversationQuestionDetail["parts"][number]) {
-  const card = declaredContentCard(part.metadata_json);
-  if (card) return card.type === "result";
-  return part.role === "tool" && part.kind === "text";
 }
 
 interface DeclaredContentCard {
@@ -922,9 +882,11 @@ const fallbackAdapters: ConversationAdapter[] = [
   {
     id: "codex",
     name: "Codex",
-    kind: "codex",
-    version: "1",
+    kind: "external",
+    version: "1.0.0",
     enabled: true,
+    manifest_path: "~/.assetiweave/conversation-adapters/codex/conversation-adapter.json",
+    executable_path: "~/.assetiweave/conversation-adapters/codex/adapter.mjs",
     trust_state: "built_in",
     capabilities: ["probe", "list_sessions", "read_session"],
     input_kinds: ["live", "file"],
@@ -934,9 +896,11 @@ const fallbackAdapters: ConversationAdapter[] = [
   {
     id: "claude-code",
     name: "Claude Code",
-    kind: "claude_code",
-    version: "1",
+    kind: "external",
+    version: "1.0.0",
     enabled: true,
+    manifest_path: "~/.assetiweave/conversation-adapters/claude-code/conversation-adapter.json",
+    executable_path: "~/.assetiweave/conversation-adapters/claude-code/adapter.mjs",
     trust_state: "built_in",
     capabilities: ["probe", "list_sessions", "read_session"],
     input_kinds: ["live", "directory", "file"],
@@ -946,9 +910,11 @@ const fallbackAdapters: ConversationAdapter[] = [
   {
     id: "opencode",
     name: "OpenCode",
-    kind: "opencode",
-    version: "1",
+    kind: "external",
+    version: "1.0.0",
     enabled: true,
+    manifest_path: "~/.assetiweave/conversation-adapters/opencode/conversation-adapter.json",
+    executable_path: "~/.assetiweave/conversation-adapters/opencode/adapter.mjs",
     trust_state: "built_in",
     capabilities: ["probe", "list_sessions", "read_session"],
     input_kinds: ["live", "sqlite"],
@@ -1045,6 +1011,9 @@ const fallbackSessionDetail: ConversationSessionDetail = {
           role: "assistant",
           kind: "text",
           text: "AssetIWeave imports source sessions into normalized turns, then groups adjacent turns into question records.",
+          metadata_json: JSON.stringify({
+            content_card: { type: "answer", format: "markdown" },
+          }),
         },
         {
           id: "preview-part-2",
@@ -1053,6 +1022,9 @@ const fallbackSessionDetail: ConversationSessionDetail = {
           role: "tool",
           kind: "command",
           command: "assetiweave-cli conversation sync --source codex-live",
+          metadata_json: JSON.stringify({
+            content_card: { type: "command" },
+          }),
         },
       ],
     },
@@ -1090,6 +1062,9 @@ const fallbackSessionDetail: ConversationSessionDetail = {
           role: "assistant",
           kind: "text",
           text: "Use session export to write one Markdown file per session.",
+          metadata_json: JSON.stringify({
+            content_card: { type: "answer", format: "markdown" },
+          }),
         },
       ],
     },

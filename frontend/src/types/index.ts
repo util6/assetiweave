@@ -172,7 +172,7 @@ export type AppKind =
   | "openclaw"
   | "custom";
 
-export type ConversationAdapterKind = "codex" | "claude_code" | "opencode" | "external";
+export type ConversationAdapterKind = "external";
 export type ConversationSourceKind = "live" | "file" | "directory" | "sqlite" | "custom";
 export type ConversationAdapterTrustState = "built_in" | "trusted" | "changed" | "untrusted";
 export type ConversationPartRole = "user" | "assistant" | "tool" | "system";
