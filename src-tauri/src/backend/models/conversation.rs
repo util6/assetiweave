@@ -317,8 +317,20 @@ pub fn conversation_turn_fingerprint(turn: &NormalizedConversationTurn) -> Strin
         if let Some(value) = &part.text {
             hasher.update(value.as_bytes());
         }
+        if let Some(value) = &part.language {
+            hasher.update(value.as_bytes());
+        }
         if let Some(value) = &part.command {
             hasher.update(value.as_bytes());
+        }
+        if let Some(value) = &part.cwd {
+            hasher.update(value.as_bytes());
+        }
+        if let Some(value) = &part.status {
+            hasher.update(value.as_bytes());
+        }
+        if let Some(value) = part.exit_code {
+            hasher.update(value.to_string().as_bytes());
         }
         if let Some(value) = &part.metadata_json {
             hasher.update(value.as_bytes());

@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
 const SQLITE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+const CONTENT_CARD_SCHEMA_VERSION = "opencode-content-cards-v2";
 
 function emit(type, payload = {}) {
   process.stdout.write(`${JSON.stringify({ type, ...payload })}\n`);
@@ -24,8 +25,12 @@ function expandPath(value) {
   return value;
 }
 
-function sha256File(filePath) {
-  return createHash("sha256").update(readFileSync(filePath)).digest("hex");
+function sourceFingerprint(filePath) {
+  return createHash("sha256")
+    .update(CONTENT_CARD_SCHEMA_VERSION)
+    .update("\0")
+    .update(readFileSync(filePath))
+    .digest("hex");
 }
 
 function sqliteJson(dbPath, sql) {
@@ -67,6 +72,12 @@ function metadata(contentCard, extra = {}) {
     ...(extra && typeof extra === "object" && !Array.isArray(extra) ? extra : {}),
     content_card: contentCard,
   });
+}
+
+function compactObject(value) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== null && entry !== undefined && entry !== ""),
+  );
 }
 
 function textPart(role, text) {
@@ -195,26 +206,61 @@ function normalizePart(row, role) {
   if (normalizedKind === "text") {
     return splitMarkdownParts(normalizedRole, text);
   }
-  const contentCard = normalizedKind === "command" || command
-    ? { type: "command" }
-    : normalizedKind === "tool" || normalizedKind === "file_change" || normalizedKind === "subagent"
-      ? { type: "result", format: "plain" }
-      : { type: "answer", format: "markdown" };
+  const cwd = valueText(data, ["cwd", "directory"])
+    ?? nestedText(data, [["state", "input", "cwd"], ["input", "cwd"]])
+    ?? null;
+  const status = valueText(data, ["status"])
+    ?? nestedText(data, [["state", "status"]])
+    ?? null;
+  const exitCode = Number.isInteger(data?.exit_code)
+    ? data.exit_code
+    : nestedInteger(data, [["state", "metadata", "exit"], ["state", "exit"]]);
+  const resultText = String(text ?? "").trim();
+  if (normalizedKind === "command" || command) {
+    const parts = [];
+    if (command?.trim()) {
+      parts.push({
+        role: normalizedRole,
+        kind: "command",
+        text: null,
+        language: null,
+        command,
+        cwd,
+        status: null,
+        exit_code: null,
+        metadata_json: metadata(compactObject({ type: "command", cwd }), data),
+      });
+    }
+    if (resultText) {
+      parts.push({
+        role: "tool",
+        kind: "tool",
+        text: resultText,
+        language: null,
+        command: null,
+        cwd: null,
+        status,
+        exit_code: exitCode,
+        metadata_json: metadata(
+          compactObject({ type: "result", format: "plain", status, exit_code: exitCode }),
+          data,
+        ),
+      });
+    }
+    return parts;
+  }
+  const contentCard = normalizedKind === "tool" || normalizedKind === "file_change" || normalizedKind === "subagent"
+    ? { type: "result", format: "plain" }
+    : { type: "answer", format: "markdown" };
   return {
     role: normalizedRole,
     kind: normalizedKind,
     text: text || null,
     language: null,
-    command,
-    cwd: valueText(data, ["cwd", "directory"])
-      ?? nestedText(data, [["state", "input", "cwd"], ["input", "cwd"]])
-      ?? null,
-    status: valueText(data, ["status"])
-      ?? nestedText(data, [["state", "status"]])
-      ?? null,
-    exit_code: Number.isInteger(data?.exit_code)
-      ? data.exit_code
-      : nestedInteger(data, [["state", "metadata", "exit"], ["state", "exit"]]),
+    command: null,
+    cwd,
+    status,
+    exit_code: exitCode,
     metadata_json: metadata(contentCard, data),
   };
 }
@@ -327,7 +373,7 @@ function readSession() {
   const requestedSessionId = input.params?.session_id ?? null;
   const sessionWhere = requestedSessionId ? `WHERE ${quoteIdent(idCol)} = ${sqlString(requestedSessionId)}` : "";
   const sessionSql = `SELECT ${quoteIdent(idCol)} AS id, ${titleCol ? quoteIdent(titleCol) : "NULL"} AS title, ${projectCol ? quoteIdent(projectCol) : "NULL"} AS project_path, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at FROM session ${sessionWhere} ORDER BY rowid DESC LIMIT 500`;
-  const fingerprint = sha256File(dbPath);
+  const fingerprint = sourceFingerprint(dbPath);
   const rows = sqliteJson(dbPath, sessionSql);
   const turnsBySession = readTurnsBySession(
     dbPath,

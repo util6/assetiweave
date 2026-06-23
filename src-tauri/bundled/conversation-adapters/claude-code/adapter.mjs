@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
+const CONTENT_CARD_SCHEMA_VERSION = "claude-code-content-cards-v2";
 
 function emit(type, payload = {}) {
   process.stdout.write(`${JSON.stringify({ type, ...payload })}\n`);
@@ -26,8 +27,18 @@ function sha256(text) {
   return createHash("sha256").update(text).digest("hex");
 }
 
+function sourceFingerprint(text) {
+  return sha256(`${CONTENT_CARD_SCHEMA_VERSION}\0${text}`);
+}
+
 function compact(value) {
   return JSON.stringify(value);
+}
+
+function compactObject(value) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== null && entry !== undefined && entry !== ""),
+  );
 }
 
 function metadata(contentCard, extra = {}) {
@@ -282,27 +293,60 @@ function toolPart(value) {
   const toolName = stringField(value, ["tool_name", "toolName", "name"]);
   const command = stringField(value?.tool_input, ["command"]) ?? stringField(value, ["command", "cmd"]);
   const text = toolText(value) || (toolName ? `${recordType || "tool"}: ${toolName}` : "");
-  if (!command && !text.trim()) return null;
+  if (!command && !text.trim()) return [];
   const lowerName = (toolName ?? "").toLowerCase();
   const kind = lowerName.includes("patch") || lowerName.includes("edit") || recordType === "patch"
     ? "file_change"
     : command || recordType.includes("shell")
       ? "command"
       : "tool";
-  return {
+  const cwd = projectPathFromValue(value?.tool_input) ?? projectPathFromValue(value) ?? null;
+  const status = stringField(value, ["status"]) ?? null;
+  const exitCode = Number.isInteger(value?.exit_code) ? value.exit_code : null;
+  if (kind === "command") {
+    const parts = [];
+    if (command?.trim()) {
+      parts.push({
+        role: "tool",
+        kind: "command",
+        text: null,
+        language: null,
+        command,
+        cwd,
+        status: null,
+        exit_code: null,
+        metadata_json: metadata(compactObject({ type: "command", cwd }), value),
+      });
+    }
+    if (text.trim()) {
+      parts.push({
+        role: "tool",
+        kind: "tool",
+        text,
+        language: null,
+        command: null,
+        cwd: null,
+        status,
+        exit_code: exitCode,
+        metadata_json: metadata(
+          compactObject({ type: "result", format: "plain", status, exit_code: exitCode }),
+          value,
+        ),
+      });
+    }
+    return parts;
+  }
+  return [{
     role: "tool",
     kind,
     text: text.trim() ? text : null,
     language: null,
-    command,
-    cwd: projectPathFromValue(value?.tool_input) ?? projectPathFromValue(value) ?? null,
-    status: stringField(value, ["status"]) ?? null,
-    exit_code: Number.isInteger(value?.exit_code) ? value.exit_code : null,
-    metadata_json: metadata(
-      kind === "command" ? { type: "command" } : { type: "result", format: "plain" },
-      value,
-    ),
-  };
+    command: null,
+    cwd,
+    status,
+    exit_code: exitCode,
+    metadata_json: metadata({ type: "result", format: "plain" }, value),
+  }];
 }
 
 function parseJsonl(text) {
@@ -355,8 +399,7 @@ function parseJsonl(text) {
     }
     if (!current) continue;
     if (isUserToolResultMessage(payload)) {
-      const part = toolPart(payload);
-      if (part) current.parts.push(part);
+      current.parts.push(...toolPart(payload));
       current.ended_at = timestamp;
       continue;
     }
@@ -369,8 +412,7 @@ function parseJsonl(text) {
       continue;
     }
     if (recordType.includes("tool") || recordType.includes("shell") || recordType === "patch") {
-      const part = toolPart(payload);
-      if (part) current.parts.push(part);
+      current.parts.push(...toolPart(payload));
       current.ended_at = timestamp;
     }
   }
@@ -407,7 +449,7 @@ function readSession() {
       started_at: turns[0]?.started_at ?? null,
       updated_at: turns.at(-1)?.ended_at ?? null,
       source_locator: filePath,
-      source_fingerprint: sha256(text),
+      source_fingerprint: sourceFingerprint(text),
       turns,
     }];
   });

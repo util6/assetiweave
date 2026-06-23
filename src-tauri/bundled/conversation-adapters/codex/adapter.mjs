@@ -6,6 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
+const CONTENT_CARD_SCHEMA_VERSION = "codex-content-cards-v2";
 
 function emit(type, payload = {}) {
   process.stdout.write(`${JSON.stringify({ type, ...payload })}\n`);
@@ -25,6 +26,10 @@ function expandPath(value) {
 
 function sha256(text) {
   return createHash("sha256").update(text).digest("hex");
+}
+
+function sourceFingerprint(text) {
+  return sha256(`${CONTENT_CARD_SCHEMA_VERSION}\0${text}`);
 }
 
 function sqliteJson(dbPath, sql) {
@@ -79,6 +84,12 @@ function metadata(contentCard, extra = {}) {
     ...(extra && typeof extra === "object" && !Array.isArray(extra) ? extra : {}),
     content_card: contentCard,
   });
+}
+
+function compactObject(value) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== null && entry !== undefined && entry !== ""),
+  );
 }
 
 function textPart(role, text) {
@@ -187,10 +198,7 @@ function nestedIntegerField(value, names, depth = 0) {
 }
 
 function commandFromPayload(payload) {
-  return (
-    nestedStringField(payload, ["command", "cmd", "shell_command"]) ??
-    directStringField(payload, ["name", "tool_name", "toolName", "tool"])
-  );
+  return nestedStringField(payload, ["command", "cmd", "shell_command"]);
 }
 
 function cwdFromPayload(payload) {
@@ -203,6 +211,29 @@ function statusFromPayload(payload) {
 
 function exitCodeFromPayload(payload) {
   return nestedIntegerField(payload, ["exit_code", "exitCode", "code"]);
+}
+
+function toolNameFromPayload(payload) {
+  return directStringField(payload, ["name", "tool_name", "toolName", "tool"]);
+}
+
+function isToolResultPayload(payload) {
+  const type = String(payload?.type ?? "").toLowerCase();
+  return (
+    type.includes("output") ||
+    type.includes("result") ||
+    payload?.output != null ||
+    payload?.result != null
+  );
+}
+
+function toolDisplayText(payload, content) {
+  const text = String(content ?? "").trim();
+  if (text) return text;
+  const toolName = toolNameFromPayload(payload);
+  const type = String(payload?.type ?? "tool").trim() || "tool";
+  if (toolName?.trim()) return `${type}: ${toolName.trim()}`;
+  return "";
 }
 
 function isToolEvent(payload) {
@@ -273,20 +304,62 @@ function normalizeTurns(text) {
       const command = commandFromPayload(payload);
       const cwd = cwdFromPayload(payload);
       const text = contentText(payload.content);
-      const card = command
-        ? { type: "command" }
-        : { type: "result", format: "plain" };
-      current.parts.push({
-        role: "tool",
-        kind: "command",
-        text: text.trim() ? text : null,
-        language: null,
-        command,
-        cwd,
-        status: statusFromPayload(payload),
-        exit_code: exitCodeFromPayload(payload),
-        metadata_json: metadata(card, payload),
-      });
+      const status = statusFromPayload(payload);
+      const exitCode = exitCodeFromPayload(payload);
+      if (command?.trim()) {
+        current.parts.push({
+          role: "tool",
+          kind: "command",
+          text: null,
+          language: null,
+          command,
+          cwd,
+          status: null,
+          exit_code: null,
+          metadata_json: metadata(compactObject({ type: "command", cwd }), payload),
+        });
+      }
+      if (command?.trim() && text.trim()) {
+        current.parts.push({
+          role: "tool",
+          kind: "tool",
+          text: text.trim(),
+          language: null,
+          command: null,
+          cwd: null,
+          status,
+          exit_code: exitCode,
+          metadata_json: metadata(
+            compactObject({ type: "result", format: "plain", status, exit_code: exitCode }),
+            payload,
+          ),
+        });
+      }
+      if (!command?.trim()) {
+        const displayText = toolDisplayText(payload, text);
+        if (displayText) {
+          const result = isToolResultPayload(payload);
+          current.parts.push({
+            role: "tool",
+            kind: "tool",
+            text: displayText,
+            language: null,
+            command: null,
+            cwd: null,
+            status: result ? status : null,
+            exit_code: result ? exitCode : null,
+            metadata_json: metadata(
+              compactObject({
+                type: result ? "result" : "tool",
+                format: result ? "plain" : undefined,
+                status: result ? status : null,
+                exit_code: result ? exitCode : null,
+              }),
+              payload,
+            ),
+          });
+        }
+      }
       current.ended_at = parsed.timestamp ?? payload.timestamp ?? current.ended_at;
     }
   }
@@ -327,7 +400,7 @@ function readSession() {
       started_at: turns[0]?.started_at ?? null,
       updated_at: row.updated_at == null ? null : String(row.updated_at),
       source_locator: rolloutPath,
-      source_fingerprint: sha256(text),
+      source_fingerprint: sourceFingerprint(text),
       turns,
     }];
   });
