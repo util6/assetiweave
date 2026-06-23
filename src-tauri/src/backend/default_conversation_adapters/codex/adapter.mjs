@@ -74,6 +74,13 @@ function valueAsString(value) {
   return null;
 }
 
+function metadata(contentCard, extra = {}) {
+  return JSON.stringify({
+    ...(extra && typeof extra === "object" && !Array.isArray(extra) ? extra : {}),
+    content_card: contentCard,
+  });
+}
+
 function directStringField(value, names) {
   if (!value || typeof value !== "object") return null;
   for (const name of names) {
@@ -211,23 +218,27 @@ function normalizeTurns(text) {
           cwd: null,
           status: null,
           exit_code: null,
-          metadata_json: null,
+          metadata_json: metadata({ type: "answer", format: "markdown" }),
         });
       }
       current.ended_at = parsed.timestamp ?? payload.timestamp ?? current.ended_at;
     } else if (current && isToolEvent(payload)) {
       const command = commandFromPayload(payload);
       const cwd = cwdFromPayload(payload);
+      const text = contentText(payload.content);
+      const card = command
+        ? { type: "command" }
+        : { type: "result", format: "plain" };
       current.parts.push({
-        role: "assistant",
+        role: "tool",
         kind: "command",
-        text: null,
+        text: text.trim() ? text : null,
         language: null,
         command,
         cwd,
         status: statusFromPayload(payload),
         exit_code: exitCodeFromPayload(payload),
-        metadata_json: JSON.stringify(payload),
+        metadata_json: metadata(card, payload),
       });
       current.ended_at = parsed.timestamp ?? payload.timestamp ?? current.ended_at;
     }

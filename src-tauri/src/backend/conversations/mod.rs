@@ -1033,9 +1033,13 @@ fn normalize_opencode_parts(
             ConversationPartRole::Assistant
         };
         if mapped_kind == ConversationPartKind::Text {
-            parts.extend(split_markdown_text_parts(role, &row.text));
+            parts.extend(
+                split_markdown_text_parts(role, &row.text)
+                    .into_iter()
+                    .map(|part| with_declared_content_card(part, None)),
+            );
         } else {
-            parts.push(NormalizedConversationPart {
+            let part = NormalizedConversationPart {
                 role,
                 kind: mapped_kind,
                 text: (!row.text.trim().is_empty()).then_some(row.text.clone()),
@@ -1044,8 +1048,12 @@ fn normalize_opencode_parts(
                 cwd: row.cwd.clone(),
                 status: row.status.clone(),
                 exit_code: row.exit_code,
-                metadata_json: row.metadata_json.clone(),
-            });
+                metadata_json: None,
+            };
+            parts.push(with_declared_content_card(
+                part,
+                row.metadata_json.as_deref(),
+            ));
         }
     }
     parts
@@ -1096,10 +1104,11 @@ fn parse_jsonl_conversation(text: &str) -> AppResult<Vec<NormalizedConversationT
         if role.as_deref() == Some("assistant") {
             let text = extract_text(payload);
             if !text.trim().is_empty() {
-                turn.parts.extend(split_markdown_text_parts(
-                    ConversationPartRole::Assistant,
-                    &text,
-                ));
+                turn.parts.extend(
+                    split_markdown_text_parts(ConversationPartRole::Assistant, &text)
+                        .into_iter()
+                        .map(|part| with_declared_content_card(part, None)),
+                );
             }
             turn.ended_at = timestamp;
             continue;
@@ -1145,7 +1154,7 @@ fn tool_part_from_event(value: &Value) -> Option<NormalizedConversationPart> {
     } else {
         ConversationPartKind::Tool
     };
-    Some(NormalizedConversationPart {
+    let part = NormalizedConversationPart {
         role: ConversationPartRole::Tool,
         kind,
         text: (!text.trim().is_empty()).then_some(text),
@@ -1154,8 +1163,10 @@ fn tool_part_from_event(value: &Value) -> Option<NormalizedConversationPart> {
         cwd: cwd_from_value(value),
         status: status_from_value(value),
         exit_code: exit_code_from_value(value),
-        metadata_json: Some(compact_json(value)),
-    })
+        metadata_json: None,
+    };
+    let raw_metadata = compact_json(value);
+    Some(with_declared_content_card(part, Some(&raw_metadata)))
 }
 
 fn is_tool_record(record_type: &str, payload: &Value) -> bool {
@@ -1835,6 +1846,44 @@ fn compact_json(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_default()
 }
 
+fn with_declared_content_card(
+    mut part: NormalizedConversationPart,
+    raw_metadata_json: Option<&str>,
+) -> NormalizedConversationPart {
+    let Some(content_card) = content_card_for_part(&part) else {
+        return part;
+    };
+    let mut metadata = raw_metadata_json
+        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    metadata.insert("content_card".to_string(), content_card);
+    part.metadata_json = Some(compact_json(&Value::Object(metadata)));
+    part
+}
+
+fn content_card_for_part(part: &NormalizedConversationPart) -> Option<Value> {
+    match part.kind {
+        ConversationPartKind::Text if part.role == ConversationPartRole::Assistant => {
+            Some(json!({ "type": "answer", "format": "markdown" }))
+        }
+        ConversationPartKind::CodeBlock => {
+            let mut card = serde_json::Map::new();
+            card.insert("type".to_string(), json!("code"));
+            if let Some(language) = part.language.as_deref().filter(|value| !value.is_empty()) {
+                card.insert("language".to_string(), json!(language));
+            }
+            Some(Value::Object(card))
+        }
+        ConversationPartKind::Command => Some(json!({ "type": "command" })),
+        ConversationPartKind::Tool
+        | ConversationPartKind::FileChange
+        | ConversationPartKind::Subagent
+        | ConversationPartKind::Metadata => Some(json!({ "type": "result", "format": "plain" })),
+        ConversationPartKind::Text => None,
+    }
+}
+
 #[allow(dead_code)]
 fn _metadata_map(value: &Value) -> BTreeMap<String, Value> {
     value
@@ -1875,6 +1924,15 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
+    }
+
+    fn content_card_type(part: &NormalizedConversationPart) -> Option<String> {
+        let metadata: Value = serde_json::from_str(part.metadata_json.as_deref()?).ok()?;
+        metadata
+            .get("content_card")
+            .and_then(|card| card.get("type"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
     }
 
     #[test]
@@ -2332,6 +2390,18 @@ mod tests {
             .iter()
             .any(|part| part.kind == ConversationPartKind::Command
                 && part.text.as_deref() == Some("pnpm test")));
+        let code_part = session.turns[0]
+            .parts
+            .iter()
+            .find(|part| part.kind == ConversationPartKind::CodeBlock)
+            .expect("code part");
+        assert_eq!(content_card_type(code_part), Some("code".to_string()));
+        let command_part = session.turns[0]
+            .parts
+            .iter()
+            .find(|part| part.kind == ConversationPartKind::Command)
+            .expect("command part");
+        assert_eq!(content_card_type(command_part), Some("command".to_string()));
     }
 
     #[test]
@@ -2573,6 +2643,21 @@ mod tests {
             .parts
             .iter()
             .any(|part| part.kind == ConversationPartKind::FileChange));
+        let command_part = turns[0]
+            .parts
+            .iter()
+            .find(|part| part.kind == ConversationPartKind::Command)
+            .expect("command part");
+        assert_eq!(content_card_type(command_part), Some("command".to_string()));
+        let file_change_part = turns[0]
+            .parts
+            .iter()
+            .find(|part| part.kind == ConversationPartKind::FileChange)
+            .expect("file change part");
+        assert_eq!(
+            content_card_type(file_change_part),
+            Some("result".to_string())
+        );
         assert!(turns[0].parts.iter().all(|part| {
             !part.text.as_deref().is_some_and(|text| {
                 text.contains("hidden reasoning")
@@ -3192,14 +3277,18 @@ printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
             .parts
             .iter()
             .all(|part| part.text.as_deref() != Some(large_reasoning.as_str())));
-        assert!(result.sessions[0].turns[0].parts.iter().any(|part| {
-            part.kind == ConversationPartKind::Tool
-                && part.command.as_deref() == Some("pnpm test")
-                && part.text.as_deref() == Some("tests passed")
-                && part.status.as_deref() == Some("completed")
-                && part.exit_code == Some(0)
-                && part.metadata_json.is_none()
-        }));
+        let tool_part = result.sessions[0].turns[0]
+            .parts
+            .iter()
+            .find(|part| {
+                part.kind == ConversationPartKind::Tool
+                    && part.command.as_deref() == Some("pnpm test")
+                    && part.text.as_deref() == Some("tests passed")
+                    && part.status.as_deref() == Some("completed")
+                    && part.exit_code == Some(0)
+            })
+            .expect("tool part");
+        assert_eq!(content_card_type(tool_part), Some("command".to_string()));
     }
 
     #[cfg(unix)]

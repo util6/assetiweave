@@ -61,6 +61,14 @@ test("keeps Gemini assistant-only artifact turns", () => {
       ["code_block", "html", "<!doctype html>\n<html><body>ok</body></html>"]
     ]
   );
+  assert.deepEqual(
+    turn.parts.map((part) => JSON.parse(part.metadata_json).content_card),
+    [
+      { type: "answer", format: "markdown" },
+      { type: "code", language: "html" }
+    ]
+  );
+  assert.equal(JSON.parse(turn.parts[1].metadata_json).filename, "demo.html");
 });
 
 test("captures Gemini generated media links", () => {
@@ -91,10 +99,17 @@ test("captures Gemini generated media links", () => {
 
   assert.equal(turn.user_text, "draw this");
   assert.deepEqual(
-    turn.parts.map((part) => part.text),
+    turn.parts.map((part) => [part.role, part.kind, part.status, part.text]),
     [
-      "Done.",
-      "Gemini media:\n- [generated.png](https://lh3.googleusercontent.com/gg/example) (image/png)"
+      ["assistant", "text", null, "Done."],
+      ["tool", "tool", "completed", "Gemini media:\n- [generated.png](https://lh3.googleusercontent.com/gg/example) (image/png)"]
+    ]
+  );
+  assert.deepEqual(
+    turn.parts.map((part) => JSON.parse(part.metadata_json).content_card),
+    [
+      { type: "answer", format: "markdown" },
+      { type: "result", format: "markdown" }
     ]
   );
 });
@@ -112,4 +127,8 @@ test("adds user attachment references to the question text", () => {
     "explain this\n\nUser attachments:\n- [input.png](https://lh3.googleusercontent.com/gg/uploaded) (image/png)"
   );
   assert.equal(turn.parts[0].text, "Answer.");
+  assert.deepEqual(JSON.parse(turn.parts[0].metadata_json).content_card, {
+    type: "answer",
+    format: "markdown"
+  });
 });

@@ -28,6 +28,13 @@ test("normalizes current Qwen assistant text messages", () => {
     turn.parts.map((part) => part.text),
     ["First answer section.", "Second answer section."]
   );
+  assert.deepEqual(
+    turn.parts.map((part) => JSON.parse(part.metadata_json).content_card),
+    [
+      { type: "answer", format: "markdown" },
+      { type: "answer", format: "markdown" }
+    ]
+  );
 });
 
 test("normalizes legacy Qwen final answer messages", () => {
@@ -46,6 +53,10 @@ test("normalizes legacy Qwen final answer messages", () => {
     turn.parts.map((part) => part.text),
     ["Legacy final answer."]
   );
+  assert.deepEqual(JSON.parse(turn.parts[0].metadata_json).content_card, {
+    type: "answer",
+    format: "markdown"
+  });
 });
 
 test("keeps questions whose response was interrupted", () => {
@@ -61,4 +72,43 @@ test("keeps questions whose response was interrupted", () => {
 
   assert.equal(turn.user_text, "Question with interrupted response");
   assert.deepEqual(turn.parts, []);
+});
+
+test("normalizes Qwen plugin links as declared result cards", () => {
+  const turn = normalizeRound({
+    req_id: "request-plugin",
+    request_messages: [
+      { content: "Find references" }
+    ],
+    qwen_response_messages: [
+      {
+        role: "plugin",
+        contentType: "plugin",
+        status: "finished",
+        content: JSON.stringify({
+          pluginResult: JSON.stringify({
+            links: [
+              {
+                title: "Reference title",
+                body: "Reference summary",
+                url: "https://example.test/reference"
+              }
+            ]
+          })
+        })
+      }
+    ]
+  }, 0);
+
+  assert.equal(turn.parts[0].role, "tool");
+  assert.equal(turn.parts[0].kind, "tool");
+  assert.equal(turn.parts[0].status, "completed");
+  assert.equal(
+    turn.parts[0].text,
+    "Qwen tool result:\n- [Reference title](https://example.test/reference) - Reference summary"
+  );
+  assert.deepEqual(JSON.parse(turn.parts[0].metadata_json).content_card, {
+    type: "result",
+    format: "markdown"
+  });
 });

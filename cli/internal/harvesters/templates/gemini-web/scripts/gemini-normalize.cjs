@@ -16,6 +16,13 @@ function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function metadata(contentCard, extra = {}) {
+  return JSON.stringify({
+    ...extra,
+    content_card: contentCard
+  });
+}
+
 function normalizedPart(role, kind, fields = {}) {
   return {
     role,
@@ -107,7 +114,7 @@ function extractArtifactParts(candidate) {
           parts.push(normalizedPart("assistant", "code_block", {
             text: parsed.code,
             language: parsed.language,
-            metadata_json: JSON.stringify({ filename })
+            metadata_json: metadata({ type: "code", language: parsed.language }, { filename })
           }));
         }
       }
@@ -183,7 +190,10 @@ function normalizeTurn(cid, rawTurn, index) {
       const answer = candidateText(candidate);
       if (answer && !seenAnswers.has(answer)) {
         seenAnswers.add(answer);
-        parts.push(normalizedPart("assistant", "text", { text: answer }));
+        parts.push(normalizedPart("assistant", "text", {
+          text: answer,
+          metadata_json: metadata({ type: "answer", format: "markdown" })
+        }));
       }
       for (const part of extractArtifactParts(candidate)) {
         parts.push(part);
@@ -194,7 +204,11 @@ function normalizeTurn(cid, rawTurn, index) {
         const fingerprint = crypto.createHash("sha256").update(mediaText).digest("hex");
         if (!seenMediaBlocks.has(fingerprint)) {
           seenMediaBlocks.add(fingerprint);
-          parts.push(normalizedPart("assistant", "text", { text: mediaText }));
+          parts.push(normalizedPart("tool", "tool", {
+            text: mediaText,
+            status: "completed",
+            metadata_json: metadata({ type: "result", format: "markdown" })
+          }));
         }
       }
     }

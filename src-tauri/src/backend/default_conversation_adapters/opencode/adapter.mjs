@@ -62,6 +62,13 @@ function parseJson(text) {
   }
 }
 
+function metadata(contentCard, extra = {}) {
+  return JSON.stringify({
+    ...(extra && typeof extra === "object" && !Array.isArray(extra) ? extra : {}),
+    content_card: contentCard,
+  });
+}
+
 function valueText(value, keys) {
   for (const key of keys) {
     const candidate = value?.[key];
@@ -112,14 +119,34 @@ function normalizePart(row, role) {
   if (!text && !data) return null;
   if (["reasoning", "step-start", "step-finish", "step_finish", "compaction", "retry", "snapshot"].includes(kind)) return null;
   const lowerRole = String(role || "").toLowerCase();
+  const normalizedKind = kind === "tool"
+    ? "tool"
+    : kind === "command"
+      ? "command"
+      : kind === "patch" || kind === "file"
+        ? "file_change"
+        : kind === "subtask" || kind === "agent"
+          ? "subagent"
+          : "text";
+  const command = valueText(data, ["command", "cmd"])
+    ?? nestedText(data, [["state", "input", "command"], ["input", "command"]])
+    ?? null;
+  const normalizedRole = lowerRole === "user"
+    ? "user"
+    : normalizedKind === "tool" || normalizedKind === "command"
+      ? "tool"
+      : "assistant";
+  const contentCard = normalizedKind === "command" || command
+    ? { type: "command" }
+    : normalizedKind === "tool" || normalizedKind === "file_change" || normalizedKind === "subagent"
+      ? { type: "result", format: "plain" }
+      : { type: "answer", format: "markdown" };
   return {
-    role: lowerRole === "user" ? "user" : "assistant",
-    kind: kind === "tool" ? "tool" : kind === "command" ? "command" : "text",
+    role: normalizedRole,
+    kind: normalizedKind,
     text: text || null,
     language: null,
-    command: valueText(data, ["command", "cmd"])
-      ?? nestedText(data, [["state", "input", "command"], ["input", "command"]])
-      ?? null,
+    command,
     cwd: valueText(data, ["cwd", "directory"])
       ?? nestedText(data, [["state", "input", "cwd"], ["input", "cwd"]])
       ?? null,
@@ -129,7 +156,7 @@ function normalizePart(row, role) {
     exit_code: Number.isInteger(data?.exit_code)
       ? data.exit_code
       : nestedInteger(data, [["state", "metadata", "exit"], ["state", "exit"]]),
-    metadata_json: null,
+    metadata_json: metadata(contentCard, data),
   };
 }
 
