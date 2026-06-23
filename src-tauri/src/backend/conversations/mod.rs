@@ -315,9 +315,9 @@ pub(crate) fn scaffold_external_adapter(
     .map_err(|error| error.to_string())?;
     fs::write(
         &response_fixture_path,
-        r#"{"type":"item","item":{"kind":"session","session":{"external_id":"example-session","title":"Example session","project_path":null,"started_at":null,"updated_at":null,"source_locator":null,"source_fingerprint":null,"turns":[{"external_id":"turn-1","turn_index":0,"user_text":"Example question","title":null,"started_at":null,"ended_at":null,"parts":[{"role":"assistant","kind":"text","text":"Example answer","language":null,"command":null,"cwd":null,"status":null,"exit_code":null,"metadata_json":null}]}]}}}
+        r###"{"type":"item","item":{"kind":"session","session":{"external_id":"example-session","title":"Example session","project_path":null,"started_at":null,"updated_at":null,"source_locator":null,"source_fingerprint":null,"turns":[{"external_id":"turn-1","turn_index":0,"user_text":"Example question","title":null,"started_at":null,"ended_at":null,"parts":[{"role":"assistant","kind":"text","text":"## Example answer\n\nExternal adapters declare display semantics.","language":null,"command":null,"cwd":null,"status":null,"exit_code":null,"metadata_json":{"content_card":{"type":"answer","format":"markdown"}}},{"role":"tool","kind":"command","text":null,"language":null,"command":"pnpm test","cwd":"/path/to/project","status":null,"exit_code":null,"metadata_json":{"content_card":{"type":"command"}}},{"role":"tool","kind":"tool","text":"Output:\nPASS example.test.ts","language":null,"command":null,"cwd":null,"status":"completed","exit_code":0,"metadata_json":{"content_card":{"type":"result","format":"plain"}}},{"role":"assistant","kind":"code_block","text":"export const ok = true;","language":"ts","command":null,"cwd":null,"status":null,"exit_code":null,"metadata_json":{"content_card":{"type":"code","language":"ts"}}}]}]}}}
 {"type":"complete","item":{"session_count":1,"turn_count":1}}
-"#,
+"###,
     )
     .map_err(|error| error.to_string())?;
 
@@ -2730,6 +2730,22 @@ printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
             sessions[0].turns[0].parts[0].text.as_deref(),
             Some("Web answer")
         );
+    }
+
+    #[test]
+    fn external_adapter_accepts_structured_part_display_metadata() {
+        let output = br###"{"type":"item","item":{"kind":"session","session":{"external_id":"web-session-1","title":"Web Fixture","project_path":null,"started_at":null,"updated_at":null,"source_locator":"fixture://web-session-1","source_fingerprint":"fixture-hash","turns":[{"external_id":"turn-1","turn_index":0,"user_text":"Web question","title":null,"started_at":null,"ended_at":null,"parts":[{"role":"tool","kind":"tool","text":"## Tool result","language":null,"command":null,"cwd":null,"status":null,"exit_code":null,"metadata_json":{"content_card":{"type":"result","format":"markdown"}}}]}]}}}
+{"type":"complete","item":{"session_count":1}}"###;
+
+        let result =
+            parse_external_adapter_output("read_session", output.to_vec(), Vec::new()).unwrap();
+
+        let metadata = result.sessions[0].turns[0].parts[0]
+            .metadata_json
+            .as_deref()
+            .unwrap();
+        assert!(metadata.contains(r#""content_card""#));
+        assert!(metadata.contains(r#""type":"result""#));
     }
 
     #[cfg(unix)]

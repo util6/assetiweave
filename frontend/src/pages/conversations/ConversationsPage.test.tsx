@@ -418,7 +418,7 @@ describe("MarkdownContent", () => {
     expect(html).toContain("ring-2 ring-primary/70");
   });
 
-  it("preserves and restores line breaks in command result previews", () => {
+  it("renders command result previews without synthesizing line breaks", () => {
     const html = renderToStaticMarkup(
       <ConversationContentCards
         blocks={[
@@ -447,9 +447,10 @@ describe("MarkdownContent", () => {
 
     expect(html).toContain("<pre");
     expect(html).toContain("whitespace-pre-wrap");
-    expect(html).toContain("Output:\n./specs/design.md:69");
-    expect(html).toContain("\n./cli/internal/errlint/legacy_exit_test.go:23");
-    expect(html).toContain("\n./src-tauri/src/path_utils.rs:166");
+    expect(html).toContain("Output: ./specs/design.md:69");
+    expect(html).not.toContain("Output:\n./specs/design.md:69");
+    expect(html).not.toContain("\n./cli/internal/errlint/legacy_exit_test.go:23");
+    expect(html).not.toContain("\n./src-tauri/src/path_utils.rs:166");
   });
 
   it("collapses long command result previews with an expand-all action", () => {

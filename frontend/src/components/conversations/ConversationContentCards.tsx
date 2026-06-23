@@ -17,12 +17,14 @@ import { MarkdownContent } from "./ConversationMarkdown";
 export type ConversationContentType = "answer" | "tool" | "command" | "code" | "result";
 
 export type ConversationContentVisibility = Record<ConversationContentType, boolean>;
+export type ConversationContentFormat = "plain" | "markdown";
 
 export interface ConversationContentBlock {
   id: string;
   type: ConversationContentType;
   role: ConversationPartRole;
   text: string;
+  format?: ConversationContentFormat;
   language?: string | null;
   cwd?: string | null;
   status?: string | null;
@@ -51,6 +53,11 @@ const icons: Record<ConversationContentType, ReactNode> = {
 
 export function buildConversationContentBlocks(parts: ConversationPart[]): ConversationContentBlock[] {
   return parts.flatMap((part) => {
+    const declaredBlock = createDeclaredContentBlock(part);
+    if (declaredBlock.length > 0) {
+      return declaredBlock;
+    }
+
     if (part.kind === "code_block") {
       return createBlock(part, "code", part.text);
     }
@@ -65,7 +72,7 @@ export function buildConversationContentBlocks(parts: ConversationPart[]): Conve
     }
 
     if (part.kind === "tool") {
-      return createBlock(part, isToolResult(part) ? "result" : "tool", part.text);
+      return createBlock(part, "tool", part.text);
     }
 
     if (part.kind === "text") {
@@ -207,7 +214,12 @@ function ConversationContentCard({
             <code>{block.text}</code>
           </pre>
         ) : block.type === "result" ? (
-          <CommandResultPreview lineLimit={resultPreviewLineLimit} t={t} value={block.text} />
+          <CommandResultPreview
+            format={block.format ?? "plain"}
+            lineLimit={resultPreviewLineLimit}
+            t={t}
+            value={block.text}
+          />
         ) : (
           <MarkdownContent value={block.text} />
         )}
@@ -218,19 +230,32 @@ function ConversationContentCard({
 }
 
 function CommandResultPreview({
+  format,
   lineLimit,
   t,
   value,
 }: {
+  format: ConversationContentFormat;
   lineLimit: number;
   t: Translator;
   value: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  if (format === "markdown") {
+    return (
+      <div
+        className="rounded-lg border border-inherit bg-theme-card/45 px-3 py-3"
+        data-result-format="markdown"
+      >
+        <MarkdownContent value={value} />
+      </div>
+    );
+  }
+
   const safeLineLimit = Number.isFinite(lineLimit)
     ? Math.max(1, Math.round(lineLimit))
     : DEFAULT_RESULT_PREVIEW_LINE_LIMIT;
-  const formattedValue = formatCommandResultText(value);
+  const formattedValue = normalizeResultPreviewText(value);
   const lines = formattedValue.split("\n");
   const hasOverflow = lines.length > safeLineLimit;
   const visibleLineCount = hasOverflow && !expanded ? safeLineLimit : lines.length;
@@ -266,16 +291,8 @@ function CommandResultPreview({
   );
 }
 
-function formatCommandResultText(value: string) {
-  return value
-    .replace(/\r\n?/g, "\n")
-    .replace(/\bOutput:\s+(?=\S)/g, "Output:\n")
-    .replace(
-      /[ \t]+(?=(?:\.{1,2}\/|~\/|\/)[^\s:\n][^\s\n]{0,240}:\d+(?::\d+)?:)/g,
-      "\n",
-    )
-    .replace(/[ \t]+(?=Chunk ID:\s*[a-z0-9])/gi, "\n")
-    .trimEnd();
+function normalizeResultPreviewText(value: string) {
+  return value.replace(/\r\n?/g, "\n").trimEnd();
 }
 
 function clearCopiedResetTimer(timerRef: { current: number | null }) {
@@ -335,8 +352,9 @@ function createBlock(
   part: ConversationPart,
   type: ConversationContentType,
   value?: string | null,
-  suffix = type,
+  suffix: string = type,
   metadataMode: "all" | "command" | "result" = "all",
+  overrides: Partial<ConversationContentBlock> = {},
 ): ConversationContentBlock[] {
   const text = value?.trim();
   if (!text) return [];
@@ -347,12 +365,82 @@ function createBlock(
       type,
       role: part.role,
       text,
-      language: metadataMode === "result" ? null : part.language,
-      cwd: metadataMode === "result" ? null : part.cwd,
-      status: metadataMode === "command" ? null : part.status,
-      exitCode: metadataMode === "command" ? null : part.exit_code,
+      format: overrides.format,
+      language: overrides.language ?? (metadataMode === "result" ? null : part.language),
+      cwd: overrides.cwd ?? (metadataMode === "result" ? null : part.cwd),
+      status: overrides.status ?? (metadataMode === "command" ? null : part.status),
+      exitCode: overrides.exitCode ?? (metadataMode === "command" ? null : part.exit_code),
     },
   ];
+}
+
+function createDeclaredContentBlock(part: ConversationPart): ConversationContentBlock[] {
+  const card = contentCardMetadata(part.metadata_json);
+  if (!card) return [];
+
+  const type = contentTypeValue(card.type);
+  if (!type) return [];
+
+  const format = contentFormatValue(card.format);
+  const text = stringValue(card.text) ?? defaultContentCardText(part, type);
+  const suffix = stringValue(card.suffix) ?? type;
+
+  return createBlock(part, type, text, suffix, "all", {
+    format,
+    language: stringValue(card.language) ?? part.language,
+    cwd: stringValue(card.cwd) ?? part.cwd,
+    status: stringValue(card.status) ?? part.status,
+    exitCode: numberValue(card.exit_code) ?? numberValue(card.exitCode) ?? part.exit_code,
+  });
+}
+
+function contentCardMetadata(value?: string | null) {
+  const metadata = parseMetadataRecord(value);
+  const card = metadata?.content_card ?? metadata?.contentCard;
+  return isRecord(card) ? card : null;
+}
+
+function parseMetadataRecord(value?: string | null) {
+  if (!value?.trim()) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function contentTypeValue(value: unknown): ConversationContentType | null {
+  return value === "answer" ||
+    value === "tool" ||
+    value === "command" ||
+    value === "code" ||
+    value === "result"
+    ? value
+    : null;
+}
+
+function contentFormatValue(value: unknown): ConversationContentFormat | undefined {
+  return value === "markdown" || value === "plain" ? value : undefined;
+}
+
+function defaultContentCardText(part: ConversationPart, type: ConversationContentType) {
+  if (type === "command") {
+    return part.command?.trim() || part.text;
+  }
+  return part.text ?? part.command ?? part.metadata_json;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function commandOutput(part: ConversationPart) {
@@ -361,19 +449,4 @@ function commandOutput(part: ConversationPart) {
   if (part.status) return part.status;
   if (part.exit_code != null) return `Exit code ${part.exit_code}`;
   return null;
-}
-
-function isToolResult(part: ConversationPart) {
-  if (part.status || part.exit_code != null) return true;
-
-  const metadata = part.metadata_json?.toLowerCase() ?? "";
-  return [
-    "tool_result",
-    "tool-result",
-    "tool_output",
-    "tooloutput",
-    "function_call_output",
-    '"output"',
-    '"result"',
-  ].some((marker) => metadata.includes(marker));
 }

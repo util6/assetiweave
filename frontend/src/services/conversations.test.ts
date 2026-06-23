@@ -187,6 +187,27 @@ describe("conversation services", () => {
     });
   });
 
+  it("does not create synthetic search cards in non-Tauri fallback search", async () => {
+    vi.stubGlobal("window", {});
+    invokeMock.mockRejectedValueOnce(new Error("preview backend missing"));
+
+    await expect(
+      searchConversationRecords({
+        query: "codex-live",
+        content_types: ["command", "result", "code"],
+      }),
+    ).resolves.toMatchObject({
+      total_count: 1,
+      hits: [
+        {
+          block_id: "preview-part-2-command",
+          card_type: "command",
+          part_id: "preview-part-2",
+        },
+      ],
+    });
+  });
+
   it("reads the desktop sync background task status", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
     invokeMock.mockResolvedValueOnce({

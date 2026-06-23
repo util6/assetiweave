@@ -676,6 +676,9 @@ function pushFallbackHit(
 }
 
 function fallbackEntriesForPart(part: ConversationQuestionDetail["parts"][number]) {
+  const declaredEntry = fallbackEntryForDeclaredPart(part);
+  if (declaredEntry.length > 0) return declaredEntry;
+
   if (part.kind === "code_block") {
     return fallbackEntry(part.id, "code", part.text);
   }
@@ -692,18 +695,62 @@ function fallbackEntriesForPart(part: ConversationQuestionDetail["parts"][number
     return fallbackEntry(part.id, cardType, part.text);
   }
 
-  const cardType = isResultPart(part) ? "result" : "tool";
-  return fallbackEntry(part.id, cardType, part.text ?? part.metadata_json);
+  return fallbackEntry(part.id, "tool", part.text ?? part.metadata_json);
+}
+
+function fallbackEntryForDeclaredPart(part: ConversationQuestionDetail["parts"][number]) {
+  const card = declaredContentCard(part.metadata_json);
+  if (!card) return [];
+  const cardType = searchCardTypeValue(card.type);
+  if (!cardType) return [];
+  const text = stringValue(card.text) ?? declaredCardDefaultText(part, cardType);
+  return fallbackEntry(part.id, cardType, text, stringValue(card.suffix) ?? cardType);
 }
 
 function fallbackEntry(
   partId: string,
   cardType: ConversationSearchCardType,
   text?: string | null,
-  suffix = cardType,
+  suffix: string = cardType,
 ) {
   const trimmedText = text?.trim();
   return trimmedText ? [{ blockId: `${partId}-${suffix}`, cardType, text: trimmedText }] : [];
+}
+
+function declaredContentCard(value?: string | null) {
+  if (!value?.trim()) return null;
+  try {
+    const metadata = JSON.parse(value) as unknown;
+    if (!isRecord(metadata)) return null;
+    const card = metadata.content_card ?? metadata.contentCard;
+    return isRecord(card) ? card : null;
+  } catch {
+    return null;
+  }
+}
+
+function searchCardTypeValue(value: unknown): ConversationSearchCardType | null {
+  return value === "answer" ||
+    value === "tool" ||
+    value === "command" ||
+    value === "code" ||
+    value === "result"
+    ? value
+    : null;
+}
+
+function declaredCardDefaultText(
+  part: ConversationQuestionDetail["parts"][number],
+  cardType: ConversationSearchCardType,
+) {
+  if (cardType === "command") {
+    return part.command?.trim() || part.text;
+  }
+  return part.text ?? part.command ?? part.metadata_json;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function commandResultText(part: ConversationQuestionDetail["parts"][number]) {
@@ -712,21 +759,6 @@ function commandResultText(part: ConversationQuestionDetail["parts"][number]) {
   if (part.status) return part.status;
   if (part.exit_code != null) return `Exit code ${part.exit_code}`;
   return null;
-}
-
-function isResultPart(part: ConversationQuestionDetail["parts"][number]) {
-  if (part.role === "tool" && part.kind === "text") return true;
-  if (part.status || part.exit_code != null) return true;
-  const metadata = part.metadata_json?.toLowerCase() ?? "";
-  return [
-    "tool_result",
-    "tool-result",
-    "tool_output",
-    "tooloutput",
-    "function_call_output",
-    "\"output\"",
-    "\"result\"",
-  ].some((marker) => metadata.includes(marker));
 }
 
 function fallbackSnippet(text: string, needle: string) {
