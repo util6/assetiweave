@@ -231,7 +231,12 @@ export async function addConversationEntry(
 }
 
 export async function syncConversations(
-  params: { source_id?: string | null; adapter_id?: string | null; dry_run?: boolean },
+  params: {
+    source_id?: string | null;
+    adapter_id?: string | null;
+    record_kind?: ConversationRecordKind | null;
+    dry_run?: boolean;
+  },
 ): Promise<ConversationSyncTaskSnapshot> {
   try {
     return await invoke<ConversationSyncTaskSnapshot>("sync_conversations", { params });

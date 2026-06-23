@@ -2060,6 +2060,17 @@
             "description": "Preview without importing",
             "type": "boolean"
           },
+          "record_kind": {
+            "aliases": [
+              "recordKind"
+            ],
+            "default": null,
+            "description": "Conversation record kind",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "source_id": {
             "aliases": [
               "sourceId"
@@ -5956,6 +5967,17 @@
             "default": false,
             "description": "Preview without importing",
             "type": "boolean"
+          },
+          "record_kind": {
+            "aliases": [
+              "recordKind"
+            ],
+            "default": null,
+            "description": "Conversation record kind",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "source_id": {
             "aliases": [

@@ -48,6 +48,14 @@ struct DefaultConversationAdapterAsset {
     executable: &'static str,
 }
 
+#[derive(Debug, Deserialize)]
+struct WebHarvesterManifest {
+    id: String,
+    entrypoint: Vec<String>,
+    #[serde(default)]
+    capabilities: Vec<String>,
+}
+
 const DEFAULT_CONVERSATION_ADAPTERS: &[DefaultConversationAdapterAsset] = &[
     DefaultConversationAdapterAsset {
         id: "codex",
@@ -432,6 +440,8 @@ pub(crate) struct ConversationSyncParams {
     pub(crate) source_id: Option<String>,
     #[serde(alias = "adapterId")]
     pub(crate) adapter_id: Option<String>,
+    #[serde(default, alias = "recordKind")]
+    pub(crate) record_kind: Option<String>,
     #[serde(default, alias = "dryRun")]
     pub(crate) dry_run: bool,
 }
@@ -841,6 +851,7 @@ impl AppService {
             Some(self.sync_conversations(ConversationSyncParams {
                 source_id: Some(source.id.clone()),
                 adapter_id: Some(adapter.id.clone()),
+                record_kind: Some(record_kind.clone()),
                 dry_run: false,
             })?)
         } else {
@@ -859,6 +870,7 @@ impl AppService {
     }
 
     pub(crate) fn sync_conversations(&self, params: ConversationSyncParams) -> AppResult<Value> {
+        let record_kind = normalize_sync_record_kind(params.record_kind.as_deref())?;
         let sources = crate::backend::store::list_conversation_sources(&self.conn)?
             .into_iter()
             .filter(|source| params.source_id.as_deref().is_none_or(|id| id == source.id))
@@ -872,21 +884,35 @@ impl AppService {
                 source.enabled || params.source_id.as_deref() == Some(source.id.as_str())
             })
             .collect::<Vec<_>>();
-        if sources.is_empty() {
-            return Err("no matching conversation sources".to_string());
-        }
 
         let mut results = Vec::new();
         let mut errors = Vec::new();
+        let mut matched_sources = 0usize;
+        let mut refreshed_web_harvesters = HashSet::new();
         for source in sources {
             let adapter =
                 crate::backend::store::load_conversation_adapter(&self.conn, &source.adapter_id)?;
-            match crate::backend::conversations::read_source_sessions_with_adapter(
-                adapter.as_ref(),
-                &source,
-            )
-            .and_then(|sessions| {
-                if is_web_record_adapter(adapter.as_ref(), &source.adapter_id) {
+            if !sync_source_matches_record_kind(adapter.as_ref(), &source.adapter_id, record_kind) {
+                continue;
+            }
+            matched_sources += 1;
+            let is_web_source = is_web_record_adapter(adapter.as_ref(), &source.adapter_id);
+            let sessions_result = if !params.dry_run && is_web_source {
+                run_web_harvester_for_adapter(adapter.as_ref(), &mut refreshed_web_harvesters)
+                    .and_then(|_| {
+                        crate::backend::conversations::read_source_sessions_with_adapter(
+                            adapter.as_ref(),
+                            &source,
+                        )
+                    })
+            } else {
+                crate::backend::conversations::read_source_sessions_with_adapter(
+                    adapter.as_ref(),
+                    &source,
+                )
+            };
+            match sessions_result.and_then(|sessions| {
+                if is_web_source {
                     crate::backend::store::import_web_record_sessions(
                         &self.conn,
                         &source,
@@ -910,6 +936,9 @@ impl AppService {
                     "message": error
                 })),
             }
+        }
+        if matched_sources == 0 {
+            return Err("no matching conversation sources".to_string());
         }
         Ok(json!({
             "dry_run": params.dry_run,
@@ -2087,6 +2116,39 @@ fn normalize_conversation_record_kind(
             crate::backend::dto::ConversationRecordKind::Web,
         )),
         other => Err(format!("unsupported conversation record kind: {other}")),
+    }
+}
+
+fn normalize_sync_record_kind(
+    record_kind: Option<&str>,
+) -> AppResult<Option<crate::backend::dto::ConversationRecordKind>> {
+    let Some(record_kind) = record_kind.and_then(clean_non_empty_string) else {
+        return Ok(None);
+    };
+    match record_kind.as_str() {
+        "session" | "sessions" | "conversation" | "conversations" => {
+            Ok(Some(crate::backend::dto::ConversationRecordKind::Session))
+        }
+        "web" | "web-record" | "web_record" | "web-records" | "web_records" => {
+            Ok(Some(crate::backend::dto::ConversationRecordKind::Web))
+        }
+        other => Err(format!("unsupported conversation record kind: {other}")),
+    }
+}
+
+fn sync_source_matches_record_kind(
+    adapter: Option<&ConversationAdapter>,
+    adapter_id: &str,
+    record_kind: Option<crate::backend::dto::ConversationRecordKind>,
+) -> bool {
+    match record_kind {
+        None => true,
+        Some(crate::backend::dto::ConversationRecordKind::Session) => {
+            !is_web_record_adapter(adapter, adapter_id)
+        }
+        Some(crate::backend::dto::ConversationRecordKind::Web) => {
+            is_web_record_adapter(adapter, adapter_id)
+        }
     }
 }
 
@@ -3370,6 +3432,138 @@ fn is_web_record_adapter(adapter: Option<&ConversationAdapter>, adapter_id: &str
     }) || adapter_id.ends_with("-web")
 }
 
+fn run_web_harvester_for_adapter(
+    adapter: Option<&ConversationAdapter>,
+    refreshed_web_harvesters: &mut HashSet<String>,
+) -> AppResult<()> {
+    let Some(adapter) = adapter else {
+        return Ok(());
+    };
+    let Some(manifest_path) = adapter.manifest_path.as_deref() else {
+        return Ok(());
+    };
+    let Some(root) = Path::new(manifest_path).parent() else {
+        return Ok(());
+    };
+    let harvester_manifest_path = root.join("harvester.json");
+    if !harvester_manifest_path.is_file() {
+        return Ok(());
+    }
+    let harvester_key = harvester_manifest_path.to_string_lossy().to_string();
+    if refreshed_web_harvesters.contains(&harvester_key) {
+        return Ok(());
+    }
+    let manifest_text = fs::read_to_string(&harvester_manifest_path).map_err(|error| {
+        format!(
+            "read web harvester manifest {}: {error}",
+            harvester_manifest_path.display()
+        )
+    })?;
+    let manifest: WebHarvesterManifest = serde_json::from_str(&manifest_text).map_err(|error| {
+        format!(
+            "invalid web harvester manifest {}: {error}",
+            harvester_manifest_path.display()
+        )
+    })?;
+    if !manifest
+        .capabilities
+        .iter()
+        .any(|capability| capability == "normalized_sessions")
+    {
+        return Ok(());
+    }
+    let command = manifest
+        .entrypoint
+        .first()
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("web harvester {} has no entrypoint", manifest.id))?;
+    let command_path = resolve_harvester_command(root, command)?;
+    let args = manifest.entrypoint.iter().skip(1).collect::<Vec<_>>();
+    let output = run_harvester_command(
+        Command::new(&command_path)
+            .args(args)
+            .current_dir(root)
+            .env("ASSETIWEAVE_HARVESTER_DIR", root)
+            .env("ASSETIWEAVE_HARVESTER_ID", &manifest.id),
+    )
+    .map_err(|error| {
+        format!(
+            "run web harvester {} at {}: {error}",
+            manifest.id,
+            command_path.display()
+        )
+    })?;
+    if !output.status.success() {
+        return Err(format!(
+            "web harvester {} failed with status {}: stdout={} stderr={}",
+            manifest.id,
+            output.status,
+            capped_output(&output.stdout),
+            capped_output(&output.stderr),
+        ));
+    }
+    refreshed_web_harvesters.insert(harvester_key);
+    Ok(())
+}
+
+fn resolve_harvester_command(root: &Path, command: &str) -> AppResult<PathBuf> {
+    let command_path = Path::new(command);
+    if command_path.is_absolute()
+        || command_path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(format!("unsafe web harvester entrypoint: {command}"));
+    }
+    let resolved = root.join(command_path);
+    if !resolved.is_file() {
+        return Err(format!(
+            "web harvester entrypoint not found: {}",
+            resolved.display()
+        ));
+    }
+    Ok(resolved)
+}
+
+fn run_harvester_command(command: &mut Command) -> Result<std::process::Output, std::io::Error> {
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+    let started_at = std::time::Instant::now();
+    let mut child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    loop {
+        if child.try_wait()?.is_some() {
+            return child.wait_with_output();
+        }
+        if started_at.elapsed() >= TIMEOUT {
+            let _ = child.kill();
+            let output = child.wait_with_output()?;
+            return Ok(std::process::Output {
+                status: output.status,
+                stdout: output.stdout,
+                stderr: [
+                    output.stderr,
+                    b"\nweb harvester timed out after 600 seconds".to_vec(),
+                ]
+                .concat(),
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+fn capped_output(bytes: &[u8]) -> String {
+    const LIMIT: usize = 4096;
+    let text = String::from_utf8_lossy(bytes);
+    if text.len() <= LIMIT {
+        return text.to_string();
+    }
+    format!("{}...", text.chars().take(LIMIT).collect::<String>())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3380,6 +3574,124 @@ mod tests {
     use std::sync::Mutex;
 
     static ASSETIWEAVE_HOME_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn conversation_adapter_fixture(id: &str, capabilities: &[&str]) -> ConversationAdapter {
+        ConversationAdapter {
+            id: id.to_string(),
+            name: id.to_string(),
+            kind: crate::backend::models::ConversationAdapterKind::External,
+            version: "1".to_string(),
+            enabled: true,
+            manifest_path: None,
+            executable_path: None,
+            content_hash: None,
+            trusted_hash: None,
+            trust_state: crate::backend::models::ConversationAdapterTrustState::Trusted,
+            protocol_version: None,
+            capabilities: capabilities
+                .iter()
+                .map(|capability| capability.to_string())
+                .collect(),
+            input_kinds: vec![crate::backend::models::ConversationSourceKind::Directory],
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn sync_record_kind_filters_session_and_web_sources_by_adapter_capability() {
+        let session_adapter = conversation_adapter_fixture("codex", &["read_session"]);
+        let web_adapter =
+            conversation_adapter_fixture("qwen-web", &["read_session", "web_records"]);
+
+        assert!(sync_source_matches_record_kind(
+            Some(&session_adapter),
+            &session_adapter.id,
+            Some(crate::backend::dto::ConversationRecordKind::Session),
+        ));
+        assert!(!sync_source_matches_record_kind(
+            Some(&web_adapter),
+            &web_adapter.id,
+            Some(crate::backend::dto::ConversationRecordKind::Session),
+        ));
+        assert!(!sync_source_matches_record_kind(
+            Some(&session_adapter),
+            &session_adapter.id,
+            Some(crate::backend::dto::ConversationRecordKind::Web),
+        ));
+        assert!(sync_source_matches_record_kind(
+            Some(&web_adapter),
+            &web_adapter.id,
+            Some(crate::backend::dto::ConversationRecordKind::Web),
+        ));
+    }
+
+    #[test]
+    fn sync_record_kind_accepts_web_record_aliases() {
+        assert_eq!(
+            normalize_sync_record_kind(Some("web_records")).unwrap(),
+            Some(crate::backend::dto::ConversationRecordKind::Web),
+        );
+        assert_eq!(
+            normalize_sync_record_kind(Some("sessions")).unwrap(),
+            Some(crate::backend::dto::ConversationRecordKind::Session),
+        );
+        assert!(normalize_sync_record_kind(Some("assets")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn web_record_sync_runs_adjacent_harvester_manifest_once() {
+        let root = env::temp_dir().join(format!("assetiweave-harvester-test-{}", Uuid::new_v4()));
+        let scripts_dir = root.join("scripts");
+        fs::create_dir_all(&scripts_dir).unwrap();
+        fs::write(
+            root.join("conversation-adapter.json"),
+            r#"{"schema_version":1,"id":"qwen-web","name":"Qwen Web","version":"1","protocol_version":1,"command":["adapter.js"],"capabilities":["read_session","web_records"],"input_kinds":["directory"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("harvester.json"),
+            r#"{"schema_version":1,"id":"qwen-web","name":"Qwen Web","version":"1","entrypoint":["scripts/harvest.sh"],"capabilities":["normalized_sessions"]}"#,
+        )
+        .unwrap();
+        let script_path = scripts_dir.join("harvest.sh");
+        fs::write(
+            &script_path,
+            "#!/bin/sh\nprintf '%s' \"$ASSETIWEAVE_HARVESTER_ID\" >> marker.txt\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&script_path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&script_path, permissions).unwrap();
+        let mut adapter =
+            conversation_adapter_fixture("qwen-web", &["read_session", "web_records"]);
+        adapter.manifest_path = Some(
+            root.join("conversation-adapter.json")
+                .to_string_lossy()
+                .to_string(),
+        );
+
+        let mut refreshed_web_harvesters = HashSet::new();
+        run_web_harvester_for_adapter(Some(&adapter), &mut refreshed_web_harvesters).unwrap();
+        run_web_harvester_for_adapter(Some(&adapter), &mut refreshed_web_harvesters).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(root.join("marker.txt")).unwrap(),
+            "qwen-web"
+        );
+        assert_eq!(refreshed_web_harvesters.len(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn web_harvester_entrypoint_must_stay_inside_root() {
+        let root = env::temp_dir().join(format!("assetiweave-harvester-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let error = resolve_harvester_command(&root, "../harvest.sh").unwrap_err();
+        assert!(error.contains("unsafe web harvester entrypoint"));
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn batch_skill_backup_deduplicates_assets_and_reports_copy_progress() {

@@ -826,6 +826,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         &[
             param!("source_id", "Optional source identifier", ["sourceId"]),
             param!("adapter_id", "Optional adapter identifier", ["adapterId"]),
+            param!("record_kind", "Conversation record kind", ["recordKind"]),
             param!("dry_run", "Preview without importing", ["dryRun"]),
         ],
         Some("assetiweave-cli conversation sync")
@@ -1844,6 +1845,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         &[
             param!("source_id", "Optional source identifier", ["sourceId"]),
             param!("adapter_id", "Optional adapter identifier", ["adapterId"]),
+            param!("record_kind", "Conversation record kind", ["recordKind"]),
             param!("dry_run", "Preview without importing", ["dryRun"]),
         ],
         None

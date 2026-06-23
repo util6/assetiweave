@@ -281,6 +281,7 @@ mod tests {
         ConversationSyncParams {
             source_id: None,
             adapter_id: None,
+            record_kind: None,
             dry_run: false,
         }
     }

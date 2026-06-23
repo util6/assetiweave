@@ -13,6 +13,7 @@ import {
   syncConversations,
   type ConversationSyncTaskSnapshot,
 } from "../../services/conversations";
+import type { ConversationRecordKind } from "../../types";
 
 const CONVERSATION_SYNC_TASK_UPDATED_EVENT = "conversation-sync-task-updated";
 const SYNC_STATUS_POLL_INTERVAL_MS = 1000;
@@ -21,6 +22,7 @@ interface ConversationSyncContextValue {
   startSync: (params: {
     source_id?: string | null;
     adapter_id?: string | null;
+    record_kind?: ConversationRecordKind | null;
     dry_run?: boolean;
   }) => Promise<ConversationSyncTaskSnapshot>;
   task: ConversationSyncTaskSnapshot | null;
@@ -103,6 +105,7 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
     async (params: {
       source_id?: string | null;
       adapter_id?: string | null;
+      record_kind?: ConversationRecordKind | null;
       dry_run?: boolean;
     }) => {
       const snapshot = await syncConversations(params);

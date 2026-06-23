@@ -435,7 +435,11 @@ export function ConversationsPage({
     setSyncProgress({ phase: "preparing", sourceLabel });
 
     try {
-      const task = await startSync({ source_id: null, dry_run: false });
+      const task = await startSync({
+        dry_run: false,
+        record_kind: webRecordMode ? "web" : "session",
+        source_id: null,
+      });
       syncTaskSourceLabelsRef.current.set(task.id, sourceLabel);
       const summary = formatConversationSyncSummary(summarizeConversationSyncTask(task), t);
       setSyncProgress({
@@ -480,6 +484,7 @@ export function ConversationsPage({
       const task = await startSync({
         adapter_id: result.adapter.id,
         dry_run: false,
+        record_kind: webRecordMode ? "web" : "session",
         source_id: result.source.id,
       });
       syncTaskSourceLabelsRef.current.set(task.id, sourceLabel);
