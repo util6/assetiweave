@@ -54,6 +54,15 @@ function sqlString(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
 }
 
+function jsonExtract(column, jsonPath) {
+  const ident = quoteIdent(column);
+  return `CASE WHEN ${ident} IS NOT NULL AND json_valid(${ident}) THEN json_extract(${ident}, ${sqlString(jsonPath)}) ELSE NULL END`;
+}
+
+function sqlCoalesce(expressions) {
+  return `COALESCE(${expressions.join(", ")})`;
+}
+
 function pick(columns, candidates) {
   return candidates.find((name) => columns.includes(name));
 }
@@ -78,6 +87,22 @@ function compactObject(value) {
   return Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== null && entry !== undefined && entry !== ""),
   );
+}
+
+function integerValue(value) {
+  if (Number.isInteger(value)) return value;
+  if (typeof value === "string" && /^-?\d+$/.test(value.trim())) return Number(value);
+  return null;
+}
+
+function smallMetadata(value) {
+  if (!value || typeof value !== "object") return {};
+  return compactObject({
+    source_type: value.type ?? value.kind,
+    tool: value.tool,
+    title: value.title,
+    description: value.description,
+  });
 }
 
 function textPart(role, text) {
@@ -180,10 +205,23 @@ function partText(kind, value, fallback) {
 }
 
 function normalizePart(row, role) {
-  const data = parseJson(row.data);
+  const rawData = parseJson(row.data);
+  const data = rawData ?? compactObject({
+    type: row.kind,
+    kind: row.kind,
+    command: row.command,
+    cmd: row.command,
+    cwd: row.cwd,
+    directory: row.cwd,
+    status: row.status,
+    exit_code: integerValue(row.exit_code),
+    tool: row.tool,
+    title: row.title,
+    description: row.description,
+  });
   const kind = row.kind ?? valueText(data, ["type", "kind"]) ?? "text";
   const text = partText(kind, data, row.text);
-  if (!text && !data) return null;
+  if (!text && (!data || Object.keys(data).length === 0)) return null;
   if (["reasoning", "step-start", "step-finish", "step_finish", "compaction", "retry", "snapshot"].includes(kind)) return null;
   const lowerRole = String(role || "").toLowerCase();
   const normalizedKind = kind === "tool"
@@ -228,7 +266,7 @@ function normalizePart(row, role) {
         cwd,
         status: null,
         exit_code: null,
-        metadata_json: metadata(compactObject({ type: "command", cwd }), data),
+        metadata_json: metadata(compactObject({ type: "command", cwd }), smallMetadata(data)),
       });
     }
     if (resultText) {
@@ -243,7 +281,7 @@ function normalizePart(row, role) {
         exit_code: exitCode,
         metadata_json: metadata(
           compactObject({ type: "result", format: "plain", status, exit_code: exitCode }),
-          data,
+          smallMetadata(data),
         ),
       });
     }
@@ -261,7 +299,7 @@ function normalizePart(row, role) {
     cwd,
     status,
     exit_code: exitCode,
-    metadata_json: metadata(contentCard, data),
+    metadata_json: metadata(contentCard, smallMetadata(data)),
   };
 }
 
@@ -295,14 +333,52 @@ function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
   const ignoredPartTypes = ["reasoning", "step-start", "step-finish", "step_finish", "compaction", "retry", "snapshot"];
   const partFilters = [];
   if (partSession) partFilters.push(`${quoteIdent(partSession)} IN (${sessionList})`);
-  if (partData) {
-    partFilters.push(
-      `COALESCE(json_extract(${quoteIdent(partData)}, '$.type'), '') NOT IN (${ignoredPartTypes.map(sqlString).join(", ")})`,
-    );
-  }
+  const partTypeExpr = partKind ? quoteIdent(partKind) : partData ? jsonExtract(partData, "$.type") : null;
+  if (partTypeExpr) partFilters.push(`COALESCE(${partTypeExpr}, '') NOT IN (${ignoredPartTypes.map(sqlString).join(", ")})`);
   const partWhere = partFilters.length ? `WHERE ${partFilters.join(" AND ")}` : "";
+  const partKindExpr = partKind ? quoteIdent(partKind) : partData ? jsonExtract(partData, "$.type") : "NULL";
+  const partTextExpr = partTextCol
+    ? quoteIdent(partTextCol)
+    : partData
+      ? sqlCoalesce([
+        jsonExtract(partData, "$.text"),
+        jsonExtract(partData, "$.content"),
+        jsonExtract(partData, "$.output"),
+        jsonExtract(partData, "$.message"),
+        jsonExtract(partData, "$.state.output"),
+        jsonExtract(partData, "$.state.metadata.output"),
+        jsonExtract(partData, "$.state.title"),
+      ])
+      : "NULL";
+  const partCommandExpr = partData
+    ? sqlCoalesce([
+      jsonExtract(partData, "$.command"),
+      jsonExtract(partData, "$.cmd"),
+      jsonExtract(partData, "$.state.input.command"),
+      jsonExtract(partData, "$.input.command"),
+    ])
+    : "NULL";
+  const partCwdExpr = partData
+    ? sqlCoalesce([
+      jsonExtract(partData, "$.cwd"),
+      jsonExtract(partData, "$.directory"),
+      jsonExtract(partData, "$.state.input.cwd"),
+      jsonExtract(partData, "$.input.cwd"),
+    ])
+    : "NULL";
+  const partStatusExpr = partData ? sqlCoalesce([jsonExtract(partData, "$.status"), jsonExtract(partData, "$.state.status")]) : "NULL";
+  const partExitExpr = partData
+    ? sqlCoalesce([
+      jsonExtract(partData, "$.exit_code"),
+      jsonExtract(partData, "$.state.metadata.exit"),
+      jsonExtract(partData, "$.state.exit"),
+    ])
+    : "NULL";
+  const partToolExpr = partData ? sqlCoalesce([jsonExtract(partData, "$.tool"), jsonExtract(partData, "$.tool_name")]) : "NULL";
+  const partTitleExpr = partData ? sqlCoalesce([jsonExtract(partData, "$.title"), jsonExtract(partData, "$.state.title")]) : "NULL";
+  const partDescriptionExpr = partData ? sqlCoalesce([jsonExtract(partData, "$.description"), jsonExtract(partData, "$.state.input.description")]) : "NULL";
   const partSql = partMessage
-    ? `SELECT ${partSession ? quoteIdent(partSession) : "NULL"} AS session_id, ${quoteIdent(partMessage)} AS message_id, ${partKind ? quoteIdent(partKind) : "NULL"} AS kind, ${partTextCol ? quoteIdent(partTextCol) : "NULL"} AS text, ${partData ? quoteIdent(partData) : "NULL"} AS data FROM part ${partWhere} ORDER BY rowid ASC`
+    ? `SELECT ${partSession ? quoteIdent(partSession) : "NULL"} AS session_id, ${quoteIdent(partMessage)} AS message_id, ${partKindExpr} AS kind, ${partTextExpr} AS text, NULL AS data, ${partCommandExpr} AS command, ${partCwdExpr} AS cwd, ${partStatusExpr} AS status, ${partExitExpr} AS exit_code, ${partToolExpr} AS tool, ${partTitleExpr} AS title, ${partDescriptionExpr} AS description FROM part ${partWhere} ORDER BY rowid ASC`
     : "";
   const partsByMessage = new Map();
   if (partSql) {
@@ -315,7 +391,17 @@ function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
       partsByMessage.set(key, list);
     }
   }
-  const msgSql = `SELECT ${quoteIdent(msgId)} AS id, ${quoteIdent(msgSession)} AS session_id, ${roleCol ? quoteIdent(roleCol) : "NULL"} AS role, ${timeCol ? quoteIdent(timeCol) : "NULL"} AS timestamp, ${dataCol ? quoteIdent(dataCol) : "NULL"} AS data FROM message WHERE ${quoteIdent(msgSession)} IN (${sessionList}) ORDER BY rowid ASC`;
+  const roleExpr = roleCol
+    ? quoteIdent(roleCol)
+    : dataCol
+      ? sqlCoalesce([jsonExtract(dataCol, "$.role"), jsonExtract(dataCol, "$.author")])
+      : "NULL";
+  const timestampExpr = timeCol
+    ? quoteIdent(timeCol)
+    : dataCol
+      ? sqlCoalesce([jsonExtract(dataCol, "$.time.created"), jsonExtract(dataCol, "$.created_at"), jsonExtract(dataCol, "$.time")])
+      : "NULL";
+  const msgSql = `SELECT ${quoteIdent(msgId)} AS id, ${quoteIdent(msgSession)} AS session_id, ${roleExpr} AS role, ${timestampExpr} AS timestamp, NULL AS data FROM message WHERE ${quoteIdent(msgSession)} IN (${sessionList}) ORDER BY rowid ASC`;
   const currentBySession = new Map();
   for (const message of sqliteJson(dbPath, msgSql)) {
     const sessionId = String(message.session_id);

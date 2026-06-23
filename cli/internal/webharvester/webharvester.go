@@ -1677,6 +1677,8 @@ const adapterScript = `#!/usr/bin/env node
 const fs = require("fs");
 const path = require("path");
 
+const CONTENT_CARD_SCHEMA = "web-content-cards-v1";
+
 function emit(value) {
   process.stdout.write(JSON.stringify(value) + "\n");
 }
@@ -1705,11 +1707,89 @@ try {
   process.exit(0);
 }
 
-const sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+const sessions = Array.isArray(payload.sessions) ? payload.sessions.map(normalizeSessionCards) : [];
 for (const session of sessions) {
   emit({ type: "item", item: { kind: "session", session } });
 }
 emit({ type: "complete", item: { session_count: sessions.length } });
+
+function normalizeSessionCards(session) {
+  if (!session || typeof session !== "object") return session;
+  let changed = false;
+  const turns = Array.isArray(session.turns) ? session.turns : [];
+  for (const turn of turns) {
+    const parts = Array.isArray(turn && turn.parts) ? turn.parts : [];
+    for (const part of parts) {
+      if (ensurePartContentCard(part)) {
+        changed = true;
+      }
+    }
+  }
+  if (changed && typeof session.source_fingerprint === "string" && session.source_fingerprint.trim()) {
+    if (!session.source_fingerprint.includes(CONTENT_CARD_SCHEMA)) {
+      session.source_fingerprint = session.source_fingerprint + ":" + CONTENT_CARD_SCHEMA;
+    }
+  }
+  return session;
+}
+
+function ensurePartContentCard(part) {
+  if (!part || typeof part !== "object") return false;
+  const metadata = metadataObject(part.metadata_json);
+  const existing = metadata.content_card || metadata.contentCard;
+  if (existing && typeof existing === "object" && typeof existing.type === "string") {
+    return false;
+  }
+  const contentCard = inferContentCard(part);
+  if (!contentCard) return false;
+  part.metadata_json = JSON.stringify({ ...metadata, content_card: contentCard });
+  return true;
+}
+
+function metadataObject(value) {
+  if (!value || typeof value !== "string" || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function inferContentCard(part) {
+  const kind = text(part.kind || "text");
+  const role = text(part.role || "assistant");
+  const language = text(part.language);
+  if (kind === "code_block") {
+    return compactObject({ type: "code", language });
+  }
+  if (kind === "command") {
+    return { type: "command" };
+  }
+  if (kind === "tool" || kind === "file_change" || kind === "subagent") {
+    return { type: "result", format: "markdown" };
+  }
+  if (kind === "metadata") {
+    return { type: "tool", format: "markdown" };
+  }
+  if (role === "tool") {
+    return { type: "result", format: "markdown" };
+  }
+  if (role === "assistant") {
+    return { type: "answer", format: "markdown" };
+  }
+  return null;
+}
+
+function compactObject(value) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== null && entry !== undefined && entry !== "")
+  );
+}
+
+function text(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
 
 function resolveSessionsPath(location) {
   const candidates = [

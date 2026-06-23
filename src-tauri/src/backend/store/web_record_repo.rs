@@ -60,7 +60,7 @@ pub(crate) async fn import_web_record_sessions_sqlx(
         let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
         for normalized in batch {
             let session = web_record_session_from_normalized(source, normalized, &now);
-            if web_record_session_is_unchanged_sqlx_tx(&mut tx, &session).await? {
+            if web_record_session_is_unchanged_sqlx_tx(&mut tx, &session, normalized).await? {
                 skipped_session_count += 1;
                 continue;
             }
@@ -443,6 +443,7 @@ async fn delete_web_record_session_sqlx_tx(
 async fn web_record_session_is_unchanged_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     session: &ConversationSession,
+    normalized: &NormalizedConversationSession,
 ) -> AppResult<bool> {
     let Some(source_fingerprint) = session.source_fingerprint.as_deref() else {
         return Ok(false);
@@ -477,7 +478,42 @@ async fn web_record_session_is_unchanged_sqlx_tx(
         && updated_at == session.updated_at
         && source_locator == session.source_locator
         && existing_fingerprint.as_deref() == Some(source_fingerprint)
-        && missing == 0)
+        && missing == 0
+        && web_record_session_turns_are_unchanged_sqlx_tx(tx, &session.id, normalized).await?)
+}
+
+async fn web_record_session_turns_are_unchanged_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    session_id: &str,
+    normalized: &NormalizedConversationSession,
+) -> AppResult<bool> {
+    let rows = sqlx::query(
+        r#"
+        SELECT external_id, fingerprint, missing
+        FROM web_record_turns
+        WHERE session_id = ?1
+        ORDER BY turn_index ASC
+        "#,
+    )
+    .bind(session_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    if rows.len() != normalized.turns.len() {
+        return Ok(false);
+    }
+    for (row, turn) in rows.iter().zip(&normalized.turns) {
+        let external_id: String = row.try_get(0).map_err(|error| error.to_string())?;
+        let fingerprint: String = row.try_get(1).map_err(|error| error.to_string())?;
+        let missing: i64 = row.try_get(2).map_err(|error| error.to_string())?;
+        if external_id != turn.external_id
+            || fingerprint != conversation_turn_fingerprint(turn)
+            || missing != 0
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 async fn clear_legacy_conversation_records_for_source_sqlx_tx(
@@ -941,6 +977,81 @@ mod tests {
             .expect("import unchanged fingerprinted web session through SQLx");
 
         assert_eq!(imported_at, "preserved");
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-web-record-import-refresh-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let source = fixture_source();
+        let mut old_session = fixture_session();
+        old_session.source_fingerprint = Some("same-source".to_string());
+        old_session.turns[0].parts[0].metadata_json = None;
+        let mut refreshed_session = fixture_session();
+        refreshed_session.source_fingerprint = Some("same-source".to_string());
+        refreshed_session.turns[0].parts[0].metadata_json = content_card_metadata("answer");
+
+        let (result, imported_at, metadata_json) = database
+            .block_on(async {
+                super::super::conversation_repo::upsert_conversation_source_sqlx(
+                    database.pool(),
+                    &source,
+                )
+                .await?;
+                import_web_record_sessions_sqlx(database.pool(), &source, &[old_session], false)
+                    .await?;
+                sqlx::query(
+                    "UPDATE web_record_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
+                )
+                .bind(&source.id)
+                .execute(database.pool())
+                .await
+                .map_err(|error| error.to_string())?;
+                let result = import_web_record_sessions_sqlx(
+                    database.pool(),
+                    &source,
+                    &[refreshed_session],
+                    false,
+                )
+                .await?;
+                let imported_at = sqlx::query_scalar::<_, String>(
+                    "SELECT imported_at FROM web_record_sessions WHERE source_id = ?1",
+                )
+                .bind(&source.id)
+                .fetch_one(database.pool())
+                .await
+                .map_err(|error| error.to_string())?;
+                let metadata_json = sqlx::query_scalar::<_, Option<String>>(
+                    r#"
+                    SELECT p.metadata_json
+                    FROM web_record_parts p
+                    JOIN web_record_turns t ON t.id = p.turn_id
+                    JOIN web_record_sessions s ON s.id = t.session_id
+                    WHERE s.source_id = ?1
+                    ORDER BY p.part_index ASC
+                    LIMIT 1
+                    "#,
+                )
+                .bind(&source.id)
+                .fetch_one(database.pool())
+                .await
+                .map_err(|error| error.to_string())?;
+                AppResult::Ok((result, imported_at, metadata_json))
+            })
+            .expect("refresh normalized web parts through SQLx");
+
+        assert_eq!(result.skipped_session_count, 0);
+        assert_ne!(imported_at, "preserved");
+        assert!(metadata_json
+            .as_deref()
+            .unwrap_or("")
+            .contains(r#""content_card""#));
 
         drop(database);
         cleanup_database(&db_path);

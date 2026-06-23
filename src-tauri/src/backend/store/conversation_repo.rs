@@ -286,6 +286,10 @@ pub(crate) async fn import_conversation_sessions_sqlx(
     let mut warning_count = 0usize;
     let mut skipped_session_count = 0usize;
     let warnings = Vec::new();
+    let incoming_session_ids = sessions
+        .iter()
+        .map(|session| stable_id("conversation-session", &[&source.id, &session.external_id]))
+        .collect::<BTreeSet<_>>();
 
     for batch in sessions.chunks(CONVERSATION_IMPORT_BATCH_SIZE) {
         let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
@@ -305,6 +309,7 @@ pub(crate) async fn import_conversation_sessions_sqlx(
                 upsert_conversation_turn_sqlx_tx(&mut tx, &stored_turn).await?;
                 replace_conversation_parts_sqlx_tx(&mut tx, &stored_turn.id, &turn.parts).await?;
             }
+            prune_conversation_turns_sqlx_tx(&mut tx, &session.id, normalized).await?;
             ensure_question_groups_for_session_sqlx_tx(&mut tx, &session.id, &now).await?;
             rebuild_session_question_aggregates_sqlx_tx(&mut tx, &session.id, &now).await?;
         }
@@ -312,6 +317,8 @@ pub(crate) async fn import_conversation_sessions_sqlx(
     }
 
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    mark_missing_conversation_sessions_sqlx_tx(&mut tx, &source.id, &incoming_session_ids, &now)
+        .await?;
     sqlx::query(
         r#"
         UPDATE conversation_sources
@@ -381,6 +388,7 @@ pub(crate) async fn list_conversation_sessions_sqlx(
         FROM conversation_sessions s
         WHERE (?1 IS NULL OR s.adapter_id = ?1)
           AND (?2 IS NULL OR s.source_id = ?2)
+          AND s.missing = 0
           AND (
               ?3 IS NULL
               OR instr(lower(s.title), ?3) > 0
@@ -1445,6 +1453,119 @@ async fn replace_conversation_parts_sqlx_tx(
         .await
         .map_err(|error| error.to_string())?;
     }
+    Ok(())
+}
+
+async fn mark_missing_conversation_sessions_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    source_id: &str,
+    incoming_session_ids: &BTreeSet<String>,
+    now: &str,
+) -> AppResult<()> {
+    let existing_ids = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM conversation_sessions WHERE source_id = ?1",
+    )
+    .bind(source_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    for session_id in existing_ids {
+        if incoming_session_ids.contains(&session_id) {
+            continue;
+        }
+        sqlx::query(
+            r#"
+            UPDATE conversation_sessions
+            SET missing = 1, imported_at = ?1
+            WHERE id = ?2
+            "#,
+        )
+        .bind(now)
+        .bind(&session_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+async fn prune_conversation_turns_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    session_id: &str,
+    normalized: &NormalizedConversationSession,
+) -> AppResult<()> {
+    let retained_turn_ids = normalized
+        .turns
+        .iter()
+        .filter(|turn| !turn.user_text.trim().is_empty())
+        .map(|turn| stable_id("conversation-turn", &[session_id, &turn.external_id]))
+        .collect::<BTreeSet<_>>();
+    let rows = sqlx::query("SELECT id FROM conversation_turns WHERE session_id = ?1")
+        .bind(session_id)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    let stale_turn_ids = rows
+        .iter()
+        .map(|row| row.try_get::<String, _>(0))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|turn_id| !retained_turn_ids.contains(turn_id))
+        .collect::<Vec<_>>();
+    if stale_turn_ids.is_empty() {
+        return Ok(());
+    }
+
+    for turn_id in &stale_turn_ids {
+        sqlx::query("DELETE FROM conversation_parts WHERE turn_id = ?1")
+            .bind(turn_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|error| error.to_string())?;
+        sqlx::query("DELETE FROM conversation_question_turns WHERE turn_id = ?1")
+            .bind(turn_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|error| error.to_string())?;
+        sqlx::query("DELETE FROM conversation_turns WHERE id = ?1")
+            .bind(turn_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    sqlx::query(
+        r#"
+        DELETE FROM conversation_question_fts
+        WHERE question_id IN (
+            SELECT q.id
+            FROM conversation_questions q
+            LEFT JOIN conversation_question_turns qt ON qt.question_id = q.id
+            WHERE q.session_id = ?1
+            GROUP BY q.id
+            HAVING COUNT(qt.turn_id) = 0
+        )
+        "#,
+    )
+    .bind(session_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query(
+        r#"
+        DELETE FROM conversation_questions
+        WHERE session_id = ?1
+          AND id NOT IN (
+              SELECT DISTINCT question_id
+              FROM conversation_question_turns
+          )
+        "#,
+    )
+    .bind(session_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    renumber_questions_for_session_sqlx_tx(tx, session_id).await?;
     Ok(())
 }
 
@@ -2754,6 +2875,135 @@ mod tests {
             .as_deref()
             .unwrap_or("")
             .contains(r#""content_card""#));
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_import_prunes_turns_removed_by_external_adapter() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-import-prune-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let adapter = test_conversation_adapter(
+            "import-prune-external",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let source = test_conversation_source(&adapter.id);
+        let mut pruned_session = fixture_session("v2");
+        pruned_session.turns.truncate(1);
+        pruned_session.source_fingerprint = Some("pruned-source".to_string());
+
+        let (detail, stale_parts) = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), &adapter).await?;
+                upsert_conversation_source_sqlx(database.pool(), &source).await?;
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    &source,
+                    &[fixture_session("v2")],
+                    false,
+                )
+                .await?;
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    &source,
+                    &[pruned_session],
+                    false,
+                )
+                .await?;
+                let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+                let detail =
+                    load_conversation_session_detail_sqlx(database.pool(), &session_id).await?;
+                let stale_parts = sqlx::query_scalar::<_, i64>(
+                    r#"
+                    SELECT COUNT(*)
+                    FROM conversation_parts p
+                    JOIN conversation_turns t ON t.id = p.turn_id
+                    WHERE t.session_id = ?1
+                      AND t.external_id IN ('t2', 't3')
+                    "#,
+                )
+                .bind(&session_id)
+                .fetch_one(database.pool())
+                .await
+                .map_err(|error| error.to_string())?;
+                AppResult::Ok((detail, stale_parts))
+            })
+            .expect("prune stale turns through SQLx");
+
+        assert_eq!(detail.questions.len(), 1);
+        assert_eq!(detail.questions[0].turns.len(), 1);
+        assert_eq!(detail.questions[0].turns[0].external_id, "t1");
+        assert_eq!(detail.questions[0].parts.len(), 2);
+        assert_eq!(stale_parts, 0);
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_import_marks_sessions_missing_when_external_adapter_omits_them() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-import-missing-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let adapter = test_conversation_adapter(
+            "import-missing-external",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let source = test_conversation_source(&adapter.id);
+        let current_session = fixture_session("v1");
+        let mut removed_session = fixture_session("v1");
+        removed_session.external_id = "removed-session".to_string();
+        removed_session.title = Some("Removed fixture".to_string());
+
+        let (listed, missing_count) = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), &adapter).await?;
+                upsert_conversation_source_sqlx(database.pool(), &source).await?;
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    &source,
+                    &[current_session.clone(), removed_session],
+                    false,
+                )
+                .await?;
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    &source,
+                    &[current_session],
+                    false,
+                )
+                .await?;
+                let listed = list_conversation_sessions_sqlx(
+                    database.pool(),
+                    None,
+                    Some(&source.id),
+                    None,
+                    20,
+                    0,
+                )
+                .await?;
+                let missing_count = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM conversation_sessions WHERE source_id = ?1 AND missing = 1",
+                )
+                .bind(&source.id)
+                .fetch_one(database.pool())
+                .await
+                .map_err(|error| error.to_string())?;
+                AppResult::Ok((listed, missing_count))
+            })
+            .expect("mark omitted sessions missing through SQLx");
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].session.external_id, "session-1");
+        assert_eq!(missing_count, 1);
 
         drop(database);
         cleanup_database(&db_path);

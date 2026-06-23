@@ -6,7 +6,9 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
-const CONTENT_CARD_SCHEMA_VERSION = "codex-content-cards-v2";
+const CONTENT_CARD_SCHEMA_VERSION = "codex-content-cards-v3";
+const MAX_PART_TEXT_CHARS = 96 * 1024;
+const MAX_SESSION_TEXT_CHARS = 384 * 1024;
 
 function emit(type, payload = {}) {
   process.stdout.write(`${JSON.stringify({ type, ...payload })}\n`);
@@ -97,6 +99,59 @@ function compactObject(value) {
   return Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== null && entry !== undefined && entry !== ""),
   );
+}
+
+function smallMetadata(value) {
+  if (!value || typeof value !== "object") return {};
+  return compactObject({
+    source_type: value.type,
+    name: value.name,
+    tool: value.tool ?? value.tool_name ?? value.toolName,
+    call_id: value.call_id ?? value.callID,
+  });
+}
+
+function truncationNotice(omittedChars) {
+  return `\n\n[AssetIWeave adapter truncated ${omittedChars} characters for browsing.]`;
+}
+
+function truncateText(value, maxChars) {
+  const text = String(value ?? "");
+  if (text.length <= maxChars) return { text, truncated: false, originalChars: text.length };
+  const notice = truncationNotice(text.length - maxChars);
+  const keepChars = Math.max(0, maxChars - notice.length);
+  return {
+    text: `${text.slice(0, keepChars)}${notice}`,
+    truncated: true,
+    originalChars: text.length,
+  };
+}
+
+function markPartTruncated(part, originalChars, budget) {
+  const metadataValue = parseJsonValue(part.metadata_json) ?? {};
+  metadataValue.truncated = true;
+  metadataValue.original_chars = originalChars;
+  metadataValue.display_chars = String(part.text ?? "").length;
+  metadataValue.display_budget_chars = budget;
+  part.metadata_json = JSON.stringify(metadataValue);
+}
+
+function applyTextBudgets(session) {
+  let remaining = MAX_SESSION_TEXT_CHARS;
+  for (const turn of session.turns) {
+    for (const part of turn.parts) {
+      if (typeof part.text !== "string" || !part.text) continue;
+      const original = part.text;
+      const maxChars = Math.max(0, Math.min(MAX_PART_TEXT_CHARS, remaining));
+      const truncated = truncateText(original, maxChars);
+      part.text = truncated.text;
+      remaining = Math.max(0, remaining - part.text.length);
+      if (truncated.truncated || original.length !== part.text.length) {
+        markPartTruncated(part, truncated.originalChars, maxChars);
+      }
+    }
+  }
+  return session;
 }
 
 function textPart(role, text) {
@@ -332,7 +387,7 @@ function normalizeTurns(text) {
           cwd,
           status: null,
           exit_code: null,
-          metadata_json: metadata(compactObject({ type: "command", cwd }), payload),
+          metadata_json: metadata(compactObject({ type: "command", cwd }), smallMetadata(payload)),
         });
       }
       if (command?.trim() && text.trim()) {
@@ -347,7 +402,7 @@ function normalizeTurns(text) {
           exit_code: exitCode,
           metadata_json: metadata(
             compactObject({ type: "result", format: "plain", status, exit_code: exitCode }),
-            payload,
+            smallMetadata(payload),
           ),
         });
       }
@@ -371,7 +426,7 @@ function normalizeTurns(text) {
                 status: result ? status : null,
                 exit_code: result ? exitCode : null,
               }),
-              payload,
+              smallMetadata(payload),
             ),
           });
         }
@@ -409,7 +464,7 @@ function readSession() {
     const parsed = normalizeTurns(text);
     const turns = parsed.turns;
     if (!turns.length) return [];
-    return [{
+    return [applyTextBudgets({
       external_id: String(row.id),
       title: row.title == null ? null : String(row.title),
       project_path: parsed.projectPath ?? inferProjectPath(turns),
@@ -418,7 +473,7 @@ function readSession() {
       source_locator: rolloutPath,
       source_fingerprint: sourceFingerprint(text),
       turns,
-    }];
+    })];
   });
 }
 

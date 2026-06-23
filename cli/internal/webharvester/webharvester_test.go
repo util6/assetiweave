@@ -152,7 +152,7 @@ func TestGeneratedAdapterReadsNormalizedSessionsFromSupportedLocations(t *testin
 			if err := os.MkdirAll(filepath.Dir(sessionsPath), 0o755); err != nil {
 				t.Fatalf("create sessions dir: %v", err)
 			}
-			if err := os.WriteFile(sessionsPath, []byte(`{"sessions":[{"external_id":"s1","turns":[]}]}`), 0o644); err != nil {
+			if err := os.WriteFile(sessionsPath, []byte(`{"sessions":[{"external_id":"s1","source_fingerprint":"legacy-source","turns":[{"external_id":"t1","turn_index":0,"user_text":"Question","parts":[{"role":"assistant","kind":"text","text":"Legacy answer","metadata_json":null}]}]}]}`), 0o644); err != nil {
 				t.Fatalf("write sessions file: %v", err)
 			}
 			adapterPath := filepath.Join(root, "adapter.js")
@@ -180,6 +180,12 @@ func TestGeneratedAdapterReadsNormalizedSessionsFromSupportedLocations(t *testin
 					}
 					if !strings.Contains(string(output), `"session_count":1`) {
 						t.Fatalf("adapter output = %s, want session_count 1", string(output))
+					}
+					if !strings.Contains(string(output), `\"content_card\":{\"type\":\"answer\",\"format\":\"markdown\"}`) {
+						t.Fatalf("adapter output = %s, want fallback content_card", string(output))
+					}
+					if strings.Contains(string(output), `"source_fingerprint":"legacy-source"`) {
+						t.Fatalf("adapter output = %s, want content-card schema salt in source_fingerprint", string(output))
 					}
 				})
 			}
