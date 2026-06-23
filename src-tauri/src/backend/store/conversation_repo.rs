@@ -7,9 +7,9 @@ use crate::backend::dto::{
 use crate::backend::models::{
     conversation_turn_fingerprint, group_turn_ids_by_question, ConversationAdapter,
     ConversationAdapterKind, ConversationAdapterTrustState, ConversationGroupingOrigin,
-    ConversationPart, ConversationPartKind, ConversationPartRole, ConversationQuestion,
-    ConversationSession, ConversationSource, ConversationSourceKind, ConversationSyncRun,
-    ConversationSyncStatus, ConversationTurn, NormalizedConversationSession,
+    ConversationPart, ConversationQuestion, ConversationSession, ConversationSource,
+    ConversationSourceKind, ConversationSyncRun, ConversationSyncStatus, ConversationTurn,
+    NormalizedConversationSession,
 };
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use sha2::{Digest, Sha256};
@@ -1546,27 +1546,12 @@ async fn rebuild_question_aggregate_sqlx_tx(
     for turn in &turns {
         question_text.push(turn.user_text.clone());
         for part in load_turn_parts_sqlx_tx(tx, &turn.id).await? {
-            match (part.role, part.kind) {
-                (ConversationPartRole::Assistant, ConversationPartKind::Text)
-                | (ConversationPartRole::Tool, ConversationPartKind::Text)
-                | (ConversationPartRole::Assistant, ConversationPartKind::Subagent)
-                | (ConversationPartRole::Tool, ConversationPartKind::Tool) => {
-                    if let Some(text) = part.text {
-                        answer_text.push(text);
-                    }
-                }
-                (_, ConversationPartKind::CodeBlock) => {
-                    if let Some(text) = part.text {
-                        code_text.push(text);
-                    }
-                }
-                (_, ConversationPartKind::Command) => {
-                    if let Some(command) = part.command.or(part.text) {
-                        command_text.push(command);
-                    }
-                }
-                _ => {}
-            }
+            append_declared_card_to_question_aggregate(
+                &part,
+                &mut answer_text,
+                &mut code_text,
+                &mut command_text,
+            );
         }
     }
 
@@ -2159,6 +2144,98 @@ struct ConversationSearchEntry {
     text: String,
 }
 
+pub(super) struct DeclaredConversationContentCard {
+    pub(super) card_type: ConversationSearchCardType,
+    pub(super) suffix: String,
+    pub(super) text: String,
+}
+
+pub(super) fn append_declared_card_to_question_aggregate(
+    part: &ConversationPart,
+    answer_text: &mut Vec<String>,
+    code_text: &mut Vec<String>,
+    command_text: &mut Vec<String>,
+) {
+    let Some(card) = declared_content_card_for_part(part) else {
+        return;
+    };
+    match card.card_type {
+        ConversationSearchCardType::Answer => answer_text.push(card.text),
+        // The existing summary schema has no separate tool/result text columns.
+        ConversationSearchCardType::Tool | ConversationSearchCardType::Result => {
+            answer_text.push(card.text);
+        }
+        ConversationSearchCardType::Code => code_text.push(card.text),
+        ConversationSearchCardType::Command => command_text.push(card.text),
+        ConversationSearchCardType::Question => {}
+    }
+}
+
+fn declared_content_card_for_part(
+    part: &ConversationPart,
+) -> Option<DeclaredConversationContentCard> {
+    let metadata_json = part.metadata_json.as_deref()?.trim();
+    if metadata_json.is_empty() {
+        return None;
+    }
+    let metadata: serde_json::Value = serde_json::from_str(metadata_json).ok()?;
+    let card = metadata
+        .get("content_card")
+        .or_else(|| metadata.get("contentCard"))?
+        .as_object()?;
+    let card_type = content_card_type_value(card.get("type")?.as_str()?)?;
+    let suffix =
+        json_string_field(card, "suffix").unwrap_or_else(|| card_type.block_suffix().to_string());
+    let text =
+        json_string_field(card, "text").or_else(|| default_declared_card_text(part, card_type))?;
+    Some(DeclaredConversationContentCard {
+        card_type,
+        suffix,
+        text,
+    })
+}
+
+fn content_card_type_value(value: &str) -> Option<ConversationSearchCardType> {
+    match value {
+        "answer" => Some(ConversationSearchCardType::Answer),
+        "tool" => Some(ConversationSearchCardType::Tool),
+        "command" => Some(ConversationSearchCardType::Command),
+        "code" => Some(ConversationSearchCardType::Code),
+        "result" => Some(ConversationSearchCardType::Result),
+        _ => None,
+    }
+}
+
+fn json_string_field(
+    card: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<String> {
+    card.get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn default_declared_card_text(
+    part: &ConversationPart,
+    card_type: ConversationSearchCardType,
+) -> Option<String> {
+    if card_type == ConversationSearchCardType::Command {
+        return first_present_text([part.command.as_deref(), part.text.as_deref()]);
+    }
+    first_present_text([part.text.as_deref(), part.command.as_deref()])
+}
+
+fn first_present_text<const N: usize>(values: [Option<&str>; N]) -> Option<String> {
+    values
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 #[derive(Clone, Copy)]
 enum SearchTimeBound {
     Since,
@@ -2242,102 +2319,14 @@ fn push_search_hit_if_matching(
 }
 
 fn search_entries_for_part(part: &ConversationPart) -> Vec<ConversationSearchEntry> {
-    match part.kind {
-        ConversationPartKind::CodeBlock => search_entry(
-            part,
-            ConversationSearchCardType::Code,
-            part.text.as_deref(),
-            "code",
-        )
+    declared_content_card_for_part(part)
+        .map(|card| ConversationSearchEntry {
+            card_type: card.card_type,
+            block_id: format!("{}-{}", part.id, card.suffix),
+            text: card.text,
+        })
         .into_iter()
-        .collect(),
-        ConversationPartKind::Command => {
-            let command = part
-                .command
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .or_else(|| {
-                    part.text
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                });
-            let output = command_card_result_text(part);
-            let mut entries = Vec::new();
-            if let Some(entry) = search_entry(
-                part,
-                ConversationSearchCardType::Command,
-                command,
-                "command",
-            ) {
-                entries.push(entry);
-            }
-            if let Some(entry) = search_entry(
-                part,
-                ConversationSearchCardType::Result,
-                output.as_deref(),
-                "result",
-            ) {
-                entries.push(entry);
-            }
-            entries
-        }
-        ConversationPartKind::Text => {
-            let card_type = if part.role == ConversationPartRole::Tool {
-                ConversationSearchCardType::Result
-            } else {
-                ConversationSearchCardType::Answer
-            };
-            search_entry(
-                part,
-                card_type,
-                part.text.as_deref(),
-                card_type.block_suffix(),
-            )
-            .into_iter()
-            .collect()
-        }
-        ConversationPartKind::Metadata => search_entry(
-            part,
-            ConversationSearchCardType::Tool,
-            part.text.as_deref().or(part.metadata_json.as_deref()),
-            "tool",
-        )
-        .into_iter()
-        .collect(),
-        ConversationPartKind::Tool
-        | ConversationPartKind::Subagent
-        | ConversationPartKind::FileChange => {
-            let card_type = if is_search_result_part(part) {
-                ConversationSearchCardType::Result
-            } else {
-                ConversationSearchCardType::Tool
-            };
-            search_entry(
-                part,
-                card_type,
-                part.text.as_deref().or(part.metadata_json.as_deref()),
-                card_type.block_suffix(),
-            )
-            .into_iter()
-            .collect()
-        }
-    }
-}
-
-fn search_entry(
-    part: &ConversationPart,
-    card_type: ConversationSearchCardType,
-    text: Option<&str>,
-    suffix: &str,
-) -> Option<ConversationSearchEntry> {
-    let text = text.map(str::trim).filter(|value| !value.is_empty())?;
-    Some(ConversationSearchEntry {
-        card_type,
-        block_id: format!("{}-{suffix}", part.id),
-        text: text.to_string(),
-    })
+        .collect()
 }
 
 impl ConversationSearchCardType {
@@ -2351,46 +2340,6 @@ impl ConversationSearchCardType {
             ConversationSearchCardType::Result => "result",
         }
     }
-}
-
-fn command_card_result_text(part: &ConversationPart) -> Option<String> {
-    let text = part.text.as_deref().map(str::trim).filter(|value| {
-        !value.is_empty() && part.command.as_deref().map(str::trim) != Some(*value)
-    });
-    if let Some(text) = text {
-        return Some(text.to_string());
-    }
-    if let Some(status) = part
-        .status
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Some(status.to_string());
-    }
-    part.exit_code
-        .map(|exit_code| format!("Exit code {exit_code}"))
-}
-
-fn is_search_result_part(part: &ConversationPart) -> bool {
-    if part.role == ConversationPartRole::Tool && part.kind == ConversationPartKind::Text {
-        return true;
-    }
-    if part.status.is_some() || part.exit_code.is_some() {
-        return true;
-    }
-    let metadata = part.metadata_json.as_deref().unwrap_or("").to_lowercase();
-    [
-        "tool_result",
-        "tool-result",
-        "tool_output",
-        "tooloutput",
-        "function_call_output",
-        "\"output\"",
-        "\"result\"",
-    ]
-    .iter()
-    .any(|marker| metadata.contains(marker))
 }
 
 fn search_snippet(text: &str, needle: &str) -> String {
@@ -2450,56 +2399,46 @@ fn render_part_markdown(
     part: &ConversationPart,
     content_filter: &ConversationExportContentFilter,
 ) {
-    match part.kind {
-        ConversationPartKind::Text => {
-            if part.role == ConversationPartRole::Tool {
-                if content_filter.result {
-                    render_text_section(output, "### Result", part.text.as_deref());
-                }
-            } else if content_filter.answer {
-                render_text_section(output, role_heading(part.role), part.text.as_deref());
+    let Some(card) = declared_content_card_for_part(part) else {
+        return;
+    };
+    match card.card_type {
+        ConversationSearchCardType::Answer => {
+            if content_filter.answer {
+                render_text_section(output, "### Answer", Some(&card.text));
             }
         }
-        ConversationPartKind::CodeBlock => {
+        ConversationSearchCardType::Tool => {
+            if content_filter.tool {
+                render_text_section(output, "### Tool", Some(&card.text));
+            }
+        }
+        ConversationSearchCardType::Code => {
             if content_filter.code {
                 output.push_str("### Code\n\n```");
                 if let Some(language) = &part.language {
                     output.push_str(language);
                 }
                 output.push('\n');
-                if let Some(text) = &part.text {
-                    output.push_str(text);
-                    output.push('\n');
-                }
+                output.push_str(&card.text);
+                output.push('\n');
                 output.push_str("```\n\n");
             }
         }
-        ConversationPartKind::Command => {
+        ConversationSearchCardType::Command => {
             if content_filter.command {
                 output.push_str("### Command\n\n```sh\n");
-                if let Some(command) = part.command.as_ref().or(part.text.as_ref()) {
-                    output.push_str(command);
-                    output.push('\n');
-                }
+                output.push_str(&card.text);
+                output.push('\n');
                 output.push_str("```\n\n");
             }
+        }
+        ConversationSearchCardType::Result => {
             if content_filter.result {
-                render_text_section(output, "### Result", command_result_text(part).as_deref());
+                render_text_section(output, "### Result", Some(&card.text));
             }
         }
-        ConversationPartKind::Tool
-        | ConversationPartKind::Subagent
-        | ConversationPartKind::FileChange => {
-            let is_result = is_export_result_part(part);
-            if (is_result && content_filter.result) || (!is_result && content_filter.tool) {
-                output.push_str(&format!("### {:?}\n\n", part.kind));
-                if let Some(text) = &part.text {
-                    output.push_str(text);
-                    output.push_str("\n\n");
-                }
-            }
-        }
-        ConversationPartKind::Metadata => {}
+        ConversationSearchCardType::Question => {}
     }
 }
 
@@ -2511,59 +2450,6 @@ fn render_text_section(output: &mut String, heading: &str, text: Option<&str>) {
     output.push_str("\n\n");
     output.push_str(text);
     output.push_str("\n\n");
-}
-
-fn command_result_text(part: &ConversationPart) -> Option<String> {
-    let mut lines = Vec::new();
-    if let Some(text) =
-        part.text.as_deref().map(str::trim).filter(|value| {
-            !value.is_empty() && part.command.as_deref().map(str::trim) != Some(*value)
-        })
-    {
-        lines.push(text.to_string());
-    }
-    if let Some(status) = part
-        .status
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        lines.push(format!("Status: `{status}`"));
-    }
-    if let Some(exit_code) = part.exit_code {
-        lines.push(format!("Exit code: `{exit_code}`"));
-    }
-    (!lines.is_empty()).then(|| lines.join("\n\n"))
-}
-
-fn is_export_result_part(part: &ConversationPart) -> bool {
-    if part.role == ConversationPartRole::Tool && part.kind == ConversationPartKind::Text {
-        return true;
-    }
-    if part.status.is_some() || part.exit_code.is_some() {
-        return true;
-    }
-    let metadata = part.metadata_json.as_deref().unwrap_or("").to_lowercase();
-    [
-        "tool_result",
-        "tool-result",
-        "tool_output",
-        "tooloutput",
-        "function_call_output",
-        "\"output\"",
-        "\"result\"",
-    ]
-    .iter()
-    .any(|marker| metadata.contains(marker))
-}
-
-fn role_heading(role: ConversationPartRole) -> &'static str {
-    match role {
-        ConversationPartRole::User => "### User",
-        ConversationPartRole::Assistant => "### Assistant",
-        ConversationPartRole::Tool => "### Tool",
-        ConversationPartRole::System => "### System",
-    }
 }
 
 fn stable_id(prefix: &str, parts: &[&str]) -> String {
@@ -2579,7 +2465,8 @@ fn stable_id(prefix: &str, parts: &[&str]) -> String {
 mod tests {
     use super::*;
     use crate::backend::models::{
-        ConversationPartRole, NormalizedConversationPart, NormalizedConversationTurn,
+        ConversationPartKind, ConversationPartRole, NormalizedConversationPart,
+        NormalizedConversationTurn,
     };
     use crate::backend::store::Database;
     use uuid::Uuid;
@@ -2809,6 +2696,7 @@ mod tests {
         let source = test_conversation_source(&adapter.id);
         let mut old_session = fixture_session("v1");
         old_session.source_fingerprint = Some("same-source".to_string());
+        old_session.turns[0].parts[0].metadata_json = None;
         let mut refreshed_session = fixture_session("v1");
         refreshed_session.source_fingerprint = Some("same-source".to_string());
         refreshed_session.turns[0].parts[0].metadata_json =
@@ -2888,13 +2776,24 @@ mod tests {
         session.turns[2].parts.push(NormalizedConversationPart {
             role: ConversationPartRole::Tool,
             kind: ConversationPartKind::Command,
-            text: Some("tests passed".to_string()),
+            text: None,
             language: None,
             command: Some("assetiweave-cli conversation session export".to_string()),
             cwd: Some("/tmp/project".to_string()),
             status: Some("completed".to_string()),
             exit_code: Some(0),
-            metadata_json: None,
+            metadata_json: content_card_metadata("command"),
+        });
+        session.turns[2].parts.push(NormalizedConversationPart {
+            role: ConversationPartRole::Tool,
+            kind: ConversationPartKind::Tool,
+            text: Some("tests passed".to_string()),
+            language: None,
+            command: None,
+            cwd: None,
+            status: Some("completed".to_string()),
+            exit_code: Some(0),
+            metadata_json: content_card_metadata("result"),
         });
 
         let (sessions, detail, filtered_questions, question, markdown, command_markdown) = database
@@ -2962,7 +2861,7 @@ mod tests {
         assert_eq!(filtered_questions.len(), 1);
         assert_eq!(filtered_questions[0].question.question_text, "Export it");
         assert_eq!(question.turns.len(), 1);
-        assert_eq!(question.parts.len(), 2);
+        assert_eq!(question.parts.len(), 3);
         assert!(markdown.contains("## 1. Export it"));
         assert!(markdown.contains("answer for t3"));
         assert!(!markdown.contains("How does sync work?"));
@@ -3162,6 +3061,110 @@ mod tests {
         cleanup_database(&db_path);
     }
 
+    #[test]
+    fn sqlx_search_and_aggregates_only_declared_content_cards() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-declared-cards-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let adapter = test_conversation_adapter(
+            "declared-card-external",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let source = test_conversation_source(&adapter.id);
+        let mut undeclared_turn = fixture_turn("undeclared", 0, "First question");
+        undeclared_turn.parts[0].text = Some("undeclared answer needle".to_string());
+        undeclared_turn.parts[0].metadata_json = None;
+        let mut declared_turn = fixture_turn("declared", 1, "Second question");
+        declared_turn.parts[0].text = Some("declared answer needle".to_string());
+        declared_turn.parts[0].metadata_json = content_card_metadata("answer");
+        let session = NormalizedConversationSession {
+            external_id: "declared-card-session".to_string(),
+            title: Some("Declared card fixture".to_string()),
+            project_path: Some("/tmp/project".to_string()),
+            started_at: None,
+            updated_at: None,
+            source_locator: None,
+            source_fingerprint: None,
+            turns: vec![undeclared_turn, declared_turn],
+        };
+
+        let (detail, undeclared_list, undeclared_page, declared_page) = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), &adapter).await?;
+                upsert_conversation_source_sqlx(database.pool(), &source).await?;
+                import_conversation_sessions_sqlx(database.pool(), &source, &[session], false)
+                    .await?;
+                let sessions = list_conversation_sessions_sqlx(
+                    database.pool(),
+                    None,
+                    Some(&source.id),
+                    None,
+                    20,
+                    0,
+                )
+                .await?;
+                let detail =
+                    load_conversation_session_detail_sqlx(database.pool(), &sessions[0].session.id)
+                        .await?;
+                let undeclared_list = list_conversation_sessions_sqlx(
+                    database.pool(),
+                    None,
+                    Some(&source.id),
+                    Some("undeclared answer"),
+                    20,
+                    0,
+                )
+                .await?;
+                let undeclared_page = search_conversation_cards_sqlx(
+                    database.pool(),
+                    ConversationRecordKind::Session,
+                    Some(&adapter.id),
+                    Some(&source.id),
+                    None,
+                    "undeclared answer",
+                    &[ConversationSearchCardType::Answer],
+                    None,
+                    None,
+                    false,
+                    20,
+                    0,
+                )
+                .await?;
+                let declared_page = search_conversation_cards_sqlx(
+                    database.pool(),
+                    ConversationRecordKind::Session,
+                    Some(&adapter.id),
+                    Some(&source.id),
+                    None,
+                    "declared answer",
+                    &[ConversationSearchCardType::Answer],
+                    None,
+                    None,
+                    false,
+                    20,
+                    0,
+                )
+                .await?;
+                AppResult::Ok((detail, undeclared_list, undeclared_page, declared_page))
+            })
+            .expect("search declared content cards through SQLx");
+
+        assert_eq!(detail.questions[0].question.answer_text, "");
+        assert_eq!(
+            detail.questions[1].question.answer_text,
+            "declared answer needle"
+        );
+        assert!(undeclared_list.is_empty());
+        assert_eq!(undeclared_page.total_count, 0);
+        assert_eq!(declared_page.total_count, 1);
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
     fn fixture_session(version: &str) -> NormalizedConversationSession {
         let mut turns = vec![
             fixture_turn("t1", 0, "How does sync work?"),
@@ -3178,7 +3181,7 @@ mod tests {
                 cwd: None,
                 status: None,
                 exit_code: None,
-                metadata_json: None,
+                metadata_json: content_card_metadata("code"),
             });
         }
         NormalizedConversationSession {
@@ -3210,9 +3213,15 @@ mod tests {
                 cwd: None,
                 status: None,
                 exit_code: None,
-                metadata_json: None,
+                metadata_json: content_card_metadata("answer"),
             }],
         }
+    }
+
+    fn content_card_metadata(card_type: &str) -> Option<String> {
+        Some(format!(
+            r#"{{"content_card":{{"type":"{card_type}","format":"markdown"}}}}"#
+        ))
     }
 
     fn test_conversation_adapter(

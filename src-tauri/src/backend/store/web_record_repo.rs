@@ -4,8 +4,8 @@ use crate::backend::dto::{
 };
 use crate::backend::models::{
     conversation_turn_fingerprint, group_turn_ids_by_question, ConversationPart,
-    ConversationPartKind, ConversationPartRole, ConversationSession, ConversationSource,
-    ConversationSyncRun, ConversationSyncStatus, ConversationTurn, NormalizedConversationSession,
+    ConversationSession, ConversationSource, ConversationSyncRun, ConversationSyncStatus,
+    ConversationTurn, NormalizedConversationSession,
 };
 use chrono::Utc;
 use sha2::{Digest, Sha256};
@@ -15,9 +15,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::{
     codec::encode_enum,
     conversation_repo::{
-        map_sqlx_conversation_part, map_sqlx_conversation_question, map_sqlx_conversation_session,
-        map_sqlx_conversation_turn, render_session_detail_markdown, ConversationImportResult,
-        CONVERSATION_IMPORT_BATCH_SIZE,
+        append_declared_card_to_question_aggregate, map_sqlx_conversation_part,
+        map_sqlx_conversation_question, map_sqlx_conversation_session, map_sqlx_conversation_turn,
+        render_session_detail_markdown, ConversationImportResult, CONVERSATION_IMPORT_BATCH_SIZE,
     },
 };
 
@@ -724,27 +724,12 @@ async fn build_question_aggregate_sqlx_tx(
                 .map_err(|error| error.to_string())?;
         question_text.push(user_text);
         for part in load_web_record_parts_sqlx_tx(tx, turn_id).await? {
-            match (part.role, part.kind) {
-                (ConversationPartRole::Assistant, ConversationPartKind::Text)
-                | (ConversationPartRole::Tool, ConversationPartKind::Text)
-                | (ConversationPartRole::Assistant, ConversationPartKind::Subagent)
-                | (ConversationPartRole::Tool, ConversationPartKind::Tool) => {
-                    if let Some(text) = part.text {
-                        answer_text.push(text);
-                    }
-                }
-                (_, ConversationPartKind::CodeBlock) => {
-                    if let Some(text) = part.text {
-                        code_text.push(text);
-                    }
-                }
-                (_, ConversationPartKind::Command) => {
-                    if let Some(command) = part.command.or(part.text) {
-                        command_text.push(command);
-                    }
-                }
-                _ => {}
-            }
+            append_declared_card_to_question_aggregate(
+                &part,
+                &mut answer_text,
+                &mut code_text,
+                &mut command_text,
+            );
         }
     }
     Ok(QuestionAggregate {
@@ -837,7 +822,8 @@ fn stable_id(prefix: &str, parts: &[&str]) -> String {
 mod tests {
     use super::*;
     use crate::backend::models::{
-        ConversationSourceKind, NormalizedConversationPart, NormalizedConversationTurn,
+        ConversationPartKind, ConversationPartRole, ConversationSourceKind,
+        NormalizedConversationPart, NormalizedConversationTurn,
     };
     use crate::backend::store::Database;
     use uuid::Uuid;
@@ -1021,6 +1007,69 @@ mod tests {
         cleanup_database(&db_path);
     }
 
+    #[test]
+    fn sqlx_web_record_aggregates_only_declared_content_cards() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-web-record-declared-cards-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let source = fixture_source();
+        let mut session = fixture_session();
+        session.turns[0].parts[0].text = Some("undeclared web answer".to_string());
+        session.turns[0].parts[0].metadata_json = None;
+        session.turns.push(NormalizedConversationTurn {
+            external_id: "turn-2".to_string(),
+            turn_index: 1,
+            user_text: "Second web question".to_string(),
+            title: None,
+            started_at: None,
+            ended_at: None,
+            parts: vec![NormalizedConversationPart {
+                role: ConversationPartRole::Assistant,
+                kind: ConversationPartKind::Text,
+                text: Some("declared web answer".to_string()),
+                language: None,
+                command: None,
+                cwd: None,
+                status: None,
+                exit_code: None,
+                metadata_json: content_card_metadata("answer"),
+            }],
+        });
+
+        let detail = database
+            .block_on(async {
+                super::super::conversation_repo::upsert_conversation_source_sqlx(
+                    database.pool(),
+                    &source,
+                )
+                .await?;
+                import_web_record_sessions_sqlx(database.pool(), &source, &[session], false)
+                    .await?;
+                let sessions = list_web_record_sessions_sqlx(
+                    database.pool(),
+                    None,
+                    Some(&source.id),
+                    None,
+                    20,
+                    0,
+                )
+                .await?;
+                load_web_record_session_detail_sqlx(database.pool(), &sessions[0].session.id).await
+            })
+            .expect("aggregate declared web content cards through SQLx");
+
+        assert_eq!(detail.questions[0].question.answer_text, "");
+        assert_eq!(
+            detail.questions[1].question.answer_text,
+            "declared web answer"
+        );
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
     async fn count_legacy_conversation_sessions_sqlx(
         pool: &SqlitePool,
         source_id: &str,
@@ -1076,10 +1125,16 @@ mod tests {
                     cwd: None,
                     status: None,
                     exit_code: None,
-                    metadata_json: None,
+                    metadata_json: content_card_metadata("answer"),
                 }],
             }],
         }
+    }
+
+    fn content_card_metadata(card_type: &str) -> Option<String> {
+        Some(format!(
+            r#"{{"content_card":{{"type":"{card_type}","format":"markdown"}}}}"#
+        ))
     }
 
     fn cleanup_database(db_path: &std::path::Path) {

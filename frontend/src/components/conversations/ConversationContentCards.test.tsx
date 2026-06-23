@@ -74,6 +74,26 @@ describe("ConversationContentCards", () => {
     expect(html).toContain("Declared result");
   });
 
+  it("does not render protocol metadata as card body", () => {
+    const blocks = buildConversationContentBlocks([
+      {
+        id: "part-metadata-only",
+        turn_id: "turn-1",
+        part_index: 0,
+        role: "tool",
+        kind: "tool",
+        metadata_json: JSON.stringify({
+          content_card: {
+            type: "tool",
+          },
+          name: "update_plan",
+        }),
+      },
+    ]);
+
+    expect(blocks).toEqual([]);
+  });
+
   it("keeps adapter-declared command output as one plain result", () => {
     const blocks = buildConversationContentBlocks([
       commandPart(),

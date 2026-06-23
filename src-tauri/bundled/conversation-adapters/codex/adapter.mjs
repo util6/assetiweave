@@ -79,6 +79,13 @@ function valueAsString(value) {
   return null;
 }
 
+function valueAsDisplayString(value) {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return null;
+}
+
 function metadata(contentCard, extra = {}) {
   return JSON.stringify({
     ...(extra && typeof extra === "object" && !Array.isArray(extra) ? extra : {}),
@@ -213,6 +220,15 @@ function exitCodeFromPayload(payload) {
   return nestedIntegerField(payload, ["exit_code", "exitCode", "code"]);
 }
 
+function outputTextFromPayload(payload) {
+  return (
+    contentText(payload?.content) ||
+    valueAsDisplayString(payload?.output) ||
+    valueAsDisplayString(payload?.result) ||
+    ""
+  );
+}
+
 function toolNameFromPayload(payload) {
   return directStringField(payload, ["name", "tool_name", "toolName", "tool"]);
 }
@@ -303,7 +319,7 @@ function normalizeTurns(text) {
     } else if (current && isToolEvent(payload)) {
       const command = commandFromPayload(payload);
       const cwd = cwdFromPayload(payload);
-      const text = contentText(payload.content);
+      const text = outputTextFromPayload(payload);
       const status = statusFromPayload(payload);
       const exitCode = exitCodeFromPayload(payload);
       if (command?.trim()) {

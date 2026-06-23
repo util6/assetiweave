@@ -418,7 +418,7 @@ function defaultContentCardText(part: ConversationPart, type: ConversationConten
   if (type === "command") {
     return part.command?.trim() || part.text;
   }
-  return part.text ?? part.command ?? part.metadata_json;
+  return part.text ?? part.command;
 }
 
 function stringValue(value: unknown) {

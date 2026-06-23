@@ -817,23 +817,26 @@ function fallbackEntriesForPart(part: ConversationQuestionDetail["parts"][number
   if (!declaredCard) return [];
 
   const cardType = declaredCard.type;
-  const primaryText = cardType === "command"
-    ? part.command ?? part.text
-    : part.text ?? part.command ?? part.metadata_json;
-  return fallbackEntry(part.id, cardType, primaryText, cardType);
+  const primaryText = declaredCard.text
+    ?? (cardType === "command"
+      ? part.command ?? part.text
+      : part.text ?? part.command);
+  return fallbackEntry(part.id, cardType, primaryText, declaredCard.suffix ?? cardType);
 }
 
 function fallbackEntry(
   partId: string,
   cardType: ConversationSearchCardType,
   text?: string | null,
-  suffix = cardType,
+  suffix: string = cardType,
 ) {
   const trimmedText = text?.trim();
   return trimmedText ? [{ blockId: `${partId}-${suffix}`, cardType, text: trimmedText }] : [];
 }
 
 interface DeclaredContentCard {
+  suffix?: string;
+  text?: string;
   type: ConversationSearchCardType;
 }
 
@@ -843,10 +846,24 @@ function declaredContentCard(metadataJson?: string | null): DeclaredContentCard 
   const card = metadata.content_card ?? metadata.contentCard;
   if (!isRecord(card)) return null;
   const type = card.type;
-  if (type === "answer" || type === "tool" || type === "command" || type === "code" || type === "result") {
-    return { type };
+  if (
+    type === "answer"
+    || type === "tool"
+    || type === "command"
+    || type === "code"
+    || type === "result"
+  ) {
+    return {
+      suffix: stringValue(card.suffix),
+      text: stringValue(card.text),
+      type,
+    };
   }
   return null;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function parseMetadata(metadataJson?: string | null): Record<string, unknown> | null {

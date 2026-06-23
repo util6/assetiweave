@@ -187,7 +187,7 @@ fn official_codex_adapter_splits_command_and_result_cards() {
             r#"{"payload":{"type":"message","role":"user","id":"turn-1","content":"Run tests"}}"#,
             r#"{"payload":{"type":"message","role":"assistant","content":"Use this:\n```sh\ncargo test\n```"}}"#,
             r#"{"payload":{"type":"function_call","name":"update_plan","arguments":"{\"plan\":[]}"}}"#,
-            r#"{"payload":{"type":"exec","command":"cargo test","content":"tests passed","status":"completed","exit_code":0}}"#,
+            r#"{"payload":{"type":"exec","command":"cargo test","output":"tests passed","status":"completed","exit_code":0}}"#,
         ]
         .join("\n"),
     )
