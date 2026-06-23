@@ -1,4 +1,5 @@
 mod asset_repo;
+mod backup_repo;
 mod codec;
 mod conversation_repo;
 mod database;
@@ -17,6 +18,7 @@ mod web_record_repo;
 pub(crate) use asset_repo::{
     load_asset_sqlx, load_assets_sqlx, replace_source_assets_sqlx, update_asset_description_sqlx,
 };
+pub(crate) use backup_repo::{checkpoint_database_wal_sqlx, vacuum_database_into_sqlx};
 pub(crate) use conversation_repo::{
     delete_conversation_adapter_sqlx, disable_conversation_source_sqlx,
     import_conversation_sessions_sqlx, list_conversation_adapters_sqlx,
