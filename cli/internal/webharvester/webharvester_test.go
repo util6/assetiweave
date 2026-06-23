@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -128,6 +130,60 @@ func TestSyncDownloadsAndNormalizesSessions(t *testing.T) {
 		len(session.Turns[0].Parts) != 1 ||
 		*sessionsFile.Sessions[0].Turns[0].Parts[0].Text != "answer" {
 		t.Fatalf("normalized turns = %#v", session.Turns)
+	}
+}
+
+func TestGeneratedAdapterReadsNormalizedSessionsFromSupportedLocations(t *testing.T) {
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required to execute generated adapter")
+	}
+
+	for _, layout := range []struct {
+		name        string
+		sessionsRel string
+	}{
+		{name: "generated harvester layout", sessionsRel: filepath.Join("normalized", "sessions.json")},
+		{name: "qwen and gemini template layout", sessionsRel: filepath.Join("output", "normalized", "sessions.json")},
+	} {
+		t.Run(layout.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "qwen-web")
+			sessionsPath := filepath.Join(root, layout.sessionsRel)
+			if err := os.MkdirAll(filepath.Dir(sessionsPath), 0o755); err != nil {
+				t.Fatalf("create sessions dir: %v", err)
+			}
+			if err := os.WriteFile(sessionsPath, []byte(`{"sessions":[{"external_id":"s1","turns":[]}]}`), 0o644); err != nil {
+				t.Fatalf("write sessions file: %v", err)
+			}
+			adapterPath := filepath.Join(root, "adapter.js")
+			if err := os.WriteFile(adapterPath, []byte(adapterScript), 0o755); err != nil {
+				t.Fatalf("write adapter script: %v", err)
+			}
+
+			for _, tc := range []struct {
+				name     string
+				location string
+			}{
+				{name: "harvester root", location: root},
+				{name: "normalized dir", location: filepath.Join(root, "normalized")},
+				{name: "output normalized dir", location: filepath.Join(root, "output", "normalized")},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					cmd := exec.Command(nodePath, adapterPath)
+					cmd.Stdin = strings.NewReader(`{"source":{"location":` + strconv.Quote(tc.location) + `}}`)
+					output, err := cmd.CombinedOutput()
+					if err != nil {
+						t.Fatalf("adapter command failed: %v\n%s", err, string(output))
+					}
+					if strings.Contains(string(output), `"type":"error"`) {
+						t.Fatalf("adapter emitted error:\n%s", string(output))
+					}
+					if !strings.Contains(string(output), `"session_count":1`) {
+						t.Fatalf("adapter output = %s, want session_count 1", string(output))
+					}
+				})
+			}
+		})
 	}
 }
 

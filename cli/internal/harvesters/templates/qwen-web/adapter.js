@@ -21,7 +21,7 @@ if (request.method === "probe") {
 }
 
 const location = request.source && request.source.location ? request.source.location : ".";
-const sessionsPath = path.join(location, "sessions.json");
+const sessionsPath = resolveSessionsPath(location);
 let payload;
 try {
   payload = JSON.parse(fs.readFileSync(sessionsPath, "utf8"));
@@ -35,3 +35,23 @@ for (const session of sessions) {
   emit({ type: "item", item: { kind: "session", session } });
 }
 emit({ type: "complete", item: { session_count: sessions.length } });
+
+function resolveSessionsPath(location) {
+  const candidates = [
+    path.join(location, "sessions.json"),
+    path.join(location, "normalized", "sessions.json"),
+    path.join(location, "output", "normalized", "sessions.json"),
+  ];
+  if (/[\\/]normalized$/i.test(location) && !/[\\/]output[\\/]normalized$/i.test(location)) {
+    candidates.push(path.join(path.dirname(location), "output", "normalized", "sessions.json"));
+  }
+  if (/[\\/]output[\\/]normalized$/i.test(location)) {
+    candidates.push(path.join(path.dirname(path.dirname(location)), "normalized", "sessions.json"));
+  }
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[0];
+}
