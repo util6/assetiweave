@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ConversationAdapter,
+  ConversationSourceKind,
   ConversationMutationResult,
   ConversationQuestionDetail,
   ConversationRecordKind,
@@ -49,6 +50,58 @@ export interface ConversationExportContentFilter {
   code: boolean;
   result: boolean;
 }
+
+export interface ConversationAdapterManifest {
+  schema_version: number;
+  id: string;
+  name: string;
+  version: string;
+  protocol_version: number;
+  command: string[];
+  capabilities: string[];
+  input_kinds: ConversationSourceKind[];
+}
+
+export interface ConversationAdapterValidationResult {
+  valid: boolean;
+  manifest_path: string;
+  manifest_hash: string;
+  executable_path: string;
+  executable_hash: string | null;
+  manifest: ConversationAdapterManifest;
+  warnings: string[];
+}
+
+export interface ConversationAdapterRegisterResult {
+  dry_run: boolean;
+  adapter: ConversationAdapter;
+  validation: ConversationAdapterValidationResult;
+}
+
+export interface ConversationSourceUpsertResult {
+  dry_run: boolean;
+  source: ConversationSource;
+}
+
+export interface ImportConversationSourceParams {
+  config_json?: string | null;
+  manifest_path: string;
+  record_kind?: ConversationRecordKind;
+  source_id?: string | null;
+  source_kind: ConversationSourceKind;
+  source_location: string;
+  source_name: string;
+}
+
+export interface ImportConversationSourceResult {
+  adapter: ConversationAdapter;
+  source: ConversationSource;
+  task: ConversationSyncTaskSnapshot;
+  validation: ConversationAdapterValidationResult;
+}
+
+export type ImportConversationSourceProgress = "validating" | "source" | "sync";
+export type StartConversationSync = typeof syncConversations;
 
 export type ConversationSyncTaskStatus = "running" | "completed" | "failed";
 
@@ -129,12 +182,185 @@ export async function listConversationAdapters(): Promise<ConversationAdapter[]>
   }
 }
 
+export async function validateConversationAdapter(
+  manifestPath: string,
+): Promise<ConversationAdapterValidationResult> {
+  try {
+    return await invoke<ConversationAdapterValidationResult>("validate_conversation_adapter", {
+      params: { manifest_path: manifestPath },
+    });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return fallbackConversationAdapterValidation(manifestPath);
+  }
+}
+
+export async function registerConversationAdapter(
+  manifestPath: string,
+  dryRun = false,
+): Promise<ConversationAdapterRegisterResult> {
+  try {
+    return await invoke<ConversationAdapterRegisterResult>("register_conversation_adapter", {
+      params: { dry_run: dryRun, manifest_path: manifestPath, yes: true },
+    });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    const validation = fallbackConversationAdapterValidation(manifestPath);
+    return {
+      dry_run: dryRun,
+      adapter: conversationAdapterFromValidation(validation),
+      validation,
+    };
+  }
+}
+
+export async function upsertConversationSource(
+  source: ConversationSource,
+  dryRun = false,
+): Promise<ConversationSourceUpsertResult> {
+  try {
+    return await invoke<ConversationSourceUpsertResult>("upsert_conversation_source", {
+      params: { dry_run: dryRun, source },
+    });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return { dry_run: dryRun, source };
+  }
+}
+
+export async function importConversationSource(
+  params: ImportConversationSourceParams,
+  onProgress?: (step: ImportConversationSourceProgress) => void,
+  startSync: StartConversationSync = syncConversations,
+): Promise<ImportConversationSourceResult> {
+  onProgress?.("validating");
+  const validation = await validateConversationAdapter(params.manifest_path);
+  if (!validation.manifest.capabilities.includes("read_session")) {
+    throw new Error("conversation adapter must declare read_session");
+  }
+  if (params.record_kind === "web" && !validation.manifest.capabilities.includes("web_records")) {
+    throw new Error("web record imports require an adapter with web_records capability");
+  }
+  if (params.record_kind !== "web" && validation.manifest.capabilities.includes("web_records")) {
+    throw new Error("web record adapters must be imported from the web records page");
+  }
+  if (!validation.manifest.input_kinds.includes(params.source_kind)) {
+    throw new Error(`conversation adapter does not support source kind: ${params.source_kind}`);
+  }
+
+  onProgress?.("source");
+  const registration = await registerConversationAdapter(validation.manifest_path, false);
+  const nowIso = new Date().toISOString();
+  const source: ConversationSource = {
+    id:
+      params.source_id?.trim() ||
+      conversationSourceId(registration.adapter.id, params.source_location),
+    adapter_id: registration.adapter.id,
+    name: params.source_name.trim() || registration.adapter.name,
+    kind: params.source_kind,
+    location: params.source_location.trim(),
+    config_json: normalizeOptionalJson(params.config_json),
+    enabled: true,
+    created_at: nowIso,
+    updated_at: nowIso,
+  };
+
+  const upsert = await upsertConversationSource(source, false);
+  onProgress?.("sync");
+  const task = await startSync({ dry_run: false, source_id: upsert.source.id });
+
+  return {
+    adapter: registration.adapter,
+    source: upsert.source,
+    task,
+    validation,
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function numberValue(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function normalizeOptionalJson(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  JSON.parse(trimmed);
+  return trimmed;
+}
+
+function conversationSourceId(adapterId: string, location: string) {
+  const locationSlug = location
+    .trim()
+    .toLowerCase()
+    .replace(/^~\//, "home/")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return [adapterId, locationSlug || "source"].join("-");
+}
+
+function fallbackConversationAdapterValidation(
+  manifestPath: string,
+): ConversationAdapterValidationResult {
+  const webLike = /web|browser|qwen|chatgpt/i.test(manifestPath);
+  return {
+    valid: true,
+    manifest_path: manifestPath,
+    manifest_hash: "preview-manifest-hash",
+    executable_path: `${manifestPath.replace(/\/[^/]*$/, "")}/adapter`,
+    executable_hash: "preview-executable-hash",
+    manifest: {
+      schema_version: 1,
+      id: webLike ? "preview-web-adapter" : "preview-conversation-adapter",
+      name: webLike ? "Preview Web Adapter" : "Preview Conversation Adapter",
+      version: "0.1.0",
+      protocol_version: 1,
+      command: ["adapter"],
+      capabilities: webLike
+        ? ["probe", "read_session", "web_records"]
+        : ["probe", "read_session"],
+      input_kinds: ["directory", "file", "sqlite"],
+    },
+    warnings: [],
+  };
+}
+
+function conversationAdapterFromValidation(
+  validation: ConversationAdapterValidationResult,
+): ConversationAdapter {
+  const nowIso = new Date().toISOString();
+  return {
+    id: validation.manifest.id,
+    name: validation.manifest.name,
+    kind: "external",
+    version: validation.manifest.version,
+    enabled: true,
+    manifest_path: validation.manifest_path,
+    executable_path: validation.executable_path,
+    content_hash: validation.executable_hash,
+    trusted_hash: validation.executable_hash ?? validation.manifest_hash,
+    trust_state: "trusted",
+    protocol_version: validation.manifest.protocol_version,
+    capabilities: validation.manifest.capabilities,
+    input_kinds: validation.manifest.input_kinds,
+    created_at: nowIso,
+    updated_at: nowIso,
+  };
 }
 
 export async function listConversationSources(): Promise<ConversationSource[]> {

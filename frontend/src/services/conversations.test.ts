@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getConversationSyncTask,
+  importConversationSource,
   mergeConversationQuestions,
   searchConversationRecords,
   summarizeConversationSyncTask,
@@ -59,6 +60,117 @@ describe("conversation services", () => {
     });
     expect(invokeMock).toHaveBeenCalledWith("sync_conversations", {
       params: { source_id: null, dry_run: false },
+    });
+  });
+
+  it("imports a conversation source by validating the adapter, adding the source, then starting background sync", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock
+      .mockResolvedValueOnce({
+        valid: true,
+        manifest_path: "/tmp/adapter/conversation-adapter.json",
+        manifest_hash: "manifest-hash",
+        executable_path: "/tmp/adapter/run",
+        executable_hash: "exe-hash",
+        manifest: {
+          schema_version: 1,
+          id: "medical-web",
+          name: "Medical Web",
+          version: "0.1.0",
+          protocol_version: 1,
+          command: ["run"],
+          capabilities: ["read_session", "web_records"],
+          input_kinds: ["directory"],
+        },
+        warnings: [],
+      })
+      .mockResolvedValueOnce({
+        dry_run: false,
+        adapter: {
+          id: "medical-web",
+          name: "Medical Web",
+          kind: "external",
+          version: "0.1.0",
+          enabled: true,
+          manifest_path: "/tmp/adapter/conversation-adapter.json",
+          executable_path: "/tmp/adapter/run",
+          content_hash: "exe-hash",
+          trusted_hash: "exe-hash",
+          trust_state: "trusted",
+          protocol_version: 1,
+          capabilities: ["read_session", "web_records"],
+          input_kinds: ["directory"],
+          created_at: "2026-06-15T00:00:00Z",
+          updated_at: "2026-06-15T00:00:00Z",
+        },
+        validation: {},
+      })
+      .mockImplementationOnce(async (_command, payload) => ({
+        dry_run: false,
+        source: payload.params.source,
+      }))
+      .mockResolvedValueOnce({
+        id: "sync-1",
+        status: "running",
+        source_id: "medical-web-export",
+        adapter_id: null,
+        dry_run: false,
+        started_at: "2026-06-15T00:00:00Z",
+        finished_at: null,
+        result: null,
+        error: null,
+      });
+    const progress: string[] = [];
+
+    await expect(
+      importConversationSource(
+        {
+          manifest_path: "/tmp/adapter/conversation-adapter.json",
+          record_kind: "web",
+          source_id: "medical-web-export",
+          source_kind: "directory",
+          source_location: "/tmp/export",
+          source_name: "医保网页记录",
+        },
+        (step) => progress.push(step),
+      ),
+    ).resolves.toMatchObject({
+      source: {
+        id: "medical-web-export",
+        adapter_id: "medical-web",
+        name: "医保网页记录",
+      },
+      task: { id: "sync-1", status: "running" },
+    });
+
+    expect(progress).toEqual(["validating", "source", "sync"]);
+    expect(invokeMock.mock.calls.map(([command]) => command)).toEqual([
+      "validate_conversation_adapter",
+      "register_conversation_adapter",
+      "upsert_conversation_source",
+      "sync_conversations",
+    ]);
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "register_conversation_adapter", {
+      params: {
+        dry_run: false,
+        manifest_path: "/tmp/adapter/conversation-adapter.json",
+        yes: true,
+      },
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "upsert_conversation_source", {
+      params: {
+        dry_run: false,
+        source: expect.objectContaining({
+          adapter_id: "medical-web",
+          id: "medical-web-export",
+          kind: "directory",
+          location: "/tmp/export",
+          name: "医保网页记录",
+        }),
+      },
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(4, "sync_conversations", {
+      params: { dry_run: false, source_id: "medical-web-export" },
     });
   });
 

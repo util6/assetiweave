@@ -13,6 +13,8 @@ import {
   ConversationContentFilter,
   ConversationSyncProgress,
 } from "../../components/conversations/ConversationToolbarControls";
+import { ConversationImportDialog } from "../../components/conversations/ConversationImportDialog";
+import { I18nProvider } from "../../i18n/I18nProvider";
 import type { Translator } from "../../i18n/I18nProvider";
 import { messages, type TranslationParams } from "../../i18n/messages";
 import type {
@@ -32,6 +34,7 @@ import {
 
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.restoreAllMocks();
 });
 
@@ -693,6 +696,44 @@ describe("MarkdownContent", () => {
     expect(html).toContain("同步完成");
     expect(html).toContain("本次新增/更新 3 个 Session、18 条内容");
     expect(html).toContain("关闭同步进度");
+  });
+
+  it("collects adapter manifest and source details before importing", async () => {
+    const onImport = vi.fn(async () => undefined);
+    const onPickManifest = vi.fn(async () => "/tmp/adapter/conversation-adapter.json");
+    const onPickSourceLocation = vi.fn(async () => "/tmp/web-records");
+    localStorage.setItem("assetiweave.locale", "zh");
+
+    render(
+      <I18nProvider>
+        <ConversationImportDialog
+          onClose={vi.fn()}
+          onImport={onImport}
+          onPickManifest={onPickManifest}
+          onPickSourceLocation={onPickSourceLocation}
+          recordKind="web"
+        />
+      </I18nProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "选择插件 manifest" }));
+    await waitFor(() => expect(onPickManifest).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "选择来源目录" }));
+    await waitFor(() => expect(onPickSourceLocation).toHaveBeenCalledWith("directory"));
+    fireEvent.change(screen.getByLabelText("来源名称"), {
+      target: { value: "医保网页记录" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "开始导入" }));
+
+    await waitFor(() => {
+      expect(onImport).toHaveBeenCalledWith({
+        config_json: null,
+        manifest_path: "/tmp/adapter/conversation-adapter.json",
+        source_kind: "directory",
+        source_location: "/tmp/web-records",
+        source_name: "医保网页记录",
+      });
+    });
   });
 
   it("renders a global background sync indicator without blocking other controls", () => {

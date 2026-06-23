@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Scissors,
   Settings,
+  UploadCloud,
   X,
 } from "lucide-react";
 import {
@@ -36,6 +37,11 @@ import {
   ConversationSyncProgress,
   type ConversationSyncProgressState,
 } from "../../components/conversations/ConversationToolbarControls";
+import {
+  ConversationImportDialog,
+  type ConversationImportFormValues,
+  type ConversationImportStep,
+} from "../../components/conversations/ConversationImportDialog";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { PageHeader } from "../../components/foundation/PageHeader";
@@ -55,6 +61,7 @@ import {
   exportWebRecordSession,
   getConversationSession,
   getWebRecordSession,
+  importConversationSource,
   listConversationAdapters,
   listConversationSessions,
   listWebRecordSessions,
@@ -64,13 +71,14 @@ import {
   summarizeConversationSyncTask,
   type ConversationSyncSummaryCounts,
 } from "../../services/conversations";
-import { selectTargetDirectory } from "../../services/catalog";
+import { selectFilePath, selectTargetDirectory } from "../../services/catalog";
 import { useConversationSync } from "../../app/backgroundTasks/ConversationSyncProvider";
 import type {
   AppKind,
   AppShortcut,
   ConversationAdapter,
   ConversationQuestionDetail,
+  ConversationSourceKind,
   ConversationSearchCardType,
   ConversationSearchHit,
   ConversationSessionDetail,
@@ -150,6 +158,9 @@ export function ConversationsPage({
   const [exportVisibility, setExportVisibility] = useState<ConversationContentVisibility>({
     ...DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
   });
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importStep, setImportStep] = useState<ConversationImportStep>("idle");
+  const [importing, setImporting] = useState(false);
   const [syncProgress, setSyncProgress] = useState<ConversationSyncProgressState | null>(null);
   const [syncProgressDismissed, setSyncProgressDismissed] = useState(false);
   const [query, setQuery] = useState("");
@@ -165,6 +176,7 @@ export function ConversationsPage({
   const [contentSearchResult, setContentSearchResult] = useState<ConversationSearchResultState | null>(null);
   const [contentSearchLoading, setContentSearchLoading] = useState(false);
   const [activeSearchTarget, setActiveSearchTarget] = useState<ConversationSearchTarget | null>(null);
+  const importedSourceNamesRef = useRef<Map<string, string>>(new Map());
 
   const sessionQuestionCount = useMemo(() => sessions.reduce((total, session) => total + session.question_count, 0), [sessions]);
   const appGroups = useMemo(() => groupConversationSessionsByApp(adapters, sessions), [adapters, sessions]);
@@ -205,6 +217,9 @@ export function ConversationsPage({
     setContentQuery("");
     setContentSearchResult(null);
     setActiveSearchTarget(null);
+    setImportDialogOpen(false);
+    setImportStep("idle");
+    setImporting(false);
     setOutputRoot(
       webRecordMode ? "~/Desktop/assetiweave-web-records" : "~/Desktop/assetiweave-conversations",
     );
@@ -337,7 +352,7 @@ export function ConversationsPage({
       return;
     }
 
-    const sourceLabel = t("conversation.sync.allSources");
+    const sourceLabel = syncSourceLabel(syncTask.source_id);
     if (syncTask.status === "running") {
       setSyncProgressDismissed(false);
       setSyncProgress({ phase: "importing", sourceLabel });
@@ -382,7 +397,14 @@ export function ConversationsPage({
     return () => {
       cancelled = true;
     };
-  }, [syncTask?.id, syncTask?.status]);
+  }, [syncTask?.id, syncTask?.source_id, syncTask?.status]);
+
+  function syncSourceLabel(sourceId: string | null | undefined) {
+    if (!sourceId) {
+      return t("conversation.sync.allSources");
+    }
+    return importedSourceNamesRef.current.get(sourceId) ?? sourceId;
+  }
 
   async function refreshCatalog(options: { rethrow?: boolean } = {}) {
     try {
@@ -442,6 +464,63 @@ export function ConversationsPage({
       setSyncProgress({ failedStep: 1, phase: "failed", sourceLabel });
       onNotifyError(errorMessage(error));
     }
+  }
+
+  async function handleImport(values: ConversationImportFormValues) {
+    setStatus(null);
+    setImporting(true);
+    setImportStep("validating");
+    try {
+      const result = await importConversationSource(
+        {
+          config_json: values.config_json,
+          manifest_path: values.manifest_path,
+          record_kind: webRecordMode ? "web" : "session",
+          source_kind: values.source_kind,
+          source_location: values.source_location,
+          source_name: values.source_name,
+        },
+        (step) => setImportStep(step === "validating" ? "validating" : step === "source" ? "source" : "sync"),
+        startSync,
+      );
+      importedSourceNamesRef.current.set(result.source.id, result.source.name);
+      const sourceLabel = result.source.name;
+      const summary = formatConversationSyncSummary(summarizeConversationSyncTask(result.task), t);
+      setSyncProgressDismissed(false);
+      setSyncProgress({
+        failedStep: result.task.status === "failed" ? 3 : undefined,
+        phase:
+          result.task.status === "failed"
+            ? "failed"
+            : result.task.status === "completed"
+              ? "refreshing"
+              : "importing",
+        sourceLabel,
+        summary,
+      });
+      setStatus(t("conversation.status.importStarted", { source: result.source.name }));
+      setImportDialogOpen(false);
+      setImportStep("idle");
+    } catch (error) {
+      setImportStep("failed");
+      onNotifyError(errorMessage(error));
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function pickImportManifest() {
+    return selectFilePath(t("conversation.import.pickManifest"), ["json"]);
+  }
+
+  async function pickImportSourceLocation(kind: ConversationSourceKind) {
+    if (kind === "directory" || kind === "custom") {
+      return selectTargetDirectory(t("conversation.import.pickSourceDirectory"));
+    }
+    return selectFilePath(
+      t("conversation.import.pickSourceFile"),
+      kind === "sqlite" ? ["db", "sqlite", "sqlite3"] : undefined,
+    );
   }
 
   async function handleMerge(previous: ConversationQuestionDetail, current: ConversationQuestionDetail) {
@@ -567,7 +646,17 @@ export function ConversationsPage({
                 onClick={() => onOpenSettings("conversations.sessions")}
               />
               <ToolbarActionButton
-                disabled={syncRunning}
+                disabled={syncRunning || importing}
+                icon={<UploadCloud size={17} />}
+                label={t("conversation.toolbar.import")}
+                onClick={() => {
+                  setImportStep("idle");
+                  setImportDialogOpen(true);
+                }}
+                text={t("conversation.toolbar.import")}
+              />
+              <ToolbarActionButton
+                disabled={syncRunning || importing}
                 icon={<RefreshCw size={17} />}
                 label={syncRunning ? t("conversation.toolbar.syncing") : t("conversation.toolbar.sync")}
                 onClick={() => void handleSync()}
@@ -642,7 +731,17 @@ export function ConversationsPage({
                   onClick={() => onOpenSettings("conversations.sessions")}
                 />
                 <ToolbarActionButton
-                  disabled={syncRunning}
+                  disabled={syncRunning || importing}
+                  icon={<UploadCloud size={17} />}
+                  label={t("conversation.toolbar.import")}
+                  onClick={() => {
+                    setImportStep("idle");
+                    setImportDialogOpen(true);
+                  }}
+                  text={t("conversation.toolbar.import")}
+                />
+                <ToolbarActionButton
+                  disabled={syncRunning || importing}
                   icon={<RefreshCw size={17} />}
                   label={syncRunning ? t("conversation.toolbar.syncing") : t("conversation.toolbar.sync")}
                   onClick={() => void handleSync()}
@@ -710,6 +809,21 @@ export function ConversationsPage({
           }
           t={t}
           visibility={exportVisibility}
+        />
+      ) : null}
+
+      {importDialogOpen ? (
+        <ConversationImportDialog
+          busy={importing}
+          onClose={() => {
+            setImportDialogOpen(false);
+            setImportStep("idle");
+          }}
+          onImport={handleImport}
+          onPickManifest={pickImportManifest}
+          onPickSourceLocation={pickImportSourceLocation}
+          recordKind={webRecordMode ? "web" : "session"}
+          step={importStep}
         />
       ) : null}
 
