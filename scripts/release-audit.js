@@ -72,9 +72,11 @@ requireIncludes("CI workflow", ciWorkflow, "pnpm cli:test:e2e");
 
 const releaseWorkflow = read(".github/workflows/release.yml");
 requireIncludes("release workflow", releaseWorkflow, "node scripts/release-audit.js --static-only");
-requireIncludes("release workflow", releaseWorkflow, "scripts/build-cli.js");
-requireIncludes("release workflow", releaseWorkflow, ".sha256");
-requireIncludes("release workflow", releaseWorkflow, "createHash('sha256')");
+requireIncludes("package scripts", JSON.stringify(packageJSON.scripts), "bundle:cli");
+requireIncludes("Tauri beforeBuildCommand", tauriConfig.build.beforeBuildCommand, "pnpm bundle:cli");
+requireIncludes("Tauri bundle resources", JSON.stringify(tauriConfig.bundle.resources), "bundled-cli/cli");
+requireNotIncludes("release workflow", releaseWorkflow, "assetiweave-tools-");
+requireNotIncludes("release workflow", releaseWorkflow, "CLI tools checksum assets");
 requireNotIncludes(
   "release workflow",
   releaseWorkflow,
@@ -132,10 +134,10 @@ requireIncludes("update checker", updateChecker, "RefreshCache");
 requireIncludes("update checker", updateChecker, "ASSETIWEAVE_CLI_NO_UPDATE_NOTIFIER");
 
 const selfUpdater = read("cli/internal/selfupdate/selfupdate.go");
-requireIncludes("self updater", selfUpdater, "assetiweave-tools-");
-requireIncludes("self updater", selfUpdater, "packageAsset");
-requireIncludes("self updater", selfUpdater, "ChecksumURL");
-requireIncludes("self updater", selfUpdater, "manual_required");
+requireIncludes("self updater", selfUpdater, "app_update_required");
+requireIncludes("self updater", selfUpdater, "CLI tools are bundled with the app installer");
+requireNotIncludes("self updater", selfUpdater, "assetiweave-tools-");
+requireNotIncludes("self updater", selfUpdater, "packageAsset");
 const selfUpdateApply = read("cli/internal/selfupdate/apply.go");
 requireIncludes("self updater", selfUpdateApply, "verifySHA256");
 requireIncludes("self updater", selfUpdateApply, "rollbackInstalled");

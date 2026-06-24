@@ -2,7 +2,6 @@ package selfupdate
 
 import (
 	"fmt"
-	"runtime"
 	"strings"
 
 	"github.com/util6/assetiweave/internal/harvesters"
@@ -37,12 +36,6 @@ type Result struct {
 }
 
 func Check(options Options) Result {
-	if options.GOOS == "" {
-		options.GOOS = runtime.GOOS
-	}
-	if options.GOARCH == "" {
-		options.GOARCH = runtime.GOARCH
-	}
 	report := update.CheckAndCache(options.CurrentVersion, options.ManifestURL)
 	result := Result{
 		Checked:         report.Checked,
@@ -59,55 +52,12 @@ func Check(options Options) Result {
 	result.ReleaseURL = releaseURL(report.Latest)
 	if !report.Available {
 		result.Action = "up_to_date"
-		result.Message = fmt.Sprintf("AssetIWeave CLI %s is up to date", report.Current)
+		result.Message = fmt.Sprintf("AssetIWeave CLI %s is up to date with the installed app", report.Current)
 		return result
 	}
-	asset, target, ok := packageAsset(report.Latest, options.GOOS, options.GOARCH)
-	result.Target = target
-	if !ok {
-		result.Action = "manual_required"
-		result.Message = fmt.Sprintf("AssetIWeave CLI %s is available; download a matching package from the release page", report.Latest)
-		return result
-	}
-	result.Action = "update_available"
-	result.PackageAsset = asset
-	result.PackageURL = assetURL(report.Latest, asset)
-	result.ChecksumAsset = checksumAsset(asset)
-	result.ChecksumURL = assetURL(report.Latest, result.ChecksumAsset)
-	result.Message = fmt.Sprintf("AssetIWeave CLI %s is available for %s", report.Latest, target)
+	result.Action = "app_update_required"
+	result.Message = fmt.Sprintf("AssetIWeave %s is available; update the desktop app because CLI tools are bundled with the app installer", report.Latest)
 	return result
-}
-
-func packageAsset(version, goos, goarch string) (asset, target string, ok bool) {
-	switch {
-	case goos == "linux" && goarch == "amd64":
-		target = "linux-x64"
-	case goos == "darwin" && goarch == "arm64":
-		target = "macos-arm64"
-	case goos == "darwin" && goarch == "amd64":
-		target = "macos-x64"
-	case goos == "windows" && goarch == "amd64":
-		target = "windows-x64"
-	default:
-		if goos != "" && goarch != "" {
-			target = goos + "-" + goarch
-		}
-		return "", target, false
-	}
-	extension := ".tar.gz"
-	if goos == "windows" {
-		extension = ".zip"
-	}
-	tag := releaseTag(version)
-	return fmt.Sprintf("assetiweave-tools-%s-%s%s", tag, target, extension), target, true
-}
-
-func checksumAsset(asset string) string {
-	return asset + ".sha256"
-}
-
-func assetURL(version, asset string) string {
-	return repoURL + "/releases/download/" + releaseTag(version) + "/" + asset
 }
 
 func releaseURL(version string) string {

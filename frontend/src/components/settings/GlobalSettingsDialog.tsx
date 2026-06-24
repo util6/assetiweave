@@ -39,6 +39,7 @@ import {
   RotateCcw,
   Settings,
   ShieldCheck,
+  Terminal,
   Type,
   X,
   type LucideIcon,
@@ -62,6 +63,7 @@ import { useI18n, type Translator } from "../../i18n/I18nProvider";
 import { headerTabLabel, railLabel, subNavLabel } from "../../i18n/navigation";
 import type { Locale, TranslationKey } from "../../i18n/messages";
 import type { HeaderTabItem, LocalizedNavigationLabels, NavigationModel, RailMenuItem, SubNavItem } from "../../router/types";
+import { getCliToolsStatus, installCliTools, type CliToolsStatus } from "../../services/cliTools";
 import { getSkillBackupSettings, revealPath, selectTargetDirectory } from "../../services/catalog";
 import type { ThemeId } from "../../theme/schema";
 import { isHexColor } from "../../theme/colorValidation";
@@ -132,6 +134,9 @@ export function GlobalSettingsDialog({
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
   const [backupError, setBackupError] = useState("");
   const [backupSettings, setBackupSettings] = useState<SkillBackupSettings | null>(null);
+  const [cliToolsStatus, setCliToolsStatus] = useState<CliToolsStatus | null>(null);
+  const [cliToolsError, setCliToolsError] = useState("");
+  const [cliToolsInstalling, setCliToolsInstalling] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -185,6 +190,18 @@ export function GlobalSettingsDialog({
       .catch((error) => {
         if (!cancelled) {
           setBackupError(errorMessage(error));
+        }
+      });
+    getCliToolsStatus()
+      .then((status) => {
+        if (!cancelled) {
+          setCliToolsStatus(status);
+          setCliToolsError("");
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setCliToolsError(errorMessage(error));
         }
       });
 
@@ -396,6 +413,18 @@ export function GlobalSettingsDialog({
       ...settings.dataBackup,
       customDirectory: "",
     });
+  }
+
+  async function handleInstallCliTools() {
+    setCliToolsInstalling(true);
+    setCliToolsError("");
+    try {
+      setCliToolsStatus(await installCliTools());
+    } catch (error) {
+      setCliToolsError(errorMessage(error));
+    } finally {
+      setCliToolsInstalling(false);
+    }
   }
 
   function openShortcutIconEditor(shortcut: AppShortcut) {
@@ -728,6 +757,13 @@ export function GlobalSettingsDialog({
                   onOpen={() => void revealPath(storageInfo.defaultDataBackupDir)}
                   openLabel={t("settings.storage.open")}
                   value={storageInfo.defaultDataBackupDir}
+                />
+                <CliToolsInstallRow
+                  error={cliToolsError}
+                  installing={cliToolsInstalling}
+                  onInstall={() => void handleInstallCliTools()}
+                  status={cliToolsStatus}
+                  t={t}
                 />
                 <DataBackupDirectoryRow
                   customDirectory={settings.dataBackup.customDirectory}
@@ -1509,6 +1545,64 @@ function DataBackupDirectoryRow({
             <X size={15} />
           </Button>
         )}
+      </div>
+    </SettingRow>
+  );
+}
+
+function CliToolsInstallRow({
+  error,
+  installing,
+  onInstall,
+  status,
+  t,
+}: {
+  error: string;
+  installing: boolean;
+  onInstall: () => void;
+  status: CliToolsStatus | null;
+  t: Translator;
+}) {
+  const ready = Boolean(status?.bundled && status.installed && status.path_configured);
+  const statusText = !status
+    ? t("settings.cli.loading")
+    : ready
+      ? t("settings.cli.ready")
+      : status.installed
+        ? t("settings.cli.needsTerminalRestart")
+        : status.bundled
+          ? t("settings.cli.notInstalled")
+          : t("settings.cli.notBundled");
+  const installLabel = status?.installed ? t("settings.cli.repair") : t("settings.cli.install");
+  const detail = error || status?.message || t("settings.cli.loading");
+
+  return (
+    <SettingRow icon={<Terminal size={18} />} label={t("settings.cli.title")}>
+      <div className="flex w-[min(38rem,52vw)] min-w-0 items-center gap-2">
+        <div className="min-w-0 flex-1 rounded-lg border border-theme-control-border bg-theme-control px-3 py-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span
+              className={clsx(
+                "size-2 shrink-0 rounded-full",
+                ready ? "bg-status-create" : error ? "bg-status-remove" : "bg-status-update",
+              )}
+              aria-hidden="true"
+            />
+            <span className="truncate text-body-sm font-semibold text-on-surface">{statusText}</span>
+          </div>
+          <p className={clsx("mt-1 truncate text-body-sm", error ? "text-status-remove" : "text-on-surface-variant")} title={detail}>
+            {detail}
+          </p>
+          {status?.install_dir && (
+            <code className="mt-1 block truncate text-code-md text-on-surface-variant" title={status.install_dir}>
+              {status.install_dir}
+            </code>
+          )}
+        </div>
+        <Button disabled={installing || status?.bundled === false} onClick={onInstall} type="button" variant="outline">
+          <Terminal size={15} />
+          <span>{installing ? t("settings.cli.installing") : installLabel}</span>
+        </Button>
       </div>
     </SettingRow>
   );

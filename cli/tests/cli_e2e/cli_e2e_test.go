@@ -155,9 +155,9 @@ func TestUpdateCheckReadsRemoteManifest(t *testing.T) {
 	if data["checked"] != true ||
 		data["update_available"] != true ||
 		data["latest"] != "99.0.0" ||
-		data["action"] != "update_available" ||
-		data["package_url"] == "" ||
-		data["checksum_url"] == "" {
+		data["action"] != "app_update_required" ||
+		data["package_url"] != nil ||
+		data["checksum_url"] != nil {
 		t.Fatalf("update check result = %#v", data)
 	}
 }

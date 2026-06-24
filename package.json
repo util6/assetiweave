@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --config frontend/vite.config.ts --host 127.0.0.1 --port 1420",
     "build": "tsc -p frontend/tsconfig.json && vite build --config frontend/vite.config.ts",
+    "bundle:cli": "node scripts/bundle-cli.js",
     "engine:build": "cargo build -p assetiweave --bin assetiweave-engine",
     "cli:contract": "pnpm engine:build && node scripts/generate-cli-contract.js",
     "cli:build": "node scripts/build-cli.js",

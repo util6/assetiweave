@@ -1475,6 +1475,32 @@ pub(crate) fn reveal_path(path: String) -> AppResult<()> {
 }
 
 #[tauri::command]
+pub(crate) fn get_cli_tools_status(
+    app: AppHandle,
+) -> AppResult<crate::adapters::cli_tools::CliToolsStatus> {
+    crate::adapters::cli_tools::status(&app)
+}
+
+#[tauri::command]
+pub(crate) fn install_cli_tools(
+    app: AppHandle,
+) -> AppResult<crate::adapters::cli_tools::CliToolsStatus> {
+    let result = crate::adapters::cli_tools::install(&app);
+    match &result {
+        Ok(status) => log_info(
+            "cli.install",
+            "安装命令行工具成功",
+            &[
+                ("install_dir", status.install_dir.clone()),
+                ("path_configured", status.path_configured.to_string()),
+            ],
+        ),
+        Err(error) => log_error("cli.install", "安装命令行工具失败", error, &[]),
+    }
+    result
+}
+
+#[tauri::command]
 pub(crate) fn logs_get_snapshot(
     file_name: Option<String>,
     line_limit: Option<usize>,
@@ -1570,6 +1596,8 @@ pub(crate) fn command_handler(
         split_conversation_question,
         create_plan,
         execute_plan,
+        get_cli_tools_status,
+        install_cli_tools,
         logs_get_snapshot,
         logs_open_log_directory,
         logs_write_operation,

@@ -945,7 +945,10 @@ mod tests {
         let tauri_command_source =
             fs::read_to_string(workspace_root.join("src-tauri/src/adapters/tauri/commands.rs"))
                 .expect("read Tauri commands");
-        let tauri_handlers = extract_tauri_handler_methods(&tauri_command_source);
+        let mut tauri_handlers = extract_tauri_handler_methods(&tauri_command_source);
+        for method in desktop_only_tauri_methods() {
+            tauri_handlers.remove(method);
+        }
         let registered = command_registry::command_specs()
             .iter()
             .filter(|spec| command_registry::is_app_method(spec.method))
@@ -1153,6 +1156,9 @@ mod tests {
             .filter(|spec| command_registry::is_app_method(spec.method))
             .map(|spec| spec.method)
             .collect::<BTreeSet<_>>();
+        for method in desktop_only_tauri_methods() {
+            frontend_methods.remove(method);
+        }
         let missing = frontend_methods
             .iter()
             .filter(|method| !registered.contains(method.as_str()))
@@ -1307,6 +1313,10 @@ mod tests {
             remaining = &after_first_quote[second_quote + 1..];
         }
         methods
+    }
+
+    fn desktop_only_tauri_methods() -> BTreeSet<&'static str> {
+        BTreeSet::from(["get_cli_tools_status", "install_cli_tools"])
     }
 
     fn extract_tauri_handler_methods(content: &str) -> BTreeSet<String> {

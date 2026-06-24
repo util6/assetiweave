@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/util6/assetiweave/internal/cmdutil"
@@ -16,7 +15,7 @@ import (
 	"github.com/util6/assetiweave/internal/update"
 )
 
-func TestUpdateCheckReportsLatestReleasePackage(t *testing.T) {
+func TestUpdateCheckReportsAppManagedRelease(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	previousVersion := protocol.CLIVersion
 	protocol.CLIVersion = "0.1.1"
@@ -50,21 +49,15 @@ func TestUpdateCheckReportsLatestReleasePackage(t *testing.T) {
 	if data["checked"] != true ||
 		data["update_available"] != true ||
 		data["latest"] != "99.0.0" ||
-		data["action"] != "update_available" ||
+		data["action"] != "app_update_required" ||
 		data["release_url"] == "" ||
-		data["package_url"] == "" ||
-		data["checksum_url"] == "" {
+		data["package_url"] != nil ||
+		data["checksum_url"] != nil {
 		t.Fatalf("update check result = %#v", data)
-	}
-	if !strings.Contains(data["package_asset"].(string), "assetiweave-tools-v99.0.0-") {
-		t.Fatalf("package_asset = %#v", data["package_asset"])
-	}
-	if !strings.HasSuffix(data["checksum_asset"].(string), ".sha256") {
-		t.Fatalf("checksum_asset = %#v", data["checksum_asset"])
 	}
 }
 
-func TestUpdateRequiresYesBeforeReplacingTools(t *testing.T) {
+func TestUpdateWithoutCheckReportsAppManagedReleaseWithoutReplacingTools(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	previousVersion := protocol.CLIVersion
@@ -84,20 +77,15 @@ func TestUpdateRequiresYesBeforeReplacingTools(t *testing.T) {
 	root.SetArgs([]string{"update"})
 
 	err := root.Execute()
-	if err == nil {
-		t.Fatal("Execute() error = nil, want confirmation error")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
 	}
-	code := handleError(factory, err)
-
-	if code != output.ExitConfirmationRequired {
-		t.Fatalf("exit code = %d, want %d", code, output.ExitConfirmationRequired)
+	var envelope output.Envelope
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
 	}
-	var envelope output.ErrorEnvelope
-	if err := json.Unmarshal(stderr.Bytes(), &envelope); err != nil {
-		t.Fatalf("stderr is not JSON: %v\n%s", err, stderr.String())
-	}
-	if envelope.Error.Subtype != "confirmation_required" ||
-		envelope.Error.Code != "confirmation_required" {
-		t.Fatalf("error = %+v", envelope.Error)
+	data, ok := envelope.Data.(map[string]any)
+	if !ok || data["action"] != "app_update_required" {
+		t.Fatalf("update data = %#v", envelope.Data)
 	}
 }

@@ -9,3 +9,5 @@ target/
 *.tmp
 
 src-tauri/target/
+src-tauri/bundled-cli/cli/*
+!src-tauri/bundled-cli/cli/.gitkeep

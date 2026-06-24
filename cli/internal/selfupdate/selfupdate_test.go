@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestCheckReportsSupportedReleasePackage(t *testing.T) {
+func TestCheckReportsAppManagedUpdate(t *testing.T) {
 	t.Setenv("ASSETIWEAVE_UPDATE_STATE_PATH", filepath.Join(t.TempDir(), "update-state.json"))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -25,19 +25,18 @@ func TestCheckReportsSupportedReleasePackage(t *testing.T) {
 
 	if !result.Checked ||
 		!result.UpdateAvailable ||
-		result.Action != "update_available" ||
+		result.Action != "app_update_required" ||
 		result.Current != "0.1.1" ||
 		result.Latest != "0.2.0" ||
-		result.Target != "macos-arm64" ||
-		result.PackageAsset != "assetiweave-tools-v0.2.0-macos-arm64.tar.gz" ||
-		result.ChecksumAsset != "assetiweave-tools-v0.2.0-macos-arm64.tar.gz.sha256" ||
-		!strings.Contains(result.PackageURL, "/releases/download/v0.2.0/assetiweave-tools-v0.2.0-macos-arm64.tar.gz") ||
-		!strings.Contains(result.ChecksumURL, "/releases/download/v0.2.0/assetiweave-tools-v0.2.0-macos-arm64.tar.gz.sha256") {
+		result.PackageURL != "" ||
+		result.ChecksumURL != "" ||
+		!strings.Contains(result.ReleaseURL, "/releases/tag/v0.2.0") ||
+		!strings.Contains(result.Message, "desktop app") {
 		t.Fatalf("result = %+v", result)
 	}
 }
 
-func TestCheckReportsManualReleaseWhenPlatformPackageIsUnavailable(t *testing.T) {
+func TestCheckReportsAppManagedUpdateForEveryPlatform(t *testing.T) {
 	t.Setenv("ASSETIWEAVE_UPDATE_STATE_PATH", filepath.Join(t.TempDir(), "update-state.json"))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"version":"0.2.0"}`))
@@ -52,7 +51,7 @@ func TestCheckReportsManualReleaseWhenPlatformPackageIsUnavailable(t *testing.T)
 	})
 
 	if !result.UpdateAvailable ||
-		result.Action != "manual_required" ||
+		result.Action != "app_update_required" ||
 		result.PackageURL != "" ||
 		!strings.Contains(result.ReleaseURL, "/releases/tag/v0.2.0") {
 		t.Fatalf("result = %+v", result)
