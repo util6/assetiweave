@@ -18,10 +18,10 @@ import {
 import {
   DataToolbar,
   ToolbarActionButton,
-  ToolbarMetric,
   ToolbarSearch,
   ToolbarTextButton,
 } from "../../components/common/DataToolbar";
+import { PageMetrics } from "../../components/common/PageMetrics";
 import { PathPickerInput } from "../../components/common/PathPickerInput";
 import { AppShortcutIconForShortcut } from "../../components/apps/AppShortcutIcon";
 import {
@@ -81,6 +81,7 @@ import type {
   ConversationSourceKind,
   ConversationSearchCardType,
   ConversationSearchHit,
+  ConversationRecordKind,
   ConversationSessionDetail,
   ConversationSessionListItem,
 } from "../../types";
@@ -89,6 +90,8 @@ import { abbreviateHomePath } from "../../utils/path";
 export { MarkdownContent } from "../../components/conversations/ConversationMarkdown";
 
 const SESSION_PAGE_SIZE = 100;
+const DISMISSED_SYNC_PROGRESS_TASK_LIMIT = 50;
+const dismissedConversationSyncProgressTaskKeys = new Set<string>();
 
 type ListConversationSessionPage = (params: {
   query?: string | null;
@@ -141,7 +144,8 @@ export function ConversationsPage({
   const { t } = useI18n();
   const { startSync, task: syncTask } = useConversationSync();
   const { settings: appSettings } = useAppSettings();
-  const webRecordMode = recordKind === "web";
+  const currentRecordKind: ConversationRecordKind = recordKind;
+  const webRecordMode = currentRecordKind === "web";
   const [adapters, setAdapters] = useState<ConversationAdapter[]>([]);
   const [sessions, setSessions] = useState<ConversationSessionListItem[]>([]);
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
@@ -220,15 +224,19 @@ export function ConversationsPage({
     setImportDialogOpen(false);
     setImportStep("idle");
     setImporting(false);
+    setStatus(null);
+    setSyncProgress(null);
+    setSyncProgressDismissed(false);
+    handledSyncTaskIdRef.current = null;
     setOutputRoot(
       webRecordMode ? "~/Desktop/assetiweave-web-records" : "~/Desktop/assetiweave-conversations",
     );
     void refreshCatalog();
-  }, [recordKind]);
+  }, [currentRecordKind]);
 
   useEffect(() => {
     void refreshSessions();
-  }, [query, recordKind]);
+  }, [query, currentRecordKind]);
 
   useEffect(() => {
     const trimmedQuery = contentQuery.trim();
@@ -245,7 +253,7 @@ export function ConversationsPage({
         content_types: ["question", "answer", "tool", "command", "code", "result"],
         limit: 50,
         query: trimmedQuery,
-        record_kind: webRecordMode ? "web" : "session",
+        record_kind: currentRecordKind,
       })
         .then((result) => {
           if (cancelled) return;
@@ -272,7 +280,7 @@ export function ConversationsPage({
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [contentQuery, onNotifyError, webRecordMode]);
+  }, [contentQuery, currentRecordKind, onNotifyError]);
 
   useEffect(() => {
     setSelectedAppId((current) => {
@@ -326,11 +334,7 @@ export function ConversationsPage({
       setSelectedQuestionIds(new Set());
       return;
     }
-    setSelectedQuestionId((current) =>
-      current && sessionDetail.questions.some((question) => question.question.id === current)
-        ? current
-        : sessionDetail.questions[0]?.question.id ?? null,
-    );
+    setSelectedQuestionId((current) => preferredConversationQuestionId(sessionDetail.questions, current));
     setSelectedQuestionIds((current) => {
       const availableIds = new Set(sessionDetail.questions.map((question) => question.question.id));
       const next = new Set([...current].filter((questionId) => availableIds.has(questionId)));
@@ -351,11 +355,25 @@ export function ConversationsPage({
     if (!syncTask) {
       return;
     }
+    if (syncTask.record_kind && syncTask.record_kind !== currentRecordKind) {
+      return;
+    }
+    if (
+      syncTask.status === "completed" &&
+      dismissedConversationSyncProgressTaskKeys.has(
+        conversationSyncProgressTaskKey(currentRecordKind, syncTask.id),
+      )
+    ) {
+      handledSyncTaskIdRef.current = syncTask.id;
+      setSyncProgress(null);
+      setSyncProgressDismissed(true);
+      return;
+    }
 
     const sourceLabel = syncSourceLabel(syncTask.source_id);
     if (syncTask.status === "running") {
       setSyncProgressDismissed(false);
-      setSyncProgress({ phase: "importing", sourceLabel });
+      setSyncProgress({ phase: "importing", sourceLabel, taskId: syncTask.id });
       return;
     }
     if (handledSyncTaskIdRef.current === syncTask.id) {
@@ -364,32 +382,29 @@ export function ConversationsPage({
     handledSyncTaskIdRef.current = syncTask.id;
 
     if (syncTask.status === "failed") {
-      setSyncProgress({ failedStep: 2, phase: "failed", sourceLabel });
+      setSyncProgress({ failedStep: 2, phase: "failed", sourceLabel, taskId: syncTask.id });
       onNotifyError(syncTask.error ?? t("conversation.sync.description.failed"));
       return;
     }
 
-    const summary = formatConversationSyncSummary(summarizeConversationSyncTask(syncTask), t);
+    const summary = formatConversationSyncSummary(
+      summarizeConversationSyncTask(syncTask),
+      t,
+      currentRecordKind,
+    );
     let cancelled = false;
-    setSyncProgress({ phase: "refreshing", sourceLabel, summary });
+    setSyncProgress({ phase: "refreshing", sourceLabel, summary, taskId: syncTask.id });
     void refreshCatalog({ rethrow: true })
       .then(() => {
         if (cancelled) {
           return;
         }
-        setSyncProgress({ phase: "completed", sourceLabel, summary });
-        setStatus(
-          summary ??
-            t(
-              webRecordMode
-                ? "conversation.webRecords.status.syncedAll"
-                : "conversation.status.syncedAll",
-            ),
-        );
+        setSyncProgress({ phase: "completed", sourceLabel, summary, taskId: syncTask.id });
+        setStatus(null);
       })
       .catch((error) => {
         if (!cancelled) {
-          setSyncProgress({ failedStep: 3, phase: "failed", sourceLabel });
+          setSyncProgress({ failedStep: 3, phase: "failed", sourceLabel, taskId: syncTask.id });
           onNotifyError(errorMessage(error));
         }
       });
@@ -397,7 +412,7 @@ export function ConversationsPage({
     return () => {
       cancelled = true;
     };
-  }, [syncTask?.id, syncTask?.source_id, syncTask?.status]);
+  }, [currentRecordKind, syncTask?.id, syncTask?.record_kind, syncTask?.source_id, syncTask?.status]);
 
   function syncSourceLabel(sourceId: string | null | undefined) {
     if (!sourceId) {
@@ -444,15 +459,20 @@ export function ConversationsPage({
     const sourceLabel = t("conversation.sync.allSources");
     setStatus(null);
     setSyncProgressDismissed(false);
+    handledSyncTaskIdRef.current = null;
     setSyncProgress({ phase: "preparing", sourceLabel });
 
     try {
       const task = await startSync({
         dry_run: false,
-        record_kind: webRecordMode ? "web" : "session",
+        record_kind: currentRecordKind,
         source_id: null,
       });
-      const summary = formatConversationSyncSummary(summarizeConversationSyncTask(task), t);
+      const summary = formatConversationSyncSummary(
+        summarizeConversationSyncTask(task),
+        t,
+        currentRecordKind,
+      );
       setSyncProgress({
         failedStep: task.status === "failed" ? 2 : undefined,
         phase:
@@ -463,6 +483,7 @@ export function ConversationsPage({
               : "importing",
         sourceLabel,
         summary,
+        taskId: task.id,
       });
     } catch (error) {
       setSyncProgress({ failedStep: 1, phase: "failed", sourceLabel });
@@ -479,7 +500,7 @@ export function ConversationsPage({
         {
           config_json: values.config_json,
           manifest_path: values.manifest_path,
-          record_kind: webRecordMode ? "web" : "session",
+          record_kind: currentRecordKind,
           source_kind: values.source_kind,
           source_location: values.source_location,
           source_name: values.source_name,
@@ -489,7 +510,11 @@ export function ConversationsPage({
       );
       importedSourceNamesRef.current.set(result.source.id, result.source.name);
       const sourceLabel = result.source.name;
-      const summary = formatConversationSyncSummary(summarizeConversationSyncTask(result.task), t);
+      const summary = formatConversationSyncSummary(
+        summarizeConversationSyncTask(result.task),
+        t,
+        currentRecordKind,
+      );
       setSyncProgressDismissed(false);
       setSyncProgress({
         failedStep: result.task.status === "failed" ? 3 : undefined,
@@ -501,6 +526,7 @@ export function ConversationsPage({
               : "importing",
         sourceLabel,
         summary,
+        taskId: result.task.id,
       });
       setStatus(t("conversation.status.importStarted", { source: result.source.name }));
       setImportDialogOpen(false);
@@ -632,8 +658,34 @@ export function ConversationsPage({
     openExportDialog("questions", questionIds);
   }
 
+  function handleDismissSyncProgress() {
+    if (syncProgress?.phase === "completed" && syncProgress.taskId) {
+      rememberDismissedConversationSyncProgressTask(currentRecordKind, syncProgress.taskId);
+    }
+    setSyncProgressDismissed(true);
+    setSyncProgress(null);
+  }
+
   return (
     <ConversationShell
+      headerActions={
+        sessionView === "browser" ? (
+          <PageMetrics
+            metrics={[
+              { label: t("conversation.toolbar.apps"), value: appGroups.length },
+              { label: t("conversation.toolbar.sessions"), value: sessions.length },
+              { label: t("conversation.toolbar.questions"), value: sessionQuestionCount },
+            ]}
+          />
+        ) : (
+          <PageMetrics
+            metrics={[
+              { label: t("conversation.toolbar.questions"), value: sessionDetail?.questions.length ?? 0 },
+              { label: t("conversation.toolbar.selected"), value: selectedQuestionCount },
+            ]}
+          />
+        )
+      }
       style={conversationStyle}
       title={t(webRecordMode ? "conversation.webRecords.title" : "conversation.sessions.title")}
       subtitle={t(webRecordMode ? "conversation.webRecords.subtitle" : "conversation.sessions.subtitle")}
@@ -685,9 +737,6 @@ export function ConversationsPage({
                 placeholder={t("conversation.search.contentPlaceholder")}
                 value={contentQuery}
               />
-              <ToolbarMetric label={t("conversation.toolbar.apps")} value={appGroups.length} />
-              <ToolbarMetric label={t("conversation.toolbar.sessions")} value={sessions.length} />
-              <ToolbarMetric label={t("conversation.toolbar.questions")} value={sessionQuestionCount} />
             </>
           }
           sticky
@@ -765,8 +814,6 @@ export function ConversationsPage({
                   placeholder={t("conversation.question.searchPlaceholder")}
                   value={detailQuery}
                 />
-                <ToolbarMetric label={t("conversation.toolbar.questions")} value={sessionDetail?.questions.length ?? 0} />
-                <ToolbarMetric label={t("conversation.toolbar.selected")} value={selectedQuestionCount} />
               </>
             }
           />
@@ -777,9 +824,10 @@ export function ConversationsPage({
         <ConversationSyncProgress
           onDismiss={
             syncProgress.phase === "completed"
-              ? () => setSyncProgressDismissed(true)
+              ? handleDismissSyncProgress
               : undefined
           }
+          recordKind={currentRecordKind}
           state={syncProgress}
           t={t}
         />
@@ -826,7 +874,7 @@ export function ConversationsPage({
           onImport={handleImport}
           onPickManifest={pickImportManifest}
           onPickSourceLocation={pickImportSourceLocation}
-          recordKind={webRecordMode ? "web" : "session"}
+          recordKind={currentRecordKind}
           step={importStep}
         />
       ) : null}
@@ -873,6 +921,7 @@ export function ConversationsPage({
 
 function ConversationShell({
   children,
+  headerActions,
   onManualOpen,
   style,
   subtitle,
@@ -880,6 +929,7 @@ function ConversationShell({
   title,
 }: {
   children: ReactNode;
+  headerActions?: ReactNode;
   onManualOpen: () => void;
   style?: CSSProperties;
   subtitle: string;
@@ -889,6 +939,7 @@ function ConversationShell({
   return (
     <div className="flex w-full flex-1 flex-col px-[var(--app-page-x)] py-6" style={style}>
       <PageHeader
+        actions={headerActions}
         className="mb-5"
         description={subtitle}
         eyebrow={t("conversation.eyebrow")}
@@ -1889,6 +1940,19 @@ function questionMatchesQuery(question: ConversationQuestionDetail, query: strin
   return searchable.some((value) => value?.toLowerCase().includes(normalized));
 }
 
+export function preferredConversationQuestionId(
+  questions: ConversationQuestionDetail[],
+  currentQuestionId: string | null,
+) {
+  const currentQuestion = currentQuestionId
+    ? questions.find((question) => question.question.id === currentQuestionId)
+    : null;
+  if (currentQuestion && currentQuestion.parts.length > 0) return currentQuestion.question.id;
+  const firstWithContent = questions.find((question) => question.parts.length > 0);
+  if (firstWithContent) return firstWithContent.question.id;
+  return currentQuestion?.question.id ?? questions[0]?.question.id ?? null;
+}
+
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -1906,18 +1970,47 @@ async function writeClipboardText(value: string) {
   await navigator.clipboard.writeText(value);
 }
 
+function rememberDismissedConversationSyncProgressTask(
+  recordKind: ConversationRecordKind,
+  taskId: string,
+) {
+  dismissedConversationSyncProgressTaskKeys.add(
+    conversationSyncProgressTaskKey(recordKind, taskId),
+  );
+  if (dismissedConversationSyncProgressTaskKeys.size <= DISMISSED_SYNC_PROGRESS_TASK_LIMIT) {
+    return;
+  }
+  const oldestKey = dismissedConversationSyncProgressTaskKeys.values().next().value;
+  if (oldestKey) {
+    dismissedConversationSyncProgressTaskKeys.delete(oldestKey);
+  }
+}
+
+function conversationSyncProgressTaskKey(recordKind: ConversationRecordKind, taskId: string) {
+  return `${recordKind}:${taskId}`;
+}
+
 function formatConversationSyncSummary(
   summary: ConversationSyncSummaryCounts | null,
   t: Translator,
+  recordKind: ConversationRecordKind = "session",
 ) {
   if (!summary) {
-    return t("conversation.sync.summaryUnavailable");
+    return t(
+      recordKind === "web"
+        ? "conversation.sync.web.summaryUnavailable"
+        : "conversation.sync.summaryUnavailable",
+    );
   }
 
   return t(
-    summary.errorCount > 0
-      ? "conversation.sync.summaryWithErrors"
-      : "conversation.sync.summary",
+    recordKind === "web"
+      ? summary.errorCount > 0
+        ? "conversation.sync.web.summaryWithErrors"
+        : "conversation.sync.web.summary"
+      : summary.errorCount > 0
+        ? "conversation.sync.summaryWithErrors"
+        : "conversation.sync.summary",
     {
       errors: summary.errorCount,
       sessions: summary.changedSessionCount,

@@ -35,7 +35,7 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
 
   const refreshTask = useCallback(async () => {
     const snapshot = await getConversationSyncTask();
-    setTask(snapshot);
+    setTask((current) => mergeConversationTaskSnapshot(snapshot, current));
     return snapshot;
   }, []);
 
@@ -44,7 +44,7 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
     void getConversationSyncTask()
       .then((snapshot) => {
         if (!cancelled) {
-          setTask((current) => current ?? snapshot);
+          setTask((current) => current ?? mergeConversationTaskSnapshot(snapshot, current));
         }
       })
       .catch(() => {});
@@ -60,7 +60,7 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
       CONVERSATION_SYNC_TASK_UPDATED_EVENT,
       (event) => {
         if (!cancelled) {
-          setTask(event.payload);
+          setTask((current) => mergeConversationTaskSnapshot(event.payload, current));
         }
       },
     )
@@ -109,8 +109,13 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
       dry_run?: boolean;
     }) => {
       const snapshot = await syncConversations(params);
-      setTask(snapshot);
-      return snapshot;
+      const nextSnapshot = mergeConversationTaskSnapshot(
+        snapshot,
+        null,
+        params.record_kind ?? "session",
+      ) ?? snapshot;
+      setTask(nextSnapshot);
+      return nextSnapshot;
     },
     [],
   );
@@ -136,4 +141,48 @@ export function useConversationSync() {
     throw new Error("useConversationSync must be used inside ConversationSyncProvider");
   }
   return context;
+}
+
+function mergeConversationTaskSnapshot(
+  snapshot: ConversationSyncTaskSnapshot | null,
+  current: ConversationSyncTaskSnapshot | null,
+  fallbackRecordKind: ConversationRecordKind | null = null,
+): ConversationSyncTaskSnapshot | null {
+  if (!snapshot) {
+    return null;
+  }
+
+  const recordKind =
+    normalizeConversationRecordKind(snapshot.record_kind) ??
+    inferConversationRecordKindFromResult(snapshot.result) ??
+    (current?.id === snapshot.id ? normalizeConversationRecordKind(current.record_kind) : null) ??
+    fallbackRecordKind;
+
+  return recordKind ? { ...snapshot, record_kind: recordKind } : snapshot;
+}
+
+function inferConversationRecordKindFromResult(result: unknown): ConversationRecordKind | null {
+  if (!isRecord(result) || !Array.isArray(result.results)) {
+    return null;
+  }
+
+  for (const item of result.results) {
+    if (!isRecord(item)) {
+      continue;
+    }
+    const recordKind = normalizeConversationRecordKind(item.record_kind);
+    if (recordKind) {
+      return recordKind;
+    }
+  }
+
+  return null;
+}
+
+function normalizeConversationRecordKind(value: unknown): ConversationRecordKind | null {
+  return value === "session" || value === "web" ? value : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

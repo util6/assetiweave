@@ -30,6 +30,7 @@ import {
   MarkdownContent,
   QuestionPreview,
   SessionQuestionWorkspace,
+  preferredConversationQuestionId,
 } from "./ConversationsPage";
 
 beforeEach(() => {
@@ -166,6 +167,30 @@ describe("MarkdownContent", () => {
     expect(html).toContain("assetiweave-cli conversation sync --dry-run");
     expect(html).toContain("从这里拆分");
     expect(html).toContain("导出");
+  });
+
+  it("selects the first question with adapter-declared content by default", () => {
+    const emptyImportedQuestion: ConversationQuestionDetail = {
+      question: {
+        ...questionDetail.question,
+        id: "empty-imported-question",
+        question_index: 0,
+        question_text: "Imported context without assistant content",
+      },
+      turns: [
+        {
+          ...questionDetail.turns[0],
+          id: "empty-turn",
+          user_text: "Imported context without assistant content",
+        },
+      ],
+      parts: [],
+    };
+
+    expect(preferredConversationQuestionId([emptyImportedQuestion, questionDetail], null))
+      .toBe(questionDetail.question.id);
+    expect(preferredConversationQuestionId([emptyImportedQuestion, questionDetail], emptyImportedQuestion.question.id))
+      .toBe(questionDetail.question.id);
   });
 
   it("lets users choose the inline question export output root", async () => {
@@ -686,6 +711,27 @@ describe("MarkdownContent", () => {
     expect(html).toContain("正在读取并导入对话");
     expect(html).toContain("第 2/4 阶段");
     expect(html).toContain("全部来源");
+  });
+
+  it("renders web record sync copy without session labels", () => {
+    const html = renderToStaticMarkup(
+      <ConversationSyncProgress
+        recordKind="web"
+        state={{
+          phase: "importing",
+          sourceLabel: "ChatGPT Web",
+          summary: "本次新增/更新 3 条网页记录、18 条内容，跳过 7 条未变化记录，覆盖 2 个来源。",
+        }}
+        t={t}
+      />,
+    );
+
+    expect(html).toContain("正在读取并导入网页记录");
+    expect(html).toContain("网页来源：ChatGPT Web");
+    expect(html).toContain("3 条网页记录");
+    expect(html).not.toContain("3 个 Session");
+    expect(html).toContain("md:grid-cols-[minmax(0,1fr)_auto]");
+    expect(html).toContain("break-words");
   });
 
   it("renders completed sync summary with a dismiss action", () => {

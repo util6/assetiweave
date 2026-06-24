@@ -110,6 +110,7 @@ export interface ConversationSyncTaskSnapshot {
   status: ConversationSyncTaskStatus;
   source_id: string | null;
   adapter_id: string | null;
+  record_kind?: ConversationRecordKind | null;
   dry_run: boolean;
   started_at: string;
   finished_at: string | null;
@@ -400,6 +401,7 @@ export async function syncConversations(
       status: "completed",
       source_id: params.source_id ?? null,
       adapter_id: params.adapter_id ?? null,
+      record_kind: recordKind,
       dry_run: Boolean(params.dry_run),
       started_at: new Date().toISOString(),
       finished_at: new Date().toISOString(),

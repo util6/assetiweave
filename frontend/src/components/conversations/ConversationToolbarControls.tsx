@@ -2,6 +2,7 @@ import { RefreshCw, X } from "lucide-react";
 import type { Translator } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
 import type { ConversationSyncTaskSnapshot } from "../../services/conversations";
+import type { ConversationRecordKind } from "../../types";
 import {
   DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
   type ConversationContentCardColorSettings,
@@ -25,6 +26,7 @@ export interface ConversationSyncProgressState {
   sourceLabel: string;
   failedStep?: 1 | 2 | 3;
   summary?: string;
+  taskId?: string;
 }
 
 export function ConversationBackgroundTaskIndicator({
@@ -100,18 +102,26 @@ export function ConversationContentFilter({
 
 export function ConversationSyncProgress({
   onDismiss,
+  recordKind = "session",
   state,
   t,
 }: {
   onDismiss?: () => void;
+  recordKind?: ConversationRecordKind;
   state: ConversationSyncProgressState;
   t: Translator;
 }) {
   const step = syncStep(state);
-  const title = t(`conversation.sync.phase.${state.phase}` as TranslationKey);
-  const description = t(`conversation.sync.description.${state.phase}` as TranslationKey);
+  const title = t(syncPhaseKey(recordKind, state.phase));
+  const description = t(syncDescriptionKey(recordKind, state.phase));
   const failed = state.phase === "failed";
   const completed = state.phase === "completed";
+  const scopeLabel = t(
+    recordKind === "web"
+      ? "conversation.sync.web.scope"
+      : "conversation.sync.scope",
+    { source: state.sourceLabel },
+  );
 
   return (
     <section
@@ -125,23 +135,23 @@ export function ConversationSyncProgress({
       }`}
       role="status"
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+        <div className="min-w-0">
           <p className={`text-body-sm font-semibold ${failed ? "text-status-remove" : completed ? "text-status-create" : "text-on-surface"}`}>
             {title}
           </p>
-          <p className="mt-1 text-body-sm text-on-surface-variant">{description}</p>
+          <p className="mt-1 max-w-3xl text-body-sm text-on-surface-variant">{description}</p>
           {state.summary ? (
-            <p className="mt-2 text-body-sm text-on-surface">{state.summary}</p>
+            <p className="mt-2 max-w-4xl break-words text-body-sm text-on-surface">{state.summary}</p>
           ) : null}
         </div>
-        <div className="flex shrink-0 items-start gap-3 text-right">
-          <div>
+        <div className="flex min-w-0 items-start justify-between gap-3 md:justify-end md:text-right">
+          <div className="min-w-0">
             <p className="text-label-caps text-on-surface-variant">
               {t("conversation.sync.stage", { current: step, total: 4 })}
             </p>
-            <p className="mt-1 text-code-sm text-on-surface-muted">
-              {t("conversation.sync.scope", { source: state.sourceLabel })}
+            <p className="mt-1 max-w-full break-words text-left text-code-sm text-on-surface-muted md:max-w-72 md:text-right">
+              {scopeLabel}
             </p>
           </div>
           {onDismiss ? (
@@ -187,4 +197,20 @@ function syncStep(state: ConversationSyncProgressState) {
   if (state.phase === "refreshing") return 3;
   if (state.phase === "completed") return 4;
   return state.failedStep ?? 2;
+}
+
+function syncPhaseKey(recordKind: ConversationRecordKind, phase: ConversationSyncPhase): TranslationKey {
+  return (
+    recordKind === "web"
+      ? `conversation.sync.web.phase.${phase}`
+      : `conversation.sync.phase.${phase}`
+  ) as TranslationKey;
+}
+
+function syncDescriptionKey(recordKind: ConversationRecordKind, phase: ConversationSyncPhase): TranslationKey {
+  return (
+    recordKind === "web"
+      ? `conversation.sync.web.description.${phase}`
+      : `conversation.sync.description.${phase}`
+  ) as TranslationKey;
 }
