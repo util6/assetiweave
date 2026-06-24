@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.2.0
+
+- Remove built-in Claude Code adapter; Claude Code, ZCode and similar sources now sync through external plugin adapters with manifest-based execution.
+- Add conversation import dialog for selecting external adapter manifests and local record sources with guided step-by-step flow.
+- Split large backend `mod.rs` files (application, conversations, capabilities, scanner, etc.) into focused submodules for maintainability.
+- Add `harvester` module to run external adapters before sync, ensuring fresh local records.
+- Adapter `readSession` output now filters empty turns and assigns `turn_index` for stable ordering.
+- Sync flow gains `record_kind` awareness so session and web record pages show independent progress and dismiss states.
+- Introduce `PageMetrics` component; move page-level metrics from toolbar into header area.
+- Add web record sync i18n copy (14 new translation keys for phase/description/summary).
+- `preferredConversationQuestionId` selects the first question with assistant content by default.
+- Bump content card schema versions for Claude Code (v3), Codex (v4), OpenCode (v3), and web adapters (v2).
+
 ## v0.1.4
 
 - Migrate the Rust backend persistence layer to SQLx migrations, repositories, and application services while removing legacy store/service paths.

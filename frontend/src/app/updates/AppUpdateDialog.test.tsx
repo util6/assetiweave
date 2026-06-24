@@ -13,7 +13,7 @@ vi.mock("./AppUpdateProvider", () => ({
     openReleases: vi.fn(),
     restartApp: vi.fn(),
     state: {
-      currentVersion: "0.1.4",
+      currentVersion: "0.2.0",
       info: null,
       progress: 0,
       source: null,
@@ -40,7 +40,7 @@ describe("AppUpdateDialog", () => {
     );
 
     expect(html).toContain("当前版本功能介绍");
-    expect(html).toContain("v0.1.4");
+    expect(html).toContain("v0.2.0");
     expect(html).toContain("我知道了");
     expect(html).not.toContain("下载并安装");
     expect(html).not.toContain("再次检查");
