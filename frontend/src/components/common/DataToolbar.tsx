@@ -201,18 +201,6 @@ export function ToolbarTextButton({
   );
 }
 
-export function ToolbarMetric({ label, value }: { label: string; value: number }) {
-  return (
-    <div
-      className="inline-flex h-10 min-w-[5.75rem] shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-xl border border-theme-control-border bg-theme-control/80 px-3 text-body-sm shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)]"
-      data-toolbar-control="metric"
-    >
-      <span className="whitespace-nowrap text-on-surface-variant">{label}</span>
-      <strong className="font-mono text-code-md text-primary">{value}</strong>
-    </div>
-  );
-}
-
 export function ToolbarSeparator() {
   return <span className="mx-1 h-6 w-px shrink-0 bg-theme-control-border" aria-hidden="true" />;
 }

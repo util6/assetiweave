@@ -4,6 +4,7 @@ import { AssetDeleteDialog } from "../../components/assets/AssetDeleteDialog";
 import { AssetEditDialog } from "../../components/assets/AssetEditDialog";
 import { AssetList } from "../../components/assets/AssetList";
 import { AssetToolbar, type AssetViewMode } from "../../components/assets/AssetToolbar";
+import { PageMetrics } from "../../components/common/PageMetrics";
 import { PageHeader } from "../../components/foundation/PageHeader";
 import { DeploymentPlanPanel } from "../../components/plans/DeploymentPlanPanel";
 import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
@@ -158,6 +159,20 @@ export function CatalogPage({
   return (
     <section className="flex flex-1 flex-col gap-[var(--app-section-gap)] px-[var(--app-page-x)] py-[var(--app-page-y)]">
       <PageHeader
+        actions={
+          <PageMetrics
+            metrics={[
+              {
+                label: t("metric.sources"),
+                value: catalog.sources.length > 0 ? catalog.sources.length : (catalog.overview?.source_count ?? 0),
+              },
+              {
+                label: t("metric.supportedApps"),
+                value: catalog.profiles.length > 0 ? catalog.profiles.length : (catalog.overview?.profile_count ?? 0),
+              },
+            ]}
+          />
+        }
         eyebrow={t("catalog.page.subtitle")}
         icon={<Sparkles size={21} />}
         title={t("catalog.page.title")}
@@ -190,10 +205,6 @@ export function CatalogPage({
           { icon: <Filter size={17} />, label: t("toolbar.filter.all", { count: catalog.assets.length }) },
           { icon: <Tag size={17} />, label: t("toolbar.filter.tag") },
           { icon: <SlidersHorizontal size={17} />, label: t("toolbar.sort.createdAt") },
-        ]}
-        metrics={[
-          { label: t("metric.sources"), value: catalog.sources.length > 0 ? catalog.sources.length : (catalog.overview?.source_count ?? 0) },
-          { label: t("metric.supportedApps"), value: catalog.profiles.length > 0 ? catalog.profiles.length : (catalog.overview?.profile_count ?? 0) },
         ]}
         onQueryChange={catalog.setQuery}
         onViewModeChange={setAssetViewMode}

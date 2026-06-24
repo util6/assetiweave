@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Download } from "lucide-react";
-import { DataToolbar, ToolbarActionButton, ToolbarCluster, ToolbarMetric, ToolbarSearch, ToolbarTextButton } from "./DataToolbar";
+import { DataToolbar, ToolbarActionButton, ToolbarCluster, ToolbarSearch, ToolbarTextButton } from "./DataToolbar";
 
 describe("DataToolbar", () => {
   it("clips toolbar overflow instead of wrapping controls into another row", () => {
@@ -78,7 +78,6 @@ describe("DataToolbar", () => {
         leading={
           <>
             <ToolbarSearch onChange={() => undefined} placeholder="搜索当前 Session 的问题..." value="" />
-            <ToolbarMetric label="问题" value={83} />
           </>
         }
       />,
@@ -88,7 +87,6 @@ describe("DataToolbar", () => {
     expect(html).toContain("whitespace-nowrap");
     expect(html).toContain('data-toolbar-control="action"');
     expect(html).toContain('data-toolbar-control="text"');
-    expect(html).toContain('data-toolbar-control="metric"');
     expect(html).toContain('data-toolbar-control="search"');
   });
 });

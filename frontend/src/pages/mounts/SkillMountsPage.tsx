@@ -27,6 +27,7 @@ import {
   SkillBackupButtonContent,
 } from "../../components/backup/SkillBackupProgress";
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
+import { PageMetrics } from "../../components/common/PageMetrics";
 import { PathPickerInput } from "../../components/common/PathPickerInput";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { EmptyState as FoundationEmptyState } from "../../components/foundation/EmptyState";
@@ -277,6 +278,14 @@ export function SkillMountsPage({
   return (
     <section className="flex flex-1 flex-col gap-[var(--app-section-gap)] px-[var(--app-page-x)] py-[var(--app-page-y)]">
       <PageHeader
+        actions={
+          <PageMetrics
+            metrics={[
+              { label: t("appMount.metric.apps"), value: profiles.length },
+              { label: t("appMount.metric.skills"), value: skillAssets.length },
+            ]}
+          />
+        }
         eyebrow={t("appMount.page.subtitle")}
         icon={<Boxes size={21} />}
         title={t("appMount.page.title")}
@@ -316,10 +325,6 @@ export function SkillMountsPage({
           ],
         ]}
         ariaLabel={t("appMount.page.title")}
-        metrics={[
-          { label: t("appMount.metric.apps"), value: profiles.length },
-          { label: t("appMount.metric.skills"), value: skillAssets.length },
-        ]}
         onQueryChange={setQuery}
         onViewModeChange={setViewMode}
         query={query}

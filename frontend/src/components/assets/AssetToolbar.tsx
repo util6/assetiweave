@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import {
   DataToolbar,
   ToolbarActionButton,
-  ToolbarMetric,
   ToolbarSearch,
   ToolbarSeparator,
   ToolbarTextButton,
@@ -29,16 +28,10 @@ export interface AssetToolbarFilter {
   onClick?: () => void;
 }
 
-export interface AssetToolbarMetric {
-  label: string;
-  value: number;
-}
-
 export function AssetToolbar<Value extends AssetToolbarViewMode = AssetToolbarViewMode>({
   actionGroups = [],
   ariaLabel,
   filters = [],
-  metrics = [],
   onQueryChange,
   onViewModeChange,
   query,
@@ -53,7 +46,6 @@ export function AssetToolbar<Value extends AssetToolbarViewMode = AssetToolbarVi
   actionGroups?: AssetToolbarAction[][];
   ariaLabel: string;
   filters?: AssetToolbarFilter[];
-  metrics?: AssetToolbarMetric[];
   onQueryChange: (query: string) => void;
   onViewModeChange?: (viewMode: Value) => void;
   query: string;
@@ -95,9 +87,6 @@ export function AssetToolbar<Value extends AssetToolbarViewMode = AssetToolbarVi
           )}
           {filters.map((filter) => (
             <ToolbarTextButton icon={filter.icon} key={filter.label} label={filter.label} onClick={filter.onClick} />
-          ))}
-          {metrics.map((metric) => (
-            <ToolbarMetric key={metric.label} label={metric.label} value={metric.value} />
           ))}
         </>
       }

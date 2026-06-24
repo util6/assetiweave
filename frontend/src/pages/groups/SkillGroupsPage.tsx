@@ -17,6 +17,7 @@ import { assetKindLabel } from "../../i18n/domain";
 import { AssetRow } from "../../components/assets/AssetRow";
 import { AssetToolbar } from "../../components/assets/AssetToolbar";
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
+import { PageMetrics } from "../../components/common/PageMetrics";
 import { MountStatePill } from "../../components/assets/MountStatePill";
 import { QuickMountButtons } from "../../components/assets/QuickMountButtons";
 import { GroupBulkMountControls } from "../../components/groups/GroupBulkMountControls";
@@ -422,6 +423,14 @@ export function SkillGroupsPage({
   return (
     <section className="flex flex-1 flex-col gap-[var(--app-section-gap)] px-[var(--app-page-x)] py-[var(--app-page-y)]">
       <PageHeader
+        actions={
+          <PageMetrics
+            metrics={[
+              { label: t("group.metric.groups"), value: groups.length },
+              { label: t("group.metric.members"), value: memberTotal },
+            ]}
+          />
+        }
         eyebrow={t("group.page.subtitle")}
         icon={<Layers3 size={21} />}
         title={t("group.page.title")}
@@ -451,10 +460,6 @@ export function SkillGroupsPage({
           ],
         ]}
         ariaLabel={t("group.page.title")}
-        metrics={[
-          { label: t("group.metric.groups"), value: groups.length },
-          { label: t("group.metric.members"), value: memberTotal },
-        ]}
         onQueryChange={setGroupQuery}
         onViewModeChange={setViewMode}
         query={groupQuery}
