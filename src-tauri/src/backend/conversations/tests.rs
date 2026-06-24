@@ -184,6 +184,7 @@ fn official_codex_adapter_splits_command_and_result_cards() {
     fs::write(
         &rollout,
         [
+            r#"{"payload":{"type":"message","role":"user","id":"turn-context","content":"Repository context only"}}"#,
             r#"{"payload":{"type":"message","role":"user","id":"turn-1","content":"Run tests"}}"#,
             r#"{"payload":{"type":"message","role":"assistant","content":"Use this:\n```sh\ncargo test\n```"}}"#,
             r#"{"payload":{"type":"function_call","name":"update_plan","arguments":"{\"plan\":[]}"}}"#,
@@ -225,6 +226,9 @@ fn official_codex_adapter_splits_command_and_result_cards() {
     let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
 
     assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].turns.len(), 1);
+    assert_eq!(sessions[0].turns[0].turn_index, 0);
+    assert_eq!(sessions[0].turns[0].user_text, "Run tests");
     let parts = &sessions[0].turns[0].parts;
     let card_types = parts
         .iter()
@@ -425,6 +429,16 @@ fn official_opencode_adapter_splits_command_and_result_cards() {
         )
         .unwrap();
         conn.execute(
+            "INSERT INTO message (id, session_id, role, data) VALUES ('m0', 'opencode-session-1', 'user', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO part (message_id, session_id, kind, text, data) VALUES ('m0', 'opencode-session-1', 'text', 'Repository context only', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
             "INSERT INTO message (id, session_id, role, data) VALUES ('m1', 'opencode-session-1', 'user', NULL)",
             [],
         )
@@ -476,6 +490,9 @@ fn official_opencode_adapter_splits_command_and_result_cards() {
     let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
 
     assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].turns.len(), 1);
+    assert_eq!(sessions[0].turns[0].turn_index, 0);
+    assert_eq!(sessions[0].turns[0].user_text, "Run tests");
     assert_content_card_types(
         &sessions[0].turns[0].parts,
         &["answer", "code", "command", "result"],
@@ -644,6 +661,7 @@ fn official_claude_code_adapter_splits_command_and_result_cards() {
     fs::write(
         &jsonl,
         [
+            r#"{"type":"message","role":"user","uuid":"turn-context","content":"Repository context only"}"#,
             r#"{"type":"message","role":"user","uuid":"turn-1","content":"Run tests"}"#,
             r#"{"type":"message","role":"assistant","content":"Use this:\n```sh\ncargo test\n```"}"#,
             r#"{"type":"shell","command":"cargo test","output":"tests passed","status":"completed","exit_code":0}"#,
@@ -670,6 +688,9 @@ fn official_claude_code_adapter_splits_command_and_result_cards() {
     let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
 
     assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].turns.len(), 1);
+    assert_eq!(sessions[0].turns[0].turn_index, 0);
+    assert_eq!(sessions[0].turns[0].user_text, "Run tests");
     assert_content_card_types(
         &sessions[0].turns[0].parts,
         &["answer", "code", "command", "result"],

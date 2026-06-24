@@ -2,7 +2,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const CONTENT_CARD_SCHEMA = "web-content-cards-v1";
+const CONTENT_CARD_SCHEMA = "web-content-cards-v2";
 
 function emit(value) {
   process.stdout.write(JSON.stringify(value) + "\n");
@@ -32,7 +32,9 @@ try {
   process.exit(0);
 }
 
-const sessions = Array.isArray(payload.sessions) ? payload.sessions.map(normalizeSessionCards) : [];
+const sessions = Array.isArray(payload.sessions)
+  ? payload.sessions.map(normalizeSessionCards).filter(Boolean)
+  : [];
 for (const session of sessions) {
   emit({ type: "item", item: { kind: "session", session } });
 }
@@ -42,7 +44,13 @@ function normalizeSessionCards(session) {
   if (!session || typeof session !== "object") return session;
   let changed = false;
   const turns = Array.isArray(session.turns) ? session.turns : [];
-  for (const turn of turns) {
+  const visibleTurns = turns
+    .filter((turn) => Array.isArray(turn && turn.parts) && turn.parts.length > 0)
+    .map((turn, index) => ({ ...turn, turn_index: index }));
+  changed = visibleTurns.length !== turns.length;
+  if (visibleTurns.length === 0) return null;
+  session.turns = visibleTurns;
+  for (const turn of visibleTurns) {
     const parts = Array.isArray(turn && turn.parts) ? turn.parts : [];
     for (const part of parts) {
       if (ensurePartContentCard(part)) {

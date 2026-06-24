@@ -6,7 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
-const CONTENT_CARD_SCHEMA_VERSION = "codex-content-cards-v3";
+const CONTENT_CARD_SCHEMA_VERSION = "codex-content-cards-v4";
 const MAX_PART_TEXT_CHARS = 96 * 1024;
 const MAX_SESSION_TEXT_CHARS = 384 * 1024;
 
@@ -152,6 +152,15 @@ function applyTextBudgets(session) {
     }
   }
   return session;
+}
+
+function displayTurns(turns) {
+  return turns
+    .filter((turn) => Array.isArray(turn.parts) && turn.parts.length > 0)
+    .map((turn, index) => ({
+      ...turn,
+      turn_index: index,
+    }));
 }
 
 function textPart(role, text) {
@@ -462,7 +471,7 @@ function readSession() {
     if (!rolloutPath || !existsSync(rolloutPath)) return [];
     const text = readFileSync(rolloutPath, "utf8");
     const parsed = normalizeTurns(text);
-    const turns = parsed.turns;
+    const turns = displayTurns(parsed.turns);
     if (!turns.length) return [];
     return [applyTextBudgets({
       external_id: String(row.id),

@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
-const CONTENT_CARD_SCHEMA_VERSION = "claude-code-content-cards-v2";
+const CONTENT_CARD_SCHEMA_VERSION = "claude-code-content-cards-v3";
 
 function emit(type, payload = {}) {
   process.stdout.write(`${JSON.stringify({ type, ...payload })}\n`);
@@ -420,6 +420,15 @@ function parseJsonl(text) {
   return { turns, projectPath };
 }
 
+function displayTurns(turns) {
+  return turns
+    .filter((turn) => Array.isArray(turn.parts) && turn.parts.length > 0)
+    .map((turn, index) => ({
+      ...turn,
+      turn_index: index,
+    }));
+}
+
 function inferProjectPathFromTurns(turns) {
   for (const turn of turns) {
     for (const part of turn.parts) {
@@ -440,7 +449,7 @@ function readSession() {
   return collectJsonlFiles(location).flatMap((filePath) => {
     const text = readFileSync(filePath, "utf8");
     const parsed = parseJsonl(text);
-    const turns = parsed.turns;
+    const turns = displayTurns(parsed.turns);
     if (!turns.length) return [];
     return [{
       external_id: path.basename(filePath, ".jsonl") || "claude-session",

@@ -1,4 +1,5 @@
 mod external;
+mod harvester;
 mod io_utils;
 mod official;
 mod prelude;
@@ -11,6 +12,7 @@ pub(crate) use external::{
     adapter_from_registration_preview, register_external_adapter, scaffold_external_adapter,
     try_run_external_adapter, validate_external_adapter,
 };
+pub(crate) use harvester::run_conversation_harvester_for_source;
 pub(crate) use official::ensure_official_conversation_adapters;
 pub(crate) use readers::read_source_sessions_with_adapter;
 #[allow(unused_imports)]

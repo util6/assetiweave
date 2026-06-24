@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
 const SQLITE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
-const CONTENT_CARD_SCHEMA_VERSION = "opencode-content-cards-v2";
+const CONTENT_CARD_SCHEMA_VERSION = "opencode-content-cards-v3";
 
 function emit(type, payload = {}) {
   process.stdout.write(`${JSON.stringify({ type, ...payload })}\n`);
@@ -315,6 +315,15 @@ function turnsForSession(turnsBySession, sessionId) {
   return turns;
 }
 
+function displayTurns(turns) {
+  return turns
+    .filter((turn) => Array.isArray(turn.parts) && turn.parts.length > 0)
+    .map((turn, index) => ({
+      ...turn,
+      turn_index: index,
+    }));
+}
+
 function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
   const turnsBySession = new Map();
   if (!sessionIds.length) return turnsBySession;
@@ -468,7 +477,7 @@ function readSession() {
     rows.map((row) => String(row.id)),
   );
   return rows.flatMap((row) => {
-    const turns = turnsBySession.get(String(row.id)) ?? [];
+    const turns = displayTurns(turnsBySession.get(String(row.id)) ?? []);
     if (!turns.length) return [];
     return [{
       external_id: String(row.id),
