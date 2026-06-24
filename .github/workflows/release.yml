@@ -56,8 +56,14 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)"
+            release_json="$(gh release view "$RELEASE_TAG" --json assets,isDraft)"
+            is_draft="$(jq -r .isDraft <<<"$release_json")"
+            asset_count="$(jq '.assets | length' <<<"$release_json")"
             if [[ "$is_draft" != "true" ]]; then
+              if (( asset_count == 0 )); then
+                gh release edit "$RELEASE_TAG" --draft
+                exit 0
+              fi
               echo "::error::Release $RELEASE_TAG already exists and is not a draft"
               exit 1
             fi
