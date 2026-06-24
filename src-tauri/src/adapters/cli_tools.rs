@@ -11,7 +11,7 @@ use tauri::{AppHandle, Manager};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-const TOOL_DIR: &str = "cli";
+const TOOL_DIR: &str = "bundled-cli/cli";
 const CLI_NAME: &str = "assetiweave-cli";
 const ENGINE_NAME: &str = "assetiweave-engine";
 
@@ -381,5 +381,34 @@ mod tests {
     #[test]
     fn shell_single_quote_escapes_embedded_quotes() {
         assert_eq!(shell_single_quote("/tmp/it's/cli"), "'/tmp/it'\\''s/cli'");
+    }
+
+    #[test]
+    fn status_detects_tauri_resource_layout() {
+        let root = env::temp_dir().join(format!(
+            "assetiweave-cli-tools-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let tool_dir = root.join("bundled-cli").join("cli");
+        fs::create_dir_all(&tool_dir).expect("create tool dir");
+        fs::write(tool_dir.join(executable_name(CLI_NAME)), "").expect("write cli");
+        fs::write(tool_dir.join(executable_name(ENGINE_NAME)), "").expect("write engine");
+
+        let status = build_status(
+            &root,
+            Some(
+                default_install_dir()
+                    .unwrap_or_else(|_| fallback_install_dir())
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+        );
+        assert!(status.bundled);
+        assert!(status
+            .bundled_cli_path
+            .as_deref()
+            .is_some_and(|path| path.contains("bundled-cli")));
+
+        let _ = fs::remove_dir_all(root);
     }
 }
