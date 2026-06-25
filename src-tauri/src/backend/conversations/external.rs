@@ -413,8 +413,11 @@ pub(crate) fn adapter_from_registration_preview(value: Value) -> AppResult<Conve
 }
 
 pub(crate) fn list_conversation_adapter_runtime_statuses(
+    adapters: &[ConversationAdapter],
 ) -> AppResult<Vec<ConversationAdapterRuntimeStatus>> {
-    Ok(list_adapter_runtime_statuses())
+    Ok(list_adapter_runtime_statuses(
+        &adapter_runtime_requirements(adapters),
+    ))
 }
 
 pub(super) fn validate_external_adapter_manifest(

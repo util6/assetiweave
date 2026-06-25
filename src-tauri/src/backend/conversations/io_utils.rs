@@ -4,7 +4,6 @@ use std::io::ErrorKind;
 const CONVERSATION_RUNTIME_OVERRIDES_KEY: &str = "conversationRuntimeOverrides";
 const ADAPTER_RUNTIME_PROBE_TIMEOUT_MS: u64 = 3_000;
 const ADAPTER_RUNTIME_PROBE_OUTPUT_CAP: usize = 16 * 1024;
-const OFFICIAL_NODE_RUNTIME_VERSION_REQUIREMENT: &str = ">=20";
 
 enum RuntimeProbeError {
     Spawn(std::io::Error),
@@ -131,7 +130,9 @@ pub(super) fn ensure_adapter_runtime_available(
     }
 }
 
-pub(super) fn list_adapter_runtime_statuses() -> Vec<ConversationAdapterRuntimeStatus> {
+pub(super) fn list_adapter_runtime_statuses(
+    requirements: &[(ConversationAdapterRuntimeKind, String)],
+) -> Vec<ConversationAdapterRuntimeStatus> {
     [
         ConversationAdapterRuntimeKind::Node,
         ConversationAdapterRuntimeKind::Python,
@@ -140,13 +141,87 @@ pub(super) fn list_adapter_runtime_statuses() -> Vec<ConversationAdapterRuntimeS
     .into_iter()
     .map(|kind| {
         let program = configured_runtime_program(&kind);
-        probe_adapter_runtime_status_with_requirement(
-            &kind,
-            program,
-            default_runtime_requirement(&kind),
-        )
+        let required_version = requirements
+            .iter()
+            .find(|(requirement_kind, _)| *requirement_kind == kind)
+            .map(|(_, version)| version.as_str());
+        probe_adapter_runtime_status_with_requirement(&kind, program, required_version)
     })
     .collect()
+}
+
+pub(super) fn adapter_runtime_requirements(
+    adapters: &[ConversationAdapter],
+) -> Vec<(ConversationAdapterRuntimeKind, String)> {
+    let mut requirements: Vec<(ConversationAdapterRuntimeKind, String)> = Vec::new();
+    for adapter in adapters {
+        if !adapter.enabled {
+            continue;
+        }
+        let Some(manifest_path) = adapter.manifest_path.as_deref() else {
+            continue;
+        };
+        let Ok(manifest_text) = fs::read_to_string(manifest_path) else {
+            continue;
+        };
+        let Ok(manifest) = serde_json::from_str::<ConversationAdapterManifest>(&manifest_text)
+        else {
+            continue;
+        };
+        let Some(runtime) = manifest.runtime.as_ref() else {
+            continue;
+        };
+        let Some(version) = runtime.version.as_deref() else {
+            continue;
+        };
+        if matches!(runtime.kind, ConversationAdapterRuntimeKind::Executable)
+            || validate_runtime_version_constraint(version).is_err()
+        {
+            continue;
+        }
+        upsert_highest_runtime_requirement(&mut requirements, &runtime.kind, version);
+    }
+    sort_runtime_requirements(requirements)
+}
+
+fn upsert_highest_runtime_requirement(
+    requirements: &mut Vec<(ConversationAdapterRuntimeKind, String)>,
+    kind: &ConversationAdapterRuntimeKind,
+    version: &str,
+) {
+    if let Some((_, current_version)) = requirements
+        .iter_mut()
+        .find(|(requirement_kind, _)| requirement_kind == kind)
+    {
+        if runtime_requirement_is_higher(version, current_version).unwrap_or(false) {
+            *current_version = version.to_string();
+        }
+    } else {
+        requirements.push((kind.clone(), version.to_string()));
+    }
+}
+
+fn runtime_requirement_is_higher(candidate: &str, current: &str) -> AppResult<bool> {
+    let candidate = parse_minimum_version_constraint(candidate)?;
+    let current = parse_minimum_version_constraint(current)?;
+    Ok(compare_versions(&candidate, &current) == std::cmp::Ordering::Greater)
+}
+
+fn sort_runtime_requirements(
+    mut requirements: Vec<(ConversationAdapterRuntimeKind, String)>,
+) -> Vec<(ConversationAdapterRuntimeKind, String)> {
+    let order = [
+        ConversationAdapterRuntimeKind::Node,
+        ConversationAdapterRuntimeKind::Python,
+        ConversationAdapterRuntimeKind::Bash,
+    ];
+    requirements.sort_by_key(|(kind, _)| {
+        order
+            .iter()
+            .position(|ordered_kind| ordered_kind == kind)
+            .unwrap_or(order.len())
+    });
+    requirements
 }
 
 #[cfg(test)]
@@ -392,15 +467,6 @@ fn adapter_runtime_missing_message(runtime: &ConversationAdapterRuntime, program
         runtime_program_location_suffix(program),
         program.display()
     )
-}
-
-fn default_runtime_requirement(kind: &ConversationAdapterRuntimeKind) -> Option<&'static str> {
-    match kind {
-        ConversationAdapterRuntimeKind::Node => Some(OFFICIAL_NODE_RUNTIME_VERSION_REQUIREMENT),
-        ConversationAdapterRuntimeKind::Python
-        | ConversationAdapterRuntimeKind::Bash
-        | ConversationAdapterRuntimeKind::Executable => None,
-    }
 }
 
 fn runtime_version_from_output(stdout: &[u8], stderr: &[u8]) -> Option<String> {

@@ -26,6 +26,53 @@ impl Drop for TempFixture {
     }
 }
 
+fn adapter_with_manifest_runtime(
+    root: &Path,
+    id: &str,
+    kind: ConversationAdapterRuntimeKind,
+    version: &str,
+) -> ConversationAdapter {
+    let adapter_dir = root.join(id);
+    fs::create_dir_all(&adapter_dir).unwrap();
+    let manifest_path = adapter_dir.join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "id": id,
+            "name": id,
+            "version": "0.1.0",
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "runtime": {
+                "type": kind,
+                "entry": "adapter",
+                "version": version
+            },
+            "capabilities": ["probe", "read_session"],
+            "input_kinds": ["directory"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    ConversationAdapter {
+        id: id.to_string(),
+        name: id.to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest_path.to_string_lossy().to_string()),
+        executable_path: Some(adapter_dir.join("adapter").to_string_lossy().to_string()),
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+        capabilities: vec!["probe".to_string(), "read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    }
+}
+
 #[test]
 fn adapter_output_rejects_oversized_line() {
     let line = format!(
@@ -329,7 +376,7 @@ fn adapter_runtime_version_constraints_reject_unsupported_shapes() {
 
 #[test]
 fn adapter_runtime_status_lists_supported_system_runtimes() {
-    let statuses = list_adapter_runtime_statuses();
+    let statuses = list_adapter_runtime_statuses(&[]);
     let kinds = statuses
         .iter()
         .map(|status| status.kind.clone())
@@ -344,12 +391,59 @@ fn adapter_runtime_status_lists_supported_system_runtimes() {
         ]
     );
     assert!(statuses.iter().all(|status| !status.program.is_empty()));
+    assert!(statuses
+        .iter()
+        .all(|status| status.required_version.is_none()));
+}
+
+#[test]
+fn adapter_runtime_status_uses_declared_runtime_requirements() {
+    let statuses = list_adapter_runtime_statuses(&[(
+        ConversationAdapterRuntimeKind::Node,
+        ">=20".to_string(),
+    )]);
+
     assert_eq!(
         statuses
             .iter()
             .find(|status| status.kind == ConversationAdapterRuntimeKind::Node)
             .and_then(|status| status.required_version.as_deref()),
         Some(">=20")
+    );
+}
+
+#[test]
+fn adapter_runtime_requirements_keep_highest_minimum_per_runtime() {
+    let fixture = TempFixture::new("assetiweave-runtime-requirements-fixture");
+    let adapters = vec![
+        adapter_with_manifest_runtime(
+            fixture.path(),
+            "node18",
+            ConversationAdapterRuntimeKind::Node,
+            ">=18",
+        ),
+        adapter_with_manifest_runtime(
+            fixture.path(),
+            "node20",
+            ConversationAdapterRuntimeKind::Node,
+            ">=20",
+        ),
+        adapter_with_manifest_runtime(
+            fixture.path(),
+            "python311",
+            ConversationAdapterRuntimeKind::Python,
+            ">=3.11",
+        ),
+    ];
+
+    let requirements = adapter_runtime_requirements(&adapters);
+
+    assert_eq!(
+        requirements,
+        vec![
+            (ConversationAdapterRuntimeKind::Node, ">=20".to_string()),
+            (ConversationAdapterRuntimeKind::Python, ">=3.11".to_string())
+        ]
     );
 }
 

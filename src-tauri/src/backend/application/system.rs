@@ -59,8 +59,7 @@ impl AppService {
 
     pub(crate) fn run_doctor(&self) -> AppResult<Value> {
         let backup_root = capabilities::skill_backup_root_sqlx(&self.db)?;
-        let runtime_statuses =
-            crate::backend::conversations::list_conversation_adapter_runtime_statuses()?;
+        let runtime_statuses = self.list_conversation_adapter_runtime_statuses()?;
         let available_runtime_count = runtime_statuses
             .iter()
             .filter(|status| status.available)

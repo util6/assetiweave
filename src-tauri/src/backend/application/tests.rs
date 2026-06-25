@@ -89,12 +89,17 @@ fn doctor_reports_conversation_adapter_runtime_statuses() {
         .find(|detail| detail["kind"].as_str() == Some("node"))
         .and_then(|detail| detail["available"].as_bool())
         .unwrap_or(false);
+    let node_required_version = details
+        .iter()
+        .find(|detail| detail["kind"].as_str() == Some("node"))
+        .and_then(|detail| detail["required_version"].as_str());
 
     assert_eq!(
         runtime_check["status"].as_str(),
         Some(if node_available { "pass" } else { "warn" })
     );
     assert_eq!(kinds, vec!["node", "python", "bash"]);
+    assert_eq!(node_required_version, Some(">=20"));
     assert!(runtime_check["message"]
         .as_str()
         .expect("runtime message")
