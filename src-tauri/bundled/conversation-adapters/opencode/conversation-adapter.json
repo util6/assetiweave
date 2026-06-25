@@ -9,7 +9,6 @@
     "entry": "adapter.mjs",
     "version": ">=20"
   },
-  "command": ["adapter.mjs"],
   "capabilities": ["probe", "list_sessions", "read_session", "export_markdown"],
   "input_kinds": ["live", "sqlite"]
 }

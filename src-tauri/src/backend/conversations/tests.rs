@@ -891,6 +891,28 @@ printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
     );
 }
 
+#[test]
+fn official_adapter_manifests_use_runtime_without_legacy_command() {
+    for manifest_relative_path in [
+        "bundled/conversation-adapters/codex/conversation-adapter.json",
+        "bundled/conversation-adapters/opencode/conversation-adapter.json",
+        "bundled/conversation-adapters/claude-code/conversation-adapter.json",
+    ] {
+        let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest_relative_path);
+        let manifest: Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+
+        assert!(
+            manifest.get("runtime").is_some(),
+            "{manifest_relative_path} missing runtime"
+        );
+        assert!(
+            manifest.get("command").is_none(),
+            "{manifest_relative_path} still declares legacy command"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn official_codex_adapter_splits_command_and_result_cards() {
