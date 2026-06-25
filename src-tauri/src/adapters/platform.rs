@@ -1,5 +1,9 @@
 use crate::backend::{dto::AppResult, path_utils::expand_path};
-use std::{ffi::OsString, path::Path, process::Command};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 struct FileManagerInvocation {
     program: &'static str,
@@ -15,10 +19,7 @@ enum FileManagerPlatform {
 }
 
 pub(crate) fn reveal_path(path: String) -> AppResult<()> {
-    let path = expand_path(&path)?;
-    if !path.exists() {
-        return Err(format!("path does not exist: {}", path.display()));
-    }
+    let path = resolve_reveal_path(&path)?;
 
     #[cfg(target_os = "macos")]
     {
@@ -43,6 +44,14 @@ pub(crate) fn reveal_path(path: String) -> AppResult<()> {
 
     #[allow(unreachable_code)]
     Err("unsupported platform".to_string())
+}
+
+fn resolve_reveal_path(path: &str) -> AppResult<PathBuf> {
+    let path = expand_path(path)?;
+    if !path.exists() {
+        return Err(format!("path does not exist: {}", path.display()));
+    }
+    Ok(path)
 }
 
 fn build_file_manager_invocation(
@@ -96,6 +105,15 @@ fn command_status(invocation: &FileManagerInvocation) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reveal_path_resolves_home_shorthand_before_invoking_file_manager() {
+        let resolved = resolve_reveal_path("~").expect("resolve home");
+
+        assert!(resolved.is_absolute());
+        assert!(resolved.is_dir());
+        assert_ne!(resolved.file_name(), Some(std::ffi::OsStr::new("~")));
+    }
 
     #[test]
     fn windows_opens_directories_without_select_flag() {

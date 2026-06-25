@@ -30,21 +30,32 @@ pub(crate) fn default_database_backup_root() -> AppResult<PathBuf> {
 }
 
 pub(crate) fn expand_path(path: &str) -> AppResult<PathBuf> {
-    #[cfg(windows)]
-    if let Some(rest) = path.strip_prefix("%USERPROFILE%\\") {
-        let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
-        return Ok(home.join(rest));
-    }
-
-    #[cfg(windows)]
-    if let Some(rest) = path.strip_prefix("%USERPROFILE%/") {
-        let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
-        return Ok(home.join(rest));
+    if path == "~" {
+        return dirs::home_dir().ok_or("无法确定用户主目录".to_string());
     }
 
     if let Some(rest) = path.strip_prefix("~/") {
         let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
         return Ok(home.join(rest));
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(rest) = path.strip_prefix("~\\") {
+            let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+            return Ok(home.join(rest));
+        }
+
+        let upper = path.to_ascii_uppercase();
+        if upper == "%USERPROFILE%" {
+            return dirs::home_dir().ok_or("无法确定用户主目录".to_string());
+        }
+        for prefix in ["%USERPROFILE%\\", "%USERPROFILE%/"] {
+            if upper.starts_with(prefix) {
+                let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+                return Ok(home.join(&path[prefix.len()..]));
+            }
+        }
     }
 
     let candidate = PathBuf::from(path);
@@ -295,8 +306,26 @@ fn hash_dir(path: &Path) -> AppResult<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{git_repository_for_path, hash_path, sanitize_git_remote};
-    use std::{fs, path::PathBuf, process::Command};
+    use super::{expand_path, git_repository_for_path, hash_path, sanitize_git_remote};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        process::Command,
+    };
+
+    #[test]
+    fn expand_path_maps_home_shorthand_to_home_directory() {
+        let home = expand_path("~").expect("expand home");
+        let child = expand_path("~/.codex/skills").expect("expand home child");
+
+        assert!(home.is_absolute());
+        assert_ne!(home.file_name(), Some(std::ffi::OsStr::new("~")));
+        assert!(child.is_absolute());
+        assert!(!child
+            .components()
+            .any(|component| component.as_os_str() == std::ffi::OsStr::new("~")));
+        assert!(child.ends_with(Path::new(".codex").join("skills")));
+    }
 
     #[test]
     fn hash_path_changes_when_directory_file_changes() {
