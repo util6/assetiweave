@@ -180,11 +180,16 @@ func newCmdHarvesterRun(f *cmdutil.Factory) *cobra.Command {
 			if err := requireYes(yes, "harvester run"); err != nil {
 				return err
 			}
+			runtimeOverrides, err := harvesters.LoadRuntimeOverrides()
+			if err != nil {
+				return err
+			}
 			result, err := harvesters.Run(harvesters.RunOptions{
-				Root:    root,
-				ID:      args[0],
-				Timeout: time.Duration(timeoutSeconds) * time.Second,
-				Args:    args[1:],
+				Root:             root,
+				ID:               args[0],
+				Timeout:          time.Duration(timeoutSeconds) * time.Second,
+				Args:             args[1:],
+				RuntimeOverrides: runtimeOverrides,
 			})
 			if err != nil {
 				return err

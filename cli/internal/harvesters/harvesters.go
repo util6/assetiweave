@@ -31,8 +31,11 @@ const (
 	defaultHTTPTimeout = 60 * time.Second
 	maxPackageBytes    = 64 << 20
 	maxPackageFiles    = 2048
+	configDirName      = ".assetiweave"
+	configFileName     = "config.json"
 	homeEnv            = "ASSETIWEAVE_HOME"
 	rootEnv            = "ASSETIWEAVE_HARVESTER_ROOT"
+	runtimeOverrideKey = "conversationRuntimeOverrides"
 )
 
 //go:embed templates
@@ -125,10 +128,11 @@ type InstallResult struct {
 }
 
 type RunOptions struct {
-	Root    string
-	ID      string
-	Timeout time.Duration
-	Args    []string
+	Root             string
+	ID               string
+	Timeout          time.Duration
+	Args             []string
+	RuntimeOverrides RuntimeOverrides
 }
 
 type RunResult struct {
@@ -147,20 +151,56 @@ type entrypointInvocation struct {
 	Args    []string
 }
 
+type RuntimeOverrides struct {
+	Node   string
+	Python string
+	Bash   string
+}
+
 func DefaultRoot() (string, error) {
 	if root := strings.TrimSpace(os.Getenv(rootEnv)); root != "" {
 		return filepath.Clean(root), nil
 	}
-	home := strings.TrimSpace(os.Getenv(homeEnv))
-	if home == "" {
-		var err error
-		home, err = os.UserHomeDir()
-		if err != nil {
-			return "", internalError("resolve home directory: %v", err)
-		}
-		home = filepath.Join(home, ".assetiweave")
+	configDir, err := appConfigDir()
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(filepath.Clean(home), "harvesters"), nil
+	return filepath.Join(configDir, "harvesters"), nil
+}
+
+func LoadRuntimeOverrides() (RuntimeOverrides, error) {
+	configDir, err := appConfigDir()
+	if err != nil {
+		return RuntimeOverrides{}, err
+	}
+	configPath := filepath.Join(configDir, configFileName)
+	content, err := os.ReadFile(configPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return RuntimeOverrides{}, nil
+	}
+	if err != nil {
+		return RuntimeOverrides{}, errs.NewConfigError(errs.SubtypeInvalidConfig, "read app settings %s: %v", configPath, err).
+			WithCode("invalid_config").
+			WithCause(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(content, &document); err != nil {
+		return RuntimeOverrides{}, errs.NewConfigError(errs.SubtypeInvalidConfig, "parse app settings %s: %v", configPath, err).
+			WithCode("invalid_config").
+			WithCause(err)
+	}
+	return runtimeOverridesFromSettingsDocument(document), nil
+}
+
+func appConfigDir() (string, error) {
+	if home := strings.TrimSpace(os.Getenv(homeEnv)); home != "" {
+		return filepath.Clean(home), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", internalError("resolve home directory: %v", err)
+	}
+	return filepath.Join(home, configDirName), nil
 }
 
 func ListOfficialTemplates(root string) ([]TemplateSummary, error) {
@@ -721,7 +761,7 @@ func Run(options RunOptions) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
-	invocation, err := resolveHarvesterInvocation(directory, manifest)
+	invocation, err := resolveHarvesterInvocation(directory, manifest, options.RuntimeOverrides)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -852,14 +892,14 @@ func validateID(id string) error {
 	return nil
 }
 
-func resolveHarvesterInvocation(directory string, manifest Manifest) (entrypointInvocation, error) {
+func resolveHarvesterInvocation(directory string, manifest Manifest, overrides RuntimeOverrides) (entrypointInvocation, error) {
 	if manifest.Runtime != nil {
-		return resolveRuntimeInvocation(directory, *manifest.Runtime)
+		return resolveRuntimeInvocation(directory, *manifest.Runtime, overrides)
 	}
-	return resolveEntrypointInvocation(directory, manifest.Entrypoint)
+	return resolveEntrypointInvocation(directory, manifest.Entrypoint, overrides)
 }
 
-func resolveEntrypointInvocation(directory string, entrypoint []string) (entrypointInvocation, error) {
+func resolveEntrypointInvocation(directory string, entrypoint []string, overrides RuntimeOverrides) (entrypointInvocation, error) {
 	if len(entrypoint) == 0 || strings.TrimSpace(entrypoint[0]) == "" {
 		return entrypointInvocation{}, validationError("harvester entrypoint is required")
 	}
@@ -870,14 +910,14 @@ func resolveEntrypointInvocation(directory string, entrypoint []string) (entrypo
 	args := append([]string{}, entrypoint[1:]...)
 	if isJavaScriptEntrypoint(commandPath) {
 		return entrypointInvocation{
-			Program: "node",
+			Program: configuredRuntimeProgram("node", overrides),
 			Args:    append([]string{commandPath}, args...),
 		}, nil
 	}
 	return entrypointInvocation{Program: commandPath, Args: args}, nil
 }
 
-func resolveRuntimeInvocation(directory string, runtimeSpec RuntimeSpec) (entrypointInvocation, error) {
+func resolveRuntimeInvocation(directory string, runtimeSpec RuntimeSpec, overrides RuntimeOverrides) (entrypointInvocation, error) {
 	if err := validateRuntimeSpec(runtimeSpec); err != nil {
 		return entrypointInvocation{}, err
 	}
@@ -888,14 +928,11 @@ func resolveRuntimeInvocation(directory string, runtimeSpec RuntimeSpec) (entryp
 	args := append([]string{}, runtimeSpec.Args...)
 	switch strings.ToLower(strings.TrimSpace(runtimeSpec.Type)) {
 	case "node":
-		return entrypointInvocation{Program: "node", Args: append([]string{entryPath}, args...)}, nil
+		return entrypointInvocation{Program: configuredRuntimeProgram("node", overrides), Args: append([]string{entryPath}, args...)}, nil
 	case "python":
-		if runtime.GOOS == "windows" {
-			return entrypointInvocation{Program: "py", Args: append([]string{"-3", entryPath}, args...)}, nil
-		}
-		return entrypointInvocation{Program: "python3", Args: append([]string{entryPath}, args...)}, nil
+		return entrypointInvocation{Program: configuredRuntimeProgram("python", overrides), Args: append(append(runtimeArgs("python"), entryPath), args...)}, nil
 	case "bash":
-		return entrypointInvocation{Program: "bash", Args: append([]string{entryPath}, args...)}, nil
+		return entrypointInvocation{Program: configuredRuntimeProgram("bash", overrides), Args: append([]string{entryPath}, args...)}, nil
 	case "executable":
 		return entrypointInvocation{Program: entryPath, Args: args}, nil
 	default:
@@ -939,6 +976,78 @@ func validRuntimeVersionConstraint(version string) bool {
 		}
 	}
 	return true
+}
+
+func runtimeOverridesFromSettingsDocument(document map[string]any) RuntimeOverrides {
+	settings := document
+	if nested, ok := document["settings"].(map[string]any); ok {
+		settings = nested
+	}
+	overrides, _ := settings[runtimeOverrideKey].(map[string]any)
+	return RuntimeOverrides{
+		Node:   runtimeOverrideValue(overrides, "node"),
+		Python: runtimeOverrideValue(overrides, "python"),
+		Bash:   runtimeOverrideValue(overrides, "bash"),
+	}
+}
+
+func runtimeOverrideValue(overrides map[string]any, key string) string {
+	value, _ := overrides[key].(string)
+	value = strings.TrimSpace(value)
+	if validRuntimeOverride(value) {
+		return value
+	}
+	return ""
+}
+
+func configuredRuntimeProgram(runtimeType string, overrides RuntimeOverrides) string {
+	switch strings.ToLower(strings.TrimSpace(runtimeType)) {
+	case "node":
+		if validRuntimeOverride(overrides.Node) {
+			return overrides.Node
+		}
+		return "node"
+	case "python":
+		if validRuntimeOverride(overrides.Python) {
+			return overrides.Python
+		}
+		if runtime.GOOS == "windows" {
+			return "py"
+		}
+		return "python3"
+	case "bash":
+		if validRuntimeOverride(overrides.Bash) {
+			return overrides.Bash
+		}
+		return "bash"
+	default:
+		return strings.TrimSpace(runtimeType)
+	}
+}
+
+func runtimeArgs(runtimeType string) []string {
+	if strings.EqualFold(strings.TrimSpace(runtimeType), "python") && runtime.GOOS == "windows" {
+		return []string{"-3"}
+	}
+	return nil
+}
+
+func validRuntimeOverride(program string) bool {
+	return program != "" && len(program) <= 4096 && isAbsoluteRuntimeProgram(program)
+}
+
+func isAbsoluteRuntimeProgram(program string) bool {
+	return filepath.IsAbs(program) || looksLikeWindowsRootedRuntimeProgram(program)
+}
+
+func looksLikeWindowsRootedRuntimeProgram(program string) bool {
+	if strings.HasPrefix(program, `\\`) || strings.HasPrefix(program, `\`) {
+		return true
+	}
+	return len(program) >= 3 &&
+		((program[2] == '\\') || (program[2] == '/')) &&
+		program[1] == ':' &&
+		((program[0] >= 'A' && program[0] <= 'Z') || (program[0] >= 'a' && program[0] <= 'z'))
 }
 
 func resolveCommand(directory, command string) (string, error) {

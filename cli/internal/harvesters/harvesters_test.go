@@ -313,7 +313,7 @@ func TestResolveEntrypointInvocationRunsJavaScriptThroughNode(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 
-	invocation, err := resolveEntrypointInvocation(dir, []string{"scripts/harvest.js", "--once"})
+	invocation, err := resolveEntrypointInvocation(dir, []string{"scripts/harvest.js", "--once"}, RuntimeOverrides{})
 	if err != nil {
 		t.Fatalf("resolveEntrypointInvocation() error = %v", err)
 	}
@@ -345,7 +345,7 @@ func TestResolveRuntimeInvocationRunsDeclaredNodeRuntime(t *testing.T) {
 			Args:    []string{"--once"},
 			Version: ">=20",
 		},
-	})
+	}, RuntimeOverrides{})
 	if err != nil {
 		t.Fatalf("resolveHarvesterInvocation() error = %v", err)
 	}
@@ -355,6 +355,88 @@ func TestResolveRuntimeInvocationRunsDeclaredNodeRuntime(t *testing.T) {
 	}
 	if got, want := invocation.Args, []string{script, "--once"}; !slices.Equal(got, want) {
 		t.Fatalf("Args = %#v, want %#v", got, want)
+	}
+}
+
+func TestResolveRuntimeInvocationUsesAbsoluteRuntimeOverride(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "demo-web")
+	script := filepath.Join(dir, "scripts", "harvest.mjs")
+	if err := os.MkdirAll(filepath.Dir(script), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(script, []byte("\n"), 0o600); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	nodePath := filepath.Join(root, "bin", "node")
+
+	invocation, err := resolveHarvesterInvocation(dir, Manifest{
+		ID:      "demo-web",
+		Runtime: &RuntimeSpec{Type: "node", Entry: "scripts/harvest.mjs"},
+	}, RuntimeOverrides{Node: nodePath})
+	if err != nil {
+		t.Fatalf("resolveHarvesterInvocation() error = %v", err)
+	}
+
+	if invocation.Program != nodePath {
+		t.Fatalf("Program = %q, want %q", invocation.Program, nodePath)
+	}
+}
+
+func TestResolveRuntimeInvocationIgnoresRelativeRuntimeOverride(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "demo-web")
+	script := filepath.Join(dir, "scripts", "harvest.mjs")
+	if err := os.MkdirAll(filepath.Dir(script), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(script, []byte("\n"), 0o600); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	invocation, err := resolveHarvesterInvocation(dir, Manifest{
+		ID:      "demo-web",
+		Runtime: &RuntimeSpec{Type: "node", Entry: "scripts/harvest.mjs"},
+	}, RuntimeOverrides{Node: filepath.Join("tools", "node")})
+	if err != nil {
+		t.Fatalf("resolveHarvesterInvocation() error = %v", err)
+	}
+
+	if invocation.Program != "node" {
+		t.Fatalf("Program = %q, want node", invocation.Program)
+	}
+}
+
+func TestLoadRuntimeOverridesReadsAppSettingsFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(homeEnv, home)
+	nodePath := filepath.Join(home, "bin", "node")
+	bashPath := filepath.Join(home, "bin", "bash")
+	document := map[string]any{
+		"schemaVersion": 1,
+		"settings": map[string]any{
+			"conversationRuntimeOverrides": map[string]any{
+				"node":   nodePath,
+				"python": filepath.Join("tools", "python"),
+				"bash":   bashPath,
+			},
+		},
+	}
+	content, err := json.Marshal(document)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, configFileName), content, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	overrides, err := LoadRuntimeOverrides()
+	if err != nil {
+		t.Fatalf("LoadRuntimeOverrides() error = %v", err)
+	}
+
+	if overrides.Node != nodePath || overrides.Python != "" || overrides.Bash != bashPath {
+		t.Fatalf("RuntimeOverrides = %#v", overrides)
 	}
 }
 
