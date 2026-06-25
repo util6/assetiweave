@@ -4,7 +4,7 @@ use std::io::ErrorKind;
 const CONVERSATION_RUNTIME_OVERRIDES_KEY: &str = "conversationRuntimeOverrides";
 const ADAPTER_RUNTIME_PROBE_TIMEOUT_MS: u64 = 3_000;
 const ADAPTER_RUNTIME_PROBE_OUTPUT_CAP: usize = 16 * 1024;
-const LEGACY_JAVASCRIPT_COMMAND_NODE_VERSION: &str = ">=20";
+pub(super) const LEGACY_JAVASCRIPT_COMMAND_NODE_VERSION: &str = ">=20";
 
 enum RuntimeProbeError {
     Spawn(std::io::Error),
@@ -45,8 +45,12 @@ pub(super) fn build_adapter_invocation(
     manifest_dir: &Path,
     manifest: &ConversationAdapterManifest,
 ) -> AppResult<AdapterCommandInvocation> {
-    if let Some(runtime) = manifest.runtime.as_ref() {
-        return Ok(build_adapter_runtime_invocation(manifest_dir, runtime, &[]));
+    if let Some(runtime) = adapter_execution_runtime(manifest) {
+        return Ok(build_adapter_runtime_invocation(
+            manifest_dir,
+            &runtime,
+            &[],
+        ));
     }
     let (command, args) = manifest
         .command
@@ -57,6 +61,24 @@ pub(super) fn build_adapter_invocation(
         command,
         args,
     ))
+}
+
+pub(super) fn adapter_execution_runtime(
+    manifest: &ConversationAdapterManifest,
+) -> Option<ConversationAdapterRuntime> {
+    if let Some(runtime) = manifest.runtime.as_ref() {
+        return Some(runtime.clone());
+    }
+    let (command, args) = manifest.command.split_first()?;
+    if !is_javascript_adapter_command(Path::new(command)) {
+        return None;
+    }
+    Some(ConversationAdapterRuntime {
+        kind: ConversationAdapterRuntimeKind::Node,
+        entry: command.clone(),
+        args: args.to_vec(),
+        version: Some(LEGACY_JAVASCRIPT_COMMAND_NODE_VERSION.to_string()),
+    })
 }
 
 pub(super) fn build_adapter_command_invocation(

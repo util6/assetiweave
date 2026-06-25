@@ -176,6 +176,31 @@ fn adapter_command_invocation_treats_javascript_extensions_case_insensitively() 
 }
 
 #[test]
+fn legacy_javascript_command_is_promoted_to_node_runtime() {
+    let manifest = ConversationAdapterManifest {
+        schema_version: 1,
+        id: "legacy-js".to_string(),
+        name: "Legacy JS".to_string(),
+        version: "0.1.0".to_string(),
+        protocol_version: EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+        command: vec!["adapter.mjs".to_string(), "--mode".to_string()],
+        runtime: None,
+        capabilities: vec!["probe".to_string(), "read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+    };
+
+    let runtime = adapter_execution_runtime(&manifest).expect("legacy js runtime");
+
+    assert_eq!(runtime.kind, ConversationAdapterRuntimeKind::Node);
+    assert_eq!(runtime.entry, "adapter.mjs");
+    assert_eq!(runtime.args, vec!["--mode".to_string()]);
+    assert_eq!(
+        runtime.version.as_deref(),
+        Some(LEGACY_JAVASCRIPT_COMMAND_NODE_VERSION)
+    );
+}
+
+#[test]
 fn adapter_runtime_invocation_uses_declared_node_runtime() {
     let manifest_dir = Path::new("/tmp/adapter");
     let runtime = ConversationAdapterRuntime {

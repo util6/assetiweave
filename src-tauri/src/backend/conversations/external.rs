@@ -735,8 +735,12 @@ pub(super) fn run_external_adapter(
     let manifest_dir = Path::new(&validation.manifest_path)
         .parent()
         .ok_or_else(|| "adapter manifest path has no parent directory".to_string())?;
-    let invocation = build_adapter_invocation(manifest_dir, manifest)?;
-    if let Some(runtime) = manifest.runtime.as_ref() {
+    let execution_runtime = adapter_execution_runtime(manifest);
+    let invocation = match execution_runtime.as_ref() {
+        Some(runtime) => build_adapter_runtime_invocation(manifest_dir, runtime, &[]),
+        None => build_adapter_invocation(manifest_dir, manifest)?,
+    };
+    if let Some(runtime) = execution_runtime.as_ref() {
         ensure_adapter_runtime_available(runtime, &invocation)?;
     }
     let mut child = Command::new(&invocation.program)
