@@ -1,5 +1,6 @@
 use super::io_utils::{
-    build_adapter_runtime_invocation, ensure_adapter_runtime_available, AdapterCommandInvocation,
+    build_adapter_runtime_invocation, ensure_adapter_runtime_available,
+    validate_runtime_version_constraint, AdapterCommandInvocation,
     LEGACY_JAVASCRIPT_COMMAND_NODE_VERSION,
 };
 use super::prelude::*;
@@ -11,7 +12,10 @@ const OUTPUT_CAPTURE_LIMIT: usize = 64 * 1024;
 #[derive(Debug, Deserialize)]
 struct HarvesterManifest {
     id: String,
+    #[serde(default)]
     entrypoint: Vec<String>,
+    #[serde(default)]
+    runtime: Option<ConversationAdapterRuntime>,
 }
 
 pub(crate) fn run_conversation_harvester_for_source(source: &ConversationSource) -> AppResult<()> {
@@ -25,7 +29,7 @@ pub(crate) fn run_conversation_harvester_for_source(source: &ConversationSource)
     let manifest: HarvesterManifest =
         serde_json::from_str(&manifest_text).map_err(|error| error.to_string())?;
     let invocation = resolve_harvester_invocation(&source_dir, &manifest)?;
-    if let Some(runtime) = harvester_entrypoint_runtime(&manifest) {
+    if let Some(runtime) = harvester_execution_runtime(&manifest) {
         ensure_adapter_runtime_available(&runtime, &invocation)?;
     }
 
@@ -86,32 +90,26 @@ fn resolve_harvester_invocation(
     root: &Path,
     manifest: &HarvesterManifest,
 ) -> AppResult<AdapterCommandInvocation> {
+    if manifest.runtime.is_some() && !manifest.entrypoint.is_empty() {
+        return Err(format!(
+            "harvester {} must not declare both runtime and entrypoint",
+            manifest.id
+        ));
+    }
+    if let Some(runtime) = manifest.runtime.as_ref() {
+        validate_harvester_runtime(&manifest.id, runtime)?;
+        validate_harvester_relative_entry(root, &manifest.id, "runtime entry", &runtime.entry)?;
+        return Ok(build_adapter_runtime_invocation(root, runtime, &[]));
+    }
     let raw_command = manifest
         .entrypoint
         .first()
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("harvester {} has no entrypoint", manifest.id))?;
-    let relative = Path::new(raw_command);
-    if relative.is_absolute()
-        || relative
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-    {
-        return Err(format!(
-            "unsafe harvester entrypoint for {}: {}",
-            manifest.id, raw_command
-        ));
-    }
-    let command_path = root.join(relative);
-    if !command_path.is_file() {
-        return Err(format!(
-            "harvester entrypoint not found for {}: {}",
-            manifest.id,
-            command_path.to_string_lossy()
-        ));
-    }
-    if let Some(runtime) = harvester_entrypoint_runtime(manifest) {
+    let command_path =
+        validate_harvester_relative_entry(root, &manifest.id, "entrypoint", raw_command)?;
+    if let Some(runtime) = harvester_execution_runtime(manifest) {
         return Ok(build_adapter_runtime_invocation(root, &runtime, &[]));
     }
     Ok(AdapterCommandInvocation {
@@ -121,9 +119,10 @@ fn resolve_harvester_invocation(
     })
 }
 
-fn harvester_entrypoint_runtime(
-    manifest: &HarvesterManifest,
-) -> Option<ConversationAdapterRuntime> {
+fn harvester_execution_runtime(manifest: &HarvesterManifest) -> Option<ConversationAdapterRuntime> {
+    if let Some(runtime) = manifest.runtime.as_ref() {
+        return Some(runtime.clone());
+    }
     let (entry, args) = manifest.entrypoint.split_first()?;
     if !is_javascript_harvester_entrypoint(Path::new(entry)) {
         return None;
@@ -134,6 +133,66 @@ fn harvester_entrypoint_runtime(
         args: args.to_vec(),
         version: Some(LEGACY_JAVASCRIPT_COMMAND_NODE_VERSION.to_string()),
     })
+}
+
+fn validate_harvester_runtime(
+    harvester_id: &str,
+    runtime: &ConversationAdapterRuntime,
+) -> AppResult<()> {
+    if runtime.entry.trim().is_empty() {
+        return Err(format!(
+            "harvester {harvester_id} runtime entry is required"
+        ));
+    }
+    if runtime
+        .version
+        .as_deref()
+        .is_some_and(|version| version.trim().is_empty())
+    {
+        return Err(format!(
+            "harvester {harvester_id} runtime version must not be empty"
+        ));
+    }
+    if let Some(version) = runtime.version.as_deref() {
+        validate_runtime_version_constraint(version)?;
+    }
+    Ok(())
+}
+
+fn validate_harvester_relative_entry(
+    root: &Path,
+    harvester_id: &str,
+    field: &str,
+    raw: &str,
+) -> AppResult<PathBuf> {
+    let trimmed = raw.trim();
+    let relative = Path::new(trimmed);
+    if relative.is_absolute()
+        || looks_like_windows_rooted_path(trimmed)
+        || trimmed
+            .split(['/', '\\'])
+            .any(|component| component == "..")
+    {
+        return Err(format!(
+            "unsafe harvester {field} for {harvester_id}: {raw}"
+        ));
+    }
+    let path = root.join(relative);
+    if !path.is_file() {
+        return Err(format!(
+            "harvester {field} not found for {harvester_id}: {}",
+            path.to_string_lossy()
+        ));
+    }
+    Ok(path)
+}
+
+fn looks_like_windows_rooted_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    if path.starts_with("\\\\") || path.starts_with('\\') {
+        return true;
+    }
+    bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic()
 }
 
 fn is_javascript_harvester_entrypoint(path: &Path) -> bool {
@@ -213,6 +272,7 @@ mod tests {
         let manifest = HarvesterManifest {
             id: "fixture-web".to_string(),
             entrypoint: vec!["scripts/harvest.js".to_string(), "--once".to_string()],
+            runtime: None,
         };
 
         let invocation = resolve_harvester_invocation(fixture.path(), &manifest).unwrap();
@@ -230,6 +290,107 @@ mod tests {
                 "--once".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn harvester_manifest_runtime_uses_declared_runtime_without_entrypoint() {
+        let fixture = TempFixture::new("assetiweave-harvester-runtime");
+        fs::create_dir_all(fixture.path().join("scripts")).unwrap();
+        fs::write(fixture.path().join("scripts").join("harvest.mjs"), "\n").unwrap();
+        let manifest: HarvesterManifest = serde_json::from_str(
+            r#"{"schema_version":1,"id":"fixture-web","runtime":{"type":"node","entry":"scripts/harvest.mjs","version":">=20","args":["--once"]}}"#,
+        )
+        .unwrap();
+
+        let invocation = resolve_harvester_invocation(fixture.path(), &manifest).unwrap();
+
+        assert_eq!(invocation.program, PathBuf::from("node"));
+        assert_eq!(
+            invocation.args,
+            vec![
+                fixture
+                    .path()
+                    .join("scripts")
+                    .join("harvest.mjs")
+                    .to_string_lossy()
+                    .to_string(),
+                "--once".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn harvester_manifest_rejects_runtime_mixed_with_entrypoint() {
+        let fixture = TempFixture::new("assetiweave-harvester-mixed-runtime");
+        fs::create_dir_all(fixture.path().join("scripts")).unwrap();
+        fs::write(fixture.path().join("scripts").join("harvest.js"), "\n").unwrap();
+        let manifest: HarvesterManifest = serde_json::from_str(
+            r#"{"schema_version":1,"id":"fixture-web","entrypoint":["scripts/harvest.js"],"runtime":{"type":"node","entry":"scripts/harvest.js","version":">=20"}}"#,
+        )
+        .unwrap();
+
+        let error = match resolve_harvester_invocation(fixture.path(), &manifest) {
+            Ok(_) => panic!("manifest should not mix runtime and entrypoint"),
+            Err(error) => error,
+        };
+
+        assert!(error.contains("must not declare both runtime and entrypoint"));
+    }
+
+    #[test]
+    fn harvester_manifest_rejects_unsafe_runtime_entry() {
+        for entry in [
+            "../harvest.js",
+            r"..\harvest.js",
+            "/tmp/harvest.js",
+            r"C:\tmp\harvest.js",
+        ] {
+            let fixture = TempFixture::new("assetiweave-harvester-runtime-escape");
+            let manifest = HarvesterManifest {
+                id: "fixture-web".to_string(),
+                entrypoint: Vec::new(),
+                runtime: Some(ConversationAdapterRuntime {
+                    kind: ConversationAdapterRuntimeKind::Node,
+                    entry: entry.to_string(),
+                    args: Vec::new(),
+                    version: Some(">=20".to_string()),
+                }),
+            };
+
+            let error = match resolve_harvester_invocation(fixture.path(), &manifest) {
+                Ok(_) => panic!("unsafe runtime entry should fail validation"),
+                Err(error) => error,
+            };
+
+            assert!(
+                error.contains("unsafe harvester runtime entry"),
+                "entry {entry:?} produced error {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn harvester_manifest_rejects_unsupported_runtime_version_constraint() {
+        let fixture = TempFixture::new("assetiweave-harvester-runtime-version");
+        fs::create_dir_all(fixture.path().join("scripts")).unwrap();
+        fs::write(fixture.path().join("scripts").join("harvest.js"), "\n").unwrap();
+        let manifest = HarvesterManifest {
+            id: "fixture-web".to_string(),
+            entrypoint: Vec::new(),
+            runtime: Some(ConversationAdapterRuntime {
+                kind: ConversationAdapterRuntimeKind::Node,
+                entry: "scripts/harvest.js".to_string(),
+                args: Vec::new(),
+                version: Some("^20".to_string()),
+            }),
+        };
+
+        let error = match resolve_harvester_invocation(fixture.path(), &manifest) {
+            Ok(_) => panic!("unsupported runtime version should fail validation"),
+            Err(error) => error,
+        };
+
+        assert!(error.contains("runtime version constraint"));
     }
 
     fn source_fixture(path: &Path) -> ConversationSource {
