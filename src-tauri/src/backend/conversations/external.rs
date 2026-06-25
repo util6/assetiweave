@@ -673,6 +673,9 @@ fn validate_manifest_shape(manifest: &ConversationAdapterManifest) -> AppResult<
     if manifest.name.trim().is_empty() {
         return Err("adapter name is required".to_string());
     }
+    if manifest.runtime.is_some() && !manifest.command.is_empty() {
+        return Err("adapter manifest must not declare both runtime and command".to_string());
+    }
     match manifest.runtime.as_ref() {
         Some(runtime) => {
             if runtime.entry.trim().is_empty() {

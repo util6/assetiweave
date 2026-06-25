@@ -620,6 +620,39 @@ fn external_adapter_validation_accepts_runtime_without_legacy_command() {
 }
 
 #[test]
+fn external_adapter_validation_rejects_runtime_mixed_with_legacy_command() {
+    let fixture = TempFixture::new("assetiweave-adapter-runtime-command-fixture");
+    fs::write(fixture.path().join("adapter.mjs"), "#!/usr/bin/env node\n").unwrap();
+    fs::write(fixture.path().join("ignored.sh"), "#!/bin/sh\n").unwrap();
+    let manifest_path = fixture.path().join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "id": "fixture-runtime-command",
+            "name": "Fixture Runtime Command",
+            "version": "0.1.0",
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "runtime": {
+                "type": "node",
+                "entry": "adapter.mjs",
+                "version": ">=20"
+            },
+            "command": ["ignored.sh"],
+            "capabilities": ["probe", "read_session"],
+            "input_kinds": ["directory"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let error = validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref())
+        .expect_err("manifest should not mix runtime and legacy command");
+
+    assert!(error.contains("must not declare both runtime and command"));
+}
+
+#[test]
 fn external_adapter_validation_rejects_unsupported_runtime_version_constraint() {
     let fixture = TempFixture::new("assetiweave-adapter-runtime-version-fixture");
     let adapter_path = fixture.path().join("adapter.mjs");
