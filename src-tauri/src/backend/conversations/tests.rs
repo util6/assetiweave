@@ -230,6 +230,35 @@ fn adapter_runtime_probe_reports_missing_system_runtime() {
     assert!(error.contains("assetiweave-missing-node-runtime"));
 }
 
+#[cfg(unix)]
+#[test]
+fn adapter_runtime_probe_rejects_detected_version_below_requirement() {
+    let fixture = TempFixture::new("assetiweave-runtime-version-fixture");
+    let runtime_program = write_executable_script(
+        fixture.path(),
+        "node18.sh",
+        r#"#!/bin/sh
+printf '%s\n' 'v18.19.0'
+"#,
+    );
+    let runtime = ConversationAdapterRuntime {
+        kind: ConversationAdapterRuntimeKind::Node,
+        entry: "adapter.mjs".to_string(),
+        args: Vec::new(),
+        version: Some(">=20".to_string()),
+    };
+    let invocation = AdapterCommandInvocation {
+        program: runtime_program,
+        args: Vec::new(),
+        display_path: PathBuf::from("adapter.mjs"),
+    };
+
+    let error = ensure_adapter_runtime_available(&runtime, &invocation).unwrap_err();
+
+    assert!(error.contains("requires >=20"));
+    assert!(error.contains("v18.19.0"));
+}
+
 #[test]
 fn adapter_runtime_probe_returns_remediation_hint() {
     let status = probe_adapter_runtime_status(
@@ -249,6 +278,25 @@ fn adapter_runtime_probe_returns_remediation_hint() {
         .unwrap_or_default()
         .contains("Node.js 20"));
     assert!(status.hint.as_deref().unwrap_or_default().contains("PATH"));
+}
+
+#[test]
+fn adapter_runtime_version_constraints_compare_detected_versions() {
+    assert!(runtime_version_satisfies_constraint("v20.11.1", ">=20").unwrap());
+    assert!(runtime_version_satisfies_constraint("Python 3.11.6", ">=3.10").unwrap());
+    assert!(
+        runtime_version_satisfies_constraint("GNU bash, version 5.2.37(1)-release", ">=5.2")
+            .unwrap()
+    );
+    assert!(!runtime_version_satisfies_constraint("v18.19.0", ">=20").unwrap());
+    assert!(!runtime_version_satisfies_constraint("Python 3.9.18", ">=3.10").unwrap());
+}
+
+#[test]
+fn adapter_runtime_version_constraints_reject_unsupported_shapes() {
+    assert!(runtime_version_satisfies_constraint("v20.11.1", "^20").is_err());
+    assert!(runtime_version_satisfies_constraint("v20.11.1", ">=20.x").is_err());
+    assert!(runtime_version_satisfies_constraint("node version unknown", ">=20").is_err());
 }
 
 #[test]
@@ -339,6 +387,39 @@ fn external_adapter_validation_accepts_runtime_without_legacy_command() {
             .map(|runtime| runtime.entry.as_str()),
         Some("adapter.mjs")
     );
+}
+
+#[test]
+fn external_adapter_validation_rejects_unsupported_runtime_version_constraint() {
+    let fixture = TempFixture::new("assetiweave-adapter-runtime-version-fixture");
+    let adapter_path = fixture.path().join("adapter.mjs");
+    fs::write(&adapter_path, "#!/usr/bin/env node\n").unwrap();
+    let manifest_path = fixture.path().join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "id": "fixture-runtime-version",
+            "name": "Fixture Runtime Version",
+            "version": "0.1.0",
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "runtime": {
+                "type": "node",
+                "entry": "adapter.mjs",
+                "version": "^20"
+            },
+            "capabilities": ["probe", "read_session"],
+            "input_kinds": ["directory"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let error = validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref())
+        .expect_err("unsupported runtime version constraint should fail validation");
+
+    assert!(error.contains("runtime version constraint"));
+    assert!(error.contains(">=x"));
 }
 
 #[test]

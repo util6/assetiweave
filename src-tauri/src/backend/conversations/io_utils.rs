@@ -118,7 +118,7 @@ pub(super) fn ensure_adapter_runtime_available(
 
     let status = probe_adapter_runtime_status(&runtime.kind, invocation.program.clone());
     if status.available {
-        Ok(())
+        ensure_runtime_version_matches(runtime, &invocation.program, status.version.as_deref())
     } else {
         let message = adapter_runtime_missing_message(runtime, &invocation.program);
         match status.error {
@@ -129,6 +129,32 @@ pub(super) fn ensure_adapter_runtime_available(
             Some(error) => Err(error),
             _ => Err(message),
         }
+    }
+}
+
+fn ensure_runtime_version_matches(
+    runtime: &ConversationAdapterRuntime,
+    program: &Path,
+    detected_version: Option<&str>,
+) -> AppResult<()> {
+    let Some(requirement) = runtime.version.as_deref() else {
+        return Ok(());
+    };
+    let Some(detected_version) = detected_version else {
+        return Err(format!(
+            "adapter runtime {} requires {requirement}, but {} did not report a version",
+            runtime_display_name(&runtime.kind),
+            program.display()
+        ));
+    };
+    if runtime_version_satisfies_constraint(detected_version, requirement)? {
+        Ok(())
+    } else {
+        Err(format!(
+            "adapter runtime {} requires {requirement}, but {} reported {detected_version}",
+            runtime_display_name(&runtime.kind),
+            program.display()
+        ))
     }
 }
 
@@ -320,6 +346,78 @@ fn runtime_version_from_output(stdout: &[u8], stderr: &[u8]) -> Option<String> {
         .map(str::trim)
         .find(|line| !line.is_empty())
         .map(str::to_string)
+}
+
+pub(super) fn validate_runtime_version_constraint(requirement: &str) -> AppResult<()> {
+    parse_minimum_version_constraint(requirement).map(|_| ())
+}
+
+pub(super) fn runtime_version_satisfies_constraint(
+    detected_version: &str,
+    requirement: &str,
+) -> AppResult<bool> {
+    let minimum = parse_minimum_version_constraint(requirement)?;
+    let detected = parse_detected_runtime_version(detected_version).ok_or_else(|| {
+        format!("could not parse adapter runtime version from output: {detected_version}")
+    })?;
+    Ok(compare_versions(&detected, &minimum) != std::cmp::Ordering::Less)
+}
+
+fn parse_minimum_version_constraint(requirement: &str) -> AppResult<Vec<u64>> {
+    let requirement = requirement.trim();
+    let version = requirement.strip_prefix(">=").ok_or_else(|| {
+        format!("adapter runtime version constraint must use >=x[.y[.z]]: {requirement}")
+    })?;
+    parse_exact_runtime_version(version.trim()).ok_or_else(|| {
+        format!("adapter runtime version constraint must use >=x[.y[.z]]: {requirement}")
+    })
+}
+
+fn parse_exact_runtime_version(version: &str) -> Option<Vec<u64>> {
+    if version.is_empty() {
+        return None;
+    }
+    let parts = version.split('.').collect::<Vec<_>>();
+    if parts.len() > 3 || parts.iter().any(|part| part.is_empty()) {
+        return None;
+    }
+    parts
+        .into_iter()
+        .map(|part| {
+            part.chars()
+                .all(|character| character.is_ascii_digit())
+                .then(|| part.parse::<u64>().ok())
+                .flatten()
+        })
+        .collect()
+}
+
+fn parse_detected_runtime_version(output: &str) -> Option<Vec<u64>> {
+    let start = output
+        .char_indices()
+        .find(|(_, character)| character.is_ascii_digit())
+        .map(|(index, _)| index)?;
+    let version = output[start..]
+        .chars()
+        .take_while(|character| character.is_ascii_digit() || *character == '.')
+        .collect::<String>();
+    parse_exact_runtime_version(version.trim_end_matches('.'))
+}
+
+fn compare_versions(left: &[u64], right: &[u64]) -> std::cmp::Ordering {
+    let max_len = left.len().max(right.len());
+    for index in 0..max_len {
+        match left
+            .get(index)
+            .copied()
+            .unwrap_or_default()
+            .cmp(&right.get(index).copied().unwrap_or_default())
+        {
+            std::cmp::Ordering::Equal => {}
+            ordering => return ordering,
+        }
+    }
+    std::cmp::Ordering::Equal
 }
 
 fn configured_runtime_program(kind: &ConversationAdapterRuntimeKind) -> PathBuf {

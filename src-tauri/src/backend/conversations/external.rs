@@ -483,6 +483,9 @@ fn validate_manifest_shape(manifest: &ConversationAdapterManifest) -> AppResult<
             {
                 return Err("adapter runtime version must not be empty".to_string());
             }
+            if let Some(version) = runtime.version.as_deref() {
+                validate_runtime_version_constraint(version)?;
+            }
         }
         None if manifest.command.is_empty() || manifest.command[0].trim().is_empty() => {
             return Err("adapter command must include an executable".to_string());
