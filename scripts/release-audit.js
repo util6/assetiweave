@@ -72,11 +72,18 @@ requireIncludes("CI workflow", ciWorkflow, "pnpm cli:test:e2e");
 
 const releaseWorkflow = read(".github/workflows/release.yml");
 requireIncludes("release workflow", releaseWorkflow, "node scripts/release-audit.js --static-only");
+requireIncludes("release workflow", releaseWorkflow, "--bundles appimage,deb");
+requireIncludes("release workflow", releaseWorkflow, "--bundles nsis");
+requireIncludes("release workflow", releaseWorkflow, "--bundles dmg");
+requireIncludes("release workflow", releaseWorkflow, "updaterJsonPreferNsis: true");
 requireIncludes("package scripts", JSON.stringify(packageJSON.scripts), "bundle:cli");
 requireIncludes("Tauri beforeBuildCommand", tauriConfig.build.beforeBuildCommand, "pnpm bundle:cli");
 requireIncludes("Tauri bundle resources", JSON.stringify(tauriConfig.bundle.resources), "bundled-cli/cli");
 requireNotIncludes("release workflow", releaseWorkflow, "assetiweave-tools-");
 requireNotIncludes("release workflow", releaseWorkflow, "CLI tools checksum assets");
+requireNotIncludes("release workflow", releaseWorkflow, "macOS app archive");
+requireNotIncludes("release workflow", releaseWorkflow, ".app.zip");
+requireNotIncludes("release workflow", releaseWorkflow, " libfuse2 rpm");
 requireNotIncludes(
   "release workflow",
   releaseWorkflow,

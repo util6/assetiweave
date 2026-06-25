@@ -73,7 +73,7 @@ jobs:
             --verify-tag \
             --draft \
             --title "AssetIWeave $RELEASE_TAG" \
-            --notes "CLI tools are bundled with the desktop app and can be installed into PATH from Settings. Update artifacts are signed for the in-app updater. macOS and Windows may still show an extra trust prompt until OS code signing is configured." \
+            --notes "CLI tools are bundled with the desktop app and can be installed into PATH from Settings. Release installers are limited to Windows x64 NSIS exe, macOS x64/aarch64 dmg, and Linux AppImage/deb. Update artifacts are signed for the in-app updater. macOS and Windows may still show an extra trust prompt until OS code signing is configured." \
             --generate-notes
 
   desktop-installers:
@@ -87,19 +87,19 @@ jobs:
           - label: Linux x64
             platform: ubuntu-22.04
             rust_target: ""
-            args: ""
+            args: "--bundles appimage,deb"
           - label: Windows x64
             platform: windows-latest
             rust_target: ""
-            args: ""
-          - label: macOS arm64 updater
+            args: "--bundles nsis"
+          - label: macOS arm64
             platform: macos-latest
             rust_target: aarch64-apple-darwin
-            args: "--target aarch64-apple-darwin --bundles app"
-          - label: macOS x64 updater
+            args: "--target aarch64-apple-darwin --bundles dmg"
+          - label: macOS x64
             platform: macos-15-intel
             rust_target: x86_64-apple-darwin
-            args: "--target x86_64-apple-darwin --bundles app"
+            args: "--target x86_64-apple-darwin --bundles dmg"
 
     steps:
       - name: Checkout
@@ -109,7 +109,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2 rpm
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -159,110 +159,17 @@ jobs:
           releaseBody: |
             AssetIWeave ${{ env.RELEASE_TAG }} release.
 
-            Download the installer or app archive for your operating system from the assets below. CLI tools are bundled with the desktop app and can be installed into PATH from Settings. Update artifacts are signed for the in-app updater; macOS and Windows may still show an extra trust prompt until OS code signing is configured.
+            Download the installer for your operating system from the assets below. CLI tools are bundled with the desktop app and can be installed into PATH from Settings. Update artifacts are signed for the in-app updater; macOS and Windows may still show an extra trust prompt until OS code signing is configured.
           releaseDraft: true
           prerelease: false
           generateReleaseNotes: true
           includeUpdaterJson: true
+          updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
-
-  macos-app:
-    name: macOS app archive (${{ matrix.target }})
-    needs: desktop-installers
-    runs-on: ${{ matrix.platform }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-            label: macos-arm64
-            platform: macos-latest
-          - target: x86_64-apple-darwin
-            label: macos-x64
-            platform: macos-15-intel
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.24"
-          cache-dependency-path: cli/go.sum
-          cache: true
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Cache Rust
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            . -> target
-            src-tauri -> target
-
-      - name: Build app bundle
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build --target ${{ matrix.target }} --bundles app
-
-      - name: Zip app bundle
-        run: |
-          mkdir -p dist/release
-          ditto -c -k --sequesterRsrc --keepParent target/${{ matrix.target }}/release/bundle/macos/AssetIWeave.app dist/release/AssetIWeave-${RELEASE_TAG}-${{ matrix.label }}.app.zip
-
-      - name: Upload macOS app archive
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          draft: true
-          prerelease: false
-          files: dist/release/*.app.zip
-
-      - name: Build DMG
-        id: build_dmg
-        continue-on-error: true
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build --target ${{ matrix.target }} --bundles dmg
-
-      - name: Copy DMG
-        if: steps.build_dmg.outcome == 'success'
-        run: |
-          mkdir -p dist/release
-          cp target/${{ matrix.target }}/release/bundle/dmg/*.dmg dist/release/
-
-      - name: Upload macOS DMG
-        if: steps.build_dmg.outcome == 'success'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          draft: true
-          prerelease: false
-          files: dist/release/*.dmg
 
   publish-release:
     name: Verify and publish release
-    needs:
-      - desktop-installers
-      - macos-app
+    needs: desktop-installers
     runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -289,6 +196,12 @@ jobs:
           signature_count="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name | select(endswith(".sig"))] | length')"
           if (( signature_count < 4 )); then
             echo "::error::Expected at least four updater signature assets, found $signature_count"
+            exit 1
+          fi
+          unsupported_assets="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name | select(test("(\\.msi|\\.msi\\.sig|\\.rpm|\\.rpm\\.sig|\\.app\\.zip)$"))')"
+          if [[ -n "$unsupported_assets" ]]; then
+            echo "::error::Release contains unsupported installer assets:"
+            echo "$unsupported_assets"
             exit 1
           fi
 
