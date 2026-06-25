@@ -1,4 +1,5 @@
 use super::prelude::*;
+use std::io::ErrorKind;
 
 pub(super) fn resolve_command_path(manifest_dir: &Path, command: &str) -> PathBuf {
     let path = PathBuf::from(command);
@@ -97,6 +98,55 @@ pub(super) fn build_adapter_runtime_invocation(
     }
 }
 
+pub(super) fn ensure_adapter_runtime_available(
+    runtime: &ConversationAdapterRuntime,
+    invocation: &AdapterCommandInvocation,
+) -> AppResult<()> {
+    if matches!(runtime.kind, ConversationAdapterRuntimeKind::Executable) {
+        return Ok(());
+    }
+
+    let mut command = Command::new(&invocation.program);
+    command.args(runtime_version_args(&runtime.kind));
+    let output = command.output().map_err(|error| {
+        if error.kind() == ErrorKind::NotFound {
+            adapter_runtime_missing_message(runtime, &invocation.program)
+        } else {
+            format!(
+                "failed to probe adapter runtime {} at {}: {error}",
+                runtime_display_name(&runtime.kind),
+                invocation.program.display()
+            )
+        }
+    })?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "adapter runtime {} at {} failed version probe with status {}: {}",
+            runtime_display_name(&runtime.kind),
+            invocation.program.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
+fn adapter_runtime_missing_message(runtime: &ConversationAdapterRuntime, program: &Path) -> String {
+    let version = runtime
+        .version
+        .as_deref()
+        .map(|version| format!(" {version}"))
+        .unwrap_or_default();
+    format!(
+        "adapter runtime {}{} was not found on PATH: {}",
+        runtime_display_name(&runtime.kind),
+        version,
+        program.display()
+    )
+}
+
 fn runtime_program(kind: &ConversationAdapterRuntimeKind) -> PathBuf {
     match kind {
         ConversationAdapterRuntimeKind::Node => PathBuf::from("node"),
@@ -114,6 +164,27 @@ fn runtime_args(kind: &ConversationAdapterRuntimeKind) -> Vec<String> {
         #[cfg(windows)]
         ConversationAdapterRuntimeKind::Python => vec!["-3".to_string()],
         _ => Vec::new(),
+    }
+}
+
+fn runtime_version_args(kind: &ConversationAdapterRuntimeKind) -> Vec<&'static str> {
+    match kind {
+        ConversationAdapterRuntimeKind::Node => vec!["--version"],
+        #[cfg(windows)]
+        ConversationAdapterRuntimeKind::Python => vec!["-3", "--version"],
+        #[cfg(not(windows))]
+        ConversationAdapterRuntimeKind::Python => vec!["--version"],
+        ConversationAdapterRuntimeKind::Bash => vec!["--version"],
+        ConversationAdapterRuntimeKind::Executable => Vec::new(),
+    }
+}
+
+fn runtime_display_name(kind: &ConversationAdapterRuntimeKind) -> &'static str {
+    match kind {
+        ConversationAdapterRuntimeKind::Node => "node",
+        ConversationAdapterRuntimeKind::Python => "python",
+        ConversationAdapterRuntimeKind::Bash => "bash",
+        ConversationAdapterRuntimeKind::Executable => "executable",
     }
 }
 

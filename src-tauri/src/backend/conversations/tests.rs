@@ -210,6 +210,27 @@ fn adapter_runtime_invocation_supports_python_and_bash() {
 }
 
 #[test]
+fn adapter_runtime_probe_reports_missing_system_runtime() {
+    let runtime = ConversationAdapterRuntime {
+        kind: ConversationAdapterRuntimeKind::Node,
+        entry: "adapter.mjs".to_string(),
+        args: Vec::new(),
+        version: Some(">=20".to_string()),
+    };
+    let invocation = AdapterCommandInvocation {
+        program: PathBuf::from("assetiweave-missing-node-runtime"),
+        args: Vec::new(),
+        display_path: PathBuf::from("adapter.mjs"),
+    };
+
+    let error = ensure_adapter_runtime_available(&runtime, &invocation).unwrap_err();
+
+    assert!(error.contains("node >=20"));
+    assert!(error.contains("PATH"));
+    assert!(error.contains("assetiweave-missing-node-runtime"));
+}
+
+#[test]
 fn external_adapter_validation_accepts_runtime_without_legacy_command() {
     let fixture = TempFixture::new("assetiweave-adapter-runtime-fixture");
     let adapter_path = fixture.path().join("adapter.mjs");
