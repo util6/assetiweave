@@ -554,6 +554,30 @@ fn adapter_runtime_overrides_read_configured_programs() {
 }
 
 #[test]
+fn adapter_runtime_overrides_ignore_relative_programs() {
+    let settings = json!({
+        "conversationRuntimeOverrides": {
+            "node": "node",
+            "python": "./python",
+            "bash": "bin/bash"
+        }
+    });
+
+    assert_eq!(
+        runtime_program_from_settings(&ConversationAdapterRuntimeKind::Node, &settings),
+        None
+    );
+    assert_eq!(
+        runtime_program_from_settings(&ConversationAdapterRuntimeKind::Python, &settings),
+        None
+    );
+    assert_eq!(
+        runtime_program_from_settings(&ConversationAdapterRuntimeKind::Bash, &settings),
+        None
+    );
+}
+
+#[test]
 fn external_adapter_validation_accepts_runtime_without_legacy_command() {
     let fixture = TempFixture::new("assetiweave-adapter-runtime-fixture");
     let adapter_path = fixture.path().join("adapter.mjs");

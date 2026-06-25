@@ -57,7 +57,7 @@ describe("AppSettingsProvider", () => {
     const settings = normalizeStoredSettings({
       conversationRuntimeOverrides: {
         bash: "x".repeat(4097),
-        node: 42,
+        node: "node",
         python: "",
       },
     });

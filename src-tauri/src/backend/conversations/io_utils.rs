@@ -605,7 +605,8 @@ pub(super) fn runtime_program_from_settings(
         ConversationAdapterRuntimeKind::Executable => return None,
     };
     let program = overrides.get(key)?.as_str()?.trim();
-    (!program.is_empty() && program.len() <= 4096).then(|| PathBuf::from(program))
+    (!program.is_empty() && program.len() <= 4096 && is_absolute_runtime_program(program))
+        .then(|| PathBuf::from(program))
 }
 
 fn default_runtime_program(kind: &ConversationAdapterRuntimeKind) -> PathBuf {
@@ -618,6 +619,21 @@ fn default_runtime_program(kind: &ConversationAdapterRuntimeKind) -> PathBuf {
         ConversationAdapterRuntimeKind::Bash => PathBuf::from("bash"),
         ConversationAdapterRuntimeKind::Executable => PathBuf::new(),
     }
+}
+
+fn is_absolute_runtime_program(program: &str) -> bool {
+    Path::new(program).is_absolute() || looks_like_windows_rooted_runtime_program(program)
+}
+
+fn looks_like_windows_rooted_runtime_program(program: &str) -> bool {
+    let bytes = program.as_bytes();
+    if program.starts_with("\\\\") || program.starts_with('\\') {
+        return true;
+    }
+    bytes.len() >= 3
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+        && bytes[0].is_ascii_alphabetic()
 }
 
 fn runtime_program_location_suffix(program: &Path) -> &'static str {

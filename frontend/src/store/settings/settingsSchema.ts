@@ -349,7 +349,15 @@ function normalizeRuntimePathSetting(value: unknown) {
   }
 
   const trimmed = value.trim();
-  return trimmed.length <= 4096 ? trimmed : "";
+  return trimmed.length <= 4096 && isAbsoluteRuntimePath(trimmed) ? trimmed : "";
+}
+
+function isAbsoluteRuntimePath(value: string) {
+  return (
+    value.startsWith("/") ||
+    value.startsWith("\\") ||
+    /^[A-Za-z]:[\\/]/.test(value)
+  );
 }
 
 export function resolveFontFamilyCss(value: FontFamilyValue, fallback: FontFallbackKind = "sans") {
