@@ -9,6 +9,46 @@ pub(super) fn resolve_command_path(manifest_dir: &Path, command: &str) -> PathBu
     }
 }
 
+pub(super) struct AdapterCommandInvocation {
+    pub(super) program: PathBuf,
+    pub(super) args: Vec<String>,
+    pub(super) display_path: PathBuf,
+}
+
+pub(super) fn build_adapter_command_invocation(
+    manifest_dir: &Path,
+    command: &str,
+    args: &[String],
+) -> AdapterCommandInvocation {
+    let executable = resolve_command_path(manifest_dir, command);
+    if is_javascript_adapter_command(&executable) {
+        let mut node_args = Vec::with_capacity(args.len() + 1);
+        node_args.push(executable.to_string_lossy().to_string());
+        node_args.extend_from_slice(args);
+        return AdapterCommandInvocation {
+            program: PathBuf::from("node"),
+            args: node_args,
+            display_path: executable,
+        };
+    }
+    AdapterCommandInvocation {
+        program: executable.clone(),
+        args: args.to_vec(),
+        display_path: executable,
+    }
+}
+
+fn is_javascript_adapter_command(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "cjs" | "js" | "mjs"
+            )
+        })
+}
+
 pub(super) fn read_capped<R: Read>(mut reader: R, cap: usize) -> AppResult<Vec<u8>> {
     let mut output = Vec::new();
     let mut buffer = [0u8; 8192];

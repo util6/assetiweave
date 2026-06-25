@@ -94,6 +94,41 @@ fn adapter_output_rejects_missing_markdown_export_fields() {
 }
 
 #[test]
+fn adapter_command_invocation_runs_javascript_adapters_through_node() {
+    let manifest_dir = Path::new("/tmp/adapter");
+    let invocation =
+        build_adapter_command_invocation(manifest_dir, "adapter.mjs", &["--probe".to_string()]);
+
+    assert_eq!(invocation.program, PathBuf::from("node"));
+    assert_eq!(
+        invocation.args,
+        vec![
+            manifest_dir
+                .join("adapter.mjs")
+                .to_string_lossy()
+                .to_string(),
+            "--probe".to_string()
+        ]
+    );
+    assert_eq!(invocation.display_path, manifest_dir.join("adapter.mjs"));
+}
+
+#[test]
+fn adapter_command_invocation_treats_javascript_extensions_case_insensitively() {
+    let manifest_dir = Path::new("/tmp/adapter");
+    let invocation = build_adapter_command_invocation(manifest_dir, "adapter.MJS", &[]);
+
+    assert_eq!(invocation.program, PathBuf::from("node"));
+    assert_eq!(
+        invocation.args,
+        vec![manifest_dir
+            .join("adapter.MJS")
+            .to_string_lossy()
+            .to_string()]
+    );
+}
+
+#[test]
 fn external_adapter_scaffold_generates_export_markdown_fixtures() {
     let fixture = TempFixture::new("assetiweave-adapter-scaffold-fixture");
 

@@ -483,15 +483,20 @@ pub(super) fn run_external_adapter(
     let manifest_dir = Path::new(&validation.manifest_path)
         .parent()
         .ok_or_else(|| "adapter manifest path has no parent directory".to_string())?;
-    let executable = resolve_command_path(manifest_dir, &manifest.command[0]);
-    let args = manifest.command.iter().skip(1).collect::<Vec<_>>();
-    let mut child = Command::new(&executable)
-        .args(args)
+    let args = manifest.command.iter().skip(1).cloned().collect::<Vec<_>>();
+    let invocation = build_adapter_command_invocation(manifest_dir, &manifest.command[0], &args);
+    let mut child = Command::new(&invocation.program)
+        .args(&invocation.args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| format!("failed to start adapter {}: {error}", executable.display()))?;
+        .map_err(|error| {
+            format!(
+                "failed to start adapter {}: {error}",
+                invocation.display_path.display()
+            )
+        })?;
 
     let mut stdin = child
         .stdin
