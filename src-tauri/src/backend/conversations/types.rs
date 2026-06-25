@@ -16,10 +16,33 @@ pub(crate) struct ConversationAdapterManifest {
     pub(crate) version: String,
     #[serde(alias = "protocolVersion")]
     pub(crate) protocol_version: u32,
+    #[serde(default)]
     pub(crate) command: Vec<String>,
+    #[serde(default)]
+    pub(crate) runtime: Option<ConversationAdapterRuntime>,
     pub(crate) capabilities: Vec<String>,
     #[serde(alias = "inputKinds")]
     pub(crate) input_kinds: Vec<ConversationSourceKind>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct ConversationAdapterRuntime {
+    #[serde(rename = "type")]
+    pub(crate) kind: ConversationAdapterRuntimeKind,
+    pub(crate) entry: String,
+    #[serde(default)]
+    pub(crate) args: Vec<String>,
+    #[serde(default)]
+    pub(crate) version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ConversationAdapterRuntimeKind {
+    Node,
+    Python,
+    Bash,
+    Executable,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

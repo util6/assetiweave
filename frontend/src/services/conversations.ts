@@ -58,8 +58,18 @@ export interface ConversationAdapterManifest {
   version: string;
   protocol_version: number;
   command: string[];
+  runtime?: ConversationAdapterRuntime | null;
   capabilities: string[];
   input_kinds: ConversationSourceKind[];
+}
+
+export type ConversationAdapterRuntimeKind = "node" | "python" | "bash" | "executable";
+
+export interface ConversationAdapterRuntime {
+  type: ConversationAdapterRuntimeKind;
+  entry: string;
+  args?: string[];
+  version?: string | null;
 }
 
 export interface ConversationAdapterValidationResult {

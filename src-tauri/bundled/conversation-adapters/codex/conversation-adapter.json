@@ -4,6 +4,11 @@
   "name": "Codex",
   "version": "1.0.0",
   "protocol_version": 1,
+  "runtime": {
+    "type": "node",
+    "entry": "adapter.mjs",
+    "version": ">=20"
+  },
   "command": ["adapter.mjs"],
   "capabilities": ["probe", "list_sessions", "read_session", "export_markdown"],
   "input_kinds": ["live", "file"]

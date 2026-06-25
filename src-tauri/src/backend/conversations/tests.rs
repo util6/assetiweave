@@ -129,6 +129,129 @@ fn adapter_command_invocation_treats_javascript_extensions_case_insensitively() 
 }
 
 #[test]
+fn adapter_runtime_invocation_uses_declared_node_runtime() {
+    let manifest_dir = Path::new("/tmp/adapter");
+    let runtime = ConversationAdapterRuntime {
+        kind: ConversationAdapterRuntimeKind::Node,
+        entry: "adapter.mjs".to_string(),
+        args: vec!["--mode".to_string(), "probe".to_string()],
+        version: Some(">=20".to_string()),
+    };
+
+    let invocation =
+        build_adapter_runtime_invocation(manifest_dir, &runtime, &["--source".to_string()]);
+
+    assert_eq!(invocation.program, PathBuf::from("node"));
+    assert_eq!(
+        invocation.args,
+        vec![
+            manifest_dir
+                .join("adapter.mjs")
+                .to_string_lossy()
+                .to_string(),
+            "--mode".to_string(),
+            "probe".to_string(),
+            "--source".to_string()
+        ]
+    );
+    assert_eq!(invocation.display_path, manifest_dir.join("adapter.mjs"));
+}
+
+#[test]
+fn adapter_runtime_invocation_supports_python_and_bash() {
+    let manifest_dir = Path::new("/tmp/adapter");
+    let python = ConversationAdapterRuntime {
+        kind: ConversationAdapterRuntimeKind::Python,
+        entry: "adapter.py".to_string(),
+        args: Vec::new(),
+        version: Some(">=3.10".to_string()),
+    };
+    let bash = ConversationAdapterRuntime {
+        kind: ConversationAdapterRuntimeKind::Bash,
+        entry: "adapter.sh".to_string(),
+        args: Vec::new(),
+        version: None,
+    };
+
+    let python_invocation = build_adapter_runtime_invocation(manifest_dir, &python, &[]);
+    let bash_invocation = build_adapter_runtime_invocation(manifest_dir, &bash, &[]);
+
+    #[cfg(windows)]
+    {
+        assert_eq!(python_invocation.program, PathBuf::from("py"));
+        assert_eq!(python_invocation.args[0], "-3");
+        assert_eq!(
+            python_invocation.args[1],
+            manifest_dir
+                .join("adapter.py")
+                .to_string_lossy()
+                .to_string()
+        );
+    }
+    #[cfg(not(windows))]
+    {
+        assert_eq!(python_invocation.program, PathBuf::from("python3"));
+        assert_eq!(
+            python_invocation.args[0],
+            manifest_dir
+                .join("adapter.py")
+                .to_string_lossy()
+                .to_string()
+        );
+    }
+    assert_eq!(bash_invocation.program, PathBuf::from("bash"));
+    assert_eq!(
+        bash_invocation.args[0],
+        manifest_dir
+            .join("adapter.sh")
+            .to_string_lossy()
+            .to_string()
+    );
+}
+
+#[test]
+fn external_adapter_validation_accepts_runtime_without_legacy_command() {
+    let fixture = TempFixture::new("assetiweave-adapter-runtime-fixture");
+    let adapter_path = fixture.path().join("adapter.mjs");
+    fs::write(&adapter_path, "#!/usr/bin/env node\n").unwrap();
+    let manifest_path = fixture.path().join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "id": "fixture-runtime",
+            "name": "Fixture Runtime",
+            "version": "0.1.0",
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "runtime": {
+                "type": "node",
+                "entry": "adapter.mjs",
+                "version": ">=20"
+            },
+            "capabilities": ["probe", "read_session", "export_markdown"],
+            "input_kinds": ["directory"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let validation =
+        validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref()).unwrap();
+
+    assert_eq!(validation.executable_path, adapter_path.to_string_lossy());
+    assert!(validation.executable_hash.is_some());
+    assert!(validation.manifest.command.is_empty());
+    assert_eq!(
+        validation
+            .manifest
+            .runtime
+            .as_ref()
+            .map(|runtime| runtime.entry.as_str()),
+        Some("adapter.mjs")
+    );
+}
+
+#[test]
 fn external_adapter_scaffold_generates_export_markdown_fixtures() {
     let fixture = TempFixture::new("assetiweave-adapter-scaffold-fixture");
 
@@ -1157,6 +1280,7 @@ fn write_manifest(dir: &Path, command: Vec<String>) -> PathBuf {
         version: "0.1.0".to_string(),
         protocol_version: EXTERNAL_ADAPTER_PROTOCOL_VERSION,
         command,
+        runtime: None,
         capabilities: vec![
             "probe".to_string(),
             "list_sessions".to_string(),

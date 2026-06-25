@@ -9,10 +9,42 @@ pub(super) fn resolve_command_path(manifest_dir: &Path, command: &str) -> PathBu
     }
 }
 
+pub(super) fn resolve_adapter_entry_path(
+    manifest_dir: &Path,
+    manifest: &ConversationAdapterManifest,
+) -> AppResult<PathBuf> {
+    if let Some(runtime) = manifest.runtime.as_ref() {
+        return Ok(resolve_command_path(manifest_dir, &runtime.entry));
+    }
+    let command = manifest
+        .command
+        .first()
+        .ok_or_else(|| "adapter command must include an executable".to_string())?;
+    Ok(resolve_command_path(manifest_dir, command))
+}
+
 pub(super) struct AdapterCommandInvocation {
     pub(super) program: PathBuf,
     pub(super) args: Vec<String>,
     pub(super) display_path: PathBuf,
+}
+
+pub(super) fn build_adapter_invocation(
+    manifest_dir: &Path,
+    manifest: &ConversationAdapterManifest,
+) -> AppResult<AdapterCommandInvocation> {
+    if let Some(runtime) = manifest.runtime.as_ref() {
+        return Ok(build_adapter_runtime_invocation(manifest_dir, runtime, &[]));
+    }
+    let (command, args) = manifest
+        .command
+        .split_first()
+        .ok_or_else(|| "adapter command must include an executable".to_string())?;
+    Ok(build_adapter_command_invocation(
+        manifest_dir,
+        command,
+        args,
+    ))
 }
 
 pub(super) fn build_adapter_command_invocation(
@@ -35,6 +67,53 @@ pub(super) fn build_adapter_command_invocation(
         program: executable.clone(),
         args: args.to_vec(),
         display_path: executable,
+    }
+}
+
+pub(super) fn build_adapter_runtime_invocation(
+    manifest_dir: &Path,
+    runtime: &ConversationAdapterRuntime,
+    call_args: &[String],
+) -> AdapterCommandInvocation {
+    let entry_path = resolve_command_path(manifest_dir, &runtime.entry);
+    if matches!(runtime.kind, ConversationAdapterRuntimeKind::Executable) {
+        let mut args = runtime.args.clone();
+        args.extend_from_slice(call_args);
+        return AdapterCommandInvocation {
+            program: entry_path.clone(),
+            args,
+            display_path: entry_path,
+        };
+    }
+    let mut args = runtime_args(&runtime.kind);
+    args.push(entry_path.to_string_lossy().to_string());
+    args.extend_from_slice(&runtime.args);
+    args.extend_from_slice(call_args);
+
+    AdapterCommandInvocation {
+        program: runtime_program(&runtime.kind),
+        args,
+        display_path: entry_path,
+    }
+}
+
+fn runtime_program(kind: &ConversationAdapterRuntimeKind) -> PathBuf {
+    match kind {
+        ConversationAdapterRuntimeKind::Node => PathBuf::from("node"),
+        #[cfg(windows)]
+        ConversationAdapterRuntimeKind::Python => PathBuf::from("py"),
+        #[cfg(not(windows))]
+        ConversationAdapterRuntimeKind::Python => PathBuf::from("python3"),
+        ConversationAdapterRuntimeKind::Bash => PathBuf::from("bash"),
+        ConversationAdapterRuntimeKind::Executable => PathBuf::new(),
+    }
+}
+
+fn runtime_args(kind: &ConversationAdapterRuntimeKind) -> Vec<String> {
+    match kind {
+        #[cfg(windows)]
+        ConversationAdapterRuntimeKind::Python => vec!["-3".to_string()],
+        _ => Vec::new(),
     }
 }
 

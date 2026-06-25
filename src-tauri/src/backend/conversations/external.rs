@@ -228,7 +228,13 @@ pub(crate) fn scaffold_external_adapter(
         name: params.name,
         version: "0.1.0".to_string(),
         protocol_version: EXTERNAL_ADAPTER_PROTOCOL_VERSION,
-        command: vec!["/absolute/path/to/adapter-executable".to_string()],
+        command: Vec::new(),
+        runtime: Some(ConversationAdapterRuntime {
+            kind: ConversationAdapterRuntimeKind::Executable,
+            entry: "/absolute/path/to/adapter-executable".to_string(),
+            args: Vec::new(),
+            version: None,
+        }),
         capabilities: vec![
             "probe".to_string(),
             "list_sessions".to_string(),
@@ -420,7 +426,7 @@ pub(super) fn validate_external_adapter_manifest(
     let manifest_dir = path
         .parent()
         .ok_or_else(|| "adapter manifest path has no parent directory".to_string())?;
-    let executable_path = resolve_command_path(manifest_dir, &manifest.command[0]);
+    let executable_path = resolve_adapter_entry_path(manifest_dir, &manifest)?;
     let executable_hash = if executable_path.is_file() {
         Some(hash_file(&executable_path)?)
     } else {
@@ -459,8 +465,23 @@ fn validate_manifest_shape(manifest: &ConversationAdapterManifest) -> AppResult<
     if manifest.name.trim().is_empty() {
         return Err("adapter name is required".to_string());
     }
-    if manifest.command.is_empty() || manifest.command[0].trim().is_empty() {
-        return Err("adapter command must include an executable".to_string());
+    match manifest.runtime.as_ref() {
+        Some(runtime) => {
+            if runtime.entry.trim().is_empty() {
+                return Err("adapter runtime entry is required".to_string());
+            }
+            if runtime
+                .version
+                .as_deref()
+                .is_some_and(|version| version.trim().is_empty())
+            {
+                return Err("adapter runtime version must not be empty".to_string());
+            }
+        }
+        None if manifest.command.is_empty() || manifest.command[0].trim().is_empty() => {
+            return Err("adapter command must include an executable".to_string());
+        }
+        None => {}
     }
     for capability in &manifest.capabilities {
         if !matches!(
@@ -483,8 +504,7 @@ pub(super) fn run_external_adapter(
     let manifest_dir = Path::new(&validation.manifest_path)
         .parent()
         .ok_or_else(|| "adapter manifest path has no parent directory".to_string())?;
-    let args = manifest.command.iter().skip(1).cloned().collect::<Vec<_>>();
-    let invocation = build_adapter_command_invocation(manifest_dir, &manifest.command[0], &args);
+    let invocation = build_adapter_invocation(manifest_dir, manifest)?;
     let mut child = Command::new(&invocation.program)
         .args(&invocation.args)
         .stdin(Stdio::piped())
