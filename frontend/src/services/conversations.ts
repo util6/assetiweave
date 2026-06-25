@@ -85,6 +85,7 @@ export interface ConversationAdapterRuntimeStatus {
 export interface ConversationAdapterValidationResult {
   valid: boolean;
   manifest_path: string;
+  content_hash: string;
   manifest_hash: string;
   executable_path: string;
   executable_hash: string | null;
@@ -385,6 +386,7 @@ function fallbackConversationAdapterValidation(
   return {
     valid: true,
     manifest_path: manifestPath,
+    content_hash: "preview-content-hash",
     manifest_hash: "preview-manifest-hash",
     executable_path: `${manifestPath.replace(/\/[^/]*$/, "")}/adapter`,
     executable_hash: "preview-executable-hash",
@@ -416,8 +418,8 @@ function conversationAdapterFromValidation(
     enabled: true,
     manifest_path: validation.manifest_path,
     executable_path: validation.executable_path,
-    content_hash: validation.executable_hash,
-    trusted_hash: validation.executable_hash ?? validation.manifest_hash,
+    content_hash: validation.content_hash,
+    trusted_hash: validation.content_hash,
     trust_state: "trusted",
     protocol_version: validation.manifest.protocol_version,
     capabilities: validation.manifest.capabilities,

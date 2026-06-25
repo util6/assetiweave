@@ -86,6 +86,7 @@ describe("conversation services", () => {
       .mockResolvedValueOnce({
         valid: true,
         manifest_path: "/tmp/adapter/conversation-adapter.json",
+        content_hash: "adapter-content-hash",
         manifest_hash: "manifest-hash",
         executable_path: "/tmp/adapter/run",
         executable_hash: "exe-hash",
@@ -111,8 +112,8 @@ describe("conversation services", () => {
           enabled: true,
           manifest_path: "/tmp/adapter/conversation-adapter.json",
           executable_path: "/tmp/adapter/run",
-          content_hash: "exe-hash",
-          trusted_hash: "exe-hash",
+          content_hash: "adapter-content-hash",
+          trusted_hash: "adapter-content-hash",
           trust_state: "trusted",
           protocol_version: 1,
           capabilities: ["read_session", "web_records"],

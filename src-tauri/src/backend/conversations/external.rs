@@ -169,9 +169,7 @@ fn validate_external_adapter_manifest_for_method(
         ));
     }
     if let Some(trusted_hash) = adapter.trusted_hash.as_deref() {
-        let executable_matches = validation.executable_hash.as_deref() == Some(trusted_hash);
-        let manifest_matches = validation.manifest_hash == trusted_hash;
-        if !executable_matches && !manifest_matches {
+        if validation.content_hash != trusted_hash {
             return Err(format!(
                 "external conversation adapter trusted hash mismatch: {}",
                 adapter.id
@@ -526,11 +524,8 @@ pub(crate) fn register_external_adapter(params: ExternalAdapterRegisterParams) -
         enabled: true,
         manifest_path: Some(validation.manifest_path.clone()),
         executable_path: Some(validation.executable_path.clone()),
-        content_hash: validation.executable_hash.clone(),
-        trusted_hash: validation
-            .executable_hash
-            .clone()
-            .or(Some(validation.manifest_hash.clone())),
+        content_hash: Some(validation.content_hash.clone()),
+        trusted_hash: Some(validation.content_hash.clone()),
         trust_state: ConversationAdapterTrustState::Trusted,
         protocol_version: Some(validation.manifest.protocol_version),
         capabilities: validation.manifest.capabilities.clone(),
@@ -634,6 +629,8 @@ pub(super) fn validate_external_adapter_manifest(
     } else {
         None
     };
+    let manifest_hash = hash_bytes(manifest_text.as_bytes());
+    let content_hash = adapter_content_hash(&manifest_hash, executable_hash.as_deref());
     let mut warnings = Vec::new();
     if executable_hash.is_none() {
         warnings.push(format!(
@@ -644,12 +641,18 @@ pub(super) fn validate_external_adapter_manifest(
     Ok(ExternalAdapterValidationResult {
         valid: true,
         manifest_path: path.to_string_lossy().to_string(),
-        manifest_hash: hash_bytes(manifest_text.as_bytes()),
+        content_hash,
+        manifest_hash,
         executable_path: executable_path.to_string_lossy().to_string(),
         executable_hash,
         manifest,
         warnings,
     })
+}
+
+fn adapter_content_hash(manifest_hash: &str, executable_hash: Option<&str>) -> String {
+    let executable_hash = executable_hash.unwrap_or("");
+    hash_bytes(format!("manifest:{manifest_hash}\nexecutable:{executable_hash}").as_bytes())
 }
 
 fn validate_manifest_shape(manifest: &ConversationAdapterManifest) -> AppResult<()> {

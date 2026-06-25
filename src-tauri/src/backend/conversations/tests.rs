@@ -848,6 +848,59 @@ printf '%s\n' '{"type":"complete","item":{}}'
 
 #[cfg(unix)]
 #[test]
+fn external_adapter_validation_content_hash_changes_when_manifest_changes() {
+    let fixture = TempFixture::new("assetiweave-adapter-manifest-hash-fixture");
+    let script = write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"complete","item":{}}'
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+    let before = validate_external_adapter(ExternalAdapterValidateParams {
+        manifest_path: manifest.to_string_lossy().to_string(),
+    })
+    .unwrap();
+
+    let relative_script = script
+        .strip_prefix(fixture.path())
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    let changed_manifest = ConversationAdapterManifest {
+        schema_version: 1,
+        id: "fixture-external".to_string(),
+        name: "Fixture External".to_string(),
+        version: "0.1.0".to_string(),
+        protocol_version: EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+        command: vec![relative_script, "--changed".to_string()],
+        runtime: None,
+        capabilities: vec![
+            "probe".to_string(),
+            "list_sessions".to_string(),
+            "read_session".to_string(),
+            "export_markdown".to_string(),
+        ],
+        input_kinds: vec![ConversationSourceKind::Directory],
+    };
+    fs::write(
+        &manifest,
+        serde_json::to_string_pretty(&changed_manifest).unwrap(),
+    )
+    .unwrap();
+    let after = validate_external_adapter(ExternalAdapterValidateParams {
+        manifest_path: manifest.to_string_lossy().to_string(),
+    })
+    .unwrap();
+
+    assert_eq!(before.executable_hash, after.executable_hash);
+    assert_ne!(before.content_hash, after.content_hash);
+}
+
+#[cfg(unix)]
+#[test]
 fn external_adapter_try_run_parses_sessions_without_shell_joining_args() {
     let fixture = TempFixture::new("assetiweave-adapter-run-fixture");
     let hacked_path = fixture.path().join("hacked");

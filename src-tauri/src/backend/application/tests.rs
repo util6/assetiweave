@@ -660,6 +660,90 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
 
 #[cfg(unix)]
 #[test]
+fn conversation_session_export_rejects_manifest_tampering_after_trust() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-export-manifest-tamper-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create test root");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let script = write_executable_script(
+        &root,
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"item","item":{"kind":"markdown_export","content":"adapter markdown export","relative_path":"plugin/export.md"}}'
+printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
+"#,
+    );
+    let session_id = upsert_conversation_export_fixture(
+        &service,
+        &root,
+        vec!["export_markdown".to_string()],
+        Some(&script),
+        false,
+    );
+    let adapter = load_export_fixture_adapter(&service, &session_id);
+    let manifest_path = adapter.manifest_path.clone().expect("manifest path");
+    let validation = crate::backend::conversations::validate_external_adapter(
+        crate::backend::conversations::ExternalAdapterValidateParams {
+            manifest_path: manifest_path.clone(),
+        },
+    )
+    .expect("validate adapter");
+    let pool = service.db.pool().clone();
+    let trusted_hash = validation.content_hash.clone();
+    let adapter_id = adapter.id.clone();
+    service
+        .db
+        .block_on(async move {
+            sqlx::query(
+                "UPDATE conversation_adapters SET content_hash = ?, trusted_hash = ? WHERE id = ?",
+            )
+            .bind(&trusted_hash)
+            .bind(&trusted_hash)
+            .bind(&adapter_id)
+            .execute(&pool)
+            .await
+            .map_err(|error| error.to_string())?;
+            AppResult::Ok(())
+        })
+        .expect("store trusted hash");
+
+    fs::write(
+        &manifest_path,
+        serde_json::json!({
+            "schema_version": 1,
+            "id": adapter.id,
+            "name": "Fixture export adapter",
+            "version": "0.1.0",
+            "protocol_version": 1,
+            "command": [adapter_manifest_entry(&root, &script), "--changed"],
+            "capabilities": ["export_markdown"],
+            "input_kinds": ["directory"]
+        })
+        .to_string(),
+    )
+    .expect("rewrite manifest with changed args");
+
+    let error = service
+        .export_conversation_session(ConversationSessionExportParams {
+            session_id,
+            output_root: root.join("exports").to_string_lossy().to_string(),
+            question_ids: Vec::new(),
+            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            dry_run: true,
+        })
+        .expect_err("manifest tampering should fail trusted hash check");
+
+    assert!(error.contains("trusted hash mismatch"));
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(unix)]
+#[test]
 fn conversation_session_export_rejects_symlink_escape_under_output_root() {
     use std::os::unix::fs::symlink;
 

@@ -103,6 +103,7 @@ pub(crate) struct ExternalAdapterTryRunParams {
 pub(crate) struct ExternalAdapterValidationResult {
     pub(crate) valid: bool,
     pub(crate) manifest_path: String,
+    pub(crate) content_hash: String,
     pub(crate) manifest_hash: String,
     pub(crate) executable_path: String,
     pub(crate) executable_hash: Option<String>,

@@ -61,11 +61,8 @@ pub(crate) fn ensure_official_conversation_adapters() -> AppResult<Vec<Conversat
             enabled: true,
             manifest_path: Some(validation.manifest_path.clone()),
             executable_path: Some(validation.executable_path.clone()),
-            content_hash: validation.executable_hash.clone(),
-            trusted_hash: validation
-                .executable_hash
-                .clone()
-                .or(Some(validation.manifest_hash.clone())),
+            content_hash: Some(validation.content_hash.clone()),
+            trusted_hash: Some(validation.content_hash.clone()),
             trust_state: ConversationAdapterTrustState::BuiltIn,
             protocol_version: Some(validation.manifest.protocol_version),
             capabilities: validation.manifest.capabilities.clone(),
