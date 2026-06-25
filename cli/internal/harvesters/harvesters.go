@@ -134,6 +134,11 @@ type RunResult struct {
 	NormalizedFile string   `json:"normalized_file,omitempty"`
 }
 
+type entrypointInvocation struct {
+	Program string
+	Args    []string
+}
+
 func DefaultRoot() (string, error) {
 	if root := strings.TrimSpace(os.Getenv(rootEnv)); root != "" {
 		return filepath.Clean(root), nil
@@ -711,7 +716,7 @@ func Run(options RunOptions) (RunResult, error) {
 	if len(manifest.Entrypoint) == 0 || strings.TrimSpace(manifest.Entrypoint[0]) == "" {
 		return RunResult{}, validationError("harvester %q has no entrypoint", options.ID)
 	}
-	commandPath, err := resolveCommand(directory, manifest.Entrypoint[0])
+	invocation, err := resolveEntrypointInvocation(directory, manifest.Entrypoint)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -721,9 +726,9 @@ func Run(options RunOptions) (RunResult, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	args := append([]string{}, manifest.Entrypoint[1:]...)
+	args := append([]string{}, invocation.Args...)
 	args = append(args, options.Args...)
-	command := exec.CommandContext(ctx, commandPath, args...)
+	command := exec.CommandContext(ctx, invocation.Program, args...)
 	command.Dir = directory
 	command.Env = append(os.Environ(),
 		"ASSETIWEAVE_HARVESTER_DIR="+directory,
@@ -745,7 +750,7 @@ func Run(options RunOptions) (RunResult, error) {
 		return RunResult{
 				ID:        manifest.ID,
 				Directory: directory,
-				Command:   append([]string{commandPath}, args...),
+				Command:   append([]string{invocation.Program}, args...),
 				ExitCode:  exitCode,
 				Stdout:    stdoutText,
 				Stderr:    stderrText,
@@ -762,7 +767,7 @@ func Run(options RunOptions) (RunResult, error) {
 	return RunResult{
 		ID:             manifest.ID,
 		Directory:      directory,
-		Command:        append([]string{commandPath}, args...),
+		Command:        append([]string{invocation.Program}, args...),
 		ExitCode:       0,
 		Stdout:         cappedString(stdout.String(), 64*1024),
 		Stderr:         cappedString(stderr.String(), 64*1024),
@@ -836,6 +841,24 @@ func validateID(id string) error {
 	return nil
 }
 
+func resolveEntrypointInvocation(directory string, entrypoint []string) (entrypointInvocation, error) {
+	if len(entrypoint) == 0 || strings.TrimSpace(entrypoint[0]) == "" {
+		return entrypointInvocation{}, validationError("harvester entrypoint is required")
+	}
+	commandPath, err := resolveCommand(directory, entrypoint[0])
+	if err != nil {
+		return entrypointInvocation{}, err
+	}
+	args := append([]string{}, entrypoint[1:]...)
+	if isJavaScriptEntrypoint(commandPath) {
+		return entrypointInvocation{
+			Program: "node",
+			Args:    append([]string{commandPath}, args...),
+		}, nil
+	}
+	return entrypointInvocation{Program: commandPath, Args: args}, nil
+}
+
 func resolveCommand(directory, command string) (string, error) {
 	command = strings.TrimSpace(command)
 	if filepath.IsAbs(command) {
@@ -856,6 +879,15 @@ func resolveCommand(directory, command string) (string, error) {
 		return "", validationError("harvester entrypoint is a directory: %s", path)
 	}
 	return path, nil
+}
+
+func isJavaScriptEntrypoint(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".cjs", ".js", ".mjs":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveNormalizedFile(directory string, manifest Manifest) string {

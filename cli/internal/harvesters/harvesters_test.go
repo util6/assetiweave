@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -286,6 +287,30 @@ func TestRunExecutesRelativeEntrypoint(t *testing.T) {
 	}
 	if result.NormalizedFile != filepath.Join(dir, "output", "normalized", "sessions.json") {
 		t.Fatalf("NormalizedFile = %s", result.NormalizedFile)
+	}
+}
+
+func TestResolveEntrypointInvocationRunsJavaScriptThroughNode(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "demo-web")
+	script := filepath.Join(dir, "scripts", "harvest.js")
+	if err := os.MkdirAll(filepath.Dir(script), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(script, []byte("\n"), 0o600); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	invocation, err := resolveEntrypointInvocation(dir, []string{"scripts/harvest.js", "--once"})
+	if err != nil {
+		t.Fatalf("resolveEntrypointInvocation() error = %v", err)
+	}
+
+	if invocation.Program != "node" {
+		t.Fatalf("Program = %q, want node", invocation.Program)
+	}
+	if got, want := invocation.Args, []string{script, "--once"}; !slices.Equal(got, want) {
+		t.Fatalf("Args = %#v, want %#v", got, want)
 	}
 }
 
