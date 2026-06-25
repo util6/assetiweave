@@ -222,6 +222,7 @@ pub(crate) fn scaffold_external_adapter(
 
     fs::create_dir_all(request_fixture_path.parent().unwrap())
         .map_err(|error| error.to_string())?;
+    let runtime = scaffold_adapter_runtime(&params)?;
     let manifest = ConversationAdapterManifest {
         schema_version: 1,
         id: params.id,
@@ -229,12 +230,7 @@ pub(crate) fn scaffold_external_adapter(
         version: "0.1.0".to_string(),
         protocol_version: EXTERNAL_ADAPTER_PROTOCOL_VERSION,
         command: Vec::new(),
-        runtime: Some(ConversationAdapterRuntime {
-            kind: ConversationAdapterRuntimeKind::Executable,
-            entry: "adapter-executable".to_string(),
-            args: Vec::new(),
-            version: None,
-        }),
+        runtime: Some(runtime),
         capabilities: vec![
             "probe".to_string(),
             "list_sessions".to_string(),
@@ -310,6 +306,57 @@ pub(crate) fn scaffold_external_adapter(
         export_request_fixture_path: export_request_fixture_path.to_string_lossy().to_string(),
         export_response_fixture_path: export_response_fixture_path.to_string_lossy().to_string(),
     })
+}
+
+fn scaffold_adapter_runtime(
+    params: &ExternalAdapterScaffoldParams,
+) -> AppResult<ConversationAdapterRuntime> {
+    let kind = params
+        .runtime_type
+        .clone()
+        .unwrap_or(ConversationAdapterRuntimeKind::Node);
+    let entry = match params.runtime_entry.as_deref() {
+        Some(entry) if entry.trim().is_empty() => {
+            return Err("adapter runtime entry must not be empty".to_string());
+        }
+        Some(entry) => entry.trim().to_string(),
+        None => default_scaffold_runtime_entry(&kind).to_string(),
+    };
+    validate_adapter_entry_path("adapter runtime entry", &entry)?;
+    let version = match params.runtime_version.as_deref() {
+        Some(version) if version.trim().is_empty() => {
+            return Err("adapter runtime version must not be empty".to_string());
+        }
+        Some(version) => {
+            let version = version.trim().to_string();
+            validate_runtime_version_constraint(&version)?;
+            Some(version)
+        }
+        None => default_scaffold_runtime_version(&kind).map(str::to_string),
+    };
+    Ok(ConversationAdapterRuntime {
+        kind,
+        entry,
+        args: Vec::new(),
+        version,
+    })
+}
+
+fn default_scaffold_runtime_entry(kind: &ConversationAdapterRuntimeKind) -> &'static str {
+    match kind {
+        ConversationAdapterRuntimeKind::Node => "adapter.mjs",
+        ConversationAdapterRuntimeKind::Python => "adapter.py",
+        ConversationAdapterRuntimeKind::Bash => "adapter.sh",
+        ConversationAdapterRuntimeKind::Executable => "adapter-executable",
+    }
+}
+
+fn default_scaffold_runtime_version(kind: &ConversationAdapterRuntimeKind) -> Option<&'static str> {
+    match kind {
+        ConversationAdapterRuntimeKind::Node => Some(">=20"),
+        ConversationAdapterRuntimeKind::Python => Some(">=3.10"),
+        ConversationAdapterRuntimeKind::Bash | ConversationAdapterRuntimeKind::Executable => None,
+    }
 }
 
 pub(crate) fn validate_external_adapter(

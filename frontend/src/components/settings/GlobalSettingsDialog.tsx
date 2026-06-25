@@ -1081,7 +1081,7 @@ export function GlobalSettingsDialog({
                 />
                 <SettingRow icon={<Code2 size={18} />} label={t("settings.conversation.adapterWorkflow")}>
                   <div className="w-[min(36rem,52vw)] rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface-variant">
-                    assetiweave-cli conversation adapter scaffold --directory {storageInfo.conversationAdapterDir}
+                    assetiweave-cli conversation adapter scaffold --directory {storageInfo.conversationAdapterDir} --runtime node
                   </div>
                 </SettingRow>
                 <ConversationRuntimeOverrideRow

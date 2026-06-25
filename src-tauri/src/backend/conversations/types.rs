@@ -71,6 +71,12 @@ pub(crate) struct ExternalAdapterScaffoldParams {
     pub(crate) directory: String,
     pub(crate) id: String,
     pub(crate) name: String,
+    #[serde(default, alias = "runtimeType")]
+    pub(crate) runtime_type: Option<ConversationAdapterRuntimeKind>,
+    #[serde(default, alias = "runtimeEntry")]
+    pub(crate) runtime_entry: Option<String>,
+    #[serde(default, alias = "runtimeVersion")]
+    pub(crate) runtime_version: Option<String>,
     #[serde(default, alias = "dryRun")]
     pub(crate) dry_run: bool,
 }

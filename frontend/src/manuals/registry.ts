@@ -460,7 +460,7 @@ export const manualDocuments = [
           ],
           items: [
             "先列出现有适配器：assetiweave-cli conversation adapter list。",
-            "创建外部适配器骨架：assetiweave-cli conversation adapter scaffold --directory ~/.assetiweave/conversation-adapters/my-adapter --id my-app --name \"My App\"。",
+            "创建外部适配器骨架：assetiweave-cli conversation adapter scaffold --directory ~/.assetiweave/conversation-adapters/my-adapter --id my-app --name \"My App\" --runtime node。",
             "校验 manifest：assetiweave-cli conversation adapter validate ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json。",
             "试运行读取能力：assetiweave-cli conversation adapter try-run ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json --method read_session --location ~/my-app-records --yes。",
             "注册适配器并新增来源：assetiweave-cli conversation adapter register ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json --yes；assetiweave-cli conversation source add --id my-app-live --adapter my-app --name \"My App Live\" --kind directory --location ~/my-app-records。",
@@ -549,7 +549,7 @@ export const manualDocuments = [
           ],
           items: [
             "List adapters: assetiweave-cli conversation adapter list.",
-            "Create a skeleton: assetiweave-cli conversation adapter scaffold --directory ~/.assetiweave/conversation-adapters/my-adapter --id my-app --name \"My App\".",
+            "Create a skeleton: assetiweave-cli conversation adapter scaffold --directory ~/.assetiweave/conversation-adapters/my-adapter --id my-app --name \"My App\" --runtime node.",
             "Validate the manifest: assetiweave-cli conversation adapter validate ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json.",
             "Try a read method: assetiweave-cli conversation adapter try-run ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json --method read_session --location ~/my-app-records --yes.",
             "Register the adapter and add a source: assetiweave-cli conversation adapter register ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json --yes; assetiweave-cli conversation source add --id my-app-live --adapter my-app --name \"My App Live\" --kind directory --location ~/my-app-records.",

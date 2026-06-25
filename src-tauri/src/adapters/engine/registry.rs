@@ -656,7 +656,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
     command!(
         "conversation.adapter.scaffold",
         "conversation.adapter.scaffold",
-        "Create a language-neutral conversation adapter manifest scaffold",
+        "Create a system-runtime conversation adapter manifest scaffold",
         Write,
         Friendly,
         true,
@@ -666,9 +666,12 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("directory", "Directory where scaffold files will be created"),
             param!("id", "Adapter identifier"),
             param!("name", "Adapter display name"),
+            param!("runtime_type", "Adapter runtime: node, python, bash, or executable", ["runtimeType"]),
+            param!("runtime_entry", "Adapter entry path relative to the adapter directory", ["runtimeEntry"]),
+            param!("runtime_version", "Runtime version requirement such as >=20 or >=3.10", ["runtimeVersion"]),
             param!("dry_run", "Preview without writing files", ["dryRun"]),
         ],
-        Some("assetiweave-cli conversation adapter scaffold --directory <dir> --id <id> --name <name>")
+        Some("assetiweave-cli conversation adapter scaffold --directory <dir> --id <id> --name <name> --runtime node")
     ),
     command!(
         "conversation.adapter.validate",
@@ -1677,7 +1680,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
     command!(
         "scaffold_conversation_adapter",
         "conversation.adapter.scaffold",
-        "Create a language-neutral conversation adapter manifest scaffold",
+        "Create a system-runtime conversation adapter manifest scaffold",
         Write,
         App,
         false,
@@ -1687,6 +1690,9 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("directory", "Directory where scaffold files will be created"),
             param!("id", "Adapter identifier"),
             param!("name", "Adapter display name"),
+            param!("runtime_type", "Adapter runtime: node, python, bash, or executable", ["runtimeType"]),
+            param!("runtime_entry", "Adapter entry path relative to the adapter directory", ["runtimeEntry"]),
+            param!("runtime_version", "Runtime version requirement such as >=20 or >=3.10", ["runtimeVersion"]),
             param!("dry_run", "Preview without writing files", ["dryRun"]),
         ],
         None

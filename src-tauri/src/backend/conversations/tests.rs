@@ -626,19 +626,20 @@ fn external_adapter_scaffold_generates_export_markdown_fixtures() {
         directory: fixture.path().to_string_lossy().to_string(),
         id: "fixture-external".to_string(),
         name: "Fixture External".to_string(),
+        runtime_type: None,
+        runtime_entry: None,
+        runtime_version: None,
         dry_run: false,
     })
     .unwrap();
 
     let manifest: ConversationAdapterManifest =
         serde_json::from_str(&fs::read_to_string(&result.manifest_path).unwrap()).unwrap();
-    assert_eq!(
-        manifest
-            .runtime
-            .as_ref()
-            .map(|runtime| runtime.entry.as_str()),
-        Some("adapter-executable")
-    );
+    let runtime = manifest.runtime.as_ref().expect("scaffold runtime");
+    assert_eq!(runtime.kind, ConversationAdapterRuntimeKind::Node);
+    assert_eq!(runtime.entry, "adapter.mjs");
+    assert_eq!(runtime.version.as_deref(), Some(">=20"));
+    assert_eq!(runtime.args, Vec::<String>::new());
     validate_external_adapter_manifest(&result.manifest_path).unwrap();
     assert!(manifest
         .capabilities
@@ -659,6 +660,30 @@ fn external_adapter_scaffold_generates_export_markdown_fixtures() {
     let export = parsed.markdown_export.expect("markdown export fixture");
     assert_eq!(export.relative_path, "example/Example-session.md");
     assert!(export.content.contains("## 1. Example question"));
+}
+
+#[test]
+fn external_adapter_scaffold_allows_explicit_runtime() {
+    let fixture = TempFixture::new("assetiweave-adapter-scaffold-runtime-fixture");
+
+    let result = scaffold_external_adapter(ExternalAdapterScaffoldParams {
+        directory: fixture.path().to_string_lossy().to_string(),
+        id: "fixture-python".to_string(),
+        name: "Fixture Python".to_string(),
+        runtime_type: Some(ConversationAdapterRuntimeKind::Python),
+        runtime_entry: Some("parser.py".to_string()),
+        runtime_version: Some(">=3.11".to_string()),
+        dry_run: false,
+    })
+    .unwrap();
+
+    let manifest: ConversationAdapterManifest =
+        serde_json::from_str(&fs::read_to_string(&result.manifest_path).unwrap()).unwrap();
+    let runtime = manifest.runtime.as_ref().expect("scaffold runtime");
+    assert_eq!(runtime.kind, ConversationAdapterRuntimeKind::Python);
+    assert_eq!(runtime.entry, "parser.py");
+    assert_eq!(runtime.version.as_deref(), Some(">=3.11"));
+    validate_external_adapter_manifest(&result.manifest_path).unwrap();
 }
 
 #[test]

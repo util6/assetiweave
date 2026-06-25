@@ -402,23 +402,37 @@ func newCmdConversationAdapter(f *cmdutil.Factory) *cobra.Command {
 }
 
 func newCmdConversationAdapterScaffold(f *cmdutil.Factory) *cobra.Command {
-	var directory, id, name string
+	var directory, id, name, runtimeType, runtimeEntry, runtimeVersion string
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "scaffold",
-		Short: "Create a language-neutral adapter manifest scaffold",
+		Short: "Create a system-runtime adapter manifest scaffold",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return callAndPrint(cmd, f, schema.MethodConversationAdapterScaffold, map[string]any{
+			params := map[string]any{
 				"directory": directory,
 				"id":        id,
 				"name":      name,
 				"dry_run":   dryRun,
-			})
+			}
+			if runtimeType != "" {
+				params["runtime_type"] = runtimeType
+			}
+			if runtimeEntry != "" {
+				params["runtime_entry"] = runtimeEntry
+			}
+			if runtimeVersion != "" {
+				params["runtime_version"] = runtimeVersion
+			}
+			return callAndPrint(cmd, f, schema.MethodConversationAdapterScaffold, params)
 		},
 	}
 	cmd.Flags().StringVar(&directory, "directory", "", "directory where scaffold files will be created")
 	cmd.Flags().StringVar(&id, "id", "", "adapter id")
 	cmd.Flags().StringVar(&name, "name", "", "adapter display name")
+	cmd.Flags().StringVar(&runtimeType, "runtime", "", "adapter runtime: node, python, bash, or executable")
+	cmd.Flags().StringVar(&runtimeType, "runtime-type", "", "alias of --runtime")
+	cmd.Flags().StringVar(&runtimeEntry, "runtime-entry", "", "adapter entry path relative to the adapter directory")
+	cmd.Flags().StringVar(&runtimeVersion, "runtime-version", "", "runtime version requirement such as >=20 or >=3.10")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without writing files")
 	_ = cmd.MarkFlagRequired("directory")
 	_ = cmd.MarkFlagRequired("id")
