@@ -1,3 +1,7 @@
+use super::io_utils::{
+    build_adapter_runtime_invocation, ensure_adapter_runtime_available, AdapterCommandInvocation,
+    LEGACY_JAVASCRIPT_COMMAND_NODE_VERSION,
+};
 use super::prelude::*;
 
 const HARVESTER_MANIFEST_FILE: &str = "harvester.json";
@@ -20,16 +24,13 @@ pub(crate) fn run_conversation_harvester_for_source(source: &ConversationSource)
     let manifest_text = fs::read_to_string(&manifest_path).map_err(|error| error.to_string())?;
     let manifest: HarvesterManifest =
         serde_json::from_str(&manifest_text).map_err(|error| error.to_string())?;
-    let command_path = resolve_harvester_command(&source_dir, &manifest)?;
-    let args = manifest
-        .entrypoint
-        .iter()
-        .skip(1)
-        .cloned()
-        .collect::<Vec<_>>();
+    let invocation = resolve_harvester_invocation(&source_dir, &manifest)?;
+    if let Some(runtime) = harvester_entrypoint_runtime(&manifest) {
+        ensure_adapter_runtime_available(&runtime, &invocation)?;
+    }
 
-    let mut child = Command::new(&command_path)
-        .args(&args)
+    let mut child = Command::new(&invocation.program)
+        .args(&invocation.args)
         .current_dir(&source_dir)
         .env("ASSETIWEAVE_HARVESTER_DIR", &source_dir)
         .env("ASSETIWEAVE_HARVESTER_ID", &manifest.id)
@@ -81,7 +82,10 @@ pub(crate) fn run_conversation_harvester_for_source(source: &ConversationSource)
     }
 }
 
-fn resolve_harvester_command(root: &Path, manifest: &HarvesterManifest) -> AppResult<PathBuf> {
+fn resolve_harvester_invocation(
+    root: &Path,
+    manifest: &HarvesterManifest,
+) -> AppResult<AdapterCommandInvocation> {
     let raw_command = manifest
         .entrypoint
         .first()
@@ -107,7 +111,40 @@ fn resolve_harvester_command(root: &Path, manifest: &HarvesterManifest) -> AppRe
             command_path.to_string_lossy()
         ));
     }
-    Ok(command_path)
+    if let Some(runtime) = harvester_entrypoint_runtime(manifest) {
+        return Ok(build_adapter_runtime_invocation(root, &runtime, &[]));
+    }
+    Ok(AdapterCommandInvocation {
+        program: command_path.clone(),
+        args: manifest.entrypoint.iter().skip(1).cloned().collect(),
+        display_path: command_path,
+    })
+}
+
+fn harvester_entrypoint_runtime(
+    manifest: &HarvesterManifest,
+) -> Option<ConversationAdapterRuntime> {
+    let (entry, args) = manifest.entrypoint.split_first()?;
+    if !is_javascript_harvester_entrypoint(Path::new(entry)) {
+        return None;
+    }
+    Some(ConversationAdapterRuntime {
+        kind: ConversationAdapterRuntimeKind::Node,
+        entry: entry.trim().to_string(),
+        args: args.to_vec(),
+        version: Some(LEGACY_JAVASCRIPT_COMMAND_NODE_VERSION.to_string()),
+    })
+}
+
+fn is_javascript_harvester_entrypoint(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "cjs" | "js" | "mjs"
+            )
+        })
 }
 
 fn capped_utf8(bytes: &[u8], limit: usize) -> String {
@@ -166,6 +203,33 @@ mod tests {
             .join("normalized")
             .join("sessions.json")
             .is_file());
+    }
+
+    #[test]
+    fn javascript_harvester_entrypoint_uses_node_runtime() {
+        let fixture = TempFixture::new("assetiweave-harvester-js-runtime");
+        fs::create_dir_all(fixture.path().join("scripts")).unwrap();
+        fs::write(fixture.path().join("scripts").join("harvest.js"), "\n").unwrap();
+        let manifest = HarvesterManifest {
+            id: "fixture-web".to_string(),
+            entrypoint: vec!["scripts/harvest.js".to_string(), "--once".to_string()],
+        };
+
+        let invocation = resolve_harvester_invocation(fixture.path(), &manifest).unwrap();
+
+        assert_eq!(invocation.program, PathBuf::from("node"));
+        assert_eq!(
+            invocation.args,
+            vec![
+                fixture
+                    .path()
+                    .join("scripts")
+                    .join("harvest.js")
+                    .to_string_lossy()
+                    .to_string(),
+                "--once".to_string()
+            ]
+        );
     }
 
     fn source_fixture(path: &Path) -> ConversationSource {
