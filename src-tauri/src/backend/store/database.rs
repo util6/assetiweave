@@ -152,6 +152,7 @@ async fn seed_defaults_sqlx(pool: &SqlitePool) -> AppResult<()> {
     normalize_default_profiles_sqlx(pool).await?;
 
     super::conversation_repo::seed_builtin_conversation_adapters_sqlx(pool).await?;
+    super::conversation_repo::migrate_legacy_conversation_adapter_hashes_sqlx(pool).await?;
 
     let default_navigation_model = crate::backend::defaults::default_navigation_model();
     if count_rows(pool, "navigation_state").await? == 0 {

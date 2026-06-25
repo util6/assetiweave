@@ -744,6 +744,96 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
 
 #[cfg(unix)]
 #[test]
+fn app_initialization_migrates_legacy_adapter_trusted_hashes() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-adapter-hash-migration-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create test root");
+    let db_path = root.join("app.db");
+    let script = write_executable_script(
+        &root,
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"complete","item":{}}'
+"#,
+    );
+    let manifest_path = root.join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::json!({
+            "schema_version": 1,
+            "id": "legacy-hash-adapter",
+            "name": "Legacy Hash Adapter",
+            "version": "0.1.0",
+            "protocol_version": 1,
+            "command": [adapter_manifest_entry(&root, &script)],
+            "capabilities": ["probe", "read_session"],
+            "input_kinds": ["directory"]
+        })
+        .to_string(),
+    )
+    .expect("write adapter manifest");
+    let validation = crate::backend::conversations::validate_external_adapter(
+        crate::backend::conversations::ExternalAdapterValidateParams {
+            manifest_path: manifest_path.to_string_lossy().to_string(),
+        },
+    )
+    .expect("validate adapter");
+    let legacy_hash = validation.executable_hash.clone().expect("executable hash");
+    {
+        let database = crate::backend::store::Database::open(&db_path).expect("open raw database");
+        let adapter = ConversationAdapter {
+            id: "legacy-hash-adapter".to_string(),
+            name: "Legacy Hash Adapter".to_string(),
+            kind: ConversationAdapterKind::External,
+            version: "0.1.0".to_string(),
+            enabled: true,
+            manifest_path: Some(manifest_path.to_string_lossy().to_string()),
+            executable_path: Some(script.to_string_lossy().to_string()),
+            content_hash: Some(legacy_hash.clone()),
+            trusted_hash: Some(legacy_hash),
+            trust_state: ConversationAdapterTrustState::Trusted,
+            protocol_version: Some(1),
+            capabilities: vec!["probe".to_string(), "read_session".to_string()],
+            input_kinds: vec![ConversationSourceKind::Directory],
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let pool = database.pool().clone();
+        database
+            .block_on(async move {
+                crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &adapter).await
+            })
+            .expect("insert legacy adapter");
+    }
+
+    let service = AppService::open_with_db_path(db_path).expect("open initialized service");
+    let pool = service.db.pool().clone();
+    let migrated = service
+        .db
+        .block_on(async move {
+            crate::backend::store::load_conversation_adapter_sqlx(&pool, "legacy-hash-adapter")
+                .await
+        })
+        .expect("load migrated adapter")
+        .expect("migrated adapter");
+
+    assert_eq!(
+        migrated.content_hash.as_deref(),
+        Some(validation.content_hash.as_str())
+    );
+    assert_eq!(
+        migrated.trusted_hash.as_deref(),
+        Some(validation.content_hash.as_str())
+    );
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(unix)]
+#[test]
 fn conversation_session_export_rejects_symlink_escape_under_output_root() {
     use std::os::unix::fs::symlink;
 

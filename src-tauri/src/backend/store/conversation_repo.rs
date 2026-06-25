@@ -123,6 +123,43 @@ pub(crate) async fn seed_builtin_conversation_adapters_sqlx(pool: &SqlitePool) -
     Ok(())
 }
 
+pub(crate) async fn migrate_legacy_conversation_adapter_hashes_sqlx(
+    pool: &SqlitePool,
+) -> AppResult<()> {
+    for mut adapter in list_conversation_adapters_sqlx(pool).await? {
+        if adapter.kind != ConversationAdapterKind::External {
+            continue;
+        }
+        let Some(manifest_path) = adapter.manifest_path.clone() else {
+            continue;
+        };
+        let Ok(validation) = crate::backend::conversations::validate_external_adapter(
+            crate::backend::conversations::ExternalAdapterValidateParams { manifest_path },
+        ) else {
+            continue;
+        };
+        let Some(trusted_hash) = adapter.trusted_hash.as_deref() else {
+            continue;
+        };
+        let content_hash = validation.content_hash.as_str();
+        if trusted_hash == content_hash {
+            if adapter.content_hash.as_deref() != Some(content_hash) {
+                adapter.content_hash = Some(validation.content_hash);
+                upsert_conversation_adapter_sqlx(pool, &adapter).await?;
+            }
+            continue;
+        }
+        let legacy_executable_hash = validation.executable_hash.as_deref();
+        let legacy_manifest_hash = validation.manifest_hash.as_str();
+        if Some(trusted_hash) == legacy_executable_hash || trusted_hash == legacy_manifest_hash {
+            adapter.content_hash = Some(validation.content_hash.clone());
+            adapter.trusted_hash = Some(validation.content_hash);
+            upsert_conversation_adapter_sqlx(pool, &adapter).await?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn list_conversation_adapters_sqlx(
     pool: &SqlitePool,
 ) -> AppResult<Vec<ConversationAdapter>> {
