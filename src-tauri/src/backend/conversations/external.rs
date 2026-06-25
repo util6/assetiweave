@@ -543,6 +543,9 @@ pub(crate) fn register_external_adapter(params: ExternalAdapterRegisterParams) -
 pub(crate) fn try_run_external_adapter(
     params: ExternalAdapterTryRunParams,
 ) -> AppResult<ExternalAdapterRunResult> {
+    if !params.yes {
+        return Err("conversation.adapter.try-run requires --yes".to_string());
+    }
     let validation = validate_external_adapter_manifest(&params.manifest_path)?;
     let method = params.method.trim();
     if !validation

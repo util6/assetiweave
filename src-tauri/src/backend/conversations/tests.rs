@@ -925,6 +925,32 @@ printf '%s\n' '{"type":"complete","item":{}}'
 
 #[cfg(unix)]
 #[test]
+fn external_adapter_try_run_requires_explicit_confirmation() {
+    let fixture = TempFixture::new("assetiweave-adapter-confirmation-fixture");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"complete","item":{}}'
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+
+    let error = try_run_external_adapter(ExternalAdapterTryRunParams {
+        manifest_path: manifest.to_string_lossy().to_string(),
+        method: "probe".to_string(),
+        location: Some(fixture.path().to_string_lossy().to_string()),
+        session_id: None,
+        yes: false,
+    })
+    .expect_err("try-run should require confirmation");
+
+    assert!(error.contains("requires --yes"));
+}
+
+#[cfg(unix)]
+#[test]
 fn external_adapter_try_run_parses_sessions_without_shell_joining_args() {
     let fixture = TempFixture::new("assetiweave-adapter-run-fixture");
     let hacked_path = fixture.path().join("hacked");
