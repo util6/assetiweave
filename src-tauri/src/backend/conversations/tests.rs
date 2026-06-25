@@ -342,6 +342,73 @@ fn external_adapter_validation_accepts_runtime_without_legacy_command() {
 }
 
 #[test]
+fn external_adapter_validation_rejects_runtime_entry_outside_adapter_directory() {
+    for entry in [
+        "../adapter.mjs",
+        r"..\adapter.mjs",
+        "/tmp/adapter.mjs",
+        r"C:\tmp\adapter.mjs",
+    ] {
+        let fixture = TempFixture::new("assetiweave-adapter-runtime-escape-fixture");
+        let manifest_path = fixture.path().join("conversation-adapter.json");
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "schema_version": 1,
+                "id": "fixture-runtime-escape",
+                "name": "Fixture Runtime Escape",
+                "version": "0.1.0",
+                "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+                "runtime": {
+                    "type": "node",
+                    "entry": entry,
+                    "version": ">=20"
+                },
+                "capabilities": ["probe", "read_session"],
+                "input_kinds": ["directory"]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let error = validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref())
+            .expect_err("unsafe runtime entry should fail validation");
+
+        assert!(
+            error.contains("adapter runtime entry"),
+            "entry {entry:?} produced error {error:?}"
+        );
+    }
+}
+
+#[test]
+fn external_adapter_validation_rejects_legacy_command_outside_adapter_directory() {
+    let fixture = TempFixture::new("assetiweave-adapter-command-escape-fixture");
+    let manifest_path = fixture.path().join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "id": "fixture-command-escape",
+            "name": "Fixture Command Escape",
+            "version": "0.1.0",
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "command": ["../adapter.sh"],
+            "capabilities": ["probe", "read_session"],
+            "input_kinds": ["directory"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let error = validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref())
+        .expect_err("unsafe legacy command should fail validation");
+
+    assert!(error.contains("adapter command"));
+    assert!(error.contains("escape"));
+}
+
+#[test]
 fn external_adapter_scaffold_generates_export_markdown_fixtures() {
     let fixture = TempFixture::new("assetiweave-adapter-scaffold-fixture");
 
@@ -355,6 +422,14 @@ fn external_adapter_scaffold_generates_export_markdown_fixtures() {
 
     let manifest: ConversationAdapterManifest =
         serde_json::from_str(&fs::read_to_string(&result.manifest_path).unwrap()).unwrap();
+    assert_eq!(
+        manifest
+            .runtime
+            .as_ref()
+            .map(|runtime| runtime.entry.as_str()),
+        Some("adapter-executable")
+    );
+    validate_external_adapter_manifest(&result.manifest_path).unwrap();
     assert!(manifest
         .capabilities
         .contains(&"export_markdown".to_string()));

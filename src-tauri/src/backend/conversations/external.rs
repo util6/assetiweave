@@ -231,7 +231,7 @@ pub(crate) fn scaffold_external_adapter(
         command: Vec::new(),
         runtime: Some(ConversationAdapterRuntime {
             kind: ConversationAdapterRuntimeKind::Executable,
-            entry: "/absolute/path/to/adapter-executable".to_string(),
+            entry: "adapter-executable".to_string(),
             args: Vec::new(),
             version: None,
         }),
@@ -475,6 +475,7 @@ fn validate_manifest_shape(manifest: &ConversationAdapterManifest) -> AppResult<
             if runtime.entry.trim().is_empty() {
                 return Err("adapter runtime entry is required".to_string());
             }
+            validate_adapter_entry_path("adapter runtime entry", &runtime.entry)?;
             if runtime
                 .version
                 .as_deref()
@@ -486,7 +487,7 @@ fn validate_manifest_shape(manifest: &ConversationAdapterManifest) -> AppResult<
         None if manifest.command.is_empty() || manifest.command[0].trim().is_empty() => {
             return Err("adapter command must include an executable".to_string());
         }
-        None => {}
+        None => validate_adapter_entry_path("adapter command", &manifest.command[0])?,
     }
     for capability in &manifest.capabilities {
         if !matches!(
@@ -497,6 +498,31 @@ fn validate_manifest_shape(manifest: &ConversationAdapterManifest) -> AppResult<
         }
     }
     Ok(())
+}
+
+fn validate_adapter_entry_path(field: &str, raw: &str) -> AppResult<()> {
+    let trimmed = raw.trim();
+    let path = Path::new(trimmed);
+    if path.is_absolute() || looks_like_windows_rooted_path(trimmed) {
+        return Err(format!(
+            "{field} must be a relative path inside the adapter directory"
+        ));
+    }
+    if trimmed
+        .split(['/', '\\'])
+        .any(|component| component == "..")
+    {
+        return Err(format!("{field} must not escape the adapter directory"));
+    }
+    Ok(())
+}
+
+fn looks_like_windows_rooted_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    if path.starts_with("\\\\") || path.starts_with('\\') {
+        return true;
+    }
+    bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic()
 }
 
 pub(super) fn run_external_adapter(
