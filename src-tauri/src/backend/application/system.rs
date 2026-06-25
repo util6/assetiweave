@@ -109,7 +109,7 @@ fn conversation_runtime_doctor_summary(
         (
             "pass",
             format!(
-                "{available_runtime_count}/{} runtimes available; all required adapter runtimes available",
+                "{available_runtime_count}/{} runtimes available; all required conversation plugin runtimes available",
                 runtime_statuses.len()
             ),
         )
@@ -117,7 +117,7 @@ fn conversation_runtime_doctor_summary(
         (
             "warn",
             format!(
-                "missing required adapter runtimes: {}; {available_runtime_count}/{} runtimes available",
+                "missing required conversation plugin runtimes: {}; {available_runtime_count}/{} runtimes available",
                 unavailable_required.join(", "),
                 runtime_statuses.len()
             ),
@@ -152,7 +152,7 @@ mod tests {
         let (status, message) = conversation_runtime_doctor_summary(&statuses);
 
         assert_eq!(status, "pass");
-        assert!(message.contains("all required adapter runtimes available"));
+        assert!(message.contains("all required conversation plugin runtimes available"));
         assert!(!message.contains("node runtime missing"));
     }
 
@@ -167,7 +167,7 @@ mod tests {
         let (status, message) = conversation_runtime_doctor_summary(&statuses);
 
         assert_eq!(status, "warn");
-        assert!(message.contains("missing required adapter runtimes"));
+        assert!(message.contains("missing required conversation plugin runtimes"));
         assert!(message.contains("node >=20"));
     }
 
