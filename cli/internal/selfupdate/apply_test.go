@@ -166,7 +166,7 @@ func makeToolsTarGzWithHarvester(t *testing.T, cli, engine string) []byte {
   "source": {"id": "tencent-yuanbao-web-export", "kind": "directory", "name": "Tencent Yuanbao Web Export"},
   "update": {"channel": "official"}
 }`,
-		"assetiweave-tools/harvesters/tencent-yuanbao-web/conversation-adapter.json": `{"schema_version":1,"id":"tencent-yuanbao-web","name":"Tencent Yuanbao Web","version":"0.1.0","protocol_version":1,"command":["adapter.js"],"capabilities":["probe","read_session"],"input_kinds":["directory"]}`,
+		"assetiweave-tools/harvesters/tencent-yuanbao-web/conversation-adapter.json": `{"schema_version":1,"id":"tencent-yuanbao-web","name":"Tencent Yuanbao Web","version":"0.1.0","protocol_version":1,"runtime":{"type":"node","entry":"adapter.js","version":">=20"},"capabilities":["probe","read_session"],"input_kinds":["directory"]}`,
 		"assetiweave-tools/harvesters/tencent-yuanbao-web/adapter.js":                "#!/usr/bin/env node\n",
 		"assetiweave-tools/harvesters/tencent-yuanbao-web/scripts/harvest.sh":        "#!/bin/sh\n",
 		"assetiweave-tools/harvesters/tencent-yuanbao-web/requests/auth-probe.json":  `{"secret":"overwrite"}` + "\n",

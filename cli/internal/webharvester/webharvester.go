@@ -280,9 +280,13 @@ func Scaffold(options ScaffoldOptions) (ScaffoldResult, error) {
 			"name":             name,
 			"version":          "0.1.0",
 			"protocol_version": 1,
-			"command":          []string{"adapter.js"},
-			"capabilities":     []string{"probe", "read_session", "web_records"},
-			"input_kinds":      []string{"directory"},
+			"runtime": map[string]any{
+				"type":    "node",
+				"entry":   "adapter.js",
+				"version": ">=20",
+			},
+			"capabilities": []string{"probe", "read_session", "web_records"},
+			"input_kinds":  []string{"directory"},
 		}),
 		adapterPath: []byte(adapterScript),
 	}

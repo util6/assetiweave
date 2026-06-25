@@ -4,9 +4,11 @@
   "name": "Qwen Web",
   "version": "0.1.0",
   "protocol_version": 1,
-  "command": [
-    "adapter.js"
-  ],
+  "runtime": {
+    "type": "node",
+    "entry": "adapter.js",
+    "version": ">=20"
+  },
   "capabilities": [
     "probe",
     "read_session",

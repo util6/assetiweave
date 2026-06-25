@@ -49,6 +49,17 @@ func TestInstallOfficialTemplateWritesUserHarvesterAsset(t *testing.T) {
 			t.Fatalf("installed file %s missing: %v", rel, err)
 		}
 	}
+	adapterManifest := readJSONFile(t, filepath.Join(result.Directory, "conversation-adapter.json"))
+	runtime, ok := adapterManifest["runtime"].(map[string]any)
+	if !ok {
+		t.Fatalf("adapter runtime missing: %#v", adapterManifest)
+	}
+	if runtime["type"] != "node" || runtime["entry"] != "adapter.js" || runtime["version"] != ">=20" {
+		t.Fatalf("adapter runtime = %#v", runtime)
+	}
+	if _, ok := adapterManifest["command"]; ok {
+		t.Fatalf("adapter manifest still uses legacy command: %#v", adapterManifest)
+	}
 	if _, err := InstallOfficialTemplate(InstallOptions{Root: root, ID: "gemini-web"}); err == nil {
 		t.Fatal("second install without force succeeded, want overwrite error")
 	}
@@ -59,6 +70,19 @@ func TestInstallOfficialTemplateWritesUserHarvesterAsset(t *testing.T) {
 	if !replaced.Updated {
 		t.Fatal("force install Updated = false, want true")
 	}
+}
+
+func readJSONFile(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var value map[string]any
+	if err := json.Unmarshal(data, &value); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	return value
 }
 
 func TestQwenNormalizerHandlesLegacyAndCurrentResponseSchemas(t *testing.T) {

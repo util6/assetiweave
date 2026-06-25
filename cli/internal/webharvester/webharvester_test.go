@@ -49,6 +49,30 @@ func TestScaffoldCreatesHarvesterAndAdapterFiles(t *testing.T) {
 	if config.SiteID != "qwen-web" || config.GeneratedAdapter.Script != "adapter.js" {
 		t.Fatalf("unexpected config = %#v", config)
 	}
+	adapterManifest := readMapJSON(t, result.ManifestPath)
+	runtime, ok := adapterManifest["runtime"].(map[string]any)
+	if !ok {
+		t.Fatalf("adapter runtime missing: %#v", adapterManifest)
+	}
+	if runtime["type"] != "node" || runtime["entry"] != "adapter.js" || runtime["version"] != ">=20" {
+		t.Fatalf("adapter runtime = %#v", runtime)
+	}
+	if _, ok := adapterManifest["command"]; ok {
+		t.Fatalf("adapter manifest still uses legacy command: %#v", adapterManifest)
+	}
+}
+
+func readMapJSON(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var value map[string]any
+	if err := json.Unmarshal(data, &value); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	return value
 }
 
 func TestAuthCheckReportsExpiredLogin(t *testing.T) {
