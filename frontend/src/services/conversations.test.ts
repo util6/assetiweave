@@ -46,7 +46,12 @@ describe("conversation services", () => {
 
     await expect(listConversationAdapterRuntimeStatuses()).resolves.toEqual([
       expect.objectContaining({ available: true, kind: "node", program: "node" }),
-      expect.objectContaining({ available: false, kind: "python", program: "python3" }),
+      expect.objectContaining({
+        available: false,
+        hint: expect.stringContaining("Python 3.10"),
+        kind: "python",
+        program: "python3",
+      }),
       expect.objectContaining({ available: true, kind: "bash", program: "bash" }),
     ]);
     expect(invokeMock).not.toHaveBeenCalled();

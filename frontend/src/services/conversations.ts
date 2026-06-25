@@ -78,6 +78,7 @@ export interface ConversationAdapterRuntimeStatus {
   available: boolean;
   version: string | null;
   error: string | null;
+  hint: string | null;
 }
 
 export interface ConversationAdapterValidationResult {
@@ -228,6 +229,7 @@ export async function listConversationAdapterRuntimeStatuses(): Promise<
         available: true,
         version: "preview",
         error: null,
+        hint: null,
       },
       {
         kind: "python",
@@ -235,6 +237,7 @@ export async function listConversationAdapterRuntimeStatuses(): Promise<
         available: false,
         version: null,
         error: "Not available in browser preview.",
+        hint: "Install Python 3.10 or newer, or set an absolute runtime path in Settings.",
       },
       {
         kind: "bash",
@@ -242,6 +245,7 @@ export async function listConversationAdapterRuntimeStatuses(): Promise<
         available: true,
         version: "preview",
         error: null,
+        hint: null,
       },
     ];
   }

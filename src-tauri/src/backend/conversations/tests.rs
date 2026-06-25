@@ -231,6 +231,27 @@ fn adapter_runtime_probe_reports_missing_system_runtime() {
 }
 
 #[test]
+fn adapter_runtime_probe_returns_remediation_hint() {
+    let status = probe_adapter_runtime_status(
+        &ConversationAdapterRuntimeKind::Node,
+        PathBuf::from("assetiweave-missing-node-runtime"),
+    );
+
+    assert!(!status.available);
+    assert!(status
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("not found"));
+    assert!(status
+        .hint
+        .as_deref()
+        .unwrap_or_default()
+        .contains("Node.js 20"));
+    assert!(status.hint.as_deref().unwrap_or_default().contains("PATH"));
+}
+
+#[test]
 fn adapter_runtime_status_lists_supported_system_runtimes() {
     let statuses = list_adapter_runtime_statuses();
     let kinds = statuses

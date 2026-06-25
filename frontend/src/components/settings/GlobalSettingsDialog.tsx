@@ -1987,6 +1987,11 @@ function AdapterRuntimeStatusRow({
                         {status.version ?? status.error}
                       </p>
                     )}
+                    {!status.available && status.hint && (
+                      <p className="mt-0.5 text-body-sm text-on-surface-variant" title={status.hint}>
+                        {status.hint}
+                      </p>
+                    )}
                   </div>
                   <span className={clsx("text-body-sm font-semibold", status.available ? "text-status-create" : "text-status-remove")}>
                     {status.available ? t("settings.conversation.runtimeAvailable") : t("settings.conversation.runtimeUnavailable")}
@@ -2005,6 +2010,7 @@ function runtimeStatusPlaceholders(): ConversationAdapterRuntimeStatus[] {
   return ["node", "python", "bash"].map((kind) => ({
     available: false,
     error: null,
+    hint: null,
     kind: kind as ConversationAdapterRuntimeStatus["kind"],
     program: kind,
     version: null,

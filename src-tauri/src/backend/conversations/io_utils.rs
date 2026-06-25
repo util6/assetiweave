@@ -162,6 +162,7 @@ pub(super) fn probe_adapter_runtime_status(
             available: true,
             version: runtime_version_from_output(&stdout, &stderr),
             error: None,
+            hint: None,
         },
         Ok((status, stdout, stderr)) => ConversationAdapterRuntimeStatus {
             kind: kind.clone(),
@@ -175,6 +176,7 @@ pub(super) fn probe_adapter_runtime_status(
                 status,
                 String::from_utf8_lossy(&stderr)
             )),
+            hint: Some(runtime_remediation_hint(kind, &program)),
         },
         Err(RuntimeProbeError::Spawn(error)) if error.kind() == ErrorKind::NotFound => {
             ConversationAdapterRuntimeStatus {
@@ -188,6 +190,7 @@ pub(super) fn probe_adapter_runtime_status(
                     runtime_program_location_suffix(&program),
                     program.display()
                 )),
+                hint: Some(runtime_remediation_hint(kind, &program)),
             }
         }
         Err(RuntimeProbeError::Spawn(error)) => ConversationAdapterRuntimeStatus {
@@ -200,6 +203,7 @@ pub(super) fn probe_adapter_runtime_status(
                 runtime_display_name(kind),
                 program.display()
             )),
+            hint: Some(runtime_remediation_hint(kind, &program)),
         },
         Err(RuntimeProbeError::Output(error)) => ConversationAdapterRuntimeStatus {
             kind: kind.clone(),
@@ -211,6 +215,7 @@ pub(super) fn probe_adapter_runtime_status(
                 runtime_display_name(kind),
                 program.display()
             )),
+            hint: Some(runtime_remediation_hint(kind, &program)),
         },
         Err(RuntimeProbeError::Timeout { stdout, stderr }) => ConversationAdapterRuntimeStatus {
             kind: kind.clone(),
@@ -223,6 +228,7 @@ pub(super) fn probe_adapter_runtime_status(
                 program.display(),
                 ADAPTER_RUNTIME_PROBE_TIMEOUT_MS
             )),
+            hint: Some(runtime_remediation_hint(kind, &program)),
         },
     }
 }
@@ -357,6 +363,29 @@ fn runtime_program_location_suffix(program: &Path) -> &'static str {
         ""
     } else {
         " on PATH"
+    }
+}
+
+fn runtime_remediation_hint(kind: &ConversationAdapterRuntimeKind, program: &Path) -> String {
+    let runtime_name = runtime_display_name(kind);
+    let configured_path_hint = if program.is_absolute() {
+        " Verify that the configured path exists and can run --version, or clear the custom runtime path to use PATH."
+    } else {
+        " Install it and ensure it is available on PATH, or set an absolute runtime path in Settings > Conversations > Conversation Parsers."
+    };
+    match kind {
+        ConversationAdapterRuntimeKind::Node => {
+            format!("Install Node.js 20 or newer.{configured_path_hint}")
+        }
+        ConversationAdapterRuntimeKind::Python => {
+            format!("Install Python 3.10 or newer.{configured_path_hint}")
+        }
+        ConversationAdapterRuntimeKind::Bash => {
+            format!("Install bash or configure a bash-compatible shell path.{configured_path_hint}")
+        }
+        ConversationAdapterRuntimeKind::Executable => {
+            format!("Check the executable runtime path for {runtime_name}.")
+        }
     }
 }
 

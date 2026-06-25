@@ -52,6 +52,7 @@ pub(crate) struct ConversationAdapterRuntimeStatus {
     pub(crate) available: bool,
     pub(crate) version: Option<String>,
     pub(crate) error: Option<String>,
+    pub(crate) hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
