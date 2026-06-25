@@ -4,6 +4,7 @@ use std::io::ErrorKind;
 const CONVERSATION_RUNTIME_OVERRIDES_KEY: &str = "conversationRuntimeOverrides";
 const ADAPTER_RUNTIME_PROBE_TIMEOUT_MS: u64 = 3_000;
 const ADAPTER_RUNTIME_PROBE_OUTPUT_CAP: usize = 16 * 1024;
+const OFFICIAL_NODE_RUNTIME_VERSION_REQUIREMENT: &str = ">=20";
 
 enum RuntimeProbeError {
     Spawn(std::io::Error),
@@ -116,45 +117,17 @@ pub(super) fn ensure_adapter_runtime_available(
         return Ok(());
     }
 
-    let status = probe_adapter_runtime_status(&runtime.kind, invocation.program.clone());
+    let status = probe_adapter_runtime_status_with_requirement(
+        &runtime.kind,
+        invocation.program.clone(),
+        runtime.version.as_deref(),
+    );
     if status.available {
-        ensure_runtime_version_matches(runtime, &invocation.program, status.version.as_deref())
-    } else {
-        let message = adapter_runtime_missing_message(runtime, &invocation.program);
-        match status.error {
-            Some(error) if error.contains("was not found") && error != message => {
-                Err(format!("{message}; {error}"))
-            }
-            Some(error) if error.contains("was not found") => Err(message),
-            Some(error) => Err(error),
-            _ => Err(message),
-        }
-    }
-}
-
-fn ensure_runtime_version_matches(
-    runtime: &ConversationAdapterRuntime,
-    program: &Path,
-    detected_version: Option<&str>,
-) -> AppResult<()> {
-    let Some(requirement) = runtime.version.as_deref() else {
-        return Ok(());
-    };
-    let Some(detected_version) = detected_version else {
-        return Err(format!(
-            "adapter runtime {} requires {requirement}, but {} did not report a version",
-            runtime_display_name(&runtime.kind),
-            program.display()
-        ));
-    };
-    if runtime_version_satisfies_constraint(detected_version, requirement)? {
         Ok(())
     } else {
-        Err(format!(
-            "adapter runtime {} requires {requirement}, but {} reported {detected_version}",
-            runtime_display_name(&runtime.kind),
-            program.display()
-        ))
+        Err(status
+            .error
+            .unwrap_or_else(|| adapter_runtime_missing_message(runtime, &invocation.program)))
     }
 }
 
@@ -167,34 +140,44 @@ pub(super) fn list_adapter_runtime_statuses() -> Vec<ConversationAdapterRuntimeS
     .into_iter()
     .map(|kind| {
         let program = configured_runtime_program(&kind);
-        probe_adapter_runtime_status(&kind, program)
+        probe_adapter_runtime_status_with_requirement(
+            &kind,
+            program,
+            default_runtime_requirement(&kind),
+        )
     })
     .collect()
 }
 
+#[cfg(test)]
 pub(super) fn probe_adapter_runtime_status(
     kind: &ConversationAdapterRuntimeKind,
     program: PathBuf,
 ) -> ConversationAdapterRuntimeStatus {
+    probe_adapter_runtime_status_with_requirement(kind, program, None)
+}
+
+pub(super) fn probe_adapter_runtime_status_with_requirement(
+    kind: &ConversationAdapterRuntimeKind,
+    program: PathBuf,
+    required_version: Option<&str>,
+) -> ConversationAdapterRuntimeStatus {
     let mut command = Command::new(&program);
     command.args(runtime_version_args(kind));
+    let required_version = required_version.map(str::to_string);
     match run_runtime_probe(
         command,
         Duration::from_millis(ADAPTER_RUNTIME_PROBE_TIMEOUT_MS),
     ) {
-        Ok((status, stdout, stderr)) if status.success() => ConversationAdapterRuntimeStatus {
-            kind: kind.clone(),
-            program: program.to_string_lossy().to_string(),
-            available: true,
-            version: runtime_version_from_output(&stdout, &stderr),
-            error: None,
-            hint: None,
-        },
+        Ok((status, stdout, stderr)) if status.success() => {
+            runtime_status_from_success(kind, &program, required_version, &stdout, &stderr)
+        }
         Ok((status, stdout, stderr)) => ConversationAdapterRuntimeStatus {
             kind: kind.clone(),
             program: program.to_string_lossy().to_string(),
             available: false,
             version: runtime_version_from_output(&stdout, &stderr),
+            required_version,
             error: Some(format!(
                 "adapter runtime {} at {} failed version probe with status {}: {}",
                 runtime_display_name(kind),
@@ -205,14 +188,20 @@ pub(super) fn probe_adapter_runtime_status(
             hint: Some(runtime_remediation_hint(kind, &program)),
         },
         Err(RuntimeProbeError::Spawn(error)) if error.kind() == ErrorKind::NotFound => {
+            let requirement = required_version
+                .as_deref()
+                .map(|version| format!(" {version}"))
+                .unwrap_or_default();
             ConversationAdapterRuntimeStatus {
                 kind: kind.clone(),
                 program: program.to_string_lossy().to_string(),
                 available: false,
                 version: None,
+                required_version,
                 error: Some(format!(
-                    "adapter runtime {} was not found{}: {}",
+                    "adapter runtime {}{} was not found{}: {}",
                     runtime_display_name(kind),
+                    requirement,
                     runtime_program_location_suffix(&program),
                     program.display()
                 )),
@@ -224,6 +213,7 @@ pub(super) fn probe_adapter_runtime_status(
             program: program.to_string_lossy().to_string(),
             available: false,
             version: None,
+            required_version,
             error: Some(format!(
                 "failed to probe adapter runtime {} at {}: {error}",
                 runtime_display_name(kind),
@@ -236,6 +226,7 @@ pub(super) fn probe_adapter_runtime_status(
             program: program.to_string_lossy().to_string(),
             available: false,
             version: None,
+            required_version,
             error: Some(format!(
                 "failed to read adapter runtime {} probe output at {}: {error}",
                 runtime_display_name(kind),
@@ -248,6 +239,7 @@ pub(super) fn probe_adapter_runtime_status(
             program: program.to_string_lossy().to_string(),
             available: false,
             version: runtime_version_from_output(&stdout, &stderr),
+            required_version,
             error: Some(format!(
                 "adapter runtime {} at {} timed out after {} ms",
                 runtime_display_name(kind),
@@ -257,6 +249,71 @@ pub(super) fn probe_adapter_runtime_status(
             hint: Some(runtime_remediation_hint(kind, &program)),
         },
     }
+}
+
+fn runtime_status_from_success(
+    kind: &ConversationAdapterRuntimeKind,
+    program: &Path,
+    required_version: Option<String>,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> ConversationAdapterRuntimeStatus {
+    let version = runtime_version_from_output(stdout, stderr);
+    if let Some(requirement) = required_version.as_deref() {
+        let error = match version.as_deref() {
+            Some(detected_version) => {
+                let satisfied = runtime_version_satisfies_constraint(detected_version, requirement);
+                match satisfied {
+                    Ok(true) => None,
+                    Ok(false) => Some(runtime_version_mismatch_error(
+                        kind,
+                        program,
+                        requirement,
+                        detected_version,
+                    )),
+                    Err(error) => Some(error),
+                }
+            }
+            None => Some(format!(
+                "adapter runtime {} requires {requirement}, but {} did not report a version",
+                runtime_display_name(kind),
+                program.display()
+            )),
+        };
+        if let Some(error) = error {
+            return ConversationAdapterRuntimeStatus {
+                kind: kind.clone(),
+                program: program.to_string_lossy().to_string(),
+                available: false,
+                version,
+                required_version,
+                error: Some(error),
+                hint: Some(runtime_remediation_hint(kind, program)),
+            };
+        }
+    }
+    ConversationAdapterRuntimeStatus {
+        kind: kind.clone(),
+        program: program.to_string_lossy().to_string(),
+        available: true,
+        version,
+        required_version,
+        error: None,
+        hint: None,
+    }
+}
+
+fn runtime_version_mismatch_error(
+    kind: &ConversationAdapterRuntimeKind,
+    program: &Path,
+    requirement: &str,
+    detected_version: &str,
+) -> String {
+    format!(
+        "adapter runtime {} requires {requirement}, but {} reported {detected_version}",
+        runtime_display_name(kind),
+        program.display()
+    )
 }
 
 fn run_runtime_probe(
@@ -335,6 +392,15 @@ fn adapter_runtime_missing_message(runtime: &ConversationAdapterRuntime, program
         runtime_program_location_suffix(program),
         program.display()
     )
+}
+
+fn default_runtime_requirement(kind: &ConversationAdapterRuntimeKind) -> Option<&'static str> {
+    match kind {
+        ConversationAdapterRuntimeKind::Node => Some(OFFICIAL_NODE_RUNTIME_VERSION_REQUIREMENT),
+        ConversationAdapterRuntimeKind::Python
+        | ConversationAdapterRuntimeKind::Bash
+        | ConversationAdapterRuntimeKind::Executable => None,
+    }
 }
 
 fn runtime_version_from_output(stdout: &[u8], stderr: &[u8]) -> Option<String> {

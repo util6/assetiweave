@@ -45,7 +45,7 @@ describe("conversation services", () => {
     vi.stubGlobal("window", {});
 
     await expect(listConversationAdapterRuntimeStatuses()).resolves.toEqual([
-      expect.objectContaining({ available: true, kind: "node", program: "node" }),
+      expect.objectContaining({ available: true, kind: "node", program: "node", required_version: ">=20" }),
       expect.objectContaining({
         available: false,
         hint: expect.stringContaining("Python 3.10"),

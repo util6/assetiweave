@@ -1979,6 +1979,11 @@ function AdapterRuntimeStatusRow({
                     <p className="truncate font-mono text-code-md text-on-surface-variant" title={status.program}>
                       {status.program}
                     </p>
+                    {status.required_version && (
+                      <p className="mt-0.5 truncate text-body-sm text-on-surface-variant" title={status.required_version}>
+                        {t("settings.conversation.runtimeRequires")} {status.required_version}
+                      </p>
+                    )}
                     {(status.version || status.error) && (
                       <p
                         className={clsx("mt-0.5 truncate text-body-sm", status.available ? "text-on-surface-variant" : "text-status-remove")}
@@ -2013,6 +2018,7 @@ function runtimeStatusPlaceholders(): ConversationAdapterRuntimeStatus[] {
     hint: null,
     kind: kind as ConversationAdapterRuntimeStatus["kind"],
     program: kind,
+    required_version: kind === "node" ? ">=20" : null,
     version: null,
   }));
 }

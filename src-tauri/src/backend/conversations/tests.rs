@@ -259,6 +259,34 @@ printf '%s\n' 'v18.19.0'
     assert!(error.contains("v18.19.0"));
 }
 
+#[cfg(unix)]
+#[test]
+fn adapter_runtime_status_reports_version_requirement_mismatch() {
+    let fixture = TempFixture::new("assetiweave-runtime-status-version-fixture");
+    let runtime_program = write_executable_script(
+        fixture.path(),
+        "node18.sh",
+        r#"#!/bin/sh
+printf '%s\n' 'v18.19.0'
+"#,
+    );
+
+    let status = probe_adapter_runtime_status_with_requirement(
+        &ConversationAdapterRuntimeKind::Node,
+        runtime_program,
+        Some(">=20"),
+    );
+
+    assert!(!status.available);
+    assert_eq!(status.version.as_deref(), Some("v18.19.0"));
+    assert_eq!(status.required_version.as_deref(), Some(">=20"));
+    assert!(status
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("requires >=20"));
+}
+
 #[test]
 fn adapter_runtime_probe_returns_remediation_hint() {
     let status = probe_adapter_runtime_status(
@@ -316,6 +344,13 @@ fn adapter_runtime_status_lists_supported_system_runtimes() {
         ]
     );
     assert!(statuses.iter().all(|status| !status.program.is_empty()));
+    assert_eq!(
+        statuses
+            .iter()
+            .find(|status| status.kind == ConversationAdapterRuntimeKind::Node)
+            .and_then(|status| status.required_version.as_deref()),
+        Some(">=20")
+    );
 }
 
 #[test]

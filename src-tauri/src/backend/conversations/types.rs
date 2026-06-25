@@ -51,6 +51,7 @@ pub(crate) struct ConversationAdapterRuntimeStatus {
     pub(crate) program: String,
     pub(crate) available: bool,
     pub(crate) version: Option<String>,
+    pub(crate) required_version: Option<String>,
     pub(crate) error: Option<String>,
     pub(crate) hint: Option<String>,
 }
