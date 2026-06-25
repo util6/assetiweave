@@ -153,6 +153,15 @@ fn write_executable_script(dir: &Path, name: &str, body: &str) -> PathBuf {
 }
 
 #[cfg(unix)]
+fn adapter_manifest_entry(root: &Path, script: &Path) -> String {
+    script
+        .strip_prefix(root)
+        .unwrap_or(script)
+        .to_string_lossy()
+        .to_string()
+}
+
+#[cfg(unix)]
 fn upsert_conversation_export_fixture(
     service: &AppService,
     root: &Path,
@@ -172,7 +181,7 @@ fn upsert_conversation_export_fixture(
                 "name": "Fixture export adapter",
                 "version": "0.1.0",
                 "protocol_version": 1,
-                "command": [script.to_string_lossy().to_string()],
+                "command": [adapter_manifest_entry(root, script)],
                 "capabilities": &adapter_capabilities,
                 "input_kinds": ["directory"]
             })
@@ -565,7 +574,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             "name": "Fixture export adapter",
             "version": "0.1.0",
             "protocol_version": 1,
-            "command": [script.to_string_lossy().to_string()],
+            "command": [adapter_manifest_entry(&root, &script)],
             "capabilities": ["read_session"],
             "input_kinds": ["directory"]
         })
