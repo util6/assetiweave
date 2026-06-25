@@ -26,7 +26,10 @@ impl AppService {
         &self,
     ) -> AppResult<Vec<crate::backend::conversations::ConversationAdapterRuntimeStatus>> {
         let adapters = self.list_conversation_adapters()?;
-        crate::backend::conversations::list_conversation_adapter_runtime_statuses(&adapters)
+        let sources = self.list_conversation_sources()?;
+        crate::backend::conversations::list_conversation_adapter_runtime_statuses(
+            &adapters, &sources,
+        )
     }
 
     pub(crate) fn register_conversation_adapter(

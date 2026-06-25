@@ -1,7 +1,7 @@
 use super::io_utils::{
-    build_adapter_runtime_invocation, ensure_adapter_runtime_available,
-    validate_runtime_version_constraint, AdapterCommandInvocation,
-    LEGACY_JAVASCRIPT_COMMAND_NODE_VERSION,
+    build_adapter_runtime_invocation, ensure_adapter_runtime_available, sort_runtime_requirements,
+    upsert_highest_runtime_requirement, validate_runtime_version_constraint,
+    AdapterCommandInvocation, LEGACY_JAVASCRIPT_COMMAND_NODE_VERSION,
 };
 use super::prelude::*;
 
@@ -84,6 +84,46 @@ pub(crate) fn run_conversation_harvester_for_source(source: &ConversationSource)
         }
         thread::sleep(Duration::from_millis(100));
     }
+}
+
+pub(super) fn append_harvester_runtime_requirements(
+    requirements: &mut Vec<(ConversationAdapterRuntimeKind, String)>,
+    sources: &[ConversationSource],
+) {
+    for source in sources {
+        if !source.enabled {
+            continue;
+        }
+        let Ok(source_dir) = crate::backend::path_utils::expand_path(&source.location) else {
+            continue;
+        };
+        let manifest_path = source_dir.join(HARVESTER_MANIFEST_FILE);
+        let Ok(manifest_text) = fs::read_to_string(&manifest_path) else {
+            continue;
+        };
+        let Ok(manifest) = serde_json::from_str::<HarvesterManifest>(&manifest_text) else {
+            continue;
+        };
+        if manifest.runtime.is_some() && !manifest.entrypoint.is_empty() {
+            continue;
+        }
+        let Some(runtime) = harvester_execution_runtime(&manifest) else {
+            continue;
+        };
+        if validate_harvester_runtime(&manifest.id, &runtime).is_err() {
+            continue;
+        }
+        let Some(version) = runtime.version.as_deref() else {
+            continue;
+        };
+        if matches!(runtime.kind, ConversationAdapterRuntimeKind::Executable)
+            || validate_runtime_version_constraint(version).is_err()
+        {
+            continue;
+        }
+        upsert_highest_runtime_requirement(requirements, &runtime.kind, version);
+    }
+    *requirements = sort_runtime_requirements(std::mem::take(requirements));
 }
 
 fn resolve_harvester_invocation(
@@ -391,6 +431,24 @@ mod tests {
         };
 
         assert!(error.contains("runtime version constraint"));
+    }
+
+    #[test]
+    fn harvester_runtime_requirements_skip_invalid_mixed_manifest() {
+        let fixture = TempFixture::new("assetiweave-harvester-runtime-requirements");
+        fs::create_dir_all(fixture.path().join("scripts")).unwrap();
+        fs::write(fixture.path().join("scripts").join("harvest.js"), "\n").unwrap();
+        fs::write(
+            fixture.path().join("harvester.json"),
+            r#"{"schema_version":1,"id":"fixture-web","entrypoint":["scripts/harvest.js"],"runtime":{"type":"node","entry":"scripts/harvest.js","version":">=20"}}"#,
+        )
+        .unwrap();
+        let source = source_fixture(fixture.path());
+        let mut requirements = Vec::new();
+
+        append_harvester_runtime_requirements(&mut requirements, &[source]);
+
+        assert!(requirements.is_empty());
     }
 
     fn source_fixture(path: &Path) -> ConversationSource {

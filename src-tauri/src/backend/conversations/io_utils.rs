@@ -216,7 +216,7 @@ pub(super) fn adapter_runtime_requirements(
     sort_runtime_requirements(requirements)
 }
 
-fn upsert_highest_runtime_requirement(
+pub(super) fn upsert_highest_runtime_requirement(
     requirements: &mut Vec<(ConversationAdapterRuntimeKind, String)>,
     kind: &ConversationAdapterRuntimeKind,
     version: &str,
@@ -239,7 +239,7 @@ fn runtime_requirement_is_higher(candidate: &str, current: &str) -> AppResult<bo
     Ok(compare_versions(&candidate, &current) == std::cmp::Ordering::Greater)
 }
 
-fn sort_runtime_requirements(
+pub(super) fn sort_runtime_requirements(
     mut requirements: Vec<(ConversationAdapterRuntimeKind, String)>,
 ) -> Vec<(ConversationAdapterRuntimeKind, String)> {
     let order = [

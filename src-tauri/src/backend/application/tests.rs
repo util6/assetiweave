@@ -1,9 +1,9 @@
 use super::prelude::*;
 use crate::backend::models::{
     AssetFormat, AssetGroupRules, ConversationAdapterKind, ConversationAdapterTrustState,
-    ConversationPartKind, ConversationPartRole, ConversationSourceKind, DeploymentState,
-    NormalizedConversationPart, NormalizedConversationSession, NormalizedConversationTurn,
-    SourceKind,
+    ConversationPartKind, ConversationPartRole, ConversationSource, ConversationSourceKind,
+    DeploymentState, NormalizedConversationPart, NormalizedConversationSession,
+    NormalizedConversationTurn, SourceKind,
 };
 use sqlx::AssertSqlSafe;
 use std::fs;
@@ -104,6 +104,56 @@ fn doctor_reports_conversation_adapter_runtime_statuses() {
         .as_str()
         .expect("runtime message")
         .contains("runtimes available"));
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn runtime_status_includes_harvester_runtime_requirements() {
+    let root =
+        std::env::temp_dir().join(format!("assetiweave-harvester-runtime-{}", Uuid::new_v4()));
+    let source_dir = root.join("source");
+    fs::create_dir_all(source_dir.join("scripts")).expect("create source dir");
+    fs::write(source_dir.join("scripts").join("harvest.py"), "\n").expect("write harvester");
+    fs::write(
+        source_dir.join("harvester.json"),
+        r#"{"schema_version":1,"id":"fixture-harvester","runtime":{"type":"python","entry":"scripts/harvest.py","version":">=3.12"}}"#,
+    )
+    .expect("write harvester manifest");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let source = ConversationSource {
+        id: "fixture-harvester-source".to_string(),
+        adapter_id: "codex".to_string(),
+        name: "Fixture Harvester".to_string(),
+        kind: ConversationSourceKind::Directory,
+        location: source_dir.to_string_lossy().to_string(),
+        config_json: None,
+        enabled: true,
+        last_synced_at: None,
+        last_sync_status: None,
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+    let pool = service.db.pool().clone();
+    service
+        .db
+        .block_on(async move {
+            crate::backend::store::upsert_conversation_source_sqlx(&pool, &source).await
+        })
+        .expect("save source");
+
+    let statuses = service
+        .list_conversation_adapter_runtime_statuses()
+        .expect("list runtime statuses");
+    let python_requirement = statuses
+        .iter()
+        .find(|status| {
+            status.kind == crate::backend::conversations::ConversationAdapterRuntimeKind::Python
+        })
+        .and_then(|status| status.required_version.as_deref());
+
+    assert_eq!(python_requirement, Some(">=3.12"));
 
     fs::remove_dir_all(root).ok();
 }

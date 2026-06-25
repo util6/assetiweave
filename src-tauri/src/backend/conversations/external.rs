@@ -606,10 +606,11 @@ pub(crate) fn adapter_from_registration_preview(value: Value) -> AppResult<Conve
 
 pub(crate) fn list_conversation_adapter_runtime_statuses(
     adapters: &[ConversationAdapter],
+    sources: &[ConversationSource],
 ) -> AppResult<Vec<ConversationAdapterRuntimeStatus>> {
-    Ok(list_adapter_runtime_statuses(
-        &adapter_runtime_requirements(adapters),
-    ))
+    let mut requirements = adapter_runtime_requirements(adapters);
+    super::harvester::append_harvester_runtime_requirements(&mut requirements, sources);
+    Ok(list_adapter_runtime_statuses(&requirements))
 }
 
 pub(super) fn validate_external_adapter_manifest(
