@@ -35,17 +35,7 @@ pub(super) fn read_external_adapter_sessions(
         )
     })?;
     let validation = validate_external_adapter_manifest(manifest_path)?;
-    if !validation
-        .manifest
-        .capabilities
-        .iter()
-        .any(|capability| capability == "read_session")
-    {
-        return Err(format!(
-            "external conversation adapter {} does not declare read_session",
-            adapter.id
-        ));
-    }
+    validate_external_adapter_manifest_for_method(adapter, &validation, "read_session")?;
     let config = match source.config_json.as_deref() {
         Some(text) if !text.trim().is_empty() => {
             Some(serde_json::from_str::<Value>(text).map_err(|error| error.to_string())?)
@@ -68,6 +58,138 @@ pub(super) fn read_external_adapter_sessions(
     .sessions)
 }
 
+pub(crate) fn export_external_adapter_markdown(
+    adapter: &ConversationAdapter,
+    source: &ConversationSource,
+    detail: &crate::backend::dto::ConversationSessionDetail,
+    question_ids: &[String],
+    content_filter: &crate::backend::dto::ConversationExportContentFilter,
+    record_kind: &str,
+    default_relative_path: &str,
+) -> AppResult<ExternalMarkdownExport> {
+    validate_external_adapter_for_method(adapter, source, "export_markdown")?;
+    let manifest_path = adapter.manifest_path.as_deref().ok_or_else(|| {
+        format!(
+            "external conversation adapter has no manifest: {}",
+            adapter.id
+        )
+    })?;
+    let validation = validate_external_adapter_manifest(manifest_path)?;
+    validate_external_adapter_manifest_for_method(adapter, &validation, "export_markdown")?;
+    let request = json!({
+        "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+        "request_id": format!("export-{}-{}", detail.session.id, Utc::now().timestamp_millis()),
+        "method": "export_markdown",
+        "source": { "location": source.location, "config": source_config_value(source)? },
+        "params": {
+            "session_detail": detail,
+            "question_ids": question_ids,
+            "content_filter": content_filter,
+            "record_kind": record_kind,
+            "default_relative_path": default_relative_path
+        }
+    });
+    run_external_adapter(
+        &validation,
+        "export_markdown",
+        request,
+        Duration::from_millis(DEFAULT_READ_TIMEOUT_MS),
+    )?
+    .markdown_export
+    .ok_or_else(|| {
+        format!(
+            "external conversation adapter {} did not return markdown_export",
+            adapter.id
+        )
+    })
+}
+
+fn validate_external_adapter_for_method(
+    adapter: &ConversationAdapter,
+    source: &ConversationSource,
+    method: &str,
+) -> AppResult<()> {
+    if adapter.kind != ConversationAdapterKind::External {
+        return Err(format!(
+            "conversation adapter {} is not a built-in or external adapter",
+            adapter.id
+        ));
+    }
+    if !adapter.enabled {
+        return Err(format!("conversation adapter is disabled: {}", adapter.id));
+    }
+    if !matches!(
+        adapter.trust_state,
+        ConversationAdapterTrustState::Trusted | ConversationAdapterTrustState::BuiltIn
+    ) {
+        return Err(format!(
+            "external conversation adapter is not trusted: {}",
+            adapter.id
+        ));
+    }
+    if !adapter.input_kinds.iter().any(|kind| *kind == source.kind) {
+        return Err(format!(
+            "external conversation adapter {} does not support source kind {:?}",
+            adapter.id, source.kind
+        ));
+    }
+    if !adapter
+        .capabilities
+        .iter()
+        .any(|capability| capability == method)
+    {
+        return Err(format!(
+            "external conversation adapter {} does not declare {method}",
+            adapter.id
+        ));
+    }
+    Ok(())
+}
+
+fn validate_external_adapter_manifest_for_method(
+    adapter: &ConversationAdapter,
+    validation: &ExternalAdapterValidationResult,
+    method: &str,
+) -> AppResult<()> {
+    if validation.manifest.id != adapter.id {
+        return Err(format!(
+            "external conversation adapter manifest id {} does not match registered adapter {}",
+            validation.manifest.id, adapter.id
+        ));
+    }
+    if !validation
+        .manifest
+        .capabilities
+        .iter()
+        .any(|capability| capability == method)
+    {
+        return Err(format!(
+            "external conversation adapter {} does not declare {method}",
+            adapter.id
+        ));
+    }
+    if let Some(trusted_hash) = adapter.trusted_hash.as_deref() {
+        let executable_matches = validation.executable_hash.as_deref() == Some(trusted_hash);
+        let manifest_matches = validation.manifest_hash == trusted_hash;
+        if !executable_matches && !manifest_matches {
+            return Err(format!(
+                "external conversation adapter trusted hash mismatch: {}",
+                adapter.id
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn source_config_value(source: &ConversationSource) -> AppResult<Option<Value>> {
+    match source.config_json.as_deref() {
+        Some(text) if !text.trim().is_empty() => Ok(Some(
+            serde_json::from_str::<Value>(text).map_err(|error| error.to_string())?,
+        )),
+        _ => Ok(None),
+    }
+}
+
 pub(crate) fn scaffold_external_adapter(
     params: ExternalAdapterScaffoldParams,
 ) -> AppResult<ExternalAdapterScaffoldResult> {
@@ -79,12 +201,22 @@ pub(crate) fn scaffold_external_adapter(
     let response_fixture_path = target_dir
         .join("fixtures")
         .join("read-session.response.ndjson");
+    let export_request_fixture_path = target_dir
+        .join("fixtures")
+        .join("export-markdown.request.json");
+    let export_response_fixture_path = target_dir
+        .join("fixtures")
+        .join("export-markdown.response.ndjson");
     if params.dry_run {
         return Ok(ExternalAdapterScaffoldResult {
             dry_run: true,
             manifest_path: manifest_path.to_string_lossy().to_string(),
             request_fixture_path: request_fixture_path.to_string_lossy().to_string(),
             response_fixture_path: response_fixture_path.to_string_lossy().to_string(),
+            export_request_fixture_path: export_request_fixture_path.to_string_lossy().to_string(),
+            export_response_fixture_path: export_response_fixture_path
+                .to_string_lossy()
+                .to_string(),
         });
     }
 
@@ -101,6 +233,7 @@ pub(crate) fn scaffold_external_adapter(
             "probe".to_string(),
             "list_sessions".to_string(),
             "read_session".to_string(),
+            "export_markdown".to_string(),
         ],
         input_kinds: vec![
             ConversationSourceKind::Directory,
@@ -131,12 +264,45 @@ pub(crate) fn scaffold_external_adapter(
 "#,
     )
     .map_err(|error| error.to_string())?;
+    fs::write(
+        &export_request_fixture_path,
+        serde_json::to_string_pretty(&json!({
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "request_id": "fixture-export-markdown",
+            "method": "export_markdown",
+            "source": { "location": "/path/to/source", "config": null },
+            "params": {
+                "session_detail": example_session_detail(),
+                "question_ids": [],
+                "content_filter": {
+                    "answer": true,
+                    "tool": true,
+                    "command": true,
+                    "code": true,
+                    "result": true
+                },
+                "record_kind": "session",
+                "default_relative_path": "example/Example-session.md"
+            }
+        }))
+        .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    fs::write(
+        &export_response_fixture_path,
+        r##"{"type":"item","item":{"kind":"markdown_export","content":"# Example session\n\n## 1. Example question\n\n### Answer\n\n```markdown\nExample answer\n```\n","relative_path":"example/Example-session.md"}}
+{"type":"complete","item":{"export_count":1}}
+"##,
+    )
+    .map_err(|error| error.to_string())?;
 
     Ok(ExternalAdapterScaffoldResult {
         dry_run: false,
         manifest_path: manifest_path.to_string_lossy().to_string(),
         request_fixture_path: request_fixture_path.to_string_lossy().to_string(),
         response_fixture_path: response_fixture_path.to_string_lossy().to_string(),
+        export_request_fixture_path: export_request_fixture_path.to_string_lossy().to_string(),
+        export_response_fixture_path: export_response_fixture_path.to_string_lossy().to_string(),
     })
 }
 
@@ -196,15 +362,33 @@ pub(crate) fn try_run_external_adapter(
         "probe" => DEFAULT_PROBE_TIMEOUT_MS,
         "list_sessions" => DEFAULT_LIST_TIMEOUT_MS,
         "read_session" => DEFAULT_READ_TIMEOUT_MS,
+        "export_markdown" => DEFAULT_READ_TIMEOUT_MS,
         other => return Err(format!("unsupported adapter method: {other}")),
     };
     let location = params.location.unwrap_or_else(|| ".".to_string());
+    let request_params = if method == "export_markdown" {
+        json!({
+            "session_detail": example_session_detail(),
+            "question_ids": params.session_id.as_ref().map(|id| vec![id.clone()]).unwrap_or_default(),
+            "content_filter": {
+                "answer": true,
+                "tool": true,
+                "command": true,
+                "code": true,
+                "result": true
+            },
+            "record_kind": "session",
+            "default_relative_path": "fixture-external/fixture-project/example-session.md"
+        })
+    } else {
+        json!({ "session_id": params.session_id })
+    };
     let request = json!({
         "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
         "request_id": format!("try-run-{}", Utc::now().timestamp_millis()),
         "method": method,
         "source": { "location": location, "config": null },
-        "params": { "session_id": params.session_id }
+        "params": request_params
     });
     run_external_adapter(
         &validation,
@@ -281,7 +465,7 @@ fn validate_manifest_shape(manifest: &ConversationAdapterManifest) -> AppResult<
     for capability in &manifest.capabilities {
         if !matches!(
             capability.as_str(),
-            "probe" | "list_sessions" | "read_session" | "web_records"
+            "probe" | "list_sessions" | "read_session" | "export_markdown" | "web_records"
         ) {
             return Err(format!("unsupported adapter capability: {capability}"));
         }
@@ -366,6 +550,7 @@ pub(super) fn parse_external_adapter_output(
     let stdout = String::from_utf8(stdout).map_err(|error| error.to_string())?;
     let stderr = String::from_utf8_lossy(&stderr).to_string();
     let mut sessions = Vec::new();
+    let mut markdown_export = None;
     let mut warnings = Vec::new();
     let mut saw_complete = false;
     let mut item_count = 0usize;
@@ -388,8 +573,22 @@ pub(super) fn parse_external_adapter_output(
                 let item = parsed
                     .item
                     .ok_or_else(|| format!("adapter item line {} missing item", index + 1))?;
-                if let Some(session) = parse_adapter_session_item(item)? {
-                    sessions.push(session);
+                match adapter_item_kind(&item) {
+                    "session" => {
+                        if let Some(session) = parse_adapter_session_item(item)? {
+                            sessions.push(session);
+                        }
+                    }
+                    "markdown_export" => {
+                        if markdown_export.is_some() {
+                            return Err(format!(
+                                "adapter returned multiple markdown_export items by line {}",
+                                index + 1
+                            ));
+                        }
+                        markdown_export = Some(parse_adapter_markdown_export_item(item)?);
+                    }
+                    _ => {}
                 }
             }
             "warning" => warnings.push(
@@ -425,16 +624,33 @@ pub(super) fn parse_external_adapter_output(
         item_count,
         warning_count: warnings.len(),
         sessions,
+        markdown_export,
         warnings,
         stderr,
     })
 }
 
-fn parse_adapter_session_item(item: Value) -> AppResult<Option<NormalizedConversationSession>> {
-    let kind = item
-        .get("kind")
+fn adapter_item_kind(item: &Value) -> &str {
+    item.get("kind")
         .and_then(Value::as_str)
-        .unwrap_or("session");
+        .unwrap_or("session")
+}
+
+fn parse_adapter_markdown_export_item(item: Value) -> AppResult<ExternalMarkdownExport> {
+    let export_value = item.get("export").cloned().unwrap_or(item);
+    let export: ExternalMarkdownExport =
+        serde_json::from_value(export_value).map_err(|error| error.to_string())?;
+    if export.content.is_empty() {
+        return Err("markdown_export content is required".to_string());
+    }
+    if export.relative_path.trim().is_empty() {
+        return Err("markdown_export relative_path is required".to_string());
+    }
+    Ok(export)
+}
+
+fn parse_adapter_session_item(item: Value) -> AppResult<Option<NormalizedConversationSession>> {
+    let kind = adapter_item_kind(&item);
     if kind != "session" {
         return Ok(None);
     }
@@ -458,4 +674,65 @@ fn validate_normalized_session(session: &NormalizedConversationSession) -> AppRe
         }
     }
     Ok(())
+}
+
+fn example_session_detail() -> Value {
+    json!({
+        "session": {
+            "id": "example-session",
+            "source_id": "fixture-source",
+            "adapter_id": "fixture-external",
+            "external_id": "example-session",
+            "title": "Example session",
+            "project_path": "/tmp/fixture-project",
+            "started_at": null,
+            "updated_at": null,
+            "source_locator": null,
+            "source_fingerprint": null,
+            "imported_at": "2026-01-01T00:00:00Z",
+            "missing": false
+        },
+        "questions": [{
+            "question": {
+                "id": "example-question",
+                "session_id": "example-session",
+                "question_index": 0,
+                "title": null,
+                "question_text": "Example question",
+                "answer_text": "Example answer",
+                "code_text": null,
+                "command_text": null,
+                "grouping_origin": "imported",
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z"
+            },
+            "turns": [{
+                "id": "example-turn",
+                "session_id": "example-session",
+                "external_id": "example-turn",
+                "turn_index": 0,
+                "user_text": "Example question",
+                "title": null,
+                "started_at": null,
+                "ended_at": null,
+                "fingerprint": "example",
+                "missing": false,
+                "imported_at": "2026-01-01T00:00:00Z"
+            }],
+            "parts": [{
+                "id": "example-part",
+                "turn_id": "example-turn",
+                "part_index": 0,
+                "role": "assistant",
+                "kind": "text",
+                "text": "Example answer",
+                "language": null,
+                "command": null,
+                "cwd": null,
+                "status": null,
+                "exit_code": null,
+                "metadata_json": "{\"content_card\":{\"type\":\"answer\",\"format\":\"markdown\"}}"
+            }]
+        }]
+    })
 }

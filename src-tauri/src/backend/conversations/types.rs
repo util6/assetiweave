@@ -76,6 +76,8 @@ pub(crate) struct ExternalAdapterScaffoldResult {
     pub(crate) manifest_path: String,
     pub(crate) request_fixture_path: String,
     pub(crate) response_fixture_path: String,
+    pub(crate) export_request_fixture_path: String,
+    pub(crate) export_response_fixture_path: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -84,8 +86,16 @@ pub(crate) struct ExternalAdapterRunResult {
     pub(crate) item_count: usize,
     pub(crate) warning_count: usize,
     pub(crate) sessions: Vec<NormalizedConversationSession>,
+    pub(crate) markdown_export: Option<ExternalMarkdownExport>,
     pub(crate) warnings: Vec<String>,
     pub(crate) stderr: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ExternalMarkdownExport {
+    pub(crate) content: String,
+    #[serde(alias = "relativePath")]
+    pub(crate) relative_path: String,
 }
 
 #[derive(Debug, Deserialize)]

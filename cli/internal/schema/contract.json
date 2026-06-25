@@ -2186,6 +2186,13 @@
             "aliases": [
               "contentFilter"
             ],
+            "default": {
+              "answer": true,
+              "code": true,
+              "command": true,
+              "result": true,
+              "tool": true
+            },
             "description": "Optional content categories to include in Markdown export",
             "properties": {
               "answer": {
@@ -2365,6 +2372,13 @@
             "aliases": [
               "contentFilter"
             ],
+            "default": {
+              "answer": true,
+              "code": true,
+              "command": true,
+              "result": true,
+              "tool": true
+            },
             "description": "Optional content categories to include in Markdown export",
             "properties": {
               "answer": {
@@ -5854,6 +5868,13 @@
             "aliases": [
               "contentFilter"
             ],
+            "default": {
+              "answer": true,
+              "code": true,
+              "command": true,
+              "result": true,
+              "tool": true
+            },
             "description": "Optional content categories to include in Markdown export",
             "properties": {
               "answer": {
@@ -6156,6 +6177,13 @@
             "aliases": [
               "contentFilter"
             ],
+            "default": {
+              "answer": true,
+              "code": true,
+              "command": true,
+              "result": true,
+              "tool": true
+            },
             "description": "Optional content categories to include in Markdown export",
             "properties": {
               "answer": {

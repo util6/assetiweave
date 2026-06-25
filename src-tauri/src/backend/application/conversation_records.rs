@@ -135,67 +135,22 @@ impl AppService {
     ) -> AppResult<Value> {
         let pool = self.db.pool().clone();
         let session_id = params.session_id.clone();
-        let detail = self.db.block_on(async move {
-            crate::backend::store::load_conversation_session_detail_sqlx(&pool, &session_id).await
+        let (detail, adapter, source) = self.db.block_on(async move {
+            let detail =
+                crate::backend::store::load_conversation_session_detail_sqlx(&pool, &session_id)
+                    .await?;
+            let adapter = load_export_adapter_for_detail(&pool, &detail).await?;
+            let source = load_export_source_for_detail(&pool, &detail).await?;
+            AppResult::Ok((detail, adapter, source))
         })?;
-        let output_root = crate::backend::path_utils::expand_path(&params.output_root)?;
-        let project_segment = detail
-            .session
-            .project_path
-            .as_deref()
-            .and_then(|path| Path::new(path).file_name())
-            .and_then(|name| name.to_str())
-            .unwrap_or("unknown-project");
-        let short_id = detail
-            .session
-            .id
-            .chars()
-            .rev()
-            .take(8)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect::<String>();
-        let question_count = params.question_ids.len();
-        let file_stem = if question_count == 0 {
-            sanitize_path_segment(&detail.session.title)
-        } else {
-            format!(
-                "{}-selected-{question_count}",
-                sanitize_path_segment(&detail.session.title)
-            )
-        };
-        let target_path = output_root
-            .join(sanitize_path_segment(&detail.session.adapter_id))
-            .join(sanitize_path_segment(project_segment))
-            .join(format!("{file_stem}-{short_id}.md"));
-        let content = crate::backend::store::render_conversation_detail_markdown_with_filter(
-            &detail,
-            &params.question_ids,
-            &params.content_filter,
-        )?;
-        if params.dry_run {
-            return Ok(json!({
-                "dry_run": true,
-                "written": false,
-                "path": target_path,
-                "bytes": content.len(),
-                "question_ids": params.question_ids,
-                "question_count": question_count
-            }));
-        }
-        if let Some(parent) = target_path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        fs::write(&target_path, &content).map_err(|error| error.to_string())?;
-        Ok(json!({
-            "dry_run": false,
-            "written": true,
-            "path": target_path,
-            "bytes": content.len(),
-            "question_ids": params.question_ids,
-            "question_count": question_count
-        }))
+        export_loaded_conversation_markdown(
+            detail,
+            adapter,
+            source,
+            params,
+            "session",
+            "unknown-project",
+        )
     }
 
     pub(crate) fn export_web_record_session(
@@ -204,67 +159,15 @@ impl AppService {
     ) -> AppResult<Value> {
         let pool = self.db.pool().clone();
         let session_id = params.session_id.clone();
-        let detail = self.db.block_on(async move {
-            crate::backend::store::load_web_record_session_detail_sqlx(&pool, &session_id).await
+        let (detail, adapter, source) = self.db.block_on(async move {
+            let detail =
+                crate::backend::store::load_web_record_session_detail_sqlx(&pool, &session_id)
+                    .await?;
+            let adapter = load_export_adapter_for_detail(&pool, &detail).await?;
+            let source = load_export_source_for_detail(&pool, &detail).await?;
+            AppResult::Ok((detail, adapter, source))
         })?;
-        let output_root = crate::backend::path_utils::expand_path(&params.output_root)?;
-        let project_segment = detail
-            .session
-            .project_path
-            .as_deref()
-            .and_then(|path| Path::new(path).file_name())
-            .and_then(|name| name.to_str())
-            .unwrap_or("web");
-        let short_id = detail
-            .session
-            .id
-            .chars()
-            .rev()
-            .take(8)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect::<String>();
-        let question_count = params.question_ids.len();
-        let file_stem = if question_count == 0 {
-            sanitize_path_segment(&detail.session.title)
-        } else {
-            format!(
-                "{}-selected-{question_count}",
-                sanitize_path_segment(&detail.session.title)
-            )
-        };
-        let target_path = output_root
-            .join(sanitize_path_segment(&detail.session.adapter_id))
-            .join(sanitize_path_segment(project_segment))
-            .join(format!("{file_stem}-{short_id}.md"));
-        let content = crate::backend::store::render_web_record_detail_markdown_with_filter(
-            &detail,
-            &params.question_ids,
-            &params.content_filter,
-        )?;
-        if params.dry_run {
-            return Ok(json!({
-                "dry_run": true,
-                "written": false,
-                "path": target_path,
-                "bytes": content.len(),
-                "question_ids": params.question_ids,
-                "question_count": question_count
-            }));
-        }
-        if let Some(parent) = target_path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        fs::write(&target_path, &content).map_err(|error| error.to_string())?;
-        Ok(json!({
-            "dry_run": false,
-            "written": true,
-            "path": target_path,
-            "bytes": content.len(),
-            "question_ids": params.question_ids,
-            "question_count": question_count
-        }))
+        export_loaded_conversation_markdown(detail, adapter, source, params, "web", "web")
     }
 
     pub(crate) fn list_conversation_questions(
@@ -332,6 +235,243 @@ impl AppService {
             .await
         })
     }
+}
+
+async fn load_export_adapter_for_detail(
+    pool: &sqlx::SqlitePool,
+    detail: &crate::backend::dto::ConversationSessionDetail,
+) -> AppResult<ConversationAdapter> {
+    crate::backend::store::load_conversation_adapter_sqlx(pool, &detail.session.adapter_id)
+        .await?
+        .ok_or_else(|| {
+            format!(
+                "conversation adapter not found: {}",
+                detail.session.adapter_id
+            )
+        })
+}
+
+async fn load_export_source_for_detail(
+    pool: &sqlx::SqlitePool,
+    detail: &crate::backend::dto::ConversationSessionDetail,
+) -> AppResult<ConversationSource> {
+    crate::backend::store::load_conversation_source_sqlx(pool, &detail.session.source_id)
+        .await?
+        .ok_or_else(|| {
+            format!(
+                "conversation source not found: {}",
+                detail.session.source_id
+            )
+        })
+}
+
+fn export_loaded_conversation_markdown(
+    detail: crate::backend::dto::ConversationSessionDetail,
+    adapter: ConversationAdapter,
+    source: ConversationSource,
+    params: ConversationSessionExportParams,
+    record_kind: &str,
+    fallback_project_segment: &str,
+) -> AppResult<Value> {
+    validate_export_question_ids(&detail, &params.question_ids)?;
+    let output_root = crate::backend::path_utils::expand_path(&params.output_root)?;
+    let default_relative_path =
+        default_export_relative_path(&detail, &params.question_ids, fallback_project_segment);
+    let default_relative_path_text = relative_path_text(&default_relative_path);
+    let export = crate::backend::conversations::export_external_adapter_markdown(
+        &adapter,
+        &source,
+        &detail,
+        &params.question_ids,
+        &params.content_filter,
+        record_kind,
+        &default_relative_path_text,
+    )?;
+    let relative_path = validate_export_relative_path(&export.relative_path)?;
+    let target_path = output_root.join(&relative_path);
+    let question_count = params.question_ids.len();
+    if params.dry_run {
+        return Ok(json!({
+            "dry_run": true,
+            "written": false,
+            "path": target_path,
+            "bytes": export.content.len(),
+            "question_ids": params.question_ids,
+            "question_count": question_count
+        }));
+    }
+    write_export_content(&output_root, &relative_path, &export.content)?;
+    Ok(json!({
+        "dry_run": false,
+        "written": true,
+        "path": target_path,
+        "bytes": export.content.len(),
+        "question_ids": params.question_ids,
+        "question_count": question_count
+    }))
+}
+
+fn validate_export_question_ids(
+    detail: &crate::backend::dto::ConversationSessionDetail,
+    question_ids: &[String],
+) -> AppResult<()> {
+    if question_ids.is_empty() {
+        return Ok(());
+    }
+    let available = detail
+        .questions
+        .iter()
+        .map(|question| &question.question.id)
+        .collect::<BTreeSet<_>>();
+    if let Some(missing_id) = question_ids
+        .iter()
+        .find(|question_id| !available.contains(question_id))
+    {
+        return Err(format!(
+            "conversation question not found in session: {missing_id}"
+        ));
+    }
+    Ok(())
+}
+
+fn default_export_relative_path(
+    detail: &crate::backend::dto::ConversationSessionDetail,
+    question_ids: &[String],
+    fallback_project_segment: &str,
+) -> PathBuf {
+    let project_segment = detail
+        .session
+        .project_path
+        .as_deref()
+        .and_then(|path| Path::new(path).file_name())
+        .and_then(|name| name.to_str())
+        .unwrap_or(fallback_project_segment);
+    let short_id = detail
+        .session
+        .id
+        .chars()
+        .rev()
+        .take(8)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    let question_count = question_ids.len();
+    let file_stem = if question_count == 0 {
+        sanitize_path_segment(&detail.session.title)
+    } else {
+        format!(
+            "{}-selected-{question_count}",
+            sanitize_path_segment(&detail.session.title)
+        )
+    };
+    PathBuf::from(sanitize_path_segment(&detail.session.adapter_id))
+        .join(sanitize_path_segment(project_segment))
+        .join(format!("{file_stem}-{short_id}.md"))
+}
+
+fn relative_path_text(path: &Path) -> String {
+    path.components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(segment) => Some(segment.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn validate_export_relative_path(value: &str) -> AppResult<PathBuf> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("markdown_export relative_path is required".to_string());
+    }
+    let path = Path::new(value);
+    if path.is_absolute() {
+        return Err("markdown_export relative_path must be relative".to_string());
+    }
+    let mut relative = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(segment) => relative.push(segment),
+            _ => {
+                return Err(
+                    "markdown_export relative_path cannot contain root, prefix, '.', or '..'"
+                        .to_string(),
+                )
+            }
+        }
+    }
+    if relative.as_os_str().is_empty() {
+        return Err("markdown_export relative_path is required".to_string());
+    }
+    Ok(relative)
+}
+
+fn write_export_content(output_root: &Path, relative_path: &Path, content: &str) -> AppResult<()> {
+    fs::create_dir_all(output_root).map_err(|error| error.to_string())?;
+    let relative_parent = relative_path.parent().unwrap_or_else(|| Path::new(""));
+    let parent = prepare_export_parent(output_root, relative_parent)?;
+    let target_path = output_root.join(relative_path);
+    if let Ok(metadata) = fs::symlink_metadata(&target_path) {
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "markdown_export relative_path points to a symlink: {}",
+                relative_path.display()
+            ));
+        }
+        if metadata.is_dir() {
+            return Err(format!(
+                "markdown_export relative_path points to a directory: {}",
+                relative_path.display()
+            ));
+        }
+    }
+    ensure_export_parent_stays_in_root(output_root, &parent)?;
+    fs::write(&target_path, content).map_err(|error| error.to_string())
+}
+
+fn prepare_export_parent(output_root: &Path, relative_parent: &Path) -> AppResult<PathBuf> {
+    let mut current = output_root.to_path_buf();
+    for component in relative_parent.components() {
+        let std::path::Component::Normal(segment) = component else {
+            return Err(
+                "markdown_export relative_path cannot contain root, prefix, '.', or '..'"
+                    .to_string(),
+            );
+        };
+        current.push(segment);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(format!(
+                    "markdown_export relative_path cannot traverse symlink: {}",
+                    current.display()
+                ));
+            }
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => {
+                return Err(format!(
+                    "markdown_export relative_path parent is not a directory: {}",
+                    current.display()
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&current).map_err(|error| error.to_string())?;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(current)
+}
+
+fn ensure_export_parent_stays_in_root(output_root: &Path, parent: &Path) -> AppResult<()> {
+    let canonical_root = output_root
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let canonical_parent = parent.canonicalize().map_err(|error| error.to_string())?;
+    if !canonical_parent.starts_with(&canonical_root) {
+        return Err("markdown_export relative_path resolves outside output_root".to_string());
+    }
+    Ok(())
 }
 
 fn normalize_conversation_record_kind(

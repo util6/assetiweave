@@ -1,6 +1,5 @@
 use crate::backend::dto::{
-    AppResult, ConversationExportContentFilter, ConversationQuestionDetail,
-    ConversationSessionDetail, ConversationSessionListItem,
+    AppResult, ConversationQuestionDetail, ConversationSessionDetail, ConversationSessionListItem,
 };
 use crate::backend::models::{
     conversation_turn_fingerprint, group_turn_ids_by_question, ConversationPart,
@@ -17,7 +16,7 @@ use super::{
     conversation_repo::{
         append_declared_card_to_question_aggregate, map_sqlx_conversation_part,
         map_sqlx_conversation_question, map_sqlx_conversation_session, map_sqlx_conversation_turn,
-        render_session_detail_markdown, ConversationImportResult, CONVERSATION_IMPORT_BATCH_SIZE,
+        ConversationImportResult, CONVERSATION_IMPORT_BATCH_SIZE,
     },
 };
 
@@ -309,15 +308,6 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
         session,
         questions: question_details,
     })
-}
-
-pub(crate) fn render_web_record_detail_markdown_with_filter(
-    detail: &ConversationSessionDetail,
-    question_ids: &[String],
-    content_filter: &ConversationExportContentFilter,
-) -> AppResult<String> {
-    let selection = (!question_ids.is_empty()).then_some(question_ids);
-    render_session_detail_markdown(detail, selection, content_filter)
 }
 
 fn web_record_session_from_normalized(
@@ -1058,7 +1048,7 @@ mod tests {
     }
 
     #[test]
-    fn sqlx_web_record_reads_filter_detail_and_render_markdown() {
+    fn sqlx_web_record_reads_filter_detail() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-web-record-read-sqlx-{}.sqlite",
             Uuid::new_v4()
@@ -1074,7 +1064,7 @@ mod tests {
         second.turns[0].user_text = "How is the read path migrated?".to_string();
         second.turns[0].parts[0].text = Some("Loaded through SQLx answer".to_string());
 
-        let (sessions, detail, markdown) = database
+        let (sessions, detail) = database
             .block_on(async {
                 super::super::conversation_repo::upsert_conversation_source_sqlx(
                     database.pool(),
@@ -1095,12 +1085,7 @@ mod tests {
                 let detail =
                     load_web_record_session_detail_sqlx(database.pool(), &sessions[0].session.id)
                         .await?;
-                let markdown = render_web_record_detail_markdown_with_filter(
-                    &detail,
-                    &[detail.questions[0].question.id.clone()],
-                    &ConversationExportContentFilter::default(),
-                )?;
-                AppResult::Ok((sessions, detail, markdown))
+                AppResult::Ok((sessions, detail))
             })
             .expect("read web records through SQLx");
 
@@ -1111,8 +1096,6 @@ mod tests {
         assert_eq!(detail.questions.len(), 1);
         assert_eq!(detail.questions[0].turns.len(), 1);
         assert_eq!(detail.questions[0].parts.len(), 1);
-        assert!(markdown.contains("## 1. How is the read path migrated?"));
-        assert!(markdown.contains("Loaded through SQLx answer"));
 
         drop(database);
         cleanup_database(&db_path);

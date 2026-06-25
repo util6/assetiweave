@@ -1,5 +1,10 @@
 use super::prelude::*;
-use crate::backend::models::{AssetFormat, AssetGroupRules, DeploymentState, SourceKind};
+use crate::backend::models::{
+    AssetFormat, AssetGroupRules, ConversationAdapterKind, ConversationAdapterTrustState,
+    ConversationPartKind, ConversationPartRole, ConversationSourceKind, DeploymentState,
+    NormalizedConversationPart, NormalizedConversationSession, NormalizedConversationTurn,
+    SourceKind,
+};
 use sqlx::AssertSqlSafe;
 use std::fs;
 
@@ -92,6 +97,562 @@ fn count_asset_rows(service: &AppService, table: &str, asset_id: &str) -> i64 {
                 .map_err(|error| error.to_string())
         })
         .expect("count asset rows")
+}
+
+#[cfg(unix)]
+fn write_executable_script(dir: &Path, name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = dir.join(name);
+    fs::write(&path, body).expect("write executable script");
+    let mut permissions = fs::metadata(&path)
+        .expect("read script metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("set script permissions");
+    path
+}
+
+#[cfg(unix)]
+fn upsert_conversation_export_fixture(
+    service: &AppService,
+    root: &Path,
+    adapter_capabilities: Vec<String>,
+    adapter_script: Option<&Path>,
+    web_record: bool,
+) -> String {
+    let adapter_id = format!("fixture-export-{}", Uuid::new_v4());
+    let source_id = format!("{adapter_id}-source");
+    let manifest_path = root.join(format!("{adapter_id}.json"));
+    if let Some(script) = adapter_script {
+        fs::write(
+            &manifest_path,
+            serde_json::json!({
+                "schema_version": 1,
+                "id": &adapter_id,
+                "name": "Fixture export adapter",
+                "version": "0.1.0",
+                "protocol_version": 1,
+                "command": [script.to_string_lossy().to_string()],
+                "capabilities": &adapter_capabilities,
+                "input_kinds": ["directory"]
+            })
+            .to_string(),
+        )
+        .expect("write export adapter manifest");
+    } else {
+        fs::write(&manifest_path, "{}").expect("write placeholder manifest");
+    }
+    let now = "2026-01-01T00:00:00Z".to_string();
+    let adapter = ConversationAdapter {
+        id: adapter_id.clone(),
+        name: "Fixture export adapter".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest_path.to_string_lossy().to_string()),
+        executable_path: adapter_script.map(|path| path.to_string_lossy().to_string()),
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(1),
+        capabilities: adapter_capabilities,
+        input_kinds: vec![ConversationSourceKind::Directory],
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    };
+    let source = ConversationSource {
+        id: source_id,
+        adapter_id,
+        name: "Fixture export source".to_string(),
+        kind: ConversationSourceKind::Directory,
+        location: root.to_string_lossy().to_string(),
+        config_json: None,
+        enabled: true,
+        last_synced_at: None,
+        last_sync_status: None,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    let session = NormalizedConversationSession {
+        external_id: "export-session".to_string(),
+        title: Some("Export Fixture".to_string()),
+        project_path: Some(root.join("project").to_string_lossy().to_string()),
+        started_at: None,
+        updated_at: None,
+        source_locator: None,
+        source_fingerprint: None,
+        turns: vec![NormalizedConversationTurn {
+            external_id: "turn-1".to_string(),
+            turn_index: 0,
+            user_text: "Export this".to_string(),
+            title: None,
+            started_at: None,
+            ended_at: None,
+            parts: vec![NormalizedConversationPart {
+                role: ConversationPartRole::Assistant,
+                kind: ConversationPartKind::Text,
+                text: Some("Rust fallback should not appear".to_string()),
+                language: None,
+                command: None,
+                cwd: None,
+                status: None,
+                exit_code: None,
+                metadata_json: Some(
+                    r#"{"content_card":{"type":"answer","format":"markdown"}}"#.to_string(),
+                ),
+            }],
+        }],
+    };
+    let pool = service.db.pool().clone();
+    let session_id = service
+        .db
+        .block_on(async move {
+            crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &adapter).await?;
+            crate::backend::store::upsert_conversation_source_sqlx(&pool, &source).await?;
+            let sessions = if web_record {
+                crate::backend::store::import_web_record_sessions_sqlx(
+                    &pool,
+                    &source,
+                    &[session],
+                    false,
+                )
+                .await?;
+                crate::backend::store::list_web_record_sessions_sqlx(
+                    &pool,
+                    Some(&source.adapter_id),
+                    Some(&source.id),
+                    None,
+                    1,
+                    0,
+                )
+                .await?
+            } else {
+                crate::backend::store::import_conversation_sessions_sqlx(
+                    &pool,
+                    &source,
+                    &[session],
+                    false,
+                )
+                .await?;
+                crate::backend::store::list_conversation_sessions_sqlx(
+                    &pool,
+                    Some(&source.adapter_id),
+                    Some(&source.id),
+                    None,
+                    1,
+                    0,
+                )
+                .await?
+            };
+            AppResult::Ok(sessions[0].session.id.clone())
+        })
+        .expect("upsert conversation export fixture");
+    session_id
+}
+
+#[cfg(unix)]
+fn load_export_fixture_adapter(service: &AppService, session_id: &str) -> ConversationAdapter {
+    let pool = service.db.pool().clone();
+    let session_id = session_id.to_string();
+    service
+        .db
+        .block_on(async move {
+            let detail =
+                crate::backend::store::load_conversation_session_detail_sqlx(&pool, &session_id)
+                    .await?;
+            crate::backend::store::load_conversation_adapter_sqlx(&pool, &detail.session.adapter_id)
+                .await?
+                .ok_or_else(|| "fixture adapter not found".to_string())
+        })
+        .expect("load export fixture adapter")
+}
+
+#[cfg(unix)]
+#[test]
+fn conversation_session_export_uses_adapter_markdown_formatter() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-export-plugin-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create test root");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let script = write_executable_script(
+        &root,
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"item","item":{"kind":"markdown_export","content":"adapter markdown export","relative_path":"plugin/export.md"}}'
+printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
+"#,
+    );
+    let session_id = upsert_conversation_export_fixture(
+        &service,
+        &root,
+        vec!["export_markdown".to_string()],
+        Some(&script),
+        false,
+    );
+    let output_root = root.join("exports");
+
+    let result = service
+        .export_conversation_session(ConversationSessionExportParams {
+            session_id,
+            output_root: output_root.to_string_lossy().to_string(),
+            question_ids: Vec::new(),
+            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            dry_run: false,
+        })
+        .expect("export through adapter");
+
+    let path = PathBuf::from(result["path"].as_str().expect("export path"));
+    assert_eq!(path, output_root.join("plugin/export.md"));
+    assert_eq!(
+        fs::read_to_string(path).expect("read exported file"),
+        "adapter markdown export"
+    );
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn conversation_session_export_dry_run_calls_adapter_without_writing_file() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-export-dry-run-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create test root");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let script = write_executable_script(
+        &root,
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf 'ran' > "$0.ran"
+printf '%s\n' '{"type":"item","item":{"kind":"markdown_export","content":"dry run markdown","relative_path":"plugin/dry-run.md"}}'
+printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
+"#,
+    );
+    let ran_marker = script.with_file_name("adapter.sh.ran");
+    let session_id = upsert_conversation_export_fixture(
+        &service,
+        &root,
+        vec!["export_markdown".to_string()],
+        Some(&script),
+        false,
+    );
+    let output_root = root.join("exports");
+
+    let result = service
+        .export_conversation_session(ConversationSessionExportParams {
+            session_id,
+            output_root: output_root.to_string_lossy().to_string(),
+            question_ids: Vec::new(),
+            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            dry_run: true,
+        })
+        .expect("dry-run export through adapter");
+
+    let path = PathBuf::from(result["path"].as_str().expect("export path"));
+    assert_eq!(path, output_root.join("plugin/dry-run.md"));
+    assert_eq!(result["bytes"], "dry run markdown".len());
+    assert!(ran_marker.exists());
+    assert!(!path.exists());
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn web_record_export_uses_adapter_markdown_formatter() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-web-record-export-plugin-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create test root");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let script = write_executable_script(
+        &root,
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"item","item":{"kind":"markdown_export","content":"web adapter markdown export","relative_path":"web/export.md"}}'
+printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
+"#,
+    );
+    let session_id = upsert_conversation_export_fixture(
+        &service,
+        &root,
+        vec!["export_markdown".to_string()],
+        Some(&script),
+        true,
+    );
+    let output_root = root.join("exports");
+
+    let result = service
+        .export_web_record_session(ConversationSessionExportParams {
+            session_id,
+            output_root: output_root.to_string_lossy().to_string(),
+            question_ids: Vec::new(),
+            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            dry_run: false,
+        })
+        .expect("export web record through adapter");
+
+    let path = PathBuf::from(result["path"].as_str().expect("export path"));
+    assert_eq!(path, output_root.join("web/export.md"));
+    assert_eq!(
+        fs::read_to_string(path).expect("read exported file"),
+        "web adapter markdown export"
+    );
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn conversation_session_export_requires_adapter_markdown_capability() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-export-no-cap-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create test root");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let session_id = upsert_conversation_export_fixture(
+        &service,
+        &root,
+        vec!["read_session".to_string()],
+        None,
+        false,
+    );
+
+    let error = service
+        .export_conversation_session(ConversationSessionExportParams {
+            session_id,
+            output_root: root.join("exports").to_string_lossy().to_string(),
+            question_ids: Vec::new(),
+            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            dry_run: true,
+        })
+        .expect_err("missing export_markdown should fail");
+
+    assert!(error.contains("export_markdown"));
+    assert!(error.contains("fixture-export"));
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn conversation_session_export_rejects_unsafe_adapter_relative_path() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-export-unsafe-path-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create test root");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let script = write_executable_script(
+        &root,
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"item","item":{"kind":"markdown_export","content":"unsafe","relative_path":"../escape.md"}}'
+printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
+"#,
+    );
+    let session_id = upsert_conversation_export_fixture(
+        &service,
+        &root,
+        vec!["export_markdown".to_string()],
+        Some(&script),
+        false,
+    );
+
+    let error = service
+        .export_conversation_session(ConversationSessionExportParams {
+            session_id,
+            output_root: root.join("exports").to_string_lossy().to_string(),
+            question_ids: Vec::new(),
+            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            dry_run: true,
+        })
+        .expect_err("unsafe adapter relative path should fail");
+
+    assert!(error.contains("relative_path"));
+    assert!(!root.join("escape.md").exists());
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn conversation_session_export_requires_manifest_markdown_capability() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-export-manifest-no-cap-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create test root");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let script = write_executable_script(
+        &root,
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"item","item":{"kind":"markdown_export","content":"adapter markdown export","relative_path":"plugin/export.md"}}'
+printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
+"#,
+    );
+    let session_id = upsert_conversation_export_fixture(
+        &service,
+        &root,
+        vec!["export_markdown".to_string()],
+        Some(&script),
+        false,
+    );
+    let adapter = load_export_fixture_adapter(&service, &session_id);
+    let manifest_path = adapter.manifest_path.expect("manifest path");
+    fs::write(
+        &manifest_path,
+        serde_json::json!({
+            "schema_version": 1,
+            "id": adapter.id,
+            "name": "Fixture export adapter",
+            "version": "0.1.0",
+            "protocol_version": 1,
+            "command": [script.to_string_lossy().to_string()],
+            "capabilities": ["read_session"],
+            "input_kinds": ["directory"]
+        })
+        .to_string(),
+    )
+    .expect("rewrite manifest without export capability");
+
+    let error = service
+        .export_conversation_session(ConversationSessionExportParams {
+            session_id,
+            output_root: root.join("exports").to_string_lossy().to_string(),
+            question_ids: Vec::new(),
+            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            dry_run: true,
+        })
+        .expect_err("manifest missing export_markdown should fail");
+
+    assert!(error.contains("export_markdown"));
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn conversation_session_export_rejects_trusted_hash_mismatch() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-export-hash-mismatch-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create test root");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let script = write_executable_script(
+        &root,
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"item","item":{"kind":"markdown_export","content":"adapter markdown export","relative_path":"plugin/export.md"}}'
+printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
+"#,
+    );
+    let session_id = upsert_conversation_export_fixture(
+        &service,
+        &root,
+        vec!["export_markdown".to_string()],
+        Some(&script),
+        false,
+    );
+    let adapter = load_export_fixture_adapter(&service, &session_id);
+    let pool = service.db.pool().clone();
+    service
+        .db
+        .block_on(async move {
+            sqlx::query("UPDATE conversation_adapters SET trusted_hash = ? WHERE id = ?")
+                .bind("definitely-not-the-current-hash")
+                .bind(&adapter.id)
+                .execute(&pool)
+                .await
+                .map_err(|error| error.to_string())?;
+            AppResult::Ok(())
+        })
+        .expect("force hash mismatch");
+
+    let error = service
+        .export_conversation_session(ConversationSessionExportParams {
+            session_id,
+            output_root: root.join("exports").to_string_lossy().to_string(),
+            question_ids: Vec::new(),
+            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            dry_run: true,
+        })
+        .expect_err("trusted hash mismatch should fail");
+
+    assert!(error.contains("trusted hash mismatch"));
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn conversation_session_export_rejects_symlink_escape_under_output_root() {
+    use std::os::unix::fs::symlink;
+
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-export-symlink-escape-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create test root");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let script = write_executable_script(
+        &root,
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"item","item":{"kind":"markdown_export","content":"escape","relative_path":"link/export.md"}}'
+printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
+"#,
+    );
+    let session_id = upsert_conversation_export_fixture(
+        &service,
+        &root,
+        vec!["export_markdown".to_string()],
+        Some(&script),
+        false,
+    );
+    let output_root = root.join("exports");
+    let outside_root = root.join("outside");
+    fs::create_dir_all(&output_root).expect("create output root");
+    fs::create_dir_all(&outside_root).expect("create outside root");
+    symlink(&outside_root, output_root.join("link")).expect("create export symlink");
+
+    let error = service
+        .export_conversation_session(ConversationSessionExportParams {
+            session_id,
+            output_root: output_root.to_string_lossy().to_string(),
+            question_ids: Vec::new(),
+            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            dry_run: false,
+        })
+        .expect_err("symlink escape under output root should fail");
+
+    assert!(error.contains("symlink") || error.contains("output_root"));
+    assert!(!outside_root.join("export.md").exists());
+    drop(service);
+    fs::remove_dir_all(root).ok();
 }
 
 #[test]

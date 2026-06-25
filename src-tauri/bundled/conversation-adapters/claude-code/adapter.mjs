@@ -464,6 +464,121 @@ function readSession() {
   });
 }
 
+function exportMarkdown() {
+  const params = input.params ?? {};
+  const detail = params.session_detail ?? params.sessionDetail;
+  if (!detail || typeof detail !== "object") {
+    throw new Error("export_markdown requires params.session_detail");
+  }
+  return {
+    content: renderSessionMarkdown(
+      detail,
+      params.question_ids ?? params.questionIds ?? [],
+      params.content_filter ?? params.contentFilter ?? {},
+    ),
+    relative_path: String(params.default_relative_path ?? params.defaultRelativePath ?? "conversation-export.md").trim(),
+  };
+}
+
+function renderSessionMarkdown(detail, questionIds, contentFilter) {
+  const session = detail.session ?? {};
+  const selectedIds = new Set(Array.isArray(questionIds) ? questionIds.map(String) : []);
+  const questions = Array.isArray(detail.questions)
+    ? detail.questions.filter((entry) => !selectedIds.size || selectedIds.has(String(entry?.question?.id ?? "")))
+    : [];
+  const lines = [
+    `# ${headingText(session.title || session.external_id || "Conversation export")}`,
+    "",
+    "**Session Metadata**",
+    "",
+    `- Adapter: \`${session.adapter_id ?? ""}\``,
+    `- Source: \`${session.source_id ?? ""}\``,
+    `- External Session: \`${session.external_id ?? ""}\``,
+  ];
+  if (session.project_path) lines.push(`- Project: \`${session.project_path}\``);
+  if (session.updated_at) lines.push(`- Updated: \`${session.updated_at}\``);
+  lines.push("");
+  questions.forEach((entry, index) => {
+    const question = entry.question ?? {};
+    const title = question.title || firstMarkdownLine(question.question_text) || `Question ${index + 1}`;
+    lines.push(`## ${index + 1}. ${headingText(title)}`, "");
+    const partsByTurn = new Map();
+    for (const part of [...(entry.parts ?? [])].sort((a, b) => Number(a.part_index ?? 0) - Number(b.part_index ?? 0))) {
+      const turnId = String(part.turn_id ?? "");
+      if (!partsByTurn.has(turnId)) partsByTurn.set(turnId, []);
+      partsByTurn.get(turnId).push(part);
+    }
+    for (const turn of [...(entry.turns ?? [])].sort((a, b) => Number(a.turn_index ?? 0) - Number(b.turn_index ?? 0))) {
+      for (const part of partsByTurn.get(String(turn.id ?? "")) ?? []) {
+        const rendered = renderContentCard(part, contentFilter);
+        if (rendered) lines.push(rendered);
+      }
+    }
+  });
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+}
+
+function renderContentCard(part, contentFilter) {
+  const card = contentCardMetadata(part.metadata_json);
+  const type = typeof card?.type === "string" ? card.type : null;
+  if (!["answer", "tool", "command", "code", "result"].includes(type)) return "";
+  if (contentFilter?.[type] === false) return "";
+  const text = cardString(card.text) ?? defaultCardText(part, type);
+  if (!text?.trim()) return "";
+  if (type === "code") return fencedSection("Code", cardString(card.language) ?? part.language, text);
+  if (type === "command") return fencedSection("Command", "sh", text);
+  if (type === "result") {
+    return fencedSection("Result", card.format === "markdown" ? "markdown" : "", text);
+  }
+  return fencedSection(type === "tool" ? "Tool" : "Answer", card.format === "markdown" ? "markdown" : "", text);
+}
+
+function contentCardMetadata(value) {
+  const metadata = typeof value === "string" ? parseJson(value) : value;
+  const card = metadata?.content_card ?? metadata?.contentCard;
+  return card && typeof card === "object" && !Array.isArray(card) ? card : null;
+}
+
+function parseJson(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function defaultCardText(part, type) {
+  if (type === "command") return String(part.command ?? part.text ?? "").trim();
+  return String(part.text ?? part.command ?? "").trim();
+}
+
+function fencedSection(label, language, value) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const fence = markdownFenceFor(text);
+  const suffix = language ? String(language).trim() : "";
+  return `### ${label}\n\n${fence}${suffix}\n${text}\n${fence}\n`;
+}
+
+function markdownFenceFor(text) {
+  const runs = String(text).match(/`+/g) ?? [];
+  const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
+  return "`".repeat(Math.max(3, longest + 1));
+}
+
+function headingText(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim() || "Untitled";
+}
+
+function firstMarkdownLine(value) {
+  return String(value ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
+}
+
+function cardString(value) {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
 try {
   if (input.method === "probe" || input.method === "list_sessions") {
     emit("complete", { item: { session_count: 0 } });
@@ -471,6 +586,9 @@ try {
     const sessions = readSession();
     for (const session of sessions) emit("item", { item: { kind: "session", session } });
     emit("complete", { item: { session_count: sessions.length } });
+  } else if (input.method === "export_markdown") {
+    emit("item", { item: { kind: "markdown_export", ...exportMarkdown() } });
+    emit("complete", { item: { export_count: 1 } });
   } else {
     fail(`unsupported method: ${input.method}`);
   }

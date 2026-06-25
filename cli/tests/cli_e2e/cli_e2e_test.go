@@ -236,6 +236,78 @@ func TestRealCLINormalizesRegisteredAliasesBeforeDispatch(t *testing.T) {
 	}
 }
 
+func TestRealCLIConversationSessionExportDryRunSmoke(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is unix-only")
+	}
+	dir := t.TempDir()
+	adapterPath := filepath.Join(dir, "adapter.sh")
+	manifestPath := filepath.Join(dir, "conversation-adapter.json")
+	if err := os.WriteFile(adapterPath, []byte(`#!/bin/sh
+cat >/dev/null
+if [ "$ASSETIWEAVE_FIXTURE_MODE" = "export" ]; then
+  printf '%s\n' '{"type":"item","item":{"kind":"markdown_export","content":"cli markdown export","relative_path":"cli/export.md"}}'
+  printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
+else
+  printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"cli-session","title":"CLI Session","project_path":null,"started_at":null,"updated_at":null,"source_locator":null,"source_fingerprint":null,"turns":[{"external_id":"turn-1","turn_index":0,"user_text":"CLI question","title":null,"started_at":null,"ended_at":null,"parts":[{"role":"assistant","kind":"text","text":"CLI answer","language":null,"command":null,"cwd":null,"status":null,"exit_code":null,"metadata_json":{"content_card":{"type":"answer","format":"markdown","text":"CLI answer"}}}]}]}}}'
+  printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+fi
+`), 0o755); err != nil {
+		t.Fatalf("write adapter fixture: %v", err)
+	}
+	manifest := `{
+  "schema_version": 1,
+  "id": "cli-export-fixture",
+  "name": "CLI Export Fixture",
+  "version": "0.1.0",
+  "protocol_version": 1,
+  "command": ["adapter.sh"],
+  "capabilities": ["read_session", "export_markdown"],
+  "input_kinds": ["directory"]
+}`
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
+		t.Fatalf("write adapter manifest: %v", err)
+	}
+	dbPath := filepath.Join(dir, "app.db")
+	env := []string{"ASSETIWEAVE_DB_PATH=" + dbPath}
+
+	register := runCLIWithEnv(t, env, "conversation", "adapter", "register", manifestPath, "--yes")
+	if !register.OK {
+		t.Fatalf("register adapter failed: %#v", register.Error)
+	}
+	source := runCLIWithEnv(t, env, "conversation", "source", "add", "--id", "cli-export-source", "--adapter", "cli-export-fixture", "--name", "CLI Export Source", "--kind", "directory", "--location", dir)
+	if !source.OK {
+		t.Fatalf("add source failed: %#v", source.Error)
+	}
+	sync := runCLIWithEnv(t, env, "conversation", "sync", "--source", "cli-export-source")
+	if !sync.OK {
+		t.Fatalf("sync conversation failed: %#v", sync.Error)
+	}
+	list := runCLIWithEnv(t, env, "conversation", "session", "list", "--source", "cli-export-source", "--limit", "1")
+	sessions, ok := list.Data.([]any)
+	if !ok || len(sessions) != 1 {
+		t.Fatalf("session list data = %#v", list.Data)
+	}
+	session, ok := sessions[0].(map[string]any)
+	if !ok || session["id"] == "" {
+		t.Fatalf("session item = %#v", sessions[0])
+	}
+
+	exportEnv := append(env, "ASSETIWEAVE_FIXTURE_MODE=export")
+	export := runCLIWithEnv(t, exportEnv, "conversation", "session", "export", session["id"].(string), "--output-root", filepath.Join(dir, "exports"), "--dry-run")
+	data, ok := export.Data.(map[string]any)
+	if !ok ||
+		data["dry_run"] != true ||
+		data["written"] != false ||
+		data["bytes"] != float64(len("cli markdown export")) ||
+		!strings.HasSuffix(data["path"].(string), filepath.Join("exports", "cli", "export.md")) {
+		t.Fatalf("export dry-run data = %#v", export.Data)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "exports", "cli", "export.md")); !os.IsNotExist(err) {
+		t.Fatalf("dry-run wrote export file or stat failed: %v", err)
+	}
+}
+
 func TestRealCLIRejectsHighRiskRawCall(t *testing.T) {
 	_, stderr, exitCode := runCLIProcess(t, "api", "call", "delete_source", "--json", `{"id":"missing","dry_run":true}`)
 	if exitCode != 10 {

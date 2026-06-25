@@ -1,8 +1,7 @@
 use crate::backend::dto::{
-    AppResult, ConversationExportContentFilter, ConversationMutationResult,
-    ConversationQuestionDetail, ConversationRecordKind, ConversationSearchCardType,
-    ConversationSearchHit, ConversationSearchPage, ConversationSessionDetail,
-    ConversationSessionListItem,
+    AppResult, ConversationMutationResult, ConversationQuestionDetail, ConversationRecordKind,
+    ConversationSearchCardType, ConversationSearchHit, ConversationSearchPage,
+    ConversationSessionDetail, ConversationSessionListItem,
 };
 use crate::backend::models::{
     conversation_turn_fingerprint, group_turn_ids_by_question, ConversationAdapter,
@@ -742,15 +741,6 @@ pub(crate) async fn split_conversation_question_sqlx(
     })
 }
 
-pub(crate) fn render_conversation_detail_markdown_with_filter(
-    detail: &ConversationSessionDetail,
-    question_ids: &[String],
-    content_filter: &ConversationExportContentFilter,
-) -> AppResult<String> {
-    let selection = (!question_ids.is_empty()).then_some(question_ids);
-    render_session_detail_markdown(detail, selection, content_filter)
-}
-
 async fn load_conversation_question_details_for_session_sqlx(
     pool: &SqlitePool,
     session_id: &str,
@@ -947,74 +937,6 @@ pub(crate) async fn search_conversation_cards_sqlx(
         total_count,
         hits: hits.into_iter().skip(offset).take(limit).collect(),
     })
-}
-
-pub(super) fn render_session_detail_markdown(
-    detail: &ConversationSessionDetail,
-    question_ids: Option<&[String]>,
-    content_filter: &ConversationExportContentFilter,
-) -> AppResult<String> {
-    let selected = question_ids.map(|ids| ids.iter().collect::<BTreeSet<_>>());
-    if let Some(selected) = &selected {
-        let available = detail
-            .questions
-            .iter()
-            .map(|question| &question.question.id)
-            .collect::<BTreeSet<_>>();
-        if let Some(missing_id) = selected.iter().find(|id| !available.contains(*id)) {
-            return Err(format!(
-                "conversation question not found in session: {missing_id}"
-            ));
-        }
-    }
-
-    let mut output = String::new();
-    output.push_str(&format!("# {}\n\n", detail.session.title));
-    output.push_str("## Session Metadata\n\n");
-    output.push_str(&format!("- Adapter: `{}`\n", detail.session.adapter_id));
-    output.push_str(&format!("- Source: `{}`\n", detail.session.source_id));
-    output.push_str(&format!(
-        "- External Session: `{}`\n",
-        detail.session.external_id
-    ));
-    if let Some(project_path) = &detail.session.project_path {
-        output.push_str(&format!("- Project: `{project_path}`\n"));
-    }
-    if let Some(updated_at) = &detail.session.updated_at {
-        output.push_str(&format!("- Updated: `{updated_at}`\n"));
-    }
-    output.push('\n');
-
-    let questions = detail
-        .questions
-        .iter()
-        .filter(|question| {
-            selected
-                .as_ref()
-                .map(|ids| ids.contains(&question.question.id))
-                .unwrap_or(true)
-        })
-        .collect::<Vec<_>>();
-
-    for (index, question) in questions.iter().enumerate() {
-        let title = question
-            .question
-            .title
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| first_line(&question.question.question_text));
-        output.push_str(&format!("## {}. {}\n\n", index + 1, title));
-        for turn in &question.turns {
-            output.push_str("### User\n\n");
-            output.push_str(&turn.user_text);
-            output.push_str("\n\n");
-            for part in question.parts.iter().filter(|part| part.turn_id == turn.id) {
-                render_part_markdown(&mut output, part, content_filter);
-            }
-        }
-    }
-    Ok(output)
 }
 
 fn builtin_sources(now: &str) -> Vec<ConversationSource> {
@@ -2515,64 +2437,6 @@ fn first_line(text: &str) -> String {
     }
 }
 
-fn render_part_markdown(
-    output: &mut String,
-    part: &ConversationPart,
-    content_filter: &ConversationExportContentFilter,
-) {
-    let Some(card) = declared_content_card_for_part(part) else {
-        return;
-    };
-    match card.card_type {
-        ConversationSearchCardType::Answer => {
-            if content_filter.answer {
-                render_text_section(output, "### Answer", Some(&card.text));
-            }
-        }
-        ConversationSearchCardType::Tool => {
-            if content_filter.tool {
-                render_text_section(output, "### Tool", Some(&card.text));
-            }
-        }
-        ConversationSearchCardType::Code => {
-            if content_filter.code {
-                output.push_str("### Code\n\n```");
-                if let Some(language) = &part.language {
-                    output.push_str(language);
-                }
-                output.push('\n');
-                output.push_str(&card.text);
-                output.push('\n');
-                output.push_str("```\n\n");
-            }
-        }
-        ConversationSearchCardType::Command => {
-            if content_filter.command {
-                output.push_str("### Command\n\n```sh\n");
-                output.push_str(&card.text);
-                output.push('\n');
-                output.push_str("```\n\n");
-            }
-        }
-        ConversationSearchCardType::Result => {
-            if content_filter.result {
-                render_text_section(output, "### Result", Some(&card.text));
-            }
-        }
-        ConversationSearchCardType::Question => {}
-    }
-}
-
-fn render_text_section(output: &mut String, heading: &str, text: Option<&str>) {
-    let Some(text) = text.map(str::trim).filter(|value| !value.is_empty()) else {
-        return;
-    };
-    output.push_str(heading);
-    output.push_str("\n\n");
-    output.push_str(text);
-    output.push_str("\n\n");
-}
-
 fn stable_id(prefix: &str, parts: &[&str]) -> String {
     let mut hasher = Sha256::new();
     for part in parts {
@@ -3010,7 +2874,7 @@ mod tests {
     }
 
     #[test]
-    fn sqlx_conversation_reads_filter_questions_and_render_markdown() {
+    fn sqlx_conversation_reads_and_filters_questions() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-read-sqlx-{}.sqlite",
             Uuid::new_v4()
@@ -3046,7 +2910,7 @@ mod tests {
             metadata_json: content_card_metadata("result"),
         });
 
-        let (sessions, detail, filtered_questions, question, markdown, command_markdown) = database
+        let (sessions, detail, filtered_questions, question) = database
             .block_on(async {
                 upsert_conversation_adapter_sqlx(database.pool(), &adapter).await?;
                 upsert_conversation_source_sqlx(database.pool(), &source).await?;
@@ -3077,30 +2941,7 @@ mod tests {
                     &filtered_questions[0].question.id,
                 )
                 .await?;
-                let markdown = render_conversation_detail_markdown_with_filter(
-                    &detail,
-                    &[question.question.id.clone()],
-                    &ConversationExportContentFilter::default(),
-                )?;
-                let command_markdown = render_conversation_detail_markdown_with_filter(
-                    &detail,
-                    &[question.question.id.clone()],
-                    &ConversationExportContentFilter {
-                        answer: false,
-                        tool: false,
-                        command: true,
-                        code: false,
-                        result: true,
-                    },
-                )?;
-                AppResult::Ok((
-                    sessions,
-                    detail,
-                    filtered_questions,
-                    question,
-                    markdown,
-                    command_markdown,
-                ))
+                AppResult::Ok((sessions, detail, filtered_questions, question))
             })
             .expect("read conversations through SQLx");
 
@@ -3112,15 +2953,6 @@ mod tests {
         assert_eq!(filtered_questions[0].question.question_text, "Export it");
         assert_eq!(question.turns.len(), 1);
         assert_eq!(question.parts.len(), 3);
-        assert!(markdown.contains("## 1. Export it"));
-        assert!(markdown.contains("answer for t3"));
-        assert!(!markdown.contains("How does sync work?"));
-        assert!(command_markdown.contains("### Command"));
-        assert!(command_markdown.contains("assetiweave-cli conversation session export"));
-        assert!(command_markdown.contains("### Result"));
-        assert!(command_markdown.contains("tests passed"));
-        assert!(!command_markdown.contains("answer for t3"));
-        assert!(!command_markdown.contains("cargo test"));
 
         drop(database);
         cleanup_database(&db_path);

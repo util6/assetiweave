@@ -1,6 +1,7 @@
 use super::prelude::*;
 use super::{
-    read_source_sessions_with_adapter, try_run_external_adapter, validate_external_adapter,
+    read_source_sessions_with_adapter, scaffold_external_adapter, try_run_external_adapter,
+    validate_external_adapter,
 };
 
 struct TempFixture {
@@ -44,6 +45,87 @@ fn adapter_output_requires_complete_line() {
         .expect_err("missing complete line should fail");
 
     assert!(error.contains("complete"));
+}
+
+#[test]
+fn adapter_output_parses_markdown_export_item() {
+    let output = br##"{"type":"item","item":{"kind":"markdown_export","content":"# Exported","relative_path":"codex/project/session.md"}}
+{"type":"complete","item":{"export_count":1}}"##;
+
+    let result =
+        parse_external_adapter_output("export_markdown", output.to_vec(), Vec::new()).unwrap();
+
+    let export = result.markdown_export.expect("markdown export item");
+    assert_eq!(result.item_count, 1);
+    assert_eq!(export.content, "# Exported");
+    assert_eq!(export.relative_path, "codex/project/session.md");
+}
+
+#[test]
+fn adapter_output_rejects_empty_markdown_export_content() {
+    let output = br#"{"type":"item","item":{"kind":"markdown_export","content":"","relative_path":"codex/project/session.md"}}
+{"type":"complete","item":{"export_count":1}}"#;
+
+    let error = parse_external_adapter_output("export_markdown", output.to_vec(), Vec::new())
+        .expect_err("empty export content should fail");
+
+    assert!(error.contains("content"));
+}
+
+#[test]
+fn adapter_output_rejects_missing_markdown_export_fields() {
+    let missing_content = br#"{"type":"item","item":{"kind":"markdown_export","relative_path":"codex/project/session.md"}}
+{"type":"complete","item":{"export_count":1}}"#;
+    let error =
+        parse_external_adapter_output("export_markdown", missing_content.to_vec(), Vec::new())
+            .expect_err("missing export content should fail");
+    assert!(error.contains("content"));
+
+    let missing_relative_path =
+        br##"{"type":"item","item":{"kind":"markdown_export","content":"# Exported"}}
+{"type":"complete","item":{"export_count":1}}"##;
+    let error = parse_external_adapter_output(
+        "export_markdown",
+        missing_relative_path.to_vec(),
+        Vec::new(),
+    )
+    .expect_err("missing export relative_path should fail");
+    assert!(error.contains("relative_path"));
+}
+
+#[test]
+fn external_adapter_scaffold_generates_export_markdown_fixtures() {
+    let fixture = TempFixture::new("assetiweave-adapter-scaffold-fixture");
+
+    let result = scaffold_external_adapter(ExternalAdapterScaffoldParams {
+        directory: fixture.path().to_string_lossy().to_string(),
+        id: "fixture-external".to_string(),
+        name: "Fixture External".to_string(),
+        dry_run: false,
+    })
+    .unwrap();
+
+    let manifest: ConversationAdapterManifest =
+        serde_json::from_str(&fs::read_to_string(&result.manifest_path).unwrap()).unwrap();
+    assert!(manifest
+        .capabilities
+        .contains(&"export_markdown".to_string()));
+
+    let request: Value =
+        serde_json::from_str(&fs::read_to_string(&result.export_request_fixture_path).unwrap())
+            .unwrap();
+    assert_eq!(request["method"], "export_markdown");
+    assert_eq!(
+        request["params"]["default_relative_path"],
+        "example/Example-session.md"
+    );
+    assert!(request["params"]["session_detail"].is_object());
+
+    let response = fs::read(&result.export_response_fixture_path).unwrap();
+    let parsed = parse_external_adapter_output("export_markdown", response, Vec::new()).unwrap();
+    let export = parsed.markdown_export.expect("markdown export fixture");
+    assert_eq!(export.relative_path, "example/Example-session.md");
+    assert!(export.content.contains("## 1. Example question"));
 }
 
 #[test]
@@ -117,6 +199,36 @@ printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
     assert_eq!(result.sessions[0].turns[0].user_text, "External question");
     assert!(result.stderr.contains(&injection_arg));
     assert!(!hacked_path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn external_adapter_try_run_parses_markdown_export() {
+    let fixture = TempFixture::new("assetiweave-adapter-export-run-fixture");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r##"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"item","item":{"kind":"markdown_export","content":"# Exported from adapter","relative_path":"fixture/export.md"}}'
+printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
+"##,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+
+    let result = try_run_external_adapter(ExternalAdapterTryRunParams {
+        manifest_path: manifest.to_string_lossy().to_string(),
+        method: "export_markdown".to_string(),
+        location: Some(fixture.path().to_string_lossy().to_string()),
+        session_id: None,
+        yes: true,
+    })
+    .unwrap();
+
+    let export = result.markdown_export.expect("markdown export");
+    assert_eq!(result.item_count, 1);
+    assert_eq!(export.content, "# Exported from adapter");
+    assert_eq!(export.relative_path, "fixture/export.md");
 }
 
 #[cfg(unix)]
@@ -247,6 +359,66 @@ fn official_codex_adapter_splits_command_and_result_cards() {
     assert_eq!(parts[2].text.as_deref(), Some("function_call: update_plan"));
     assert_eq!(parts[3].command.as_deref(), Some("cargo test"));
     assert_eq!(parts[4].text.as_deref(), Some("tests passed"));
+}
+
+#[cfg(unix)]
+#[test]
+fn official_adapters_export_markdown_from_standard_session_detail() {
+    if !command_available("node") {
+        return;
+    }
+    for manifest_relative_path in [
+        "bundled/conversation-adapters/codex/conversation-adapter.json",
+        "bundled/conversation-adapters/opencode/conversation-adapter.json",
+        "bundled/conversation-adapters/claude-code/conversation-adapter.json",
+    ] {
+        let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest_relative_path);
+        let validation =
+            validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref()).unwrap();
+        let request = json!({
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "request_id": "fixture-export-markdown",
+            "method": "export_markdown",
+            "source": { "location": ".", "config": null },
+            "params": {
+                "session_detail": export_session_detail_fixture(),
+                "question_ids": ["question-1"],
+                "content_filter": {
+                    "answer": true,
+                    "tool": true,
+                    "command": false,
+                    "code": true,
+                    "result": true
+                },
+                "record_kind": "session",
+                "default_relative_path": "adapter/project/custom.md"
+            }
+        });
+
+        let result = run_external_adapter(
+            &validation,
+            "export_markdown",
+            request,
+            Duration::from_millis(DEFAULT_READ_TIMEOUT_MS),
+        )
+        .unwrap();
+        let export = result.markdown_export.expect("markdown export");
+
+        assert_eq!(export.relative_path, "adapter/project/custom.md");
+        assert!(export.content.contains("## 1. Export this"));
+        assert!(!export.content.contains("## Session Metadata"));
+        assert!(export
+            .content
+            .contains("### Answer\n\n```markdown\n# visible answer\n\n## nested heading\n```"));
+        assert!(export
+            .content
+            .contains("### Code\n\n```ts\nconst ok = true;\n```"));
+        assert!(export
+            .content
+            .contains("### Result\n\n```\n# result heading\n```"));
+        assert!(!export.content.contains("raw hidden answer"));
+        assert!(!export.content.contains("pnpm test"));
+    }
 }
 
 #[cfg(unix)]
@@ -757,6 +929,7 @@ fn official_adapter_fixture(
             "probe".to_string(),
             "list_sessions".to_string(),
             "read_session".to_string(),
+            "export_markdown".to_string(),
         ],
         input_kinds,
         created_at: "2026-01-01T00:00:00Z".to_string(),
@@ -790,6 +963,112 @@ fn assert_content_card_types(
             .map(|value| value.to_string())
             .collect::<Vec<_>>()
     );
+}
+
+fn export_session_detail_fixture() -> serde_json::Value {
+    json!({
+        "session": {
+            "id": "session-1",
+            "source_id": "source-1",
+            "adapter_id": "adapter-1",
+            "external_id": "external-session-1",
+            "title": "Export Fixture",
+            "project_path": "/tmp/project",
+            "started_at": null,
+            "updated_at": null,
+            "source_locator": null,
+            "source_fingerprint": null,
+            "missing": false,
+            "created_at": "2026-01-01T00:00:00Z",
+            "imported_at": "2026-01-01T00:00:00Z"
+        },
+        "questions": [{
+            "question": {
+                "id": "question-1",
+                "session_id": "session-1",
+                "question_index": 0,
+                "title": null,
+                "question_text": "Export this",
+                "answer_text": "visible answer",
+                "code_text": "const ok = true;",
+                "command_text": "pnpm test",
+                "grouping_origin": "imported",
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z"
+            },
+            "turns": [{
+                "id": "turn-1",
+                "session_id": "session-1",
+                "external_id": "turn-1",
+                "turn_index": 0,
+                "user_text": "Export this",
+                "title": null,
+                "started_at": null,
+                "ended_at": null,
+                "fingerprint": "turn-fingerprint",
+                "missing": false,
+                "imported_at": "2026-01-01T00:00:00Z"
+            }],
+            "parts": [
+                {
+                    "id": "part-answer",
+                    "turn_id": "turn-1",
+                    "part_index": 0,
+                    "role": "assistant",
+                    "kind": "text",
+                    "text": "raw hidden answer",
+                    "language": null,
+                    "command": null,
+                    "cwd": null,
+                    "status": null,
+                    "exit_code": null,
+                    "metadata_json": "{\"content_card\":{\"type\":\"answer\",\"format\":\"markdown\",\"text\":\"# visible answer\\n\\n## nested heading\"}}"
+                },
+                {
+                    "id": "part-code",
+                    "turn_id": "turn-1",
+                    "part_index": 1,
+                    "role": "assistant",
+                    "kind": "code_block",
+                    "text": "const ok = true;",
+                    "language": "ts",
+                    "command": null,
+                    "cwd": null,
+                    "status": null,
+                    "exit_code": null,
+                    "metadata_json": "{\"content_card\":{\"type\":\"code\",\"language\":\"ts\"}}"
+                },
+                {
+                    "id": "part-command",
+                    "turn_id": "turn-1",
+                    "part_index": 2,
+                    "role": "tool",
+                    "kind": "command",
+                    "text": null,
+                    "language": null,
+                    "command": "pnpm test",
+                    "cwd": "/tmp/project",
+                    "status": "completed",
+                    "exit_code": 0,
+                    "metadata_json": "{\"content_card\":{\"type\":\"command\"}}"
+                },
+                {
+                    "id": "part-result",
+                    "turn_id": "turn-1",
+                    "part_index": 3,
+                    "role": "tool",
+                    "kind": "tool",
+                    "text": "# result heading",
+                    "language": null,
+                    "command": null,
+                    "cwd": null,
+                    "status": "completed",
+                    "exit_code": 0,
+                    "metadata_json": "{\"content_card\":{\"type\":\"result\",\"format\":\"plain\"}}"
+                }
+            ]
+        }]
+    })
 }
 
 #[cfg(unix)]
@@ -847,6 +1126,7 @@ fn write_manifest(dir: &Path, command: Vec<String>) -> PathBuf {
             "probe".to_string(),
             "list_sessions".to_string(),
             "read_session".to_string(),
+            "export_markdown".to_string(),
         ],
         input_kinds: vec![ConversationSourceKind::Directory],
     };

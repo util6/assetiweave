@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) type AppResult<T> = Result<T, String>;
 
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct ConversationExportContentFilter {
     #[serde(default = "default_true")]
     pub(crate) answer: bool,
