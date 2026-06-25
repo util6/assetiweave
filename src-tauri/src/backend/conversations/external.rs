@@ -223,6 +223,7 @@ pub(crate) fn scaffold_external_adapter(
     fs::create_dir_all(request_fixture_path.parent().unwrap())
         .map_err(|error| error.to_string())?;
     let runtime = scaffold_adapter_runtime(&params)?;
+    write_scaffold_adapter_entrypoint(&target_dir, &runtime)?;
     let manifest = ConversationAdapterManifest {
         schema_version: 1,
         id: params.id,
@@ -308,6 +309,46 @@ pub(crate) fn scaffold_external_adapter(
     })
 }
 
+fn write_scaffold_adapter_entrypoint(
+    target_dir: &Path,
+    runtime: &ConversationAdapterRuntime,
+) -> AppResult<()> {
+    let entry_path = resolve_command_path(target_dir, &runtime.entry);
+    if entry_path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = entry_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::write(
+        &entry_path,
+        scaffold_adapter_entrypoint_template(&runtime.kind),
+    )
+    .map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    if matches!(
+        runtime.kind,
+        ConversationAdapterRuntimeKind::Bash | ConversationAdapterRuntimeKind::Executable
+    ) {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&entry_path)
+            .map_err(|error| error.to_string())?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&entry_path, permissions).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn scaffold_adapter_entrypoint_template(kind: &ConversationAdapterRuntimeKind) -> &'static str {
+    match kind {
+        ConversationAdapterRuntimeKind::Node => NODE_ADAPTER_STARTER,
+        ConversationAdapterRuntimeKind::Python => PYTHON_ADAPTER_STARTER,
+        ConversationAdapterRuntimeKind::Bash => BASH_ADAPTER_STARTER,
+        ConversationAdapterRuntimeKind::Executable => EXECUTABLE_ADAPTER_STARTER,
+    }
+}
+
 fn scaffold_adapter_runtime(
     params: &ExternalAdapterScaffoldParams,
 ) -> AppResult<ConversationAdapterRuntime> {
@@ -358,6 +399,112 @@ fn default_scaffold_runtime_version(kind: &ConversationAdapterRuntimeKind) -> Op
         ConversationAdapterRuntimeKind::Bash | ConversationAdapterRuntimeKind::Executable => None,
     }
 }
+
+const NODE_ADAPTER_STARTER: &str = r##"#!/usr/bin/env node
+const chunks = [];
+for await (const chunk of process.stdin) chunks.push(chunk);
+const request = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+const method = request.method;
+
+function write(item) {
+  process.stdout.write(`${JSON.stringify(item)}\n`);
+}
+
+if (method === "export_markdown") {
+  write({
+    type: "item",
+    item: {
+      kind: "markdown_export",
+      content: "# Example session\n\n## 1. Example question\n\nExample answer\n",
+      relative_path: request.params?.default_relative_path ?? "example/Example-session.md",
+    },
+  });
+  write({ type: "complete", item: { export_count: 1 } });
+} else if (method === "read_session") {
+  write({
+    type: "item",
+    item: {
+      kind: "session",
+      session: {
+        external_id: request.params?.session_id ?? "example-session",
+        title: "Example session",
+        project_path: null,
+        started_at: null,
+        updated_at: null,
+        source_locator: null,
+        source_fingerprint: null,
+        turns: [],
+      },
+    },
+  });
+  write({ type: "complete", item: { session_count: 1, turn_count: 0 } });
+} else {
+  write({ type: "complete", item: {} });
+}
+"##;
+
+const PYTHON_ADAPTER_STARTER: &str = r##"#!/usr/bin/env python3
+import json
+import sys
+
+request = json.loads(sys.stdin.read() or "{}")
+method = request.get("method")
+
+def write(item):
+    sys.stdout.write(json.dumps(item, separators=(",", ":")) + "\n")
+
+if method == "export_markdown":
+    write({
+        "type": "item",
+        "item": {
+            "kind": "markdown_export",
+            "content": "# Example session\n\n## 1. Example question\n\nExample answer\n",
+            "relative_path": request.get("params", {}).get("default_relative_path", "example/Example-session.md"),
+        },
+    })
+    write({"type": "complete", "item": {"export_count": 1}})
+elif method == "read_session":
+    write({
+        "type": "item",
+        "item": {
+            "kind": "session",
+            "session": {
+                "external_id": request.get("params", {}).get("session_id") or "example-session",
+                "title": "Example session",
+                "project_path": None,
+                "started_at": None,
+                "updated_at": None,
+                "source_locator": None,
+                "source_fingerprint": None,
+                "turns": [],
+            },
+        },
+    })
+    write({"type": "complete", "item": {"session_count": 1, "turn_count": 0}})
+else:
+    write({"type": "complete", "item": {}})
+"##;
+
+const BASH_ADAPTER_STARTER: &str = r##"#!/usr/bin/env bash
+set -euo pipefail
+
+request="$(cat)"
+case "$request" in
+  *'"method":"export_markdown"'*)
+    printf '%s\n' '{"type":"item","item":{"kind":"markdown_export","content":"# Example session\n\n## 1. Example question\n\nExample answer\n","relative_path":"example/Example-session.md"}}'
+    printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
+    ;;
+  *'"method":"read_session"'*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"example-session","title":"Example session","project_path":null,"started_at":null,"updated_at":null,"source_locator":null,"source_fingerprint":null,"turns":[]}}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1,"turn_count":0}}'
+    ;;
+  *)
+    printf '%s\n' '{"type":"complete","item":{}}'
+    ;;
+esac
+"##;
+
+const EXECUTABLE_ADAPTER_STARTER: &str = BASH_ADAPTER_STARTER;
 
 pub(crate) fn validate_external_adapter(
     params: ExternalAdapterValidateParams,

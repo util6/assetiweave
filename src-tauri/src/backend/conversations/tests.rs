@@ -640,6 +640,15 @@ fn external_adapter_scaffold_generates_export_markdown_fixtures() {
     assert_eq!(runtime.entry, "adapter.mjs");
     assert_eq!(runtime.version.as_deref(), Some(">=20"));
     assert_eq!(runtime.args, Vec::<String>::new());
+    let entry_path = fixture.path().join("adapter.mjs");
+    assert!(entry_path.is_file());
+    let entry_text = fs::read_to_string(entry_path).unwrap();
+    assert!(entry_text.contains("process.stdin"));
+    assert!(!validate_external_adapter_manifest(&result.manifest_path)
+        .unwrap()
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("does not exist")));
     validate_external_adapter_manifest(&result.manifest_path).unwrap();
     assert!(manifest
         .capabilities
@@ -660,6 +669,20 @@ fn external_adapter_scaffold_generates_export_markdown_fixtures() {
     let export = parsed.markdown_export.expect("markdown export fixture");
     assert_eq!(export.relative_path, "example/Example-session.md");
     assert!(export.content.contains("## 1. Example question"));
+
+    let starter_run = try_run_external_adapter(ExternalAdapterTryRunParams {
+        manifest_path: result.manifest_path.clone(),
+        method: "export_markdown".to_string(),
+        location: Some("/path/to/source".to_string()),
+        session_id: None,
+        yes: true,
+    })
+    .unwrap();
+    let starter_export = starter_run.markdown_export.expect("starter export");
+    assert_eq!(
+        starter_export.relative_path,
+        "fixture-external/fixture-project/example-session.md"
+    );
 }
 
 #[test]
@@ -683,7 +706,32 @@ fn external_adapter_scaffold_allows_explicit_runtime() {
     assert_eq!(runtime.kind, ConversationAdapterRuntimeKind::Python);
     assert_eq!(runtime.entry, "parser.py");
     assert_eq!(runtime.version.as_deref(), Some(">=3.11"));
+    let entry_text = fs::read_to_string(fixture.path().join("parser.py")).unwrap();
+    assert!(entry_text.contains("sys.stdin"));
     validate_external_adapter_manifest(&result.manifest_path).unwrap();
+}
+
+#[test]
+fn external_adapter_scaffold_preserves_existing_entrypoint() {
+    let fixture = TempFixture::new("assetiweave-adapter-scaffold-existing-entry-fixture");
+    let entry_path = fixture.path().join("adapter.mjs");
+    fs::write(&entry_path, "console.log('custom adapter');\n").unwrap();
+
+    scaffold_external_adapter(ExternalAdapterScaffoldParams {
+        directory: fixture.path().to_string_lossy().to_string(),
+        id: "fixture-existing-entry".to_string(),
+        name: "Fixture Existing Entry".to_string(),
+        runtime_type: None,
+        runtime_entry: None,
+        runtime_version: None,
+        dry_run: false,
+    })
+    .unwrap();
+
+    assert_eq!(
+        fs::read_to_string(entry_path).unwrap(),
+        "console.log('custom adapter');\n"
+    );
 }
 
 #[test]
