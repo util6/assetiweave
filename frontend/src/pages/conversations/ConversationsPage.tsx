@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CompositionEvent, type CSSProperties, type ReactNode } from "react";
 import {
   AppWindow,
   ArrowLeft,
@@ -24,6 +24,7 @@ import {
 import { PageMetrics } from "../../components/common/PageMetrics";
 import { PathPickerInput } from "../../components/common/PathPickerInput";
 import { AppShortcutIconForShortcut } from "../../components/apps/AppShortcutIcon";
+import type { NotificationMessage } from "../../components/notifications/NotificationBanner";
 import {
   buildConversationContentBlocks,
   conversationCardDomId,
@@ -90,6 +91,7 @@ import { abbreviateHomePath } from "../../utils/path";
 export { MarkdownContent } from "../../components/conversations/ConversationMarkdown";
 
 const SESSION_PAGE_SIZE = 100;
+const CONTENT_SEARCH_COMMIT_DELAY_MS = 220;
 const DISMISSED_SYNC_PROGRESS_TASK_LIMIT = 50;
 const dismissedConversationSyncProgressTaskKeys = new Set<string>();
 
@@ -112,6 +114,8 @@ interface ConversationSearchTarget {
   sessionId: string;
 }
 
+type ConversationPageNotification = Omit<NotificationMessage, "id">;
+
 export async function loadAllConversationSessionPages(
   listSessions: ListConversationSessionPage,
   query: string | null,
@@ -130,6 +134,7 @@ export async function loadAllConversationSessionPages(
 export function ConversationsPage({
   appShortcuts,
   onManualOpen,
+  onNotify,
   onNotifyError,
   onOpenSettings,
   recordKind = "session",
@@ -137,6 +142,7 @@ export function ConversationsPage({
   activeSubNavId?: string;
   appShortcuts: AppShortcut[];
   onManualOpen: () => void;
+  onNotify: (notification: ConversationPageNotification) => void;
   onNotifyError: (message: string) => void;
   onOpenSettings: (panel?: SettingsPanelId) => void;
   recordKind?: "session" | "web";
@@ -173,7 +179,6 @@ export function ConversationsPage({
     webRecordMode ? "~/Desktop/assetiweave-web-records" : "~/Desktop/assetiweave-conversations",
   );
   const [exporting, setExporting] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
   const handledSyncTaskIdRef = useRef<string | null>(null);
   const syncRunning = syncTask?.status === "running";
   const [contentQuery, setContentQuery] = useState("");
@@ -224,7 +229,6 @@ export function ConversationsPage({
     setImportDialogOpen(false);
     setImportStep("idle");
     setImporting(false);
-    setStatus(null);
     setSyncProgress(null);
     setSyncProgressDismissed(false);
     handledSyncTaskIdRef.current = null;
@@ -248,37 +252,34 @@ export function ConversationsPage({
 
     let cancelled = false;
     setContentSearchLoading(true);
-    const timeoutId = window.setTimeout(() => {
-      void searchConversationRecords({
-        content_types: ["question", "answer", "tool", "command", "code", "result"],
-        limit: 50,
-        query: trimmedQuery,
-        record_kind: currentRecordKind,
-      })
-        .then((result) => {
-          if (cancelled) return;
-          setContentSearchResult({
-            hits: result.hits,
-            query: result.query,
-            totalCount: result.total_count,
-          });
-        })
-        .catch((error) => {
-          if (!cancelled) {
-            setContentSearchResult(null);
-            onNotifyError(errorMessage(error));
-          }
-        })
-        .finally(() => {
-          if (!cancelled) {
-            setContentSearchLoading(false);
-          }
+    void searchConversationRecords({
+      content_types: ["question", "answer", "tool", "command", "code", "result"],
+      limit: 50,
+      query: trimmedQuery,
+      record_kind: currentRecordKind,
+    })
+      .then((result) => {
+        if (cancelled) return;
+        setContentSearchResult({
+          hits: result.hits,
+          query: result.query,
+          totalCount: result.total_count,
         });
-    }, 280);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setContentSearchResult(null);
+          onNotifyError(errorMessage(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setContentSearchLoading(false);
+        }
+      });
 
     return () => {
       cancelled = true;
-      window.clearTimeout(timeoutId);
     };
   }, [contentQuery, currentRecordKind, onNotifyError]);
 
@@ -400,7 +401,6 @@ export function ConversationsPage({
           return;
         }
         setSyncProgress({ phase: "completed", sourceLabel, summary, taskId: syncTask.id });
-        setStatus(null);
       })
       .catch((error) => {
         if (!cancelled) {
@@ -457,7 +457,6 @@ export function ConversationsPage({
 
   async function handleSync() {
     const sourceLabel = t("conversation.sync.allSources");
-    setStatus(null);
     setSyncProgressDismissed(false);
     handledSyncTaskIdRef.current = null;
     setSyncProgress({ phase: "preparing", sourceLabel });
@@ -492,7 +491,6 @@ export function ConversationsPage({
   }
 
   async function handleImport(values: ConversationImportFormValues) {
-    setStatus(null);
     setImporting(true);
     setImportStep("validating");
     try {
@@ -528,7 +526,11 @@ export function ConversationsPage({
         summary,
         taskId: result.task.id,
       });
-      setStatus(t("conversation.status.importStarted", { source: result.source.name }));
+      onNotify({
+        messageKey: "conversation.status.importStarted",
+        messageParams: { source: result.source.name },
+        tone: "info",
+      });
       setImportDialogOpen(false);
       setImportStep("idle");
     } catch (error) {
@@ -564,7 +566,7 @@ export function ConversationsPage({
         }
         return next;
       });
-      setStatus(t("conversation.status.merged"));
+      onNotify({ messageKey: "conversation.status.merged", tone: "success" });
       if (selectedSessionId) await loadSession(selectedSessionId);
       await refreshSessions();
     } catch (error) {
@@ -575,7 +577,7 @@ export function ConversationsPage({
   async function handleSplit(question: ConversationQuestionDetail, turnId: string) {
     try {
       await splitConversationQuestion(question.question.id, turnId, false);
-      setStatus(t("conversation.status.split"));
+      onNotify({ messageKey: "conversation.status.split", tone: "success" });
       if (selectedSessionId) await loadSession(selectedSessionId);
       await refreshSessions();
     } catch (error) {
@@ -595,10 +597,14 @@ export function ConversationsPage({
     try {
       const exportSession = webRecordMode ? exportWebRecordSession : exportConversationSession;
       await exportSession(selectedSessionId, outputRoot, false, questionIds, exportVisibility);
-      setStatus(
+      onNotify(
         questionIds.length > 0
-          ? t("conversation.status.exportedSelected", { count: questionIds.length })
-          : t("conversation.status.exported"),
+          ? {
+              messageKey: "conversation.status.exportedSelected",
+              messageParams: { count: questionIds.length },
+              tone: "success",
+            }
+          : { messageKey: "conversation.status.exported", tone: "success" },
       );
       setExportDialog(null);
     } catch (error) {
@@ -608,20 +614,20 @@ export function ConversationsPage({
     }
   }
 
-  function handleOpenSession(sessionId: string) {
+  const handleOpenSession = useCallback((sessionId: string) => {
     setSelectedSessionId(sessionId);
     setDetailQuery("");
     setActiveSearchTarget(null);
     setSelectedQuestionIds(new Set());
     setSessionView("detail");
-  }
+  }, []);
 
-  function handleAppSelect(appId: string) {
+  const handleAppSelect = useCallback((appId: string) => {
     setSelectedAppId(appId);
     setSelectedProjectKey(null);
-  }
+  }, []);
 
-  function handleOpenSearchHit(hit: ConversationSearchHit) {
+  const handleOpenSearchHit = useCallback((hit: ConversationSearchHit) => {
     setSelectedSessionId(hit.session.id);
     setSelectedQuestionId(hit.question_id);
     setDetailQuery("");
@@ -636,7 +642,7 @@ export function ConversationsPage({
     if (hit.card_type !== "question") {
       setContentVisibility((current) => ({ ...current, [hit.card_type]: true }));
     }
-  }
+  }, []);
 
   function handleQuestionSelectionChange(questionId: string, checked: boolean) {
     setSelectedQuestionIds((current) => {
@@ -731,10 +737,12 @@ export function ConversationsPage({
                 placeholder={t("conversation.toolbar.searchPlaceholder")}
                 value={query}
               />
-              <ToolbarSearch
+              <DebouncedToolbarSearch
                 className="w-[min(24rem,100%)] max-[980px]:w-64"
+                commitDelayMs={CONTENT_SEARCH_COMMIT_DELAY_MS}
                 onChange={setContentQuery}
                 placeholder={t("conversation.search.contentPlaceholder")}
+                resetSignal={currentRecordKind}
                 value={contentQuery}
               />
             </>
@@ -832,7 +840,6 @@ export function ConversationsPage({
           t={t}
         />
       ) : null}
-      {status ? <div className="mt-4 rounded-xl border border-theme-card-border bg-theme-control px-4 py-2 text-body-sm text-on-surface">{status}</div> : null}
       {sessionView === "browser" && (contentSearchResult || contentSearchLoading || contentQuery.trim()) ? (
         <ConversationContentSearchResults
           loading={contentSearchLoading}
@@ -950,6 +957,110 @@ function ConversationShell({
       {children}
     </div>
   );
+}
+
+export function DebouncedToolbarSearch({
+  className,
+  commitDelayMs,
+  onChange,
+  placeholder,
+  resetSignal,
+  value,
+}: {
+  className?: string;
+  commitDelayMs: number;
+  onChange: (value: string) => void;
+  placeholder: string;
+  resetSignal?: string;
+  value: string;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const committedValueRef = useRef(value);
+  const composingRef = useRef(false);
+  const draftRef = useRef(value);
+  const resetSignalRef = useRef(resetSignal);
+  const onChangeRef = useRef(onChange);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  useEffect(() => {
+    const resetSignalChanged = resetSignalRef.current !== resetSignal;
+    resetSignalRef.current = resetSignal;
+    if (!resetSignalChanged && value === committedValueRef.current) return;
+    clearDebouncedSearchTimer(timerRef);
+    composingRef.current = false;
+    committedValueRef.current = value;
+    draftRef.current = value;
+    if (inputRef.current && inputRef.current.value !== value) {
+      inputRef.current.value = value;
+    }
+  }, [resetSignal, value]);
+
+  useEffect(() => {
+    return () => clearDebouncedSearchTimer(timerRef);
+  }, []);
+
+  function commitDraft(nextValue: string) {
+    if (nextValue === committedValueRef.current) return;
+    committedValueRef.current = nextValue;
+    onChangeRef.current(nextValue);
+  }
+
+  function scheduleCommit(nextValue: string) {
+    clearDebouncedSearchTimer(timerRef);
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      if (!composingRef.current) {
+        commitDraft(nextValue);
+      }
+    }, commitDelayMs);
+  }
+
+  function handleChange(nextValue: string, event: ChangeEvent<HTMLInputElement>) {
+    draftRef.current = nextValue;
+    if (composingRef.current || inputEventIsComposing(event)) {
+      clearDebouncedSearchTimer(timerRef);
+      return;
+    }
+    scheduleCommit(nextValue);
+  }
+
+  function handleCompositionStart() {
+    composingRef.current = true;
+    clearDebouncedSearchTimer(timerRef);
+  }
+
+  function handleCompositionEnd(event: CompositionEvent<HTMLInputElement>) {
+    composingRef.current = false;
+    const nextValue = event.currentTarget.value;
+    draftRef.current = nextValue;
+    scheduleCommit(nextValue);
+  }
+
+  return (
+    <ToolbarSearch
+      className={className}
+      defaultValue={value}
+      inputRef={inputRef}
+      onChange={handleChange}
+      onCompositionEnd={handleCompositionEnd}
+      onCompositionStart={handleCompositionStart}
+      placeholder={placeholder}
+    />
+  );
+}
+
+function clearDebouncedSearchTimer(timerRef: { current: number | null }) {
+  if (timerRef.current === null) return;
+  window.clearTimeout(timerRef.current);
+  timerRef.current = null;
+}
+
+function inputEventIsComposing(event: ChangeEvent<HTMLInputElement>) {
+  return Boolean((event.nativeEvent as InputEvent).isComposing);
 }
 
 function ColumnPanel({ children, className = "", icon, title }: { children: ReactNode; className?: string; icon: ReactNode; title: string }) {
@@ -1179,7 +1290,7 @@ export function ConversationExportDialog({
   );
 }
 
-export function AppSessionBrowser({
+export const AppSessionBrowser = memo(function AppSessionBrowser({
   appShortcuts,
   columnMinWidth = DEFAULT_COLUMN_MIN_WIDTH,
   groups,
@@ -1303,7 +1414,7 @@ export function AppSessionBrowser({
       </section>
     </ResizableColumns>
   );
-}
+});
 
 function ProjectListItem({
   group,

@@ -189,6 +189,7 @@ export function AppRouter() {
               activeSubNavId={activeSubNavId}
               appShortcuts={catalog.appShortcuts}
               onManualOpen={openCurrentManual}
+              onNotify={(notification) => catalog.showNotification(notification)}
               onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
               onOpenSettings={openSettings}
               recordKind={routeId === "web-records" ? "web" : "session"}

@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { Search } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ChangeEvent, CompositionEvent, ReactNode, Ref } from "react";
 
 export type ToolbarViewMode = "list" | "columns" | "grid";
 
@@ -78,14 +78,22 @@ export function ToolbarCluster({
 
 export function ToolbarSearch({
   className,
+  defaultValue,
+  inputRef,
   onChange,
+  onCompositionEnd,
+  onCompositionStart,
   placeholder,
   value,
 }: {
   className?: string;
-  onChange: (value: string) => void;
+  defaultValue?: string;
+  inputRef?: Ref<HTMLInputElement>;
+  onChange: (value: string, event: ChangeEvent<HTMLInputElement>) => void;
+  onCompositionEnd?: (event: CompositionEvent<HTMLInputElement>) => void;
+  onCompositionStart?: (event: CompositionEvent<HTMLInputElement>) => void;
   placeholder: string;
-  value: string;
+  value?: string;
 }) {
   return (
     <label
@@ -98,8 +106,12 @@ export function ToolbarSearch({
       <Search size={17} />
       <input
         className="min-w-0 flex-1 whitespace-nowrap border-0 bg-transparent text-body-sm text-on-surface outline-none placeholder:text-outline"
-        onChange={(event) => onChange(event.target.value)}
+        defaultValue={defaultValue}
+        onChange={(event) => onChange(event.target.value, event)}
+        onCompositionEnd={onCompositionEnd}
+        onCompositionStart={onCompositionStart}
         placeholder={placeholder}
+        ref={inputRef}
         value={value}
       />
     </label>

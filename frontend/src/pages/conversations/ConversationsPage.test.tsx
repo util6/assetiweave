@@ -1,6 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { Profiler, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -18,12 +19,14 @@ import { I18nProvider } from "../../i18n/I18nProvider";
 import type { Translator } from "../../i18n/I18nProvider";
 import { messages, type TranslationParams } from "../../i18n/messages";
 import type {
+  AppShortcut,
   ConversationAdapter,
   ConversationQuestionDetail,
   ConversationSessionDetail,
 } from "../../types";
 import {
   AppSessionBrowser,
+  DebouncedToolbarSearch,
   groupConversationSessionsByApp,
   ConversationExportDialog,
   loadAllConversationSessionPages,
@@ -325,6 +328,108 @@ describe("MarkdownContent", () => {
     expect(html).toContain("sticky bottom-0");
   });
 
+  it("does not re-render the session browser for unrelated parent search updates", () => {
+    vi.stubGlobal("ResizeObserver", class {
+      disconnect() {}
+      observe() {}
+      unobserve() {}
+    });
+    const groups = groupConversationSessionsByApp(adapters, [
+      {
+        ...sessionDetail.session,
+        question_count: 1,
+        turn_count: 2,
+      },
+    ]);
+    const onAppSelect = vi.fn();
+    const onProjectSelect = vi.fn();
+    const onSessionOpen = vi.fn();
+    const appShortcuts: AppShortcut[] = [];
+    let translateCallCount = 0;
+    const countingT: Translator = (key, params) => {
+      translateCallCount += 1;
+      return t(key, params);
+    };
+
+    function Wrapper() {
+      const [, setSearchDraft] = useState("");
+      return (
+        <>
+          <button onClick={() => setSearchDraft("deploy")} type="button">
+            Update search draft
+          </button>
+          <AppSessionBrowser
+            appShortcuts={appShortcuts}
+            columnMinWidth={300}
+            groups={groups}
+            onAppSelect={onAppSelect}
+            onProjectSelect={onProjectSelect}
+            onSessionOpen={onSessionOpen}
+            selectedAppId="codex"
+            selectedProjectKey="/Users/util6/code-space/assetiweave"
+            t={countingT}
+          />
+        </>
+      );
+    }
+
+    render(<Wrapper />);
+
+    translateCallCount = 0;
+
+    fireEvent.click(screen.getByRole("button", { name: "Update search draft" }));
+
+    expect(translateCallCount).toBe(0);
+  });
+
+  it("does not re-render the debounced search control during IME composition", async () => {
+    vi.useFakeTimers();
+    try {
+      const onChange = vi.fn();
+      let renderCount = 0;
+
+      render(
+        <Profiler id="content-search" onRender={() => {
+          renderCount += 1;
+        }}>
+          <DebouncedToolbarSearch
+            commitDelayMs={220}
+            onChange={onChange}
+            placeholder="Search content"
+            value=""
+          />
+        </Profiler>,
+      );
+
+      const searchInput = screen.getByPlaceholderText("Search content") as HTMLInputElement;
+      renderCount = 0;
+
+      fireEvent.compositionStart(searchInput);
+      fireEvent.change(searchInput, {
+        target: { value: "zhong" },
+        nativeEvent: { isComposing: true },
+      });
+
+      expect(searchInput.value).toBe("zhong");
+      expect(renderCount).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(onChange).not.toHaveBeenCalled();
+
+      fireEvent.compositionEnd(searchInput, {
+        data: "中",
+        target: { value: "中" },
+      });
+
+      await vi.advanceTimersByTimeAsync(220);
+
+      expect(onChange).toHaveBeenCalledWith("中");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("splits commands and execution results into independently filterable cards", () => {
     const blocks = buildConversationContentBlocks(questionDetail.parts);
 
@@ -395,7 +500,9 @@ describe("MarkdownContent", () => {
     await waitFor(() =>
       expect(writeText).toHaveBeenCalledWith("assetiweave-cli conversation sync --dry-run"),
     );
-    expect(screen.getByRole("button", { name: "已复制" })).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "已复制" })).toBeTruthy();
+    });
   });
 
   it("copies user prompt text from the user question card", async () => {
