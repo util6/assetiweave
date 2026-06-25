@@ -6797,7 +6797,7 @@
     }
   ],
   "contract_version": 3,
-  "engine_version": "0.2.5",
+  "engine_version": "0.2.6",
   "methods": [
     "overview.get",
     "source.list",
