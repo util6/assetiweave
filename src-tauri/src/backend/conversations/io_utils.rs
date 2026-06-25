@@ -4,6 +4,7 @@ use std::io::ErrorKind;
 const CONVERSATION_RUNTIME_OVERRIDES_KEY: &str = "conversationRuntimeOverrides";
 const ADAPTER_RUNTIME_PROBE_TIMEOUT_MS: u64 = 3_000;
 const ADAPTER_RUNTIME_PROBE_OUTPUT_CAP: usize = 16 * 1024;
+const LEGACY_JAVASCRIPT_COMMAND_NODE_VERSION: &str = ">=20";
 
 enum RuntimeProbeError {
     Spawn(std::io::Error),
@@ -168,18 +169,27 @@ pub(super) fn adapter_runtime_requirements(
         else {
             continue;
         };
-        let Some(runtime) = manifest.runtime.as_ref() else {
-            continue;
-        };
-        let Some(version) = runtime.version.as_deref() else {
-            continue;
-        };
-        if matches!(runtime.kind, ConversationAdapterRuntimeKind::Executable)
-            || validate_runtime_version_constraint(version).is_err()
+        if let Some(runtime) = manifest.runtime.as_ref() {
+            let Some(version) = runtime.version.as_deref() else {
+                continue;
+            };
+            if matches!(runtime.kind, ConversationAdapterRuntimeKind::Executable)
+                || validate_runtime_version_constraint(version).is_err()
+            {
+                continue;
+            }
+            upsert_highest_runtime_requirement(&mut requirements, &runtime.kind, version);
+        } else if manifest
+            .command
+            .first()
+            .is_some_and(|command| is_javascript_adapter_command(Path::new(command)))
         {
-            continue;
+            upsert_highest_runtime_requirement(
+                &mut requirements,
+                &ConversationAdapterRuntimeKind::Node,
+                LEGACY_JAVASCRIPT_COMMAND_NODE_VERSION,
+            );
         }
-        upsert_highest_runtime_requirement(&mut requirements, &runtime.kind, version);
     }
     sort_runtime_requirements(requirements)
 }

@@ -448,6 +448,58 @@ fn adapter_runtime_requirements_keep_highest_minimum_per_runtime() {
 }
 
 #[test]
+fn adapter_runtime_requirements_include_legacy_javascript_commands() {
+    let fixture = TempFixture::new("assetiweave-runtime-legacy-js-fixture");
+    let adapter_dir = fixture.path().join("legacy-js");
+    fs::create_dir_all(&adapter_dir).unwrap();
+    let manifest_path = adapter_dir.join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "id": "legacy-js",
+            "name": "Legacy JS",
+            "version": "0.1.0",
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "command": ["adapter.mjs"],
+            "capabilities": ["probe", "read_session"],
+            "input_kinds": ["directory"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let adapter = ConversationAdapter {
+        id: "legacy-js".to_string(),
+        name: "Legacy JS".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest_path.to_string_lossy().to_string()),
+        executable_path: Some(
+            adapter_dir
+                .join("adapter.mjs")
+                .to_string_lossy()
+                .to_string(),
+        ),
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+        capabilities: vec!["probe".to_string(), "read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+
+    let requirements = adapter_runtime_requirements(&[adapter]);
+
+    assert_eq!(
+        requirements,
+        vec![(ConversationAdapterRuntimeKind::Node, ">=20".to_string())]
+    );
+}
+
+#[test]
 fn adapter_runtime_overrides_read_configured_programs() {
     let settings = json!({
         "conversationRuntimeOverrides": {
