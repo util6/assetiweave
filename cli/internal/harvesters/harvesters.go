@@ -41,18 +41,26 @@ var officialTemplates embed.FS
 var validIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 type Manifest struct {
-	SchemaVersion int         `json:"schema_version"`
-	ID            string      `json:"id"`
-	Name          string      `json:"name"`
-	Version       string      `json:"version"`
-	Origin        string      `json:"origin"`
-	Entrypoint    []string    `json:"entrypoint"`
-	Output        OutputSpec  `json:"output"`
-	Adapter       AdapterSpec `json:"adapter"`
-	Source        SourceSpec  `json:"source"`
-	Update        UpdateSpec  `json:"update"`
-	Capabilities  []string    `json:"capabilities,omitempty"`
-	Description   string      `json:"description,omitempty"`
+	SchemaVersion int          `json:"schema_version"`
+	ID            string       `json:"id"`
+	Name          string       `json:"name"`
+	Version       string       `json:"version"`
+	Origin        string       `json:"origin"`
+	Entrypoint    []string     `json:"entrypoint,omitempty"`
+	Runtime       *RuntimeSpec `json:"runtime,omitempty"`
+	Output        OutputSpec   `json:"output"`
+	Adapter       AdapterSpec  `json:"adapter"`
+	Source        SourceSpec   `json:"source"`
+	Update        UpdateSpec   `json:"update"`
+	Capabilities  []string     `json:"capabilities,omitempty"`
+	Description   string       `json:"description,omitempty"`
+}
+
+type RuntimeSpec struct {
+	Type    string   `json:"type"`
+	Entry   string   `json:"entry"`
+	Args    []string `json:"args,omitempty"`
+	Version string   `json:"version,omitempty"`
 }
 
 type OutputSpec struct {
@@ -713,10 +721,7 @@ func Run(options RunOptions) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
-	if len(manifest.Entrypoint) == 0 || strings.TrimSpace(manifest.Entrypoint[0]) == "" {
-		return RunResult{}, validationError("harvester %q has no entrypoint", options.ID)
-	}
-	invocation, err := resolveEntrypointInvocation(directory, manifest.Entrypoint)
+	invocation, err := resolveHarvesterInvocation(directory, manifest)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -820,6 +825,12 @@ func validateManifest(manifest Manifest) error {
 	if strings.TrimSpace(manifest.Version) == "" {
 		return validationError("harvester version is required")
 	}
+	if manifest.Runtime != nil && len(manifest.Entrypoint) > 0 {
+		return validationError("harvester %q must not declare both runtime and entrypoint", manifest.ID)
+	}
+	if manifest.Runtime != nil {
+		return validateRuntimeSpec(*manifest.Runtime)
+	}
 	if len(manifest.Entrypoint) == 0 {
 		return validationError("harvester entrypoint is required")
 	}
@@ -841,6 +852,13 @@ func validateID(id string) error {
 	return nil
 }
 
+func resolveHarvesterInvocation(directory string, manifest Manifest) (entrypointInvocation, error) {
+	if manifest.Runtime != nil {
+		return resolveRuntimeInvocation(directory, *manifest.Runtime)
+	}
+	return resolveEntrypointInvocation(directory, manifest.Entrypoint)
+}
+
 func resolveEntrypointInvocation(directory string, entrypoint []string) (entrypointInvocation, error) {
 	if len(entrypoint) == 0 || strings.TrimSpace(entrypoint[0]) == "" {
 		return entrypointInvocation{}, validationError("harvester entrypoint is required")
@@ -857,6 +875,70 @@ func resolveEntrypointInvocation(directory string, entrypoint []string) (entrypo
 		}, nil
 	}
 	return entrypointInvocation{Program: commandPath, Args: args}, nil
+}
+
+func resolveRuntimeInvocation(directory string, runtimeSpec RuntimeSpec) (entrypointInvocation, error) {
+	if err := validateRuntimeSpec(runtimeSpec); err != nil {
+		return entrypointInvocation{}, err
+	}
+	entryPath, err := resolveCommand(directory, runtimeSpec.Entry)
+	if err != nil {
+		return entrypointInvocation{}, err
+	}
+	args := append([]string{}, runtimeSpec.Args...)
+	switch strings.ToLower(strings.TrimSpace(runtimeSpec.Type)) {
+	case "node":
+		return entrypointInvocation{Program: "node", Args: append([]string{entryPath}, args...)}, nil
+	case "python":
+		if runtime.GOOS == "windows" {
+			return entrypointInvocation{Program: "py", Args: append([]string{"-3", entryPath}, args...)}, nil
+		}
+		return entrypointInvocation{Program: "python3", Args: append([]string{entryPath}, args...)}, nil
+	case "bash":
+		return entrypointInvocation{Program: "bash", Args: append([]string{entryPath}, args...)}, nil
+	case "executable":
+		return entrypointInvocation{Program: entryPath, Args: args}, nil
+	default:
+		return entrypointInvocation{}, validationError("unsupported harvester runtime type: %s", runtimeSpec.Type)
+	}
+}
+
+func validateRuntimeSpec(runtimeSpec RuntimeSpec) error {
+	runtimeType := strings.ToLower(strings.TrimSpace(runtimeSpec.Type))
+	switch runtimeType {
+	case "node", "python", "bash", "executable":
+	default:
+		return validationError("unsupported harvester runtime type: %s", runtimeSpec.Type)
+	}
+	if strings.TrimSpace(runtimeSpec.Entry) == "" {
+		return validationError("harvester runtime entry is required")
+	}
+	if strings.TrimSpace(runtimeSpec.Version) != "" && !validRuntimeVersionConstraint(runtimeSpec.Version) {
+		return validationError("harvester runtime version constraint must use >=x[.y[.z]]: %s", runtimeSpec.Version)
+	}
+	return nil
+}
+
+func validRuntimeVersionConstraint(version string) bool {
+	version = strings.TrimSpace(version)
+	if !strings.HasPrefix(version, ">=") {
+		return false
+	}
+	parts := strings.Split(strings.TrimSpace(strings.TrimPrefix(version, ">=")), ".")
+	if len(parts) == 0 || len(parts) > 3 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		for _, character := range part {
+			if character < '0' || character > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func resolveCommand(directory, command string) (string, error) {

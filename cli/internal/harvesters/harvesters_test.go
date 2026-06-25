@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -60,6 +61,17 @@ func TestInstallOfficialTemplateWritesUserHarvesterAsset(t *testing.T) {
 	}
 	if _, ok := adapterManifest["command"]; ok {
 		t.Fatalf("adapter manifest still uses legacy command: %#v", adapterManifest)
+	}
+	harvesterManifest := readJSONFile(t, filepath.Join(result.Directory, "harvester.json"))
+	harvesterRuntime, ok := harvesterManifest["runtime"].(map[string]any)
+	if !ok {
+		t.Fatalf("harvester runtime missing: %#v", harvesterManifest)
+	}
+	if harvesterRuntime["type"] != "node" || harvesterRuntime["entry"] != "scripts/harvest.js" || harvesterRuntime["version"] != ">=20" {
+		t.Fatalf("harvester runtime = %#v", harvesterRuntime)
+	}
+	if _, ok := harvesterManifest["entrypoint"]; ok {
+		t.Fatalf("harvester manifest still uses legacy entrypoint: %#v", harvesterManifest)
 	}
 	if _, err := InstallOfficialTemplate(InstallOptions{Root: root, ID: "gemini-web"}); err == nil {
 		t.Fatal("second install without force succeeded, want overwrite error")
@@ -311,6 +323,55 @@ func TestResolveEntrypointInvocationRunsJavaScriptThroughNode(t *testing.T) {
 	}
 	if got, want := invocation.Args, []string{script, "--once"}; !slices.Equal(got, want) {
 		t.Fatalf("Args = %#v, want %#v", got, want)
+	}
+}
+
+func TestResolveRuntimeInvocationRunsDeclaredNodeRuntime(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "demo-web")
+	script := filepath.Join(dir, "scripts", "harvest.mjs")
+	if err := os.MkdirAll(filepath.Dir(script), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(script, []byte("\n"), 0o600); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	invocation, err := resolveHarvesterInvocation(dir, Manifest{
+		ID: "demo-web",
+		Runtime: &RuntimeSpec{
+			Type:    "node",
+			Entry:   "scripts/harvest.mjs",
+			Args:    []string{"--once"},
+			Version: ">=20",
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolveHarvesterInvocation() error = %v", err)
+	}
+
+	if invocation.Program != "node" {
+		t.Fatalf("Program = %q, want node", invocation.Program)
+	}
+	if got, want := invocation.Args, []string{script, "--once"}; !slices.Equal(got, want) {
+		t.Fatalf("Args = %#v, want %#v", got, want)
+	}
+}
+
+func TestValidateManifestRejectsRuntimeMixedWithEntrypoint(t *testing.T) {
+	err := validateManifest(Manifest{
+		SchemaVersion: 1,
+		ID:            "demo-web",
+		Name:          "Demo Web",
+		Version:       "0.1.0",
+		Entrypoint:    []string{"scripts/harvest.js"},
+		Runtime:       &RuntimeSpec{Type: "node", Entry: "scripts/harvest.js", Version: ">=20"},
+	})
+	if err == nil {
+		t.Fatal("validateManifest() error = nil, want mixed runtime and entrypoint error")
+	}
+	if !strings.Contains(err.Error(), "must not declare both runtime and entrypoint") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

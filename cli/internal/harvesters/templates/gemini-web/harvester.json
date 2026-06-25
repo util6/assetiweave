@@ -5,9 +5,11 @@
   "version": "0.1.2",
   "origin": "official",
   "description": "Official AssetIWeave harvester template for Gemini web conversations.",
-  "entrypoint": [
-    "scripts/harvest.js"
-  ],
+  "runtime": {
+    "type": "node",
+    "entry": "scripts/harvest.js",
+    "version": ">=20"
+  },
   "capabilities": [
     "browser_cookie_auth",
     "conversation_export",
