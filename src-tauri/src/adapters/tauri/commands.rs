@@ -1168,6 +1168,15 @@ pub(crate) fn validate_conversation_adapter(
 }
 
 #[tauri::command]
+pub(crate) fn list_conversation_adapter_runtime_statuses(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::backend::conversations::ConversationAdapterRuntimeStatus>> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?
+        .list_conversation_adapter_runtime_statuses()
+}
+
+#[tauri::command]
 pub(crate) fn register_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterRegisterParams,
@@ -1575,6 +1584,7 @@ pub(crate) fn command_handler(
         list_conversation_adapters,
         scaffold_conversation_adapter,
         validate_conversation_adapter,
+        list_conversation_adapter_runtime_statuses,
         register_conversation_adapter,
         unregister_conversation_adapter,
         try_run_conversation_adapter,

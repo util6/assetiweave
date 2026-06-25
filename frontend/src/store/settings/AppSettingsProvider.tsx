@@ -36,6 +36,7 @@ export type {
   AppSettings,
   AppSettingsStorageInfo,
   ConversationContentCardColorSettings,
+  ConversationRuntimeOverrideSettings,
   DataBackupSettings,
   FontFallbackKind,
   FontFamilyPresetId,

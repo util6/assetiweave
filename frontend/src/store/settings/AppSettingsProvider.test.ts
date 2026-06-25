@@ -34,6 +34,35 @@ describe("AppSettingsProvider", () => {
     expect(settings.typography).toEqual(defaultSettings.typography);
     expect(settings.conversations).toEqual(defaultSettings.conversations);
     expect(settings.dataBackup).toEqual(defaultSettings.dataBackup);
+    expect(settings.conversationRuntimeOverrides).toEqual(defaultSettings.conversationRuntimeOverrides);
+  });
+
+  it("preserves configured conversation runtime override paths", () => {
+    const settings = normalizeStoredSettings({
+      conversationRuntimeOverrides: {
+        bash: "  /opt/homebrew/bin/bash  ",
+        node: "/opt/homebrew/bin/node",
+        python: "C:\\Python312\\python.exe",
+      },
+    });
+
+    expect(settings.conversationRuntimeOverrides).toEqual({
+      bash: "/opt/homebrew/bin/bash",
+      node: "/opt/homebrew/bin/node",
+      python: "C:\\Python312\\python.exe",
+    });
+  });
+
+  it("drops invalid conversation runtime override paths", () => {
+    const settings = normalizeStoredSettings({
+      conversationRuntimeOverrides: {
+        bash: "x".repeat(4097),
+        node: 42,
+        python: "",
+      },
+    });
+
+    expect(settings.conversationRuntimeOverrides).toEqual(defaultSettings.conversationRuntimeOverrides);
   });
 
   it("preserves a configured database backup directory", () => {

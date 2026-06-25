@@ -59,6 +59,32 @@ impl AppService {
 
     pub(crate) fn run_doctor(&self) -> AppResult<Value> {
         let backup_root = capabilities::skill_backup_root_sqlx(&self.db)?;
+        let runtime_statuses =
+            crate::backend::conversations::list_conversation_adapter_runtime_statuses()?;
+        let available_runtime_count = runtime_statuses
+            .iter()
+            .filter(|status| status.available)
+            .count();
+        let node_runtime_available = runtime_statuses.iter().any(|status| {
+            status.kind == crate::backend::conversations::ConversationAdapterRuntimeKind::Node
+                && status.available
+        });
+        let runtime_status = if node_runtime_available {
+            "pass"
+        } else {
+            "warn"
+        };
+        let runtime_message = if node_runtime_available {
+            format!(
+                "{available_runtime_count}/{} runtimes available",
+                runtime_statuses.len()
+            )
+        } else {
+            format!(
+                "node runtime missing; {available_runtime_count}/{} runtimes available",
+                runtime_statuses.len()
+            )
+        };
         let pool = self.db.pool().clone();
         let source_count = self.db.block_on(async move {
             crate::backend::store::count_rows_sqlx(&pool, "sources").await
@@ -75,6 +101,12 @@ impl AppService {
                     "name": "sources",
                     "status": "pass",
                     "message": format!("{source_count} sources")
+                },
+                {
+                    "name": "conversation_adapter_runtimes",
+                    "status": runtime_status,
+                    "message": runtime_message,
+                    "details": runtime_statuses
                 }
             ]
         }))

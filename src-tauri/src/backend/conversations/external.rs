@@ -412,6 +412,11 @@ pub(crate) fn adapter_from_registration_preview(value: Value) -> AppResult<Conve
     serde_json::from_value(adapter).map_err(|error| error.to_string())
 }
 
+pub(crate) fn list_conversation_adapter_runtime_statuses(
+) -> AppResult<Vec<ConversationAdapterRuntimeStatus>> {
+    Ok(list_adapter_runtime_statuses())
+}
+
 pub(super) fn validate_external_adapter_manifest(
     manifest_path: &str,
 ) -> AppResult<ExternalAdapterValidationResult> {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getConversationSyncTask,
   importConversationSource,
+  listConversationAdapterRuntimeStatuses,
   mergeConversationQuestions,
   searchConversationRecords,
   summarizeConversationSyncTask,
@@ -38,6 +39,17 @@ describe("conversation services", () => {
       dry_run: false,
       affected_question_ids: ["preview-question-1", "preview-question-2"],
     });
+  });
+
+  it("reports preview runtime diagnostics without calling Tauri", async () => {
+    vi.stubGlobal("window", {});
+
+    await expect(listConversationAdapterRuntimeStatuses()).resolves.toEqual([
+      expect.objectContaining({ available: true, kind: "node", program: "node" }),
+      expect.objectContaining({ available: false, kind: "python", program: "python3" }),
+      expect.objectContaining({ available: true, kind: "bash", program: "bash" }),
+    ]);
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 
   it("starts sync as a background task", async () => {

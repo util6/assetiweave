@@ -99,6 +99,12 @@ export interface DataBackupSettings {
   customDirectory: string;
 }
 
+export interface ConversationRuntimeOverrideSettings {
+  bash: string;
+  node: string;
+  python: string;
+}
+
 export const DEFAULT_CONVERSATION_CONTENT_CARD_COLORS: ConversationContentCardColorSettings = {
   answer: "#b99545",
   code: "#4f8bd9",
@@ -110,6 +116,7 @@ export const DEFAULT_CONVERSATION_CONTENT_CARD_COLORS: ConversationContentCardCo
 export interface AppSettings {
   columnMinWidth: number;
   confirmBeforeDeploy: boolean;
+  conversationRuntimeOverrides: ConversationRuntimeOverrideSettings;
   dataBackup: DataBackupSettings;
   density: InterfaceDensity;
   reduceMotion: boolean;
@@ -129,6 +136,11 @@ export interface AppSettingsStorageInfo {
 export const defaultSettings: AppSettings = {
   columnMinWidth: DEFAULT_COLUMN_MIN_WIDTH,
   confirmBeforeDeploy: true,
+  conversationRuntimeOverrides: {
+    bash: "",
+    node: "",
+    python: "",
+  },
   dataBackup: {
     customDirectory: "",
   },
@@ -179,6 +191,9 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
         ? stored.confirmBeforeDeploy
         : defaultSettings.confirmBeforeDeploy,
     dataBackup: normalizeDataBackupSettings(stored.dataBackup),
+    conversationRuntimeOverrides: normalizeConversationRuntimeOverrides(
+      stored.conversationRuntimeOverrides,
+    ),
     density: stored.density === "compact" ? "compact" : defaultSettings.density,
     reduceMotion:
       typeof stored.reduceMotion === "boolean"
@@ -191,6 +206,15 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
     theme: normalizeThemeId(stored.theme),
     typography,
     conversations,
+  };
+}
+
+function normalizeConversationRuntimeOverrides(value: unknown): ConversationRuntimeOverrideSettings {
+  const stored = isRecord(value) ? (value as Partial<ConversationRuntimeOverrideSettings>) : {};
+  return {
+    bash: normalizeRuntimePathSetting(stored.bash),
+    node: normalizeRuntimePathSetting(stored.node),
+    python: normalizeRuntimePathSetting(stored.python),
   };
 }
 
@@ -311,6 +335,15 @@ function normalizeResultPreviewLineLimit(value: unknown) {
 }
 
 function normalizeDirectorySetting(value: unknown) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length <= 4096 ? trimmed : "";
+}
+
+function normalizeRuntimePathSetting(value: unknown) {
   if (typeof value !== "string") {
     return "";
   }

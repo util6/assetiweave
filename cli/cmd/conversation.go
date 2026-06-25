@@ -394,6 +394,7 @@ func newCmdConversationAdapter(f *cmdutil.Factory) *cobra.Command {
 	})
 	cmd.AddCommand(newCmdConversationAdapterScaffold(f))
 	cmd.AddCommand(newCmdConversationAdapterValidate(f))
+	cmd.AddCommand(newCmdConversationAdapterRuntimeStatus(f))
 	cmd.AddCommand(newCmdConversationAdapterRegister(f))
 	cmd.AddCommand(newCmdConversationAdapterUnregister(f))
 	cmd.AddCommand(newCmdConversationAdapterTryRun(f))
@@ -432,6 +433,16 @@ func newCmdConversationAdapterValidate(f *cmdutil.Factory) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return callAndPrint(cmd, f, schema.MethodConversationAdapterValidate, map[string]any{"manifest_path": args[0]})
+		},
+	}
+}
+
+func newCmdConversationAdapterRuntimeStatus(f *cmdutil.Factory) *cobra.Command {
+	return &cobra.Command{
+		Use:   "runtime-status",
+		Short: "List detected system runtimes for conversation adapters",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodConversationAdapterRuntimeStatus, map[string]any{})
 		},
 	}
 }

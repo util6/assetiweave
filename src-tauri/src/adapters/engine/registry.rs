@@ -683,6 +683,18 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli conversation adapter validate <manifest>")
     ),
     command!(
+        "conversation.adapter.runtime-status",
+        "conversation.adapter.runtime-status",
+        "List detected system runtimes for conversation adapters",
+        Read,
+        Friendly,
+        false,
+        NoParams,
+        Service => |service, _params| service.list_conversation_adapter_runtime_statuses(),
+        &[],
+        Some("assetiweave-cli conversation adapter runtime-status")
+    ),
+    command!(
         "conversation.adapter.register",
         "conversation.adapter.register",
         "Register a trusted conversation adapter script",
@@ -1689,6 +1701,18 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         crate::backend::conversations::ExternalAdapterValidateParams,
         Service => |service, params| service.validate_conversation_adapter(params),
         &[param!("manifest_path", "Adapter manifest path", ["manifestPath"])],
+        None
+    ),
+    command!(
+        "list_conversation_adapter_runtime_statuses",
+        "conversation.adapter.runtime-status",
+        "List detected system runtimes for conversation adapters",
+        Read,
+        App,
+        false,
+        NoParams,
+        Service => |service, _params| service.list_conversation_adapter_runtime_statuses(),
+        &[],
         None
     ),
     command!(

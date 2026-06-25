@@ -22,6 +22,12 @@ impl AppService {
         crate::backend::conversations::validate_external_adapter(params)
     }
 
+    pub(crate) fn list_conversation_adapter_runtime_statuses(
+        &self,
+    ) -> AppResult<Vec<crate::backend::conversations::ConversationAdapterRuntimeStatus>> {
+        crate::backend::conversations::list_conversation_adapter_runtime_statuses()
+    }
+
     pub(crate) fn register_conversation_adapter(
         &self,
         params: crate::backend::conversations::ExternalAdapterRegisterParams,

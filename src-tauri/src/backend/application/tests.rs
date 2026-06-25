@@ -64,6 +64,45 @@ fn load_test_assets(service: &AppService) -> Vec<Asset> {
         .expect("load assets")
 }
 
+#[test]
+fn doctor_reports_conversation_adapter_runtime_statuses() {
+    let root = std::env::temp_dir().join(format!("assetiweave-doctor-runtime-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create temp dir");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+
+    let report = service.run_doctor().expect("run doctor");
+    let checks = report["checks"].as_array().expect("doctor checks");
+    let runtime_check = checks
+        .iter()
+        .find(|check| check["name"] == "conversation_adapter_runtimes")
+        .expect("runtime check");
+    let details = runtime_check["details"]
+        .as_array()
+        .expect("runtime details");
+    let kinds = details
+        .iter()
+        .filter_map(|detail| detail["kind"].as_str())
+        .collect::<Vec<_>>();
+    let node_available = details
+        .iter()
+        .find(|detail| detail["kind"].as_str() == Some("node"))
+        .and_then(|detail| detail["available"].as_bool())
+        .unwrap_or(false);
+
+    assert_eq!(
+        runtime_check["status"].as_str(),
+        Some(if node_available { "pass" } else { "warn" })
+    );
+    assert_eq!(kinds, vec!["node", "python", "bash"]);
+    assert!(runtime_check["message"]
+        .as_str()
+        .expect("runtime message")
+        .contains("runtimes available"));
+
+    fs::remove_dir_all(root).ok();
+}
+
 fn set_test_asset_mount(
     service: &AppService,
     asset_id: &str,

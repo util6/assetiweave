@@ -36,13 +36,22 @@ pub(crate) struct ConversationAdapterRuntime {
     pub(crate) version: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ConversationAdapterRuntimeKind {
     Node,
     Python,
     Bash,
     Executable,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct ConversationAdapterRuntimeStatus {
+    pub(crate) kind: ConversationAdapterRuntimeKind,
+    pub(crate) program: String,
+    pub(crate) available: bool,
+    pub(crate) version: Option<String>,
+    pub(crate) error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

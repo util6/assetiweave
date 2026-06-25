@@ -1511,6 +1511,25 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.adapter.runtime-status",
+      "cli": "assetiweave-cli conversation adapter runtime-status",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List detected system runtimes for conversation adapters",
+      "exposure": "friendly",
+      "method": "conversation.adapter.runtime-status",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.adapter.register",
       "cli": "assetiweave-cli conversation adapter register <manifest> --yes",
       "confirmation_required": true,
@@ -5392,6 +5411,25 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.adapter.runtime-status",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List detected system runtimes for conversation adapters",
+      "exposure": "app",
+      "method": "list_conversation_adapter_runtime_statuses",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.adapter.register",
       "cli": null,
       "confirmation_required": true,
@@ -6791,6 +6829,7 @@
     "conversation.adapter.list",
     "conversation.adapter.scaffold",
     "conversation.adapter.validate",
+    "conversation.adapter.runtime-status",
     "conversation.adapter.register",
     "conversation.adapter.unregister",
     "conversation.adapter.try-run",
@@ -6863,6 +6902,7 @@
     "list_conversation_adapters",
     "scaffold_conversation_adapter",
     "validate_conversation_adapter",
+    "list_conversation_adapter_runtime_statuses",
     "register_conversation_adapter",
     "unregister_conversation_adapter",
     "try_run_conversation_adapter",

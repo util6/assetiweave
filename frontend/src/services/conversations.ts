@@ -72,6 +72,14 @@ export interface ConversationAdapterRuntime {
   version?: string | null;
 }
 
+export interface ConversationAdapterRuntimeStatus {
+  kind: ConversationAdapterRuntimeKind;
+  program: string;
+  available: boolean;
+  version: string | null;
+  error: string | null;
+}
+
 export interface ConversationAdapterValidationResult {
   valid: boolean;
   manifest_path: string;
@@ -207,6 +215,39 @@ export async function validateConversationAdapter(
 
     return fallbackConversationAdapterValidation(manifestPath);
   }
+}
+
+export async function listConversationAdapterRuntimeStatuses(): Promise<
+  ConversationAdapterRuntimeStatus[]
+> {
+  if (!isTauriRuntime()) {
+    return [
+      {
+        kind: "node",
+        program: "node",
+        available: true,
+        version: "preview",
+        error: null,
+      },
+      {
+        kind: "python",
+        program: "python3",
+        available: false,
+        version: null,
+        error: "Not available in browser preview.",
+      },
+      {
+        kind: "bash",
+        program: "bash",
+        available: true,
+        version: "preview",
+        error: null,
+      },
+    ];
+  }
+  return invoke<ConversationAdapterRuntimeStatus[]>(
+    "list_conversation_adapter_runtime_statuses",
+  );
 }
 
 export async function registerConversationAdapter(

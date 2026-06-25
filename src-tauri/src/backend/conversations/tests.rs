@@ -231,6 +231,54 @@ fn adapter_runtime_probe_reports_missing_system_runtime() {
 }
 
 #[test]
+fn adapter_runtime_status_lists_supported_system_runtimes() {
+    let statuses = list_adapter_runtime_statuses();
+    let kinds = statuses
+        .iter()
+        .map(|status| status.kind.clone())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        kinds,
+        vec![
+            ConversationAdapterRuntimeKind::Node,
+            ConversationAdapterRuntimeKind::Python,
+            ConversationAdapterRuntimeKind::Bash
+        ]
+    );
+    assert!(statuses.iter().all(|status| !status.program.is_empty()));
+}
+
+#[test]
+fn adapter_runtime_overrides_read_configured_programs() {
+    let settings = json!({
+        "conversationRuntimeOverrides": {
+            "node": "/opt/node/bin/node",
+            "python": "  /opt/python/bin/python3  ",
+            "bash": "",
+            "ignored": "/tmp/ignored"
+        }
+    });
+
+    assert_eq!(
+        runtime_program_from_settings(&ConversationAdapterRuntimeKind::Node, &settings),
+        Some(PathBuf::from("/opt/node/bin/node"))
+    );
+    assert_eq!(
+        runtime_program_from_settings(&ConversationAdapterRuntimeKind::Python, &settings),
+        Some(PathBuf::from("/opt/python/bin/python3"))
+    );
+    assert_eq!(
+        runtime_program_from_settings(&ConversationAdapterRuntimeKind::Bash, &settings),
+        None
+    );
+    assert_eq!(
+        runtime_program_from_settings(&ConversationAdapterRuntimeKind::Executable, &settings),
+        None
+    );
+}
+
+#[test]
 fn external_adapter_validation_accepts_runtime_without_legacy_command() {
     let fixture = TempFixture::new("assetiweave-adapter-runtime-fixture");
     let adapter_path = fixture.path().join("adapter.mjs");

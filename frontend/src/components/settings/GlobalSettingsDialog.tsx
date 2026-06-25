@@ -36,6 +36,7 @@ import {
   PanelLeft,
   PanelTop,
   Puzzle,
+  RefreshCw,
   RotateCcw,
   Settings,
   ShieldCheck,
@@ -65,6 +66,10 @@ import type { Locale, TranslationKey } from "../../i18n/messages";
 import type { HeaderTabItem, LocalizedNavigationLabels, NavigationModel, RailMenuItem, SubNavItem } from "../../router/types";
 import { getCliToolsStatus, installCliTools, type CliToolsStatus } from "../../services/cliTools";
 import { getSkillBackupSettings, revealPath, selectTargetDirectory } from "../../services/catalog";
+import {
+  listConversationAdapterRuntimeStatuses,
+  type ConversationAdapterRuntimeStatus,
+} from "../../services/conversations";
 import type { ThemeId } from "../../theme/schema";
 import { isHexColor } from "../../theme/colorValidation";
 import { themeOptions } from "../../theme/themes";
@@ -82,6 +87,7 @@ import {
   fontFamilyOptions,
   resolveFontFamilyCss,
   useAppSettings,
+  type ConversationRuntimeOverrideSettings,
   type ConversationContentCardColorSettings,
   type FontFallbackKind,
   type FontFamilyPresetId,
@@ -137,6 +143,9 @@ export function GlobalSettingsDialog({
   const [cliToolsStatus, setCliToolsStatus] = useState<CliToolsStatus | null>(null);
   const [cliToolsError, setCliToolsError] = useState("");
   const [cliToolsInstalling, setCliToolsInstalling] = useState(false);
+  const [adapterRuntimeStatuses, setAdapterRuntimeStatuses] = useState<ConversationAdapterRuntimeStatus[]>([]);
+  const [adapterRuntimeLoading, setAdapterRuntimeLoading] = useState(false);
+  const [adapterRuntimeError, setAdapterRuntimeError] = useState("");
 
   useEffect(() => {
     if (open) {
@@ -202,6 +211,24 @@ export function GlobalSettingsDialog({
       .catch((error) => {
         if (!cancelled) {
           setCliToolsError(errorMessage(error));
+        }
+      });
+    setAdapterRuntimeLoading(true);
+    listConversationAdapterRuntimeStatuses()
+      .then((statuses) => {
+        if (!cancelled) {
+          setAdapterRuntimeStatuses(statuses);
+          setAdapterRuntimeError("");
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setAdapterRuntimeError(errorMessage(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setAdapterRuntimeLoading(false);
         }
       });
 
@@ -415,6 +442,16 @@ export function GlobalSettingsDialog({
     });
   }
 
+  function updateConversationRuntimeOverride(
+    key: keyof ConversationRuntimeOverrideSettings,
+    value: string,
+  ) {
+    updateSetting("conversationRuntimeOverrides", {
+      ...settings.conversationRuntimeOverrides,
+      [key]: value,
+    });
+  }
+
   async function handleInstallCliTools() {
     setCliToolsInstalling(true);
     setCliToolsError("");
@@ -424,6 +461,18 @@ export function GlobalSettingsDialog({
       setCliToolsError(errorMessage(error));
     } finally {
       setCliToolsInstalling(false);
+    }
+  }
+
+  async function refreshAdapterRuntimeStatuses() {
+    setAdapterRuntimeLoading(true);
+    setAdapterRuntimeError("");
+    try {
+      setAdapterRuntimeStatuses(await listConversationAdapterRuntimeStatuses());
+    } catch (error) {
+      setAdapterRuntimeError(errorMessage(error));
+    } finally {
+      setAdapterRuntimeLoading(false);
     }
   }
 
@@ -1035,6 +1084,18 @@ export function GlobalSettingsDialog({
                     assetiweave-cli conversation adapter scaffold --directory {storageInfo.conversationAdapterDir}
                   </div>
                 </SettingRow>
+                <ConversationRuntimeOverrideRow
+                  onChange={updateConversationRuntimeOverride}
+                  t={t}
+                  value={settings.conversationRuntimeOverrides}
+                />
+                <AdapterRuntimeStatusRow
+                  error={adapterRuntimeError}
+                  loading={adapterRuntimeLoading}
+                  onRefresh={() => void refreshAdapterRuntimeStatuses()}
+                  statuses={adapterRuntimeStatuses}
+                  t={t}
+                />
               </SettingsGroup>
             )}
           </div>
@@ -1812,6 +1873,142 @@ function ConversationContentCardColorField({
       </div>
     </label>
   );
+}
+
+function ConversationRuntimeOverrideRow({
+  onChange,
+  t,
+  value,
+}: {
+  onChange: (key: keyof ConversationRuntimeOverrideSettings, value: string) => void;
+  t: Translator;
+  value: ConversationRuntimeOverrideSettings;
+}) {
+  const runtimes: Array<{
+    key: keyof ConversationRuntimeOverrideSettings;
+    label: string;
+    placeholder: string;
+  }> = [
+    { key: "node", label: "Node", placeholder: "node" },
+    { key: "python", label: "Python", placeholder: "python3" },
+    { key: "bash", label: "Bash", placeholder: "bash" },
+  ];
+
+  return (
+    <SettingRow icon={<Terminal size={18} />} label={t("settings.conversation.runtimeOverrides")}>
+      <div className="grid w-[min(38rem,52vw)] gap-2">
+        {runtimes.map((runtime) => (
+          <label className="grid grid-cols-[72px_minmax(0,1fr)_auto] items-center gap-2" key={runtime.key}>
+            <span className="text-body-sm font-semibold text-on-surface">{runtime.label}</span>
+            <Input
+              aria-label={`${runtime.label} ${t("settings.conversation.runtimePath")}`}
+              className="font-mono text-code-md"
+              onChange={(event) => onChange(runtime.key, event.target.value)}
+              placeholder={runtime.placeholder}
+              value={value[runtime.key]}
+            />
+            <Button
+              aria-label={`${t("settings.conversation.runtimeClear")} ${runtime.label}`}
+              disabled={!value[runtime.key]}
+              onClick={() => onChange(runtime.key, "")}
+              size="icon-sm"
+              title={t("settings.conversation.runtimeClear")}
+              type="button"
+              variant="ghost"
+            >
+              <X size={15} />
+            </Button>
+          </label>
+        ))}
+        <p className="text-body-sm text-on-surface-variant">{t("settings.conversation.runtimeOverridesHint")}</p>
+      </div>
+    </SettingRow>
+  );
+}
+
+function AdapterRuntimeStatusRow({
+  error,
+  loading,
+  onRefresh,
+  statuses,
+  t,
+}: {
+  error: string;
+  loading: boolean;
+  onRefresh: () => void;
+  statuses: ConversationAdapterRuntimeStatus[];
+  t: Translator;
+}) {
+  const allAvailable = statuses.length > 0 && statuses.every((status) => status.available);
+  const statusText = loading
+    ? t("settings.conversation.runtimeLoading")
+    : error
+      ? t("settings.conversation.runtimeError")
+      : allAvailable
+        ? t("settings.conversation.runtimeReady")
+        : t("settings.conversation.runtimeMissing");
+
+  return (
+    <SettingRow icon={<Terminal size={18} />} label={t("settings.conversation.runtimeStatus")}>
+      <div className="flex w-[min(38rem,52vw)] min-w-0 items-start gap-2">
+        <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-theme-control-border bg-theme-control">
+          <div className="flex min-h-10 items-center justify-between gap-3 border-b border-theme-control-border px-3 py-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <span
+                className={clsx(
+                  "size-2 shrink-0 rounded-full",
+                  error ? "bg-status-remove" : loading ? "bg-status-update" : allAvailable ? "bg-status-create" : "bg-status-remove",
+                )}
+                aria-hidden="true"
+              />
+              <span className="truncate text-body-sm font-semibold text-on-surface">{statusText}</span>
+            </div>
+            <Button disabled={loading} onClick={onRefresh} size="sm" type="button" variant="ghost">
+              <RefreshCw className={clsx("size-4", loading && "animate-spin")} />
+              <span>{t("settings.conversation.runtimeRefresh")}</span>
+            </Button>
+          </div>
+          {error ? (
+            <p className="px-3 py-2 text-body-sm text-status-remove">{error}</p>
+          ) : (
+            <div className="divide-y divide-theme-control-border">
+              {(statuses.length > 0 ? statuses : runtimeStatusPlaceholders()).map((status) => (
+                <div className="grid min-h-11 grid-cols-[96px_1fr_auto] items-center gap-3 px-3 py-2" key={status.kind}>
+                  <span className="font-mono text-code-md font-semibold uppercase text-on-surface">{status.kind}</span>
+                  <div className="min-w-0">
+                    <p className="truncate font-mono text-code-md text-on-surface-variant" title={status.program}>
+                      {status.program}
+                    </p>
+                    {(status.version || status.error) && (
+                      <p
+                        className={clsx("mt-0.5 truncate text-body-sm", status.available ? "text-on-surface-variant" : "text-status-remove")}
+                        title={status.version ?? status.error ?? undefined}
+                      >
+                        {status.version ?? status.error}
+                      </p>
+                    )}
+                  </div>
+                  <span className={clsx("text-body-sm font-semibold", status.available ? "text-status-create" : "text-status-remove")}>
+                    {status.available ? t("settings.conversation.runtimeAvailable") : t("settings.conversation.runtimeUnavailable")}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </SettingRow>
+  );
+}
+
+function runtimeStatusPlaceholders(): ConversationAdapterRuntimeStatus[] {
+  return ["node", "python", "bash"].map((kind) => ({
+    available: false,
+    error: null,
+    kind: kind as ConversationAdapterRuntimeStatus["kind"],
+    program: kind,
+    version: null,
+  }));
 }
 
 function ThemePaletteControl({
