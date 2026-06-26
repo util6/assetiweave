@@ -85,7 +85,9 @@ import {
   RESULT_PREVIEW_LINE_LIMIT_STEP,
   firstFontFamilyName,
   fontFamilyOptions,
+  normalizeConversationTranslationTargetLanguage,
   resolveFontFamilyCss,
+  TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH,
   useAppSettings,
   type ConversationRuntimeOverrideSettings,
   type ConversationContentCardColorSettings,
@@ -1053,6 +1055,27 @@ export function GlobalSettingsDialog({
                     step={RESULT_PREVIEW_LINE_LIMIT_STEP}
                     unit={t("settings.unit.lines")}
                     value={settings.conversations.resultPreviewLineLimit}
+                  />
+                </SettingRow>
+                <SettingRow icon={<Languages size={18} />} label={t("settings.conversation.translationTarget")}>
+                  <Input
+                    aria-label={t("settings.conversation.translationTarget")}
+                    className="h-9 w-[min(28rem,44vw)] min-w-56"
+                    maxLength={TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH}
+                    onBlur={(event) =>
+                      updateSetting("conversations", {
+                        ...settings.conversations,
+                        translationTargetLanguage: normalizeConversationTranslationTargetLanguage(event.currentTarget.value),
+                      })
+                    }
+                    onChange={(event) =>
+                      updateSetting("conversations", {
+                        ...settings.conversations,
+                        translationTargetLanguage: event.target.value.slice(0, TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH),
+                      })
+                    }
+                    placeholder={t("settings.conversation.translationTargetPlaceholder")}
+                    value={settings.conversations.translationTargetLanguage}
                   />
                 </SettingRow>
                 <SettingRow icon={<Columns3 size={18} />} label={t("settings.conversation.compactToolbar")}>

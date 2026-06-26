@@ -10,6 +10,24 @@ import { isHexColor } from "../../theme/colorValidation";
 import type { Asset, AssetGroupIconSvg, AssetGroupInput } from "../../types";
 import { AssetPickerHeader, AssetPickerText, GroupField } from "./SkillGroupFormPrimitives";
 
+function generateRandomGroupColor(): string {
+  const hue = Math.floor(Math.random() * 360);
+  const saturation = 50 + Math.floor(Math.random() * 30); // 50-80%
+  const lightness = 40 + Math.floor(Math.random() * 20); // 40-60%
+  // Convert HSL to hex
+  const s = saturation / 100;
+  const l = lightness / 100;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + hue / 30) % 12;
+    const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * color)
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
 interface SkillGroupCreateDialogProps {
   assets: Asset[];
   busy: boolean;
@@ -52,10 +70,11 @@ export function SkillGroupCreateDialog({
       return;
     }
 
+    const randomColor = generateRandomGroupColor();
     setName("");
     setDescription("");
-    setColor(DEFAULT_GROUP_COLOR_HEX);
-    setDraftColor(DEFAULT_GROUP_COLOR_HEX);
+    setColor(randomColor);
+    setDraftColor(randomColor);
     setDisplayIcon("");
     setIconSvg(null);
     setEnabled(true);
