@@ -59,7 +59,7 @@ export default {
         "sidebar-width": "64px",
       },
       fontFamily: {
-        sans: ["Geist", "sans-serif"],
+        sans: ["JetBrains Mono", "monospace"],
         mono: ["JetBrains Mono", "monospace"],
       },
       fontSize: {

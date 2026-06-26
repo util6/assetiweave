@@ -17,6 +17,7 @@ export {
   COLUMN_MIN_WIDTH_STEP,
   DEFAULT_COLUMN_MIN_WIDTH,
   DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
+  DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
   FONT_SIZE_STEP,
@@ -30,12 +31,15 @@ export {
   fontFamilyOptions,
   firstFontFamilyName,
   normalizeStoredSettings,
+  normalizeConversationTranslationTargetLanguage,
   resolveFontFamilyCss,
+  TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH,
 } from "./settingsSchema";
 export type {
   AppSettings,
   AppSettingsStorageInfo,
   ConversationContentCardColorSettings,
+  ConversationTranslationTargetLanguage,
   ConversationRuntimeOverrideSettings,
   DataBackupSettings,
   FontFallbackKind,

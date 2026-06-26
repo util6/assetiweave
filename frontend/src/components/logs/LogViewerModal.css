@@ -107,7 +107,7 @@
   min-height: 360px;
   max-height: 52vh;
   overflow: auto;
-  font-family: "SF Mono", "Menlo", "Consolas", "Monaco", monospace;
+  font-family: "JetBrains Mono", "SFMono-Regular", "Menlo", "Consolas", monospace;
 }
 
 .log-viewer-content pre {

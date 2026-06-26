@@ -3,10 +3,11 @@ import { normalizeThemeId } from "../../theme/themes";
 
 export type InterfaceDensity = "comfortable" | "compact";
 
-export type FontFamilyPresetId = "system" | "geist" | "serif" | "mono" | "custom";
+export type FontFamilyPresetId = "system" | "jetbrains" | "serif" | "mono" | "custom";
 export type BuiltInFontFamilyPresetId = Exclude<FontFamilyPresetId, "custom">;
 export type FontFamilyToken = BuiltInFontFamilyPresetId;
 export type FontFallbackKind = "sans" | "serif" | "mono";
+export type ConversationTranslationTargetLanguage = string;
 
 export interface FontFamilySetting {
   customFontFamily: string;
@@ -34,21 +35,21 @@ export interface FontFamilyOption {
 }
 
 const fontFallbackCss: Record<FontFallbackKind, string> = {
-  sans: 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  sans: '"JetBrains Mono", "SFMono-Regular", Consolas, monospace',
   serif: 'Georgia, "Times New Roman", Times, serif',
   mono: '"JetBrains Mono", "SFMono-Regular", Consolas, monospace',
 };
 
 export const fontFamilyCss: Record<BuiltInFontFamilyPresetId, string> = {
-  system: `system-ui, ${fontFallbackCss.sans}`,
-  geist: `"Geist", ${fontFallbackCss.sans}`,
+  system: `"JetBrains Mono", ${fontFallbackCss.sans}`,
+  jetbrains: `"JetBrains Mono", ${fontFallbackCss.sans}`,
   serif: fontFallbackCss.serif,
   mono: fontFallbackCss.mono,
 };
 
 export const fontFamilyOptions: FontFamilyOption[] = [
-  { fallback: "sans", id: "system", labelKey: "settings.font.system", value: "system-ui" },
-  { fallback: "sans", id: "geist", labelKey: "settings.font.geist", value: "Geist" },
+  { fallback: "sans", id: "system", labelKey: "settings.font.system", value: "JetBrains Mono" },
+  { fallback: "sans", id: "jetbrains", labelKey: "settings.font.jetbrains", value: "JetBrains Mono" },
   { fallback: "serif", id: "serif", labelKey: "settings.font.serif", value: "Georgia" },
   { fallback: "mono", id: "mono", labelKey: "settings.font.mono", value: "JetBrains Mono" },
 ];
@@ -66,6 +67,8 @@ export const RESULT_PREVIEW_LINE_LIMIT_MIN = 5;
 export const RESULT_PREVIEW_LINE_LIMIT_MAX = 20;
 export const RESULT_PREVIEW_LINE_LIMIT_STEP = 1;
 export const DEFAULT_RESULT_PREVIEW_LINE_LIMIT = 10;
+export const TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH = 80;
+export const DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE = "简体中文";
 
 export interface TypographySettings {
   baseFontSize: number;
@@ -85,6 +88,7 @@ export interface ConversationPageSettings {
   sessionBrowserFontFamily: FontFamilySetting;
   sessionBrowserFontSize: number;
   sessionToolbarCompact: boolean;
+  translationTargetLanguage: ConversationTranslationTargetLanguage;
 }
 
 export interface ConversationContentCardColorSettings {
@@ -152,19 +156,20 @@ export const defaultSettings: AppSettings = {
     baseFontSize: 14,
     codeFontFamily: createFontFamilySetting("mono"),
     codeFontSize: 13,
-    contentFontFamily: createFontFamilySetting("system"),
+    contentFontFamily: createFontFamilySetting("mono"),
     contentFontSize: 14,
-    interfaceFontFamily: createFontFamilySetting("geist"),
+    interfaceFontFamily: createFontFamilySetting("jetbrains"),
   },
   conversations: {
     codeFontSize: 13,
     contentCardColors: DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
-    contentFontFamily: createFontFamilySetting("system"),
+    contentFontFamily: createFontFamilySetting("mono"),
     contentFontSize: 14,
     resultPreviewLineLimit: DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
-    sessionBrowserFontFamily: createFontFamilySetting("system"),
+    sessionBrowserFontFamily: createFontFamilySetting("mono"),
     sessionBrowserFontSize: 13,
     sessionToolbarCompact: true,
+    translationTargetLanguage: DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
   },
 };
 
@@ -283,8 +288,36 @@ function normalizeConversationPageSettings(
       typeof stored.sessionToolbarCompact === "boolean"
         ? stored.sessionToolbarCompact
         : defaultSettings.conversations.sessionToolbarCompact,
+    translationTargetLanguage: normalizeConversationTranslationTargetLanguage(
+      stored.translationTargetLanguage,
+    ),
   };
 }
+
+export function normalizeConversationTranslationTargetLanguage(
+  value: unknown,
+): ConversationTranslationTargetLanguage {
+  if (typeof value !== "string") {
+    return defaultSettings.conversations.translationTargetLanguage;
+  }
+
+  const normalized = value
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!normalized || normalized.length > TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH) {
+    return defaultSettings.conversations.translationTargetLanguage;
+  }
+
+  return legacyTranslationTargetLanguageNames[normalized] ?? normalized;
+}
+
+const legacyTranslationTargetLanguageNames: Record<string, string> = {
+  "zh-CN": DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
+  en: "English",
+  ja: "日本語",
+  ko: "한국어",
+};
 
 function normalizeContentCardColors(value: unknown): ConversationContentCardColorSettings {
   const stored = isRecord(value) ? (value as Partial<ConversationContentCardColorSettings>) : {};
@@ -447,7 +480,7 @@ export function fontFamilyOptionForPreset(preset: BuiltInFontFamilyPresetId) {
 
 function normalizeFontFamilyPreset(value: unknown): FontFamilyPresetId | null {
   return value === "system" ||
-    value === "geist" ||
+    value === "jetbrains" ||
     value === "serif" ||
     value === "mono" ||
     value === "custom"

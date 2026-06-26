@@ -116,6 +116,25 @@ describe("AppSettingsProvider", () => {
     expect(settings.conversations.sessionBrowserFontFamily).toEqual(sessionBrowserFontFamily);
     expect(settings.conversations.sessionBrowserFontSize).toBe(12);
     expect(settings.conversations.sessionToolbarCompact).toBe(false);
+    expect(settings.conversations.translationTargetLanguage).toBe(defaultSettings.conversations.translationTargetLanguage);
+  });
+
+  it("normalizes conversation translation target language", () => {
+    expect(normalizeStoredSettings({
+      conversations: { translationTargetLanguage: "  Spanish (Latin America)  " },
+    }).conversations.translationTargetLanguage).toBe("Spanish (Latin America)");
+    expect(normalizeStoredSettings({
+      conversations: { translationTargetLanguage: "fr" },
+    }).conversations.translationTargetLanguage).toBe("fr");
+    expect(normalizeStoredSettings({
+      conversations: { translationTargetLanguage: "zh-CN" },
+    }).conversations.translationTargetLanguage).toBe(defaultSettings.conversations.translationTargetLanguage);
+    expect(normalizeStoredSettings({
+      conversations: { translationTargetLanguage: "French\n\nCanadian" },
+    }).conversations.translationTargetLanguage).toBe("French Canadian");
+    expect(normalizeStoredSettings({
+      conversations: { translationTargetLanguage: "" },
+    }).conversations.translationTargetLanguage).toBe(defaultSettings.conversations.translationTargetLanguage);
   });
 
   it("normalizes command result preview line limits", () => {
@@ -135,7 +154,7 @@ describe("AppSettingsProvider", () => {
       typography: {
         codeFontFamily: "mono",
         contentFontFamily: "serif",
-        interfaceFontFamily: "geist",
+        interfaceFontFamily: "jetbrains",
       },
       conversations: {
         contentFontFamily: "system",
@@ -145,7 +164,7 @@ describe("AppSettingsProvider", () => {
 
     expect(settings.typography.codeFontFamily).toEqual(createFontFamilySetting("mono"));
     expect(settings.typography.contentFontFamily).toEqual(createFontFamilySetting("serif"));
-    expect(settings.typography.interfaceFontFamily).toEqual(createFontFamilySetting("geist"));
+    expect(settings.typography.interfaceFontFamily).toEqual(createFontFamilySetting("jetbrains"));
     expect(settings.conversations.contentFontFamily).toEqual(createFontFamilySetting("system"));
     expect(settings.conversations.sessionBrowserFontFamily).toEqual(createFontFamilySetting("mono"));
   });
@@ -155,7 +174,7 @@ describe("AppSettingsProvider", () => {
       typography: {
         codeFontFamily: fontFamilyCss.mono,
         contentFontFamily: '"Inter Variable", ui-sans-serif, system-ui, sans-serif',
-        interfaceFontFamily: fontFamilyCss.geist,
+        interfaceFontFamily: fontFamilyCss.jetbrains,
       },
       conversations: {
         sessionBrowserFontFamily: '"LXGW WenKai", Georgia, serif',
@@ -164,7 +183,7 @@ describe("AppSettingsProvider", () => {
 
     expect(settings.typography.codeFontFamily).toEqual(createFontFamilySetting("mono"));
     expect(settings.typography.contentFontFamily).toEqual(createFontFamilySetting("custom", "Inter Variable"));
-    expect(settings.typography.interfaceFontFamily).toEqual(createFontFamilySetting("geist"));
+    expect(settings.typography.interfaceFontFamily).toEqual(createFontFamilySetting("jetbrains"));
     expect(settings.conversations.sessionBrowserFontFamily).toEqual(createFontFamilySetting("custom", "LXGW WenKai"));
   });
 
@@ -172,7 +191,7 @@ describe("AppSettingsProvider", () => {
     expect(resolveFontFamilyCss(createFontFamilySetting("custom", "Maple Mono NF CN"), "mono")).toBe(
       '"Maple Mono NF CN", "JetBrains Mono", "SFMono-Regular", Consolas, monospace',
     );
-    expect(resolveFontFamilyCss(createFontFamilySetting("geist"), "sans")).toBe(fontFamilyCss.geist);
+    expect(resolveFontFamilyCss(createFontFamilySetting("jetbrains"), "sans")).toBe(fontFamilyCss.jetbrains);
   });
 
   it("preserves custom mode even when the custom font name matches a preset font", () => {
