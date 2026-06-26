@@ -34,3 +34,13 @@ tokio = { version = "1", features = ["rt", "time"] }
 ureq = { version = "2", features = ["json"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 walkdir = "2"
+
+[profile.dev]
+debug = 1            # line-tables only — enough for backtraces, much smaller than full
+
+[profile.dev.package."*"]
+debug = 0            # no debug info for dependencies
+
+[profile.release]
+strip = true         # strip debug symbols from release binary
+lto = "thin"         # link-time optimization — smaller binary
