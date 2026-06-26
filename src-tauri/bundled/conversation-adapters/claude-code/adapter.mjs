@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
-const CONTENT_CARD_SCHEMA_VERSION = "claude-code-content-cards-v3";
+const CONTENT_CARD_SCHEMA_VERSION = "claude-code-content-cards-v4";
 
 function emit(type, payload = {}) {
   process.stdout.write(`${JSON.stringify({ type, ...payload })}\n`);
@@ -195,6 +195,12 @@ function isUserToolResultMessage(value) {
   return valueContainsType(value?.content, "tool_result");
 }
 
+function contentItemsOfType(value, expectedType) {
+  const content = value?.content;
+  if (!Array.isArray(content)) return [];
+  return content.filter((item) => item && typeof item === "object" && item.type === expectedType);
+}
+
 function isIgnoredContentValue(value) {
   const type = stringField(value, ["type"]) ?? "";
   return [
@@ -286,6 +292,127 @@ function toolText(value) {
   if (typeof value?.output === "string") return value.output;
   if (typeof value?.content === "string") return value.content;
   return "";
+}
+
+function toolInput(value) {
+  const candidate = value?.tool_input ?? value?.input ?? value?.arguments ?? value?.args;
+  return parseJsonString(candidate) ?? candidate ?? null;
+}
+
+function compactToolMetadata(value, extra = {}) {
+  return compactObject({
+    type: stringField(value, ["type"]),
+    id: stringField(value, ["id", "uuid", "call_id", "callID"]),
+    tool_use_id: stringField(value, ["tool_use_id", "toolUseID"]),
+    name: stringField(value, ["tool_name", "toolName", "name"]),
+    ...extra,
+  });
+}
+
+function toolUsePart(value) {
+  const toolName = stringField(value, ["tool_name", "toolName", "name"]);
+  const input = toolInput(value);
+  const command = stringField(input, ["command"]) ?? stringField(value, ["command", "cmd"]);
+  const cwd = projectPathFromValue(input) ?? projectPathFromValue(value) ?? null;
+  if (command?.trim()) {
+    return [{
+      role: "tool",
+      kind: "command",
+      text: null,
+      language: null,
+      command,
+      cwd,
+      status: null,
+      exit_code: null,
+      metadata_json: metadata(compactObject({ type: "command", cwd }), compactToolMetadata(value)),
+    }];
+  }
+
+  const inputText = input == null
+    ? ""
+    : typeof input === "string"
+      ? input
+      : JSON.stringify(input, null, 2);
+  const text = [toolName ? `Tool: ${toolName}` : "Tool", inputText].filter((entry) => entry.trim()).join("\n\n");
+  if (!text.trim()) return [];
+  return [{
+    role: "tool",
+    kind: "tool",
+    text,
+    language: null,
+    command: null,
+    cwd,
+    status: null,
+    exit_code: null,
+    metadata_json: metadata({ type: "tool", format: input && typeof input === "object" ? "json" : "plain" }, compactToolMetadata(value)),
+  }];
+}
+
+function toolResultText(value, parent) {
+  if (typeof value?.content === "string") return value.content;
+  if (Array.isArray(value?.content)) return extractText({ content: value.content });
+  const result = parent?.toolUseResult ?? parent?.tool_use_result;
+  if (typeof result?.stdout === "string" || typeof result?.stderr === "string") {
+    return [result.stdout, result.stderr].filter((entry) => typeof entry === "string" && entry.trim()).join("\n\n");
+  }
+  if (typeof result?.content === "string") return result.content;
+  if (Array.isArray(result?.content)) return extractText({ content: result.content });
+  if (result != null) return compact(result);
+  return toolText(value);
+}
+
+function toolResultPart(value, parent) {
+  const text = toolResultText(value, parent);
+  if (!text.trim()) return [];
+  const result = parent?.toolUseResult ?? parent?.tool_use_result;
+  const status = stringField(result, ["status"]) ?? (result?.interrupted === true ? "interrupted" : null);
+  const exitCode = Number.isInteger(result?.exit_code)
+    ? result.exit_code
+    : Number.isInteger(result?.exitCode)
+      ? result.exitCode
+      : null;
+  return [{
+    role: "tool",
+    kind: "tool",
+    text,
+    language: null,
+    command: null,
+    cwd: null,
+    status,
+    exit_code: exitCode,
+    metadata_json: metadata(
+      compactObject({ type: "result", format: "plain", status, exit_code: exitCode }),
+      compactToolMetadata(value),
+    ),
+  }];
+}
+
+function assistantMessageParts(payload, parent) {
+  if (!Array.isArray(payload?.content)) {
+    const text = extractText(payload);
+    return text.trim() ? splitMarkdownParts("assistant", text) : [];
+  }
+
+  const parts = [];
+  for (const item of payload.content) {
+    if (!item || typeof item !== "object") {
+      const textPartValue = textPart("assistant", item);
+      if (textPartValue) parts.push(textPartValue);
+      continue;
+    }
+    if (item.type === "tool_use") {
+      parts.push(...toolUsePart(item));
+      continue;
+    }
+    if (item.type === "tool_result") {
+      parts.push(...toolResultPart(item, parent));
+      continue;
+    }
+    if (isIgnoredContentValue(item)) continue;
+    const text = extractText(item);
+    if (text.trim()) parts.push(...splitMarkdownParts("assistant", text));
+  }
+  return parts;
 }
 
 function toolPart(value) {
@@ -399,15 +526,13 @@ function parseJsonl(text) {
     }
     if (!current) continue;
     if (isUserToolResultMessage(payload)) {
-      current.parts.push(...toolPart(payload));
+      const resultParts = contentItemsOfType(payload, "tool_result").flatMap((item) => toolResultPart(item, value));
+      current.parts.push(...resultParts);
       current.ended_at = timestamp;
       continue;
     }
     if (role === "assistant") {
-      const text = extractText(payload);
-      if (text.trim()) {
-        current.parts.push(...splitMarkdownParts("assistant", text));
-      }
+      current.parts.push(...assistantMessageParts(payload, value));
       current.ended_at = timestamp;
       continue;
     }

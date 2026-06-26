@@ -1720,6 +1720,60 @@ fn official_claude_code_adapter_splits_command_and_result_cards() {
 
 #[cfg(unix)]
 #[test]
+fn official_claude_code_adapter_reads_content_array_tool_use_and_result_cards() {
+    if !command_available("node") {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-official-claude-array-fixture");
+    let jsonl = fixture.path().join("session.jsonl");
+    fs::write(
+        &jsonl,
+        [
+            r#"{"type":"user","message":{"role":"user","content":"Run tests"},"uuid":"turn-1","timestamp":"2026-06-26T00:00:00Z"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I will run the test suite."},{"type":"tool_use","id":"call-1","name":"Bash","input":{"command":"cargo test","description":"Run Rust tests"}}]},"timestamp":"2026-06-26T00:00:01Z"}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call-1","content":"tests passed"}]},"toolUseResult":{"stdout":"tests passed","stderr":"","interrupted":false,"isImage":false},"timestamp":"2026-06-26T00:00:02Z"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"All tests passed."}]},"timestamp":"2026-06-26T00:00:03Z"}"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let adapter = official_adapter_fixture(
+        "claude-code",
+        "Claude Code",
+        "bundled/conversation-adapters/claude-code/conversation-adapter.json",
+        vec![
+            ConversationSourceKind::Live,
+            ConversationSourceKind::Directory,
+            ConversationSourceKind::File,
+        ],
+    );
+    let source = source_fixture(
+        "claude-code",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].turns.len(), 1);
+    assert_eq!(sessions[0].turns[0].user_text, "Run tests");
+    assert_content_card_types(
+        &sessions[0].turns[0].parts,
+        &["answer", "command", "result", "answer"],
+    );
+    assert_eq!(
+        sessions[0].turns[0].parts[1].command.as_deref(),
+        Some("cargo test")
+    );
+    assert_eq!(
+        sessions[0].turns[0].parts[2].text.as_deref(),
+        Some("tests passed")
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn external_adapter_run_times_out() {
     let fixture = TempFixture::new("assetiweave-adapter-timeout-fixture");
     write_executable_script(
