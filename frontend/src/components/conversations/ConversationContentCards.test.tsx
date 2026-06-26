@@ -1,7 +1,9 @@
 /* @vitest-environment jsdom */
 
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ConversationContentCards,
   buildConversationContentBlocks,
@@ -11,6 +13,10 @@ import { messages, type TranslationParams } from "../../i18n/messages";
 import type { ConversationPart } from "../../types";
 
 describe("ConversationContentCards", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   it("does not infer card types for undeclared parts", () => {
     const blocks = buildConversationContentBlocks([
       {
@@ -173,6 +179,113 @@ describe("ConversationContentCards", () => {
     expect(html).toContain("API and Interface Design");
     expect(html).not.toContain("<h4");
     expect(html).toContain("Overview");
+  });
+
+  it("inserts translated content for a custom target language after opencode is available", async () => {
+    const translator = vi.fn().mockResolvedValue({ translated_text: "Ejecuta `pnpm test`." });
+
+    render(
+      <ConversationContentCards
+        blocks={[{
+          id: "part-answer-answer",
+          role: "assistant",
+          text: "Run `pnpm test`.",
+          type: "answer",
+        }]}
+        t={t}
+        translationAvailabilityChecker={async () => ({
+          available: true,
+          error: null,
+          version: "opencode 1.0.0",
+        })}
+        translationTargetLanguage="Spanish (Latin America)"
+        translator={translator}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    const translateButton = await screen.findByRole("button", { name: "翻译回答文字为Spanish (Latin America)" });
+    fireEvent.click(translateButton);
+
+    await waitFor(() =>
+      expect(translator).toHaveBeenCalledWith({
+        targetLanguage: "Spanish (Latin America)",
+        text: "Run `pnpm test`.",
+      }),
+    );
+    expect(await screen.findByText("译文 · Spanish (Latin America)")).toBeTruthy();
+    expect(await screen.findByText(/Ejecuta/)).toBeTruthy();
+  });
+
+  it("enables translation after StrictMode replays the availability effect", async () => {
+    const availabilityChecker = vi.fn().mockResolvedValue({
+      available: true,
+      error: null,
+      version: "opencode 1.0.0",
+    });
+
+    render(
+      <StrictMode>
+        <ConversationContentCards
+          blocks={[{
+            id: "part-answer-answer",
+            role: "assistant",
+            text: "Run `pnpm test`.",
+            type: "answer",
+          }]}
+          t={t}
+          translationAvailabilityChecker={availabilityChecker}
+          visibility={{
+            answer: true,
+            code: true,
+            command: true,
+            result: true,
+            tool: true,
+          }}
+        />
+      </StrictMode>,
+    );
+
+    const translateButton = await screen.findByRole("button", { name: "翻译回答文字为简体中文" });
+
+    expect((translateButton as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("disables translation when opencode is unavailable", async () => {
+    render(
+      <ConversationContentCards
+        blocks={[{
+          id: "part-answer-answer",
+          role: "assistant",
+          text: "Run tests.",
+          type: "answer",
+        }]}
+        t={t}
+        translationAvailabilityChecker={async () => ({
+          available: false,
+          error: "not found",
+          version: null,
+        })}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    const translateButton = await screen.findByRole("button", {
+      name: "opencode 不可用，无法翻译",
+    });
+    expect((translateButton as HTMLButtonElement).disabled).toBe(true);
   });
 });
 

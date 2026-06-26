@@ -22,6 +22,11 @@ use crate::{
         SkillAcquireParams, SkillRemoteCheckParams, SkillSearchParams, SkillSearchResult,
         SourceRemoveParams, SourceScanParams, UpdateSkillBackupSettingsParams,
     },
+    backend::card_translation::{
+        check_opencode_translation_availability as check_opencode_translation_availability_impl,
+        translate_conversation_card_with_opencode as translate_conversation_card_with_opencode_impl,
+        OpencodeTranslationAvailability, OpencodeTranslationRequest, OpencodeTranslationResult,
+    },
     backend::conversations::{
         ExternalAdapterRegisterParams, ExternalAdapterScaffoldParams, ExternalAdapterTryRunParams,
         ExternalAdapterValidateParams,
@@ -1177,6 +1182,23 @@ pub(crate) fn list_conversation_adapter_runtime_statuses(
 }
 
 #[tauri::command]
+pub(crate) fn check_opencode_translation_availability() -> AppResult<OpencodeTranslationAvailability>
+{
+    Ok(check_opencode_translation_availability_impl())
+}
+
+#[tauri::command]
+pub(crate) async fn translate_conversation_card_with_opencode(
+    params: OpencodeTranslationRequest,
+) -> AppResult<OpencodeTranslationResult> {
+    tauri::async_runtime::spawn_blocking(move || {
+        translate_conversation_card_with_opencode_impl(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub(crate) fn register_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterRegisterParams,
@@ -1585,6 +1607,8 @@ pub(crate) fn command_handler(
         scaffold_conversation_adapter,
         validate_conversation_adapter,
         list_conversation_adapter_runtime_statuses,
+        check_opencode_translation_availability,
+        translate_conversation_card_with_opencode,
         register_conversation_adapter,
         unregister_conversation_adapter,
         try_run_conversation_adapter,

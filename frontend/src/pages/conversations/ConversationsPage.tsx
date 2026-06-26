@@ -51,10 +51,12 @@ import type { TranslationKey } from "../../i18n/messages";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import { DEFAULT_COLUMN_MIN_WIDTH } from "../../store/settings/settingsSchema";
 import {
+  DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
   DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
   resolveFontFamilyCss,
   useAppSettings,
   type ConversationContentCardColorSettings,
+  type ConversationTranslationTargetLanguage,
   type SettingsPanelId,
 } from "../../store/settings/AppSettingsProvider";
 import {
@@ -919,6 +921,7 @@ export function ConversationsPage({
           session={sessionDetail}
           setOutputRoot={setOutputRoot}
           t={t}
+          translationTargetLanguage={appSettings.conversations.translationTargetLanguage}
           visibility={contentVisibility}
         />
       )}
@@ -1674,6 +1677,7 @@ export function SessionQuestionWorkspace({
   session,
   setOutputRoot,
   t,
+  translationTargetLanguage = DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
   visibility,
 }: {
   activeSearchTarget?: ConversationSearchTarget | null;
@@ -1695,6 +1699,7 @@ export function SessionQuestionWorkspace({
   session: ConversationSessionDetail | null;
   setOutputRoot: (value: string) => void;
   t: Translator;
+  translationTargetLanguage?: ConversationTranslationTargetLanguage;
   visibility: ConversationContentVisibility;
 }) {
   return (
@@ -1764,6 +1769,7 @@ export function SessionQuestionWorkspace({
             session={session}
             setOutputRoot={setOutputRoot}
             t={t}
+            translationTargetLanguage={translationTargetLanguage}
             visibility={visibility}
           />
         ) : (
@@ -1845,6 +1851,7 @@ export function QuestionPreview({
   session,
   setOutputRoot,
   t,
+  translationTargetLanguage = DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
   visibility = DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
 }: {
   activeSearchTarget?: ConversationSearchTarget | null;
@@ -1859,6 +1866,7 @@ export function QuestionPreview({
   session: ConversationSessionDetail;
   setOutputRoot: (value: string) => void;
   t: Translator;
+  translationTargetLanguage?: ConversationTranslationTargetLanguage;
   visibility?: ConversationContentVisibility;
 }) {
   const title = question.question.title || firstLine(question.question.question_text, t);
@@ -1983,6 +1991,7 @@ export function QuestionPreview({
                     onCopyError={onCopyError}
                     resultPreviewLineLimit={resultPreviewLineLimit}
                     t={t}
+                    translationTargetLanguage={translationTargetLanguage}
                     visibility={visibility}
                   />
                 )}

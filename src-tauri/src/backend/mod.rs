@@ -1,6 +1,7 @@
 pub(crate) mod app_settings;
 pub(crate) mod application;
 pub(crate) mod capabilities;
+pub(crate) mod card_translation;
 pub(crate) mod conversations;
 pub(crate) mod data_backup;
 pub(crate) mod defaults;

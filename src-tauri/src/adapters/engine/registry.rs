@@ -1722,6 +1722,30 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "check_opencode_translation_availability",
+        "conversation.card.translation.opencode-status",
+        "Check whether opencode is available for content card translation",
+        Read,
+        App,
+        false,
+        NoParams,
+        Service => |service, _params| service.check_opencode_translation_availability(),
+        &[],
+        None
+    ),
+    command!(
+        "translate_conversation_card_with_opencode",
+        "conversation.card.translation.opencode-run",
+        "Translate a conversation content card with opencode",
+        Write,
+        App,
+        false,
+        crate::backend::card_translation::OpencodeTranslationRequest,
+        Service => |service, params| service.translate_conversation_card_with_opencode(params),
+        &[param!("prompt", "Translation prompt passed to opencode run")],
+        None
+    ),
+    command!(
         "register_conversation_adapter",
         "conversation.adapter.register",
         "Register a trusted conversation adapter script",

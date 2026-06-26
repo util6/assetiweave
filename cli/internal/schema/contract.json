@@ -5508,6 +5508,51 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.card.translation.opencode-status",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Check whether opencode is available for content card translation",
+      "exposure": "app",
+      "method": "check_opencode_translation_availability",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.card.translation.opencode-run",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Translate a conversation content card with opencode",
+      "exposure": "app",
+      "method": "translate_conversation_card_with_opencode",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "prompt": {
+            "description": "Translation prompt passed to opencode run",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.adapter.register",
       "cli": null,
       "confirmation_required": true,
@@ -6981,6 +7026,8 @@
     "scaffold_conversation_adapter",
     "validate_conversation_adapter",
     "list_conversation_adapter_runtime_statuses",
+    "check_opencode_translation_availability",
+    "translate_conversation_card_with_opencode",
     "register_conversation_adapter",
     "unregister_conversation_adapter",
     "try_run_conversation_adapter",

@@ -1,15 +1,25 @@
-import { Braces, Check, CheckCircle2, Copy, FileText, Terminal, Wrench } from "lucide-react";
+import { Braces, Check, CheckCircle2, Copy, FileText, Languages, Terminal, Wrench } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Translator } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
+import {
+  checkOpencodeTranslationAvailability,
+  translateConversationCardContent,
+  type ConversationCardTranslationRequest,
+  type OpencodeTranslationAvailability,
+  type OpencodeTranslationResult,
+} from "../../services/cardTranslation";
 import type {
   ConversationPart,
   ConversationPartRole,
 } from "../../types";
 import {
   DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
+  DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
   DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
+  normalizeConversationTranslationTargetLanguage,
   type ConversationContentCardColorSettings,
+  type ConversationTranslationTargetLanguage,
 } from "../../store/settings/AppSettingsProvider";
 import { abbreviateHomePath } from "../../utils/path";
 import { MarkdownContent } from "./ConversationMarkdown";
@@ -18,6 +28,7 @@ export type ConversationContentType = "answer" | "tool" | "command" | "code" | "
 
 export type ConversationContentVisibility = Record<ConversationContentType, boolean>;
 export type ConversationContentFormat = "plain" | "markdown";
+type TranslationAvailabilityStatus = "idle" | "checking" | "available" | "unavailable";
 
 export interface ConversationContentBlock {
   id: string;
@@ -60,20 +71,33 @@ export function ConversationContentCards({
   blocks,
   colors = DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
   onCopyError,
+  onTranslationError,
   resultPreviewLineLimit = DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
   t,
+  translationAvailabilityChecker = checkOpencodeTranslationAvailability,
+  translationTargetLanguage = DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
+  translator = translateConversationCardContent,
   visibility,
 }: {
   activeBlockId?: string | null;
   blocks: ConversationContentBlock[];
   colors?: ConversationContentCardColorSettings;
   onCopyError?: (message: string) => void;
+  onTranslationError?: (message: string) => void;
   resultPreviewLineLimit?: number;
   t: Translator;
+  translationAvailabilityChecker?: () => Promise<OpencodeTranslationAvailability>;
+  translationTargetLanguage?: ConversationTranslationTargetLanguage;
+  translator?: (request: ConversationCardTranslationRequest) => Promise<OpencodeTranslationResult>;
   visibility: ConversationContentVisibility;
 }) {
   const visibleBlocks = blocks.filter((block) => visibility[block.type]);
   const [copiedBlockId, setCopiedBlockId] = useState<string | null>(null);
+  const [translatedBlocks, setTranslatedBlocks] = useState<Record<string, string>>({});
+  const [translationErrors, setTranslationErrors] = useState<Record<string, string>>({});
+  const [translatingBlockIds, setTranslatingBlockIds] = useState<Set<string>>(new Set());
+  const [translationAvailability, setTranslationAvailability] =
+    useState<TranslationAvailabilityStatus>("idle");
   const copiedResetTimerRef = useRef<number | null>(null);
 
   useEffect(
@@ -82,6 +106,31 @@ export function ConversationContentCards({
     },
     [],
   );
+
+  useEffect(() => {
+    setTranslatedBlocks({});
+    setTranslationErrors({});
+  }, [translationTargetLanguage]);
+
+  useEffect(() => {
+    if (visibleBlocks.length === 0) return;
+
+    let cancelled = false;
+    setTranslationAvailability("checking");
+    translationAvailabilityChecker()
+      .then((availability) => {
+        if (cancelled) return;
+        setTranslationAvailability(availability.available ? "available" : "unavailable");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTranslationAvailability("unavailable");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [translationAvailabilityChecker, visibleBlocks.length]);
 
   async function handleCopyBlock(block: ConversationContentBlock) {
     try {
@@ -96,6 +145,43 @@ export function ConversationContentCards({
       onCopyError?.(
         t("conversation.content.copyFailed", { message: errorMessage(error) }),
       );
+    }
+  }
+
+  async function handleTranslateBlock(block: ConversationContentBlock) {
+    if (translationAvailability !== "available") return;
+
+    setTranslatingBlockIds((current) => new Set(current).add(block.id));
+    setTranslationErrors((current) => {
+      const next = { ...current };
+      delete next[block.id];
+      return next;
+    });
+
+    try {
+      const result = await translator({
+        targetLanguage: translationTargetLanguage,
+        text: block.text,
+      });
+      setTranslatedBlocks((current) => ({
+        ...current,
+        [block.id]: result.translated_text,
+      }));
+    } catch (error) {
+      const message = errorMessage(error);
+      setTranslationErrors((current) => ({
+        ...current,
+        [block.id]: message,
+      }));
+      onTranslationError?.(
+        t("conversation.content.translationFailed", { message }),
+      );
+    } finally {
+      setTranslatingBlockIds((current) => {
+        const next = new Set(current);
+        next.delete(block.id);
+        return next;
+      });
     }
   }
 
@@ -117,8 +203,14 @@ export function ConversationContentCards({
           highlighted={activeBlockId === block.id}
           key={block.id}
           onCopy={() => void handleCopyBlock(block)}
+          onTranslate={() => void handleTranslateBlock(block)}
           resultPreviewLineLimit={resultPreviewLineLimit}
           t={t}
+          translatedText={translatedBlocks[block.id]}
+          translating={translatingBlockIds.has(block.id)}
+          translationAvailability={translationAvailability}
+          translationError={translationErrors[block.id]}
+          translationTargetLanguage={translationTargetLanguage}
         />
       ))}
     </div>
@@ -131,16 +223,28 @@ function ConversationContentCard({
   copied,
   highlighted,
   onCopy,
+  onTranslate,
   resultPreviewLineLimit,
   t,
+  translatedText,
+  translating,
+  translationAvailability,
+  translationError,
+  translationTargetLanguage,
 }: {
   block: ConversationContentBlock;
   colors: ConversationContentCardColorSettings;
   copied: boolean;
   highlighted: boolean;
   onCopy: () => void;
+  onTranslate: () => void;
   resultPreviewLineLimit: number;
   t: Translator;
+  translatedText?: string;
+  translating: boolean;
+  translationAvailability: TranslationAvailabilityStatus;
+  translationError?: string;
+  translationTargetLanguage: ConversationTranslationTargetLanguage;
 }) {
   const label = t(`conversation.content.${block.type}` as TranslationKey);
   const role = t(`conversation.part.role.${block.role}` as TranslationKey);
@@ -148,6 +252,16 @@ function ConversationContentCard({
   const copyLabel = copied
     ? t("conversation.content.copied")
     : t("conversation.content.copy", { type: label });
+  const translationTargetLabel = normalizeConversationTranslationTargetLanguage(translationTargetLanguage);
+  const translateDisabled = translationAvailability !== "available" || translating;
+  const translateLabel = translationButtonLabel({
+    hasTranslation: Boolean(translatedText),
+    label,
+    status: translationAvailability,
+    t,
+    targetLanguage: translationTargetLabel,
+    translating,
+  });
 
   return (
     <section
@@ -178,6 +292,16 @@ function ConversationContentCard({
           >
             {copied ? <Check className="size-[1em]" /> : <Copy className="size-[1em]" />}
           </button>
+          <button
+            aria-label={translateLabel}
+            className="inline-grid size-[1em] shrink-0 place-items-center rounded-[3px] text-on-surface-muted transition-colors enabled:hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
+            disabled={translateDisabled}
+            onClick={onTranslate}
+            title={translateLabel}
+            type="button"
+          >
+            <Languages className={translating ? "size-[1em] animate-pulse" : "size-[1em]"} />
+          </button>
         </div>
       </header>
       <div className="px-4 py-3">
@@ -195,10 +319,52 @@ function ConversationContentCard({
         ) : (
           <MarkdownContent value={block.text} />
         )}
+        {translatedText ? (
+          <div className="mt-3 rounded-lg border border-inherit bg-theme-card/45 px-3 py-3">
+            <div className="mb-2 text-label-caps text-on-surface-muted">
+              {t("conversation.content.translation", { language: translationTargetLabel })}
+            </div>
+            <MarkdownContent value={translatedText} />
+          </div>
+        ) : null}
+        {translationError ? (
+          <div className="mt-3 rounded-lg border border-status-remove/35 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove" role="alert">
+            {t("conversation.content.translationFailed", { message: translationError })}
+          </div>
+        ) : null}
         <BlockMetadata block={block} t={t} />
       </div>
     </section>
   );
+}
+
+function translationButtonLabel({
+  hasTranslation,
+  label,
+  status,
+  t,
+  targetLanguage,
+  translating,
+}: {
+  hasTranslation: boolean;
+  label: string;
+  status: TranslationAvailabilityStatus;
+  t: Translator;
+  targetLanguage: string;
+  translating: boolean;
+}) {
+  if (translating) {
+    return t("conversation.content.translating");
+  }
+  if (status === "checking" || status === "idle") {
+    return t("conversation.content.translationChecking");
+  }
+  if (status === "unavailable") {
+    return t("conversation.content.translationUnavailable");
+  }
+  return hasTranslation
+    ? t("conversation.content.retranslate", { language: targetLanguage, type: label })
+    : t("conversation.content.translate", { language: targetLanguage, type: label });
 }
 
 function CommandResultPreview({

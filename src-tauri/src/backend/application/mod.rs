@@ -1,4 +1,5 @@
 mod assets;
+mod card_translation;
 mod conversation_adapters;
 mod conversation_records;
 mod params;
