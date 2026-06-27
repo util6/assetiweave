@@ -10,9 +10,11 @@ use super::{
 
 pub(crate) async fn load_asset_mounts_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     asset_id: Option<&str>,
 ) -> AppResult<Vec<AssetMount>> {
     let rows = sqlx::query(sql::LIST_ASSET_MOUNTS)
+        .bind(tenant_id)
         .bind(asset_id)
         .fetch_all(pool)
         .await
@@ -23,9 +25,11 @@ pub(crate) async fn load_asset_mounts_sqlx(
 
 pub(crate) async fn load_enabled_asset_mounts_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     profile_id: Option<&str>,
 ) -> AppResult<Vec<AssetMount>> {
     let rows = sqlx::query(sql::LIST_ENABLED_ASSET_MOUNTS)
+        .bind(tenant_id)
         .bind(profile_id)
         .fetch_all(pool)
         .await
@@ -34,8 +38,12 @@ pub(crate) async fn load_enabled_asset_mounts_sqlx(
     rows.iter().map(map_sqlx_mount).collect()
 }
 
-pub(crate) async fn delete_orphan_asset_mounts_sqlx(pool: &SqlitePool) -> AppResult<()> {
+pub(crate) async fn delete_orphan_asset_mounts_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> AppResult<()> {
     sqlx::query(sql::DELETE_ORPHAN_ASSET_MOUNTS)
+        .bind(tenant_id)
         .execute(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -44,13 +52,14 @@ pub(crate) async fn delete_orphan_asset_mounts_sqlx(pool: &SqlitePool) -> AppRes
 
 pub(crate) async fn set_asset_mount_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     asset_id: &str,
     profile_id: &str,
     enabled: bool,
     strategy: DeploymentStrategy,
 ) -> AppResult<AssetMount> {
     let now = Utc::now().to_rfc3339();
-    let created_at = load_asset_mount_sqlx(pool, asset_id, profile_id)
+    let created_at = load_asset_mount_sqlx(pool, tenant_id, asset_id, profile_id)
         .await?
         .map(|mount| mount.created_at)
         .unwrap_or_else(|| now.clone());
@@ -62,43 +71,55 @@ pub(crate) async fn set_asset_mount_sqlx(
         created_at,
         updated_at: now,
     };
-    upsert_asset_mount_sqlx(pool, &mount).await?;
+    upsert_asset_mount_sqlx(pool, tenant_id, &mount).await?;
     Ok(mount)
 }
 
 pub(crate) async fn persist_verified_mount_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     state: &DeploymentState,
     strategy: DeploymentStrategy,
 ) -> AppResult<AssetMount> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
-    upsert_deployment_state_tx(&mut tx, state).await?;
-    let mount =
-        set_asset_mount_tx(&mut tx, &state.asset_id, &state.profile_id, true, strategy).await?;
+    upsert_deployment_state_tx(&mut tx, tenant_id, state).await?;
+    let mount = set_asset_mount_tx(
+        &mut tx,
+        tenant_id,
+        &state.asset_id,
+        &state.profile_id,
+        true,
+        strategy,
+    )
+    .await?;
     tx.commit().await.map_err(|error| error.to_string())?;
     Ok(mount)
 }
 
 pub(crate) async fn persist_verified_unmount_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     asset_id: &str,
     profile_id: &str,
     target_path: &str,
     strategy: DeploymentStrategy,
 ) -> AppResult<AssetMount> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
-    delete_deployment_state_tx(&mut tx, profile_id, asset_id, target_path).await?;
-    let mount = set_asset_mount_tx(&mut tx, asset_id, profile_id, false, strategy).await?;
+    delete_deployment_state_tx(&mut tx, tenant_id, profile_id, asset_id, target_path).await?;
+    let mount =
+        set_asset_mount_tx(&mut tx, tenant_id, asset_id, profile_id, false, strategy).await?;
     tx.commit().await.map_err(|error| error.to_string())?;
     Ok(mount)
 }
 
 async fn load_asset_mount_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     asset_id: &str,
     profile_id: &str,
 ) -> AppResult<Option<AssetMount>> {
     sqlx::query(sql::GET_ASSET_MOUNT)
+        .bind(tenant_id)
         .bind(asset_id)
         .bind(profile_id)
         .fetch_optional(pool)
@@ -110,10 +131,12 @@ async fn load_asset_mount_sqlx(
 
 async fn load_asset_mount_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     asset_id: &str,
     profile_id: &str,
 ) -> AppResult<Option<AssetMount>> {
     sqlx::query(sql::GET_ASSET_MOUNT)
+        .bind(tenant_id)
         .bind(asset_id)
         .bind(profile_id)
         .fetch_optional(&mut **tx)
@@ -125,13 +148,14 @@ async fn load_asset_mount_tx(
 
 async fn set_asset_mount_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     asset_id: &str,
     profile_id: &str,
     enabled: bool,
     strategy: DeploymentStrategy,
 ) -> AppResult<AssetMount> {
     let now = Utc::now().to_rfc3339();
-    let created_at = load_asset_mount_tx(tx, asset_id, profile_id)
+    let created_at = load_asset_mount_tx(tx, tenant_id, asset_id, profile_id)
         .await?
         .map(|mount| mount.created_at)
         .unwrap_or_else(|| now.clone());
@@ -143,12 +167,17 @@ async fn set_asset_mount_tx(
         created_at,
         updated_at: now,
     };
-    upsert_asset_mount_tx(tx, &mount).await?;
+    upsert_asset_mount_tx(tx, tenant_id, &mount).await?;
     Ok(mount)
 }
 
-async fn upsert_asset_mount_sqlx(pool: &SqlitePool, mount: &AssetMount) -> AppResult<()> {
+async fn upsert_asset_mount_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    mount: &AssetMount,
+) -> AppResult<()> {
     sqlx::query(sql::UPSERT_ASSET_MOUNT)
+        .bind(tenant_id)
         .bind(&mount.asset_id)
         .bind(&mount.profile_id)
         .bind(if mount.enabled { 1_i64 } else { 0_i64 })
@@ -163,9 +192,11 @@ async fn upsert_asset_mount_sqlx(pool: &SqlitePool, mount: &AssetMount) -> AppRe
 
 async fn upsert_asset_mount_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     mount: &AssetMount,
 ) -> AppResult<()> {
     sqlx::query(sql::UPSERT_ASSET_MOUNT)
+        .bind(tenant_id)
         .bind(&mount.asset_id)
         .bind(&mount.profile_id)
         .bind(if mount.enabled { 1_i64 } else { 0_i64 })
@@ -180,9 +211,11 @@ async fn upsert_asset_mount_tx(
 
 async fn upsert_deployment_state_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     state: &DeploymentState,
 ) -> AppResult<()> {
     sqlx::query(sql::UPSERT_DEPLOYMENT_STATE)
+        .bind(tenant_id)
         .bind(&state.profile_id)
         .bind(&state.asset_id)
         .bind(&state.target_path)
@@ -198,11 +231,13 @@ async fn upsert_deployment_state_tx(
 
 async fn delete_deployment_state_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     profile_id: &str,
     asset_id: &str,
     target_path: &str,
 ) -> AppResult<()> {
     sqlx::query(sql::DELETE_DEPLOYMENT_STATE)
+        .bind(tenant_id)
         .bind(profile_id)
         .bind(asset_id)
         .bind(target_path)
@@ -245,6 +280,7 @@ mod tests {
                 insert_asset(database.pool(), "asset-a").await?;
                 let initial = set_asset_mount_sqlx(
                     database.pool(),
+                    "default",
                     "asset-a",
                     "profile-a",
                     true,
@@ -253,6 +289,7 @@ mod tests {
                 .await?;
                 let updated = set_asset_mount_sqlx(
                     database.pool(),
+                    "default",
                     "asset-a",
                     "profile-a",
                     false,
@@ -261,6 +298,7 @@ mod tests {
                 .await?;
                 set_asset_mount_sqlx(
                     database.pool(),
+                    "default",
                     "asset-b",
                     "profile-a",
                     true,
@@ -268,11 +306,14 @@ mod tests {
                 )
                 .await?;
 
-                let scoped = load_asset_mounts_sqlx(database.pool(), Some("asset-a")).await?;
+                let scoped =
+                    load_asset_mounts_sqlx(database.pool(), "default", Some("asset-a")).await?;
                 let enabled =
-                    load_enabled_asset_mounts_sqlx(database.pool(), Some("profile-a")).await?;
-                delete_orphan_asset_mounts_sqlx(database.pool()).await?;
-                let all_after_cleanup = load_asset_mounts_sqlx(database.pool(), None).await?;
+                    load_enabled_asset_mounts_sqlx(database.pool(), "default", Some("profile-a"))
+                        .await?;
+                delete_orphan_asset_mounts_sqlx(database.pool(), "default").await?;
+                let all_after_cleanup =
+                    load_asset_mounts_sqlx(database.pool(), "default", None).await?;
 
                 AppResult::Ok((initial, updated, scoped, enabled, all_after_cleanup))
             })
@@ -314,24 +355,38 @@ mod tests {
 
                 let mounted = persist_verified_mount_sqlx(
                     database.pool(),
+                    "default",
                     &state,
                     DeploymentStrategy::SymlinkToSource,
                 )
                 .await?;
-                let managed_after_mount =
-                    managed_by(database.pool(), "profile-a", "asset-a", "/target/a").await?;
+                let managed_after_mount = managed_by(
+                    database.pool(),
+                    "default",
+                    "profile-a",
+                    "asset-a",
+                    "/target/a",
+                )
+                .await?;
                 let unmounted = persist_verified_unmount_sqlx(
                     database.pool(),
+                    "default",
                     "asset-a",
                     "profile-a",
                     "/target/a",
                     DeploymentStrategy::CopyToTarget,
                 )
                 .await?;
-                let managed_after_unmount =
-                    managed_by(database.pool(), "profile-a", "asset-a", "/target/a").await?;
+                let managed_after_unmount = managed_by(
+                    database.pool(),
+                    "default",
+                    "profile-a",
+                    "asset-a",
+                    "/target/a",
+                )
+                .await?;
                 let stored_mounts =
-                    load_asset_mounts_sqlx(database.pool(), Some("asset-a")).await?;
+                    load_asset_mounts_sqlx(database.pool(), "default", Some("asset-a")).await?;
 
                 AppResult::Ok((
                     mounted,
@@ -365,11 +420,13 @@ mod tests {
 
     async fn managed_by(
         pool: &SqlitePool,
+        tenant_id: &str,
         profile_id: &str,
         asset_id: &str,
         target_path: &str,
     ) -> AppResult<Option<String>> {
         sqlx::query_scalar(sql::GET_MANAGED_DEPLOYMENT)
+            .bind(tenant_id)
             .bind(profile_id)
             .bind(asset_id)
             .bind(target_path)

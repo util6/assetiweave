@@ -86,6 +86,7 @@ func buildInternalWithOptions(ctx context.Context, f *cmdutil.Factory, options b
 
 	root.AddCommand(newCmdVersion(f))
 	root.AddCommand(newCmdOverview(f))
+	root.AddCommand(newCmdTenant(f))
 	root.AddCommand(newCmdSource(f))
 	root.AddCommand(newCmdProfile(f))
 	root.AddCommand(newCmdAsset(f))

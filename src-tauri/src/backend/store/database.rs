@@ -53,10 +53,11 @@ impl Database {
     }
 }
 
-pub(crate) async fn latest_scan_status(pool: &SqlitePool) -> AppResult<String> {
+pub(crate) async fn latest_scan_status(pool: &SqlitePool, tenant_id: &str) -> AppResult<String> {
     let status: Option<String> = sqlx::query_scalar(
-        "SELECT last_scan_status FROM sources ORDER BY last_scanned_at DESC NULLS LAST LIMIT 1",
+        "SELECT last_scan_status FROM sources WHERE tenant_id = ?1 ORDER BY last_scanned_at DESC NULLS LAST LIMIT 1",
     )
+    .bind(tenant_id)
     .fetch_optional(pool)
     .await
     .map_err(|error| error.to_string())?
@@ -64,28 +65,41 @@ pub(crate) async fn latest_scan_status(pool: &SqlitePool) -> AppResult<String> {
     Ok(status.unwrap_or_else(|| "等待首次扫描".to_string()))
 }
 
-pub(crate) async fn count_rows(pool: &SqlitePool, table: &str) -> AppResult<usize> {
+pub(crate) async fn count_rows(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    table: &str,
+) -> AppResult<usize> {
     let count: i64 = match table {
-        "sources" => sqlx::query_scalar("SELECT COUNT(*) FROM sources")
+        "sources" => sqlx::query_scalar("SELECT COUNT(*) FROM sources WHERE tenant_id = ?1")
+            .bind(tenant_id)
             .fetch_one(pool)
             .await
             .map_err(|error| error.to_string())?,
-        "assets" => sqlx::query_scalar("SELECT COUNT(*) FROM assets")
+        "assets" => sqlx::query_scalar("SELECT COUNT(*) FROM assets WHERE tenant_id = ?1")
+            .bind(tenant_id)
             .fetch_one(pool)
             .await
             .map_err(|error| error.to_string())?,
-        "profiles" => sqlx::query_scalar("SELECT COUNT(*) FROM profiles")
+        "profiles" => sqlx::query_scalar("SELECT COUNT(*) FROM profiles WHERE tenant_id = ?1")
+            .bind(tenant_id)
             .fetch_one(pool)
             .await
             .map_err(|error| error.to_string())?,
-        "navigation_state" => sqlx::query_scalar("SELECT COUNT(*) FROM navigation_state")
-            .fetch_one(pool)
-            .await
-            .map_err(|error| error.to_string())?,
-        "app_shortcut_items" => sqlx::query_scalar("SELECT COUNT(*) FROM app_shortcut_items")
-            .fetch_one(pool)
-            .await
-            .map_err(|error| error.to_string())?,
+        "navigation_state" => {
+            sqlx::query_scalar("SELECT COUNT(*) FROM navigation_state WHERE tenant_id = ?1")
+                .bind(tenant_id)
+                .fetch_one(pool)
+                .await
+                .map_err(|error| error.to_string())?
+        }
+        "app_shortcut_items" => {
+            sqlx::query_scalar("SELECT COUNT(*) FROM app_shortcut_items WHERE tenant_id = ?1")
+                .bind(tenant_id)
+                .fetch_one(pool)
+                .await
+                .map_err(|error| error.to_string())?
+        }
         other => return Err(format!("unsupported count table: {other}")),
     };
     Ok(count as usize)
@@ -136,35 +150,51 @@ async fn open_migrated_pool(db_path: &Path) -> AppResult<SqlitePool> {
 }
 
 async fn seed_defaults_sqlx(pool: &SqlitePool) -> AppResult<()> {
-    if count_rows(pool, "sources").await? == 0 {
-        for source in crate::backend::defaults::default_sources() {
-            super::source_repo::upsert_source_sqlx(pool, &source).await?;
+    super::tenant_repo::ensure_local_identity_sqlx(pool).await?;
+    let tenant_id = super::tenant_repo::DEFAULT_TENANT_ID;
+
+    seed_tenant_defaults_sqlx(pool, tenant_id).await?;
+
+    Ok(())
+}
+
+pub(crate) async fn seed_tenant_defaults_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+    if count_rows(pool, tenant_id, "sources").await? == 0 {
+        for source in crate::backend::defaults::default_sources_for_tenant(tenant_id) {
+            super::source_repo::upsert_source_sqlx(pool, tenant_id, &source).await?;
         }
     }
-    ensure_library_source_sqlx(pool).await?;
-    normalize_existing_sources_sqlx(pool).await?;
+    ensure_library_source_sqlx(pool, tenant_id).await?;
+    normalize_existing_sources_sqlx(pool, tenant_id).await?;
 
-    if count_rows(pool, "profiles").await? == 0 {
+    if count_rows(pool, tenant_id, "profiles").await? == 0 {
         for profile in crate::backend::defaults::default_profiles() {
-            super::profile_repo::upsert_profile_sqlx(pool, &profile).await?;
+            super::profile_repo::upsert_profile_sqlx(pool, tenant_id, &profile).await?;
         }
     }
-    normalize_default_profiles_sqlx(pool).await?;
+    normalize_default_profiles_sqlx(pool, tenant_id).await?;
 
-    super::conversation_repo::seed_builtin_conversation_adapters_sqlx(pool).await?;
-    super::conversation_repo::migrate_legacy_conversation_adapter_hashes_sqlx(pool).await?;
+    super::conversation_repo::seed_builtin_conversation_adapters_sqlx(pool, tenant_id).await?;
+    super::conversation_repo::migrate_legacy_conversation_adapter_hashes_sqlx(pool, tenant_id)
+        .await?;
 
     let default_navigation_model = crate::backend::defaults::default_navigation_model();
-    if count_rows(pool, "navigation_state").await? == 0 {
-        super::menu_repo::seed_navigation_model_sqlx(pool, &default_navigation_model).await?;
-    } else {
-        super::menu_repo::ensure_navigation_model_items_sqlx(pool, &default_navigation_model)
+    if count_rows(pool, tenant_id, "navigation_state").await? == 0 {
+        super::menu_repo::seed_navigation_model_sqlx(pool, tenant_id, &default_navigation_model)
             .await?;
+    } else {
+        super::menu_repo::ensure_navigation_model_items_sqlx(
+            pool,
+            tenant_id,
+            &default_navigation_model,
+        )
+        .await?;
     }
 
-    if count_rows(pool, "app_shortcut_items").await? == 0 {
+    if count_rows(pool, tenant_id, "app_shortcut_items").await? == 0 {
         super::shortcut_repo::seed_app_shortcuts_sqlx(
             pool,
+            tenant_id,
             &crate::backend::defaults::default_app_shortcuts(),
         )
         .await?;
@@ -173,39 +203,39 @@ async fn seed_defaults_sqlx(pool: &SqlitePool) -> AppResult<()> {
     Ok(())
 }
 
-async fn ensure_library_source_sqlx(pool: &SqlitePool) -> AppResult<()> {
-    if super::source_repo::load_source_sqlx(pool, "assetiweave-library-skills")
+async fn ensure_library_source_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+    if super::source_repo::load_source_sqlx(pool, tenant_id, "assetiweave-library-skills")
         .await?
         .is_some()
     {
         return Ok(());
     }
-    if let Some(source) = crate::backend::defaults::default_sources()
+    if let Some(source) = crate::backend::defaults::default_sources_for_tenant(tenant_id)
         .into_iter()
         .find(|source| source.id == "assetiweave-library-skills")
     {
-        super::source_repo::upsert_source_sqlx(pool, &source).await?;
+        super::source_repo::upsert_source_sqlx(pool, tenant_id, &source).await?;
     }
     Ok(())
 }
 
-async fn normalize_existing_sources_sqlx(pool: &SqlitePool) -> AppResult<()> {
-    for source in super::source_repo::load_sources_sqlx(pool).await? {
-        super::source_repo::upsert_source_sqlx(pool, &source).await?;
+async fn normalize_existing_sources_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+    for source in super::source_repo::load_sources_sqlx(pool, tenant_id).await? {
+        super::source_repo::upsert_source_sqlx(pool, tenant_id, &source).await?;
     }
     Ok(())
 }
 
-async fn normalize_default_profiles_sqlx(pool: &SqlitePool) -> AppResult<()> {
+async fn normalize_default_profiles_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
     let defaults = crate::backend::defaults::default_profiles();
-    for mut profile in super::profile_repo::load_profiles_sqlx(pool).await? {
+    for mut profile in super::profile_repo::load_profiles_sqlx(pool, tenant_id).await? {
         let Some(default_profile) = defaults.iter().find(|candidate| candidate.id == profile.id)
         else {
             continue;
         };
         if legacy_profile_target_paths(&profile.id).contains(&profile.target_paths) {
             profile.target_paths = default_profile.target_paths.clone();
-            super::profile_repo::upsert_profile_sqlx(pool, &profile).await?;
+            super::profile_repo::upsert_profile_sqlx(pool, tenant_id, &profile).await?;
         }
     }
     Ok(())
@@ -369,7 +399,7 @@ mod tests {
             .expect("query migrations");
 
         assert_eq!(source_table_count, 1);
-        assert_eq!(migration_count, 1);
+        assert_eq!(migration_count, 4);
         cleanup_database(&db_path);
     }
 
@@ -428,7 +458,7 @@ mod tests {
                 "local_folder".to_string()
             )
         );
-        assert_eq!(migration_count, 1);
+        assert_eq!(migration_count, 4);
         cleanup_database(&db_path);
     }
 
@@ -512,6 +542,52 @@ mod tests {
 
         assert_eq!(codex_name, "preserved");
         drop(reopened);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn initialized_database_seeds_local_principal_and_default_tenant() {
+        let db_path = temp_database_path("tenant-identity");
+        let database = Database::open_initialized(&db_path).expect("open initialized database");
+
+        let (principal_count, tenant_count, membership_count, active_tenant_id) = database
+            .block_on(async {
+                let principal_count =
+                    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM principals WHERE id = 'local'")
+                        .fetch_one(database.pool())
+                        .await
+                        .map_err(|error| error.to_string())?;
+                let tenant_count =
+                    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tenants WHERE id = 'default'")
+                        .fetch_one(database.pool())
+                        .await
+                        .map_err(|error| error.to_string())?;
+                let membership_count = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM tenant_memberships WHERE principal_id = 'local' AND tenant_id = 'default' AND role = 'owner'",
+                )
+                .fetch_one(database.pool())
+                .await
+                .map_err(|error| error.to_string())?;
+                let active_tenant_id = sqlx::query_scalar::<_, String>(
+                    "SELECT active_tenant_id FROM tenant_state WHERE principal_id = 'local'",
+                )
+                .fetch_one(database.pool())
+                .await
+                .map_err(|error| error.to_string())?;
+                AppResult::Ok((
+                    principal_count,
+                    tenant_count,
+                    membership_count,
+                    active_tenant_id,
+                ))
+            })
+            .expect("query tenant identity defaults");
+
+        assert_eq!(principal_count, 1);
+        assert_eq!(tenant_count, 1);
+        assert_eq!(membership_count, 1);
+        assert_eq!(active_tenant_id, "default");
+        drop(database);
         cleanup_database(&db_path);
     }
 

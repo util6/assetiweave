@@ -437,12 +437,17 @@ function normalizeFontFamilySetting(value: unknown, fallback: FontFamilySetting)
     return createFontFamilySetting(legacyPreset);
   }
 
-  const legacyOption = fontFamilyOptions.find((option) => option.value === trimmedValue);
+  const legacyOption =
+    fontFamilyOptions.find((option) => option.id === fallback.preset && option.value === trimmedValue) ??
+    fontFamilyOptions.find((option) => option.value === trimmedValue);
   if (legacyOption) {
     return createFontFamilySetting(legacyOption.id);
   }
 
-  const legacyPresetCss = Object.entries(fontFamilyCss).find(([, cssValue]) => cssValue === trimmedValue);
+  const legacyPresetCss =
+    Object.entries(fontFamilyCss).find(
+      ([preset, cssValue]) => preset === fallback.preset && cssValue === trimmedValue,
+    ) ?? Object.entries(fontFamilyCss).find(([, cssValue]) => cssValue === trimmedValue);
   if (legacyPresetCss) {
     return createFontFamilySetting(legacyPresetCss[0] as BuiltInFontFamilyPresetId);
   }

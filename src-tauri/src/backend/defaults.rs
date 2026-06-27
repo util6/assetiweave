@@ -19,13 +19,17 @@ pub(crate) fn is_default_app_profile_id(profile_id: &str) -> bool {
     DEFAULT_APP_PROFILE_IDS.contains(&profile_id)
 }
 
-pub(crate) fn default_sources() -> Vec<Source> {
+pub(crate) fn default_sources_for_tenant(tenant_id: &str) -> Vec<Source> {
     let mut sources = Vec::new();
+    let default_skill_root =
+        crate::backend::path_utils::default_skill_backup_root_for_tenant(tenant_id)
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_else(|_| format!("~/.assetiweave/tenants/{tenant_id}/library/skills"));
     let candidates = [
         (
             "assetiweave-library-skills",
             "AssetIWeave Skill Backup Library",
-            "~/.assetiweave/library/skills",
+            default_skill_root.as_str(),
             vec!["**/SKILL.md"],
             Some(AssetKind::Skill),
             SourceOrigin::AssetiweaveLibrary,
@@ -280,7 +284,7 @@ fn sub_nav(id: &str, label: &str, route_key: &str) -> SubNavItem {
 
 #[cfg(test)]
 mod tests {
-    use super::default_profiles;
+    use super::{default_profiles, default_sources_for_tenant};
 
     #[test]
     fn opencode_default_profile_uses_config_skills_path() {
@@ -290,5 +294,48 @@ mod tests {
             .expect("opencode profile");
 
         assert_eq!(profile.target_paths, vec!["~/.config/opencode/skills"]);
+    }
+
+    #[test]
+    fn skill_sources_scope_only_assetiweave_library_path_by_tenant() {
+        let tenant_a_sources = default_sources_for_tenant("tenant-a");
+        let tenant_b_sources = default_sources_for_tenant("tenant-b");
+
+        let tenant_a_library = tenant_a_sources
+            .iter()
+            .find(|source| source.id == "assetiweave-library-skills")
+            .expect("tenant a skill library source");
+        let tenant_b_library = tenant_b_sources
+            .iter()
+            .find(|source| source.id == "assetiweave-library-skills")
+            .expect("tenant b skill library source");
+        assert!(tenant_a_library
+            .root_path
+            .ends_with(".assetiweave/tenants/tenant-a/library/skills"));
+        assert!(tenant_b_library
+            .root_path
+            .ends_with(".assetiweave/tenants/tenant-b/library/skills"));
+        assert_ne!(tenant_a_library.root_path, tenant_b_library.root_path);
+
+        let tenant_a_codex = tenant_a_sources
+            .iter()
+            .find(|source| source.id == "codex-skills")
+            .expect("tenant a codex source");
+        let tenant_b_codex = tenant_b_sources
+            .iter()
+            .find(|source| source.id == "codex-skills")
+            .expect("tenant b codex source");
+        assert_eq!(tenant_a_codex.root_path, "~/.codex/skills");
+        assert_eq!(tenant_a_codex.root_path, tenant_b_codex.root_path);
+
+        let tenant_a_agents = tenant_a_sources
+            .iter()
+            .find(|source| source.id == "agents-skills")
+            .expect("tenant a agents source");
+        let tenant_b_agents = tenant_b_sources
+            .iter()
+            .find(|source| source.id == "agents-skills")
+            .expect("tenant b agents source");
+        assert_eq!(tenant_a_agents.root_path, tenant_b_agents.root_path);
     }
 }

@@ -52,7 +52,7 @@ impl AppService {
             .or_else(|| location.skill_name_hint())
             .unwrap_or_else(|| location.repo.clone());
         let name = slug_path_segment(&raw_name);
-        let staging_dir = capabilities::skill_backup_root_sqlx(&self.db)?
+        let staging_dir = capabilities::skill_backup_root_sqlx(&self.db, self.tenant_id())?
             .join("staging")
             .join(format!("{}-{}", slug_path_segment(&name), short_uuid()));
         let skill_path_hint = location.skill_path_hint(&staging_dir);
@@ -111,10 +111,15 @@ impl AppService {
             ),
         };
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let remote_source_to_save = remote_source.clone();
         self.db.block_on(async move {
-            crate::backend::store::upsert_skill_remote_source_sqlx(&pool, &remote_source_to_save)
-                .await
+            crate::backend::store::upsert_skill_remote_source_sqlx(
+                &pool,
+                &tenant_id,
+                &remote_source_to_save,
+            )
+            .await
         })?;
         Ok(json!({
             "dry_run": false,
@@ -134,9 +139,11 @@ impl AppService {
 
     pub(crate) fn list_skill_remote_sources(&self) -> AppResult<Vec<SkillRemoteSource>> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
-            crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool).await?;
-            crate::backend::store::list_skill_remote_sources_sqlx(&pool).await
+            crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool, &tenant_id)
+                .await?;
+            crate::backend::store::list_skill_remote_sources_sqlx(&pool, &tenant_id).await
         })
     }
 
@@ -151,11 +158,18 @@ impl AppService {
             .filter(|id| !id.is_empty())
         {
             let pool = self.db.pool().clone();
+            let tenant_id = self.tenant_id().to_string();
             vec![self
                 .db
                 .block_on(async move {
-                    crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool).await?;
-                    crate::backend::store::load_skill_remote_source_sqlx(&pool, asset_id).await
+                    crate::backend::store::delete_orphan_skill_remote_sources_sqlx(
+                        &pool, &tenant_id,
+                    )
+                    .await?;
+                    crate::backend::store::load_skill_remote_source_sqlx(
+                        &pool, &tenant_id, asset_id,
+                    )
+                    .await
                 })?
                 .ok_or_else(|| format!("skill remote source not found: {asset_id}"))?]
         } else {
@@ -166,10 +180,15 @@ impl AppService {
         for source in sources {
             let source = check_skill_remote_source(source);
             let pool = self.db.pool().clone();
+            let tenant_id = self.tenant_id().to_string();
             let source_to_save = source.clone();
             self.db.block_on(async move {
-                crate::backend::store::update_skill_remote_check_result_sqlx(&pool, &source_to_save)
-                    .await
+                crate::backend::store::update_skill_remote_check_result_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &source_to_save,
+                )
+                .await
             })?;
             checked.push(source);
         }

@@ -20,6 +20,111 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "tenant.list",
+      "cli": "assetiweave-cli tenant list",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List tenants visible to the current local principal",
+      "exposure": "friendly",
+      "method": "tenant.list",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "tenant.active",
+      "cli": "assetiweave-cli tenant active",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Get the active tenant for the current local principal",
+      "exposure": "friendly",
+      "method": "tenant.active",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "tenant.create",
+      "cli": "assetiweave-cli tenant create <name>",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Create a local workspace tenant for the current principal",
+      "exposure": "friendly",
+      "method": "tenant.create",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "Tenant display name",
+            "type": "string"
+          },
+          "set_active": {
+            "aliases": [
+              "setActive"
+            ],
+            "default": false,
+            "description": "Switch to the created tenant",
+            "type": "boolean"
+          },
+          "slug": {
+            "description": "Tenant stable slug",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "tenant.switch",
+      "cli": "assetiweave-cli tenant switch <tenant-id>",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Switch the active tenant for subsequent local calls",
+      "exposure": "friendly",
+      "method": "tenant.switch",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Tenant identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "source.list",
       "cli": "assetiweave-cli source list",
       "confirmation_required": false,
@@ -2774,6 +2879,111 @@
         "type": "object"
       },
       "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "tenant.list",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List tenants visible to the current local principal",
+      "exposure": "app",
+      "method": "list_tenants",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "tenant.active",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Get the active tenant for the current local principal",
+      "exposure": "app",
+      "method": "get_active_tenant",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "tenant.create",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Create a local workspace tenant for the current principal",
+      "exposure": "app",
+      "method": "create_tenant",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "Tenant display name",
+            "type": "string"
+          },
+          "set_active": {
+            "aliases": [
+              "setActive"
+            ],
+            "default": false,
+            "description": "Switch to the created tenant",
+            "type": "boolean"
+          },
+          "slug": {
+            "description": "Tenant stable slug",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "tenant.switch",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Switch the active tenant for subsequent local calls",
+      "exposure": "app",
+      "method": "switch_tenant",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Tenant identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
       "since": "0.1.0",
       "supports_dry_run": false
     },
@@ -6923,6 +7133,10 @@
   "engine_version": "0.2.6",
   "methods": [
     "overview.get",
+    "tenant.list",
+    "tenant.active",
+    "tenant.create",
+    "tenant.switch",
     "source.list",
     "source.add",
     "source.remove",
@@ -6977,6 +7191,10 @@
     "schema.list",
     "schema.get",
     "get_app_overview",
+    "list_tenants",
+    "get_active_tenant",
+    "create_tenant",
+    "switch_tenant",
     "get_app_settings",
     "save_app_settings",
     "list_assets",

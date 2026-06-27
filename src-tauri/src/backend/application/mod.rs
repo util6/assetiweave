@@ -10,6 +10,7 @@ mod skill_remote;
 mod skills;
 mod sources;
 mod system;
+mod tenants;
 mod utils;
 
 #[cfg(test)]

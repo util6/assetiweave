@@ -3,8 +3,9 @@ use super::prelude::*;
 impl AppService {
     pub(crate) fn list_conversation_adapters(&self) -> AppResult<Vec<ConversationAdapter>> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
-            crate::backend::store::list_conversation_adapters_sqlx(&pool).await
+            crate::backend::store::list_conversation_adapters_sqlx(&pool, &tenant_id).await
         })
     }
 
@@ -42,8 +43,10 @@ impl AppService {
             let adapter =
                 crate::backend::conversations::adapter_from_registration_preview(preview.clone())?;
             let pool = self.db.pool().clone();
+            let tenant_id = self.tenant_id().to_string();
             self.db.block_on(async move {
-                crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &adapter).await
+                crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &adapter)
+                    .await
             })?;
         }
         Ok(preview)
@@ -57,11 +60,17 @@ impl AppService {
             return Err("conversation.adapter.unregister requires --yes".to_string());
         }
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let adapter_id = params.adapter_id.clone();
         let adapter = self
             .db
             .block_on(async move {
-                crate::backend::store::load_conversation_adapter_sqlx(&pool, &adapter_id).await
+                crate::backend::store::load_conversation_adapter_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &adapter_id,
+                )
+                .await
             })?
             .ok_or_else(|| format!("conversation adapter not found: {}", params.adapter_id))?;
         if params.dry_run {
@@ -72,9 +81,11 @@ impl AppService {
             }));
         }
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let adapter_id = params.adapter_id.clone();
         let adapter = self.db.block_on(async move {
-            crate::backend::store::delete_conversation_adapter_sqlx(&pool, &adapter_id).await
+            crate::backend::store::delete_conversation_adapter_sqlx(&pool, &tenant_id, &adapter_id)
+                .await
         })?;
         Ok(json!({
             "dry_run": false,
@@ -92,8 +103,9 @@ impl AppService {
 
     pub(crate) fn list_conversation_sources(&self) -> AppResult<Vec<ConversationSource>> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
-            crate::backend::store::list_conversation_sources_sqlx(&pool).await
+            crate::backend::store::list_conversation_sources_sqlx(&pool, &tenant_id).await
         })
     }
 
@@ -102,11 +114,17 @@ impl AppService {
         params: ConversationSourceUpsertParams,
     ) -> AppResult<Value> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let adapter_id = params.source.adapter_id.clone();
         if self
             .db
             .block_on(async move {
-                crate::backend::store::load_conversation_adapter_sqlx(&pool, &adapter_id).await
+                crate::backend::store::load_conversation_adapter_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &adapter_id,
+                )
+                .await
             })?
             .is_none()
         {
@@ -122,9 +140,10 @@ impl AppService {
             }));
         }
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let source = params.source.clone();
         self.db.block_on(async move {
-            crate::backend::store::upsert_conversation_source_sqlx(&pool, &source).await
+            crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source).await
         })?;
         Ok(json!({
             "dry_run": false,
@@ -137,11 +156,13 @@ impl AppService {
         params: ConversationSourceDisableParams,
     ) -> AppResult<Value> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let source_id = params.id.clone();
         let source = self
             .db
             .block_on(async move {
-                crate::backend::store::load_conversation_source_sqlx(&pool, &source_id).await
+                crate::backend::store::load_conversation_source_sqlx(&pool, &tenant_id, &source_id)
+                    .await
             })?
             .ok_or_else(|| format!("conversation source not found: {}", params.id))?;
         if params.dry_run {
@@ -152,9 +173,11 @@ impl AppService {
             }));
         }
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let source_id = params.id.clone();
         let source = self.db.block_on(async move {
-            crate::backend::store::disable_conversation_source_sqlx(&pool, &source_id).await
+            crate::backend::store::disable_conversation_source_sqlx(&pool, &tenant_id, &source_id)
+                .await
         })?;
         Ok(json!({
             "dry_run": false,
@@ -166,11 +189,12 @@ impl AppService {
     pub(crate) fn sync_conversations(&self, params: ConversationSyncParams) -> AppResult<Value> {
         let record_kind = normalize_sync_record_kind(params.record_kind.as_deref())?;
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let sources = self
             .db
-            .block_on(
-                async move { crate::backend::store::list_conversation_sources_sqlx(&pool).await },
-            )?
+            .block_on(async move {
+                crate::backend::store::list_conversation_sources_sqlx(&pool, &tenant_id).await
+            })?
             .into_iter()
             .filter(|source| params.source_id.as_deref().is_none_or(|id| id == source.id))
             .filter(|source| {
@@ -191,9 +215,15 @@ impl AppService {
         let mut errors = Vec::new();
         for source in sources {
             let pool = self.db.pool().clone();
+            let tenant_id = self.tenant_id().to_string();
             let adapter_id = source.adapter_id.clone();
             let adapter = self.db.block_on(async move {
-                crate::backend::store::load_conversation_adapter_sqlx(&pool, &adapter_id).await
+                crate::backend::store::load_conversation_adapter_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &adapter_id,
+                )
+                .await
             })?;
             if !sync_source_matches_record_kind(adapter.as_ref(), &source.adapter_id, record_kind) {
                 continue;
@@ -216,10 +246,12 @@ impl AppService {
             let sync_result = match sessions_result {
                 Ok(sessions) if is_web_record_adapter(adapter.as_ref(), &source.adapter_id) => {
                     let pool = self.db.pool().clone();
+                    let tenant_id = self.tenant_id().to_string();
                     let import_source = source.clone();
                     self.db.block_on(async move {
                         crate::backend::store::import_web_record_sessions_sqlx(
                             &pool,
+                            &tenant_id,
                             &import_source,
                             &sessions,
                             params.dry_run,
@@ -229,10 +261,12 @@ impl AppService {
                 }
                 Ok(sessions) => {
                     let pool = self.db.pool().clone();
+                    let tenant_id = self.tenant_id().to_string();
                     let import_source = source.clone();
                     self.db.block_on(async move {
                         crate::backend::store::import_conversation_sessions_sqlx(
                             &pool,
+                            &tenant_id,
                             &import_source,
                             &sessions,
                             params.dry_run,

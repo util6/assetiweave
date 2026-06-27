@@ -5,8 +5,10 @@ use super::sql;
 
 pub(crate) async fn list_skill_remote_sources_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
 ) -> AppResult<Vec<SkillRemoteSource>> {
     let rows = sqlx::query(sql::LIST_SKILL_REMOTE_SOURCES)
+        .bind(tenant_id)
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -15,9 +17,11 @@ pub(crate) async fn list_skill_remote_sources_sqlx(
 
 pub(crate) async fn load_skill_remote_source_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     asset_id: &str,
 ) -> AppResult<Option<SkillRemoteSource>> {
     sqlx::query(sql::GET_SKILL_REMOTE_SOURCE)
+        .bind(tenant_id)
         .bind(asset_id)
         .fetch_optional(pool)
         .await
@@ -29,9 +33,11 @@ pub(crate) async fn load_skill_remote_source_sqlx(
 
 pub(crate) async fn upsert_skill_remote_source_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     source: &SkillRemoteSource,
 ) -> AppResult<()> {
     sqlx::query(sql::UPSERT_SKILL_REMOTE_SOURCE)
+        .bind(tenant_id)
         .bind(&source.asset_id)
         .bind(&source.provider)
         .bind(&source.source_url)
@@ -53,9 +59,11 @@ pub(crate) async fn upsert_skill_remote_source_sqlx(
 
 pub(crate) async fn update_skill_remote_check_result_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     source: &SkillRemoteSource,
 ) -> AppResult<()> {
     sqlx::query(sql::UPDATE_SKILL_REMOTE_CHECK)
+        .bind(tenant_id)
         .bind(&source.asset_id)
         .bind(&source.last_checked_at)
         .bind(&source.latest_tree_sha)
@@ -67,8 +75,12 @@ pub(crate) async fn update_skill_remote_check_result_sqlx(
     Ok(())
 }
 
-pub(crate) async fn delete_orphan_skill_remote_sources_sqlx(pool: &SqlitePool) -> AppResult<()> {
+pub(crate) async fn delete_orphan_skill_remote_sources_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> AppResult<()> {
     sqlx::query(sql::DELETE_ORPHAN_SKILL_REMOTE_SOURCES)
+        .bind(tenant_id)
         .execute(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -109,14 +121,15 @@ mod tests {
 
         database
             .block_on(async {
-                upsert_skill_remote_source_sqlx(database.pool(), &source).await?;
+                upsert_skill_remote_source_sqlx(database.pool(), "default", &source).await?;
                 source.last_checked_at = Some("2026-01-02T00:00:00Z".to_string());
                 source.latest_tree_sha = Some("new-tree".to_string());
                 source.status = "changed".to_string();
                 source.message = Some("Remote Skill changed since import".to_string());
-                update_skill_remote_check_result_sqlx(database.pool(), &source).await?;
-                let loaded = load_skill_remote_source_sqlx(database.pool(), "asset-a").await?;
-                let listed = list_skill_remote_sources_sqlx(database.pool()).await?;
+                update_skill_remote_check_result_sqlx(database.pool(), "default", &source).await?;
+                let loaded =
+                    load_skill_remote_source_sqlx(database.pool(), "default", "asset-a").await?;
+                let listed = list_skill_remote_sources_sqlx(database.pool(), "default").await?;
                 AppResult::Ok((loaded, listed))
             })
             .map(|(loaded, listed)| {
@@ -146,14 +159,15 @@ mod tests {
             .block_on(async {
                 crate::backend::store::replace_source_assets_sqlx(
                     database.pool(),
+                    "default",
                     &asset.source_id,
                     std::slice::from_ref(&asset),
                 )
                 .await?;
-                upsert_skill_remote_source_sqlx(database.pool(), &retained).await?;
-                upsert_skill_remote_source_sqlx(database.pool(), &orphan).await?;
-                delete_orphan_skill_remote_sources_sqlx(database.pool()).await?;
-                list_skill_remote_sources_sqlx(database.pool()).await
+                upsert_skill_remote_source_sqlx(database.pool(), "default", &retained).await?;
+                upsert_skill_remote_source_sqlx(database.pool(), "default", &orphan).await?;
+                delete_orphan_skill_remote_sources_sqlx(database.pool(), "default").await?;
+                list_skill_remote_sources_sqlx(database.pool(), "default").await
             })
             .expect("delete SQLx orphan remote sources");
 

@@ -3,8 +3,10 @@ use super::prelude::*;
 impl AppService {
     pub(crate) fn list_profiles(&self) -> AppResult<Vec<TargetProfile>> {
         let pool = self.db.pool().clone();
-        self.db
-            .block_on(async move { crate::backend::store::load_profiles_sqlx(&pool).await })
+        let tenant_id = self.tenant_id().to_string();
+        self.db.block_on(async move {
+            crate::backend::store::load_profiles_sqlx(&pool, &tenant_id).await
+        })
     }
 
     pub(crate) fn create_profile(&self, input: TargetProfileInput) -> AppResult<TargetProfile> {
@@ -17,9 +19,10 @@ impl AppService {
             return Err(format!("profile already exists: {}", profile.id));
         }
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let profile_to_save = profile.clone();
         self.db.block_on(async move {
-            crate::backend::store::upsert_profile_sqlx(&pool, &profile_to_save).await
+            crate::backend::store::upsert_profile_sqlx(&pool, &tenant_id, &profile_to_save).await
         })?;
         Ok(profile)
     }
@@ -35,9 +38,10 @@ impl AppService {
         };
         capabilities::ensure_default_profile_update_is_allowed(&existing_profile, &profile)?;
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let profile_to_save = profile.clone();
         self.db.block_on(async move {
-            crate::backend::store::upsert_profile_sqlx(&pool, &profile_to_save).await
+            crate::backend::store::upsert_profile_sqlx(&pool, &tenant_id, &profile_to_save).await
         })?;
         Ok(profile)
     }
@@ -46,16 +50,20 @@ impl AppService {
         if !self.list_profiles()?.iter().any(|profile| profile.id == id) {
             return Err(format!("profile not found: {id}"));
         }
-        capabilities::ensure_profile_can_be_deleted_sqlx(&self.db, &id)?;
+        capabilities::ensure_profile_can_be_deleted_sqlx(&self.db, self.tenant_id(), &id)?;
         let pool = self.db.pool().clone();
-        self.db
-            .block_on(async move { crate::backend::store::delete_profile_sqlx(&pool, &id).await })
+        let tenant_id = self.tenant_id().to_string();
+        self.db.block_on(async move {
+            crate::backend::store::delete_profile_sqlx(&pool, &tenant_id, &id).await
+        })
     }
 
     pub(crate) fn navigation_model(&self) -> AppResult<crate::backend::dto::NavigationModel> {
         let pool = self.db.pool().clone();
-        self.db
-            .block_on(async move { crate::backend::store::load_navigation_model_sqlx(&pool).await })
+        let tenant_id = self.tenant_id().to_string();
+        self.db.block_on(async move {
+            crate::backend::store::load_navigation_model_sqlx(&pool, &tenant_id).await
+        })
     }
 
     pub(crate) fn update_navigation_model(
@@ -63,24 +71,28 @@ impl AppService {
         model: NavigationModel,
     ) -> AppResult<NavigationModel> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
-            crate::backend::store::save_navigation_model_sqlx(&pool, &model).await?;
-            crate::backend::store::load_navigation_model_sqlx(&pool).await
+            crate::backend::store::save_navigation_model_sqlx(&pool, &tenant_id, &model).await?;
+            crate::backend::store::load_navigation_model_sqlx(&pool, &tenant_id).await
         })
     }
 
     pub(crate) fn list_app_shortcuts(&self) -> AppResult<Vec<crate::backend::dto::AppShortcut>> {
         let pool = self.db.pool().clone();
-        self.db
-            .block_on(async move { crate::backend::store::load_app_shortcuts_sqlx(&pool).await })
+        let tenant_id = self.tenant_id().to_string();
+        self.db.block_on(async move {
+            crate::backend::store::load_app_shortcuts_sqlx(&pool, &tenant_id).await
+        })
     }
 
     pub(crate) fn list_app_shortcut_settings(
         &self,
     ) -> AppResult<Vec<crate::backend::dto::AppShortcut>> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
-            crate::backend::store::load_app_shortcut_settings_sqlx(&pool).await
+            crate::backend::store::load_app_shortcut_settings_sqlx(&pool, &tenant_id).await
         })
     }
 
@@ -89,9 +101,10 @@ impl AppService {
         shortcuts: Vec<AppShortcut>,
     ) -> AppResult<Vec<AppShortcut>> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
-            crate::backend::store::save_app_shortcuts_sqlx(&pool, &shortcuts).await?;
-            crate::backend::store::load_app_shortcut_settings_sqlx(&pool).await
+            crate::backend::store::save_app_shortcuts_sqlx(&pool, &tenant_id, &shortcuts).await?;
+            crate::backend::store::load_app_shortcut_settings_sqlx(&pool, &tenant_id).await
         })
     }
 }

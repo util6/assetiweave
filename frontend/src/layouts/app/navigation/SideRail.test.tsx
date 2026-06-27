@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../../i18n/I18nProvider";
 import type { HeaderTabItem, RailMenuItem } from "../../../router/types";
@@ -95,9 +95,22 @@ describe("SideRail", () => {
     expect(html).toContain('aria-label="发现新版本 v0.2.0"');
     expect(html.indexOf("发现新版本 v0.2.0")).toBeLessThan(html.indexOf(">技能<"));
   });
+
+  it("renders a primary action above the brand identity", () => {
+    const html = renderSideRail(false, undefined, <button type="button">Tenants</button>);
+    const actionIndex = html.indexOf(">Tenants<");
+
+    expect(actionIndex).toBeLessThan(html.indexOf('title="AssetIWeave"'));
+    expect(actionIndex).toBeLessThan(html.indexOf("展开侧边栏"));
+    expect(actionIndex).toBeLessThan(html.indexOf('aria-label="技能"'));
+  });
 });
 
-function renderSideRail(expanded: boolean, brandAction?: ComponentProps<typeof SideRail>["brandAction"]) {
+function renderSideRail(
+  expanded: boolean,
+  brandAction?: ComponentProps<typeof SideRail>["brandAction"],
+  primaryAction?: ReactNode,
+) {
   return renderToStaticMarkup(
     <I18nProvider>
       <SideRail
@@ -110,6 +123,7 @@ function renderSideRail(expanded: boolean, brandAction?: ComponentProps<typeof S
         onExpandedChange={vi.fn()}
         onHeaderTabSelect={vi.fn()}
         onItemSelect={vi.fn()}
+        primaryAction={primaryAction}
       />
     </I18nProvider>,
   );

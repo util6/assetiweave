@@ -14,10 +14,12 @@ use super::{codec::encode_enum, sql};
 
 async fn upsert_asset_mount_observations_connection(
     conn: &mut SqliteConnection,
+    tenant_id: &str,
     observations: &[AssetMountObservation],
 ) -> AppResult<()> {
     for observation in observations {
         sqlx::query(sql::UPSERT_ASSET_MOUNT_OBSERVATION)
+            .bind(tenant_id)
             .bind(&observation.asset_id)
             .bind(&observation.profile_id)
             .bind(&observation.target_dir)
@@ -35,16 +37,18 @@ async fn upsert_asset_mount_observations_connection(
 #[cfg(test)]
 pub(crate) async fn upsert_asset_mount_observations_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     observations: &[AssetMountObservation],
 ) -> AppResult<()> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
-    upsert_asset_mount_observations_connection(&mut tx, observations).await?;
+    upsert_asset_mount_observations_connection(&mut tx, tenant_id, observations).await?;
     tx.commit().await.map_err(|error| error.to_string())?;
     Ok(())
 }
 
 pub(crate) async fn persist_asset_mount_snapshot_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     observations: &[AssetMountObservation],
     assets: &[Asset],
     profiles: &[TargetProfile],
@@ -60,7 +64,7 @@ pub(crate) async fn persist_asset_mount_snapshot_sqlx(
         .collect::<HashMap<_, _>>();
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
 
-    upsert_asset_mount_observations_connection(&mut tx, observations).await?;
+    upsert_asset_mount_observations_connection(&mut tx, tenant_id, observations).await?;
     for status in statuses {
         let asset = asset_by_id
             .get(status.asset_id.as_str())
@@ -81,6 +85,7 @@ pub(crate) async fn persist_asset_mount_snapshot_sqlx(
                 managed_by: "assetiweave".to_string(),
             };
             sqlx::query(sql::UPSERT_DEPLOYMENT_STATE)
+                .bind(tenant_id)
                 .bind(&state.profile_id)
                 .bind(&state.asset_id)
                 .bind(&state.target_path)
@@ -93,6 +98,7 @@ pub(crate) async fn persist_asset_mount_snapshot_sqlx(
                 .map_err(|error| error.to_string())?;
         } else {
             sqlx::query(sql::DELETE_DEPLOYMENT_STATE)
+                .bind(tenant_id)
                 .bind(&profile.id)
                 .bind(&asset.id)
                 .bind(&status.target_path)
@@ -103,12 +109,14 @@ pub(crate) async fn persist_asset_mount_snapshot_sqlx(
 
         let now = Utc::now().to_rfc3339();
         let created_at: Option<String> = sqlx::query_scalar(sql::GET_ASSET_MOUNT_CREATED_AT)
+            .bind(tenant_id)
             .bind(&asset.id)
             .bind(&profile.id)
             .fetch_optional(&mut *tx)
             .await
             .map_err(|error| error.to_string())?;
         sqlx::query(sql::UPSERT_ASSET_MOUNT)
+            .bind(tenant_id)
             .bind(&asset.id)
             .bind(&profile.id)
             .bind(enabled)
@@ -121,6 +129,7 @@ pub(crate) async fn persist_asset_mount_snapshot_sqlx(
     }
 
     sqlx::query(sql::DELETE_ORPHAN_ASSET_MOUNT_OBSERVATIONS)
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await
         .map_err(|error| error.to_string())?;
@@ -131,8 +140,10 @@ pub(crate) async fn persist_asset_mount_snapshot_sqlx(
 #[cfg(test)]
 pub(crate) async fn load_asset_mount_observations_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
 ) -> AppResult<Vec<AssetMountObservation>> {
     let rows = sqlx::query(sql::LIST_ASSET_MOUNT_OBSERVATIONS)
+        .bind(tenant_id)
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -143,8 +154,10 @@ pub(crate) async fn load_asset_mount_observations_sqlx(
 #[cfg(test)]
 pub(crate) async fn delete_orphan_asset_mount_observations_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
 ) -> AppResult<()> {
     sqlx::query(sql::DELETE_ORPHAN_ASSET_MOUNT_OBSERVATIONS)
+        .bind(tenant_id)
         .execute(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -186,6 +199,7 @@ mod tests {
                 insert_asset(database.pool(), "asset-a").await?;
                 upsert_asset_mount_observations_sqlx(
                     database.pool(),
+                    "default",
                     &[
                         test_observation(
                             "asset-a",
@@ -204,6 +218,7 @@ mod tests {
                 .await?;
                 upsert_asset_mount_observations_sqlx(
                     database.pool(),
+                    "default",
                     &[test_observation(
                         "asset-a",
                         "profile-a",
@@ -213,9 +228,11 @@ mod tests {
                 )
                 .await?;
 
-                let before_cleanup = load_asset_mount_observations_sqlx(database.pool()).await?;
-                delete_orphan_asset_mount_observations_sqlx(database.pool()).await?;
-                let after_cleanup = load_asset_mount_observations_sqlx(database.pool()).await?;
+                let before_cleanup =
+                    load_asset_mount_observations_sqlx(database.pool(), "default").await?;
+                delete_orphan_asset_mount_observations_sqlx(database.pool(), "default").await?;
+                let after_cleanup =
+                    load_asset_mount_observations_sqlx(database.pool(), "default").await?;
 
                 AppResult::Ok((before_cleanup, after_cleanup))
             })
@@ -260,6 +277,7 @@ mod tests {
         let error = database
             .block_on(persist_asset_mount_snapshot_sqlx(
                 database.pool(),
+                "default",
                 std::slice::from_ref(&observation),
                 &[],
                 &[],
@@ -267,7 +285,10 @@ mod tests {
             ))
             .expect_err("missing asset must reject snapshot");
         let observations = database
-            .block_on(load_asset_mount_observations_sqlx(database.pool()))
+            .block_on(load_asset_mount_observations_sqlx(
+                database.pool(),
+                "default",
+            ))
             .expect("load observations after rollback");
 
         assert!(error.contains("asset not found: missing-asset"));

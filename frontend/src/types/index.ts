@@ -122,6 +122,25 @@ export interface AppOverview {
   last_scan_status: string;
 }
 
+export type TenantKind = "local_workspace" | "organization";
+export type TenantStatus = "active" | "archived";
+
+export interface Tenant {
+  id: string;
+  slug: string;
+  name: string;
+  kind: TenantKind;
+  status: TenantStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TenantCreateParams {
+  name: string;
+  slug?: string | null;
+  set_active?: boolean;
+}
+
 export type SourceKind = "local" | "git_checkout" | "import" | "custom";
 export type SourceScannerKind = "skill" | "mcp" | "prompt" | "rule" | "mixed" | "custom";
 export type SourceOrigin = "git_repo" | "local_folder" | "app_target" | "app_local" | "assetiweave_library" | "custom";

@@ -259,6 +259,58 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli overview")
     ),
     command!(
+        "tenant.list",
+        "tenant.list",
+        "List tenants visible to the current local principal",
+        Read,
+        Friendly,
+        false,
+        NoParams,
+        Service => |service, _params| service.list_tenants(),
+        &[],
+        Some("assetiweave-cli tenant list")
+    ),
+    command!(
+        "tenant.active",
+        "tenant.active",
+        "Get the active tenant for the current local principal",
+        Read,
+        Friendly,
+        false,
+        NoParams,
+        Service => |service, _params| service.active_tenant(),
+        &[],
+        Some("assetiweave-cli tenant active")
+    ),
+    command!(
+        "tenant.create",
+        "tenant.create",
+        "Create a local workspace tenant for the current principal",
+        Write,
+        Friendly,
+        false,
+        crate::backend::application::TenantCreateParams,
+        Service => |service, params| service.create_tenant(params),
+        &[
+            param!("name", "Tenant display name"),
+            param!("slug", "Tenant stable slug"),
+            param!("set_active", "Switch to the created tenant", ["setActive"]),
+        ],
+        Some("assetiweave-cli tenant create <name>")
+    ),
+    command!(
+        "tenant.switch",
+        "tenant.switch",
+        "Switch the active tenant for subsequent local calls",
+        Write,
+        Friendly,
+        false,
+        crate::backend::application::IdParams,
+        Service => |service, params| service.switch_tenant(params.id),
+        &[param!("id", "Tenant identifier")],
+        Some("assetiweave-cli tenant switch <tenant-id>")
+    ),
+    command!(
         "source.list",
         "source.list",
         "List registered asset sources",
@@ -1075,6 +1127,58 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         NoParams,
         Service => |service, _params| service.overview(),
         &[],
+        None
+    ),
+    command!(
+        "list_tenants",
+        "tenant.list",
+        "List tenants visible to the current local principal",
+        Read,
+        App,
+        false,
+        NoParams,
+        Service => |service, _params| service.list_tenants(),
+        &[],
+        None
+    ),
+    command!(
+        "get_active_tenant",
+        "tenant.active",
+        "Get the active tenant for the current local principal",
+        Read,
+        App,
+        false,
+        NoParams,
+        Service => |service, _params| service.active_tenant(),
+        &[],
+        None
+    ),
+    command!(
+        "create_tenant",
+        "tenant.create",
+        "Create a local workspace tenant for the current principal",
+        Write,
+        App,
+        false,
+        crate::backend::application::TenantCreateParams,
+        Service => |service, params| service.create_tenant(params),
+        &[
+            param!("name", "Tenant display name"),
+            param!("slug", "Tenant stable slug"),
+            param!("set_active", "Switch to the created tenant", ["setActive"]),
+        ],
+        None
+    ),
+    command!(
+        "switch_tenant",
+        "tenant.switch",
+        "Switch the active tenant for subsequent local calls",
+        Write,
+        App,
+        false,
+        crate::backend::application::IdParams,
+        Service => |service, params| service.switch_tenant(params.id),
+        &[param!("id", "Tenant identifier")],
         None
     ),
     command!(

@@ -8,16 +8,18 @@ use super::sql;
 
 pub(crate) async fn seed_navigation_model_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     model: &NavigationModel,
 ) -> Result<(), String> {
-    save_navigation_model_sqlx(pool, model).await
+    save_navigation_model_sqlx(pool, tenant_id, model).await
 }
 
 pub(crate) async fn ensure_navigation_model_items_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     defaults: &NavigationModel,
 ) -> Result<(), String> {
-    let mut current = load_navigation_model_sqlx(pool).await?;
+    let mut current = load_navigation_model_sqlx(pool, tenant_id).await?;
     for item in &defaults.rail_items {
         if !current
             .rail_items
@@ -50,15 +52,17 @@ pub(crate) async fn ensure_navigation_model_items_sqlx(
             }
         }
     }
-    save_navigation_model_sqlx(pool, &current).await
+    save_navigation_model_sqlx(pool, tenant_id, &current).await
 }
 
 pub(crate) async fn save_navigation_model_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     model: &NavigationModel,
 ) -> Result<(), String> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     sqlx::query(sql::UPSERT_NAVIGATION_STATE)
+        .bind(tenant_id)
         .bind(&model.active_rail_id)
         .bind(&model.active_header_tab_id)
         .bind(&model.active_sub_nav_id)
@@ -119,8 +123,10 @@ pub(crate) async fn save_navigation_model_sqlx(
 
 pub(crate) async fn load_navigation_model_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
 ) -> Result<NavigationModel, String> {
     let state = sqlx::query(sql::GET_NAVIGATION_STATE)
+        .bind(tenant_id)
         .fetch_one(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -283,11 +289,11 @@ mod tests {
 
         let loaded = database
             .block_on(async {
-                save_navigation_model_sqlx(database.pool(), &model).await?;
-                let mut loaded = load_navigation_model_sqlx(database.pool()).await?;
+                save_navigation_model_sqlx(database.pool(), "default", &model).await?;
+                let mut loaded = load_navigation_model_sqlx(database.pool(), "default").await?;
                 loaded.active_sub_nav_id = "updated-sub-nav".to_string();
-                save_navigation_model_sqlx(database.pool(), &loaded).await?;
-                load_navigation_model_sqlx(database.pool()).await
+                save_navigation_model_sqlx(database.pool(), "default", &loaded).await?;
+                load_navigation_model_sqlx(database.pool(), "default").await
             })
             .expect("round trip navigation model");
 

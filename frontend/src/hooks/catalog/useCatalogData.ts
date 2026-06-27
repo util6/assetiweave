@@ -127,6 +127,7 @@ export function useCatalogData() {
     navigationModel,
     overview,
     profiles,
+    reloadCatalogData: loadCatalogData,
     refreshMountState,
     refreshOverview,
     refreshProfiles,

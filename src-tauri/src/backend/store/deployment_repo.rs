@@ -6,9 +6,11 @@ use super::{codec::encode_enum, sql};
 
 pub(crate) async fn upsert_deployment_state_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     state: &DeploymentState,
 ) -> AppResult<()> {
     sqlx::query(sql::UPSERT_DEPLOYMENT_STATE)
+        .bind(tenant_id)
         .bind(&state.profile_id)
         .bind(&state.asset_id)
         .bind(&state.target_path)
@@ -24,11 +26,13 @@ pub(crate) async fn upsert_deployment_state_sqlx(
 
 pub(crate) async fn is_managed_deployment_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     profile_id: &str,
     asset_id: &str,
     target_path: &str,
 ) -> AppResult<bool> {
     let managed_by: Option<String> = sqlx::query_scalar(sql::GET_MANAGED_DEPLOYMENT)
+        .bind(tenant_id)
         .bind(profile_id)
         .bind(asset_id)
         .bind(target_path)
@@ -40,9 +44,11 @@ pub(crate) async fn is_managed_deployment_sqlx(
 
 pub(crate) async fn count_deployment_state_by_profile_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     profile_id: &str,
 ) -> AppResult<usize> {
     let count: i64 = sqlx::query_scalar(sql::COUNT_DEPLOYMENT_STATE_BY_PROFILE)
+        .bind(tenant_id)
         .bind(profile_id)
         .fetch_one(pool)
         .await
@@ -52,9 +58,11 @@ pub(crate) async fn count_deployment_state_by_profile_sqlx(
 
 pub(crate) async fn load_managed_deployment_targets_by_profile_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     profile_id: &str,
 ) -> AppResult<Vec<(String, String)>> {
     let rows = sqlx::query(sql::LIST_MANAGED_DEPLOYMENT_TARGETS_BY_PROFILE)
+        .bind(tenant_id)
         .bind(profile_id)
         .fetch_all(pool)
         .await
@@ -72,11 +80,13 @@ pub(crate) async fn load_managed_deployment_targets_by_profile_sqlx(
 #[cfg(test)]
 pub(crate) async fn delete_deployment_state_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     profile_id: &str,
     asset_id: &str,
     target_path: &str,
 ) -> AppResult<()> {
     sqlx::query(sql::DELETE_DEPLOYMENT_STATE)
+        .bind(tenant_id)
         .bind(profile_id)
         .bind(asset_id)
         .bind(target_path)
@@ -86,8 +96,12 @@ pub(crate) async fn delete_deployment_state_sqlx(
     Ok(())
 }
 
-pub(crate) async fn delete_orphan_deployment_state_sqlx(pool: &SqlitePool) -> AppResult<()> {
+pub(crate) async fn delete_orphan_deployment_state_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> AppResult<()> {
     sqlx::query(sql::DELETE_ORPHAN_DEPLOYMENT_STATE)
+        .bind(tenant_id)
         .execute(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -113,16 +127,19 @@ mod tests {
                 insert_asset(database.pool(), "asset-a").await?;
                 upsert_deployment_state_sqlx(
                     database.pool(),
+                    "default",
                     &test_state("profile-a", "asset-a", "/target/a", "assetiweave"),
                 )
                 .await?;
                 upsert_deployment_state_sqlx(
                     database.pool(),
+                    "default",
                     &test_state("profile-a", "asset-b", "/target/b", "other-tool"),
                 )
                 .await?;
                 upsert_deployment_state_sqlx(
                     database.pool(),
+                    "default",
                     &test_state("profile-b", "asset-a", "/target/c", "assetiweave"),
                 )
                 .await?;
@@ -130,6 +147,7 @@ mod tests {
                 assert!(
                     is_managed_deployment_sqlx(
                         database.pool(),
+                        "default",
                         "profile-a",
                         "asset-a",
                         "/target/a"
@@ -139,6 +157,7 @@ mod tests {
                 assert!(
                     !is_managed_deployment_sqlx(
                         database.pool(),
+                        "default",
                         "profile-a",
                         "asset-b",
                         "/target/b"
@@ -146,27 +165,40 @@ mod tests {
                     .await?
                 );
                 assert_eq!(
-                    count_deployment_state_by_profile_sqlx(database.pool(), "profile-a").await?,
+                    count_deployment_state_by_profile_sqlx(database.pool(), "default", "profile-a")
+                        .await?,
                     2
                 );
                 assert_eq!(
-                    count_deployment_state_by_profile_sqlx(database.pool(), "profile-b").await?,
+                    count_deployment_state_by_profile_sqlx(database.pool(), "default", "profile-b")
+                        .await?,
                     1
                 );
                 assert_eq!(
-                    load_managed_deployment_targets_by_profile_sqlx(database.pool(), "profile-a")
-                        .await?,
+                    load_managed_deployment_targets_by_profile_sqlx(
+                        database.pool(),
+                        "default",
+                        "profile-a",
+                    )
+                    .await?,
                     vec![("asset-a".to_string(), "/target/a".to_string())]
                 );
 
-                delete_deployment_state_sqlx(database.pool(), "profile-a", "asset-b", "/target/b")
-                    .await?;
+                delete_deployment_state_sqlx(
+                    database.pool(),
+                    "default",
+                    "profile-a",
+                    "asset-b",
+                    "/target/b",
+                )
+                .await?;
                 upsert_deployment_state_sqlx(
                     database.pool(),
+                    "default",
                     &test_state("profile-a", "asset-b", "/target/b", "assetiweave"),
                 )
                 .await?;
-                delete_orphan_deployment_state_sqlx(database.pool()).await?;
+                delete_orphan_deployment_state_sqlx(database.pool(), "default").await?;
 
                 let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM deployment_state")
                     .fetch_one(database.pool())

@@ -21,7 +21,7 @@ pub(super) use crate::backend::{
         LogField,
     },
     path_utils::{
-        default_skill_backup_root, expand_path, find_git_root, git_browser_url,
+        default_skill_backup_root_for_tenant, expand_path, find_git_root, git_browser_url,
         git_repository_for_path,
     },
 };

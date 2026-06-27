@@ -15,10 +15,11 @@ use super::{
 
 pub(crate) async fn load_skill_group_details_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     assets: &[Asset],
 ) -> AppResult<Vec<AssetGroupDetail>> {
-    let groups = load_asset_groups_by_kind_sqlx(pool, AssetKind::Skill).await?;
-    let manual_members = load_group_members_sqlx(pool).await?;
+    let groups = load_asset_groups_by_kind_sqlx(pool, tenant_id, AssetKind::Skill).await?;
+    let manual_members = load_group_members_sqlx(pool, tenant_id).await?;
     groups
         .into_iter()
         .map(|group| build_group_detail(group, assets, &manual_members))
@@ -27,15 +28,16 @@ pub(crate) async fn load_skill_group_details_sqlx(
 
 pub(crate) async fn load_skill_group_details_by_ids_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     group_ids: &BTreeSet<String>,
     assets: &[Asset],
 ) -> AppResult<Vec<AssetGroupDetail>> {
-    let groups = load_asset_groups_by_kind_sqlx(pool, AssetKind::Skill)
+    let groups = load_asset_groups_by_kind_sqlx(pool, tenant_id, AssetKind::Skill)
         .await?
         .into_iter()
         .filter(|group| group_ids.contains(&group.id))
         .collect::<Vec<_>>();
-    let manual_members = load_group_members_sqlx(pool).await?;
+    let manual_members = load_group_members_sqlx(pool, tenant_id).await?;
     groups
         .into_iter()
         .map(|group| build_group_detail(group, assets, &manual_members))
@@ -44,26 +46,29 @@ pub(crate) async fn load_skill_group_details_by_ids_sqlx(
 
 pub(crate) async fn load_skill_group_detail_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     group_id: &str,
     assets: &[Asset],
 ) -> AppResult<AssetGroupDetail> {
-    let group = load_asset_group_sqlx(pool, group_id)
+    let group = load_asset_group_sqlx(pool, tenant_id, group_id)
         .await?
         .ok_or_else(|| format!("asset group not found: {group_id}"))?;
     if group.asset_kind != AssetKind::Skill {
         return Err("only skill groups are supported".to_string());
     }
-    let manual_members = load_group_members_sqlx(pool).await?;
+    let manual_members = load_group_members_sqlx(pool, tenant_id).await?;
     build_group_detail(group, assets, &manual_members)
 }
 
 pub(crate) async fn upsert_asset_group_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     group: &AssetGroup,
 ) -> AppResult<()> {
     validate_asset_group(group)?;
     let icon_svg = group.icon_svg.as_ref().map(encode_json).transpose()?;
     sqlx::query(sql::UPSERT_ASSET_GROUP)
+        .bind(tenant_id)
         .bind(&group.id)
         .bind(group.name.trim())
         .bind(
@@ -94,14 +99,20 @@ pub(crate) async fn upsert_asset_group_sqlx(
     Ok(())
 }
 
-pub(crate) async fn delete_asset_group_sqlx(pool: &SqlitePool, group_id: &str) -> AppResult<()> {
+pub(crate) async fn delete_asset_group_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    group_id: &str,
+) -> AppResult<()> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     sqlx::query(sql::DELETE_ASSET_GROUP_MEMBERS)
+        .bind(tenant_id)
         .bind(group_id)
         .execute(&mut *tx)
         .await
         .map_err(|error| error.to_string())?;
     sqlx::query(sql::DELETE_ASSET_GROUP)
+        .bind(tenant_id)
         .bind(group_id)
         .execute(&mut *tx)
         .await
@@ -112,11 +123,12 @@ pub(crate) async fn delete_asset_group_sqlx(pool: &SqlitePool, group_id: &str) -
 
 pub(crate) async fn replace_asset_group_members_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     group_id: &str,
     asset_ids: &[String],
     assets: &[Asset],
 ) -> AppResult<()> {
-    let group = load_asset_group_sqlx(pool, group_id)
+    let group = load_asset_group_sqlx(pool, tenant_id, group_id)
         .await?
         .ok_or_else(|| format!("asset group not found: {group_id}"))?;
     if group.asset_kind != AssetKind::Skill {
@@ -146,12 +158,14 @@ pub(crate) async fn replace_asset_group_members_sqlx(
     let now = Utc::now().to_rfc3339();
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     sqlx::query(sql::DELETE_ASSET_GROUP_MEMBERS)
+        .bind(tenant_id)
         .bind(group_id)
         .execute(&mut *tx)
         .await
         .map_err(|error| error.to_string())?;
     for asset_id in deduped {
         sqlx::query(sql::INSERT_ASSET_GROUP_MEMBER)
+            .bind(tenant_id)
             .bind(group_id)
             .bind(asset_id)
             .bind(&now)
@@ -163,8 +177,12 @@ pub(crate) async fn replace_asset_group_members_sqlx(
     Ok(())
 }
 
-pub(crate) async fn delete_orphan_asset_group_members_sqlx(pool: &SqlitePool) -> AppResult<()> {
+pub(crate) async fn delete_orphan_asset_group_members_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> AppResult<()> {
     sqlx::query(sql::DELETE_ORPHAN_ASSET_GROUP_MEMBERS)
+        .bind(tenant_id)
         .execute(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -233,9 +251,11 @@ pub(crate) fn build_group_detail(
 
 async fn load_asset_groups_by_kind_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     kind: AssetKind,
 ) -> AppResult<Vec<AssetGroup>> {
     let rows = sqlx::query(sql::LIST_ASSET_GROUPS_BY_KIND)
+        .bind(tenant_id)
         .bind(encode_enum(kind)?)
         .fetch_all(pool)
         .await
@@ -243,8 +263,13 @@ async fn load_asset_groups_by_kind_sqlx(
     rows.iter().map(map_sqlx_asset_group_row).collect()
 }
 
-async fn load_asset_group_sqlx(pool: &SqlitePool, group_id: &str) -> AppResult<Option<AssetGroup>> {
+async fn load_asset_group_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    group_id: &str,
+) -> AppResult<Option<AssetGroup>> {
     let row = sqlx::query(sql::GET_ASSET_GROUP)
+        .bind(tenant_id)
         .bind(group_id)
         .fetch_optional(pool)
         .await
@@ -254,8 +279,10 @@ async fn load_asset_group_sqlx(pool: &SqlitePool, group_id: &str) -> AppResult<O
 
 async fn load_group_members_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
 ) -> AppResult<BTreeMap<String, BTreeSet<String>>> {
     let rows = sqlx::query(sql::LIST_ASSET_GROUP_MEMBERS)
+        .bind(tenant_id)
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -466,13 +493,15 @@ mod tests {
             .block_on(async {
                 crate::backend::store::replace_source_assets_sqlx(
                     database.pool(),
+                    "default",
                     "source-a",
                     &assets,
                 )
                 .await?;
-                upsert_asset_group_sqlx(database.pool(), &group).await?;
+                upsert_asset_group_sqlx(database.pool(), "default", &group).await?;
                 replace_asset_group_members_sqlx(
                     database.pool(),
+                    "default",
                     &group.id,
                     &[
                         "tampermonkey".to_string(),
@@ -482,21 +511,26 @@ mod tests {
                     &assets,
                 )
                 .await?;
-                let details = load_skill_group_details_sqlx(database.pool(), &assets).await?;
+                let details =
+                    load_skill_group_details_sqlx(database.pool(), "default", &assets).await?;
                 let detail =
-                    load_skill_group_detail_sqlx(database.pool(), &group.id, &assets).await?;
+                    load_skill_group_detail_sqlx(database.pool(), "default", &group.id, &assets)
+                        .await?;
                 sqlx::query(sql::INSERT_ASSET_GROUP_MEMBER)
+                    .bind("default")
                     .bind(&group.id)
                     .bind("missing-skill")
                     .bind("2026-01-01T00:00:00Z")
                     .execute(database.pool())
                     .await
                     .map_err(|error| error.to_string())?;
-                delete_orphan_asset_group_members_sqlx(database.pool()).await?;
+                delete_orphan_asset_group_members_sqlx(database.pool(), "default").await?;
                 let cleaned_detail =
-                    load_skill_group_detail_sqlx(database.pool(), &group.id, &assets).await?;
-                delete_asset_group_sqlx(database.pool(), &group.id).await?;
-                let after_delete = load_skill_group_details_sqlx(database.pool(), &assets).await?;
+                    load_skill_group_detail_sqlx(database.pool(), "default", &group.id, &assets)
+                        .await?;
+                delete_asset_group_sqlx(database.pool(), "default", &group.id).await?;
+                let after_delete =
+                    load_skill_group_details_sqlx(database.pool(), "default", &assets).await?;
                 AppResult::Ok((details, detail, cleaned_detail, after_delete))
             })
             .expect("round trip SQLx asset groups");

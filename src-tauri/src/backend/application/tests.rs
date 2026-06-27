@@ -40,28 +40,86 @@ fn clear_test_tables(service: &AppService, tables: &[&str]) {
 
 fn upsert_test_source(service: &AppService, source: &Source) {
     let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
     service
         .db
-        .block_on(async move { crate::backend::store::upsert_source_sqlx(&pool, source).await })
+        .block_on(async move {
+            crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, source).await
+        })
         .expect("save source");
 }
 
 fn replace_test_source_assets(service: &AppService, source_id: &str, assets: &[Asset]) {
     let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
     service
         .db
         .block_on(async move {
-            crate::backend::store::replace_source_assets_sqlx(&pool, source_id, assets).await
+            crate::backend::store::replace_source_assets_sqlx(&pool, &tenant_id, source_id, assets)
+                .await
         })
         .expect("save source assets");
 }
 
 fn load_test_assets(service: &AppService) -> Vec<Asset> {
     let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
     service
         .db
-        .block_on(async move { crate::backend::store::load_assets_sqlx(&pool, None).await })
+        .block_on(
+            async move { crate::backend::store::load_assets_sqlx(&pool, &tenant_id, None).await },
+        )
         .expect("load assets")
+}
+
+#[test]
+fn creating_tenant_seeds_isolated_skill_backup_library_root() {
+    let root = std::env::temp_dir().join(format!("assetiweave-tenant-root-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create temp dir");
+    let db_path = root.join("app.db");
+
+    let service = AppService::open_with_db_path(db_path.clone()).expect("open application service");
+    let tenant = service
+        .create_tenant(TenantCreateParams {
+            name: "Client A".to_string(),
+            slug: Some("client-a".to_string()),
+            set_active: true,
+        })
+        .expect("create tenant");
+    assert_eq!(tenant.id, "client-a");
+    assert_eq!(tenant.slug, "client-a");
+    drop(service);
+
+    let tenant_service =
+        AppService::open_with_db_path(db_path).expect("open service for active tenant");
+    assert_eq!(tenant_service.tenant_id(), "client-a");
+
+    let settings = tenant_service
+        .get_skill_backup_settings()
+        .expect("load tenant skill backup settings");
+    assert!(
+        settings
+            .expanded_root_path
+            .ends_with(".assetiweave/tenants/client-a/library/skills"),
+        "unexpected tenant skill root: {}",
+        settings.expanded_root_path
+    );
+    assert_eq!(settings.expanded_root_path, settings.default_root_path);
+    assert!(settings.is_default_root);
+
+    assert!(tenant_service
+        .list_sources()
+        .expect("list tenant sources")
+        .iter()
+        .any(|source| source.id == capabilities::SKILL_BACKUP_SOURCE_ID
+            && source.root_path == settings.root_path));
+    assert!(!tenant_service
+        .list_profiles()
+        .expect("list tenant profiles")
+        .is_empty());
+
+    drop(tenant_service);
+    fs::remove_dir_all(root).ok();
 }
 
 #[test]
@@ -136,10 +194,11 @@ fn runtime_status_includes_harvester_runtime_requirements() {
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     };
     let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
     service
         .db
         .block_on(async move {
-            crate::backend::store::upsert_conversation_source_sqlx(&pool, &source).await
+            crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source).await
         })
         .expect("save source");
 
@@ -166,11 +225,12 @@ fn set_test_asset_mount(
     strategy: DeploymentStrategy,
 ) {
     let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
     service
         .db
         .block_on(async move {
             crate::backend::store::set_asset_mount_sqlx(
-                &pool, asset_id, profile_id, enabled, strategy,
+                &pool, &tenant_id, asset_id, profile_id, enabled, strategy,
             )
             .await
         })
@@ -308,14 +368,18 @@ fn upsert_conversation_export_fixture(
         }],
     };
     let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
     let session_id = service
         .db
         .block_on(async move {
-            crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &adapter).await?;
-            crate::backend::store::upsert_conversation_source_sqlx(&pool, &source).await?;
+            crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &adapter)
+                .await?;
+            crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source)
+                .await?;
             let sessions = if web_record {
                 crate::backend::store::import_web_record_sessions_sqlx(
                     &pool,
+                    &tenant_id,
                     &source,
                     &[session],
                     false,
@@ -323,6 +387,7 @@ fn upsert_conversation_export_fixture(
                 .await?;
                 crate::backend::store::list_web_record_sessions_sqlx(
                     &pool,
+                    &tenant_id,
                     Some(&source.adapter_id),
                     Some(&source.id),
                     None,
@@ -333,6 +398,7 @@ fn upsert_conversation_export_fixture(
             } else {
                 crate::backend::store::import_conversation_sessions_sqlx(
                     &pool,
+                    &tenant_id,
                     &source,
                     &[session],
                     false,
@@ -340,6 +406,7 @@ fn upsert_conversation_export_fixture(
                 .await?;
                 crate::backend::store::list_conversation_sessions_sqlx(
                     &pool,
+                    &tenant_id,
                     Some(&source.adapter_id),
                     Some(&source.id),
                     None,
@@ -357,16 +424,24 @@ fn upsert_conversation_export_fixture(
 #[cfg(unix)]
 fn load_export_fixture_adapter(service: &AppService, session_id: &str) -> ConversationAdapter {
     let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
     let session_id = session_id.to_string();
     service
         .db
         .block_on(async move {
-            let detail =
-                crate::backend::store::load_conversation_session_detail_sqlx(&pool, &session_id)
-                    .await?;
-            crate::backend::store::load_conversation_adapter_sqlx(&pool, &detail.session.adapter_id)
-                .await?
-                .ok_or_else(|| "fixture adapter not found".to_string())
+            let detail = crate::backend::store::load_conversation_session_detail_sqlx(
+                &pool,
+                &tenant_id,
+                &session_id,
+            )
+            .await?;
+            crate::backend::store::load_conversation_adapter_sqlx(
+                &pool,
+                &tenant_id,
+                &detail.session.adapter_id,
+            )
+            .await?
+            .ok_or_else(|| "fixture adapter not found".to_string())
         })
         .expect("load export fixture adapter")
 }
@@ -852,20 +927,27 @@ printf '%s\n' '{"type":"complete","item":{}}'
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         };
         let pool = database.pool().clone();
+        let tenant_id = "default".to_string();
         database
             .block_on(async move {
-                crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &adapter).await
+                crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &adapter)
+                    .await
             })
             .expect("insert legacy adapter");
     }
 
     let service = AppService::open_with_db_path(db_path).expect("open initialized service");
     let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
     let migrated = service
         .db
         .block_on(async move {
-            crate::backend::store::load_conversation_adapter_sqlx(&pool, "legacy-hash-adapter")
-                .await
+            crate::backend::store::load_conversation_adapter_sqlx(
+                &pool,
+                &tenant_id,
+                "legacy-hash-adapter",
+            )
+            .await
         })
         .expect("load migrated adapter")
         .expect("migrated adapter");
@@ -1010,6 +1092,7 @@ fn profile_delete_guard_blocks_sqlx_deployment_state() {
         .block_on(async {
             crate::backend::store::upsert_deployment_state_sqlx(
                 service.db.pool(),
+                service.tenant_id(),
                 &DeploymentState {
                     profile_id: profile.id.clone(),
                     asset_id: "asset-a".to_string(),
@@ -1144,11 +1227,15 @@ fn skill_group_crud_and_members_use_sqlx_path() {
         },
     ];
     let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
     service
         .db
         .block_on(async move {
-            crate::backend::store::upsert_source_sqlx(&pool, &source).await?;
-            crate::backend::store::replace_source_assets_sqlx(&pool, "source-a", &assets).await
+            crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, &source).await?;
+            crate::backend::store::replace_source_assets_sqlx(
+                &pool, &tenant_id, "source-a", &assets,
+            )
+            .await
         })
         .expect("seed SQLx catalog");
 
@@ -1260,7 +1347,8 @@ fn cleanup_orphan_asset_records_uses_sqlx_for_migrated_tables() {
     )
     .expect("seed orphan records");
 
-    capabilities::cleanup_orphan_asset_records(&service.db).expect("cleanup orphan records");
+    capabilities::cleanup_orphan_asset_records(&service.db, service.tenant_id())
+        .expect("cleanup orphan records");
 
     for table in [
         "asset_mounts",
@@ -1301,10 +1389,11 @@ fn list_skill_remote_sources_prunes_orphans_through_sqlx_path() {
         message: None,
     };
     let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
     service
         .db
         .block_on(async move {
-            crate::backend::store::upsert_skill_remote_source_sqlx(&pool, &orphan).await
+            crate::backend::store::upsert_skill_remote_source_sqlx(&pool, &tenant_id, &orphan).await
         })
         .expect("save orphan remote source");
 

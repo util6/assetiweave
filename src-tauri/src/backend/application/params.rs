@@ -50,6 +50,14 @@ pub(crate) struct IdParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct TenantCreateParams {
+    pub(crate) name: String,
+    pub(crate) slug: Option<String>,
+    #[serde(default, alias = "setActive")]
+    pub(crate) set_active: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct AssetProfileParams {
     #[serde(alias = "assetId")]
     pub(crate) asset_id: String,

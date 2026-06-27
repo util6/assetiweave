@@ -9,16 +9,19 @@ use super::{
 
 pub(crate) async fn load_assets_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     kind: Option<AssetKind>,
 ) -> AppResult<Vec<Asset>> {
     let rows = if let Some(kind) = kind {
         sqlx::query(sql::LIST_ASSETS_BY_KIND)
+            .bind(tenant_id)
             .bind(encode_enum(kind)?)
             .fetch_all(pool)
             .await
             .map_err(|error| error.to_string())?
     } else {
         sqlx::query(sql::LIST_ASSETS)
+            .bind(tenant_id)
             .fetch_all(pool)
             .await
             .map_err(|error| error.to_string())?
@@ -26,8 +29,13 @@ pub(crate) async fn load_assets_sqlx(
     rows.iter().map(map_sqlx_asset_row).collect()
 }
 
-pub(crate) async fn load_asset_sqlx(pool: &SqlitePool, asset_id: &str) -> AppResult<Option<Asset>> {
+pub(crate) async fn load_asset_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    asset_id: &str,
+) -> AppResult<Option<Asset>> {
     sqlx::query(sql::LOAD_ASSET)
+        .bind(tenant_id)
         .bind(asset_id)
         .fetch_optional(pool)
         .await
@@ -62,17 +70,20 @@ fn map_sqlx_asset_row(row: &SqliteRow) -> AppResult<Asset> {
 
 pub(crate) async fn replace_source_assets_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     source_id: &str,
     assets: &[Asset],
 ) -> AppResult<()> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     sqlx::query(sql::DELETE_ASSETS_BY_SOURCE)
+        .bind(tenant_id)
         .bind(source_id)
         .execute(&mut *tx)
         .await
         .map_err(|error| error.to_string())?;
     for asset in assets {
         sqlx::query(sql::INSERT_ASSET)
+            .bind(tenant_id)
             .bind(&asset.id)
             .bind(&asset.source_id)
             .bind(&asset.name)
@@ -95,11 +106,13 @@ pub(crate) async fn replace_source_assets_sqlx(
 
 pub(crate) async fn update_asset_description_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     asset: &Asset,
 ) -> AppResult<()> {
     let result = sqlx::query(sql::UPDATE_ASSET_DESCRIPTION)
         .bind(&asset.description)
         .bind(&asset.updated_at)
+        .bind(tenant_id)
         .bind(&asset.id)
         .execute(pool)
         .await
@@ -126,15 +139,20 @@ mod tests {
 
         database
             .block_on(async {
-                replace_source_assets_sqlx(database.pool(), "source-a", &[skill.clone(), rule])
-                    .await?;
+                replace_source_assets_sqlx(
+                    database.pool(),
+                    "default",
+                    "source-a",
+                    &[skill.clone(), rule],
+                )
+                .await?;
                 let scoped_assets =
-                    load_assets_sqlx(database.pool(), Some(AssetKind::Skill)).await?;
-                let loaded_skill = load_asset_sqlx(database.pool(), &skill.id).await?;
-                let missing_asset = load_asset_sqlx(database.pool(), "missing").await?;
+                    load_assets_sqlx(database.pool(), "default", Some(AssetKind::Skill)).await?;
+                let loaded_skill = load_asset_sqlx(database.pool(), "default", &skill.id).await?;
+                let missing_asset = load_asset_sqlx(database.pool(), "default", "missing").await?;
                 skill.description = Some("Updated".to_string());
-                update_asset_description_sqlx(database.pool(), &skill).await?;
-                let all_assets = load_assets_sqlx(database.pool(), None).await?;
+                update_asset_description_sqlx(database.pool(), "default", &skill).await?;
+                let all_assets = load_assets_sqlx(database.pool(), "default", None).await?;
                 AppResult::Ok((scoped_assets, loaded_skill, missing_asset, all_assets))
             })
             .map(|(scoped_assets, loaded_skill, missing_asset, all_assets)| {
@@ -149,6 +167,50 @@ mod tests {
                 assert_eq!(updated.description.as_deref(), Some("Updated"));
             })
             .expect("query SQLx asset repo");
+        drop(database);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn sqlx_asset_repo_isolates_source_replacement_by_tenant() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-asset-tenant-sqlx-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let mut default_asset = test_asset("skill-a", AssetKind::Skill);
+        default_asset.absolute_path = "/tmp/default-skill-a.md".to_string();
+        let mut tenant_asset = test_asset("skill-a", AssetKind::Skill);
+        tenant_asset.absolute_path = "/tmp/tenant-skill-a.md".to_string();
+
+        let (default_assets, tenant_assets) = database
+            .block_on(async {
+                replace_source_assets_sqlx(
+                    database.pool(),
+                    "default",
+                    "source-a",
+                    &[default_asset],
+                )
+                .await?;
+                replace_source_assets_sqlx(
+                    database.pool(),
+                    "tenant-a",
+                    "source-a",
+                    &[tenant_asset],
+                )
+                .await?;
+                replace_source_assets_sqlx(database.pool(), "default", "source-a", &[]).await?;
+                let default_assets = load_assets_sqlx(database.pool(), "default", None).await?;
+                let tenant_assets = load_assets_sqlx(database.pool(), "tenant-a", None).await?;
+                AppResult::Ok((default_assets, tenant_assets))
+            })
+            .expect("query tenant-scoped assets");
+
+        assert!(default_assets.is_empty());
+        assert_eq!(tenant_assets.len(), 1);
+        assert_eq!(tenant_assets[0].absolute_path, "/tmp/tenant-skill-a.md");
         drop(database);
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));

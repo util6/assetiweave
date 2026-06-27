@@ -2,10 +2,11 @@ use super::prelude::*;
 
 pub(crate) fn scan_selected_sources(
     db: &crate::backend::store::Database,
+    tenant_id: &str,
     sources: Vec<Source>,
     scan: fn(&Source) -> AppResult<Vec<Asset>>,
 ) -> AppResult<Vec<Asset>> {
-    for mut source in prune_missing_sources(db, sources)? {
+    for mut source in prune_missing_sources(db, tenant_id, sources)? {
         if !source.enabled {
             log_info(
                 "source.scan.skip",
@@ -25,7 +26,7 @@ pub(crate) fn scan_selected_sources(
             Ok(assets) => {
                 source.last_scanned_at = Some(now);
                 source.last_scan_status = Some(format!("ok: {} assets", assets.len()));
-                persist_source_scan_result_sqlx(db, &source, &assets)?;
+                persist_source_scan_result_sqlx(db, tenant_id, &source, &assets)?;
                 let mut fields = source_log_fields(&source);
                 fields.push(("asset_count", assets.len().to_string()));
                 log_info("source.scan.success", "扫描来源成功", &fields);
@@ -44,12 +45,12 @@ pub(crate) fn scan_selected_sources(
                     let mut fields = source_log_fields(&source);
                     fields.push(("error", error.clone()));
                     log_warn("source.scan.removed", "来源路径不存在，已移除", &fields);
-                    delete_source_sqlx(db, &source.id)?;
+                    delete_source_sqlx(db, tenant_id, &source.id)?;
                     continue;
                 }
                 source.last_scanned_at = Some(now);
                 source.last_scan_status = Some(format!("error: {error}"));
-                upsert_source_sqlx(db, &source)?;
+                upsert_source_sqlx(db, tenant_id, &source)?;
                 log_error(
                     "source.scan.error",
                     "扫描来源失败",
@@ -60,25 +61,36 @@ pub(crate) fn scan_selected_sources(
         }
     }
 
-    cleanup_orphan_asset_records(db)?;
+    cleanup_orphan_asset_records(db, tenant_id)?;
     let pool = db.pool().clone();
-    db.block_on(async move { crate::backend::store::load_assets_sqlx(&pool, None).await })
+    let tenant_id = tenant_id.to_string();
+    db.block_on(
+        async move { crate::backend::store::load_assets_sqlx(&pool, &tenant_id, None).await },
+    )
 }
 
-pub(crate) fn refresh_all_sources(db: &crate::backend::store::Database) -> AppResult<Vec<Asset>> {
+pub(crate) fn refresh_all_sources(
+    db: &crate::backend::store::Database,
+    tenant_id: &str,
+) -> AppResult<Vec<Asset>> {
     let pool = db.pool().clone();
-    let sources =
-        db.block_on(async move { crate::backend::store::load_sources_sqlx(&pool).await })?;
-    scan_selected_sources(db, sources, crate::backend::scanner::scan_source)
+    let tenant_id_for_query = tenant_id.to_string();
+    let sources = db.block_on(async move {
+        crate::backend::store::load_sources_sqlx(&pool, &tenant_id_for_query).await
+    })?;
+    scan_selected_sources(db, tenant_id, sources, crate::backend::scanner::scan_source)
 }
 
 pub(crate) fn refresh_recorded_assets(
     db: &crate::backend::store::Database,
+    tenant_id: &str,
 ) -> AppResult<Vec<Asset>> {
     let pool = db.pool().clone();
-    let sources =
-        db.block_on(async move { crate::backend::store::load_sources_sqlx(&pool).await })?;
-    let sources = prune_missing_sources(db, sources)?;
+    let tenant_id_for_query = tenant_id.to_string();
+    let sources = db.block_on(async move {
+        crate::backend::store::load_sources_sqlx(&pool, &tenant_id_for_query).await
+    })?;
+    let sources = prune_missing_sources(db, tenant_id, sources)?;
     let source_map: HashMap<&str, &Source> = sources
         .iter()
         .map(|source| (source.id.as_str(), source))
@@ -93,8 +105,10 @@ pub(crate) fn refresh_recorded_assets(
     let now = Utc::now().to_rfc3339();
 
     let pool = db.pool().clone();
-    let assets =
-        db.block_on(async move { crate::backend::store::load_assets_sqlx(&pool, None).await })?;
+    let tenant_id_for_query = tenant_id.to_string();
+    let assets = db.block_on(async move {
+        crate::backend::store::load_assets_sqlx(&pool, &tenant_id_for_query, None).await
+    })?;
     for asset in assets {
         let Some(source) = source_map.get(asset.source_id.as_str()) else {
             orphan_source_ids.push(asset.source_id.clone());
@@ -136,32 +150,40 @@ pub(crate) fn refresh_recorded_assets(
         source.last_scan_status = Some(format!(
             "validated: {retained_count} assets, {removed_count} removed, {updated_count} updated"
         ));
-        persist_source_scan_result_sqlx(db, &source, &retained_assets)?;
+        persist_source_scan_result_sqlx(db, tenant_id, &source, &retained_assets)?;
     }
 
     orphan_source_ids.sort();
     orphan_source_ids.dedup();
     for source_id in orphan_source_ids {
-        replace_source_assets_sqlx(db, &source_id, &[])?;
+        replace_source_assets_sqlx(db, tenant_id, &source_id, &[])?;
     }
 
-    cleanup_orphan_asset_records(db)?;
+    cleanup_orphan_asset_records(db, tenant_id)?;
     let pool = db.pool().clone();
-    db.block_on(async move { crate::backend::store::load_assets_sqlx(&pool, None).await })
+    let tenant_id = tenant_id.to_string();
+    db.block_on(
+        async move { crate::backend::store::load_assets_sqlx(&pool, &tenant_id, None).await },
+    )
 }
 
-pub(crate) fn cleanup_orphan_asset_records(db: &crate::backend::store::Database) -> AppResult<()> {
+pub(crate) fn cleanup_orphan_asset_records(
+    db: &crate::backend::store::Database,
+    tenant_id: &str,
+) -> AppResult<()> {
     let pool = db.pool().clone();
+    let tenant_id = tenant_id.to_string();
     db.block_on(async move {
-        crate::backend::store::delete_orphan_asset_mounts_sqlx(&pool).await?;
-        crate::backend::store::delete_orphan_deployment_state_sqlx(&pool).await?;
-        crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool).await?;
-        crate::backend::store::delete_orphan_asset_group_members_sqlx(&pool).await
+        crate::backend::store::delete_orphan_asset_mounts_sqlx(&pool, &tenant_id).await?;
+        crate::backend::store::delete_orphan_deployment_state_sqlx(&pool, &tenant_id).await?;
+        crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool, &tenant_id).await?;
+        crate::backend::store::delete_orphan_asset_group_members_sqlx(&pool, &tenant_id).await
     })
 }
 
 fn prune_missing_sources(
     db: &crate::backend::store::Database,
+    tenant_id: &str,
     sources: Vec<Source>,
 ) -> AppResult<Vec<Source>> {
     let mut retained_sources = Vec::new();
@@ -179,50 +201,74 @@ fn prune_missing_sources(
         }
     }
     for source_id in missing_source_ids {
-        delete_source_sqlx(db, &source_id)?;
+        delete_source_sqlx(db, tenant_id, &source_id)?;
     }
     Ok(retained_sources)
 }
 
 fn persist_source_scan_result_sqlx(
     db: &crate::backend::store::Database,
+    tenant_id: &str,
     source: &Source,
     assets: &[Asset],
 ) -> AppResult<()> {
     let pool = db.pool().clone();
+    let tenant_id = tenant_id.to_string();
     let source_id = source.id.clone();
     let source_to_save = source.clone();
     let assets_to_save = assets.to_vec();
     db.block_on(async move {
-        crate::backend::store::replace_source_assets_sqlx(&pool, &source_id, &assets_to_save)
-            .await?;
-        crate::backend::store::upsert_source_sqlx(&pool, &source_to_save).await
+        crate::backend::store::replace_source_assets_sqlx(
+            &pool,
+            &tenant_id,
+            &source_id,
+            &assets_to_save,
+        )
+        .await?;
+        crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, &source_to_save).await
     })
 }
 
 fn replace_source_assets_sqlx(
     db: &crate::backend::store::Database,
+    tenant_id: &str,
     source_id: &str,
     assets: &[Asset],
 ) -> AppResult<()> {
     let pool = db.pool().clone();
+    let tenant_id = tenant_id.to_string();
     let source_id = source_id.to_string();
     let assets = assets.to_vec();
     db.block_on(async move {
-        crate::backend::store::replace_source_assets_sqlx(&pool, &source_id, &assets).await
+        crate::backend::store::replace_source_assets_sqlx(&pool, &tenant_id, &source_id, &assets)
+            .await
     })
 }
 
-fn upsert_source_sqlx(db: &crate::backend::store::Database, source: &Source) -> AppResult<()> {
+fn upsert_source_sqlx(
+    db: &crate::backend::store::Database,
+    tenant_id: &str,
+    source: &Source,
+) -> AppResult<()> {
     let pool = db.pool().clone();
+    let tenant_id = tenant_id.to_string();
     let source = source.clone();
-    db.block_on(async move { crate::backend::store::upsert_source_sqlx(&pool, &source).await })
+    db.block_on(async move {
+        crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, &source).await
+    })
 }
 
-fn delete_source_sqlx(db: &crate::backend::store::Database, source_id: &str) -> AppResult<()> {
+fn delete_source_sqlx(
+    db: &crate::backend::store::Database,
+    tenant_id: &str,
+    source_id: &str,
+) -> AppResult<()> {
     let pool = db.pool().clone();
+    let tenant_id = tenant_id.to_string();
     let source_id = source_id.to_string();
-    db.block_on(async move { crate::backend::store::delete_source_sqlx(&pool, &source_id).await })
+    db.block_on(async move {
+        crate::backend::store::delete_source_sqlx(&pool, &tenant_id, &source_id).await
+    })
 }
 
 fn source_root_is_missing(source: &Source) -> bool {

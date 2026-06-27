@@ -22,6 +22,7 @@ use super::{
 
 pub(crate) async fn import_web_record_sessions_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     source: &ConversationSource,
     sessions: &[NormalizedConversationSession],
     dry_run: bool,
@@ -47,9 +48,15 @@ pub(crate) async fn import_web_record_sessions_sqlx(
         .collect::<BTreeSet<_>>();
     {
         let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
-        clear_legacy_conversation_records_for_source_sqlx_tx(&mut tx, &source.id).await?;
-        prune_missing_web_record_sessions_sqlx_tx(&mut tx, &source.id, &incoming_session_ids)
+        clear_legacy_conversation_records_for_source_sqlx_tx(&mut tx, tenant_id, &source.id)
             .await?;
+        prune_missing_web_record_sessions_sqlx_tx(
+            &mut tx,
+            tenant_id,
+            &source.id,
+            &incoming_session_ids,
+        )
+        .await?;
         tx.commit().await.map_err(|error| error.to_string())?;
     }
 
@@ -59,12 +66,14 @@ pub(crate) async fn import_web_record_sessions_sqlx(
         let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
         for normalized in batch {
             let session = web_record_session_from_normalized(source, normalized, &now);
-            if web_record_session_is_unchanged_sqlx_tx(&mut tx, &session, normalized).await? {
+            if web_record_session_is_unchanged_sqlx_tx(&mut tx, tenant_id, &session, normalized)
+                .await?
+            {
                 skipped_session_count += 1;
                 continue;
             }
-            delete_web_record_session_sqlx_tx(&mut tx, &session.id).await?;
-            insert_web_record_session_sqlx_tx(&mut tx, &session).await?;
+            delete_web_record_session_sqlx_tx(&mut tx, tenant_id, &session.id).await?;
+            insert_web_record_session_sqlx_tx(&mut tx, tenant_id, &session).await?;
 
             let mut stored_turns = Vec::new();
             for turn in &normalized.turns {
@@ -73,11 +82,19 @@ pub(crate) async fn import_web_record_sessions_sqlx(
                     continue;
                 }
                 let stored_turn = web_record_turn_from_normalized(&session.id, turn, &now);
-                insert_web_record_turn_sqlx_tx(&mut tx, &stored_turn).await?;
-                insert_web_record_parts_sqlx_tx(&mut tx, &stored_turn.id, &turn.parts).await?;
+                insert_web_record_turn_sqlx_tx(&mut tx, tenant_id, &stored_turn).await?;
+                insert_web_record_parts_sqlx_tx(&mut tx, tenant_id, &stored_turn.id, &turn.parts)
+                    .await?;
                 stored_turns.push(stored_turn);
             }
-            insert_web_record_questions_sqlx_tx(&mut tx, &session.id, &stored_turns, &now).await?;
+            insert_web_record_questions_sqlx_tx(
+                &mut tx,
+                tenant_id,
+                &session.id,
+                &stored_turns,
+                &now,
+            )
+            .await?;
         }
         tx.commit().await.map_err(|error| error.to_string())?;
     }
@@ -87,16 +104,18 @@ pub(crate) async fn import_web_record_sessions_sqlx(
         r#"
         UPDATE conversation_sources
         SET last_synced_at = ?1, last_sync_status = 'completed', updated_at = ?1
-        WHERE id = ?2
+        WHERE tenant_id = ?2 AND id = ?3
         "#,
     )
     .bind(&now)
+    .bind(tenant_id)
     .bind(&source.id)
     .execute(&mut *tx)
     .await
     .map_err(|error| error.to_string())?;
     insert_sync_run_sqlx_tx(
         &mut tx,
+        tenant_id,
         &ConversationSyncRun {
             id: stable_id("web-record-sync", &[&source.id, &now]),
             source_id: Some(source.id.clone()),
@@ -127,6 +146,7 @@ pub(crate) async fn import_web_record_sessions_sqlx(
 
 pub(crate) async fn list_web_record_sessions_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     adapter_id: Option<&str>,
     source_id: Option<&str>,
     query: Option<&str>,
@@ -142,37 +162,40 @@ pub(crate) async fn list_web_record_sessions_sqlx(
                (
                    SELECT COUNT(*)
                    FROM web_record_questions q
-                   WHERE q.session_id = s.id
+                   WHERE q.tenant_id = s.tenant_id AND q.session_id = s.id
                ) AS question_count,
                (
                    SELECT COUNT(*)
                    FROM web_record_turns t
-                   WHERE t.session_id = s.id
+                   WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
                ) AS turn_count
         FROM web_record_sessions s
-        WHERE (?1 IS NULL OR s.adapter_id = ?1)
-          AND (?2 IS NULL OR s.source_id = ?2)
+        WHERE s.tenant_id = ?1
+          AND (?2 IS NULL OR s.adapter_id = ?2)
+          AND (?3 IS NULL OR s.source_id = ?3)
           AND (
-              ?3 IS NULL
-              OR instr(lower(s.title), ?3) > 0
-              OR instr(lower(COALESCE(s.project_path, '')), ?3) > 0
-              OR instr(lower(s.external_id), ?3) > 0
+              ?4 IS NULL
+              OR instr(lower(s.title), ?4) > 0
+              OR instr(lower(COALESCE(s.project_path, '')), ?4) > 0
+              OR instr(lower(s.external_id), ?4) > 0
               OR EXISTS (
                   SELECT 1
                   FROM web_record_questions q
-                  WHERE q.session_id = s.id
+                  WHERE q.tenant_id = s.tenant_id
+                    AND q.session_id = s.id
                     AND (
-                        instr(lower(q.question_text), ?3) > 0
-                        OR instr(lower(q.answer_text), ?3) > 0
-                        OR instr(lower(q.code_text), ?3) > 0
-                        OR instr(lower(q.command_text), ?3) > 0
+                        instr(lower(q.question_text), ?4) > 0
+                        OR instr(lower(q.answer_text), ?4) > 0
+                        OR instr(lower(q.code_text), ?4) > 0
+                        OR instr(lower(q.command_text), ?4) > 0
                     )
               )
           )
         ORDER BY COALESCE(s.updated_at, s.imported_at) DESC, s.title ASC
-        LIMIT ?4 OFFSET ?5
+        LIMIT ?5 OFFSET ?6
         "#,
     )
+    .bind(tenant_id)
     .bind(adapter_id)
     .bind(source_id)
     .bind(needle.as_deref())
@@ -205,6 +228,7 @@ pub(crate) async fn list_web_record_sessions_sqlx(
 
 pub(crate) async fn load_web_record_session_detail_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     session_id: &str,
 ) -> AppResult<ConversationSessionDetail> {
     let session_row = sqlx::query(
@@ -213,9 +237,10 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
                started_at, updated_at, source_locator, source_fingerprint,
                missing, created_at, imported_at
         FROM web_record_sessions
-        WHERE id = ?1
+        WHERE tenant_id = ?1 AND id = ?2
         "#,
     )
+    .bind(tenant_id)
     .bind(session_id)
     .fetch_optional(pool)
     .await
@@ -228,10 +253,11 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
         SELECT id, session_id, question_index, title, question_text, answer_text,
                code_text, command_text, grouping_origin, created_at, updated_at
         FROM web_record_questions
-        WHERE session_id = ?1
+        WHERE tenant_id = ?1 AND session_id = ?2
         ORDER BY question_index ASC
         "#,
     )
+    .bind(tenant_id)
     .bind(session_id)
     .fetch_all(pool)
     .await
@@ -247,12 +273,13 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
                t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at,
                qt.question_id
         FROM web_record_question_turns qt
-        JOIN web_record_turns t ON t.id = qt.turn_id
-        JOIN web_record_questions q ON q.id = qt.question_id
-        WHERE q.session_id = ?1
+        JOIN web_record_turns t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
+        JOIN web_record_questions q ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
+        WHERE q.tenant_id = ?1 AND q.session_id = ?2
         ORDER BY q.question_index ASC, qt.turn_order ASC, t.turn_index ASC
         "#,
     )
+    .bind(tenant_id)
     .bind(session_id)
     .fetch_all(pool)
     .await
@@ -271,11 +298,12 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
                p.command, p.cwd, p.status, p.exit_code, p.metadata_json
         FROM web_record_parts p
-        JOIN web_record_turns t ON t.id = p.turn_id
-        WHERE t.session_id = ?1
+        JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
+        WHERE t.tenant_id = ?1 AND t.session_id = ?2
         ORDER BY t.turn_index ASC, p.part_index ASC
         "#,
     )
+    .bind(tenant_id)
     .bind(session_id)
     .fetch_all(pool)
     .await
@@ -367,18 +395,21 @@ struct QuestionAggregate {
 
 async fn prune_missing_web_record_sessions_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     source_id: &str,
     incoming_session_ids: &BTreeSet<String>,
 ) -> AppResult<()> {
-    let existing_ids =
-        sqlx::query_scalar::<_, String>("SELECT id FROM web_record_sessions WHERE source_id = ?1")
-            .bind(source_id)
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(|error| error.to_string())?;
+    let existing_ids = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM web_record_sessions WHERE tenant_id = ?1 AND source_id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
     for session_id in existing_ids {
         if !incoming_session_ids.contains(&session_id) {
-            delete_web_record_session_sqlx_tx(tx, &session_id).await?;
+            delete_web_record_session_sqlx_tx(tx, tenant_id, &session_id).await?;
         }
     }
     Ok(())
@@ -386,21 +417,26 @@ async fn prune_missing_web_record_sessions_sqlx_tx(
 
 async fn delete_web_record_session_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     session_id: &str,
 ) -> AppResult<()> {
     sqlx::query(
         r#"
         DELETE FROM web_record_question_turns
-        WHERE question_id IN (
-            SELECT id FROM web_record_questions WHERE session_id = ?1
+        WHERE tenant_id = ?1
+          AND question_id IN (
+            SELECT id FROM web_record_questions
+            WHERE tenant_id = ?1 AND session_id = ?2
         )
         "#,
     )
+    .bind(tenant_id)
     .bind(session_id)
     .execute(&mut **tx)
     .await
     .map_err(|error| error.to_string())?;
-    sqlx::query("DELETE FROM web_record_questions WHERE session_id = ?1")
+    sqlx::query("DELETE FROM web_record_questions WHERE tenant_id = ?1 AND session_id = ?2")
+        .bind(tenant_id)
         .bind(session_id)
         .execute(&mut **tx)
         .await
@@ -408,21 +444,26 @@ async fn delete_web_record_session_sqlx_tx(
     sqlx::query(
         r#"
         DELETE FROM web_record_parts
-        WHERE turn_id IN (
-            SELECT id FROM web_record_turns WHERE session_id = ?1
+        WHERE tenant_id = ?1
+          AND turn_id IN (
+            SELECT id FROM web_record_turns
+            WHERE tenant_id = ?1 AND session_id = ?2
         )
         "#,
     )
+    .bind(tenant_id)
     .bind(session_id)
     .execute(&mut **tx)
     .await
     .map_err(|error| error.to_string())?;
-    sqlx::query("DELETE FROM web_record_turns WHERE session_id = ?1")
+    sqlx::query("DELETE FROM web_record_turns WHERE tenant_id = ?1 AND session_id = ?2")
+        .bind(tenant_id)
         .bind(session_id)
         .execute(&mut **tx)
         .await
         .map_err(|error| error.to_string())?;
-    sqlx::query("DELETE FROM web_record_sessions WHERE id = ?1")
+    sqlx::query("DELETE FROM web_record_sessions WHERE tenant_id = ?1 AND id = ?2")
+        .bind(tenant_id)
         .bind(session_id)
         .execute(&mut **tx)
         .await
@@ -432,6 +473,7 @@ async fn delete_web_record_session_sqlx_tx(
 
 async fn web_record_session_is_unchanged_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     session: &ConversationSession,
     normalized: &NormalizedConversationSession,
 ) -> AppResult<bool> {
@@ -443,9 +485,10 @@ async fn web_record_session_is_unchanged_sqlx_tx(
         SELECT title, project_path, started_at, updated_at, source_locator,
                source_fingerprint, missing
         FROM web_record_sessions
-        WHERE id = ?1
+        WHERE tenant_id = ?1 AND id = ?2
         "#,
     )
+    .bind(tenant_id)
     .bind(&session.id)
     .fetch_optional(&mut **tx)
     .await
@@ -469,11 +512,13 @@ async fn web_record_session_is_unchanged_sqlx_tx(
         && source_locator == session.source_locator
         && existing_fingerprint.as_deref() == Some(source_fingerprint)
         && missing == 0
-        && web_record_session_turns_are_unchanged_sqlx_tx(tx, &session.id, normalized).await?)
+        && web_record_session_turns_are_unchanged_sqlx_tx(tx, tenant_id, &session.id, normalized)
+            .await?)
 }
 
 async fn web_record_session_turns_are_unchanged_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     session_id: &str,
     normalized: &NormalizedConversationSession,
 ) -> AppResult<bool> {
@@ -481,10 +526,11 @@ async fn web_record_session_turns_are_unchanged_sqlx_tx(
         r#"
         SELECT external_id, fingerprint, missing
         FROM web_record_turns
-        WHERE session_id = ?1
+        WHERE tenant_id = ?1 AND session_id = ?2
         ORDER BY turn_index ASC
         "#,
     )
+    .bind(tenant_id)
     .bind(session_id)
     .fetch_all(&mut **tx)
     .await
@@ -508,14 +554,20 @@ async fn web_record_session_turns_are_unchanged_sqlx_tx(
 
 async fn clear_legacy_conversation_records_for_source_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     source_id: &str,
 ) -> AppResult<()> {
     sqlx::query(
         r#"
         DELETE FROM conversation_question_fts
-        WHERE session_id IN (SELECT id FROM conversation_sessions WHERE source_id = ?1)
+        WHERE tenant_id = ?1
+          AND session_id IN (
+            SELECT id FROM conversation_sessions
+            WHERE tenant_id = ?1 AND source_id = ?2
+          )
         "#,
     )
+    .bind(tenant_id)
     .bind(source_id)
     .execute(&mut **tx)
     .await
@@ -523,14 +575,16 @@ async fn clear_legacy_conversation_records_for_source_sqlx_tx(
     sqlx::query(
         r#"
         DELETE FROM conversation_question_turns
-        WHERE question_id IN (
+        WHERE tenant_id = ?1
+          AND question_id IN (
             SELECT q.id
             FROM conversation_questions q
-            JOIN conversation_sessions s ON s.id = q.session_id
-            WHERE s.source_id = ?1
+            JOIN conversation_sessions s ON s.tenant_id = q.tenant_id AND s.id = q.session_id
+            WHERE s.tenant_id = ?1 AND s.source_id = ?2
         )
         "#,
     )
+    .bind(tenant_id)
     .bind(source_id)
     .execute(&mut **tx)
     .await
@@ -538,9 +592,14 @@ async fn clear_legacy_conversation_records_for_source_sqlx_tx(
     sqlx::query(
         r#"
         DELETE FROM conversation_questions
-        WHERE session_id IN (SELECT id FROM conversation_sessions WHERE source_id = ?1)
+        WHERE tenant_id = ?1
+          AND session_id IN (
+            SELECT id FROM conversation_sessions
+            WHERE tenant_id = ?1 AND source_id = ?2
+          )
         "#,
     )
+    .bind(tenant_id)
     .bind(source_id)
     .execute(&mut **tx)
     .await
@@ -548,14 +607,16 @@ async fn clear_legacy_conversation_records_for_source_sqlx_tx(
     sqlx::query(
         r#"
         DELETE FROM conversation_parts
-        WHERE turn_id IN (
+        WHERE tenant_id = ?1
+          AND turn_id IN (
             SELECT t.id
             FROM conversation_turns t
-            JOIN conversation_sessions s ON s.id = t.session_id
-            WHERE s.source_id = ?1
+            JOIN conversation_sessions s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
+            WHERE s.tenant_id = ?1 AND s.source_id = ?2
         )
         "#,
     )
+    .bind(tenant_id)
     .bind(source_id)
     .execute(&mut **tx)
     .await
@@ -563,14 +624,20 @@ async fn clear_legacy_conversation_records_for_source_sqlx_tx(
     sqlx::query(
         r#"
         DELETE FROM conversation_turns
-        WHERE session_id IN (SELECT id FROM conversation_sessions WHERE source_id = ?1)
+        WHERE tenant_id = ?1
+          AND session_id IN (
+            SELECT id FROM conversation_sessions
+            WHERE tenant_id = ?1 AND source_id = ?2
+          )
         "#,
     )
+    .bind(tenant_id)
     .bind(source_id)
     .execute(&mut **tx)
     .await
     .map_err(|error| error.to_string())?;
-    sqlx::query("DELETE FROM conversation_sessions WHERE source_id = ?1")
+    sqlx::query("DELETE FROM conversation_sessions WHERE tenant_id = ?1 AND source_id = ?2")
+        .bind(tenant_id)
         .bind(source_id)
         .execute(&mut **tx)
         .await
@@ -580,17 +647,19 @@ async fn clear_legacy_conversation_records_for_source_sqlx_tx(
 
 async fn insert_web_record_session_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     session: &ConversationSession,
 ) -> AppResult<()> {
     sqlx::query(
         r#"
         INSERT INTO web_record_sessions (
-            id, source_id, adapter_id, external_id, title, project_path, started_at,
+            tenant_id, id, source_id, adapter_id, external_id, title, project_path, started_at,
             updated_at, source_locator, source_fingerprint, missing, created_at, imported_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
         "#,
     )
+    .bind(tenant_id)
     .bind(&session.id)
     .bind(&session.source_id)
     .bind(&session.adapter_id)
@@ -612,17 +681,19 @@ async fn insert_web_record_session_sqlx_tx(
 
 async fn insert_web_record_turn_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     turn: &ConversationTurn,
 ) -> AppResult<()> {
     sqlx::query(
         r#"
         INSERT INTO web_record_turns (
-            id, session_id, external_id, turn_index, user_text, title, started_at,
+            tenant_id, id, session_id, external_id, turn_index, user_text, title, started_at,
             ended_at, fingerprint, missing, imported_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
         "#,
     )
+    .bind(tenant_id)
     .bind(&turn.id)
     .bind(&turn.session_id)
     .bind(&turn.external_id)
@@ -642,6 +713,7 @@ async fn insert_web_record_turn_sqlx_tx(
 
 async fn insert_web_record_parts_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     turn_id: &str,
     parts: &[crate::backend::models::NormalizedConversationPart],
 ) -> AppResult<()> {
@@ -649,12 +721,13 @@ async fn insert_web_record_parts_sqlx_tx(
         sqlx::query(
             r#"
             INSERT INTO web_record_parts (
-                id, turn_id, part_index, role, kind, text, language, command,
+                tenant_id, id, turn_id, part_index, role, kind, text, language, command,
                 cwd, status, exit_code, metadata_json
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             "#,
         )
+        .bind(tenant_id)
         .bind(stable_id("web-record-part", &[turn_id, &index.to_string()]))
         .bind(turn_id)
         .bind(index as i64)
@@ -676,6 +749,7 @@ async fn insert_web_record_parts_sqlx_tx(
 
 async fn insert_web_record_questions_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     session_id: &str,
     turns: &[ConversationTurn],
     now: &str,
@@ -695,10 +769,13 @@ async fn insert_web_record_questions_sqlx_tx(
         for (order, turn_id) in group.turn_ids.iter().enumerate() {
             sqlx::query(
                 r#"
-                INSERT INTO web_record_question_turns (question_id, turn_id, turn_order)
-                VALUES (?1, ?2, ?3)
+                INSERT INTO web_record_question_turns (
+                    tenant_id, question_id, turn_id, turn_order
+                )
+                VALUES (?1, ?2, ?3, ?4)
                 "#,
             )
+            .bind(tenant_id)
             .bind(&question_id)
             .bind(turn_id)
             .bind(order as i64)
@@ -706,16 +783,17 @@ async fn insert_web_record_questions_sqlx_tx(
             .await
             .map_err(|error| error.to_string())?;
         }
-        let aggregate = build_question_aggregate_sqlx_tx(tx, &group.turn_ids).await?;
+        let aggregate = build_question_aggregate_sqlx_tx(tx, tenant_id, &group.turn_ids).await?;
         sqlx::query(
             r#"
             INSERT INTO web_record_questions (
-                id, session_id, question_index, title, question_text, answer_text,
+                tenant_id, id, session_id, question_index, title, question_text, answer_text,
                 code_text, command_text, grouping_origin, created_at, updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
             "#,
         )
+        .bind(tenant_id)
         .bind(&question_id)
         .bind(session_id)
         .bind(index as i64)
@@ -735,6 +813,7 @@ async fn insert_web_record_questions_sqlx_tx(
 
 async fn build_question_aggregate_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     turn_ids: &[String],
 ) -> AppResult<QuestionAggregate> {
     let mut question_text = Vec::new();
@@ -742,14 +821,16 @@ async fn build_question_aggregate_sqlx_tx(
     let mut code_text = Vec::new();
     let mut command_text = Vec::new();
     for turn_id in turn_ids {
-        let user_text: String =
-            sqlx::query_scalar::<_, String>("SELECT user_text FROM web_record_turns WHERE id = ?1")
-                .bind(turn_id)
-                .fetch_one(&mut **tx)
-                .await
-                .map_err(|error| error.to_string())?;
+        let user_text: String = sqlx::query_scalar::<_, String>(
+            "SELECT user_text FROM web_record_turns WHERE tenant_id = ?1 AND id = ?2",
+        )
+        .bind(tenant_id)
+        .bind(turn_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|error| error.to_string())?;
         question_text.push(user_text);
-        for part in load_web_record_parts_sqlx_tx(tx, turn_id).await? {
+        for part in load_web_record_parts_sqlx_tx(tx, tenant_id, turn_id).await? {
             append_declared_card_to_question_aggregate(
                 &part,
                 &mut answer_text,
@@ -768,6 +849,7 @@ async fn build_question_aggregate_sqlx_tx(
 
 async fn load_web_record_parts_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     turn_id: &str,
 ) -> AppResult<Vec<ConversationPart>> {
     let rows = sqlx::query(
@@ -775,10 +857,11 @@ async fn load_web_record_parts_sqlx_tx(
         SELECT id, turn_id, part_index, role, kind, text, language, command,
                cwd, status, exit_code, metadata_json
         FROM web_record_parts
-        WHERE turn_id = ?1
+        WHERE tenant_id = ?1 AND turn_id = ?2
         ORDER BY part_index ASC
         "#,
     )
+    .bind(tenant_id)
     .bind(turn_id)
     .fetch_all(&mut **tx)
     .await
@@ -788,17 +871,19 @@ async fn load_web_record_parts_sqlx_tx(
 
 async fn insert_sync_run_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
     run: &ConversationSyncRun,
 ) -> AppResult<()> {
     sqlx::query(
         r#"
         INSERT INTO conversation_sync_runs (
-            id, source_id, adapter_id, status, started_at, finished_at,
+            tenant_id, id, source_id, adapter_id, status, started_at, finished_at,
             session_count, turn_count, warning_count, error_message
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
         "#,
     )
+    .bind(tenant_id)
     .bind(&run.id)
     .bind(&run.source_id)
     .bind(&run.adapter_id)
@@ -847,12 +932,15 @@ fn stable_id(prefix: &str, parts: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::dto::{ConversationRecordKind, ConversationSearchCardType};
     use crate::backend::models::{
         ConversationPartKind, ConversationPartRole, ConversationSourceKind,
         NormalizedConversationPart, NormalizedConversationTurn,
     };
     use crate::backend::store::Database;
     use uuid::Uuid;
+
+    const TEST_TENANT_ID: &str = "default";
 
     #[test]
     fn sqlx_web_records_use_independent_tables_and_remove_legacy_session_rows() {
@@ -867,11 +955,13 @@ mod tests {
             .block_on(async {
                 super::super::conversation_repo::upsert_conversation_source_sqlx(
                     database.pool(),
+                    TEST_TENANT_ID,
                     &source,
                 )
                 .await?;
                 super::super::conversation_repo::import_conversation_sessions_sqlx(
                     database.pool(),
+                    TEST_TENANT_ID,
                     &source,
                     &[fixture_session()],
                     false,
@@ -881,6 +971,7 @@ mod tests {
                     count_legacy_conversation_sessions_sqlx(database.pool(), &source.id).await?;
                 import_web_record_sessions_sqlx(
                     database.pool(),
+                    TEST_TENANT_ID,
                     &source,
                     &[fixture_session()],
                     false,
@@ -890,6 +981,7 @@ mod tests {
                     count_legacy_conversation_sessions_sqlx(database.pool(), &source.id).await?;
                 let sessions = list_web_record_sessions_sqlx(
                     database.pool(),
+                    TEST_TENANT_ID,
                     None,
                     Some(&source.id),
                     None,
@@ -897,9 +989,12 @@ mod tests {
                     0,
                 )
                 .await?;
-                let detail =
-                    load_web_record_session_detail_sqlx(database.pool(), &sessions[0].session.id)
-                        .await?;
+                let detail = load_web_record_session_detail_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &sessions[0].session.id,
+                )
+                .await?;
                 AppResult::Ok((
                     legacy_count_before_import,
                     legacy_count_after_import,
@@ -923,6 +1018,104 @@ mod tests {
     }
 
     #[test]
+    fn sqlx_web_record_legacy_cleanup_is_tenant_scoped() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-web-record-legacy-cleanup-tenant-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let tenant_alpha = "tenant-alpha";
+        let tenant_beta = "tenant-beta";
+        let source = fixture_source();
+
+        let (beta_before, beta_after, alpha_legacy_count) = database
+            .block_on(async {
+                for tenant_id in [tenant_alpha, tenant_beta] {
+                    super::super::conversation_repo::upsert_conversation_source_sqlx(
+                        database.pool(),
+                        tenant_id,
+                        &source,
+                    )
+                    .await?;
+                    super::super::conversation_repo::import_conversation_sessions_sqlx(
+                        database.pool(),
+                        tenant_id,
+                        &source,
+                        &[fixture_session()],
+                        false,
+                    )
+                    .await?;
+                }
+
+                let beta_sessions =
+                    super::super::conversation_repo::list_conversation_sessions_sqlx(
+                        database.pool(),
+                        tenant_beta,
+                        None,
+                        Some(&source.id),
+                        None,
+                        20,
+                        0,
+                    )
+                    .await?;
+                let beta_detail =
+                    super::super::conversation_repo::load_conversation_session_detail_sqlx(
+                        database.pool(),
+                        tenant_beta,
+                        &beta_sessions[0].session.id,
+                    )
+                    .await?;
+                let beta_before = (
+                    beta_detail.questions[0].turns.len(),
+                    beta_detail.questions[0].parts.len(),
+                );
+
+                import_web_record_sessions_sqlx(
+                    database.pool(),
+                    tenant_alpha,
+                    &source,
+                    &[fixture_session()],
+                    false,
+                )
+                .await?;
+
+                let beta_detail =
+                    super::super::conversation_repo::load_conversation_session_detail_sqlx(
+                        database.pool(),
+                        tenant_beta,
+                        &beta_sessions[0].session.id,
+                    )
+                    .await?;
+                let beta_after = (
+                    beta_detail.questions[0].turns.len(),
+                    beta_detail.questions[0].parts.len(),
+                );
+                let alpha_legacy_count =
+                    super::super::conversation_repo::list_conversation_sessions_sqlx(
+                        database.pool(),
+                        tenant_alpha,
+                        None,
+                        Some(&source.id),
+                        None,
+                        20,
+                        0,
+                    )
+                    .await?
+                    .len();
+
+                AppResult::Ok((beta_before, beta_after, alpha_legacy_count))
+            })
+            .expect("web record legacy cleanup stays tenant-scoped");
+
+        assert_eq!(beta_before, (1, 1));
+        assert_eq!(beta_after, (1, 1));
+        assert_eq!(alpha_legacy_count, 0);
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
     fn sqlx_web_record_import_skips_unchanged_fingerprinted_sessions() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-web-record-import-skip-sqlx-{}.sqlite",
@@ -937,11 +1130,13 @@ mod tests {
             .block_on(async {
                 super::super::conversation_repo::upsert_conversation_source_sqlx(
                     database.pool(),
+                    TEST_TENANT_ID,
                     &source,
                 )
                 .await?;
                 import_web_record_sessions_sqlx(
                     database.pool(),
+                    TEST_TENANT_ID,
                     &source,
                     &[session.clone()],
                     false,
@@ -954,8 +1149,14 @@ mod tests {
                 .execute(database.pool())
                 .await
                 .map_err(|error| error.to_string())?;
-                import_web_record_sessions_sqlx(database.pool(), &source, &[session], false)
-                    .await?;
+                import_web_record_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[session],
+                    false,
+                )
+                .await?;
                 sqlx::query_scalar::<_, String>(
                     "SELECT imported_at FROM web_record_sessions WHERE source_id = ?1",
                 )
@@ -991,11 +1192,18 @@ mod tests {
             .block_on(async {
                 super::super::conversation_repo::upsert_conversation_source_sqlx(
                     database.pool(),
+                    TEST_TENANT_ID,
                     &source,
                 )
                 .await?;
-                import_web_record_sessions_sqlx(database.pool(), &source, &[old_session], false)
-                    .await?;
+                import_web_record_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[old_session],
+                    false,
+                )
+                .await?;
                 sqlx::query(
                     "UPDATE web_record_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
                 )
@@ -1005,6 +1213,7 @@ mod tests {
                 .map_err(|error| error.to_string())?;
                 let result = import_web_record_sessions_sqlx(
                     database.pool(),
+                    TEST_TENANT_ID,
                     &source,
                     &[refreshed_session],
                     false,
@@ -1068,13 +1277,21 @@ mod tests {
             .block_on(async {
                 super::super::conversation_repo::upsert_conversation_source_sqlx(
                     database.pool(),
+                    TEST_TENANT_ID,
                     &source,
                 )
                 .await?;
-                import_web_record_sessions_sqlx(database.pool(), &source, &[first, second], false)
-                    .await?;
+                import_web_record_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[first, second],
+                    false,
+                )
+                .await?;
                 let sessions = list_web_record_sessions_sqlx(
                     database.pool(),
+                    TEST_TENANT_ID,
                     None,
                     Some(&source.id),
                     Some("sqlx answer"),
@@ -1082,9 +1299,12 @@ mod tests {
                     0,
                 )
                 .await?;
-                let detail =
-                    load_web_record_session_detail_sqlx(database.pool(), &sessions[0].session.id)
-                        .await?;
+                let detail = load_web_record_session_detail_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &sessions[0].session.id,
+                )
+                .await?;
                 AppResult::Ok((sessions, detail))
             })
             .expect("read web records through SQLx");
@@ -1136,13 +1356,21 @@ mod tests {
             .block_on(async {
                 super::super::conversation_repo::upsert_conversation_source_sqlx(
                     database.pool(),
+                    TEST_TENANT_ID,
                     &source,
                 )
                 .await?;
-                import_web_record_sessions_sqlx(database.pool(), &source, &[session], false)
-                    .await?;
+                import_web_record_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[session],
+                    false,
+                )
+                .await?;
                 let sessions = list_web_record_sessions_sqlx(
                     database.pool(),
+                    TEST_TENANT_ID,
                     None,
                     Some(&source.id),
                     None,
@@ -1150,7 +1378,12 @@ mod tests {
                     0,
                 )
                 .await?;
-                load_web_record_session_detail_sqlx(database.pool(), &sessions[0].session.id).await
+                load_web_record_session_detail_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &sessions[0].session.id,
+                )
+                .await
             })
             .expect("aggregate declared web content cards through SQLx");
 
@@ -1159,6 +1392,129 @@ mod tests {
             detail.questions[1].question.answer_text,
             "declared web answer"
         );
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_web_records_are_isolated_by_tenant() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-web-record-tenant-isolation-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let tenant_alpha = "tenant-alpha";
+        let tenant_beta = "tenant-beta";
+        let source = fixture_source();
+        let mut alpha_session = fixture_session();
+        alpha_session.turns[0].parts[0].text = Some("alpha web answer".to_string());
+        let mut beta_session = fixture_session();
+        beta_session.turns[0].parts[0].text = Some("beta web answer".to_string());
+
+        let (session_id, alpha_detail, beta_detail, alpha_page, beta_page) = database
+            .block_on(async {
+                for tenant_id in [tenant_alpha, tenant_beta] {
+                    super::super::conversation_repo::upsert_conversation_source_sqlx(
+                        database.pool(),
+                        tenant_id,
+                        &source,
+                    )
+                    .await?;
+                }
+                import_web_record_sessions_sqlx(
+                    database.pool(),
+                    tenant_alpha,
+                    &source,
+                    &[alpha_session],
+                    false,
+                )
+                .await?;
+                import_web_record_sessions_sqlx(
+                    database.pool(),
+                    tenant_beta,
+                    &source,
+                    &[beta_session],
+                    false,
+                )
+                .await?;
+
+                let alpha_sessions = list_web_record_sessions_sqlx(
+                    database.pool(),
+                    tenant_alpha,
+                    None,
+                    Some(&source.id),
+                    Some("alpha web"),
+                    20,
+                    0,
+                )
+                .await?;
+                let beta_sessions = list_web_record_sessions_sqlx(
+                    database.pool(),
+                    tenant_beta,
+                    None,
+                    Some(&source.id),
+                    Some("beta web"),
+                    20,
+                    0,
+                )
+                .await?;
+                let session_id = alpha_sessions[0].session.id.clone();
+                assert_eq!(beta_sessions[0].session.id, session_id);
+                let alpha_detail =
+                    load_web_record_session_detail_sqlx(database.pool(), tenant_alpha, &session_id)
+                        .await?;
+                let beta_detail =
+                    load_web_record_session_detail_sqlx(database.pool(), tenant_beta, &session_id)
+                        .await?;
+                let alpha_page = super::super::conversation_repo::search_conversation_cards_sqlx(
+                    database.pool(),
+                    tenant_alpha,
+                    ConversationRecordKind::Web,
+                    Some(&source.adapter_id),
+                    Some(&source.id),
+                    None,
+                    "beta web answer",
+                    &[ConversationSearchCardType::Answer],
+                    None,
+                    None,
+                    false,
+                    20,
+                    0,
+                )
+                .await?;
+                let beta_page = super::super::conversation_repo::search_conversation_cards_sqlx(
+                    database.pool(),
+                    tenant_beta,
+                    ConversationRecordKind::Web,
+                    Some(&source.adapter_id),
+                    Some(&source.id),
+                    None,
+                    "alpha web answer",
+                    &[ConversationSearchCardType::Answer],
+                    None,
+                    None,
+                    false,
+                    20,
+                    0,
+                )
+                .await?;
+                AppResult::Ok((session_id, alpha_detail, beta_detail, alpha_page, beta_page))
+            })
+            .expect("isolate web records by tenant");
+
+        assert_eq!(alpha_detail.session.id, session_id);
+        assert_eq!(beta_detail.session.id, session_id);
+        assert_eq!(
+            alpha_detail.questions[0].question.answer_text,
+            "alpha web answer"
+        );
+        assert_eq!(
+            beta_detail.questions[0].question.answer_text,
+            "beta web answer"
+        );
+        assert_eq!(alpha_page.total_count, 0);
+        assert_eq!(beta_page.total_count, 0);
 
         drop(database);
         cleanup_database(&db_path);

@@ -17,6 +17,20 @@ pub(crate) fn ensure_app_library_dirs() -> AppResult<()> {
 }
 
 pub(crate) fn default_skill_backup_root() -> AppResult<PathBuf> {
+    default_skill_backup_root_for_tenant("default")
+}
+
+pub(crate) fn default_skill_backup_root_for_tenant(tenant_id: &str) -> AppResult<PathBuf> {
+    let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+    Ok(home
+        .join(".assetiweave")
+        .join("tenants")
+        .join(safe_tenant_path_segment(tenant_id))
+        .join("library")
+        .join("skills"))
+}
+
+pub(crate) fn legacy_skill_backup_root() -> AppResult<PathBuf> {
     let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
     Ok(home.join(".assetiweave").join("library").join("skills"))
 }
@@ -248,10 +262,23 @@ pub(crate) fn detect_app_target(path: &Path) -> Option<AppKind> {
 }
 
 pub(crate) fn is_app_library_path(path: &Path) -> bool {
-    let Ok(library_root) = default_skill_backup_root() else {
-        return false;
-    };
-    normalize_absolute_path(path).starts_with(&normalize_absolute_path(&library_root))
+    let normalized = normalize_absolute_path(path);
+    if let Some(home) = dirs::home_dir() {
+        let tenants_root = normalize_absolute_path(&home.join(".assetiweave").join("tenants"));
+        if let Ok(relative) = normalized.strip_prefix(tenants_root) {
+            let parts = relative
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy().to_string())
+                .collect::<Vec<_>>();
+            if parts.len() >= 3 && parts[1] == "library" && parts[2] == "skills" {
+                return true;
+            }
+        }
+    }
+
+    legacy_skill_backup_root()
+        .map(|library_root| normalized.starts_with(&normalize_absolute_path(&library_root)))
+        .unwrap_or(false)
 }
 
 pub(crate) fn normalize_relative_path(path: &Path) -> String {
@@ -263,6 +290,29 @@ pub(crate) fn normalize_relative_path(path: &Path) -> String {
 
 fn normalize_absolute_path(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn safe_tenant_path_segment(tenant_id: &str) -> String {
+    let mut segment = tenant_id
+        .trim()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    while segment.contains("--") {
+        segment = segment.replace("--", "-");
+    }
+    let segment = segment.trim_matches('-');
+    if segment.is_empty() {
+        "default".to_string()
+    } else {
+        segment.to_string()
+    }
 }
 
 pub(crate) fn hash_file(path: &Path) -> AppResult<String> {

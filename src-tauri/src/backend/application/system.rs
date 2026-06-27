@@ -7,17 +7,40 @@ impl AppService {
 
     pub(crate) fn open_with_db_path(db_path: PathBuf) -> AppResult<Self> {
         let db = crate::backend::store::Database::open_initialized(&db_path)?;
-        Ok(Self { db, db_path })
+        let pool = db.pool().clone();
+        let context = db.block_on(async move {
+            crate::backend::store::load_local_request_context_sqlx(&pool).await
+        })?;
+        Ok(Self {
+            db,
+            db_path,
+            context,
+        })
+    }
+
+    pub(crate) fn request_context(&self) -> &RequestContext {
+        &self.context
+    }
+
+    pub(crate) fn tenant_id(&self) -> &str {
+        &self.context.tenant.id
     }
 
     pub(crate) fn overview(&self) -> AppResult<AppOverview> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
             Ok(AppOverview {
-                source_count: crate::backend::store::count_rows_sqlx(&pool, "sources").await?,
-                asset_count: crate::backend::store::count_rows_sqlx(&pool, "assets").await?,
-                profile_count: crate::backend::store::count_rows_sqlx(&pool, "profiles").await?,
-                last_scan_status: crate::backend::store::latest_scan_status_sqlx(&pool).await?,
+                source_count: crate::backend::store::count_rows_sqlx(&pool, &tenant_id, "sources")
+                    .await?,
+                asset_count: crate::backend::store::count_rows_sqlx(&pool, &tenant_id, "assets")
+                    .await?,
+                profile_count: crate::backend::store::count_rows_sqlx(
+                    &pool, &tenant_id, "profiles",
+                )
+                .await?,
+                last_scan_status: crate::backend::store::latest_scan_status_sqlx(&pool, &tenant_id)
+                    .await?,
             })
         })
     }
@@ -58,13 +81,14 @@ impl AppService {
     }
 
     pub(crate) fn run_doctor(&self) -> AppResult<Value> {
-        let backup_root = capabilities::skill_backup_root_sqlx(&self.db)?;
+        let backup_root = capabilities::skill_backup_root_sqlx(&self.db, self.tenant_id())?;
         let runtime_statuses = self.list_conversation_adapter_runtime_statuses()?;
         let (runtime_status, runtime_message) =
             conversation_runtime_doctor_summary(&runtime_statuses);
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let source_count = self.db.block_on(async move {
-            crate::backend::store::count_rows_sqlx(&pool, "sources").await
+            crate::backend::store::count_rows_sqlx(&pool, &tenant_id, "sources").await
         })?;
         Ok(json!({
             "checks": [
@@ -78,6 +102,11 @@ impl AppService {
                     "name": "sources",
                     "status": "pass",
                     "message": format!("{source_count} sources")
+                },
+                {
+                    "name": "tenant",
+                    "status": "pass",
+                    "message": self.tenant_id()
                 },
                 {
                     "name": "conversation_adapter_runtimes",

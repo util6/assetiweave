@@ -6,6 +6,7 @@ impl AppService {
         params: ConversationSessionListParams,
     ) -> AppResult<Vec<crate::backend::dto::ConversationSessionListItem>> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let adapter_id = params.adapter_id;
         let source_id = params.source_id;
         let query = params.query;
@@ -14,6 +15,7 @@ impl AppService {
         self.db.block_on(async move {
             crate::backend::store::list_conversation_sessions_sqlx(
                 &pool,
+                &tenant_id,
                 adapter_id.as_deref(),
                 source_id.as_deref(),
                 query.as_deref(),
@@ -29,9 +31,14 @@ impl AppService {
         params: ConversationSessionGetParams,
     ) -> AppResult<crate::backend::dto::ConversationSessionDetail> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
-            crate::backend::store::load_conversation_session_detail_sqlx(&pool, &params.session_id)
-                .await
+            crate::backend::store::load_conversation_session_detail_sqlx(
+                &pool,
+                &tenant_id,
+                &params.session_id,
+            )
+            .await
         })
     }
 
@@ -40,6 +47,7 @@ impl AppService {
         params: ConversationSessionListParams,
     ) -> AppResult<Vec<crate::backend::dto::ConversationSessionListItem>> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let adapter_id = params.adapter_id;
         let source_id = params.source_id;
         let query = params.query;
@@ -48,6 +56,7 @@ impl AppService {
         self.db.block_on(async move {
             crate::backend::store::list_web_record_sessions_sqlx(
                 &pool,
+                &tenant_id,
                 adapter_id.as_deref(),
                 source_id.as_deref(),
                 query.as_deref(),
@@ -63,9 +72,14 @@ impl AppService {
         params: ConversationSessionGetParams,
     ) -> AppResult<crate::backend::dto::ConversationSessionDetail> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
-            crate::backend::store::load_web_record_session_detail_sqlx(&pool, &params.session_id)
-                .await
+            crate::backend::store::load_web_record_session_detail_sqlx(
+                &pool,
+                &tenant_id,
+                &params.session_id,
+            )
+            .await
         })
     }
 
@@ -82,6 +96,7 @@ impl AppService {
         let limit = params.limit.unwrap_or(50).clamp(1, 500);
         let offset = params.offset.unwrap_or(0);
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let adapter_id = params.adapter_id.clone();
         let source_id = params.source_id.clone();
         let project_path = params.project_path.clone();
@@ -94,6 +109,7 @@ impl AppService {
         let page = self.db.block_on(async move {
             crate::backend::store::search_conversation_cards_sqlx(
                 &pool,
+                &tenant_id,
                 record_kind,
                 adapter_id.as_deref(),
                 source_id.as_deref(),
@@ -134,13 +150,17 @@ impl AppService {
         params: ConversationSessionExportParams,
     ) -> AppResult<Value> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let session_id = params.session_id.clone();
         let (detail, adapter, source) = self.db.block_on(async move {
-            let detail =
-                crate::backend::store::load_conversation_session_detail_sqlx(&pool, &session_id)
-                    .await?;
-            let adapter = load_export_adapter_for_detail(&pool, &detail).await?;
-            let source = load_export_source_for_detail(&pool, &detail).await?;
+            let detail = crate::backend::store::load_conversation_session_detail_sqlx(
+                &pool,
+                &tenant_id,
+                &session_id,
+            )
+            .await?;
+            let adapter = load_export_adapter_for_detail(&pool, &tenant_id, &detail).await?;
+            let source = load_export_source_for_detail(&pool, &tenant_id, &detail).await?;
             AppResult::Ok((detail, adapter, source))
         })?;
         export_loaded_conversation_markdown(
@@ -158,13 +178,17 @@ impl AppService {
         params: ConversationSessionExportParams,
     ) -> AppResult<Value> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let session_id = params.session_id.clone();
         let (detail, adapter, source) = self.db.block_on(async move {
-            let detail =
-                crate::backend::store::load_web_record_session_detail_sqlx(&pool, &session_id)
-                    .await?;
-            let adapter = load_export_adapter_for_detail(&pool, &detail).await?;
-            let source = load_export_source_for_detail(&pool, &detail).await?;
+            let detail = crate::backend::store::load_web_record_session_detail_sqlx(
+                &pool,
+                &tenant_id,
+                &session_id,
+            )
+            .await?;
+            let adapter = load_export_adapter_for_detail(&pool, &tenant_id, &detail).await?;
+            let source = load_export_source_for_detail(&pool, &tenant_id, &detail).await?;
             AppResult::Ok((detail, adapter, source))
         })?;
         export_loaded_conversation_markdown(detail, adapter, source, params, "web", "web")
@@ -175,6 +199,7 @@ impl AppService {
         params: ConversationQuestionListParams,
     ) -> AppResult<Vec<crate::backend::dto::ConversationQuestionDetail>> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         let session_id = params.session_id;
         let query = params.query;
         let limit = params.limit.unwrap_or(100).clamp(1, 500);
@@ -182,6 +207,7 @@ impl AppService {
         self.db.block_on(async move {
             crate::backend::store::list_conversation_question_details_sqlx(
                 &pool,
+                &tenant_id,
                 &session_id,
                 query.as_deref(),
                 limit,
@@ -196,9 +222,11 @@ impl AppService {
         params: ConversationQuestionGetParams,
     ) -> AppResult<crate::backend::dto::ConversationQuestionDetail> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
             crate::backend::store::load_conversation_question_detail_sqlx(
                 &pool,
+                &tenant_id,
                 &params.question_id,
             )
             .await
@@ -210,9 +238,11 @@ impl AppService {
         params: ConversationQuestionMergeParams,
     ) -> AppResult<crate::backend::dto::ConversationMutationResult> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
             crate::backend::store::merge_conversation_questions_sqlx(
                 &pool,
+                &tenant_id,
                 &params.question_ids,
                 params.dry_run,
             )
@@ -225,9 +255,11 @@ impl AppService {
         params: ConversationQuestionSplitParams,
     ) -> AppResult<crate::backend::dto::ConversationMutationResult> {
         let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
             crate::backend::store::split_conversation_question_sqlx(
                 &pool,
+                &tenant_id,
                 &params.question_id,
                 &params.before_turn_id,
                 params.dry_run,
@@ -239,23 +271,29 @@ impl AppService {
 
 async fn load_export_adapter_for_detail(
     pool: &sqlx::SqlitePool,
+    tenant_id: &str,
     detail: &crate::backend::dto::ConversationSessionDetail,
 ) -> AppResult<ConversationAdapter> {
-    crate::backend::store::load_conversation_adapter_sqlx(pool, &detail.session.adapter_id)
-        .await?
-        .ok_or_else(|| {
-            format!(
-                "conversation adapter not found: {}",
-                detail.session.adapter_id
-            )
-        })
+    crate::backend::store::load_conversation_adapter_sqlx(
+        pool,
+        tenant_id,
+        &detail.session.adapter_id,
+    )
+    .await?
+    .ok_or_else(|| {
+        format!(
+            "conversation adapter not found: {}",
+            detail.session.adapter_id
+        )
+    })
 }
 
 async fn load_export_source_for_detail(
     pool: &sqlx::SqlitePool,
+    tenant_id: &str,
     detail: &crate::backend::dto::ConversationSessionDetail,
 ) -> AppResult<ConversationSource> {
-    crate::backend::store::load_conversation_source_sqlx(pool, &detail.session.source_id)
+    crate::backend::store::load_conversation_source_sqlx(pool, tenant_id, &detail.session.source_id)
         .await?
         .ok_or_else(|| {
             format!(

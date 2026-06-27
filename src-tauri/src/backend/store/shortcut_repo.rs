@@ -9,12 +9,14 @@ use super::{
 
 pub(crate) async fn seed_app_shortcuts_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     shortcuts: &[(&str, &str, &str, bool)],
 ) -> AppResult<()> {
     for (sort_order, (profile_id, display_icon, accent_color, enabled)) in
         shortcuts.iter().enumerate()
     {
         sqlx::query(sql::UPSERT_APP_SHORTCUT)
+            .bind(tenant_id)
             .bind(profile_id)
             .bind(display_icon)
             .bind(Option::<String>::None)
@@ -28,8 +30,12 @@ pub(crate) async fn seed_app_shortcuts_sqlx(
     Ok(())
 }
 
-pub(crate) async fn load_app_shortcuts_sqlx(pool: &SqlitePool) -> AppResult<Vec<AppShortcut>> {
+pub(crate) async fn load_app_shortcuts_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> AppResult<Vec<AppShortcut>> {
     let rows = sqlx::query(sql::LIST_APP_SHORTCUTS)
+        .bind(tenant_id)
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -38,8 +44,10 @@ pub(crate) async fn load_app_shortcuts_sqlx(pool: &SqlitePool) -> AppResult<Vec<
 
 pub(crate) async fn load_app_shortcut_settings_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
 ) -> AppResult<Vec<AppShortcut>> {
     let rows = sqlx::query(sql::LIST_APP_SHORTCUT_SETTINGS)
+        .bind(tenant_id)
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -48,12 +56,14 @@ pub(crate) async fn load_app_shortcut_settings_sqlx(
 
 pub(crate) async fn save_app_shortcuts_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     shortcuts: &[AppShortcut],
 ) -> AppResult<()> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     for (sort_order, shortcut) in shortcuts.iter().enumerate() {
         let icon_svg = shortcut.icon_svg.as_ref().map(encode_json).transpose()?;
         sqlx::query(sql::UPSERT_APP_SHORTCUT)
+            .bind(tenant_id)
             .bind(&shortcut.profile_id)
             .bind(&shortcut.display_icon)
             .bind(icon_svg)
@@ -138,9 +148,11 @@ mod tests {
         let (settings, enabled) = database
             .block_on(async {
                 for profile in &profiles {
-                    crate::backend::store::upsert_profile_sqlx(database.pool(), profile).await?;
+                    crate::backend::store::upsert_profile_sqlx(database.pool(), "default", profile)
+                        .await?;
                 }
-                let mut settings = load_app_shortcut_settings_sqlx(database.pool()).await?;
+                let mut settings =
+                    load_app_shortcut_settings_sqlx(database.pool(), "default").await?;
                 settings[0].display_icon = "X".to_string();
                 settings[0].accent_color = "#123456".to_string();
                 settings[0].enabled = false;
@@ -152,10 +164,10 @@ mod tests {
                     }],
                     view_box: Some("0 0 1 1".to_string()),
                 });
-                save_app_shortcuts_sqlx(database.pool(), &settings).await?;
+                save_app_shortcuts_sqlx(database.pool(), "default", &settings).await?;
                 AppResult::Ok((
-                    load_app_shortcut_settings_sqlx(database.pool()).await?,
-                    load_app_shortcuts_sqlx(database.pool()).await?,
+                    load_app_shortcut_settings_sqlx(database.pool(), "default").await?,
+                    load_app_shortcuts_sqlx(database.pool(), "default").await?,
                 ))
             })
             .expect("round trip SQLx app shortcuts");

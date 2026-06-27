@@ -5,7 +5,8 @@ import { NotificationBanner, type NotificationMessage } from "../../components/n
 import { useI18n } from "../../i18n/I18nProvider";
 import type { HeaderTabItem, NavigationModel, RailMenuItem } from "../../router/types";
 import type { SettingsPanelId } from "../../store/settings/AppSettingsProvider";
-import type { AppShortcut } from "../../types";
+import type { AppShortcut, Tenant, TenantCreateParams } from "../../types";
+import { TenantSwitcher, TenantSwitcherDialog } from "./TenantSwitcher";
 import { SideRail, type SideRailBrandAction } from "./navigation/SideRail";
 import { SubNavigation } from "./navigation/SubNavigation";
 
@@ -33,6 +34,7 @@ export function AppLayout({
   logViewerOpen,
   settingsPanel,
   settingsOpen,
+  tenantControls,
 }: {
   activeSubNavId: string;
   appShortcuts: AppShortcut[];
@@ -51,9 +53,19 @@ export function AppLayout({
   onSubNavSelect: (id: string) => void;
   settingsPanel: SettingsPanelId;
   settingsOpen: boolean;
+  tenantControls: {
+    activeTenant: Tenant | null;
+    busy: boolean;
+    error?: string | null;
+    loading: boolean;
+    onCreateTenant: (params: TenantCreateParams) => Promise<unknown>;
+    onSwitchTenant: (tenantId: string) => Promise<unknown>;
+    tenants: Tenant[];
+  };
 }) {
   const { t } = useI18n();
   const { openDialog: openUpdateDialog, state: updateState } = useAppUpdater();
+  const [tenantDialogOpen, setTenantDialogOpen] = useState(false);
   const [sideRailExpanded, setSideRailExpanded] = useState(false);
   const activeSubNavItems = navigationModel.subNavItems[navigationModel.activeHeaderTabId] ?? [];
   const railItems = ensureLogRailItem(navigationModel.railItems).filter(isSupportedRailItem);
@@ -86,13 +98,39 @@ export function AppLayout({
         onExpandedChange={setSideRailExpanded}
         onHeaderTabSelect={onHeaderTabSelect}
         onItemSelect={handleRailItemSelect}
+        primaryAction={
+          <TenantSwitcher
+            activeTenant={tenantControls.activeTenant}
+            busy={tenantControls.busy}
+            loading={tenantControls.loading}
+            onOpen={() => setTenantDialogOpen(true)}
+            open={tenantDialogOpen}
+          />
+        }
       />
 
       <main className="ml-[var(--app-sidebar-width)] flex min-h-screen w-[calc(100%-var(--app-sidebar-width))] flex-1 flex-col transition-[margin,width] duration-200">
-        <SubNavigation activeId={activeSubNavId} items={activeSubNavItems} onSelect={(item) => onSubNavSelect(item.id)} />
+        <SubNavigation
+          activeId={activeSubNavId}
+          items={activeSubNavItems}
+          onSelect={(item) => onSubNavSelect(item.id)}
+        />
         <NotificationBanner notification={notification} onDismiss={onDismissNotification} />
         {children}
       </main>
+
+      {tenantDialogOpen ? (
+        <TenantSwitcherDialog
+          activeTenant={tenantControls.activeTenant}
+          busy={tenantControls.busy}
+          error={tenantControls.error}
+          loading={tenantControls.loading}
+          onClose={() => setTenantDialogOpen(false)}
+          onCreateTenant={tenantControls.onCreateTenant}
+          onSwitchTenant={tenantControls.onSwitchTenant}
+          tenants={tenantControls.tenants}
+        />
+      ) : null}
 
       {settingsOpen ? (
         <Suspense fallback={null}>

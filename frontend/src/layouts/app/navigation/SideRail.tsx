@@ -26,6 +26,7 @@ export function SideRail({
   onExpandedChange,
   onHeaderTabSelect,
   onItemSelect,
+  primaryAction,
 }: {
   activeId: string;
   activeHeaderTabId: string;
@@ -36,6 +37,7 @@ export function SideRail({
   onExpandedChange: (expanded: boolean) => void;
   onHeaderTabSelect: (tab: HeaderTabItem) => void;
   onItemSelect?: (item: RailMenuItem) => void;
+  primaryAction?: ReactNode;
 }) {
   const { t } = useI18n();
   const secondaryItems = items.filter((item) => item.enabled && item.position === "secondary");
@@ -53,6 +55,7 @@ export function SideRail({
       data-expanded={expanded}
     >
       <div className={clsx("flex w-full flex-col gap-2", expanded ? "items-stretch" : "items-center")}>
+        {primaryAction ? <div className="mb-2 flex w-full justify-center">{primaryAction}</div> : null}
         <div className={clsx("mb-4 flex w-full items-center gap-2", expanded ? "justify-between" : "flex-col")}>
           <BrandIdentity action={brandAction} expanded={expanded} />
           <button

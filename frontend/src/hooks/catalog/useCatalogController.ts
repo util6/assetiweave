@@ -7,6 +7,7 @@ import {
   revealPath,
 } from "../../services/catalog";
 import { useAppSettings } from "../../store/settings/AppSettingsProvider";
+import { useTenantController } from "../tenants/useTenantController";
 import {
   countAssetsForProfileState,
   countMountedAssetsForProfile,
@@ -24,6 +25,13 @@ export function useCatalogController() {
   const { settings } = useAppSettings();
   const catalogData = useCatalogData();
   const operations = useCatalogOperations(catalogData.refreshOverview, catalogData.activeAssetKind);
+  const tenantController = useTenantController({
+    onTenantChanged: async () => {
+      await catalogData.reloadCatalogData();
+      operations.clearDeploymentPlan();
+      setQuery("");
+    },
+  });
   const { expandedIds, toggleAsset } = useExpandedAssets();
   const { setMountProfiles, toggleMountProfile } = useMountSelection(
     catalogData.assetMountStatuses,
@@ -305,6 +313,7 @@ export function useCatalogController() {
     setMountProfiles: setMountProfilesAndClearPlan,
     setQuery,
     showNotification,
+    ...tenantController,
     toggleAsset,
     toggleMountProfile: toggleMountAndClearPlan,
   };

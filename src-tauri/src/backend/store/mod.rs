@@ -13,6 +13,7 @@ mod shortcut_repo;
 mod skill_remote_repo;
 mod source_repo;
 mod sql;
+mod tenant_repo;
 mod web_record_repo;
 
 pub(crate) use asset_repo::{
@@ -30,7 +31,8 @@ pub(crate) use conversation_repo::{
     upsert_conversation_adapter_sqlx, upsert_conversation_source_sqlx,
 };
 pub(crate) use database::{
-    count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx, Database,
+    count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx,
+    seed_tenant_defaults_sqlx, Database,
 };
 pub(crate) use deployment_repo::{
     count_deployment_state_by_profile_sqlx, delete_orphan_deployment_state_sqlx,
@@ -64,6 +66,10 @@ pub(crate) use skill_remote_repo::{
 pub(crate) use source_repo::{
     delete_source_sqlx, load_skill_sources_sqlx, load_source_sqlx, load_sources_sqlx,
     normalize_source, upsert_source_sqlx,
+};
+pub(crate) use tenant_repo::{
+    create_local_tenant_sqlx, list_tenants_for_principal_sqlx, load_local_request_context_sqlx,
+    set_active_tenant_sqlx,
 };
 pub(crate) use web_record_repo::{
     import_web_record_sessions_sqlx, list_web_record_sessions_sqlx,

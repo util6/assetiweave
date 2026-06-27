@@ -2,15 +2,28 @@ use super::prelude::*;
 
 pub(crate) fn apply_skill_group_mount_record(
     db: &crate::backend::store::Database,
+    tenant_id: &str,
     group_id: &str,
     profile_id: &str,
     enabled: bool,
 ) -> AppResult<ApplyAssetGroupMountResult> {
     let pool = db.pool().clone();
+    let tenant_id_for_query = tenant_id.to_string();
     let group_id_to_load = group_id.to_string();
     let detail = db.block_on(async move {
-        let assets = crate::backend::store::load_assets_sqlx(&pool, Some(AssetKind::Skill)).await?;
-        crate::backend::store::load_skill_group_detail_sqlx(&pool, &group_id_to_load, &assets).await
+        let assets = crate::backend::store::load_assets_sqlx(
+            &pool,
+            &tenant_id_for_query,
+            Some(AssetKind::Skill),
+        )
+        .await?;
+        crate::backend::store::load_skill_group_detail_sqlx(
+            &pool,
+            &tenant_id_for_query,
+            &group_id_to_load,
+            &assets,
+        )
+        .await
     })?;
     if !detail.group.enabled {
         return Err(format!("asset group is disabled: {}", detail.group.name));
@@ -21,9 +34,9 @@ pub(crate) fn apply_skill_group_mount_record(
     let mut errors = Vec::new();
     for member in &detail.members {
         let result = if enabled {
-            mount_asset_mount_record(db, &member.asset_id, profile_id)
+            mount_asset_mount_record(db, tenant_id, &member.asset_id, profile_id)
         } else {
-            unmount_asset_mount_record(db, &member.asset_id, profile_id)
+            unmount_asset_mount_record(db, tenant_id, &member.asset_id, profile_id)
         };
 
         match result {
@@ -52,16 +65,24 @@ pub(crate) fn apply_skill_group_mount_record(
 }
 pub(crate) fn apply_skill_group_exclusive_mount_record(
     db: &crate::backend::store::Database,
+    tenant_id: &str,
     input: &SkillGroupExclusiveMountInput,
 ) -> AppResult<ApplySkillGroupExclusiveMountResult> {
-    let preview = build_skill_group_exclusive_mount_preview_sqlx(db, input)?;
+    let preview = build_skill_group_exclusive_mount_preview_sqlx(db, tenant_id, input)?;
     let pool = db.pool().clone();
+    let tenant_id_for_query = tenant_id.to_string();
     let profile_id = preview.profile_id.clone();
     let (assets, profile) = db.block_on(async move {
-        let assets = crate::backend::store::load_assets_sqlx(&pool, Some(AssetKind::Skill)).await?;
-        let profile = crate::backend::store::load_profile_sqlx(&pool, &profile_id)
-            .await?
-            .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+        let assets = crate::backend::store::load_assets_sqlx(
+            &pool,
+            &tenant_id_for_query,
+            Some(AssetKind::Skill),
+        )
+        .await?;
+        let profile =
+            crate::backend::store::load_profile_sqlx(&pool, &tenant_id_for_query, &profile_id)
+                .await?
+                .ok_or_else(|| format!("profile not found: {profile_id}"))?;
         AppResult::Ok((assets, profile))
     })?;
     let asset_by_id = assets
@@ -79,7 +100,7 @@ pub(crate) fn apply_skill_group_exclusive_mount_record(
     }
 
     for item in &preview.mount {
-        match mount_asset_mount_record(db, &item.asset_id, &preview.profile_id) {
+        match mount_asset_mount_record(db, tenant_id, &item.asset_id, &preview.profile_id) {
             Ok(update) => statuses.push(update.status),
             Err(message) => errors.push(SkillGroupExclusiveMountError {
                 asset_id: item.asset_id.clone(),
@@ -90,7 +111,12 @@ pub(crate) fn apply_skill_group_exclusive_mount_record(
     }
 
     for item in &preview.unmount {
-        match unmount_exclusive_skill_mount_record(db, &item.asset_id, &preview.profile_id) {
+        match unmount_exclusive_skill_mount_record(
+            db,
+            tenant_id,
+            &item.asset_id,
+            &preview.profile_id,
+        ) {
             Ok(update) => statuses.push(update.status),
             Err(message) => errors.push(SkillGroupExclusiveMountError {
                 asset_id: item.asset_id.clone(),
@@ -109,9 +135,11 @@ pub(crate) fn apply_skill_group_exclusive_mount_record(
 
 pub(crate) fn build_skill_group_exclusive_mount_preview_sqlx(
     db: &crate::backend::store::Database,
+    tenant_id: &str,
     input: &SkillGroupExclusiveMountInput,
 ) -> AppResult<SkillGroupExclusiveMountPreview> {
     let pool = db.pool().clone();
+    let tenant_id_for_query = tenant_id.to_string();
     let profile_id = input.profile_id.clone();
     let requested_group_ids = input
         .group_ids
@@ -122,17 +150,27 @@ pub(crate) fn build_skill_group_exclusive_mount_preview_sqlx(
         .collect::<BTreeSet<_>>();
     let (profile, skill_assets, sources, enabled_mounts, group_details, managed_targets) = db
         .block_on(async move {
-            let profile = crate::backend::store::load_profile_sqlx(&pool, &profile_id)
-                .await?
-                .ok_or_else(|| format!("profile not found: {profile_id}"))?;
-            let skill_assets =
-                crate::backend::store::load_assets_sqlx(&pool, Some(AssetKind::Skill)).await?;
-            let sources = crate::backend::store::load_sources_sqlx(&pool).await?;
-            let enabled_mounts =
-                crate::backend::store::load_enabled_asset_mounts_sqlx(&pool, Some(&profile_id))
-                    .await?;
+            let profile =
+                crate::backend::store::load_profile_sqlx(&pool, &tenant_id_for_query, &profile_id)
+                    .await?
+                    .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+            let skill_assets = crate::backend::store::load_assets_sqlx(
+                &pool,
+                &tenant_id_for_query,
+                Some(AssetKind::Skill),
+            )
+            .await?;
+            let sources =
+                crate::backend::store::load_sources_sqlx(&pool, &tenant_id_for_query).await?;
+            let enabled_mounts = crate::backend::store::load_enabled_asset_mounts_sqlx(
+                &pool,
+                &tenant_id_for_query,
+                Some(&profile_id),
+            )
+            .await?;
             let group_details = crate::backend::store::load_skill_group_details_by_ids_sqlx(
                 &pool,
+                &tenant_id_for_query,
                 &requested_group_ids,
                 &skill_assets,
             )
@@ -140,6 +178,7 @@ pub(crate) fn build_skill_group_exclusive_mount_preview_sqlx(
             let managed_targets =
                 crate::backend::store::load_managed_deployment_targets_by_profile_sqlx(
                     &pool,
+                    &tenant_id_for_query,
                     &profile_id,
                 )
                 .await?;
@@ -390,20 +429,23 @@ fn validate_exclusive_mount_candidate(
 
 fn unmount_exclusive_skill_mount_record(
     db: &crate::backend::store::Database,
+    tenant_id: &str,
     asset_id: &str,
     profile_id: &str,
 ) -> AppResult<AssetMountUpdateResult> {
-    let (asset, profile) = load_mount_asset_and_profile_sqlx(db, asset_id, profile_id)?;
+    let (asset, profile) = load_mount_asset_and_profile_sqlx(db, tenant_id, asset_id, profile_id)?;
     let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
     match inspection.state {
         crate::backend::targeting::PhysicalMountState::Mounted => {
             let pool = db.pool().clone();
+            let tenant_id = tenant_id.to_string();
             let profile_id = profile.id.clone();
             let asset_id = asset.id.clone();
             let target_path = inspection.target_path.clone();
             let is_managed = db.block_on(async move {
                 crate::backend::store::is_managed_deployment_sqlx(
                     &pool,
+                    &tenant_id,
                     &profile_id,
                     &asset_id,
                     &target_path,
@@ -427,7 +469,7 @@ fn unmount_exclusive_skill_mount_record(
         }
     }
 
-    unmount_asset_mount_record(db, asset_id, profile_id)
+    unmount_asset_mount_record(db, tenant_id, asset_id, profile_id)
 }
 
 pub(crate) fn exclusive_item(asset: &Asset) -> SkillGroupExclusiveMountItem {

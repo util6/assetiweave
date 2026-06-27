@@ -68,6 +68,7 @@ fn action_log_fields(
 
 pub(crate) async fn execute_deployment_plan(
     pool: &SqlitePool,
+    tenant_id: &str,
     profiles: &[TargetProfile],
     assets: &[Asset],
     plan: &DeploymentPlan,
@@ -139,7 +140,7 @@ pub(crate) async fn execute_deployment_plan(
             continue;
         };
 
-        match execute_deployment_action(pool, profile, asset, action).await {
+        match execute_deployment_action(pool, tenant_id, profile, asset, action).await {
             Ok(()) => {
                 result.executed_count += 1;
                 log_action_info(
@@ -180,6 +181,7 @@ enum DeploymentError {
 
 async fn execute_deployment_action(
     pool: &SqlitePool,
+    tenant_id: &str,
     profile: &TargetProfile,
     asset: &Asset,
     action: &DeploymentAction,
@@ -192,6 +194,7 @@ async fn execute_deployment_action(
     if target_path.exists()
         && !crate::backend::store::is_managed_deployment_sqlx(
             pool,
+            tenant_id,
             &profile.id,
             &asset.id,
             &action.target_path,
@@ -236,7 +239,7 @@ async fn execute_deployment_action(
         deployed_at: Utc::now().to_rfc3339(),
         managed_by: "assetiweave".to_string(),
     };
-    crate::backend::store::upsert_deployment_state_sqlx(pool, &state)
+    crate::backend::store::upsert_deployment_state_sqlx(pool, tenant_id, &state)
         .await
         .map_err(DeploymentError::Failure)?;
     Ok(())

@@ -133,6 +133,7 @@ export function AppRouter() {
   const activeSubNavLabel = activeSubNavItem ? subNavLabel(activeSubNavItem, t, locale) : "";
   const underConstructionFeatureLabel = [activeHeaderLabel, activeSubNavLabel].filter(Boolean).join(" / ") || undefined;
   const activeRouteKey = activeSubNavItem?.routeKey ?? `${catalog.navigationModel.activeHeaderTabId}.${activeSubNavId}`;
+  const tenantRouteKey = catalog.activeTenant?.id ?? "tenant-loading";
 
   function handleHeaderTabSelect(tab: HeaderTabItem) {
     const nextSubNavId = catalog.navigationModel.subNavItems[tab.id]?.find((item) => item.enabled)?.id ?? "overview";
@@ -178,97 +179,108 @@ export function AppRouter() {
         onSubNavSelect={handleSubNavSelect}
         settingsPanel={settingsPanel}
         settingsOpen={settingsOpen}
+        tenantControls={{
+          activeTenant: catalog.activeTenant,
+          busy: catalog.tenantBusy,
+          error: catalog.error,
+          loading: catalog.loading,
+          onCreateTenant: catalog.createLocalTenant,
+          onSwitchTenant: catalog.switchActiveTenant,
+          tenants: catalog.tenants,
+        }}
       >
-        {manualRouteKey ? (
-          <Suspense fallback={<RouteLoadingState />}>
-            <ManualPage routeKey={manualRouteKey} onBack={() => setManualRouteKey(null)} />
-          </Suspense>
-        ) : routeId === "conversations" || routeId === "web-records" ? (
-          <Suspense fallback={<RouteLoadingState />}>
-            <ConversationsPage
-              activeSubNavId={activeSubNavId}
-              appShortcuts={catalog.appShortcuts}
-              onManualOpen={openCurrentManual}
-              onNotify={(notification) => catalog.showNotification(notification)}
-              onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
-              onOpenSettings={openSettings}
-              recordKind={routeId === "web-records" ? "web" : "session"}
-            />
-          </Suspense>
-        ) : routeId === "skill-mounts" ? (
-          <Suspense fallback={<RouteLoadingState />}>
-            <SkillMountsPage
-              appShortcuts={catalog.appShortcuts}
-              assetMountStatuses={catalog.assetMountStatuses}
-              assets={catalog.assets}
-              onCatalogRefresh={catalog.refreshOverview}
-              onManualOpen={openCurrentManual}
-              onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
-              onOpenSettings={() => openSettings("workspace.deployment")}
-              onRefreshMountStatus={catalog.refreshMountStatus}
-              onRefreshProfiles={catalog.refreshProfiles}
-              onRevealPath={(path) => void catalog.revealPath(path)}
-              onSaveAppShortcuts={catalog.saveAppShortcuts}
-              onSetSkillMountProfiles={catalog.setMountProfiles}
-              onToggleMount={catalog.toggleMountProfile}
-              profiles={catalog.profiles}
-              refreshingMountStatus={catalog.refreshingMountStatus}
-              sources={catalog.sources}
-            />
-          </Suspense>
-        ) : routeId === "skill-groups" ? (
-          <Suspense fallback={<RouteLoadingState />}>
-            <SkillGroupsPage
-              appShortcuts={catalog.appShortcuts}
-              assetMountStatuses={catalog.assetMountStatuses}
-              assets={catalog.assets}
-              expandedAssetIds={catalog.expandedIds}
-              onManualOpen={openCurrentManual}
-              onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
-              onOpenSettings={() => openSettings("workspace.deployment")}
-              onApplyGroupExclusiveMount={catalog.applyGroupExclusiveMount}
-              onPreviewGroupExclusiveMount={catalog.previewGroupExclusiveMount}
-              onRefreshMountStatus={catalog.refreshMountStatus}
-              onRevealPath={(path) => void catalog.revealPath(path)}
-              onSetGroupMountProfile={catalog.setGroupMountProfile}
-              onSetSkillMountProfiles={catalog.setMountProfiles}
-              onToggleAsset={catalog.toggleAsset}
-              onToggleMount={catalog.toggleMountProfile}
-              profiles={catalog.profiles}
-              refreshingMountStatus={catalog.refreshingMountStatus}
-              sources={catalog.sources}
-            />
-          </Suspense>
-        ) : routeId === "sources" ? (
-          <Suspense fallback={<RouteLoadingState />}>
-            <SourcesPage
-              appShortcuts={catalog.appShortcuts}
-              assetMountStatuses={catalog.assetMountStatuses}
-              assets={catalog.assets}
-              expandedAssetIds={catalog.expandedIds}
-              onAssetReveal={(path) => void catalog.revealPath(path)}
-              onApplyAssetUpdate={catalog.applyAssetUpdate}
-              onCatalogRefresh={catalog.refreshOverview}
-              onClearDeploymentPlan={catalog.clearDeploymentPlan}
-              onManualOpen={openCurrentManual}
-              onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
-              onOpenSettings={() => openSettings("workspace.menu")}
-              onRefreshMountStatus={catalog.refreshMountStatus}
-              onRemoveAsset={catalog.removeAsset}
-              onSetSourceMountProfile={catalog.setMountProfiles}
-              onToggleAsset={catalog.toggleAsset}
-              onToggleMount={catalog.toggleMountProfile}
-              profiles={catalog.profiles}
-              refreshingMountStatus={catalog.refreshingMountStatus}
-            />
-          </Suspense>
-        ) : routeId === "under-construction" ? (
-          <UnderConstructionPage featureLabel={underConstructionFeatureLabel} onManualOpen={openCurrentManual} routeKey={activeRouteKey} />
-        ) : (
-          <Suspense fallback={<RouteLoadingState />}>
-            <CatalogPage catalog={catalog} onManualOpen={openCurrentManual} onOpenSettings={() => openSettings("general.appearance")} />
-          </Suspense>
-        )}
+        <div className="contents" key={tenantRouteKey}>
+          {manualRouteKey ? (
+            <Suspense fallback={<RouteLoadingState />}>
+              <ManualPage routeKey={manualRouteKey} onBack={() => setManualRouteKey(null)} />
+            </Suspense>
+          ) : routeId === "conversations" || routeId === "web-records" ? (
+            <Suspense fallback={<RouteLoadingState />}>
+              <ConversationsPage
+                activeSubNavId={activeSubNavId}
+                appShortcuts={catalog.appShortcuts}
+                onManualOpen={openCurrentManual}
+                onNotify={(notification) => catalog.showNotification(notification)}
+                onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
+                onOpenSettings={openSettings}
+                recordKind={routeId === "web-records" ? "web" : "session"}
+              />
+            </Suspense>
+          ) : routeId === "skill-mounts" ? (
+            <Suspense fallback={<RouteLoadingState />}>
+              <SkillMountsPage
+                appShortcuts={catalog.appShortcuts}
+                assetMountStatuses={catalog.assetMountStatuses}
+                assets={catalog.assets}
+                onCatalogRefresh={catalog.refreshOverview}
+                onManualOpen={openCurrentManual}
+                onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
+                onOpenSettings={() => openSettings("workspace.deployment")}
+                onRefreshMountStatus={catalog.refreshMountStatus}
+                onRefreshProfiles={catalog.refreshProfiles}
+                onRevealPath={(path) => void catalog.revealPath(path)}
+                onSaveAppShortcuts={catalog.saveAppShortcuts}
+                onSetSkillMountProfiles={catalog.setMountProfiles}
+                onToggleMount={catalog.toggleMountProfile}
+                profiles={catalog.profiles}
+                refreshingMountStatus={catalog.refreshingMountStatus}
+                sources={catalog.sources}
+              />
+            </Suspense>
+          ) : routeId === "skill-groups" ? (
+            <Suspense fallback={<RouteLoadingState />}>
+              <SkillGroupsPage
+                appShortcuts={catalog.appShortcuts}
+                assetMountStatuses={catalog.assetMountStatuses}
+                assets={catalog.assets}
+                expandedAssetIds={catalog.expandedIds}
+                onManualOpen={openCurrentManual}
+                onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
+                onOpenSettings={() => openSettings("workspace.deployment")}
+                onApplyGroupExclusiveMount={catalog.applyGroupExclusiveMount}
+                onPreviewGroupExclusiveMount={catalog.previewGroupExclusiveMount}
+                onRefreshMountStatus={catalog.refreshMountStatus}
+                onRevealPath={(path) => void catalog.revealPath(path)}
+                onSetGroupMountProfile={catalog.setGroupMountProfile}
+                onSetSkillMountProfiles={catalog.setMountProfiles}
+                onToggleAsset={catalog.toggleAsset}
+                onToggleMount={catalog.toggleMountProfile}
+                profiles={catalog.profiles}
+                refreshingMountStatus={catalog.refreshingMountStatus}
+                sources={catalog.sources}
+              />
+            </Suspense>
+          ) : routeId === "sources" ? (
+            <Suspense fallback={<RouteLoadingState />}>
+              <SourcesPage
+                appShortcuts={catalog.appShortcuts}
+                assetMountStatuses={catalog.assetMountStatuses}
+                assets={catalog.assets}
+                expandedAssetIds={catalog.expandedIds}
+                onAssetReveal={(path) => void catalog.revealPath(path)}
+                onApplyAssetUpdate={catalog.applyAssetUpdate}
+                onCatalogRefresh={catalog.refreshOverview}
+                onClearDeploymentPlan={catalog.clearDeploymentPlan}
+                onManualOpen={openCurrentManual}
+                onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
+                onOpenSettings={() => openSettings("workspace.menu")}
+                onRefreshMountStatus={catalog.refreshMountStatus}
+                onRemoveAsset={catalog.removeAsset}
+                onSetSourceMountProfile={catalog.setMountProfiles}
+                onToggleAsset={catalog.toggleAsset}
+                onToggleMount={catalog.toggleMountProfile}
+                profiles={catalog.profiles}
+                refreshingMountStatus={catalog.refreshingMountStatus}
+              />
+            </Suspense>
+          ) : routeId === "under-construction" ? (
+            <UnderConstructionPage featureLabel={underConstructionFeatureLabel} onManualOpen={openCurrentManual} routeKey={activeRouteKey} />
+          ) : (
+            <Suspense fallback={<RouteLoadingState />}>
+              <CatalogPage catalog={catalog} onManualOpen={openCurrentManual} onOpenSettings={() => openSettings("general.appearance")} />
+            </Suspense>
+          )}
+        </div>
       </AppLayout>
       {logViewerOpen ? (
         <Suspense fallback={null}>

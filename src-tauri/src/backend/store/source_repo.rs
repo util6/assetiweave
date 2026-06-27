@@ -15,16 +15,24 @@ use super::{
     sql,
 };
 
-pub(crate) async fn load_sources_sqlx(pool: &SqlitePool) -> AppResult<Vec<Source>> {
+pub(crate) async fn load_sources_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> AppResult<Vec<Source>> {
     let rows = sqlx::query(sql::LIST_SOURCES)
+        .bind(tenant_id)
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())?;
     rows.iter().map(map_sqlx_source_row).collect()
 }
 
-pub(crate) async fn load_skill_sources_sqlx(pool: &SqlitePool) -> AppResult<Vec<Source>> {
+pub(crate) async fn load_skill_sources_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> AppResult<Vec<Source>> {
     let rows = sqlx::query(sql::LIST_SKILL_SOURCES)
+        .bind(tenant_id)
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -33,9 +41,11 @@ pub(crate) async fn load_skill_sources_sqlx(pool: &SqlitePool) -> AppResult<Vec<
 
 pub(crate) async fn load_source_sqlx(
     pool: &SqlitePool,
+    tenant_id: &str,
     source_id: &str,
 ) -> AppResult<Option<Source>> {
     sqlx::query(sql::LOAD_SOURCE)
+        .bind(tenant_id)
         .bind(source_id)
         .fetch_optional(pool)
         .await
@@ -86,9 +96,14 @@ fn map_sqlx_source_row(row: &SqliteRow) -> AppResult<Source> {
     })
 }
 
-pub(crate) async fn upsert_source_sqlx(pool: &SqlitePool, source: &Source) -> AppResult<()> {
+pub(crate) async fn upsert_source_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    source: &Source,
+) -> AppResult<()> {
     let source = normalize_source(source);
     sqlx::query(sql::UPSERT_SOURCE)
+        .bind(tenant_id)
         .bind(&source.id)
         .bind(&source.name)
         .bind(encode_enum(source.kind)?)
@@ -174,13 +189,19 @@ fn is_skill_like_source(source: &Source) -> bool {
             .any(|glob| glob.to_ascii_lowercase().contains("skill.md"))
 }
 
-pub(crate) async fn delete_source_sqlx(pool: &SqlitePool, id: &str) -> AppResult<()> {
+pub(crate) async fn delete_source_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    id: &str,
+) -> AppResult<()> {
     sqlx::query(sql::DELETE_ASSETS_BY_SOURCE)
+        .bind(tenant_id)
         .bind(id)
         .execute(pool)
         .await
         .map_err(|error| error.to_string())?;
     sqlx::query(sql::DELETE_SOURCE)
+        .bind(tenant_id)
         .bind(id)
         .execute(pool)
         .await
@@ -205,13 +226,14 @@ mod tests {
 
         let (all_sources, skill_sources, loaded_skill_source, missing_source) = database
             .block_on(async {
-                upsert_source_sqlx(database.pool(), &regular_source).await?;
-                upsert_source_sqlx(database.pool(), &skill_source).await?;
-                let all_sources = load_sources_sqlx(database.pool()).await?;
-                let skill_sources = load_skill_sources_sqlx(database.pool()).await?;
+                upsert_source_sqlx(database.pool(), "default", &regular_source).await?;
+                upsert_source_sqlx(database.pool(), "default", &skill_source).await?;
+                let all_sources = load_sources_sqlx(database.pool(), "default").await?;
+                let skill_sources = load_skill_sources_sqlx(database.pool(), "default").await?;
                 let loaded_skill_source =
-                    load_source_sqlx(database.pool(), &skill_source.id).await?;
-                let missing_source = load_source_sqlx(database.pool(), "missing").await?;
+                    load_source_sqlx(database.pool(), "default", &skill_source.id).await?;
+                let missing_source =
+                    load_source_sqlx(database.pool(), "default", "missing").await?;
                 AppResult::Ok((
                     all_sources,
                     skill_sources,
@@ -229,6 +251,49 @@ mod tests {
             skill_source.id
         );
         assert!(missing_source.is_none());
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_source_repo_isolates_same_id_by_tenant() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-source-tenant-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let mut default_source = test_source("shared", SourceScannerKind::Mixed);
+        default_source.name = "Default source".to_string();
+        let mut tenant_source = test_source("shared", SourceScannerKind::Skill);
+        tenant_source.name = "Tenant source".to_string();
+
+        let (default_sources, tenant_sources, default_loaded, tenant_loaded) = database
+            .block_on(async {
+                upsert_source_sqlx(database.pool(), "default", &default_source).await?;
+                upsert_source_sqlx(database.pool(), "tenant-a", &tenant_source).await?;
+                let default_sources = load_sources_sqlx(database.pool(), "default").await?;
+                let tenant_sources = load_sources_sqlx(database.pool(), "tenant-a").await?;
+                let default_loaded = load_source_sqlx(database.pool(), "default", "shared").await?;
+                let tenant_loaded = load_source_sqlx(database.pool(), "tenant-a", "shared").await?;
+                AppResult::Ok((
+                    default_sources,
+                    tenant_sources,
+                    default_loaded,
+                    tenant_loaded,
+                ))
+            })
+            .expect("query tenant-scoped sources");
+
+        assert_eq!(default_sources.len(), 1);
+        assert_eq!(tenant_sources.len(), 1);
+        assert_eq!(
+            default_loaded.expect("load default source").name,
+            "Default source"
+        );
+        assert_eq!(
+            tenant_loaded.expect("load tenant source").name,
+            "Tenant source"
+        );
         drop(database);
         cleanup_database(&db_path);
     }

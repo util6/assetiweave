@@ -3,6 +3,10 @@ package schema
 const (
 	MethodSystemVersion                    = "system.version"
 	MethodOverviewGet                      = "overview.get"
+	MethodTenantList                       = "tenant.list"
+	MethodTenantActive                     = "tenant.active"
+	MethodTenantCreate                     = "tenant.create"
+	MethodTenantSwitch                     = "tenant.switch"
 	MethodSourceList                       = "source.list"
 	MethodSourceAdd                        = "source.add"
 	MethodSourceRemove                     = "source.remove"
