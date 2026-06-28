@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-06-28T00:00:00Z",
+  "items": [
+    {
+      "id": "codex-session",
+      "name": "Codex Session Parser",
+      "version": "1.0.0",
+      "record_kind": "session",
+      "provider": "codex",
+      "adapter_id": "codex",
+      "description": "Reads local Codex session records and exports normalized conversation turns.",
+      "repository_url": "https://github.com/util6/assetiweave",
+      "tags": ["session", "codex", "node"],
+      "expected_content_hash": "7cc193fcb5db8f7536792fd7480e376a9ca1acbca9c201736744304b599db094",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+      }
+    },
+    {
+      "id": "opencode-session",
+      "name": "OpenCode Session Parser",
+      "version": "1.0.0",
+      "record_kind": "session",
+      "provider": "opencode",
+      "adapter_id": "opencode",
+      "description": "Reads OpenCode SQLite state and converts sessions into AssetIWeave conversation records.",
+      "repository_url": "https://github.com/util6/assetiweave",
+      "tags": ["session", "opencode", "sqlite", "node"],
+      "expected_content_hash": "7402082acd6351b771383f98988bf0a88ae1c5093b278ecce5d946df6884bd7e",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/opencode"
+      }
+    },
+    {
+      "id": "claude-code-session",
+      "name": "Claude Code Session Parser",
+      "version": "1.0.0",
+      "record_kind": "session",
+      "provider": "claude-code",
+      "adapter_id": "claude-code",
+      "description": "Reads Claude Code project conversations and emits the shared external adapter protocol.",
+      "repository_url": "https://github.com/util6/assetiweave",
+      "tags": ["session", "claude-code", "node"],
+      "expected_content_hash": "84768c83036672f6a6569f9b22914352f58dc677ca4764a7387788376d64a475",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/claude-code"
+      }
+    },
+    {
+      "id": "zcode-session",
+      "name": "ZCode Session Parser",
+      "version": "0.1.0",
+      "record_kind": "session",
+      "provider": "zcode",
+      "adapter_id": "zcode",
+      "description": "Reads ZCode SQLite conversation records using the existing external adapter script.",
+      "repository_url": "https://github.com/util6/assetiweave",
+      "tags": ["session", "zcode", "sqlite", "python"],
+      "expected_content_hash": "5a50814a30a7894ee5243873bce8cb175ffdce9fab8d6a75324b5d446837c044",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/zcode"
+      }
+    },
+    {
+      "id": "chatgpt-web",
+      "name": "ChatGPT Web Harvester",
+      "version": "0.1.0",
+      "record_kind": "web",
+      "provider": "chatgpt",
+      "adapter_id": "chatgpt-web",
+      "description": "Collects ChatGPT web conversations and exposes normalized web records through the adapter protocol.",
+      "repository_url": "https://github.com/util6/assetiweave",
+      "tags": ["web", "chatgpt", "node", "browser-cookie-auth"],
+      "expected_content_hash": "1b00dd931991ecfbe19954b4dd59cb92513fc28f43a0d8d1f129f275e737aa31",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/chatgpt-web"
+      }
+    },
+    {
+      "id": "qwen-web",
+      "name": "Qwen Web Harvester",
+      "version": "0.1.0",
+      "record_kind": "web",
+      "provider": "qwen",
+      "adapter_id": "qwen-web",
+      "description": "Collects Qwen web conversations and exposes normalized web records through the adapter protocol.",
+      "repository_url": "https://github.com/util6/assetiweave",
+      "tags": ["web", "qwen", "node", "browser-cookie-auth"],
+      "expected_content_hash": "3c485df513a682713de1a946e69c19ddf2d6ed86e68e926e7af4f81338971756",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/qwen-web"
+      }
+    },
+    {
+      "id": "gemini-web",
+      "name": "Gemini Web Harvester",
+      "version": "0.1.2",
+      "record_kind": "web",
+      "provider": "gemini",
+      "adapter_id": "gemini-web",
+      "description": "Collects Gemini web conversations and exposes normalized web records through the adapter protocol.",
+      "repository_url": "https://github.com/util6/assetiweave",
+      "tags": ["web", "gemini", "node", "browser-cookie-auth"],
+      "expected_content_hash": "20f277c789a111d06f87b30be7523905826d9cb63b7194f5bd18fcf6bc8bfd76",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/gemini-web"
+      }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "zcode",
+  "name": "ZCode",
+  "version": "0.1.0",
+  "protocol_version": 1,
+  "command": [
+    "./zcode_adapter.py"
+  ],
+  "capabilities": [
+    "probe",
+    "list_sessions",
+    "read_session"
+  ],
+  "input_kinds": [
+    "sqlite"
+  ]
+}

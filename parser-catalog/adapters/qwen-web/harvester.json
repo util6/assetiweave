@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "qwen-web",
+  "name": "Qwen Web",
+  "version": "0.1.1",
+  "origin": "official",
+  "description": "Official AssetIWeave harvester template for Qwen web conversations.",
+  "runtime": {
+    "type": "node",
+    "entry": "scripts/harvest.js",
+    "version": ">=20"
+  },
+  "capabilities": [
+    "browser_cookie_auth",
+    "conversation_export",
+    "normalized_sessions"
+  ],
+  "output": {
+    "raw_dir": "output/raw",
+    "normalized_dir": "output/normalized",
+    "sessions_file": "sessions.json"
+  },
+  "adapter": {
+    "manifest": "conversation-adapter.json"
+  },
+  "source": {
+    "id": "qwen-web-export",
+    "kind": "directory",
+    "name": "Qwen Web Export"
+  },
+  "update": {
+    "channel": "official"
+  }
+}

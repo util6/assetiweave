@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "site_id": "gemini-web",
+  "name": "Gemini Web",
+  "auth_probe": {
+    "request": "requests/auth-probe.json",
+    "success": {
+      "status": 200,
+      "body_contains": "\"SNlM0e\""
+    },
+    "expired_when": {
+      "status": 401
+    }
+  },
+  "list": {
+    "request": "requests/list.json",
+    "sessions_path": "data.sessions",
+    "id_path": "id",
+    "title_path": "title",
+    "updated_at_path": "updated_at",
+    "started_at_path": "",
+    "source_url_path": "",
+    "fingerprint_path": ""
+  },
+  "detail": {
+    "request": "requests/detail.json",
+    "messages_path": "data.messages",
+    "id_path": "id",
+    "role_path": "role",
+    "text_path": "content",
+    "created_at_path": "created_at"
+  },
+  "parser": {
+    "user_roles": [
+      "user"
+    ],
+    "assistant_roles": [
+      "assistant",
+      "model"
+    ],
+    "system_roles": [
+      "system"
+    ],
+    "tool_roles": [
+      "tool"
+    ]
+  },
+  "output": {
+    "raw_dir": "output/raw",
+    "normalized_dir": "output/normalized",
+    "sessions_file": "sessions.json"
+  },
+  "generated_adapter": {
+    "manifest": "conversation-adapter.json",
+    "script": "adapter.js"
+  }
+}

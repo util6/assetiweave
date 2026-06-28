@@ -1,0 +1,10 @@
+{
+  "method": "GET",
+  "url": "https://gemini.google.com/app",
+  "headers": {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Origin": "https://gemini.google.com",
+    "Referer": "https://gemini.google.com/",
+    "User-Agent": "Mozilla/5.0"
+  }
+}

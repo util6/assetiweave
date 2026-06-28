@@ -1,0 +1,10 @@
+{
+  "method": "GET",
+  "url": "https://chatgpt.com/api/auth/session",
+  "headers": {
+    "Accept": "application/json",
+    "Origin": "https://chatgpt.com",
+    "Referer": "https://chatgpt.com/",
+    "User-Agent": "Mozilla/5.0"
+  }
+}
