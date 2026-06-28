@@ -18,6 +18,7 @@ func newCmdConversation(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{Use: "conversation", Short: "Manage normalized conversation records"}
 	cmd.AddCommand(newCmdConversationAdapter(f))
 	cmd.AddCommand(newCmdConversationSource(f))
+	cmd.AddCommand(newCmdConversationScript(f))
 	cmd.AddCommand(newCmdConversationSync(f))
 	cmd.AddCommand(newCmdConversationSearch(f))
 	cmd.AddCommand(newCmdConversationSession(f))
@@ -622,6 +623,61 @@ func newCmdConversationSourceDisable(f *cmdutil.Factory) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without changing state")
+	return cmd
+}
+
+func newCmdConversationScript(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "script", Short: "Manage downloadable conversation parser scripts"}
+	cmd.AddCommand(newCmdConversationScriptCatalog(f))
+	cmd.AddCommand(newCmdConversationScriptInstall(f))
+	return cmd
+}
+
+func newCmdConversationScriptCatalog(f *cmdutil.Factory) *cobra.Command {
+	var catalogURL string
+	cmd := &cobra.Command{
+		Use:   "catalog",
+		Short: "List downloadable conversation parser scripts",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			params := map[string]any{"catalog_url": nil}
+			if catalogURL != "" {
+				params["catalog_url"] = catalogURL
+			}
+			return callAndPrint(cmd, f, schema.MethodConversationScriptCatalog, params)
+		},
+	}
+	cmd.Flags().StringVar(&catalogURL, "catalog-url", "", "catalog JSON URL or local path")
+	return cmd
+}
+
+func newCmdConversationScriptInstall(f *cmdutil.Factory) *cobra.Command {
+	var catalogURL string
+	var dryRun, yes bool
+	cmd := &cobra.Command{
+		Use:   "install <item-id>",
+		Short: "Download and register a trusted conversation parser script",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !dryRun {
+				if err := requireYes(yes, "conversation script install"); err != nil {
+					return err
+				}
+			}
+			params := map[string]any{
+				"catalog_url": nil,
+				"item_id":     args[0],
+				"dry_run":     dryRun,
+				"yes":         yes,
+			}
+			if catalogURL != "" {
+				params["catalog_url"] = catalogURL
+			}
+			return callAndPrint(cmd, f, schema.MethodConversationScriptInstall, params)
+		},
+	}
+	cmd.Flags().StringVar(&catalogURL, "catalog-url", "", "catalog JSON URL or local path")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview install target without downloading")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm downloading and trusting this script")
 	return cmd
 }
 

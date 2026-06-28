@@ -2058,6 +2058,90 @@
       "supports_dry_run": true
     },
     {
+      "canonical_method": "conversation.script.catalog",
+      "cli": "assetiweave-cli conversation script catalog",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List downloadable conversation parser scripts from a catalog",
+      "exposure": "friendly",
+      "method": "conversation.script.catalog",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_url": {
+            "aliases": [
+              "catalogUrl"
+            ],
+            "default": null,
+            "description": "Optional catalog JSON URL or local path",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.script.install",
+      "cli": "assetiweave-cli conversation script install <item-id> --yes",
+      "confirmation_required": true,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Download and register a trusted conversation parser script",
+      "exposure": "friendly",
+      "method": "conversation.script.install",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_url": {
+            "aliases": [
+              "catalogUrl"
+            ],
+            "default": null,
+            "description": "Optional catalog JSON URL or local path",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview install target without downloading",
+            "type": "boolean"
+          },
+          "item_id": {
+            "aliases": [
+              "itemId"
+            ],
+            "description": "Catalog item identifier",
+            "type": "string"
+          },
+          "yes": {
+            "default": false,
+            "description": "Confirm downloading and trusting this script",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": true
+    },
+    {
       "canonical_method": "conversation.sync",
       "cli": "assetiweave-cli conversation sync",
       "confirmation_required": false,
@@ -6052,6 +6136,109 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.script.catalog",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List downloadable conversation parser scripts from a catalog",
+      "exposure": "app",
+      "method": "list_conversation_script_catalog",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_url": {
+            "aliases": [
+              "catalogUrl"
+            ],
+            "default": null,
+            "description": "Optional catalog JSON URL or local path",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.script.install",
+      "cli": null,
+      "confirmation_required": true,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Download and register a trusted conversation parser script",
+      "exposure": "app",
+      "method": "install_conversation_script",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_url": {
+            "aliases": [
+              "catalogUrl"
+            ],
+            "default": null,
+            "description": "Optional catalog JSON URL or local path",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview install target without downloading",
+            "type": "boolean"
+          },
+          "item_id": {
+            "aliases": [
+              "itemId"
+            ],
+            "description": "Catalog item identifier",
+            "type": "string"
+          },
+          "yes": {
+            "default": false,
+            "description": "Confirm downloading and trusting this script",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "get_conversation_script_install_task",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Get the current desktop conversation script install background task",
+      "exposure": "app",
+      "method": "get_conversation_script_install_task",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.sync",
       "cli": null,
       "confirmation_required": false,
@@ -7174,6 +7361,8 @@
     "conversation.source.add",
     "conversation.source.update",
     "conversation.source.disable",
+    "conversation.script.catalog",
+    "conversation.script.install",
     "conversation.sync",
     "conversation.session.list",
     "conversation.search",
@@ -7252,6 +7441,9 @@
     "list_conversation_sources",
     "upsert_conversation_source",
     "disable_conversation_source",
+    "list_conversation_script_catalog",
+    "install_conversation_script",
+    "get_conversation_script_install_task",
     "sync_conversations",
     "get_conversation_sync_task",
     "list_conversation_sessions",

@@ -46,6 +46,8 @@ const (
 	MethodConversationSourceAdd            = "conversation.source.add"
 	MethodConversationSourceUpdate         = "conversation.source.update"
 	MethodConversationSourceDisable        = "conversation.source.disable"
+	MethodConversationScriptCatalog        = "conversation.script.catalog"
+	MethodConversationScriptInstall        = "conversation.script.install"
 	MethodConversationSync                 = "conversation.sync"
 	MethodConversationSessionList          = "conversation.session.list"
 	MethodConversationSearch               = "conversation.search"
