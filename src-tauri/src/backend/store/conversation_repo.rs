@@ -116,7 +116,10 @@ pub(crate) async fn seed_builtin_conversation_adapters_sqlx(
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     for adapter in crate::backend::conversations::ensure_official_conversation_adapters()? {
-        upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter).await?;
+        match load_conversation_adapter_sqlx(pool, tenant_id, &adapter.id).await? {
+            Some(existing) if existing.trust_state != ConversationAdapterTrustState::BuiltIn => {}
+            _ => upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter).await?,
+        }
     }
     for source in builtin_sources(&now) {
         if load_conversation_source_sqlx(pool, tenant_id, &source.id)
@@ -2771,6 +2774,41 @@ mod tests {
         assert_eq!(source_after_adapter_delete.id, source.id);
         assert!(!source_after_adapter_delete.enabled);
         assert!(missing_adapter.is_none());
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn seeding_builtin_conversation_adapters_preserves_user_registered_adapter() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-adapter-seed-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let mut market_adapter = test_conversation_adapter(
+            "codex",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        market_adapter.manifest_path =
+            Some("/tmp/assetiweave-market/codex-session/conversation-adapter.json".to_string());
+        market_adapter.executable_path =
+            Some("/tmp/assetiweave-market/codex-session/adapter.mjs".to_string());
+
+        let loaded = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &market_adapter)
+                    .await?;
+                seed_builtin_conversation_adapters_sqlx(database.pool(), TEST_TENANT_ID).await?;
+                load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, "codex").await
+            })
+            .expect("seed built-in conversation adapters")
+            .expect("codex adapter");
+
+        assert_eq!(loaded.trust_state, ConversationAdapterTrustState::Trusted);
+        assert_eq!(loaded.manifest_path, market_adapter.manifest_path);
+        assert_eq!(loaded.executable_path, market_adapter.executable_path);
 
         drop(database);
         cleanup_database(&db_path);

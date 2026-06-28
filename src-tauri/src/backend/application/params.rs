@@ -312,6 +312,24 @@ pub(crate) struct ConversationSourceDisableParams {
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct ConversationScriptCatalogParams {
+    #[serde(default, alias = "catalogUrl")]
+    pub(crate) catalog_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct ConversationScriptInstallParams {
+    #[serde(default, alias = "catalogUrl")]
+    pub(crate) catalog_url: Option<String>,
+    #[serde(alias = "itemId")]
+    pub(crate) item_id: String,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+    #[serde(default)]
+    pub(crate) yes: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct ConversationSyncParams {
     #[serde(alias = "sourceId")]
     pub(crate) source_id: Option<String>,
