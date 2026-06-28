@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getConversationSyncTask,
+  installConversationScript,
   importConversationSource,
+  listConversationScriptCatalog,
   listConversationAdapterRuntimeStatuses,
   mergeConversationQuestions,
   searchConversationRecords,
@@ -77,6 +79,68 @@ describe("conversation services", () => {
     });
     expect(invokeMock).toHaveBeenCalledWith("sync_conversations", {
       params: { source_id: null, dry_run: false },
+    });
+  });
+
+  it("loads the conversation script catalog with an optional catalog URL", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValueOnce([]);
+
+    await expect(listConversationScriptCatalog("https://example.test/catalog.json")).resolves.toEqual([]);
+
+    expect(invokeMock).toHaveBeenCalledWith("list_conversation_script_catalog", {
+      params: { catalog_url: "https://example.test/catalog.json" },
+    });
+  });
+
+  it("returns the bundled script catalog fallback for browser previews", async () => {
+    vi.stubGlobal("window", {});
+    invokeMock.mockRejectedValueOnce(new Error("preview backend missing"));
+
+    const entries = await listConversationScriptCatalog();
+
+    expect(entries.map((entry) => entry.item.id)).toEqual([
+      "codex-session",
+      "opencode-session",
+      "claude-code-session",
+      "zcode-session",
+      "chatgpt-web",
+      "qwen-web",
+      "gemini-web",
+    ]);
+    expect(entries.filter((entry) => entry.item.record_kind === "web").map((entry) => entry.item.adapter_id)).toEqual([
+      "chatgpt-web",
+      "qwen-web",
+      "gemini-web",
+    ]);
+  });
+
+  it("starts conversation script installs as background tasks", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValueOnce({
+      id: "install-1",
+      status: "running",
+      item_id: "codex-session",
+      catalog_url: null,
+      dry_run: false,
+      started_at: "2026-06-28T00:00:00Z",
+      finished_at: null,
+      result: null,
+      error: null,
+    });
+
+    await expect(installConversationScript({ itemId: "codex-session" })).resolves.toMatchObject({
+      id: "install-1",
+      status: "running",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("install_conversation_script", {
+      params: {
+        catalog_url: null,
+        dry_run: false,
+        item_id: "codex-session",
+        yes: true,
+      },
     });
   });
 

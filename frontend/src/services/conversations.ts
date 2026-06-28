@@ -126,6 +126,53 @@ export type StartConversationSync = typeof syncConversations;
 
 export type ConversationSyncTaskStatus = "running" | "completed" | "failed";
 
+export type ConversationScriptCatalogSourceKind = "github";
+
+export interface ConversationScriptCatalogSource {
+  type: ConversationScriptCatalogSourceKind;
+  url: string;
+  branch?: string | null;
+  path?: string | null;
+}
+
+export interface ConversationScriptCatalogItem {
+  id: string;
+  name: string;
+  version: string;
+  record_kind: ConversationRecordKind;
+  provider?: string | null;
+  adapter_id?: string | null;
+  description?: string | null;
+  homepage_url?: string | null;
+  repository_url?: string | null;
+  tags: string[];
+  manifest_file?: string | null;
+  expected_content_hash?: string | null;
+  source: ConversationScriptCatalogSource;
+}
+
+export interface ConversationScriptCatalogEntry {
+  item: ConversationScriptCatalogItem;
+  installed: boolean;
+  update_available: boolean;
+  installed_adapter?: ConversationAdapter | null;
+  install_path?: string | null;
+}
+
+export type ConversationScriptInstallTaskStatus = "running" | "completed" | "failed";
+
+export interface ConversationScriptInstallTaskSnapshot {
+  id: string;
+  status: ConversationScriptInstallTaskStatus;
+  item_id: string;
+  catalog_url?: string | null;
+  dry_run: boolean;
+  started_at: string;
+  finished_at: string | null;
+  result: unknown | null;
+  error: string | null;
+}
+
 export interface ConversationSyncTaskSnapshot {
   id: string;
   status: ConversationSyncTaskStatus;
@@ -438,6 +485,70 @@ export async function listConversationSources(): Promise<ConversationSource[]> {
     }
 
     return fallbackSources;
+  }
+}
+
+export async function listConversationScriptCatalog(
+  catalogUrl?: string | null,
+): Promise<ConversationScriptCatalogEntry[]> {
+  try {
+    return await invoke<ConversationScriptCatalogEntry[]>("list_conversation_script_catalog", {
+      params: { catalog_url: catalogUrl?.trim() || null },
+    });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return fallbackConversationScriptCatalogEntries();
+  }
+}
+
+export async function installConversationScript(params: {
+  itemId: string;
+  catalogUrl?: string | null;
+  dryRun?: boolean;
+}): Promise<ConversationScriptInstallTaskSnapshot> {
+  try {
+    return await invoke<ConversationScriptInstallTaskSnapshot>("install_conversation_script", {
+      params: {
+        catalog_url: params.catalogUrl?.trim() || null,
+        dry_run: params.dryRun ?? false,
+        item_id: params.itemId,
+        yes: params.dryRun ? false : true,
+      },
+    });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return {
+      id: `preview-script-install-${Date.now()}`,
+      status: "completed",
+      item_id: params.itemId,
+      catalog_url: params.catalogUrl ?? null,
+      dry_run: Boolean(params.dryRun),
+      started_at: new Date().toISOString(),
+      finished_at: new Date().toISOString(),
+      result: { installed: true },
+      error: null,
+    };
+  }
+}
+
+export async function getConversationScriptInstallTask(): Promise<
+  ConversationScriptInstallTaskSnapshot | null
+> {
+  try {
+    return await invoke<ConversationScriptInstallTaskSnapshot | null>(
+      "get_conversation_script_install_task",
+    );
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+    return null;
   }
 }
 
@@ -1007,6 +1118,50 @@ const fallbackAdapters: ConversationAdapter[] = [
     kind: "external",
     version: "0.1.0",
     enabled: true,
+    manifest_path: "~/.assetiweave/conversation-adapters/market/qwen-web/conversation-adapter.json",
+    executable_path: "~/.assetiweave/conversation-adapters/market/qwen-web/adapter.js",
+    trust_state: "trusted",
+    capabilities: ["probe", "read_session", "web_records"],
+    input_kinds: ["directory"],
+    created_at: now,
+    updated_at: now,
+  },
+  {
+    id: "zcode",
+    name: "ZCode",
+    kind: "external",
+    version: "0.1.0",
+    enabled: true,
+    manifest_path: "~/.assetiweave/conversation-adapters/market/zcode-session/conversation-adapter.json",
+    executable_path: "~/.assetiweave/conversation-adapters/market/zcode-session/zcode_adapter.py",
+    trust_state: "trusted",
+    capabilities: ["probe", "list_sessions", "read_session"],
+    input_kinds: ["sqlite"],
+    created_at: now,
+    updated_at: now,
+  },
+  {
+    id: "chatgpt-web",
+    name: "ChatGPT Web",
+    kind: "external",
+    version: "0.1.0",
+    enabled: true,
+    manifest_path: "~/.assetiweave/conversation-adapters/market/chatgpt-web/conversation-adapter.json",
+    executable_path: "~/.assetiweave/conversation-adapters/market/chatgpt-web/adapter.js",
+    trust_state: "trusted",
+    capabilities: ["probe", "read_session", "web_records"],
+    input_kinds: ["directory"],
+    created_at: now,
+    updated_at: now,
+  },
+  {
+    id: "gemini-web",
+    name: "Gemini Web",
+    kind: "external",
+    version: "0.1.2",
+    enabled: true,
+    manifest_path: "~/.assetiweave/conversation-adapters/market/gemini-web/conversation-adapter.json",
+    executable_path: "~/.assetiweave/conversation-adapters/market/gemini-web/adapter.js",
     trust_state: "trusted",
     capabilities: ["probe", "read_session", "web_records"],
     input_kinds: ["directory"],
@@ -1014,6 +1169,135 @@ const fallbackAdapters: ConversationAdapter[] = [
     updated_at: now,
   },
 ];
+
+function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEntry[] {
+  const items: ConversationScriptCatalogItem[] = [
+    {
+      id: "codex-session",
+      name: "Codex Session Parser",
+      version: "1.0.0",
+      record_kind: "session",
+      provider: "codex",
+      adapter_id: "codex",
+      description: "Reads local Codex session records and exports normalized conversation turns.",
+      repository_url: "https://github.com/util6/assetiweave",
+      tags: ["session", "codex", "node"],
+      expected_content_hash: "7cc193fcb5db8f7536792fd7480e376a9ca1acbca9c201736744304b599db094",
+      source: {
+        type: "github",
+        url: "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex",
+      },
+    },
+    {
+      id: "opencode-session",
+      name: "OpenCode Session Parser",
+      version: "1.0.0",
+      record_kind: "session",
+      provider: "opencode",
+      adapter_id: "opencode",
+      description: "Reads OpenCode SQLite state and converts sessions into conversation records.",
+      repository_url: "https://github.com/util6/assetiweave",
+      tags: ["session", "opencode", "sqlite", "node"],
+      expected_content_hash: "7402082acd6351b771383f98988bf0a88ae1c5093b278ecce5d946df6884bd7e",
+      source: {
+        type: "github",
+        url: "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/opencode",
+      },
+    },
+    {
+      id: "claude-code-session",
+      name: "Claude Code Session Parser",
+      version: "1.0.0",
+      record_kind: "session",
+      provider: "claude-code",
+      adapter_id: "claude-code",
+      description: "Reads Claude Code project conversations and emits the shared external adapter protocol.",
+      repository_url: "https://github.com/util6/assetiweave",
+      tags: ["session", "claude-code", "node"],
+      expected_content_hash: "84768c83036672f6a6569f9b22914352f58dc677ca4764a7387788376d64a475",
+      source: {
+        type: "github",
+        url: "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/claude-code",
+      },
+    },
+    {
+      id: "zcode-session",
+      name: "ZCode Session Parser",
+      version: "0.1.0",
+      record_kind: "session",
+      provider: "zcode",
+      adapter_id: "zcode",
+      description: "Reads ZCode SQLite conversation records using the existing external adapter script.",
+      repository_url: "https://github.com/util6/assetiweave",
+      tags: ["session", "zcode", "sqlite", "python"],
+      expected_content_hash: "5a50814a30a7894ee5243873bce8cb175ffdce9fab8d6a75324b5d446837c044",
+      source: {
+        type: "github",
+        url: "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/zcode",
+      },
+    },
+    {
+      id: "chatgpt-web",
+      name: "ChatGPT Web Harvester",
+      version: "0.1.0",
+      record_kind: "web",
+      provider: "chatgpt",
+      adapter_id: "chatgpt-web",
+      description: "Collects ChatGPT web conversations and exposes normalized web records through the adapter protocol.",
+      repository_url: "https://github.com/util6/assetiweave",
+      tags: ["web", "chatgpt", "node", "browser-cookie-auth"],
+      expected_content_hash: "1b00dd931991ecfbe19954b4dd59cb92513fc28f43a0d8d1f129f275e737aa31",
+      source: {
+        type: "github",
+        url: "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/chatgpt-web",
+      },
+    },
+    {
+      id: "qwen-web",
+      name: "Qwen Web Harvester",
+      version: "0.1.0",
+      record_kind: "web",
+      provider: "qwen",
+      adapter_id: "qwen-web",
+      description: "Collects Qwen web conversations and exposes normalized web records through the adapter protocol.",
+      repository_url: "https://github.com/util6/assetiweave",
+      tags: ["web", "qwen", "node", "browser-cookie-auth"],
+      expected_content_hash: "3c485df513a682713de1a946e69c19ddf2d6ed86e68e926e7af4f81338971756",
+      source: {
+        type: "github",
+        url: "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/qwen-web",
+      },
+    },
+    {
+      id: "gemini-web",
+      name: "Gemini Web Harvester",
+      version: "0.1.2",
+      record_kind: "web",
+      provider: "gemini",
+      adapter_id: "gemini-web",
+      description: "Collects Gemini web conversations and exposes normalized web records through the adapter protocol.",
+      repository_url: "https://github.com/util6/assetiweave",
+      tags: ["web", "gemini", "node", "browser-cookie-auth"],
+      expected_content_hash: "20f277c789a111d06f87b30be7523905826d9cb63b7194f5bd18fcf6bc8bfd76",
+      source: {
+        type: "github",
+        url: "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/gemini-web",
+      },
+    },
+  ];
+
+  return items.map((item) => {
+    const adapterId = item.adapter_id ?? item.id;
+    const installedAdapter = fallbackAdapters.find((adapter) => adapter.id === adapterId) ?? null;
+    return {
+      item,
+      installed: Boolean(installedAdapter),
+      update_available: Boolean(installedAdapter && installedAdapter.version !== item.version),
+      installed_adapter: installedAdapter,
+      install_path: installedAdapter?.manifest_path?.replace(/\/conversation-adapter\.json$/, "") ?? null,
+    };
+  });
+}
 
 const fallbackSources: ConversationSource[] = [
   {

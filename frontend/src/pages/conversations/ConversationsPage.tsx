@@ -881,8 +881,11 @@ export function ConversationsPage({
             setImportStep("idle");
           }}
           onImport={handleImport}
+          onNotify={onNotify}
+          onNotifyError={onNotifyError}
           onPickManifest={pickImportManifest}
           onPickSourceLocation={pickImportSourceLocation}
+          onScriptInstalled={() => refreshCatalog()}
           recordKind={currentRecordKind}
           step={importStep}
         />
