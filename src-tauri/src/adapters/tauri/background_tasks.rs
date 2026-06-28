@@ -1,5 +1,5 @@
 use crate::backend::{
-    application::ConversationSyncParams,
+    application::{ConversationScriptInstallParams, ConversationSyncParams},
     dto::{AppResult, CatalogAsset},
 };
 use chrono::Utc;
@@ -22,6 +22,19 @@ pub(crate) struct ConversationSyncTaskSnapshot {
     pub(crate) status: BackgroundTaskStatus,
     pub(crate) source_id: Option<String>,
     pub(crate) adapter_id: Option<String>,
+    pub(crate) dry_run: bool,
+    pub(crate) started_at: String,
+    pub(crate) finished_at: Option<String>,
+    pub(crate) result: Option<Value>,
+    pub(crate) error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct ConversationScriptInstallTaskSnapshot {
+    pub(crate) id: String,
+    pub(crate) status: BackgroundTaskStatus,
+    pub(crate) item_id: String,
+    pub(crate) catalog_url: Option<String>,
     pub(crate) dry_run: bool,
     pub(crate) started_at: String,
     pub(crate) finished_at: Option<String>,
@@ -54,6 +67,7 @@ pub(crate) struct SkillBackupTaskSnapshot {
 #[derive(Default)]
 pub(crate) struct BackgroundTaskRegistry {
     conversation_sync: Mutex<Option<ConversationSyncTaskSnapshot>>,
+    conversation_script_install: Mutex<Option<ConversationScriptInstallTaskSnapshot>>,
     skill_backup: Mutex<Option<SkillBackupTaskSnapshot>>,
 }
 
@@ -126,6 +140,84 @@ impl BackgroundTaskRegistry {
         &self,
     ) -> AppResult<Option<ConversationSyncTaskSnapshot>> {
         self.conversation_sync
+            .lock()
+            .map(|snapshot| snapshot.clone())
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn begin_conversation_script_install(
+        &self,
+        params: &ConversationScriptInstallParams,
+    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
+        let mut current = self
+            .conversation_script_install
+            .lock()
+            .map_err(|error| error.to_string())?;
+        if let Some(snapshot) = current
+            .as_ref()
+            .filter(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
+        {
+            return Ok((snapshot.clone(), false));
+        }
+
+        let item_id = params.item_id.trim().to_string();
+        if item_id.is_empty() {
+            return Err("conversation script install requires an item id".to_string());
+        }
+
+        let snapshot = ConversationScriptInstallTaskSnapshot {
+            id: Uuid::new_v4().to_string(),
+            status: BackgroundTaskStatus::Running,
+            item_id,
+            catalog_url: params.catalog_url.clone(),
+            dry_run: params.dry_run,
+            started_at: Utc::now().to_rfc3339(),
+            finished_at: None,
+            result: None,
+            error: None,
+        };
+        *current = Some(snapshot.clone());
+        Ok((snapshot, true))
+    }
+
+    pub(crate) fn finish_conversation_script_install(
+        &self,
+        task_id: &str,
+        result: AppResult<Value>,
+    ) -> AppResult<ConversationScriptInstallTaskSnapshot> {
+        let mut current = self
+            .conversation_script_install
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let snapshot = current
+            .as_mut()
+            .ok_or_else(|| "conversation script install task not found".to_string())?;
+        if snapshot.id != task_id {
+            return Err(format!(
+                "conversation script install task is no longer current: {task_id}"
+            ));
+        }
+
+        snapshot.finished_at = Some(Utc::now().to_rfc3339());
+        match result {
+            Ok(value) => {
+                snapshot.status = BackgroundTaskStatus::Completed;
+                snapshot.result = Some(value);
+                snapshot.error = None;
+            }
+            Err(error) => {
+                snapshot.status = BackgroundTaskStatus::Failed;
+                snapshot.result = None;
+                snapshot.error = Some(error);
+            }
+        }
+        Ok(snapshot.clone())
+    }
+
+    pub(crate) fn conversation_script_install_snapshot(
+        &self,
+    ) -> AppResult<Option<ConversationScriptInstallTaskSnapshot>> {
+        self.conversation_script_install
             .lock()
             .map(|snapshot| snapshot.clone())
             .map_err(|error| error.to_string())
@@ -257,7 +349,16 @@ impl BackgroundTaskRegistry {
                     .is_some_and(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
             })
             .unwrap_or(true);
-        conversation_sync_running || skill_backup_running
+        let conversation_script_install_running = self
+            .conversation_script_install
+            .lock()
+            .map(|snapshot| {
+                snapshot
+                    .as_ref()
+                    .is_some_and(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
+            })
+            .unwrap_or(true);
+        conversation_sync_running || conversation_script_install_running || skill_backup_running
     }
 }
 
@@ -371,5 +472,46 @@ mod tests {
             .finish_skill_backup(&running.id, Err("catalog refresh failed".to_string()))
             .unwrap();
         assert_eq!(refresh_failed.errors[0].asset_id, None);
+    }
+
+    #[test]
+    fn conversation_script_install_blocks_duplicate_start_and_finishes() {
+        let registry = BackgroundTaskRegistry::default();
+        let params = ConversationScriptInstallParams {
+            catalog_url: Some("https://example.test/catalog.json".to_string()),
+            item_id: "codex-session".to_string(),
+            dry_run: false,
+            yes: true,
+        };
+
+        let (running, should_start) = registry
+            .begin_conversation_script_install(&params)
+            .expect("start install task");
+        let (duplicate, should_start_duplicate) = registry
+            .begin_conversation_script_install(&ConversationScriptInstallParams {
+                item_id: "opencode-session".to_string(),
+                ..params
+            })
+            .expect("reuse running install task");
+
+        assert!(should_start);
+        assert!(!should_start_duplicate);
+        assert_eq!(running.id, duplicate.id);
+        assert_eq!(running.item_id, "codex-session");
+        assert!(registry.has_running_tasks());
+
+        let completed = registry
+            .finish_conversation_script_install(
+                &running.id,
+                Ok(serde_json::json!({ "installed": true })),
+            )
+            .expect("finish install task");
+
+        assert_eq!(completed.status, BackgroundTaskStatus::Completed);
+        assert_eq!(
+            completed.result,
+            Some(serde_json::json!({ "installed": true }))
+        );
+        assert!(!registry.has_running_tasks());
     }
 }

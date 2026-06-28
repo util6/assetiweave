@@ -857,6 +857,43 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli conversation source disable <source-id>")
     ),
     command!(
+        "conversation.script.catalog",
+        "conversation.script.catalog",
+        "List downloadable conversation parser scripts from a catalog",
+        Read,
+        Friendly,
+        false,
+        crate::backend::application::ConversationScriptCatalogParams,
+        Service => |service, params| service.list_conversation_script_catalog(params),
+        &[param!(
+            "catalog_url",
+            "Optional catalog JSON URL or local path",
+            ["catalogUrl"]
+        )],
+        Some("assetiweave-cli conversation script catalog")
+    ),
+    command!(
+        "conversation.script.install",
+        "conversation.script.install",
+        "Download and register a trusted conversation parser script",
+        HighRiskWrite,
+        Friendly,
+        true,
+        crate::backend::application::ConversationScriptInstallParams,
+        Service => |service, params| service.install_conversation_script(params),
+        &[
+            param!(
+                "catalog_url",
+                "Optional catalog JSON URL or local path",
+                ["catalogUrl"]
+            ),
+            param!("item_id", "Catalog item identifier", ["itemId"]),
+            param!("dry_run", "Preview install target without downloading", ["dryRun"]),
+            param!("yes", "Confirm downloading and trusting this script"),
+        ],
+        Some("assetiweave-cli conversation script install <item-id> --yes")
+    ),
+    command!(
         "conversation.sync",
         "conversation.sync",
         "Synchronize conversation sources",
@@ -1939,6 +1976,55 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("id", "Conversation source identifier"),
             param!("dry_run", "Preview without disabling", ["dryRun"]),
         ],
+        None
+    ),
+    command!(
+        "list_conversation_script_catalog",
+        "conversation.script.catalog",
+        "List downloadable conversation parser scripts from a catalog",
+        Read,
+        App,
+        false,
+        crate::backend::application::ConversationScriptCatalogParams,
+        Service => |service, params| service.list_conversation_script_catalog(params),
+        &[param!(
+            "catalog_url",
+            "Optional catalog JSON URL or local path",
+            ["catalogUrl"]
+        )],
+        None
+    ),
+    command!(
+        "install_conversation_script",
+        "conversation.script.install",
+        "Download and register a trusted conversation parser script",
+        HighRiskWrite,
+        App,
+        false,
+        crate::backend::application::ConversationScriptInstallParams,
+        Service => |service, params| service.install_conversation_script(params),
+        &[
+            param!(
+                "catalog_url",
+                "Optional catalog JSON URL or local path",
+                ["catalogUrl"]
+            ),
+            param!("item_id", "Catalog item identifier", ["itemId"]),
+            param!("dry_run", "Preview install target without downloading", ["dryRun"]),
+            param!("yes", "Confirm downloading and trusting this script"),
+        ],
+        None
+    ),
+    command!(
+        "get_conversation_script_install_task",
+        "get_conversation_script_install_task",
+        "Get the current desktop conversation script install background task",
+        Read,
+        App,
+        false,
+        NoParams,
+        System => |_params| Value::Null,
+        &[],
         None
     ),
     command!(

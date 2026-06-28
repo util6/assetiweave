@@ -1,6 +1,6 @@
 use crate::adapters::app_state::AppState;
 use crate::adapters::tauri::background_tasks::{
-    ConversationSyncTaskSnapshot, SkillBackupTaskSnapshot,
+    ConversationScriptInstallTaskSnapshot, ConversationSyncTaskSnapshot, SkillBackupTaskSnapshot,
 };
 #[cfg(test)]
 use crate::backend::capabilities::{
@@ -15,7 +15,8 @@ use crate::{
     backend::application::{
         AppService, ConversationAdapterUnregisterParams, ConversationQuestionGetParams,
         ConversationQuestionListParams, ConversationQuestionMergeParams,
-        ConversationQuestionSplitParams, ConversationSearchParams, ConversationSearchResult,
+        ConversationQuestionSplitParams, ConversationScriptCatalogParams,
+        ConversationScriptInstallParams, ConversationSearchParams, ConversationSearchResult,
         ConversationSessionExportParams, ConversationSessionGetParams,
         ConversationSessionListParams, ConversationSourceDisableParams,
         ConversationSourceUpsertParams, ConversationSyncParams, ListAssetsParams,
@@ -286,6 +287,20 @@ fn emit_skill_backup_task(app: &AppHandle, snapshot: &SkillBackupTaskSnapshot) {
         log_error(
             "skill.backup.background",
             "推送 Skill 后台备份任务状态失败",
+            &error.to_string(),
+            &[("task_id", snapshot.id.clone())],
+        );
+    }
+}
+
+fn emit_conversation_script_install_task(
+    app: &AppHandle,
+    snapshot: &ConversationScriptInstallTaskSnapshot,
+) {
+    if let Err(error) = app.emit("conversation-script-install-task-updated", snapshot) {
+        log_error(
+            "conversation.script.install",
+            "推送对话脚本后台安装任务状态失败",
             &error.to_string(),
             &[("task_id", snapshot.id.clone())],
         );
@@ -1303,6 +1318,74 @@ pub(crate) fn disable_conversation_source(
 }
 
 #[tauri::command]
+pub(crate) fn list_conversation_script_catalog(
+    state: State<'_, AppState>,
+    params: ConversationScriptCatalogParams,
+) -> AppResult<Vec<crate::backend::application::ConversationScriptCatalogEntry>> {
+    AppService::open_with_db_path(state.db_path.clone())?.list_conversation_script_catalog(params)
+}
+
+#[tauri::command]
+pub(crate) fn install_conversation_script(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: ConversationScriptInstallParams,
+) -> AppResult<ConversationScriptInstallTaskSnapshot> {
+    let (snapshot, should_start) = state
+        .background_tasks
+        .begin_conversation_script_install(&params)?;
+    if !should_start {
+        return Ok(snapshot);
+    }
+
+    let db_path = state.db_path.clone();
+    let background_tasks = state.background_tasks.clone();
+    let task_id = snapshot.id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            AppService::open_with_db_path(db_path)
+                .and_then(|service| service.install_conversation_script(params))
+        }))
+        .unwrap_or_else(|_| Err("conversation script install task panicked".to_string()));
+        match &result {
+            Ok(value) => log_info(
+                "conversation.script.install",
+                "后台安装对话脚本成功",
+                &[("task_id", task_id.clone()), ("result", value.to_string())],
+            ),
+            Err(error) => log_error(
+                "conversation.script.install",
+                "后台安装对话脚本失败",
+                error,
+                &[("task_id", task_id.clone())],
+            ),
+        }
+        match background_tasks.finish_conversation_script_install(&task_id, result) {
+            Ok(snapshot) => emit_conversation_script_install_task(&app, &snapshot),
+            Err(error) => {
+                log_error(
+                    "conversation.script.install",
+                    "更新后台安装任务状态失败",
+                    &error,
+                    &[("task_id", task_id)],
+                );
+            }
+        }
+    });
+
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub(crate) fn get_conversation_script_install_task(
+    state: State<'_, AppState>,
+) -> AppResult<Option<ConversationScriptInstallTaskSnapshot>> {
+    state
+        .background_tasks
+        .conversation_script_install_snapshot()
+}
+
+#[tauri::command]
 pub(crate) fn sync_conversations(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -1670,6 +1753,9 @@ pub(crate) fn command_handler(
         list_conversation_sources,
         upsert_conversation_source,
         disable_conversation_source,
+        list_conversation_script_catalog,
+        install_conversation_script,
+        get_conversation_script_install_task,
         sync_conversations,
         get_conversation_sync_task,
         list_conversation_sessions,
