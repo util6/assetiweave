@@ -5,6 +5,89 @@ export const DEFAULT_GROUP_COLOR_HEX = "#2f9d78";
 
 const themes = [
   defineTheme({
+    id: "promptStudio",
+    labelKey: "settings.theme.promptStudio",
+    mode: "dark",
+    swatches: ["#120b25", "#17141f", "#27c7f4", "#d946b8"],
+    tokens: {
+      palette: {
+        background: "8 7 17",
+        surface: "17 14 28",
+        surfaceLowest: "5 5 12",
+        surfaceLow: "13 10 24",
+        surfaceCard: "24 22 33",
+        surfaceHigh: "33 31 45",
+        surfaceHighest: "45 42 62",
+        border: "45 42 64",
+        outline: "151 146 173",
+        outlineVariant: "71 67 92",
+        onSurface: "244 243 250",
+        onSurfaceVariant: "197 193 214",
+        primary: "211 243 255",
+        primaryStrong: "39 199 244",
+        gridLine: "160 150 196",
+      },
+      status: {
+        update: "45 156 255",
+        create: "47 211 156",
+        remove: "217 70 184",
+        conflict: "246 199 61",
+      },
+      surface: {
+        pageGlow: "101 73 255",
+        pageSheen: "217 70 184",
+        cardBg: "24 22 33",
+        cardBorder: "45 42 64",
+        cardHeader: "18 16 27",
+        subnavBg: "10 8 20",
+        toolbarBg: "14 12 24",
+      },
+      control: {
+        bg: "24 22 33",
+        hover: "36 32 50",
+        border: "55 52 75",
+        fg: "197 193 214",
+      },
+      navigation: {
+        bg: "10 8 20",
+        hover: "27 23 39",
+        active: "34 29 58",
+        activeFg: "236 248 255",
+        activeBorder: "39 199 244",
+        indicator: "217 70 184",
+      },
+      button: {
+        primaryBg: "45 156 255",
+        primaryHover: "39 199 244",
+        primaryFg: "255 255 255",
+      },
+      switch: {
+        bg: "45 42 62",
+        thumb: "197 193 214",
+        checked: "47 211 156",
+        checkedThumb: "255 255 255",
+      },
+      effect: {
+        gridOpacity: "0.012",
+        insetHighlight: "255 255 255",
+        panelShadow: "2 1 8",
+        glow: "39 199 244",
+        focusRing: "45 156 255",
+        scrim: "5 5 12",
+        glassOpacity: "0.82",
+        hoverLift: "subtle",
+      },
+      component: {
+        cardShadow: "0 22px 60px rgb(var(--theme-panel-shadow) / 0.46)",
+        panelShadow: "0 28px 80px rgb(var(--theme-panel-shadow) / 0.54)",
+        toolbarShadow: "0 14px 36px rgb(var(--theme-panel-shadow) / 0.36)",
+        dialogShadow: "0 32px 90px rgb(var(--theme-panel-shadow) / 0.62)",
+        controlInsetShadow: "inset 0 1px 0 rgb(var(--theme-inset-highlight) / 0.2)",
+        activeShadow: "0 14px 34px rgb(var(--theme-glow) / 0.26)",
+      },
+    },
+  }),
+  defineTheme({
     id: "midnight",
     labelKey: "settings.theme.midnight",
     mode: "dark",
@@ -361,7 +444,7 @@ export function normalizeThemeId(value: unknown): ThemeId {
     return "sunlight";
   }
 
-  return "midnight";
+  return "promptStudio";
 }
 
 export function getTheme(themeId: ThemeId) {

@@ -3,10 +3,14 @@ import { cva } from "class-variance-authority";
 export const panelRecipe = cva("rounded-xl border text-on-surface", {
   variants: {
     variant: {
-      default: "border-theme-card-border bg-theme-card shadow-[var(--theme-shadow-card)]",
-      muted: "border-theme-card-border bg-theme-card/70 shadow-[var(--theme-shadow-card)]",
-      inset: "border-theme-card-border bg-theme-card-header/65 shadow-[var(--theme-shadow-control-inset)]",
-      toolbar: "border-theme-card-border bg-theme-toolbar/85 shadow-[var(--theme-shadow-toolbar)] backdrop-blur",
+      default:
+        "border-theme-card-border bg-[linear-gradient(145deg,rgb(var(--theme-card-bg)/0.96),rgb(var(--theme-card-header)/0.92))] shadow-[var(--theme-shadow-card)]",
+      muted:
+        "border-theme-card-border bg-[linear-gradient(145deg,rgb(var(--theme-card-bg)/0.76),rgb(var(--theme-card-header)/0.68))] shadow-[var(--theme-shadow-card)]",
+      inset:
+        "border-theme-card-border bg-[linear-gradient(145deg,rgb(var(--theme-card-header)/0.78),rgb(var(--theme-control-bg)/0.66))] shadow-[var(--theme-shadow-control-inset)]",
+      toolbar:
+        "border-theme-card-border bg-[linear-gradient(135deg,rgb(var(--theme-toolbar-bg)/0.9),rgb(var(--theme-card-header)/0.82))] shadow-[var(--theme-shadow-toolbar)] backdrop-blur",
     },
     padding: {
       none: "p-0",
@@ -89,9 +93,9 @@ export const surfaceButtonRecipe = cva(
     variants: {
       variant: {
         default:
-          "bg-theme-button-primary text-theme-button-primary-fg shadow-glow hover:-translate-y-px hover:bg-theme-button-primary-hover",
+          "theme-primary-gradient text-theme-button-primary-fg hover:-translate-y-px",
         destructive:
-          "bg-status-remove text-theme-button-primary-fg shadow-[0_12px_24px_rgb(var(--color-status-remove)/0.2)] hover:bg-status-remove/90",
+          "theme-danger-gradient text-theme-button-primary-fg",
         outline:
           "border border-theme-control-border bg-theme-control text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] hover:bg-theme-control-hover hover:text-on-surface",
         secondary: "bg-theme-control-hover text-on-surface hover:bg-theme-card-header",

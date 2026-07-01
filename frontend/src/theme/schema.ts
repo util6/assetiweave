@@ -1,6 +1,6 @@
 import type { TranslationKey } from "../i18n/messages";
 
-export type ThemeId = "midnight" | "sunlight" | "violetDark" | "violetLight";
+export type ThemeId = "promptStudio" | "midnight" | "sunlight" | "violetDark" | "violetLight";
 export type ThemeMode = "dark" | "light";
 export type ThemeHoverLift = "none" | "subtle" | "raised";
 export type RgbString = `${number} ${number} ${number}`;

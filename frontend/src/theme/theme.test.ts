@@ -3,7 +3,7 @@ import { themeCssVars } from "./cssVars";
 import type { ThemeDefinition, ThemeTokens } from "./schema";
 import { normalizeThemeId, themeOptions, themeRegistry } from "./themes";
 
-const themeIds = ["midnight", "sunlight", "violetDark", "violetLight"] as const;
+const themeIds = ["promptStudio", "midnight", "sunlight", "violetDark", "violetLight"] as const;
 
 const tokenGroups = [
   "palette",
@@ -83,6 +83,7 @@ describe("theme registry", () => {
   });
 
   it("normalizes current and legacy stored theme ids", () => {
+    expect(normalizeThemeId("promptStudio")).toBe("promptStudio");
     expect(normalizeThemeId("midnight")).toBe("midnight");
     expect(normalizeThemeId("sunlight")).toBe("sunlight");
     expect(normalizeThemeId("violetDark")).toBe("violetDark");
@@ -90,7 +91,7 @@ describe("theme registry", () => {
     expect(normalizeThemeId("graphite")).toBe("violetDark");
     expect(normalizeThemeId("forest")).toBe("sunlight");
     expect(normalizeThemeId("ember")).toBe("sunlight");
-    expect(normalizeThemeId("unknown")).toBe("midnight");
+    expect(normalizeThemeId("unknown")).toBe("promptStudio");
   });
 
   it("registers complete theme definitions", () => {

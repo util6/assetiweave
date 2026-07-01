@@ -9,6 +9,7 @@ import {
   RESULT_PREVIEW_LINE_LIMIT_MIN,
   createFontFamilySetting,
   defaultSettings,
+  DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
   fontFamilyCss,
   normalizeStoredSettings,
   resolveFontFamilyCss,
@@ -33,6 +34,7 @@ describe("AppSettingsProvider", () => {
 
     expect(settings.typography).toEqual(defaultSettings.typography);
     expect(settings.conversations).toEqual(defaultSettings.conversations);
+    expect(settings.conversationTranslation).toEqual(defaultSettings.conversationTranslation);
     expect(settings.dataBackup).toEqual(defaultSettings.dataBackup);
     expect(settings.conversationRuntimeOverrides).toEqual(defaultSettings.conversationRuntimeOverrides);
   });
@@ -116,25 +118,42 @@ describe("AppSettingsProvider", () => {
     expect(settings.conversations.sessionBrowserFontFamily).toEqual(sessionBrowserFontFamily);
     expect(settings.conversations.sessionBrowserFontSize).toBe(12);
     expect(settings.conversations.sessionToolbarCompact).toBe(false);
-    expect(settings.conversations.translationTargetLanguage).toBe(defaultSettings.conversations.translationTargetLanguage);
+    expect(settings.conversationTranslation.targetLanguage).toBe(defaultSettings.conversationTranslation.targetLanguage);
   });
 
-  it("normalizes conversation translation target language", () => {
+  it("migrates and normalizes conversation translation settings", () => {
     expect(normalizeStoredSettings({
       conversations: { translationTargetLanguage: "  Spanish (Latin America)  " },
-    }).conversations.translationTargetLanguage).toBe("Spanish (Latin America)");
+    }).conversationTranslation.targetLanguage).toBe("Spanish (Latin America)");
     expect(normalizeStoredSettings({
-      conversations: { translationTargetLanguage: "fr" },
-    }).conversations.translationTargetLanguage).toBe("fr");
+      conversationTranslation: {
+        cli: "gemini",
+        model: "gemini-2.5-pro",
+        promptTemplate: "Translate into {targetLanguage}: {content}",
+        provider: "cli",
+        targetLanguage: "French\n\nCanadian",
+      },
+    }).conversationTranslation).toEqual({
+      cli: "gemini",
+      model: "gemini-2.5-pro",
+      promptTemplate: "Translate into {targetLanguage}: {content}",
+      provider: "cli",
+      targetLanguage: "French Canadian",
+    });
     expect(normalizeStoredSettings({
-      conversations: { translationTargetLanguage: "zh-CN" },
-    }).conversations.translationTargetLanguage).toBe(defaultSettings.conversations.translationTargetLanguage);
-    expect(normalizeStoredSettings({
-      conversations: { translationTargetLanguage: "French\n\nCanadian" },
-    }).conversations.translationTargetLanguage).toBe("French Canadian");
-    expect(normalizeStoredSettings({
-      conversations: { translationTargetLanguage: "" },
-    }).conversations.translationTargetLanguage).toBe(defaultSettings.conversations.translationTargetLanguage);
+      conversationTranslation: {
+        cli: "custom",
+        model: "x".repeat(200),
+        promptTemplate: "",
+        provider: "google",
+        targetLanguage: "zh-CN",
+      },
+    }).conversationTranslation).toEqual({
+      ...defaultSettings.conversationTranslation,
+      provider: "google",
+    });
+    expect(DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE).toContain("{targetLanguage}");
+    expect(DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE).toContain("{content}");
   });
 
   it("normalizes command result preview line limits", () => {
