@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CompositionEvent, type CSSProperties, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CompositionEvent, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import {
   AppWindow,
   ArrowLeft,
@@ -11,6 +11,7 @@ import {
   Layers3,
   RefreshCw,
   Scissors,
+  Search,
   Settings,
   UploadCloud,
   X,
@@ -51,12 +52,11 @@ import type { TranslationKey } from "../../i18n/messages";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import { DEFAULT_COLUMN_MIN_WIDTH } from "../../store/settings/settingsSchema";
 import {
-  DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
   DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
   resolveFontFamilyCss,
   useAppSettings,
   type ConversationContentCardColorSettings,
-  type ConversationTranslationTargetLanguage,
+  type ConversationTranslationSettings,
   type SettingsPanelId,
 } from "../../store/settings/AppSettingsProvider";
 import {
@@ -93,7 +93,15 @@ import { abbreviateHomePath } from "../../utils/path";
 export { MarkdownContent } from "../../components/conversations/ConversationMarkdown";
 
 const SESSION_PAGE_SIZE = 100;
-const CONTENT_SEARCH_COMMIT_DELAY_MS = 220;
+const CONTENT_SEARCH_COMMIT_DELAY_MS = 700;
+const CONVERSATION_SEARCH_CARD_TYPES: ConversationSearchCardType[] = [
+  "question",
+  "answer",
+  "tool",
+  "command",
+  "code",
+  "result",
+];
 const DISMISSED_SYNC_PROGRESS_TASK_LIMIT = 50;
 const dismissedConversationSyncProgressTaskKeys = new Set<string>();
 
@@ -104,6 +112,7 @@ type ListConversationSessionPage = (params: {
 }) => Promise<ConversationSessionListItem[]>;
 
 interface ConversationSearchResultState {
+  contentTypes: ConversationSearchCardType[];
   query: string;
   totalCount: number;
   hits: ConversationSearchHit[];
@@ -184,6 +193,8 @@ export function ConversationsPage({
   const handledSyncTaskIdRef = useRef<string | null>(null);
   const syncRunning = syncTask?.status === "running";
   const [contentQuery, setContentQuery] = useState("");
+  const [contentSearchCardTypes, setContentSearchCardTypes] =
+    useState<ConversationSearchCardType[]>(CONVERSATION_SEARCH_CARD_TYPES);
   const [contentSearchResult, setContentSearchResult] = useState<ConversationSearchResultState | null>(null);
   const [contentSearchLoading, setContentSearchLoading] = useState(false);
   const [activeSearchTarget, setActiveSearchTarget] = useState<ConversationSearchTarget | null>(null);
@@ -226,6 +237,7 @@ export function ConversationsPage({
     setSessionView("browser");
     setSelectedQuestionIds(new Set());
     setContentQuery("");
+    setContentSearchCardTypes(CONVERSATION_SEARCH_CARD_TYPES);
     setContentSearchResult(null);
     setActiveSearchTarget(null);
     setImportDialogOpen(false);
@@ -253,9 +265,12 @@ export function ConversationsPage({
     }
 
     let cancelled = false;
+    const contentTypes = contentSearchCardTypes.length > 0
+      ? contentSearchCardTypes
+      : CONVERSATION_SEARCH_CARD_TYPES;
     setContentSearchLoading(true);
     void searchConversationRecords({
-      content_types: ["question", "answer", "tool", "command", "code", "result"],
+      content_types: contentTypes,
       limit: 50,
       query: trimmedQuery,
       record_kind: currentRecordKind,
@@ -263,6 +278,7 @@ export function ConversationsPage({
       .then((result) => {
         if (cancelled) return;
         setContentSearchResult({
+          contentTypes: result.scope?.content_types ?? contentTypes,
           hits: result.hits,
           query: result.query,
           totalCount: result.total_count,
@@ -283,7 +299,15 @@ export function ConversationsPage({
     return () => {
       cancelled = true;
     };
-  }, [contentQuery, currentRecordKind, onNotifyError]);
+  }, [contentQuery, contentSearchCardTypes, currentRecordKind, onNotifyError]);
+
+  const handleShowAllContentSearchCardTypes = useCallback(() => {
+    setContentSearchCardTypes(CONVERSATION_SEARCH_CARD_TYPES);
+  }, []);
+
+  const handleToggleContentSearchCardType = useCallback((cardType: ConversationSearchCardType) => {
+    setContentSearchCardTypes((current) => toggleConversationSearchCardType(current, cardType));
+  }, []);
 
   useEffect(() => {
     setSelectedAppId((current) => {
@@ -390,19 +414,17 @@ export function ConversationsPage({
       return;
     }
 
-    const summary = formatConversationSyncSummary(
-      summarizeConversationSyncTask(syncTask),
-      t,
-      currentRecordKind,
-    );
+    const summaryCounts = summarizeConversationSyncTask(syncTask);
+    const summary = formatConversationSyncSummary(summaryCounts, t, currentRecordKind);
+    const advice = formatConversationSyncAdvice(summaryCounts, t, currentRecordKind);
     let cancelled = false;
-    setSyncProgress({ phase: "refreshing", sourceLabel, summary, taskId: syncTask.id });
+    setSyncProgress({ advice, phase: "refreshing", sourceLabel, summary, taskId: syncTask.id });
     void refreshCatalog({ rethrow: true })
       .then(() => {
         if (cancelled) {
           return;
         }
-        setSyncProgress({ phase: "completed", sourceLabel, summary, taskId: syncTask.id });
+        setSyncProgress({ advice, phase: "completed", sourceLabel, summary, taskId: syncTask.id });
       })
       .catch((error) => {
         if (!cancelled) {
@@ -745,6 +767,8 @@ export function ConversationsPage({
                 onChange={setContentQuery}
                 placeholder={t("conversation.search.contentPlaceholder")}
                 resetSignal={currentRecordKind}
+                searching={contentSearchLoading}
+                submitLabel={t("conversation.search.submit")}
                 value={contentQuery}
               />
             </>
@@ -844,9 +868,13 @@ export function ConversationsPage({
       ) : null}
       {sessionView === "browser" && (contentSearchResult || contentSearchLoading || contentQuery.trim()) ? (
         <ConversationContentSearchResults
+          contentCardColors={appSettings.conversations.contentCardColors}
           loading={contentSearchLoading}
+          onCardTypeToggle={handleToggleContentSearchCardType}
+          onShowAllCardTypes={handleShowAllContentSearchCardTypes}
           onOpenHit={handleOpenSearchHit}
           result={contentSearchResult}
+          selectedCardTypes={contentSearchCardTypes}
           t={t}
         />
       ) : null}
@@ -924,7 +952,8 @@ export function ConversationsPage({
           session={sessionDetail}
           setOutputRoot={setOutputRoot}
           t={t}
-          translationTargetLanguage={appSettings.conversations.translationTargetLanguage}
+          recordKind={currentRecordKind}
+          translationSettings={appSettings.conversationTranslation}
           visibility={contentVisibility}
         />
       )}
@@ -971,6 +1000,8 @@ export function DebouncedToolbarSearch({
   onChange,
   placeholder,
   resetSignal,
+  searching = false,
+  submitLabel,
   value,
 }: {
   className?: string;
@@ -978,6 +1009,8 @@ export function DebouncedToolbarSearch({
   onChange: (value: string) => void;
   placeholder: string;
   resetSignal?: string;
+  searching?: boolean;
+  submitLabel?: string;
   value: string;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -1015,6 +1048,11 @@ export function DebouncedToolbarSearch({
     onChangeRef.current(nextValue);
   }
 
+  function commitCurrentDraft() {
+    clearDebouncedSearchTimer(timerRef);
+    commitDraft(draftRef.current);
+  }
+
   function scheduleCommit(nextValue: string) {
     clearDebouncedSearchTimer(timerRef);
     timerRef.current = window.setTimeout(() => {
@@ -1046,6 +1084,12 @@ export function DebouncedToolbarSearch({
     scheduleCommit(nextValue);
   }
 
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter" || composingRef.current) return;
+    event.preventDefault();
+    commitCurrentDraft();
+  }
+
   return (
     <ToolbarSearch
       className={className}
@@ -1054,7 +1098,22 @@ export function DebouncedToolbarSearch({
       onChange={handleChange}
       onCompositionEnd={handleCompositionEnd}
       onCompositionStart={handleCompositionStart}
+      onKeyDown={handleKeyDown}
       placeholder={placeholder}
+      trailing={
+        submitLabel ? (
+          <button
+            aria-label={submitLabel}
+            className="grid size-7 shrink-0 place-items-center rounded-lg text-on-surface-muted transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-wait disabled:opacity-70"
+            disabled={searching}
+            onClick={commitCurrentDraft}
+            title={submitLabel}
+            type="button"
+          >
+            {searching ? <RefreshCw className="animate-spin" size={15} /> : <Search size={15} />}
+          </button>
+        ) : undefined
+      }
     />
   );
 }
@@ -1463,73 +1522,262 @@ function projectGroupLabel(group: ConversationProjectSessionGroup, t: Translator
   return group.projectPath ? abbreviateHomePath(group.projectPath) : t("conversation.session.noProject");
 }
 
+function toggleConversationSearchCardType(
+  selectedCardTypes: ConversationSearchCardType[],
+  cardType: ConversationSearchCardType,
+) {
+  if (allConversationSearchCardTypesSelected(selectedCardTypes)) {
+    return [cardType];
+  }
+  if (selectedCardTypes.includes(cardType)) {
+    if (selectedCardTypes.length === 1) return selectedCardTypes;
+    return CONVERSATION_SEARCH_CARD_TYPES.filter((candidate) => (
+      candidate !== cardType && selectedCardTypes.includes(candidate)
+    ));
+  }
+  return CONVERSATION_SEARCH_CARD_TYPES.filter((candidate) => (
+    candidate === cardType || selectedCardTypes.includes(candidate)
+  ));
+}
+
+function allConversationSearchCardTypesSelected(selectedCardTypes: ConversationSearchCardType[]) {
+  return searchResultMatchesSelectedCardTypes(CONVERSATION_SEARCH_CARD_TYPES, selectedCardTypes);
+}
+
 function ConversationContentSearchResults({
+  contentCardColors,
   loading,
+  onCardTypeToggle,
   onOpenHit,
+  onShowAllCardTypes,
   result,
+  selectedCardTypes,
   t,
 }: {
+  contentCardColors: ConversationContentCardColorSettings;
   loading: boolean;
+  onCardTypeToggle: (cardType: ConversationSearchCardType) => void;
   onOpenHit: (hit: ConversationSearchHit) => void;
+  onShowAllCardTypes: () => void;
   result: ConversationSearchResultState | null;
+  selectedCardTypes: ConversationSearchCardType[];
   t: Translator;
 }) {
   const hits = result?.hits ?? [];
+  const allCardTypesSelected = allConversationSearchCardTypesSelected(selectedCardTypes);
+  const visibleHits = allCardTypesSelected
+    ? hits
+    : hits.filter((hit) => selectedCardTypes.includes(hit.card_type));
   const query = result?.query ?? "";
+  const resultMatchesActiveFilter = result
+    ? searchResultMatchesSelectedCardTypes(result.contentTypes, selectedCardTypes)
+    : false;
+  const displayedTotalCount = resultMatchesActiveFilter && result ? result.totalCount : visibleHits.length;
+  const groupedHits = CONVERSATION_SEARCH_CARD_TYPES
+    .map((cardType) => ({
+      cardType,
+      hits: visibleHits.filter((hit) => hit.card_type === cardType),
+    }))
+    .filter((group) => group.hits.length > 0);
 
   return (
     <section
       aria-live="polite"
       className="mt-4 overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/72 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.14)]"
     >
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-theme-card-border bg-theme-card-header/72 px-4 py-3">
+      <header className="grid gap-3 border-b border-theme-card-border bg-theme-card-header/72 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
         <div className="min-w-0">
           <h2 className="text-label-caps text-on-surface-variant">{t("conversation.search.resultsTitle")}</h2>
           <p className="mt-1 truncate text-body-sm text-on-surface">
             {loading
               ? t("conversation.search.loading")
               : result
-                ? t("conversation.search.resultsCount", { count: result.totalCount, query })
+                ? t("conversation.search.resultsCount", { count: displayedTotalCount, query })
                 : t("conversation.search.empty")}
           </p>
         </div>
+        <div
+          aria-label={t("conversation.search.typeFilterAria")}
+          className="flex min-w-0 flex-wrap items-center gap-1.5"
+          role="group"
+        >
+          <button
+            aria-pressed={allCardTypesSelected}
+            className={`inline-flex h-8 shrink-0 items-center rounded-lg border px-2.5 text-label-caps transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 ${
+              allCardTypesSelected
+                ? "border-primary/50 bg-primary/12 text-primary"
+                : "border-theme-control-border bg-theme-control/80 text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface"
+            }`}
+            onClick={onShowAllCardTypes}
+            type="button"
+          >
+            {t("conversation.search.type.all")}
+          </button>
+          {CONVERSATION_SEARCH_CARD_TYPES.map((cardType) => (
+            <SearchCardTypeFilterButton
+              active={selectedCardTypes.includes(cardType)}
+              cardType={cardType}
+              colors={contentCardColors}
+              disabled={selectedCardTypes.length === 1 && selectedCardTypes[0] === cardType}
+              key={cardType}
+              onClick={() => onCardTypeToggle(cardType)}
+              t={t}
+            />
+          ))}
+        </div>
       </header>
-      {hits.length === 0 ? (
+      {loading ? (
+        <div
+          aria-label={t("conversation.search.loading")}
+          className="h-1 overflow-hidden bg-theme-control"
+          role="progressbar"
+        >
+          <div className="h-full w-full animate-pulse bg-status-update" />
+        </div>
+      ) : null}
+      {visibleHits.length === 0 ? (
         <div className="px-4 py-6 text-body-sm text-on-surface-variant">
           {loading ? t("conversation.search.loading") : t("conversation.search.empty")}
         </div>
       ) : (
         <div className="grid divide-y divide-theme-card-border">
-          {hits.map((hit) => (
-            <button
-              className="grid gap-2 px-4 py-3 text-left transition-colors hover:bg-theme-card-header/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-              key={`${hit.session.id}-${hit.block_id}-${hit.question_id}`}
-              onClick={() => onOpenHit(hit)}
-              type="button"
-            >
-              <span className="flex min-w-0 flex-wrap items-center gap-2">
-                <span className="rounded-full bg-theme-control px-2 py-1 text-label-caps text-primary">
-                  {conversationSearchCardTypeLabel(hit.card_type, t)}
+          {groupedHits.map((group) => (
+            <section className="grid" key={group.cardType}>
+              <header className="flex min-w-0 flex-wrap items-center justify-between gap-2 bg-theme-card-header/35 px-4 py-2">
+                <SearchCardTypeBadge cardType={group.cardType} colors={contentCardColors} t={t} />
+                <span className="text-code-sm text-on-surface-muted">
+                  {t("conversation.search.groupCount", { count: group.hits.length })}
                 </span>
-                <span className="min-w-0 truncate text-body-sm font-semibold text-on-surface">
-                  {hit.session.title}
-                </span>
-                <span className="min-w-0 truncate text-code-sm text-on-surface-muted">
-                  {hit.question_title}
-                </span>
-              </span>
-              <span className="line-clamp-2 text-body-sm text-on-surface-variant">{hit.snippet}</span>
-              {hit.session.project_path ? (
-                <span className="truncate font-mono text-code-sm text-on-surface-muted">
-                  {abbreviateHomePath(hit.session.project_path)}
-                </span>
-              ) : null}
-            </button>
+              </header>
+              <div className="grid divide-y divide-theme-card-border/70">
+                {group.hits.map((hit) => (
+                  <button
+                    aria-label={t("conversation.search.openHit", {
+                      title: hit.session.title,
+                      type: conversationSearchCardTypeLabel(hit.card_type, t),
+                    })}
+                    className="grid gap-2 px-4 py-3 text-left transition-colors hover:bg-theme-card-header/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                    key={`${hit.session.id}-${hit.block_id}-${hit.question_id}`}
+                    onClick={() => onOpenHit(hit)}
+                    type="button"
+                  >
+                    <span className="flex min-w-0 flex-wrap items-center gap-2">
+                      <SearchCardTypeBadge cardType={hit.card_type} colors={contentCardColors} t={t} />
+                      <span className="min-w-0 truncate text-body-sm font-semibold text-on-surface">
+                        {hit.session.title}
+                      </span>
+                      <span className="min-w-0 truncate text-code-sm text-on-surface-muted">
+                        {hit.question_title}
+                      </span>
+                    </span>
+                    <span className="line-clamp-2 text-body-sm text-on-surface-variant">{hit.snippet}</span>
+                    {hit.session.project_path ? (
+                      <span className="truncate font-mono text-code-sm text-on-surface-muted">
+                        {abbreviateHomePath(hit.session.project_path)}
+                      </span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       )}
     </section>
   );
+}
+
+function SearchCardTypeFilterButton({
+  active,
+  cardType,
+  colors,
+  disabled,
+  onClick,
+  t,
+}: {
+  active: boolean;
+  cardType: ConversationSearchCardType;
+  colors: ConversationContentCardColorSettings;
+  disabled: boolean;
+  onClick: () => void;
+  t: Translator;
+}) {
+  const palette = searchCardTypePalette(cardType, colors);
+  return (
+    <button
+      aria-pressed={active}
+      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-theme-control-border px-2.5 text-label-caps text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-on-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 disabled:cursor-default disabled:hover:bg-transparent"
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        backgroundColor: active ? palette.backgroundColor : undefined,
+        borderColor: active ? palette.borderColor : undefined,
+        color: active ? palette.accentColor : undefined,
+      }}
+      type="button"
+    >
+      <span className="size-2 rounded-full" style={{ backgroundColor: palette.accentColor }} />
+      <span>{conversationSearchCardTypeLabel(cardType, t)}</span>
+    </button>
+  );
+}
+
+function searchResultMatchesSelectedCardTypes(
+  contentTypes: ConversationSearchCardType[],
+  selectedCardTypes: ConversationSearchCardType[],
+) {
+  if (contentTypes.length !== selectedCardTypes.length) return false;
+  return CONVERSATION_SEARCH_CARD_TYPES.every((cardType) => (
+    contentTypes.includes(cardType) === selectedCardTypes.includes(cardType)
+  ));
+}
+
+function SearchCardTypeBadge({
+  cardType,
+  colors,
+  t,
+}: {
+  cardType: ConversationSearchCardType;
+  colors: ConversationContentCardColorSettings;
+  t: Translator;
+}) {
+  const palette = searchCardTypePalette(cardType, colors);
+  return (
+    <span
+      className="inline-flex shrink-0 items-center rounded-full border px-2 py-1 text-label-caps"
+      data-search-card-type-badge={cardType}
+      style={{
+        backgroundColor: palette.backgroundColor,
+        borderColor: palette.borderColor,
+        color: palette.accentColor,
+      }}
+    >
+      {conversationSearchCardTypeLabel(cardType, t)}
+    </span>
+  );
+}
+
+function searchCardTypePalette(
+  cardType: ConversationSearchCardType,
+  colors: ConversationContentCardColorSettings,
+) {
+  if (cardType === "question") {
+    return {
+      accentColor: "rgb(var(--color-primary-strong))",
+      backgroundColor: "rgb(var(--color-primary-strong) / 0.12)",
+      borderColor: "rgb(var(--color-primary-strong) / 0.42)",
+    };
+  }
+  const accentColor = colors[cardType];
+  return {
+    accentColor,
+    backgroundColor: hexWithAlpha(accentColor, "18"),
+    borderColor: hexWithAlpha(accentColor, "66"),
+  };
+}
+
+function hexWithAlpha(hexColor: string, alpha: string) {
+  return `${hexColor}${alpha}`;
 }
 
 function conversationSearchCardTypeLabel(cardType: ConversationSearchCardType, t: Translator) {
@@ -1674,13 +1922,14 @@ export function SessionQuestionWorkspace({
   outputRoot,
   question,
   questions,
+  recordKind = "session",
   resultPreviewLineLimit = DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
   selectedQuestionId,
   selectedQuestionIds,
   session,
   setOutputRoot,
   t,
-  translationTargetLanguage = DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
+  translationSettings,
   visibility,
 }: {
   activeSearchTarget?: ConversationSearchTarget | null;
@@ -1696,13 +1945,14 @@ export function SessionQuestionWorkspace({
   outputRoot: string;
   question: ConversationQuestionDetail | null;
   questions: ConversationQuestionDetail[];
+  recordKind?: ConversationRecordKind;
   resultPreviewLineLimit?: number;
   selectedQuestionId: string | null;
   selectedQuestionIds: Set<string>;
   session: ConversationSessionDetail | null;
   setOutputRoot: (value: string) => void;
   t: Translator;
-  translationTargetLanguage?: ConversationTranslationTargetLanguage;
+  translationSettings?: ConversationTranslationSettings;
   visibility: ConversationContentVisibility;
 }) {
   return (
@@ -1769,10 +2019,11 @@ export function SessionQuestionWorkspace({
             outputRoot={outputRoot}
             question={question}
             resultPreviewLineLimit={resultPreviewLineLimit}
+            recordKind={recordKind}
             session={session}
             setOutputRoot={setOutputRoot}
             t={t}
-            translationTargetLanguage={translationTargetLanguage}
+            translationSettings={translationSettings}
             visibility={visibility}
           />
         ) : (
@@ -1850,11 +2101,12 @@ export function QuestionPreview({
   onSplit,
   outputRoot,
   question,
+  recordKind = "session",
   resultPreviewLineLimit,
   session,
   setOutputRoot,
   t,
-  translationTargetLanguage = DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
+  translationSettings,
   visibility = DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
 }: {
   activeSearchTarget?: ConversationSearchTarget | null;
@@ -1865,11 +2117,12 @@ export function QuestionPreview({
   onSplit?: (question: ConversationQuestionDetail, turnId: string) => Promise<void>;
   outputRoot: string;
   question: ConversationQuestionDetail;
+  recordKind?: ConversationRecordKind;
   resultPreviewLineLimit?: number;
   session: ConversationSessionDetail;
   setOutputRoot: (value: string) => void;
   t: Translator;
-  translationTargetLanguage?: ConversationTranslationTargetLanguage;
+  translationSettings?: ConversationTranslationSettings;
   visibility?: ConversationContentVisibility;
 }) {
   const title = question.question.title || firstLine(question.question.question_text, t);
@@ -1992,9 +2245,10 @@ export function QuestionPreview({
                     blocks={blocks}
                     colors={contentCardColors}
                     onCopyError={onCopyError}
+                    recordKind={recordKind}
                     resultPreviewLineLimit={resultPreviewLineLimit}
                     t={t}
-                    translationTargetLanguage={translationTargetLanguage}
+                    translationSettings={translationSettings}
                     visibility={visibility}
                   />
                 )}
@@ -2142,5 +2396,20 @@ function formatConversationSyncSummary(
       turns: summary.turnCount,
       warnings: summary.warningCount,
     },
+  );
+}
+
+function formatConversationSyncAdvice(
+  summary: ConversationSyncSummaryCounts | null,
+  t: Translator,
+  recordKind: ConversationRecordKind = "session",
+) {
+  if (!summary || summary.errorCount <= 0) {
+    return undefined;
+  }
+  return t(
+    recordKind === "web"
+      ? "conversation.sync.web.partialFailureAdvice"
+      : "conversation.sync.partialFailureAdvice",
   );
 }

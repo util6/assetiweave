@@ -22,6 +22,7 @@ export type ConversationSyncPhase =
   | "failed";
 
 export interface ConversationSyncProgressState {
+  advice?: string;
   phase: ConversationSyncPhase;
   sourceLabel: string;
   failedStep?: 1 | 2 | 3;
@@ -116,6 +117,7 @@ export function ConversationSyncProgress({
   const description = t(syncDescriptionKey(recordKind, state.phase));
   const failed = state.phase === "failed";
   const completed = state.phase === "completed";
+  const completedWithAdvice = completed && Boolean(state.advice);
   const scopeLabel = t(
     recordKind === "web"
       ? "conversation.sync.web.scope"
@@ -129,7 +131,9 @@ export function ConversationSyncProgress({
       className={`mt-4 rounded-xl border px-4 py-3 ${
         failed
           ? "border-status-remove/40 bg-status-remove/10"
-          : completed
+          : completedWithAdvice
+            ? "border-status-update/40 bg-status-update/[0.08]"
+            : completed
             ? "border-status-create/40 bg-status-create/10"
             : "border-status-update/35 bg-status-update/[0.08]"
       }`}
@@ -137,12 +141,17 @@ export function ConversationSyncProgress({
     >
       <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
         <div className="min-w-0">
-          <p className={`text-body-sm font-semibold ${failed ? "text-status-remove" : completed ? "text-status-create" : "text-on-surface"}`}>
+          <p className={`text-body-sm font-semibold ${failed ? "text-status-remove" : completedWithAdvice ? "text-status-update" : completed ? "text-status-create" : "text-on-surface"}`}>
             {title}
           </p>
           <p className="mt-1 max-w-3xl text-body-sm text-on-surface-variant">{description}</p>
           {state.summary ? (
             <p className="mt-2 max-w-4xl break-words text-body-sm text-on-surface">{state.summary}</p>
+          ) : null}
+          {state.advice ? (
+            <p className="mt-2 max-w-4xl break-words text-body-sm font-medium text-status-update">
+              {state.advice}
+            </p>
           ) : null}
         </div>
         <div className="flex min-w-0 items-start justify-between gap-3 md:justify-end md:text-right">
@@ -180,7 +189,9 @@ export function ConversationSyncProgress({
           className={`h-full rounded-full transition-[width] duration-500 ${
             failed
               ? "bg-status-remove"
-              : completed
+              : completedWithAdvice
+                ? "bg-status-update"
+                : completed
                 ? "bg-status-create"
                 : "animate-pulse bg-status-update"
           }`}

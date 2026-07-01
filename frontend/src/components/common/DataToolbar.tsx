@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { Search } from "lucide-react";
-import type { ChangeEvent, CompositionEvent, ReactNode, Ref } from "react";
+import type { ChangeEvent, CompositionEvent, KeyboardEvent, ReactNode, Ref } from "react";
 
 export type ToolbarViewMode = "list" | "columns" | "grid";
 
@@ -77,26 +77,32 @@ export function ToolbarCluster({
 }
 
 export function ToolbarSearch({
+  ariaLabel,
   className,
   defaultValue,
   inputRef,
   onChange,
   onCompositionEnd,
   onCompositionStart,
+  onKeyDown,
   placeholder,
+  trailing,
   value,
 }: {
+  ariaLabel?: string;
   className?: string;
   defaultValue?: string;
   inputRef?: Ref<HTMLInputElement>;
   onChange: (value: string, event: ChangeEvent<HTMLInputElement>) => void;
   onCompositionEnd?: (event: CompositionEvent<HTMLInputElement>) => void;
   onCompositionStart?: (event: CompositionEvent<HTMLInputElement>) => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void;
   placeholder: string;
+  trailing?: ReactNode;
   value?: string;
 }) {
   return (
-    <label
+    <div
       className={clsx(
         "flex h-10 min-w-[16rem] shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-theme-control-border bg-theme-control/95 px-3 text-outline shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors focus-within:border-primary/60 focus-within:text-primary",
         className,
@@ -105,16 +111,20 @@ export function ToolbarSearch({
     >
       <Search size={17} />
       <input
+        aria-label={ariaLabel ?? placeholder}
         className="min-w-0 flex-1 whitespace-nowrap border-0 bg-transparent text-body-sm text-on-surface outline-none placeholder:text-outline"
         defaultValue={defaultValue}
         onChange={(event) => onChange(event.target.value, event)}
         onCompositionEnd={onCompositionEnd}
         onCompositionStart={onCompositionStart}
+        onKeyDown={onKeyDown}
         placeholder={placeholder}
         ref={inputRef}
+        type="search"
         value={value}
       />
-    </label>
+      {trailing}
+    </div>
   );
 }
 
@@ -173,7 +183,7 @@ export function ToolbarActionButton({
         "inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-55",
         text ? "min-w-[5.75rem] px-3 text-body-sm font-semibold" : "w-10",
         primary
-          ? "bg-theme-button-primary text-theme-button-primary-fg shadow-glow hover:-translate-y-0.5 hover:bg-theme-button-primary-hover"
+          ? "theme-primary-gradient text-theme-button-primary-fg hover:-translate-y-0.5"
           : "border border-theme-control-border bg-theme-control/95 text-theme-control-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] hover:bg-theme-control-hover hover:text-on-surface",
       )}
       disabled={disabled}

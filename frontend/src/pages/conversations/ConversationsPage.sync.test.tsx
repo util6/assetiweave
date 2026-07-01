@@ -176,13 +176,21 @@ describe("ConversationsPage sync scope", () => {
   });
 
   it.each(["session", "web"] as const)(
-    "debounces content card search before showing loading or querying on %s pages",
+    "coalesces content card typing before searching on %s pages",
     async (recordKind) => {
       vi.useFakeTimers();
       try {
         renderConversationsPage(recordKind);
 
         const searchInput = screen.getByPlaceholderText("Search content and jump to cards...") as HTMLInputElement;
+        fireEvent.change(searchInput, { target: { value: "d" } });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(300);
+        });
+        fireEvent.change(searchInput, { target: { value: "de" } });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(300);
+        });
         fireEvent.change(searchInput, { target: { value: "deploy" } });
 
         expect(searchInput.value).toBe("deploy");
@@ -190,7 +198,7 @@ describe("ConversationsPage sync scope", () => {
         expect(searchConversationRecordsMock).not.toHaveBeenCalled();
 
         await act(async () => {
-          await vi.advanceTimersByTimeAsync(219);
+          await vi.advanceTimersByTimeAsync(699);
         });
 
         expect(searchConversationRecordsMock).not.toHaveBeenCalled();
@@ -210,6 +218,180 @@ describe("ConversationsPage sync scope", () => {
       }
     },
   );
+
+  it("submits content card search immediately from Enter or the search button", async () => {
+    vi.useFakeTimers();
+    try {
+      renderConversationsPage("session");
+
+      const searchInput = screen.getByPlaceholderText("Search content and jump to cards...") as HTMLInputElement;
+      fireEvent.change(searchInput, { target: { value: "deploy" } });
+      fireEvent.keyDown(searchInput, { key: "Enter" });
+
+      await act(async () => undefined);
+
+      expect(searchConversationRecordsMock).toHaveBeenCalledWith({
+        content_types: ["question", "answer", "tool", "command", "code", "result"],
+        limit: 50,
+        query: "deploy",
+        record_kind: "session",
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(700);
+      });
+
+      expect(searchConversationRecordsMock).toHaveBeenCalledTimes(1);
+      searchConversationRecordsMock.mockClear();
+
+      fireEvent.change(searchInput, { target: { value: "rollback" } });
+      fireEvent.click(screen.getByRole("button", { name: "Search content" }));
+
+      await act(async () => undefined);
+
+      expect(searchConversationRecordsMock).toHaveBeenCalledWith({
+        content_types: ["question", "answer", "tool", "command", "code", "result"],
+        limit: 50,
+        query: "rollback",
+        record_kind: "session",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows explicit progress while content card search is running", async () => {
+    let resolveSearch: (value: Awaited<ReturnType<typeof searchConversationRecordsMock>>) => void;
+    searchConversationRecordsMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSearch = resolve;
+      }),
+    );
+
+    renderConversationsPage("session");
+
+    const searchInput = screen.getByPlaceholderText("Search content and jump to cards...") as HTMLInputElement;
+    fireEvent.change(searchInput, { target: { value: "deploy" } });
+    fireEvent.keyDown(searchInput, { key: "Enter" });
+
+    expect(await screen.findByRole("progressbar", { name: "Searching content..." })).toBeTruthy();
+
+    resolveSearch!({
+      hits: [],
+      query: "deploy",
+      record_kind: "session",
+      scope: {
+        adapter_id: null,
+        content_types: ["question", "answer", "tool", "command", "code", "result"],
+        limit: 50,
+        offset: 0,
+        project_path: null,
+        query: "deploy",
+        record_kind: "session",
+        since: null,
+        timeline: false,
+        until: null,
+      },
+      total_count: 0,
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByRole("progressbar", { name: "Searching content..." })).toBeNull(),
+    );
+  });
+
+  it("groups search hits by card type and filters multiple result types from the header", async () => {
+    searchConversationRecordsMock.mockResolvedValueOnce({
+      hits: [
+        searchHit("command-hit", "command", "command match"),
+        searchHit("answer-hit-1", "answer", "answer match one"),
+        searchHit("answer-hit-2", "answer", "answer match two"),
+      ],
+      query: "deploy",
+      record_kind: "session",
+      scope: searchScope("deploy", ["question", "answer", "tool", "command", "code", "result"]),
+      total_count: 3,
+    });
+
+    renderConversationsPage("session");
+
+    const searchInput = screen.getByPlaceholderText("Search content and jump to cards...") as HTMLInputElement;
+    fireEvent.change(searchInput, { target: { value: "deploy" } });
+    fireEvent.keyDown(searchInput, { key: "Enter" });
+
+    const answerOne = await screen.findByText("answer match one");
+    const answerTwo = screen.getByText("answer match two");
+    const command = screen.getByText("command match");
+
+    expect(answerOne.compareDocumentPosition(command) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(answerTwo.compareDocumentPosition(command) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const commandBadge = document.querySelector('[data-search-card-type-badge="command"]');
+    expect(commandBadge?.getAttribute("style")).toContain("rgb(208, 138, 25)");
+
+    let resolveCommandSearch: (value: Awaited<ReturnType<typeof searchConversationRecordsMock>>) => void;
+    searchConversationRecordsMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCommandSearch = resolve;
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Commands" }));
+
+    await waitFor(() =>
+      expect(searchConversationRecordsMock).toHaveBeenLastCalledWith({
+        content_types: ["command"],
+        limit: 50,
+        query: "deploy",
+        record_kind: "session",
+      }),
+    );
+    expect(screen.queryByText("answer match one")).toBeNull();
+    expect(screen.getByText("command match")).toBeTruthy();
+
+    let resolveCombinedSearch: (value: Awaited<ReturnType<typeof searchConversationRecordsMock>>) => void;
+    searchConversationRecordsMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCombinedSearch = resolve;
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Answer text" }));
+
+    await waitFor(() =>
+      expect(searchConversationRecordsMock).toHaveBeenLastCalledWith({
+        content_types: ["answer", "command"],
+        limit: 50,
+        query: "deploy",
+        record_kind: "session",
+      }),
+    );
+    expect(screen.getByText("answer match one")).toBeTruthy();
+    expect(screen.getByText("command match")).toBeTruthy();
+
+    resolveCommandSearch!({
+      hits: [searchHit("command-hit", "command", "command match")],
+      query: "deploy",
+      record_kind: "session",
+      scope: searchScope("deploy", ["command"]),
+      total_count: 1,
+    });
+    resolveCombinedSearch!({
+      hits: [
+        searchHit("answer-hit-1", "answer", "answer match one"),
+        searchHit("command-hit", "command", "command match"),
+      ],
+      query: "deploy",
+      record_kind: "session",
+      scope: searchScope("deploy", ["answer", "command"]),
+      total_count: 2,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("answer match one")).toBeTruthy();
+    });
+    expect(screen.getByText("command match")).toBeTruthy();
+  });
 
   it.each(["session", "web"] as const)(
     "waits for IME composition to finish before searching content cards on %s pages",
@@ -242,7 +424,7 @@ describe("ConversationsPage sync scope", () => {
         expect(searchInput.value).toBe("中");
 
         await act(async () => {
-          await vi.advanceTimersByTimeAsync(220);
+          await vi.advanceTimersByTimeAsync(700);
         });
 
         expect(searchConversationRecordsMock).toHaveBeenCalledWith({
@@ -322,6 +504,49 @@ describe("ConversationsPage sync scope", () => {
     });
   });
 
+  it("shows usage guidance when a completed web sync has failed sources", async () => {
+    conversationSyncTaskMock.current = {
+      adapter_id: null,
+      dry_run: false,
+      error: null,
+      finished_at: "2026-06-15T00:00:05Z",
+      id: "sync-completed-with-errors",
+      record_kind: "web",
+      result: {
+        errors: [
+          {
+            adapter_id: "gemini-web",
+            message: "Gemini web CSRF token SNlM0e was not found",
+            source_id: "gemini-web-export",
+          },
+        ],
+        results: [
+          {
+            adapter_id: "chatgpt-web",
+            record_kind: "web",
+            session_count: 1,
+            skipped_session_count: 0,
+            source_id: "chatgpt-web-export",
+            turn_count: 3,
+            warning_count: 0,
+          },
+        ],
+      },
+      source_id: null,
+      started_at: "2026-06-15T00:00:00Z",
+      status: "completed",
+    };
+
+    renderConversationsPage("web");
+
+    expect(await screen.findByText("Web record sync completed")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Some web sources failed even though the sync task completed. Successful sources were imported; refresh browser login or re-trust changed adapters, then sync the failed source again.",
+      ),
+    ).toBeTruthy();
+  });
+
   it("keeps completed sync progress dismissed after leaving and returning to the page", async () => {
     conversationSyncTaskMock.current = {
       adapter_id: null,
@@ -386,6 +611,43 @@ function renderConversationsPage(
       />
     </I18nProvider>,
   );
+}
+
+function searchScope(
+  query: string,
+  contentTypes: Array<"question" | "answer" | "tool" | "command" | "code" | "result">,
+) {
+  return {
+    adapter_id: null,
+    content_types: contentTypes,
+    limit: 50,
+    offset: 0,
+    project_path: null,
+    query,
+    record_kind: "session" as const,
+    since: null,
+    timeline: false,
+    until: null,
+  };
+}
+
+function searchHit(
+  id: string,
+  cardType: "question" | "answer" | "tool" | "command" | "code" | "result",
+  snippet: string,
+) {
+  return {
+    block_id: id,
+    card_type: cardType,
+    part_id: `${id}-part`,
+    question_id: `${id}-question`,
+    question_index: 0,
+    question_title: `${snippet} question`,
+    score: 100,
+    session: conversationSession,
+    snippet,
+    turn_id: `${id}-turn`,
+  };
 }
 
 const conversationAdapter: ConversationAdapter = {
