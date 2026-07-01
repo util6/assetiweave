@@ -43,6 +43,12 @@ const SkillGroupsPage = lazy(() =>
   })),
 );
 
+const PromptOverviewPage = lazy(() =>
+  import("../pages/prompts/PromptOverviewPage").then((module) => ({
+    default: module.PromptOverviewPage,
+  })),
+);
+
 const SkillMountsPage = lazy(() =>
   import("../pages/mounts/SkillMountsPage").then((module) => ({
     default: module.SkillMountsPage,
@@ -249,6 +255,10 @@ export function AppRouter() {
                 refreshingMountStatus={catalog.refreshingMountStatus}
                 sources={catalog.sources}
               />
+            </Suspense>
+          ) : routeId === "prompts-overview" ? (
+            <Suspense fallback={<RouteLoadingState />}>
+              <PromptOverviewPage onManualOpen={openCurrentManual} />
             </Suspense>
           ) : routeId === "sources" ? (
             <Suspense fallback={<RouteLoadingState />}>

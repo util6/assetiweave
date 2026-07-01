@@ -54,6 +54,19 @@ describe("app route resolution", () => {
     ).toBe("web-records");
   });
 
+  it("routes the prompt overview tab to the prompt notes page", () => {
+    expect(
+      resolveAppRoute(
+        {
+          ...fallbackNavigationModel,
+          activeHeaderTabId: "prompts",
+          activeSubNavId: "overview",
+        },
+        "overview",
+      ),
+    ).toBe("prompts-overview");
+  });
+
   it("does not route retired conversation source and adapter tabs to the conversations page", () => {
     expect(
       resolveAppRoute(
@@ -118,9 +131,9 @@ describe("app route resolution", () => {
         {
           ...fallbackNavigationModel,
           activeHeaderTabId: "prompts",
-          activeSubNavId: "overview",
+          activeSubNavId: "templates",
         },
-        "overview",
+        "templates",
       ),
     ).toBe("under-construction");
   });
