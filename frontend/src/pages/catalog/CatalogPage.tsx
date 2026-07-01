@@ -47,6 +47,12 @@ export function CatalogPage({
     void refreshAssetGroups();
   }, [editingAsset]);
 
+  useEffect(() => {
+    if (editingAsset && !catalog.assets.some((asset) => asset.id === editingAsset.id)) {
+      setEditingAsset(null);
+    }
+  }, [catalog.assets, editingAsset]);
+
   async function refreshAssetGroups() {
     try {
       setAssetGroups(await listSkillGroups());

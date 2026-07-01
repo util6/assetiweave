@@ -95,6 +95,12 @@ export function SourcesPage({
     void refreshAssetGroups();
   }, [editingAsset]);
 
+  useEffect(() => {
+    if (editingAsset && !assets.some((asset) => asset.id === editingAsset.id)) {
+      setEditingAsset(null);
+    }
+  }, [assets, editingAsset]);
+
   async function refreshAssetGroups() {
     try {
       setAssetGroups(await listSkillGroups());

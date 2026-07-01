@@ -82,7 +82,7 @@ export function useCatalogController() {
     });
 
     try {
-      const statuses = await catalogData.refreshMountState();
+      const statuses = await catalogData.refreshCatalogAndMountState();
       const summary = summarizeMountStatusRefresh(statuses);
       operations.clearDeploymentPlan();
       setNotification({

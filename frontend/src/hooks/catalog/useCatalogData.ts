@@ -69,6 +69,20 @@ export function useCatalogData() {
     return mountStatusList;
   }
 
+  async function refreshCatalogAndMountState() {
+    const [assetList, sourceList, appOverview, mountStatusList] = await Promise.all([
+      listAssets(activeAssetKind),
+      listSources(),
+      getOverview(),
+      refreshAssetMountStatuses(),
+    ]);
+    setAssets(assetList);
+    setSources(sourceList);
+    setAssetMountStatuses(mountStatusList);
+    setOverview(appOverview);
+    return mountStatusList;
+  }
+
   async function refreshProfiles() {
     const [profileList, shortcutList, appOverview, mountStatusList] = await Promise.all([
       listProfiles(),
@@ -128,6 +142,7 @@ export function useCatalogData() {
     overview,
     profiles,
     reloadCatalogData: loadCatalogData,
+    refreshCatalogAndMountState,
     refreshMountState,
     refreshOverview,
     refreshProfiles,
