@@ -105,6 +105,7 @@ pub(crate) fn catalog_assets_sqlx(
     db.block_on(async move {
         let assets = crate::backend::store::load_assets_sqlx(&pool, &tenant_id, kind).await?;
         let sources = crate::backend::store::load_sources_sqlx(&pool, &tenant_id).await?;
+        let assets = filter_unavailable_backup_library_assets(assets, &sources);
         AppResult::Ok(build_catalog_assets(assets, &sources))
     })
 }
@@ -119,6 +120,7 @@ pub(crate) fn catalog_visible_assets_sqlx(
     db.block_on(async move {
         let assets = crate::backend::store::load_assets_sqlx(&pool, &tenant_id, kind).await?;
         let sources = crate::backend::store::load_sources_sqlx(&pool, &tenant_id).await?;
+        let assets = filter_unavailable_backup_library_assets(assets, &sources);
         AppResult::Ok(
             build_catalog_asset_entries(assets, &sources)
                 .into_iter()
@@ -126,6 +128,20 @@ pub(crate) fn catalog_visible_assets_sqlx(
                 .collect(),
         )
     })
+}
+
+fn filter_unavailable_backup_library_assets(assets: Vec<Asset>, sources: &[Source]) -> Vec<Asset> {
+    let source_by_id = sources
+        .iter()
+        .map(|source| (source.id.as_str(), source))
+        .collect::<HashMap<_, _>>();
+    assets
+        .into_iter()
+        .filter(|asset| {
+            let source = source_by_id.get(asset.source_id.as_str()).copied();
+            !unavailable_backup_library_asset(asset, source)
+        })
+        .collect()
 }
 
 pub(crate) fn build_catalog_assets(assets: Vec<Asset>, sources: &[Source]) -> Vec<CatalogAsset> {
@@ -143,6 +159,7 @@ fn build_catalog_asset_entries(assets: Vec<Asset>, sources: &[Source]) -> Vec<Ca
     let mut without_identity = Vec::new();
 
     for asset in assets {
+        let source = source_by_id.get(asset.source_id.as_str()).copied();
         if asset.kind == AssetKind::Skill {
             if let Some(content_hash) = asset.content_hash.clone().filter(|hash| !hash.is_empty()) {
                 content_groups.entry(content_hash).or_default().push(asset);
@@ -150,10 +167,7 @@ fn build_catalog_asset_entries(assets: Vec<Asset>, sources: &[Source]) -> Vec<Ca
             }
         }
         without_identity.push(CatalogAsset {
-            backup_status: standalone_backup_status(
-                &asset,
-                source_by_id.get(asset.source_id.as_str()).copied(),
-            ),
+            backup_status: standalone_backup_status(&asset, source),
             repository: None,
             asset,
         });
@@ -259,6 +273,27 @@ fn standalone_backup_status(
         backup_path: Some(asset.absolute_path.clone()),
         hidden_asset_ids: Vec::new(),
     })
+}
+
+fn unavailable_backup_library_asset(asset: &Asset, source: Option<&Source>) -> bool {
+    if asset.kind != AssetKind::Skill || backup_entry_state(asset, source).is_none() {
+        return false;
+    }
+
+    let asset_path = Path::new(&asset.absolute_path);
+    if !asset_path.exists() {
+        return true;
+    }
+
+    source
+        .and_then(|source| expand_path(&source.root_path).ok())
+        .is_some_and(|root| !path_is_inside_or_same(&root, asset_path))
+}
+
+fn path_is_inside_or_same(root: &Path, path: &Path) -> bool {
+    let normalized_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let normalized_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    normalized_path == normalized_root || normalized_path.starts_with(&normalized_root)
 }
 
 fn backup_entry_state(asset: &Asset, source: Option<&Source>) -> Option<SkillBackupState> {

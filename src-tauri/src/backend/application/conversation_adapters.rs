@@ -230,13 +230,16 @@ impl AppService {
             }
             let sessions_result =
                 if !params.dry_run && is_web_record_adapter(adapter.as_ref(), &source.adapter_id) {
-                    crate::backend::conversations::run_conversation_harvester_for_source(&source)
-                        .and_then(|_| {
-                            crate::backend::conversations::read_source_sessions_with_adapter(
-                                adapter.as_ref(),
-                                &source,
-                            )
-                        })
+                    crate::backend::conversations::run_conversation_harvester_for_adapter_source(
+                        adapter.as_ref(),
+                        &source,
+                    )
+                    .and_then(|_| {
+                        crate::backend::conversations::read_source_sessions_with_adapter(
+                            adapter.as_ref(),
+                            &source,
+                        )
+                    })
                 } else {
                     crate::backend::conversations::read_source_sessions_with_adapter(
                         adapter.as_ref(),

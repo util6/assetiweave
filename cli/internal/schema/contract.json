@@ -2864,6 +2864,54 @@
       "supports_dry_run": true
     },
     {
+      "canonical_method": "conversation.part.translation.update",
+      "cli": "assetiweave-cli conversation part translation update <part-id> --text <text>",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Overwrite the stored translation for a conversation content part",
+      "exposure": "friendly",
+      "method": "conversation.part.translation.update",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "part_id": {
+            "aliases": [
+              "partId"
+            ],
+            "description": "Conversation part identifier",
+            "type": "string"
+          },
+          "record_kind": {
+            "aliases": [
+              "recordKind"
+            ],
+            "default": null,
+            "description": "Conversation record table family",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "translated_text": {
+            "aliases": [
+              "translatedText"
+            ],
+            "description": "Translated content to store",
+            "type": "string"
+          }
+        },
+        "required": [
+          "part_id",
+          "translated_text"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "doctor.run",
       "cli": "assetiweave-cli doctor",
       "confirmation_required": false,
@@ -5847,6 +5895,146 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.card.translation.run",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Translate a conversation content card with the configured translation provider",
+      "exposure": "app",
+      "method": "translate_conversation_card",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "cli": {
+            "description": "CLI translator when provider is cli",
+            "enum": [
+              "opencode",
+              "gemini"
+            ],
+            "type": "string"
+          },
+          "model": {
+            "description": "Optional model identifier",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "Rendered translation prompt",
+            "type": "string"
+          },
+          "provider": {
+            "description": "Translation provider family",
+            "enum": [
+              "cli",
+              "google",
+              "apple"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "cli",
+          "model",
+          "prompt"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.card.translation.connection-test",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Run a lightweight translation prompt to test provider connectivity",
+      "exposure": "app",
+      "method": "test_conversation_translation_connection",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "cli": {
+            "description": "CLI translator when provider is cli",
+            "enum": [
+              "opencode",
+              "gemini"
+            ],
+            "type": "string"
+          },
+          "model": {
+            "description": "Optional model identifier",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "Connection test prompt",
+            "type": "string"
+          },
+          "provider": {
+            "description": "Translation provider family",
+            "enum": [
+              "cli",
+              "google",
+              "apple"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "cli",
+          "model",
+          "prompt"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.card.translation.model-list",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List available translation models for the selected provider",
+      "exposure": "app",
+      "method": "list_conversation_translation_models",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "cli": {
+            "description": "CLI translator when provider is cli",
+            "enum": [
+              "opencode",
+              "gemini"
+            ],
+            "type": "string"
+          },
+          "provider": {
+            "description": "Translation provider family",
+            "enum": [
+              "cli",
+              "google",
+              "apple"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "cli"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.adapter.register",
       "cli": null,
       "confirmation_required": true,
@@ -6980,6 +7168,54 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.part.translation.update",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Overwrite the stored translation for a conversation content part",
+      "exposure": "app",
+      "method": "update_conversation_part_translation",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "part_id": {
+            "aliases": [
+              "partId"
+            ],
+            "description": "Conversation part identifier",
+            "type": "string"
+          },
+          "record_kind": {
+            "aliases": [
+              "recordKind"
+            ],
+            "default": null,
+            "description": "Conversation record table family",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "translated_text": {
+            "aliases": [
+              "translatedText"
+            ],
+            "description": "Translated content to store",
+            "type": "string"
+          }
+        },
+        "required": [
+          "part_id",
+          "translated_text"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "create_plan",
       "cli": null,
       "confirmation_required": false,
@@ -7375,6 +7611,7 @@
     "conversation.question.get",
     "conversation.question.merge",
     "conversation.question.split",
+    "conversation.part.translation.update",
     "doctor.run",
     "system.version",
     "schema.list",
@@ -7435,6 +7672,9 @@
     "list_conversation_adapter_runtime_statuses",
     "check_opencode_translation_availability",
     "translate_conversation_card_with_opencode",
+    "translate_conversation_card",
+    "test_conversation_translation_connection",
+    "list_conversation_translation_models",
     "register_conversation_adapter",
     "unregister_conversation_adapter",
     "try_run_conversation_adapter",
@@ -7457,6 +7697,7 @@
     "get_conversation_question",
     "merge_conversation_questions",
     "split_conversation_question",
+    "update_conversation_part_translation",
     "create_plan",
     "execute_plan",
     "logs_get_snapshot",

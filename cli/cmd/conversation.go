@@ -24,6 +24,7 @@ func newCmdConversation(f *cmdutil.Factory) *cobra.Command {
 	cmd.AddCommand(newCmdConversationSession(f))
 	cmd.AddCommand(newCmdConversationWebRecord(f))
 	cmd.AddCommand(newCmdConversationQuestion(f))
+	cmd.AddCommand(newCmdConversationPart(f))
 	cmd.AddCommand(newCmdConversationWeb(f))
 	return cmd
 }
@@ -1038,6 +1039,38 @@ func newCmdConversationQuestionSplit(f *cmdutil.Factory) *cobra.Command {
 	cmd.Flags().StringVar(&beforeTurn, "before-turn", "", "turn id that starts the new question")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without splitting")
 	_ = cmd.MarkFlagRequired("before-turn")
+	return cmd
+}
+
+func newCmdConversationPart(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "part", Short: "Manage conversation content parts"}
+	cmd.AddCommand(newCmdConversationPartTranslation(f))
+	return cmd
+}
+
+func newCmdConversationPartTranslation(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "translation", Short: "Manage stored part translations"}
+	cmd.AddCommand(newCmdConversationPartTranslationUpdate(f))
+	return cmd
+}
+
+func newCmdConversationPartTranslationUpdate(f *cmdutil.Factory) *cobra.Command {
+	var recordKind, text string
+	cmd := &cobra.Command{
+		Use:   "update <part-id>",
+		Short: "Overwrite the stored translation for a content part",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodConversationPartTranslationUpdate, map[string]any{
+				"record_kind":     recordKind,
+				"part_id":         args[0],
+				"translated_text": text,
+			})
+		},
+	}
+	cmd.Flags().StringVar(&recordKind, "record-kind", "session", "conversation record kind: session or web")
+	cmd.Flags().StringVar(&text, "text", "", "translated content to store")
+	_ = cmd.MarkFlagRequired("text")
 	return cmd
 }
 
