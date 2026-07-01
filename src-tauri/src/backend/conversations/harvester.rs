@@ -20,9 +20,32 @@ struct HarvesterManifest {
 
 pub(crate) fn run_conversation_harvester_for_source(source: &ConversationSource) -> AppResult<()> {
     let source_dir = crate::backend::path_utils::expand_path(&source.location)?;
+    run_conversation_harvester_in_dir(&source_dir).map(|_| ())
+}
+
+pub(crate) fn run_conversation_harvester_for_adapter_source(
+    adapter: Option<&ConversationAdapter>,
+    source: &ConversationSource,
+) -> AppResult<()> {
+    if let Some(adapter_dir) = adapter.and_then(adapter_manifest_dir) {
+        if run_conversation_harvester_in_dir(&adapter_dir)? {
+            return Ok(());
+        }
+    }
+
+    run_conversation_harvester_for_source(source)
+}
+
+fn adapter_manifest_dir(adapter: &ConversationAdapter) -> Option<PathBuf> {
+    let manifest_path = adapter.manifest_path.as_deref()?;
+    let manifest_path = crate::backend::path_utils::expand_path(manifest_path).ok()?;
+    manifest_path.parent().map(Path::to_path_buf)
+}
+
+fn run_conversation_harvester_in_dir(source_dir: &Path) -> AppResult<bool> {
     let manifest_path = source_dir.join(HARVESTER_MANIFEST_FILE);
     if !manifest_path.is_file() {
-        return Ok(());
+        return Ok(false);
     }
 
     let manifest_text = fs::read_to_string(&manifest_path).map_err(|error| error.to_string())?;
@@ -73,7 +96,7 @@ pub(crate) fn run_conversation_harvester_for_source(source: &ConversationSource)
                 }
                 return Err(message);
             }
-            return Ok(());
+            return Ok(true);
         }
         if start.elapsed() > Duration::from_millis(HARVESTER_TIMEOUT_MS) {
             let _ = child.kill();
@@ -451,6 +474,50 @@ mod tests {
         assert!(requirements.is_empty());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn adapter_manifest_directory_harvester_runs_for_normalized_output_source() {
+        let fixture = TempFixture::new("assetiweave-harvester-adapter-dir");
+        let normalized_dir = fixture.path().join("output").join("normalized");
+        fs::create_dir_all(fixture.path().join("scripts")).unwrap();
+        fs::create_dir_all(&normalized_dir).unwrap();
+        fs::write(
+            fixture.path().join("conversation-adapter.json"),
+            r#"{"schema_version":1,"id":"fixture-web","name":"Fixture","version":"0.1.0","protocol_version":1,"command":["adapter.sh"],"capabilities":["read_session","web_records"],"input_kinds":["directory"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("harvester.json"),
+            r#"{"schema_version":1,"id":"fixture-web","name":"Fixture","version":"0.1.0","entrypoint":["scripts/harvest.sh"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("scripts").join("harvest.sh"),
+            "#!/bin/sh\nprintf 'fresh' > output/normalized/fresh.txt\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(fixture.path().join("scripts").join("harvest.sh"))
+            .unwrap()
+            .permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(
+            fixture.path().join("scripts").join("harvest.sh"),
+            permissions,
+        )
+        .unwrap();
+        let adapter = adapter_fixture(&fixture.path().join("conversation-adapter.json"));
+        let source = source_fixture(&normalized_dir);
+
+        run_conversation_harvester_for_adapter_source(Some(&adapter), &source)
+            .expect("run adapter-directory harvester");
+
+        assert_eq!(
+            fs::read_to_string(normalized_dir.join("fresh.txt")).unwrap(),
+            "fresh"
+        );
+    }
+
     fn source_fixture(path: &Path) -> ConversationSource {
         ConversationSource {
             id: "fixture-source".to_string(),
@@ -462,6 +529,26 @@ mod tests {
             enabled: true,
             last_synced_at: None,
             last_sync_status: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn adapter_fixture(manifest_path: &Path) -> ConversationAdapter {
+        ConversationAdapter {
+            id: "fixture-web".to_string(),
+            name: "Fixture".to_string(),
+            kind: ConversationAdapterKind::External,
+            version: "0.1.0".to_string(),
+            enabled: true,
+            manifest_path: Some(manifest_path.to_string_lossy().to_string()),
+            executable_path: None,
+            content_hash: None,
+            trusted_hash: None,
+            trust_state: ConversationAdapterTrustState::Trusted,
+            protocol_version: Some(1),
+            capabilities: vec!["read_session".to_string(), "web_records".to_string()],
+            input_kinds: vec![ConversationSourceKind::Directory],
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         }

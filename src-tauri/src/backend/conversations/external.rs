@@ -515,6 +515,11 @@ pub(crate) fn register_external_adapter(params: ExternalAdapterRegisterParams) -
         return Err("conversation.adapter.register requires --yes".to_string());
     }
     let validation = validate_external_adapter_manifest(&params.manifest_path)?;
+    let probe = if params.dry_run {
+        None
+    } else {
+        Some(probe_external_adapter_before_trust(&validation)?)
+    };
     let now = Utc::now().to_rfc3339();
     let adapter = ConversationAdapter {
         id: validation.manifest.id.clone(),
@@ -536,8 +541,48 @@ pub(crate) fn register_external_adapter(params: ExternalAdapterRegisterParams) -
     Ok(json!({
         "dry_run": params.dry_run,
         "adapter": adapter,
+        "probe": probe,
         "validation": validation
     }))
+}
+
+fn probe_external_adapter_before_trust(
+    validation: &ExternalAdapterValidationResult,
+) -> AppResult<ExternalAdapterRunResult> {
+    if !validation
+        .manifest
+        .capabilities
+        .iter()
+        .any(|capability| capability == "probe")
+    {
+        return Err(format!(
+            "adapter {} must declare probe before it can be trusted",
+            validation.manifest.id
+        ));
+    }
+    let manifest_dir = Path::new(&validation.manifest_path)
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let request = json!({
+        "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+        "request_id": format!("trust-probe-{}", Utc::now().timestamp_millis()),
+        "method": "probe",
+        "source": { "location": manifest_dir, "config": null },
+        "params": {}
+    });
+    run_external_adapter(
+        validation,
+        "probe",
+        request,
+        Duration::from_millis(DEFAULT_PROBE_TIMEOUT_MS),
+    )
+    .map_err(|error| {
+        format!(
+            "adapter {} probe failed; refusing to trust: {error}",
+            validation.manifest.id
+        )
+    })
 }
 
 pub(crate) fn try_run_external_adapter(

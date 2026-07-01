@@ -1,7 +1,7 @@
 use super::prelude::*;
 use super::{
-    read_source_sessions_with_adapter, scaffold_external_adapter, try_run_external_adapter,
-    validate_external_adapter,
+    read_source_sessions_with_adapter, register_external_adapter, scaffold_external_adapter,
+    try_run_external_adapter, validate_external_adapter,
 };
 
 struct TempFixture {
@@ -954,6 +954,59 @@ printf '%s\n' '{"type":"complete","item":{}}'
 
     assert_eq!(before.executable_hash, after.executable_hash);
     assert_ne!(before.content_hash, after.content_hash);
+}
+
+#[cfg(unix)]
+#[test]
+fn external_adapter_register_runs_probe_before_trusting() {
+    let fixture = TempFixture::new("assetiweave-adapter-register-probe-fixture");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"complete","item":{"ok":true}}'
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+
+    let result = register_external_adapter(ExternalAdapterRegisterParams {
+        manifest_path: manifest.to_string_lossy().to_string(),
+        dry_run: false,
+        yes: true,
+    })
+    .expect("register should probe and trust adapter");
+
+    assert_eq!(result["adapter"]["trust_state"], "trusted");
+    assert_eq!(
+        result["adapter"]["trusted_hash"],
+        result["validation"]["content_hash"]
+    );
+    assert_eq!(result["probe"]["item_count"], 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn external_adapter_register_rejects_failed_probe_before_trusting() {
+    let fixture = TempFixture::new("assetiweave-adapter-register-failed-probe-fixture");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"error","message":"probe failed"}'
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+
+    let error = register_external_adapter(ExternalAdapterRegisterParams {
+        manifest_path: manifest.to_string_lossy().to_string(),
+        dry_run: false,
+        yes: true,
+    })
+    .expect_err("register should reject adapter when probe fails");
+
+    assert!(error.contains("probe failed"), "error = {error}");
 }
 
 #[cfg(unix)]

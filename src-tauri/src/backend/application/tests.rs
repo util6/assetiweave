@@ -1806,6 +1806,175 @@ fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
 }
 
 #[test]
+fn deleted_backup_library_copy_clears_source_backup_status() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-skill-backup-deleted-status-{}",
+        Uuid::new_v4()
+    ));
+    let source_root = root.join("source");
+    let backup_root = root.join("backup");
+    fs::create_dir_all(source_root.join("skill-a")).expect("create skill");
+    fs::write(
+        source_root.join("skill-a").join("SKILL.md"),
+        "---\ndescription: Skill A\n---\n",
+    )
+    .expect("write skill");
+
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    clear_test_tables(&service, &["assets", "sources"]);
+    let source = Source {
+        id: "source-a".to_string(),
+        name: "Source A".to_string(),
+        kind: SourceKind::Local,
+        root_path: source_root.to_string_lossy().to_string(),
+        scanner_kind: SourceScannerKind::Skill,
+        source_origin: SourceOrigin::LocalFolder,
+        repo_root: None,
+        scan_root: String::new(),
+        origin_app_kind: None,
+        include_globs: vec!["**/SKILL.md".to_string()],
+        exclude_globs: Vec::new(),
+        default_kind: Some(AssetKind::Skill),
+        enabled: true,
+        priority: 0,
+        last_scanned_at: None,
+        last_scan_status: None,
+    };
+    upsert_test_source(&service, &source);
+    service
+        .update_skill_backup_settings(UpdateSkillBackupSettingsParams {
+            root_path: backup_root.to_string_lossy().to_string(),
+            migrate: false,
+        })
+        .expect("configure backup root");
+
+    let source_asset = load_test_assets(&service)
+        .into_iter()
+        .find(|asset| asset.source_id == "source-a")
+        .expect("source asset");
+    let backed_up = service
+        .backup_skill(source_asset.id.clone())
+        .expect("backup skill");
+    let backup_path = backed_up
+        .backup_status
+        .as_ref()
+        .and_then(|status| status.backup_path.as_deref())
+        .expect("backup path");
+    fs::remove_dir_all(backup_path).expect("delete backup copy outside app");
+
+    let catalog = service.list_skills().expect("list catalog");
+    let source_catalog_asset = catalog
+        .iter()
+        .find(|candidate| candidate.asset.id == source_asset.id)
+        .expect("source catalog asset");
+    assert_eq!(source_catalog_asset.asset.source_id, "source-a");
+    assert!(source_catalog_asset.backup_status.is_none());
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn stale_backup_record_outside_current_root_does_not_mark_git_skill_backed_up() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-stale-backup-root-status-{}",
+        Uuid::new_v4()
+    ));
+    let source_root = root.join("source-repo");
+    let source_skill_path = source_root.join("skills").join("canvas-design");
+    let current_backup_root = root.join("current-backup");
+    let stale_backup_root = root.join("old-backup");
+    let stale_backup_path = stale_backup_root
+        .join("backed-up")
+        .join("source-a")
+        .join("canvas-design");
+    fs::create_dir_all(&source_skill_path).expect("create source skill");
+    fs::create_dir_all(&current_backup_root).expect("create current backup root");
+    fs::create_dir_all(&stale_backup_path).expect("create stale backup skill");
+    fs::write(
+        source_skill_path.join("SKILL.md"),
+        "---\ndescription: Canvas design\n---\n",
+    )
+    .expect("write source skill");
+    fs::write(
+        stale_backup_path.join("SKILL.md"),
+        "---\ndescription: Canvas design\n---\n",
+    )
+    .expect("write stale backup skill");
+
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    clear_test_tables(&service, &["assets", "sources"]);
+    let source = Source {
+        id: "source-a".to_string(),
+        name: "Git Source".to_string(),
+        kind: SourceKind::Local,
+        root_path: source_root.to_string_lossy().to_string(),
+        scanner_kind: SourceScannerKind::Skill,
+        source_origin: SourceOrigin::GitRepo,
+        repo_root: Some(source_root.to_string_lossy().to_string()),
+        scan_root: String::new(),
+        origin_app_kind: None,
+        include_globs: vec!["**/SKILL.md".to_string()],
+        exclude_globs: Vec::new(),
+        default_kind: Some(AssetKind::Skill),
+        enabled: true,
+        priority: 0,
+        last_scanned_at: None,
+        last_scan_status: None,
+    };
+    let backup_source = capabilities::assetiweave_library_source_with_root(
+        current_backup_root.to_string_lossy().to_string(),
+    );
+    upsert_test_source(&service, &source);
+    upsert_test_source(&service, &backup_source);
+
+    let source_asset = Asset {
+        id: "source-a-canvas-design".to_string(),
+        source_id: source.id.clone(),
+        name: "canvas-design".to_string(),
+        kind: AssetKind::Skill,
+        format: AssetFormat::Directory,
+        relative_path: "skills/canvas-design".to_string(),
+        absolute_path: source_skill_path.to_string_lossy().to_string(),
+        entry_file: Some("skills/canvas-design/SKILL.md".to_string()),
+        description: Some("Canvas design".to_string()),
+        content_hash: Some("same-content".to_string()),
+        discovered_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+    let stale_backup_asset = Asset {
+        id: "backup-canvas-design".to_string(),
+        source_id: backup_source.id.clone(),
+        name: "canvas-design".to_string(),
+        kind: AssetKind::Skill,
+        format: AssetFormat::Directory,
+        relative_path: "backed-up/source-a/canvas-design".to_string(),
+        absolute_path: stale_backup_path.to_string_lossy().to_string(),
+        entry_file: Some("backed-up/source-a/canvas-design/SKILL.md".to_string()),
+        description: Some("Canvas design".to_string()),
+        content_hash: Some("same-content".to_string()),
+        discovered_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+    replace_test_source_assets(&service, &source.id, std::slice::from_ref(&source_asset));
+    replace_test_source_assets(
+        &service,
+        &backup_source.id,
+        std::slice::from_ref(&stale_backup_asset),
+    );
+
+    let catalog = service.list_skills().expect("list catalog");
+    assert_eq!(catalog.len(), 1);
+    assert_eq!(catalog[0].asset.id, source_asset.id);
+    assert!(catalog[0].backup_status.is_none());
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-app-target-backup-status-{}",
