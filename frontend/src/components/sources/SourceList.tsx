@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
 import { groupMountStatusesByAssetId } from "../../utils/mountState";
+import { groupSourceDisplayAssets } from "../../utils/sourceAssets";
 import { SourceColumnView } from "./SourceColumnView";
 import { SourceRow } from "./SourceRow";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -46,16 +47,7 @@ export function SourceList({
   const [expandedSourceIds, setExpandedSourceIds] = useState<Set<string>>(new Set());
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const mountStatusesByAssetId = groupMountStatusesByAssetId(assetMountStatuses);
-  const assetsBySourceId = useMemo(() => {
-    return assets.reduce<Map<string, Asset[]>>((grouped, asset) => {
-      if (asset.kind !== "skill") {
-        return grouped;
-      }
-
-      grouped.set(asset.source_id, [...(grouped.get(asset.source_id) ?? []), asset]);
-      return grouped;
-    }, new Map());
-  }, [assets]);
+  const assetsBySourceId = useMemo(() => groupSourceDisplayAssets(assets, sources), [assets, sources]);
 
   function toggleSourceExpanded(sourceId: string) {
     setExpandedSourceIds((current) => {
