@@ -267,6 +267,47 @@ impl AppService {
             .await
         })
     }
+
+    pub(crate) fn update_conversation_part_translation(
+        &self,
+        params: ConversationPartTranslationUpdateParams,
+    ) -> AppResult<()> {
+        let part_id = params.part_id.trim();
+        if part_id.is_empty() {
+            return Err("conversation part id is required".to_string());
+        }
+        if params.translated_text.len() > 200_000 {
+            return Err("conversation part translation is too large".to_string());
+        }
+
+        let (_, record_kind) = normalize_conversation_record_kind(params.record_kind.as_deref())?;
+        let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
+        let part_id = part_id.to_string();
+        let translated_text = params.translated_text;
+        self.db.block_on(async move {
+            match record_kind {
+                crate::backend::dto::ConversationRecordKind::Session => {
+                    crate::backend::store::update_conversation_part_translation_sqlx(
+                        &pool,
+                        &tenant_id,
+                        &part_id,
+                        &translated_text,
+                    )
+                    .await
+                }
+                crate::backend::dto::ConversationRecordKind::Web => {
+                    crate::backend::store::update_web_record_part_translation_sqlx(
+                        &pool,
+                        &tenant_id,
+                        &part_id,
+                        &translated_text,
+                    )
+                    .await
+                }
+            }
+        })
+    }
 }
 
 async fn load_export_adapter_for_detail(

@@ -449,3 +449,13 @@ pub(crate) struct ConversationQuestionSplitParams {
     #[serde(default, alias = "dryRun")]
     pub(crate) dry_run: bool,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationPartTranslationUpdateParams {
+    #[serde(default, alias = "recordKind")]
+    pub(crate) record_kind: Option<String>,
+    #[serde(alias = "partId")]
+    pub(crate) part_id: String,
+    #[serde(alias = "translatedText")]
+    pub(crate) translated_text: String,
+}

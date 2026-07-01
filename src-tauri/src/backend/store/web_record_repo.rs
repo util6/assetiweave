@@ -296,7 +296,7 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
     let part_rows = sqlx::query(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
-               p.command, p.cwd, p.status, p.exit_code, p.metadata_json
+               p.command, p.cwd, p.status, p.exit_code, p.metadata_json, p.translated_text
         FROM web_record_parts p
         JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
         WHERE t.tenant_id = ?1 AND t.session_id = ?2
@@ -336,6 +336,33 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
         session,
         questions: question_details,
     })
+}
+
+pub(crate) async fn update_web_record_part_translation_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    part_id: &str,
+    translated_text: &str,
+) -> AppResult<()> {
+    let result = sqlx::query(
+        r#"
+        UPDATE web_record_parts
+        SET translated_text = ?1
+        WHERE tenant_id = ?2 AND id = ?3
+        "#,
+    )
+    .bind(translated_text)
+    .bind(tenant_id)
+    .bind(part_id)
+    .execute(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+
+    if result.rows_affected() == 0 {
+        return Err(format!("web record part not found: {part_id}"));
+    }
+
+    Ok(())
 }
 
 fn web_record_session_from_normalized(
@@ -855,7 +882,7 @@ async fn load_web_record_parts_sqlx_tx(
     let rows = sqlx::query(
         r#"
         SELECT id, turn_id, part_index, role, kind, text, language, command,
-               cwd, status, exit_code, metadata_json
+               cwd, status, exit_code, metadata_json, translated_text
         FROM web_record_parts
         WHERE tenant_id = ?1 AND turn_id = ?2
         ORDER BY part_index ASC

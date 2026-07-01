@@ -12,6 +12,7 @@ use std::{
 };
 
 const OPENCODE_COMMAND: &str = "opencode";
+const GEMINI_COMMAND: &str = "gemini";
 
 #[derive(Debug, Serialize)]
 pub(crate) struct OpencodeTranslationAvailability {
@@ -28,6 +29,49 @@ pub(crate) struct OpencodeTranslationRequest {
 #[derive(Debug, Serialize)]
 pub(crate) struct OpencodeTranslationResult {
     pub(crate) translated_text: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ConversationTranslationProvider {
+    Cli,
+    Google,
+    Apple,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ConversationTranslationCli {
+    Opencode,
+    Gemini,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationTranslationRequest {
+    pub(crate) provider: ConversationTranslationProvider,
+    pub(crate) cli: ConversationTranslationCli,
+    pub(crate) model: String,
+    pub(crate) prompt: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationTranslationConnectionRequest {
+    pub(crate) provider: ConversationTranslationProvider,
+    pub(crate) cli: ConversationTranslationCli,
+    pub(crate) model: String,
+    pub(crate) prompt: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationTranslationModelsRequest {
+    pub(crate) provider: ConversationTranslationProvider,
+    pub(crate) cli: ConversationTranslationCli,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ConversationTranslationModelsResult {
+    pub(crate) models: Vec<String>,
+    pub(crate) error: Option<String>,
 }
 
 pub(crate) fn check_opencode_translation_availability() -> OpencodeTranslationAvailability {
@@ -51,18 +95,95 @@ pub(crate) fn check_opencode_translation_availability() -> OpencodeTranslationAv
     }
 }
 
+pub(crate) fn test_conversation_translation_connection(
+    params: ConversationTranslationConnectionRequest,
+) -> OpencodeTranslationAvailability {
+    match translate_conversation_card(ConversationTranslationRequest {
+        provider: params.provider,
+        cli: params.cli,
+        model: params.model,
+        prompt: params.prompt,
+    }) {
+        Ok(_) => OpencodeTranslationAvailability {
+            available: true,
+            version: None,
+            error: None,
+        },
+        Err(error) => OpencodeTranslationAvailability {
+            available: false,
+            version: None,
+            error: Some(error),
+        },
+    }
+}
+
+pub(crate) fn list_conversation_translation_models(
+    params: ConversationTranslationModelsRequest,
+) -> ConversationTranslationModelsResult {
+    let ConversationTranslationProvider::Cli = params.provider else {
+        return ConversationTranslationModelsResult {
+            models: Vec::new(),
+            error: Some(
+                "model listing is only available for CLI translation providers".to_string(),
+            ),
+        };
+    };
+
+    match params.cli {
+        ConversationTranslationCli::Opencode => {
+            match run_translation_cli_command(
+                OPENCODE_COMMAND,
+                &["models"],
+                Duration::from_secs(20),
+            ) {
+                Ok(output) if output.status.success() => ConversationTranslationModelsResult {
+                    models: parse_model_lines(&output.stdout),
+                    error: None,
+                },
+                Ok(output) => ConversationTranslationModelsResult {
+                    models: Vec::new(),
+                    error: Some(command_failure_message("opencode models", &output)),
+                },
+                Err(error) => ConversationTranslationModelsResult {
+                    models: Vec::new(),
+                    error: Some(error),
+                },
+            }
+        }
+        ConversationTranslationCli::Gemini => ConversationTranslationModelsResult {
+            models: Vec::new(),
+            error: Some(
+                "Gemini CLI does not expose a model listing command; enter a model manually"
+                    .to_string(),
+            ),
+        },
+    }
+}
+
+pub(crate) fn translate_conversation_card(
+    params: ConversationTranslationRequest,
+) -> AppResult<OpencodeTranslationResult> {
+    validate_translation_prompt(&params.prompt)?;
+    let model = normalize_model(&params.model)?;
+
+    match params.provider {
+        ConversationTranslationProvider::Cli => {
+            translate_with_cli(params.cli, model.as_deref(), &params.prompt)
+        }
+        ConversationTranslationProvider::Google => {
+            Err("Google Translate provider is reserved but not implemented yet".to_string())
+        }
+        ConversationTranslationProvider::Apple => {
+            Err("Apple Translate provider is reserved but not implemented yet".to_string())
+        }
+    }
+}
+
 pub(crate) fn translate_conversation_card_with_opencode(
     params: OpencodeTranslationRequest,
 ) -> AppResult<OpencodeTranslationResult> {
-    let prompt = params.prompt.trim();
-    if prompt.is_empty() {
-        return Err("translation prompt is empty".to_string());
-    }
-    if prompt.len() > 200_000 {
-        return Err("translation prompt is too large".to_string());
-    }
-
-    let output = run_opencode_command(&["run", prompt], Duration::from_secs(180))?;
+    validate_translation_prompt(&params.prompt)?;
+    let output = run_opencode_command(&["run", params.prompt.trim()], Duration::from_secs(180))?;
     if !output.status.success() {
         return Err(command_failure_message("opencode run", &output));
     }
@@ -75,29 +196,102 @@ pub(crate) fn translate_conversation_card_with_opencode(
     Ok(OpencodeTranslationResult { translated_text })
 }
 
+fn translate_with_cli(
+    cli: ConversationTranslationCli,
+    model: Option<&str>,
+    prompt: &str,
+) -> AppResult<OpencodeTranslationResult> {
+    let prompt = prompt.trim();
+    let (program, args) = match cli {
+        ConversationTranslationCli::Opencode => {
+            let mut args = vec!["run"];
+            if let Some(model) = model {
+                args.extend(["--model", model]);
+            }
+            args.push(prompt);
+            (OPENCODE_COMMAND, args)
+        }
+        ConversationTranslationCli::Gemini => {
+            let mut args = Vec::new();
+            if let Some(model) = model {
+                args.extend(["--model", model]);
+            }
+            args.extend(["--prompt", prompt]);
+            (GEMINI_COMMAND, args)
+        }
+    };
+    let output = run_translation_cli_command(program, &args, Duration::from_secs(180))?;
+    if !output.status.success() {
+        return Err(command_failure_message(
+            &format!("{program} translation"),
+            &output,
+        ));
+    }
+
+    let translated_text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if translated_text.is_empty() {
+        return Err(format!("{program} returned an empty translation"));
+    }
+
+    Ok(OpencodeTranslationResult { translated_text })
+}
+
+fn validate_translation_prompt(prompt: &str) -> AppResult<()> {
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Err("translation prompt is empty".to_string());
+    }
+    if prompt.len() > 200_000 {
+        return Err("translation prompt is too large".to_string());
+    }
+    Ok(())
+}
+
+fn normalize_model(model: &str) -> AppResult<Option<String>> {
+    let model = model.trim();
+    if model.is_empty() {
+        return Ok(None);
+    }
+    if model.len() > 120 || model.contains(['\n', '\r', '\0']) {
+        return Err("translation model is invalid".to_string());
+    }
+    Ok(Some(model.to_string()))
+}
+
 fn run_opencode_command(args: &[&str], timeout: Duration) -> AppResult<Output> {
-    let program = resolve_opencode_executable()?;
+    let program = resolve_translation_cli_executable(OPENCODE_COMMAND)?;
     run_command_with_timeout(&program, args, timeout)
 }
 
-fn resolve_opencode_executable() -> AppResult<PathBuf> {
+fn run_translation_cli_command(
+    command_name: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> AppResult<Output> {
+    let program = resolve_translation_cli_executable(command_name)?;
+    run_command_with_timeout(&program, args, timeout)
+}
+
+fn resolve_translation_cli_executable(command_name: &str) -> AppResult<PathBuf> {
     let path_env = env::var_os("PATH");
-    let login_shell_candidate = find_opencode_with_login_shell();
+    let login_shell_candidate = find_command_with_login_shell(command_name);
     let home_dir = dirs::home_dir();
-    let search_candidates = opencode_search_candidates(home_dir.as_deref());
-    resolve_opencode_executable_from_sources(
+    let search_candidates = translation_cli_search_candidates(command_name, home_dir.as_deref());
+    resolve_translation_cli_executable_from_sources(
+        command_name,
         path_env.as_deref(),
         login_shell_candidate,
         &search_candidates,
     )
 }
 
-fn resolve_opencode_executable_from_sources(
+fn resolve_translation_cli_executable_from_sources(
+    command_name: &str,
     path_env: Option<&OsStr>,
     login_shell_candidate: Option<PathBuf>,
     search_candidates: &[PathBuf],
 ) -> AppResult<PathBuf> {
-    if let Some(path) = find_program_on_path(OPENCODE_COMMAND, path_env) {
+    if let Some(path) = find_program_on_path(command_name, path_env) {
         return Ok(path);
     }
 
@@ -111,7 +305,7 @@ fn resolve_opencode_executable_from_sources(
         }
     }
 
-    Err("opencode was not found on this host. Install OpenCode and make `opencode` available on PATH or from a login shell.".to_string())
+    Err(format!("{command_name} was not found on this host. Install it and make `{command_name}` available on PATH or from a login shell."))
 }
 
 fn find_program_on_path(program: &str, path_env: Option<&OsStr>) -> Option<PathBuf> {
@@ -149,37 +343,50 @@ fn executable_file_names(program: &str) -> Vec<OsString> {
 }
 
 #[cfg(not(windows))]
-fn opencode_executable_name() -> &'static str {
-    OPENCODE_COMMAND
+fn executable_name(command_name: &str) -> OsString {
+    OsString::from(command_name)
 }
 
 #[cfg(windows)]
-fn opencode_executable_name() -> &'static str {
-    "opencode.exe"
+fn executable_name(command_name: &str) -> OsString {
+    OsString::from(format!("{command_name}.exe"))
 }
 
+#[cfg(test)]
+fn opencode_executable_name() -> OsString {
+    executable_name(OPENCODE_COMMAND)
+}
+
+#[cfg(test)]
 fn opencode_search_candidates(home_dir: Option<&Path>) -> Vec<PathBuf> {
-    let executable = opencode_executable_name();
+    translation_cli_search_candidates(OPENCODE_COMMAND, home_dir)
+}
+
+fn translation_cli_search_candidates(command_name: &str, home_dir: Option<&Path>) -> Vec<PathBuf> {
+    let executable = executable_name(command_name);
     let mut candidates = Vec::new();
 
     #[cfg(not(windows))]
     candidates.extend([
-        Path::new("/opt/homebrew/bin").join(executable),
-        Path::new("/usr/local/bin").join(executable),
-        Path::new("/opt/local/bin").join(executable),
+        Path::new("/opt/homebrew/bin").join(&executable),
+        Path::new("/usr/local/bin").join(&executable),
+        Path::new("/opt/local/bin").join(&executable),
     ]);
 
     if let Some(home_dir) = home_dir {
         candidates.extend([
-            home_dir.join(".opencode").join("bin").join(executable),
-            home_dir.join(".local").join("bin").join(executable),
-            home_dir.join(".npm-global").join("bin").join(executable),
-            home_dir.join(".pnpm-global").join("bin").join(executable),
-            home_dir.join(".bun").join("bin").join(executable),
-            home_dir.join(".deno").join("bin").join(executable),
-            home_dir.join(".cargo").join("bin").join(executable),
-            home_dir.join(".volta").join("bin").join(executable),
-            home_dir.join("Library").join("pnpm").join(executable),
+            home_dir
+                .join(format!(".{command_name}"))
+                .join("bin")
+                .join(&executable),
+            home_dir.join(".local").join("bin").join(&executable),
+            home_dir.join(".npm-global").join("bin").join(&executable),
+            home_dir.join(".pnpm-global").join("bin").join(&executable),
+            home_dir.join(".bun").join("bin").join(&executable),
+            home_dir.join(".deno").join("bin").join(&executable),
+            home_dir.join(".cargo").join("bin").join(&executable),
+            home_dir.join(".volta").join("bin").join(&executable),
+            home_dir.join("Library").join("pnpm").join(&executable),
         ]);
     }
 
@@ -187,10 +394,11 @@ fn opencode_search_candidates(home_dir: Option<&Path>) -> Vec<PathBuf> {
 }
 
 #[cfg(not(windows))]
-fn find_opencode_with_login_shell() -> Option<PathBuf> {
+fn find_command_with_login_shell(command_name: &str) -> Option<PathBuf> {
     let shell = login_shell()?;
+    let script = format!("command -v {command_name}");
     let output = Command::new(shell)
-        .args(["-lc", "command -v opencode"])
+        .args(["-lc", &script])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output()
@@ -208,7 +416,7 @@ fn find_opencode_with_login_shell() -> Option<PathBuf> {
 }
 
 #[cfg(windows)]
-fn find_opencode_with_login_shell() -> Option<PathBuf> {
+fn find_command_with_login_shell(_command_name: &str) -> Option<PathBuf> {
     None
 }
 
@@ -279,6 +487,17 @@ fn first_nonempty_line(bytes: &[u8]) -> Option<String> {
         .map(str::to_string)
 }
 
+fn parse_model_lines(bytes: &[u8]) -> Vec<String> {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| !line.starts_with("opencode models"))
+        .take(500)
+        .map(str::to_string)
+        .collect()
+}
+
 fn command_failure_message(command_name: &str, output: &Output) -> String {
     let detail = first_nonempty_line(&output.stderr)
         .or_else(|| first_nonempty_line(&output.stdout))
@@ -320,9 +539,13 @@ mod tests {
         write_executable(&executable);
         let path_env = env::join_paths([dir.path()]).unwrap();
 
-        let resolved =
-            resolve_opencode_executable_from_sources(Some(path_env.as_os_str()), None, &[])
-                .unwrap();
+        let resolved = resolve_translation_cli_executable_from_sources(
+            OPENCODE_COMMAND,
+            Some(path_env.as_os_str()),
+            None,
+            &[],
+        )
+        .unwrap();
 
         assert_eq!(resolved, executable);
     }
@@ -333,7 +556,8 @@ mod tests {
         let executable = dir.path().join(opencode_executable_name());
         write_executable(&executable);
 
-        let resolved = resolve_opencode_executable_from_sources(
+        let resolved = resolve_translation_cli_executable_from_sources(
+            OPENCODE_COMMAND,
             Some(std::ffi::OsStr::new("")),
             None,
             &[executable.clone()],
@@ -349,7 +573,8 @@ mod tests {
         let fallback = dir.path().join(opencode_executable_name());
         write_executable(&fallback);
 
-        let resolved = resolve_opencode_executable_from_sources(
+        let resolved = resolve_translation_cli_executable_from_sources(
+            OPENCODE_COMMAND,
             Some(std::ffi::OsStr::new("")),
             Some(dir.path().join("missing-opencode")),
             &[fallback.clone()],
@@ -381,6 +606,24 @@ mod tests {
                 .join("bin")
                 .join(opencode_executable_name())
         ));
+    }
+
+    #[test]
+    fn resolves_gemini_from_path_without_opencode_name() {
+        let dir = TempDir::new("assetiweave-gemini-path");
+        let executable = dir.path().join(executable_name(GEMINI_COMMAND));
+        write_executable(&executable);
+        let path_env = env::join_paths([dir.path()]).unwrap();
+
+        let resolved = resolve_translation_cli_executable_from_sources(
+            GEMINI_COMMAND,
+            Some(path_env.as_os_str()),
+            None,
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(resolved, executable);
     }
 
     fn write_executable(path: &Path) {

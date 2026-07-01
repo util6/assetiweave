@@ -627,7 +627,7 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
     let part_rows = sqlx::query(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
-               p.command, p.cwd, p.status, p.exit_code, p.metadata_json
+               p.command, p.cwd, p.status, p.exit_code, p.metadata_json, p.translated_text
         FROM conversation_parts p
         JOIN conversation_question_turns qt ON qt.tenant_id = p.tenant_id AND qt.turn_id = p.turn_id
         WHERE qt.tenant_id = ?1 AND qt.question_id = ?2
@@ -854,6 +854,33 @@ pub(crate) async fn split_conversation_question_sqlx(
     })
 }
 
+pub(crate) async fn update_conversation_part_translation_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    part_id: &str,
+    translated_text: &str,
+) -> AppResult<()> {
+    let result = sqlx::query(
+        r#"
+        UPDATE conversation_parts
+        SET translated_text = ?1
+        WHERE tenant_id = ?2 AND id = ?3
+        "#,
+    )
+    .bind(translated_text)
+    .bind(tenant_id)
+    .bind(part_id)
+    .execute(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+
+    if result.rows_affected() == 0 {
+        return Err(format!("conversation part not found: {part_id}"));
+    }
+
+    Ok(())
+}
+
 async fn load_conversation_question_details_for_session_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -909,7 +936,7 @@ async fn load_conversation_question_details_for_session_sqlx(
     let part_rows = sqlx::query(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
-               p.command, p.cwd, p.status, p.exit_code, p.metadata_json
+               p.command, p.cwd, p.status, p.exit_code, p.metadata_json, p.translated_text
         FROM conversation_parts p
         JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
         WHERE t.tenant_id = ?1 AND t.session_id = ?2
@@ -1226,6 +1253,7 @@ pub(super) fn map_sqlx_conversation_part(row: &SqliteRow) -> AppResult<Conversat
         status: row.try_get(9).map_err(|error| error.to_string())?,
         exit_code: row.try_get(10).map_err(|error| error.to_string())?,
         metadata_json: row.try_get(11).map_err(|error| error.to_string())?,
+        translated_text: row.try_get(12).map_err(|error| error.to_string())?,
     })
 }
 
@@ -1903,7 +1931,7 @@ async fn load_turn_parts_sqlx_tx(
     let rows = sqlx::query(
         r#"
         SELECT id, turn_id, part_index, role, kind, text, language, command,
-               cwd, status, exit_code, metadata_json
+               cwd, status, exit_code, metadata_json, translated_text
         FROM conversation_parts
         WHERE tenant_id = ?1 AND turn_id = ?2
         ORDER BY part_index ASC
@@ -2359,7 +2387,7 @@ async fn load_search_parts_sqlx(
     let query = format!(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
-               p.command, p.cwd, p.status, p.exit_code, p.metadata_json
+               p.command, p.cwd, p.status, p.exit_code, p.metadata_json, p.translated_text
         FROM {parts} p
         JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
         JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id

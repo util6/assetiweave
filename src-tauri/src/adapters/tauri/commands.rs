@@ -13,11 +13,11 @@ use crate::backend::capabilities::{
 };
 use crate::{
     backend::application::{
-        AppService, ConversationAdapterUnregisterParams, ConversationQuestionGetParams,
-        ConversationQuestionListParams, ConversationQuestionMergeParams,
-        ConversationQuestionSplitParams, ConversationScriptCatalogParams,
-        ConversationScriptInstallParams, ConversationSearchParams, ConversationSearchResult,
-        ConversationSessionExportParams, ConversationSessionGetParams,
+        AppService, ConversationAdapterUnregisterParams, ConversationPartTranslationUpdateParams,
+        ConversationQuestionGetParams, ConversationQuestionListParams,
+        ConversationQuestionMergeParams, ConversationQuestionSplitParams,
+        ConversationScriptCatalogParams, ConversationScriptInstallParams, ConversationSearchParams,
+        ConversationSearchResult, ConversationSessionExportParams, ConversationSessionGetParams,
         ConversationSessionListParams, ConversationSourceDisableParams,
         ConversationSourceUpsertParams, ConversationSyncParams, ListAssetsParams,
         SkillAcquireParams, SkillRemoteCheckParams, SkillSearchParams, SkillSearchResult,
@@ -25,7 +25,12 @@ use crate::{
     },
     backend::card_translation::{
         check_opencode_translation_availability as check_opencode_translation_availability_impl,
+        list_conversation_translation_models as list_conversation_translation_models_impl,
+        test_conversation_translation_connection as test_conversation_translation_connection_impl,
+        translate_conversation_card as translate_conversation_card_impl,
         translate_conversation_card_with_opencode as translate_conversation_card_with_opencode_impl,
+        ConversationTranslationConnectionRequest, ConversationTranslationModelsRequest,
+        ConversationTranslationModelsResult, ConversationTranslationRequest,
         OpencodeTranslationAvailability, OpencodeTranslationRequest, OpencodeTranslationResult,
     },
     backend::conversations::{
@@ -1265,6 +1270,37 @@ pub(crate) async fn translate_conversation_card_with_opencode(
 }
 
 #[tauri::command]
+pub(crate) async fn translate_conversation_card(
+    params: ConversationTranslationRequest,
+) -> AppResult<OpencodeTranslationResult> {
+    tauri::async_runtime::spawn_blocking(move || translate_conversation_card_impl(params))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn test_conversation_translation_connection(
+    params: ConversationTranslationConnectionRequest,
+) -> AppResult<OpencodeTranslationAvailability> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(test_conversation_translation_connection_impl(params))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn list_conversation_translation_models(
+    params: ConversationTranslationModelsRequest,
+) -> AppResult<ConversationTranslationModelsResult> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(list_conversation_translation_models_impl(params))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub(crate) fn register_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterRegisterParams,
@@ -1496,12 +1532,16 @@ pub(crate) fn get_web_record_session(
 }
 
 #[tauri::command]
-pub(crate) fn search_conversation_records(
+pub(crate) async fn search_conversation_records(
     state: State<'_, AppState>,
     params: ConversationSearchParams,
 ) -> AppResult<ConversationSearchResult> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.search_conversation_records(params)
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?.search_conversation_records(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1547,6 +1587,16 @@ pub(crate) fn split_conversation_question(
 ) -> AppResult<crate::backend::dto::ConversationMutationResult> {
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
     AppService::open_with_db_path(state.db_path.clone())?.split_conversation_question(params)
+}
+
+#[tauri::command]
+pub(crate) fn update_conversation_part_translation(
+    state: State<'_, AppState>,
+    params: ConversationPartTranslationUpdateParams,
+) -> AppResult<()> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?
+        .update_conversation_part_translation(params)
 }
 
 #[tauri::command]
@@ -1747,6 +1797,9 @@ pub(crate) fn command_handler(
         list_conversation_adapter_runtime_statuses,
         check_opencode_translation_availability,
         translate_conversation_card_with_opencode,
+        translate_conversation_card,
+        test_conversation_translation_connection,
+        list_conversation_translation_models,
         register_conversation_adapter,
         unregister_conversation_adapter,
         try_run_conversation_adapter,
@@ -1769,6 +1822,7 @@ pub(crate) fn command_handler(
         get_conversation_question,
         merge_conversation_questions,
         split_conversation_question,
+        update_conversation_part_translation,
         create_plan,
         execute_plan,
         get_cli_tools_status,

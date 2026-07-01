@@ -278,6 +278,7 @@ export interface ConversationPart {
   status?: string | null;
   exit_code?: number | null;
   metadata_json?: string | null;
+  translated_text?: string | null;
 }
 
 export interface ConversationQuestion {

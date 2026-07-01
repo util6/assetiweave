@@ -183,11 +183,13 @@ describe("ConversationContentCards", () => {
 
   it("inserts translated content for a custom target language after opencode is available", async () => {
     const translator = vi.fn().mockResolvedValue({ translated_text: "Ejecuta `pnpm test`." });
+    const translationSaver = vi.fn().mockResolvedValue(undefined);
 
     render(
       <ConversationContentCards
         blocks={[{
           id: "part-answer-answer",
+          partId: "part-answer",
           role: "assistant",
           text: "Run `pnpm test`.",
           type: "answer",
@@ -198,7 +200,14 @@ describe("ConversationContentCards", () => {
           error: null,
           version: "opencode 1.0.0",
         })}
-        translationTargetLanguage="Spanish (Latin America)"
+        translationSaver={translationSaver}
+        translationSettings={{
+          cli: "opencode",
+          model: "anthropic/claude-sonnet-4-20250514",
+          promptTemplate: "Translate to {targetLanguage}: {content}",
+          provider: "cli",
+          targetLanguage: "Spanish (Latin America)",
+        }}
         translator={translator}
         visibility={{
           answer: true,
@@ -215,12 +224,62 @@ describe("ConversationContentCards", () => {
 
     await waitFor(() =>
       expect(translator).toHaveBeenCalledWith({
+        cli: "opencode",
+        model: "anthropic/claude-sonnet-4-20250514",
+        promptTemplate: "Translate to {targetLanguage}: {content}",
+        provider: "cli",
         targetLanguage: "Spanish (Latin America)",
         text: "Run `pnpm test`.",
       }),
     );
+    expect(translationSaver).toHaveBeenCalledWith({
+      partId: "part-answer",
+      recordKind: "session",
+      translatedText: "Ejecuta `pnpm test`.",
+    });
     expect(await screen.findByText("译文 · Spanish (Latin America)")).toBeTruthy();
     expect(await screen.findByText(/Ejecuta/)).toBeTruthy();
+  });
+
+  it("renders saved translated text from the content part", () => {
+    const blocks = buildConversationContentBlocks([
+      {
+        id: "part-answer",
+        turn_id: "turn-1",
+        part_index: 0,
+        role: "assistant",
+        kind: "text",
+        text: "Run `pnpm test`.",
+        translated_text: "运行 `pnpm test`。",
+        metadata_json: JSON.stringify({
+          content_card: {
+            type: "answer",
+          },
+        }),
+      },
+    ]);
+
+    render(
+      <ConversationContentCards
+        blocks={blocks}
+        t={t}
+        translationAvailabilityChecker={async () => ({
+          available: false,
+          error: "not found",
+          version: null,
+        })}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("译文 · 简体中文")).toBeTruthy();
+    expect(screen.getByText(/运行/)).toBeTruthy();
   });
 
   it("enables translation after StrictMode replays the availability effect", async () => {
@@ -235,6 +294,7 @@ describe("ConversationContentCards", () => {
         <ConversationContentCards
           blocks={[{
             id: "part-answer-answer",
+            partId: "part-answer",
             role: "assistant",
             text: "Run `pnpm test`.",
             type: "answer",
@@ -262,6 +322,7 @@ describe("ConversationContentCards", () => {
       <ConversationContentCards
         blocks={[{
           id: "part-answer-answer",
+          partId: "part-answer",
           role: "assistant",
           text: "Run tests.",
           type: "answer",
@@ -283,7 +344,7 @@ describe("ConversationContentCards", () => {
     );
 
     const translateButton = await screen.findByRole("button", {
-      name: "opencode 不可用，无法翻译",
+      name: "翻译服务不可用，无法翻译",
     });
     expect((translateButton as HTMLButtonElement).disabled).toBe(true);
   });

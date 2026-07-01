@@ -70,6 +70,10 @@ import {
   listConversationAdapterRuntimeStatuses,
   type ConversationAdapterRuntimeStatus,
 } from "../../services/conversations";
+import {
+  listConversationTranslationModels,
+  testConversationTranslationConnection,
+} from "../../services/cardTranslation";
 import type { ThemeId } from "../../theme/schema";
 import { isHexColor } from "../../theme/colorValidation";
 import { themeOptions } from "../../theme/themes";
@@ -87,8 +91,12 @@ import {
   fontFamilyOptions,
   normalizeConversationTranslationTargetLanguage,
   resolveFontFamilyCss,
+  TRANSLATION_MODEL_MAX_LENGTH,
+  TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH,
   TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH,
   useAppSettings,
+  type ConversationTranslationCli,
+  type ConversationTranslationProvider,
   type ConversationRuntimeOverrideSettings,
   type ConversationContentCardColorSettings,
   type FontFallbackKind,
@@ -148,6 +156,12 @@ export function GlobalSettingsDialog({
   const [adapterRuntimeStatuses, setAdapterRuntimeStatuses] = useState<ConversationAdapterRuntimeStatus[]>([]);
   const [adapterRuntimeLoading, setAdapterRuntimeLoading] = useState(false);
   const [adapterRuntimeError, setAdapterRuntimeError] = useState("");
+  const [translationConnectionState, setTranslationConnectionState] =
+    useState<"idle" | "checking" | "connected" | "failed">("idle");
+  const [translationConnectionMessage, setTranslationConnectionMessage] = useState("");
+  const [translationModels, setTranslationModels] = useState<string[]>([]);
+  const [translationModelsLoading, setTranslationModelsLoading] = useState(false);
+  const [translationModelsMessage, setTranslationModelsMessage] = useState("");
 
   useEffect(() => {
     if (open) {
@@ -155,6 +169,17 @@ export function GlobalSettingsDialog({
       ensureGroupExpanded(initialPanel);
     }
   }, [initialPanel, open]);
+
+  useEffect(() => {
+    setTranslationConnectionState("idle");
+    setTranslationConnectionMessage("");
+    setTranslationModels([]);
+    setTranslationModelsMessage("");
+  }, [
+    settings.conversationTranslation.cli,
+    settings.conversationTranslation.model,
+    settings.conversationTranslation.provider,
+  ]);
 
   function toggleGroupCollapsed(groupId: string) {
     setCollapsedGroups((prev) => {
@@ -287,6 +312,7 @@ export function GlobalSettingsDialog({
       scope: t("settings.scope.conversations"),
       panels: [
         { id: "conversations.sessions", icon: ListTree, label: t("settings.section.conversationSessions") },
+        { id: "conversations.translation", icon: Languages, label: t("settings.section.conversationTranslation") },
         { id: "conversations.adapters", icon: Puzzle, label: t("settings.section.conversationAdapters") },
       ],
     },
@@ -435,6 +461,60 @@ export function GlobalSettingsDialog({
       ...settings.dataBackup,
       customDirectory: selected,
     });
+  }
+
+  function updateConversationTranslation(
+    patch: Partial<typeof settings.conversationTranslation>,
+  ) {
+    updateSetting("conversationTranslation", {
+      ...settings.conversationTranslation,
+      ...patch,
+    });
+  }
+
+  async function testTranslationConnection() {
+    setTranslationConnectionState("checking");
+    setTranslationConnectionMessage("");
+    try {
+      const result = await testConversationTranslationConnection({
+        cli: settings.conversationTranslation.cli,
+        model: settings.conversationTranslation.model,
+        prompt: "Reply with OK only.",
+        provider: settings.conversationTranslation.provider,
+      });
+      setTranslationConnectionState(result.available ? "connected" : "failed");
+      setTranslationConnectionMessage(
+        result.available
+          ? result.version || t("settings.conversation.translationConnected")
+          : result.error || t("settings.conversation.translationConnectionFailed"),
+      );
+    } catch (error) {
+      setTranslationConnectionState("failed");
+      setTranslationConnectionMessage(errorMessage(error));
+    }
+  }
+
+  async function refreshTranslationModels() {
+    setTranslationModelsLoading(true);
+    setTranslationModelsMessage("");
+    try {
+      const result = await listConversationTranslationModels({
+        cli: settings.conversationTranslation.cli,
+        provider: settings.conversationTranslation.provider,
+      });
+      setTranslationModels(result.models);
+      setTranslationModelsMessage(
+        result.error ||
+          (result.models.length === 0
+            ? t("settings.conversation.translationModelsUnavailable")
+            : ""),
+      );
+    } catch (error) {
+      setTranslationModels([]);
+      setTranslationModelsMessage(errorMessage(error));
+    } finally {
+      setTranslationModelsLoading(false);
+    }
   }
 
   function clearDataBackupDirectory() {
@@ -1057,27 +1137,6 @@ export function GlobalSettingsDialog({
                     value={settings.conversations.resultPreviewLineLimit}
                   />
                 </SettingRow>
-                <SettingRow icon={<Languages size={18} />} label={t("settings.conversation.translationTarget")}>
-                  <Input
-                    aria-label={t("settings.conversation.translationTarget")}
-                    className="h-9 w-[min(28rem,44vw)] min-w-56"
-                    maxLength={TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH}
-                    onBlur={(event) =>
-                      updateSetting("conversations", {
-                        ...settings.conversations,
-                        translationTargetLanguage: normalizeConversationTranslationTargetLanguage(event.currentTarget.value),
-                      })
-                    }
-                    onChange={(event) =>
-                      updateSetting("conversations", {
-                        ...settings.conversations,
-                        translationTargetLanguage: event.target.value.slice(0, TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH),
-                      })
-                    }
-                    placeholder={t("settings.conversation.translationTargetPlaceholder")}
-                    value={settings.conversations.translationTargetLanguage}
-                  />
-                </SettingRow>
                 <SettingRow icon={<Columns3 size={18} />} label={t("settings.conversation.compactToolbar")}>
                   <SwitchControl
                     checked={settings.conversations.sessionToolbarCompact}
@@ -1088,6 +1147,166 @@ export function GlobalSettingsDialog({
                         sessionToolbarCompact: checked,
                       })
                     }
+                  />
+                </SettingRow>
+              </SettingsGroup>
+            )}
+
+            {activePanel === "conversations.translation" && (
+              <SettingsGroup>
+                <SettingRow icon={<Languages size={18} />} label={t("settings.conversation.translationProvider")}>
+                  <SegmentedControl
+                    label={t("settings.conversation.translationProvider")}
+                    onChange={(value) =>
+                      updateConversationTranslation({
+                        provider: value as ConversationTranslationProvider,
+                      })
+                    }
+                    options={[
+                      { label: t("settings.conversation.translationProvider.cli"), value: "cli" },
+                      { label: t("settings.conversation.translationProvider.google"), value: "google" },
+                      { label: t("settings.conversation.translationProvider.apple"), value: "apple" },
+                    ]}
+                    value={settings.conversationTranslation.provider}
+                  />
+                </SettingRow>
+                {settings.conversationTranslation.provider === "cli" ? (
+                  <>
+                    <SettingRow icon={<Terminal size={18} />} label={t("settings.conversation.translationCli")}>
+                      <SegmentedControl
+                        label={t("settings.conversation.translationCli")}
+                        onChange={(value) =>
+                          updateConversationTranslation({
+                            cli: value as ConversationTranslationCli,
+                            model: "",
+                          })
+                        }
+                        options={[
+                          { label: t("settings.conversation.translationCli.opencode"), value: "opencode" },
+                          { label: t("settings.conversation.translationCli.gemini"), value: "gemini" },
+                        ]}
+                        value={settings.conversationTranslation.cli}
+                      />
+                    </SettingRow>
+                    <SettingRow icon={<RefreshCw size={18} />} label={t("settings.conversation.translationModel")}>
+                      <div className="grid w-[min(38rem,52vw)] gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Input
+                            aria-label={t("settings.conversation.translationModel")}
+                            className="h-9 min-w-0 flex-1"
+                            list={translationModels.length > 0 ? "conversation-translation-models" : undefined}
+                            maxLength={TRANSLATION_MODEL_MAX_LENGTH}
+                            onChange={(event) =>
+                              updateConversationTranslation({
+                                model: event.target.value.slice(0, TRANSLATION_MODEL_MAX_LENGTH),
+                              })
+                            }
+                            placeholder={t("settings.conversation.translationModelPlaceholder")}
+                            value={settings.conversationTranslation.model}
+                          />
+                          {translationModels.length > 0 ? (
+                            <datalist id="conversation-translation-models">
+                              {translationModels.map((model) => (
+                                <option key={model} value={model} />
+                              ))}
+                            </datalist>
+                          ) : null}
+                          <Button
+                            disabled={translationModelsLoading}
+                            onClick={() => void refreshTranslationModels()}
+                            type="button"
+                            variant="outline"
+                          >
+                            <RefreshCw className={translationModelsLoading ? "animate-spin" : ""} size={15} />
+                            <span>{t("settings.conversation.translationRefreshModels")}</span>
+                          </Button>
+                        </div>
+                        {translationModelsMessage ? (
+                          <p className="truncate text-body-sm text-on-surface-variant" title={translationModelsMessage}>
+                            {translationModelsMessage}
+                          </p>
+                        ) : null}
+                      </div>
+                    </SettingRow>
+                    <SettingRow icon={<Activity size={18} />} label={t("settings.conversation.translationConnection")}>
+                      <div className="flex w-[min(38rem,52vw)] min-w-0 items-center gap-2">
+                        <Button
+                          disabled={translationConnectionState === "checking"}
+                          onClick={() => void testTranslationConnection()}
+                          type="button"
+                          variant="outline"
+                        >
+                          <Activity className={translationConnectionState === "checking" ? "animate-pulse" : ""} size={15} />
+                          <span>
+                            {translationConnectionState === "checking"
+                              ? t("settings.conversation.translationConnecting")
+                              : t("settings.conversation.translationConnect")}
+                          </span>
+                        </Button>
+                        <span
+                          className={clsx(
+                            "min-w-0 flex-1 truncate text-body-sm",
+                            translationConnectionState === "connected"
+                              ? "text-status-create"
+                              : translationConnectionState === "failed"
+                                ? "text-status-remove"
+                                : "text-on-surface-variant",
+                          )}
+                          title={translationConnectionMessage}
+                        >
+                          {translationConnectionState === "connected"
+                            ? translationConnectionMessage || t("settings.conversation.translationConnected")
+                            : translationConnectionState === "failed"
+                              ? translationConnectionMessage || t("settings.conversation.translationConnectionFailed")
+                              : t("settings.conversation.translationConnectionIdle")}
+                        </span>
+                      </div>
+                    </SettingRow>
+                  </>
+                ) : (
+                  <SettingRow icon={<Activity size={18} />} label={t("settings.conversation.translationConnection")}>
+                    <div className="w-[min(38rem,52vw)] rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 text-body-sm text-on-surface-variant">
+                      {t("settings.conversation.translationProviderReserved")}
+                    </div>
+                  </SettingRow>
+                )}
+                <SettingRow icon={<Languages size={18} />} label={t("settings.conversation.translationTarget")}>
+                  <Input
+                    aria-label={t("settings.conversation.translationTarget")}
+                    className="h-9 w-[min(28rem,44vw)] min-w-56"
+                    maxLength={TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH}
+                    onBlur={(event) =>
+                      updateConversationTranslation({
+                        targetLanguage: normalizeConversationTranslationTargetLanguage(event.currentTarget.value),
+                      })
+                    }
+                    onChange={(event) =>
+                      updateConversationTranslation({
+                        targetLanguage: event.target.value.slice(0, TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH),
+                      })
+                    }
+                    placeholder={t("settings.conversation.translationTargetPlaceholder")}
+                    value={settings.conversationTranslation.targetLanguage}
+                  />
+                </SettingRow>
+                <SettingRow icon={<Code2 size={18} />} label={t("settings.conversation.translationPrompt")}>
+                  <textarea
+                    aria-label={t("settings.conversation.translationPrompt")}
+                    className="min-h-44 w-[min(38rem,52vw)] rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60"
+                    maxLength={TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH}
+                    onBlur={(event) =>
+                      updateConversationTranslation({
+                        promptTemplate: event.currentTarget.value.trim(),
+                      })
+                    }
+                    onChange={(event) =>
+                      updateConversationTranslation({
+                        promptTemplate: event.target.value.slice(0, TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH),
+                      })
+                    }
+                    placeholder={t("settings.conversation.translationPromptPlaceholder")}
+                    spellCheck={false}
+                    value={settings.conversationTranslation.promptTemplate}
                   />
                 </SettingRow>
               </SettingsGroup>

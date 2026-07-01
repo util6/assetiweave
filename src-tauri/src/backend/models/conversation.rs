@@ -151,6 +151,7 @@ pub struct ConversationPart {
     pub status: Option<String>,
     pub exit_code: Option<i32>,
     pub metadata_json: Option<String>,
+    pub translated_text: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

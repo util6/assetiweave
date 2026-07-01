@@ -3,22 +3,27 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Translator } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
 import {
-  checkOpencodeTranslationAvailability,
+  checkConversationTranslationAvailability,
   translateConversationCardContent,
+  updateConversationPartTranslation,
   type ConversationCardTranslationRequest,
   type OpencodeTranslationAvailability,
   type OpencodeTranslationResult,
+  type ConversationPartTranslationUpdateRequest,
 } from "../../services/cardTranslation";
 import type {
   ConversationPart,
   ConversationPartRole,
+  ConversationRecordKind,
 } from "../../types";
 import {
   DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
+  DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
   DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
   DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
   normalizeConversationTranslationTargetLanguage,
   type ConversationContentCardColorSettings,
+  type ConversationTranslationSettings,
   type ConversationTranslationTargetLanguage,
 } from "../../store/settings/AppSettingsProvider";
 import { abbreviateHomePath } from "../../utils/path";
@@ -32,6 +37,7 @@ type TranslationAvailabilityStatus = "idle" | "checking" | "available" | "unavai
 
 export interface ConversationContentBlock {
   id: string;
+  partId?: string;
   type: ConversationContentType;
   role: ConversationPartRole;
   text: string;
@@ -40,6 +46,7 @@ export interface ConversationContentBlock {
   cwd?: string | null;
   status?: string | null;
   exitCode?: number | null;
+  translatedText?: string | null;
 }
 
 export const DEFAULT_CONVERSATION_CONTENT_VISIBILITY: ConversationContentVisibility = {
@@ -72,10 +79,12 @@ export function ConversationContentCards({
   colors = DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
   onCopyError,
   onTranslationError,
+  recordKind = "session",
   resultPreviewLineLimit = DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
   t,
-  translationAvailabilityChecker = checkOpencodeTranslationAvailability,
-  translationTargetLanguage = DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
+  translationAvailabilityChecker,
+  translationSaver = updateConversationPartTranslation,
+  translationSettings = DEFAULT_TRANSLATION_SETTINGS,
   translator = translateConversationCardContent,
   visibility,
 }: {
@@ -84,10 +93,12 @@ export function ConversationContentCards({
   colors?: ConversationContentCardColorSettings;
   onCopyError?: (message: string) => void;
   onTranslationError?: (message: string) => void;
+  recordKind?: ConversationRecordKind;
   resultPreviewLineLimit?: number;
   t: Translator;
   translationAvailabilityChecker?: () => Promise<OpencodeTranslationAvailability>;
-  translationTargetLanguage?: ConversationTranslationTargetLanguage;
+  translationSaver?: (request: ConversationPartTranslationUpdateRequest) => Promise<void>;
+  translationSettings?: ConversationTranslationSettings;
   translator?: (request: ConversationCardTranslationRequest) => Promise<OpencodeTranslationResult>;
   visibility: ConversationContentVisibility;
 }) {
@@ -108,16 +119,17 @@ export function ConversationContentCards({
   );
 
   useEffect(() => {
-    setTranslatedBlocks({});
-    setTranslationErrors({});
-  }, [translationTargetLanguage]);
-
-  useEffect(() => {
     if (visibleBlocks.length === 0) return;
 
     let cancelled = false;
     setTranslationAvailability("checking");
-    translationAvailabilityChecker()
+    const checkAvailability = translationAvailabilityChecker ?? (() =>
+      checkConversationTranslationAvailability({
+        cli: translationSettings.cli,
+        model: translationSettings.model,
+        provider: translationSettings.provider,
+      }));
+    checkAvailability()
       .then((availability) => {
         if (cancelled) return;
         setTranslationAvailability(availability.available ? "available" : "unavailable");
@@ -130,7 +142,13 @@ export function ConversationContentCards({
     return () => {
       cancelled = true;
     };
-  }, [translationAvailabilityChecker, visibleBlocks.length]);
+  }, [
+    translationAvailabilityChecker,
+    translationSettings.cli,
+    translationSettings.model,
+    translationSettings.provider,
+    visibleBlocks.length,
+  ]);
 
   async function handleCopyBlock(block: ConversationContentBlock) {
     try {
@@ -160,9 +178,20 @@ export function ConversationContentCards({
 
     try {
       const result = await translator({
-        targetLanguage: translationTargetLanguage,
+        cli: translationSettings.cli,
+        model: translationSettings.model,
+        promptTemplate: translationSettings.promptTemplate,
+        provider: translationSettings.provider,
+        targetLanguage: translationSettings.targetLanguage,
         text: block.text,
       });
+      if (block.partId) {
+        await translationSaver({
+          partId: block.partId,
+          recordKind,
+          translatedText: result.translated_text,
+        });
+      }
       setTranslatedBlocks((current) => ({
         ...current,
         [block.id]: result.translated_text,
@@ -206,16 +235,24 @@ export function ConversationContentCards({
           onTranslate={() => void handleTranslateBlock(block)}
           resultPreviewLineLimit={resultPreviewLineLimit}
           t={t}
-          translatedText={translatedBlocks[block.id]}
+          translatedText={translatedBlocks[block.id] ?? block.translatedText ?? undefined}
           translating={translatingBlockIds.has(block.id)}
           translationAvailability={translationAvailability}
           translationError={translationErrors[block.id]}
-          translationTargetLanguage={translationTargetLanguage}
+          translationTargetLanguage={translationSettings.targetLanguage}
         />
       ))}
     </div>
   );
 }
+
+const DEFAULT_TRANSLATION_SETTINGS: ConversationTranslationSettings = {
+  cli: "opencode",
+  model: "",
+  promptTemplate: DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
+  provider: "cli",
+  targetLanguage: DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
+};
 
 function ConversationContentCard({
   block,
@@ -502,9 +539,11 @@ function createBlock(
   return [
     {
       id: `${part.id}-${suffix}`,
+      partId: part.id,
       type,
       role: part.role,
       text,
+      translatedText: part.translated_text,
       format: overrides.format,
       language: hasOverride("language")
         ? overrides.language

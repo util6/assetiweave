@@ -28,7 +28,8 @@ pub(crate) use conversation_repo::{
     load_conversation_question_detail_sqlx, load_conversation_session_detail_sqlx,
     load_conversation_source_sqlx, merge_conversation_questions_sqlx,
     search_conversation_cards_sqlx, split_conversation_question_sqlx,
-    upsert_conversation_adapter_sqlx, upsert_conversation_source_sqlx,
+    update_conversation_part_translation_sqlx, upsert_conversation_adapter_sqlx,
+    upsert_conversation_source_sqlx,
 };
 pub(crate) use database::{
     count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx,
@@ -73,5 +74,5 @@ pub(crate) use tenant_repo::{
 };
 pub(crate) use web_record_repo::{
     import_web_record_sessions_sqlx, list_web_record_sessions_sqlx,
-    load_web_record_session_detail_sqlx,
+    load_web_record_session_detail_sqlx, update_web_record_part_translation_sqlx,
 };

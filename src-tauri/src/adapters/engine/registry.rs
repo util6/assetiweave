@@ -1107,6 +1107,22 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli conversation question split <question-id> --before-turn <turn-id>")
     ),
     command!(
+        "conversation.part.translation.update",
+        "conversation.part.translation.update",
+        "Overwrite the stored translation for a conversation content part",
+        Write,
+        Friendly,
+        false,
+        crate::backend::application::ConversationPartTranslationUpdateParams,
+        Service => |service, params| service.update_conversation_part_translation(params),
+        &[
+            param!("record_kind", "Conversation record table family", ["recordKind"]),
+            param!("part_id", "Conversation part identifier", ["partId"]),
+            param!("translated_text", "Translated content to store", ["translatedText"]),
+        ],
+        Some("assetiweave-cli conversation part translation update <part-id> --text <text>")
+    ),
+    command!(
         "doctor.run",
         "doctor.run",
         "Run local AssetIWeave diagnostics",
@@ -1887,6 +1903,55 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "translate_conversation_card",
+        "conversation.card.translation.run",
+        "Translate a conversation content card with the configured translation provider",
+        Write,
+        App,
+        false,
+        crate::backend::card_translation::ConversationTranslationRequest,
+        Service => |service, params| service.translate_conversation_card(params),
+        &[
+            param!("provider", "Translation provider family"),
+            param!("cli", "CLI translator when provider is cli"),
+            param!("model", "Optional model identifier"),
+            param!("prompt", "Rendered translation prompt")
+        ],
+        None
+    ),
+    command!(
+        "test_conversation_translation_connection",
+        "conversation.card.translation.connection-test",
+        "Run a lightweight translation prompt to test provider connectivity",
+        Read,
+        App,
+        false,
+        crate::backend::card_translation::ConversationTranslationConnectionRequest,
+        Service => |service, params| service.test_conversation_translation_connection(params),
+        &[
+            param!("provider", "Translation provider family"),
+            param!("cli", "CLI translator when provider is cli"),
+            param!("model", "Optional model identifier"),
+            param!("prompt", "Connection test prompt")
+        ],
+        None
+    ),
+    command!(
+        "list_conversation_translation_models",
+        "conversation.card.translation.model-list",
+        "List available translation models for the selected provider",
+        Read,
+        App,
+        false,
+        crate::backend::card_translation::ConversationTranslationModelsRequest,
+        Service => |service, params| service.list_conversation_translation_models(params),
+        &[
+            param!("provider", "Translation provider family"),
+            param!("cli", "CLI translator when provider is cli")
+        ],
+        None
+    ),
+    command!(
         "register_conversation_adapter",
         "conversation.adapter.register",
         "Register a trusted conversation adapter script",
@@ -2249,6 +2314,22 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("question_id", "Question identifier", ["questionId"]),
             param!("before_turn_id", "Turn identifier that starts the new question", ["beforeTurnId"]),
             param!("dry_run", "Preview without splitting", ["dryRun"]),
+        ],
+        None
+    ),
+    command!(
+        "update_conversation_part_translation",
+        "conversation.part.translation.update",
+        "Overwrite the stored translation for a conversation content part",
+        Write,
+        App,
+        false,
+        crate::backend::application::ConversationPartTranslationUpdateParams,
+        Service => |service, params| service.update_conversation_part_translation(params),
+        &[
+            param!("record_kind", "Conversation record table family", ["recordKind"]),
+            param!("part_id", "Conversation part identifier", ["partId"]),
+            param!("translated_text", "Translated content to store", ["translatedText"]),
         ],
         None
     ),
