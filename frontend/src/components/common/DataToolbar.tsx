@@ -1,11 +1,27 @@
+import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import clsx from "clsx";
-import { Search } from "lucide-react";
-import type { ChangeEvent, CompositionEvent, KeyboardEvent, ReactNode, Ref } from "react";
+import { Check, ChevronDown, Search } from "lucide-react";
+import {
+  useMemo,
+  useState,
+  forwardRef,
+  type ButtonHTMLAttributes,
+  type ChangeEvent,
+  type CompositionEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  type Ref,
+} from "react";
 
 export type ToolbarViewMode = "list" | "columns" | "grid";
 
 export interface ToolbarViewOption<Value extends ToolbarViewMode = ToolbarViewMode> {
   icon: ReactNode;
+  label: string;
+  value: Value;
+}
+
+export interface ToolbarSelectOption<Value extends string = string> {
   label: string;
   value: Value;
 }
@@ -223,6 +239,245 @@ export function ToolbarTextButton({
   );
 }
 
+export function ToolbarMultiSelectDropdown<Value extends string>({
+  allLabel,
+  ariaLabel,
+  clearLabel,
+  emptyLabel,
+  icon,
+  label,
+  onClear,
+  onToggleValue,
+  options,
+  selectedValues,
+}: {
+  allLabel: string;
+  ariaLabel: string;
+  clearLabel: string;
+  emptyLabel: string;
+  icon?: ReactNode;
+  label: string;
+  onClear: () => void;
+  onToggleValue: (value: Value) => void;
+  options: ToolbarSelectOption<Value>[];
+  selectedValues: Value[];
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedSet = useMemo(() => new Set(selectedValues), [selectedValues]);
+  const selectedCount = selectedValues.length;
+
+  return (
+    <DropdownMenuPrimitive.Root onOpenChange={setOpen} open={open}>
+      <DropdownMenuPrimitive.Trigger asChild>
+        <ToolbarDropdownButton
+          active={selectedCount > 0 || open}
+          ariaLabel={ariaLabel}
+          expanded={open}
+          icon={icon}
+          label={selectedCount > 0 ? `${label}(${selectedCount})` : allLabel}
+        />
+      </DropdownMenuPrimitive.Trigger>
+      <DropdownMenuPrimitive.Portal>
+        <ToolbarDropdownContent>
+          <div className="flex max-h-[min(22rem,var(--radix-dropdown-menu-content-available-height))] flex-col gap-1 overflow-y-auto pr-1">
+            <ToolbarDropdownCheckItem checked={selectedCount === 0} label={allLabel} onChange={onClear} />
+            {options.length === 0 ? (
+              <div className="px-2 py-2 text-body-sm text-outline">{emptyLabel}</div>
+            ) : (
+              options.map((option) => (
+                <ToolbarDropdownCheckItem
+                  checked={selectedSet.has(option.value)}
+                  key={option.value}
+                  label={option.label}
+                  onChange={() => onToggleValue(option.value)}
+                />
+              ))
+            )}
+          </div>
+          {selectedCount > 0 && (
+            <>
+              <DropdownMenuPrimitive.Separator className="my-2 h-px bg-theme-control-border" />
+              <button
+                className="h-8 w-full rounded-lg px-2 text-left text-body-sm text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-on-surface"
+                onClick={onClear}
+                type="button"
+              >
+                {clearLabel}
+              </button>
+            </>
+          )}
+        </ToolbarDropdownContent>
+      </DropdownMenuPrimitive.Portal>
+    </DropdownMenuPrimitive.Root>
+  );
+}
+
+export function ToolbarSingleSelectDropdown<Value extends string>({
+  ariaLabel,
+  icon,
+  onChange,
+  options,
+  value,
+}: {
+  ariaLabel: string;
+  icon?: ReactNode;
+  onChange: (value: Value) => void;
+  options: ToolbarSelectOption<Value>[];
+  value: Value;
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedOption = useMemo(() => options.find((option) => option.value === value) ?? null, [options, value]);
+
+  return (
+    <DropdownMenuPrimitive.Root onOpenChange={setOpen} open={open}>
+      <DropdownMenuPrimitive.Trigger asChild>
+        <ToolbarDropdownButton
+          active={open}
+          ariaLabel={ariaLabel}
+          expanded={open}
+          icon={icon}
+          label={selectedOption?.label ?? ariaLabel}
+        />
+      </DropdownMenuPrimitive.Trigger>
+      <DropdownMenuPrimitive.Portal>
+        <ToolbarDropdownContent>
+          <div className="flex max-h-[min(22rem,var(--radix-dropdown-menu-content-available-height))] flex-col gap-1 overflow-y-auto pr-1">
+            {options.map((option) => {
+              const selected = option.value === value;
+              return (
+                <DropdownMenuPrimitive.Item
+                  className={clsx(
+                    "grid h-9 cursor-default grid-cols-[minmax(0,1fr)_1rem] items-center gap-3 rounded-lg px-2 text-left text-body-sm outline-none transition-colors",
+                    selected
+                      ? "bg-theme-control-hover text-primary"
+                      : "text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
+                  )}
+                  key={option.value}
+                  onClick={() => {
+                    onChange(option.value);
+                  }}
+                >
+                  <span className="min-w-0 truncate">{option.label}</span>
+                  {selected && <Check size={15} />}
+                </DropdownMenuPrimitive.Item>
+              );
+            })}
+          </div>
+        </ToolbarDropdownContent>
+      </DropdownMenuPrimitive.Portal>
+    </DropdownMenuPrimitive.Root>
+  );
+}
+
+export function ToolbarSortDirectionButton({
+  direction,
+  label,
+  onClick,
+  title,
+}: {
+  direction: "asc" | "desc";
+  label: string;
+  onClick: () => void;
+  title: string;
+}) {
+  return (
+    <button
+      aria-label={label}
+      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-theme-control-border bg-theme-control/95 text-body-sm font-semibold text-theme-control-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors hover:bg-theme-control-hover hover:text-on-surface"
+      data-toolbar-control="sort-direction"
+      onClick={onClick}
+      title={title}
+      type="button"
+    >
+      {direction === "desc" ? "↓" : "↑"}
+    </button>
+  );
+}
+
 export function ToolbarSeparator() {
   return <span className="mx-1 h-6 w-px shrink-0 bg-theme-control-border" aria-hidden="true" />;
+}
+
+const ToolbarDropdownButton = forwardRef<HTMLButtonElement, ToolbarDropdownButtonProps>(function ToolbarDropdownButton({
+  active,
+  ariaLabel,
+  expanded,
+  icon,
+  label,
+  ...buttonProps
+}, ref) {
+  return (
+    <button
+      {...buttonProps}
+      aria-label={ariaLabel}
+      className={clsx(
+        "inline-flex h-10 max-w-[13rem] shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl border px-3 text-body-sm shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors",
+        active
+          ? "border-primary/45 bg-theme-control-hover text-primary"
+          : "border-theme-control-border bg-theme-control/95 text-theme-control-fg hover:bg-theme-control-hover hover:text-on-surface",
+        buttonProps.className,
+      )}
+      data-toolbar-control="dropdown"
+      ref={ref}
+      type="button"
+    >
+      {icon}
+      <span className="min-w-0 truncate">{label}</span>
+      <ChevronDown className={clsx("shrink-0 transition-transform", expanded && "rotate-180")} size={15} />
+    </button>
+  );
+});
+
+interface ToolbarDropdownButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> {
+  active: boolean;
+  ariaLabel: string;
+  expanded: boolean;
+  icon?: ReactNode;
+  label: string;
+}
+
+function ToolbarDropdownContent({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  return (
+    <DropdownMenuPrimitive.Content
+      align="start"
+      className="z-30 w-64 rounded-xl border border-theme-card-border bg-theme-card/98 p-2 text-theme-control-fg shadow-[0_18px_44px_rgb(var(--theme-panel-shadow)/0.26)] backdrop-blur"
+      collisionPadding={12}
+      sideOffset={8}
+    >
+      {children}
+    </DropdownMenuPrimitive.Content>
+  );
+}
+
+function ToolbarDropdownCheckItem({
+  checked,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  onChange: () => void;
+}) {
+  return (
+    <DropdownMenuPrimitive.CheckboxItem
+      checked={checked}
+      className={clsx(
+        "grid h-9 cursor-default grid-cols-[1rem_minmax(0,1fr)] items-center gap-3 rounded-lg px-2 text-body-sm outline-none transition-colors",
+        checked ? "bg-theme-control-hover text-primary" : "text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
+      )}
+      onCheckedChange={onChange}
+      onSelect={(event) => event.preventDefault()}
+    >
+      <span className="grid size-3.5 place-items-center rounded border border-theme-control-border bg-theme-control">
+        <DropdownMenuPrimitive.ItemIndicator>
+          <Check size={11} />
+        </DropdownMenuPrimitive.ItemIndicator>
+      </span>
+      <span className="min-w-0 truncate">{label}</span>
+    </DropdownMenuPrimitive.CheckboxItem>
+  );
 }

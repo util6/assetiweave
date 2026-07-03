@@ -31,4 +31,25 @@ describe("PageHeader", () => {
     expect(html).toContain('aria-label="打开当前页面使用手册"');
     expect(html.indexOf("分组管理")).toBeLessThan(html.indexOf("打开当前页面使用手册"));
   });
+
+  it("keeps the header in a single horizontal row when width is constrained", () => {
+    const html = renderToStaticMarkup(
+      <I18nProvider>
+        <PageHeader
+          actions={<div>来源 4</div>}
+          eyebrow="资产目录"
+          icon={<Layers3 size={21} />}
+          title="目录总览"
+          titleAction={<ManualHelpButton onOpen={vi.fn()} />}
+        />
+      </I18nProvider>,
+    );
+
+    expect(html).toContain("flex-nowrap");
+    expect(html).toContain("overflow-hidden");
+    expect(html).toContain("truncate");
+    expect(html).toContain("whitespace-nowrap");
+    expect(html).not.toContain("max-[920px]:flex-col");
+    expect(html).not.toContain("w-full max-w-3xl shrink-0");
+  });
 });

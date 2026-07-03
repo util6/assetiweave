@@ -18,7 +18,11 @@ describe("PageMetrics", () => {
     expect(html).toContain("128");
     expect(html).toContain("h-10");
     expect(html).toContain("min-w-[5.75rem]");
+    expect(html).toContain("flex-nowrap");
+    expect(html).toContain("overflow-hidden");
+    expect(html).toContain("truncate");
     expect(html).toContain('data-page-metric=""');
+    expect(html).not.toContain("flex-wrap");
     expect(html).not.toContain("grid-cols-3");
   });
 });

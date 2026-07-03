@@ -1,7 +1,15 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Download } from "lucide-react";
-import { DataToolbar, ToolbarActionButton, ToolbarCluster, ToolbarSearch, ToolbarTextButton } from "./DataToolbar";
+import {
+  DataToolbar,
+  ToolbarActionButton,
+  ToolbarCluster,
+  ToolbarMultiSelectDropdown,
+  ToolbarSearch,
+  ToolbarSingleSelectDropdown,
+  ToolbarTextButton,
+} from "./DataToolbar";
 
 describe("DataToolbar", () => {
   it("clips toolbar overflow instead of wrapping controls into another row", () => {
@@ -88,5 +96,40 @@ describe("DataToolbar", () => {
     expect(html).toContain('data-toolbar-control="action"');
     expect(html).toContain('data-toolbar-control="text"');
     expect(html).toContain('data-toolbar-control="search"');
+  });
+
+  it("renders custom toolbar dropdown triggers instead of native select controls", () => {
+    const html = renderToStaticMarkup(
+      <DataToolbar
+        actions={<button type="button">Refresh</button>}
+        ariaLabel="Asset toolbar"
+        leading={
+          <>
+            <ToolbarMultiSelectDropdown
+              allLabel="全部"
+              ariaLabel="筛选"
+              clearLabel="清空筛选"
+              emptyLabel="暂无"
+              label="筛选"
+              onClear={() => undefined}
+              onToggleValue={() => undefined}
+              options={[{ label: "Skill", value: "skill" }]}
+              selectedValues={["skill"]}
+            />
+            <ToolbarSingleSelectDropdown
+              ariaLabel="排序"
+              onChange={() => undefined}
+              options={[{ label: "按创建时间", value: "created" }]}
+              value="created"
+            />
+          </>
+        }
+      />,
+    );
+
+    expect(html).toContain('data-toolbar-control="dropdown"');
+    expect(html).toContain("筛选(1)");
+    expect(html).toContain("按创建时间");
+    expect(html).not.toContain("<select");
   });
 });
