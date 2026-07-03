@@ -300,6 +300,63 @@ describe("ConversationsPage sync scope", () => {
     );
   });
 
+  it("switches to the hit app and project before opening a content search result", async () => {
+    const opencodeAdapter: ConversationAdapter = {
+      ...conversationAdapter,
+      executable_path: "/tmp/opencode-adapter",
+      id: "opencode",
+      manifest_path: "/tmp/opencode-adapter.json",
+      name: "OpenCode",
+    };
+    const opencodeSession: ConversationSessionListItem = {
+      ...conversationSession,
+      adapter_id: "opencode",
+      external_id: "opencode-external-target",
+      id: "opencode-session-target",
+      project_path: "/Users/util6/code-space/other-project",
+      source_id: "opencode-live",
+      title: "OpenCode target",
+    };
+
+    listConversationAdaptersMock.mockResolvedValue([opencodeAdapter, conversationAdapter]);
+    listConversationSessionsMock.mockResolvedValue([opencodeSession, conversationSession]);
+    searchConversationRecordsMock.mockResolvedValueOnce({
+      hits: [
+        {
+          block_id: "part-export-target-answer",
+          card_type: "answer",
+          part_id: "part-export-target-answer",
+          question_id: "question-export-target",
+          question_index: 0,
+          question_title: "Export question",
+          score: 100,
+          session: conversationSession,
+          snippet: "Export-ready answer.",
+          turn_id: "turn-export-target",
+        },
+      ],
+      query: "export",
+      record_kind: "session",
+      scope: searchScope("export", ["question", "answer", "tool", "command", "code", "result"]),
+      total_count: 1,
+    });
+
+    renderConversationsPage("session");
+
+    expect(await screen.findByRole("button", { name: "Open session OpenCode target" })).toBeTruthy();
+
+    const searchInput = screen.getByPlaceholderText("Search content and jump to cards...") as HTMLInputElement;
+    fireEvent.change(searchInput, { target: { value: "export" } });
+    fireEvent.keyDown(searchInput, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("button", { name: "Open Answer text search result: Export target" }));
+
+    await waitFor(() =>
+      expect(getConversationSessionMock).toHaveBeenLastCalledWith("session-export-target"),
+    );
+    expect(await screen.findAllByText("Export question")).toHaveLength(2);
+    expect(screen.getAllByText("Export-ready answer.")).toHaveLength(2);
+  });
+
   it("groups search hits by card type and filters multiple result types from the header", async () => {
     searchConversationRecordsMock.mockResolvedValueOnce({
       hits: [
@@ -542,9 +599,58 @@ describe("ConversationsPage sync scope", () => {
     expect(await screen.findByText("Web record sync completed")).toBeTruthy();
     expect(
       screen.getByText(
-        "Some web sources failed even though the sync task completed. Successful sources were imported; refresh browser login or re-trust changed adapters, then sync the failed source again.",
+        "Successful sources were imported. Fix the failed web source below, then sync that source again.",
       ),
     ).toBeTruthy();
+    expect(screen.getByText("Failed web sources")).toBeTruthy();
+    expect(screen.getByText("gemini-web · gemini-web-export")).toBeTruthy();
+    expect(screen.getByText("Gemini web CSRF token SNlM0e was not found")).toBeTruthy();
+  });
+
+  it("shows failed source details when a completed session sync has failed sources", async () => {
+    conversationSyncTaskMock.current = {
+      adapter_id: null,
+      dry_run: false,
+      error: null,
+      finished_at: "2026-06-15T00:00:05Z",
+      id: "session-sync-completed-with-errors",
+      record_kind: "session",
+      result: {
+        errors: [
+          {
+            adapter_id: "claude-code",
+            message: "adapter trusted hash mismatch: claude-code",
+            source_id: "claude-code-export",
+          },
+        ],
+        results: [
+          {
+            adapter_id: "codex",
+            record_kind: "session",
+            session_count: 2,
+            skipped_session_count: 1,
+            source_id: "codex-export",
+            turn_count: 5,
+            warning_count: 0,
+          },
+        ],
+      },
+      source_id: null,
+      started_at: "2026-06-15T00:00:00Z",
+      status: "completed",
+    };
+
+    renderConversationsPage("session");
+
+    expect(await screen.findByText("Sync completed")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Successful sources were imported. Fix the failed source below, then sync that source again.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("Failed sources")).toBeTruthy();
+    expect(screen.getByText("claude-code · claude-code-export")).toBeTruthy();
+    expect(screen.getByText("adapter trusted hash mismatch: claude-code")).toBeTruthy();
   });
 
   it("keeps completed sync progress dismissed after leaving and returning to the page", async () => {

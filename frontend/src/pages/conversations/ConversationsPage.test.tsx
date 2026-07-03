@@ -328,6 +328,40 @@ describe("MarkdownContent", () => {
     expect(html).toContain("sticky bottom-0");
   });
 
+  it("shows the short stable hash id before the session counts", () => {
+    vi.stubGlobal("ResizeObserver", class {
+      disconnect() {}
+      observe() {}
+      unobserve() {}
+    });
+
+    render(
+      <AppSessionBrowser
+        appShortcuts={[]}
+        columnMinWidth={300}
+        groups={groupConversationSessionsByApp(adapters, [
+          {
+            ...sessionDetail.session,
+            id: "conversation-session-abcdef1234567890abcdef1234567890",
+            question_count: 1,
+            turn_count: 2,
+          },
+        ])}
+        onAppSelect={vi.fn()}
+        onProjectSelect={vi.fn()}
+        onSessionOpen={vi.fn()}
+        selectedAppId="codex"
+        selectedProjectKey="/Users/util6/code-space/assetiweave"
+        t={t}
+      />,
+    );
+    const hashId = screen.getByText("abcdef12");
+
+    expect(hashId.parentElement?.textContent).toBe("abcdef12·1 个问题 · 2 个 Turn");
+    expect(screen.queryByText(/Hash ID/)).toBeNull();
+    expect(screen.queryByText(/abcdef123/)).toBeNull();
+  });
+
   it("does not re-render the session browser for unrelated parent search updates", () => {
     vi.stubGlobal("ResizeObserver", class {
       disconnect() {}

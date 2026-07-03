@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CompositionEvent, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import {
   AppWindow,
+  ArrowDownWideNarrow,
   ArrowLeft,
   Check,
   ChevronRight,
@@ -20,6 +21,8 @@ import {
   DataToolbar,
   ToolbarActionButton,
   ToolbarSearch,
+  ToolbarSingleSelectDropdown,
+  ToolbarSortDirectionButton,
   ToolbarTextButton,
 } from "../../components/common/DataToolbar";
 import { PageMetrics } from "../../components/common/PageMetrics";
@@ -73,6 +76,7 @@ import {
   splitConversationQuestion,
   summarizeConversationSyncTask,
   type ConversationSyncSummaryCounts,
+  type ConversationSyncTaskSnapshot,
 } from "../../services/conversations";
 import { selectFilePath, selectTargetDirectory } from "../../services/catalog";
 import { useConversationSync } from "../../app/backgroundTasks/ConversationSyncProvider";
@@ -126,6 +130,8 @@ interface ConversationSearchTarget {
 }
 
 type ConversationPageNotification = Omit<NotificationMessage, "id">;
+type ConversationSessionSortBy = "updated" | "started" | "title" | "question-count" | "turn-count";
+type ConversationQuestionSortBy = "index" | "updated" | "title";
 
 export async function loadAllConversationSessionPages(
   listSessions: ListConversationSessionPage,
@@ -195,13 +201,21 @@ export function ConversationsPage({
   const [contentQuery, setContentQuery] = useState("");
   const [contentSearchCardTypes, setContentSearchCardTypes] =
     useState<ConversationSearchCardType[]>(CONVERSATION_SEARCH_CARD_TYPES);
+  const [sessionSortBy, setSessionSortBy] = useState<ConversationSessionSortBy>("updated");
+  const [sessionSortDirection, setSessionSortDirection] = useState<"asc" | "desc">("desc");
+  const [questionSortBy, setQuestionSortBy] = useState<ConversationQuestionSortBy>("index");
+  const [questionSortDirection, setQuestionSortDirection] = useState<"asc" | "desc">("asc");
   const [contentSearchResult, setContentSearchResult] = useState<ConversationSearchResultState | null>(null);
   const [contentSearchLoading, setContentSearchLoading] = useState(false);
   const [activeSearchTarget, setActiveSearchTarget] = useState<ConversationSearchTarget | null>(null);
   const importedSourceNamesRef = useRef<Map<string, string>>(new Map());
 
   const sessionQuestionCount = useMemo(() => sessions.reduce((total, session) => total + session.question_count, 0), [sessions]);
-  const appGroups = useMemo(() => groupConversationSessionsByApp(adapters, sessions), [adapters, sessions]);
+  const sortedSessions = useMemo(
+    () => sortConversationSessions(sessions, sessionSortBy, sessionSortDirection),
+    [sessionSortBy, sessionSortDirection, sessions],
+  );
+  const appGroups = useMemo(() => groupConversationSessionsByApp(adapters, sortedSessions), [adapters, sortedSessions]);
   const selectedAppGroup = useMemo(
     () => appGroups.find((group) => group.app.id === selectedAppId) ?? null,
     [appGroups, selectedAppId],
@@ -211,8 +225,13 @@ export function ConversationsPage({
     [selectedQuestionId, sessionDetail],
   );
   const visibleSessionQuestions = useMemo(
-    () => sessionDetail?.questions.filter((question) => questionMatchesQuery(question, detailQuery)) ?? [],
-    [detailQuery, sessionDetail],
+    () =>
+      sortConversationQuestions(
+        sessionDetail?.questions.filter((question) => questionMatchesQuery(question, detailQuery)) ?? [],
+        questionSortBy,
+        questionSortDirection,
+      ),
+    [detailQuery, questionSortBy, questionSortDirection, sessionDetail],
   );
   const selectedQuestionCount = selectedQuestionIds.size;
   const conversationStyle = useMemo(
@@ -417,14 +436,15 @@ export function ConversationsPage({
     const summaryCounts = summarizeConversationSyncTask(syncTask);
     const summary = formatConversationSyncSummary(summaryCounts, t, currentRecordKind);
     const advice = formatConversationSyncAdvice(summaryCounts, t, currentRecordKind);
+    const failureItems = formatConversationSyncFailureItems(syncTask, syncSourceLabel, t);
     let cancelled = false;
-    setSyncProgress({ advice, phase: "refreshing", sourceLabel, summary, taskId: syncTask.id });
+    setSyncProgress({ advice, failureItems, phase: "refreshing", sourceLabel, summary, taskId: syncTask.id });
     void refreshCatalog({ rethrow: true })
       .then(() => {
         if (cancelled) {
           return;
         }
-        setSyncProgress({ advice, phase: "completed", sourceLabel, summary, taskId: syncTask.id });
+        setSyncProgress({ advice, failureItems, phase: "completed", sourceLabel, summary, taskId: syncTask.id });
       })
       .catch((error) => {
         if (!cancelled) {
@@ -491,13 +511,22 @@ export function ConversationsPage({
         record_kind: currentRecordKind,
         source_id: null,
       });
+      const summaryCounts = summarizeConversationSyncTask(task);
       const summary = formatConversationSyncSummary(
-        summarizeConversationSyncTask(task),
+        summaryCounts,
         t,
         currentRecordKind,
       );
+      const advice = formatConversationSyncAdvice(
+        summaryCounts,
+        t,
+        currentRecordKind,
+      );
+      const failureItems = formatConversationSyncFailureItems(task, syncSourceLabel, t);
       setSyncProgress({
+        advice,
         failedStep: task.status === "failed" ? 2 : undefined,
+        failureItems,
         phase:
           task.status === "failed"
             ? "failed"
@@ -532,14 +561,23 @@ export function ConversationsPage({
       );
       importedSourceNamesRef.current.set(result.source.id, result.source.name);
       const sourceLabel = result.source.name;
+      const summaryCounts = summarizeConversationSyncTask(result.task);
       const summary = formatConversationSyncSummary(
-        summarizeConversationSyncTask(result.task),
+        summaryCounts,
         t,
         currentRecordKind,
       );
+      const advice = formatConversationSyncAdvice(
+        summaryCounts,
+        t,
+        currentRecordKind,
+      );
+      const failureItems = formatConversationSyncFailureItems(result.task, syncSourceLabel, t);
       setSyncProgressDismissed(false);
       setSyncProgress({
+        advice,
         failedStep: result.task.status === "failed" ? 3 : undefined,
+        failureItems,
         phase:
           result.task.status === "failed"
             ? "failed"
@@ -652,6 +690,8 @@ export function ConversationsPage({
   }, []);
 
   const handleOpenSearchHit = useCallback((hit: ConversationSearchHit) => {
+    setSelectedAppId(hit.session.adapter_id);
+    setSelectedProjectKey(normalizedProjectPath(hit.session) ?? NO_PROJECT_GROUP_KEY);
     setSelectedSessionId(hit.session.id);
     setSelectedQuestionId(hit.question_id);
     setDetailQuery("");
@@ -771,6 +811,25 @@ export function ConversationsPage({
                 submitLabel={t("conversation.search.submit")}
                 value={contentQuery}
               />
+              <ToolbarSingleSelectDropdown
+                ariaLabel={t("conversation.toolbar.sessionSort")}
+                icon={<ArrowDownWideNarrow size={15} />}
+                onChange={setSessionSortBy}
+                options={[
+                  { label: t("conversation.toolbar.sort.updated"), value: "updated" },
+                  { label: t("conversation.toolbar.sort.started"), value: "started" },
+                  { label: t("toolbar.sort.name"), value: "title" },
+                  { label: t("conversation.toolbar.sort.questionCount"), value: "question-count" },
+                  { label: t("conversation.toolbar.sort.turnCount"), value: "turn-count" },
+                ]}
+                value={sessionSortBy}
+              />
+              <ToolbarSortDirectionButton
+                direction={sessionSortDirection}
+                label={t("toolbar.sort.direction.label")}
+                onClick={() => setSessionSortDirection((current) => (current === "desc" ? "asc" : "desc"))}
+                title={t(sessionSortDirection === "desc" ? "toolbar.sort.direction.descTitle" : "toolbar.sort.direction.ascTitle")}
+              />
             </>
           }
           sticky
@@ -847,6 +906,23 @@ export function ConversationsPage({
                   onChange={setDetailQuery}
                   placeholder={t("conversation.question.searchPlaceholder")}
                   value={detailQuery}
+                />
+                <ToolbarSingleSelectDropdown
+                  ariaLabel={t("conversation.toolbar.questionSort")}
+                  icon={<ArrowDownWideNarrow size={15} />}
+                  onChange={setQuestionSortBy}
+                  options={[
+                    { label: t("conversation.toolbar.sort.original"), value: "index" },
+                    { label: t("conversation.toolbar.sort.updated"), value: "updated" },
+                    { label: t("toolbar.sort.name"), value: "title" },
+                  ]}
+                  value={questionSortBy}
+                />
+                <ToolbarSortDirectionButton
+                  direction={questionSortDirection}
+                  label={t("toolbar.sort.direction.label")}
+                  onClick={() => setQuestionSortDirection((current) => (current === "desc" ? "asc" : "desc"))}
+                  title={t(questionSortDirection === "desc" ? "toolbar.sort.direction.descTitle" : "toolbar.sort.direction.ascTitle")}
                 />
               </>
             }
@@ -983,7 +1059,6 @@ function ConversationShell({
       <PageHeader
         actions={headerActions}
         className="mb-5"
-        description={subtitle}
         eyebrow={t("conversation.eyebrow")}
         icon={<AppWindow size={21} />}
         title={title}
@@ -1252,6 +1327,68 @@ export function groupConversationSessionsByProject(
 function normalizedProjectPath(session: ConversationSessionListItem) {
   const projectPath = session.project_path?.trim();
   return projectPath ? projectPath : null;
+}
+
+function sortConversationSessions(
+  sessions: ConversationSessionListItem[],
+  sortBy: ConversationSessionSortBy,
+  sortDirection: "asc" | "desc",
+) {
+  return [...sessions].sort((left, right) => {
+    const direction = sortDirection === "asc" ? 1 : -1;
+    let primary = 0;
+
+    if (sortBy === "started") {
+      primary = compareOptionalDate(left.started_at, right.started_at);
+    } else if (sortBy === "title") {
+      primary = left.title.localeCompare(right.title);
+    } else if (sortBy === "question-count") {
+      primary = left.question_count - right.question_count;
+    } else if (sortBy === "turn-count") {
+      primary = left.turn_count - right.turn_count;
+    } else {
+      primary = compareOptionalDate(left.updated_at, right.updated_at);
+    }
+
+    if (primary !== 0) {
+      return primary * direction;
+    }
+
+    return left.title.localeCompare(right.title) || left.id.localeCompare(right.id);
+  });
+}
+
+function sortConversationQuestions(
+  questions: ConversationQuestionDetail[],
+  sortBy: ConversationQuestionSortBy,
+  sortDirection: "asc" | "desc",
+) {
+  return [...questions].sort((left, right) => {
+    const direction = sortDirection === "asc" ? 1 : -1;
+    let primary = 0;
+
+    if (sortBy === "title") {
+      primary = (left.question.title ?? left.question.question_text).localeCompare(
+        right.question.title ?? right.question.question_text,
+      );
+    } else if (sortBy === "updated") {
+      primary = compareOptionalDate(left.question.updated_at, right.question.updated_at);
+    } else {
+      primary = left.question.question_index - right.question.question_index;
+    }
+
+    if (primary !== 0) {
+      return primary * direction;
+    }
+
+    return left.question.question_index - right.question.question_index || left.question.id.localeCompare(right.question.id);
+  });
+}
+
+function compareOptionalDate(left: string | null | undefined, right: string | null | undefined) {
+  const leftTime = left ? Date.parse(left) : 0;
+  const rightTime = right ? Date.parse(right) : 0;
+  return leftTime - rightTime;
 }
 
 export function ConversationExportDialog({
@@ -1885,6 +2022,8 @@ function SessionCard({
   session: ConversationSessionListItem;
   t: Translator;
 }) {
+  const hashId = shortSessionHashId(session.id);
+
   return (
     <button
       aria-label={t("conversation.session.open", { title: session.title })}
@@ -1898,7 +2037,9 @@ function SessionCard({
           {session.project_path ? abbreviateHomePath(session.project_path) : t("conversation.session.noProject")}
         </span>
         <span className="mt-3 inline-flex rounded-full bg-theme-control px-2 py-1 text-code-sm text-on-surface-muted">
-          {t("conversation.session.counts", { questions: session.question_count, turns: session.turn_count })}
+          <span className="font-mono">{hashId}</span>
+          <span className="px-1.5">·</span>
+          <span>{t("conversation.session.counts", { questions: session.question_count, turns: session.turn_count })}</span>
         </span>
       </span>
       <span className="grid size-9 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-on-surface-variant transition-colors group-hover:text-primary">
@@ -1906,6 +2047,13 @@ function SessionCard({
       </span>
     </button>
   );
+}
+
+function shortSessionHashId(sessionId: string) {
+  const trimmed = sessionId.trim();
+  const hashMatch = trimmed.match(/-([a-f0-9]{12,})$/i);
+  const hashId = hashMatch?.[1] ?? trimmed;
+  return hashId.slice(0, 8);
 }
 
 export function SessionQuestionWorkspace({
@@ -2140,12 +2288,12 @@ export function QuestionPreview({
 
   useEffect(() => {
     if (!activeBlockId) return;
-    const timeoutId = window.setTimeout(() => {
+    const frameId = window.requestAnimationFrame(() => {
       document
         .getElementById(conversationCardDomId(activeBlockId))
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
-    }, 80);
-    return () => window.clearTimeout(timeoutId);
+        ?.scrollIntoView({ behavior: "auto", block: "center" });
+    });
+    return () => window.cancelAnimationFrame(frameId);
   }, [activeBlockId]);
 
   async function handleCopyUserPrompt(turnId: string, value: string) {
@@ -2412,4 +2560,72 @@ function formatConversationSyncAdvice(
       ? "conversation.sync.web.partialFailureAdvice"
       : "conversation.sync.partialFailureAdvice",
   );
+}
+
+function formatConversationSyncFailureItems(
+  task: ConversationSyncTaskSnapshot,
+  sourceLabel: (sourceId: string | null | undefined) => string,
+  t: Translator,
+) {
+  if (!isPlainRecord(task.result) || !Array.isArray(task.result.errors)) {
+    return undefined;
+  }
+
+  const items = task.result.errors
+    .map((rawError) => formatConversationSyncFailureItem(rawError, sourceLabel, t))
+    .filter((item): item is { message: string; source: string } => Boolean(item));
+
+  return items.length > 0 ? items : undefined;
+}
+
+function formatConversationSyncFailureItem(
+  rawError: unknown,
+  sourceLabel: (sourceId: string | null | undefined) => string,
+  t: Translator,
+) {
+  if (!isPlainRecord(rawError)) {
+    return null;
+  }
+
+  const adapterId = stringRecordValue(rawError.adapter_id);
+  const sourceId = stringRecordValue(rawError.source_id);
+  const sourceName = sourceId ? sourceLabel(sourceId) : null;
+  const source = formatConversationSyncFailureSource(adapterId, sourceId, sourceName, t);
+  const message = compactConversationSyncFailureMessage(
+    stringRecordValue(rawError.message),
+    t,
+  );
+
+  return { message, source };
+}
+
+function formatConversationSyncFailureSource(
+  adapterId: string | null,
+  sourceId: string | null,
+  sourceName: string | null,
+  t: Translator,
+) {
+  const labelParts = [adapterId, sourceName ?? sourceId]
+    .filter((part): part is string => Boolean(part))
+    .filter((part, index, parts) => parts.indexOf(part) === index);
+
+  return labelParts.length > 0
+    ? labelParts.join(" · ")
+    : t("conversation.sync.unknownFailedSource");
+}
+
+function compactConversationSyncFailureMessage(message: string | null, t: Translator) {
+  const normalized = message?.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return t("conversation.sync.failureMessageUnavailable");
+  }
+  return normalized.length > 260 ? `${normalized.slice(0, 257)}...` : normalized;
+}
+
+function stringRecordValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

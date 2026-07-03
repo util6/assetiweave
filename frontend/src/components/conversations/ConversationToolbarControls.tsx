@@ -23,11 +23,17 @@ export type ConversationSyncPhase =
 
 export interface ConversationSyncProgressState {
   advice?: string;
+  failureItems?: ConversationSyncFailureItem[];
   phase: ConversationSyncPhase;
   sourceLabel: string;
   failedStep?: 1 | 2 | 3;
   summary?: string;
   taskId?: string;
+}
+
+export interface ConversationSyncFailureItem {
+  message: string;
+  source: string;
 }
 
 export function ConversationBackgroundTaskIndicator({
@@ -152,6 +158,30 @@ export function ConversationSyncProgress({
             <p className="mt-2 max-w-4xl break-words text-body-sm font-medium text-status-update">
               {state.advice}
             </p>
+          ) : null}
+          {state.failureItems?.length ? (
+            <div className="mt-3 max-w-4xl">
+              <p className="text-label-caps text-status-update">
+                {t(
+                  recordKind === "web"
+                    ? "conversation.sync.web.failedSourcesTitle"
+                    : "conversation.sync.failedSourcesTitle",
+                )}
+              </p>
+              <ul className="mt-1.5 space-y-1.5">
+                {state.failureItems.map((item, index) => (
+                  <li
+                    className="min-w-0 border-l-2 border-status-update/50 pl-3 text-body-sm"
+                    key={`${item.source}-${index}`}
+                  >
+                    <p className="break-words font-semibold text-on-surface">{item.source}</p>
+                    <p className="mt-0.5 break-words text-code-sm text-on-surface-variant">
+                      {item.message}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : null}
         </div>
         <div className="flex min-w-0 items-start justify-between gap-3 md:justify-end md:text-right">
