@@ -48,7 +48,17 @@ export function useCatalogController() {
         }
       : null,
   );
-  const filteredAssets = useAssetFilter(catalogData.assets, query);
+  const assetFilterOptions = useMemo(
+    () => ({
+      kindFilters: [],
+      query,
+      sortBy: "created" as const,
+      sortDirection: "desc" as const,
+      sourceFilters: [],
+    }),
+    [query],
+  );
+  const filteredAssets = useAssetFilter(catalogData.assets, assetFilterOptions);
   const assetById = useMemo(() => new Map(catalogData.assets.map((asset) => [asset.id, asset])), [catalogData.assets]);
   const sourceById = useMemo(() => new Map(catalogData.sources.map((source) => [source.id, source])), [catalogData.sources]);
 

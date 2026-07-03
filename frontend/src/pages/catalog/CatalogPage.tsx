@@ -1,15 +1,18 @@
-import { useEffect, useState } from "react";
-import { Filter, Grid3X3, LayoutList, Plus, RefreshCw, Settings, SlidersHorizontal, Sparkles, Tag } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowDownWideNarrow, Filter, FolderOpen, Grid3X3, LayoutList, Plus, RefreshCw, Settings, Sparkles } from "lucide-react";
 import { AssetDeleteDialog } from "../../components/assets/AssetDeleteDialog";
 import { AssetEditDialog } from "../../components/assets/AssetEditDialog";
 import { AssetList } from "../../components/assets/AssetList";
 import { AssetToolbar, type AssetViewMode } from "../../components/assets/AssetToolbar";
+import { ToolbarMultiSelectDropdown, ToolbarSingleSelectDropdown, ToolbarSortDirectionButton } from "../../components/common/DataToolbar";
 import { PageMetrics } from "../../components/common/PageMetrics";
 import { PageHeader } from "../../components/foundation/PageHeader";
 import { DeploymentPlanPanel } from "../../components/plans/DeploymentPlanPanel";
 import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
 import type { CatalogController } from "../../hooks/catalog/useCatalogController";
+import { filterAssets, type AssetSortBy, type AssetSortDirection } from "../../hooks/catalog/useAssetFilter";
 import { useI18n } from "../../i18n/I18nProvider";
+import { assetKindLabel } from "../../i18n/domain";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import {
   deleteAsset,
@@ -18,6 +21,7 @@ import {
   updateAssetDescription,
 } from "../../services/catalog";
 import type { Asset, AssetGroupDetail } from "../../types";
+import type { AssetKind } from "../../types";
 
 export function CatalogPage({
   catalog,
@@ -31,10 +35,46 @@ export function CatalogPage({
   const { t } = useI18n();
   const { startBackup, task: backupTask } = useSkillBackup();
   const [assetViewMode, setAssetViewMode] = useState<AssetViewMode>("list");
+  const [kindFilters, setKindFilters] = useState<AssetKind[]>([]);
+  const [sourceFilters, setSourceFilters] = useState<string[]>([]);
+  const [sortBy, setSortBy] = useState<AssetSortBy>("created");
+  const [sortDirection, setSortDirection] = useState<AssetSortDirection>("desc");
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const [deletingAsset, setDeletingAsset] = useState<Asset | null>(null);
   const [assetGroups, setAssetGroups] = useState<AssetGroupDetail[]>([]);
   const [assetActionBusy, setAssetActionBusy] = useState(false);
+  const visibleAssets = useMemo(
+    () =>
+      filterAssets(catalog.assets, {
+        kindFilters,
+        query: catalog.query,
+        sortBy,
+        sortDirection,
+        sourceFilters,
+      }),
+    [catalog.assets, catalog.query, kindFilters, sortBy, sortDirection, sourceFilters],
+  );
+  const kindFilterOptions = useMemo(
+    () =>
+      buildKindFilterOptions(catalog.assets).map(({ count, kind }) => ({
+        label: `${assetKindLabel(kind, t)} (${count})`,
+        value: kind,
+      })),
+    [catalog.assets, t],
+  );
+  const sourceFilterOptions = useMemo(() => {
+    const countBySourceId = new Map<string, number>();
+    catalog.assets.forEach((asset) => {
+      countBySourceId.set(asset.source_id, (countBySourceId.get(asset.source_id) ?? 0) + 1);
+    });
+
+    return catalog.sources
+      .filter((source) => countBySourceId.has(source.id))
+      .map((source) => ({
+        label: `${source.name} (${countBySourceId.get(source.id) ?? 0})`,
+        value: source.id,
+      }));
+  }, [catalog.assets, catalog.sources]);
   const currentEditingAsset = editingAsset
     ? (catalog.assets.find((asset) => asset.id === editingAsset.id) ?? editingAsset)
     : null;
@@ -207,11 +247,52 @@ export function CatalogPage({
           ],
         ]}
         ariaLabel={t("toolbar.aria.assetActions")}
-        filters={[
-          { icon: <Filter size={17} />, label: t("toolbar.filter.all", { count: catalog.assets.length }) },
-          { icon: <Tag size={17} />, label: t("toolbar.filter.tag") },
-          { icon: <SlidersHorizontal size={17} />, label: t("toolbar.sort.createdAt") },
-        ]}
+        filterControls={
+          <>
+            <ToolbarMultiSelectDropdown
+              allLabel={t("toolbar.filter.all", { count: catalog.assets.length })}
+              ariaLabel={t("toolbar.filter.kind")}
+              clearLabel={t("toolbar.filter.clear")}
+              emptyLabel={t("toolbar.filter.empty")}
+              icon={<Filter size={15} />}
+              label={t("toolbar.filter.kind")}
+              onClear={() => setKindFilters([])}
+              onToggleValue={(value) => setKindFilters((current) => toggleFilterValue(current, value))}
+              options={kindFilterOptions}
+              selectedValues={kindFilters}
+            />
+            <ToolbarMultiSelectDropdown
+              allLabel={t("toolbar.filter.sourceAll", { count: catalog.sources.length })}
+              ariaLabel={t("toolbar.filter.source")}
+              clearLabel={t("toolbar.filter.clear")}
+              emptyLabel={t("toolbar.filter.empty")}
+              icon={<FolderOpen size={15} />}
+              label={t("toolbar.filter.source")}
+              onClear={() => setSourceFilters([])}
+              onToggleValue={(value) => setSourceFilters((current) => toggleFilterValue(current, value))}
+              options={sourceFilterOptions}
+              selectedValues={sourceFilters}
+            />
+            <ToolbarSingleSelectDropdown
+              ariaLabel={t("toolbar.sort.label")}
+              icon={<ArrowDownWideNarrow size={15} />}
+              onChange={setSortBy}
+              options={[
+                { label: t("toolbar.sort.createdAt"), value: "created" },
+                { label: t("toolbar.sort.updatedAt"), value: "updated" },
+                { label: t("toolbar.sort.name"), value: "name" },
+                { label: t("toolbar.sort.kind"), value: "kind" },
+              ]}
+              value={sortBy}
+            />
+            <ToolbarSortDirectionButton
+              direction={sortDirection}
+              label={t("toolbar.sort.direction.label")}
+              onClick={() => setSortDirection((current) => (current === "desc" ? "asc" : "desc"))}
+              title={t(sortDirection === "desc" ? "toolbar.sort.direction.descTitle" : "toolbar.sort.direction.ascTitle")}
+            />
+          </>
+        }
         onQueryChange={catalog.setQuery}
         onViewModeChange={setAssetViewMode}
         query={catalog.query}
@@ -230,7 +311,7 @@ export function CatalogPage({
       <AssetList
         appShortcuts={catalog.appShortcuts}
         assetMountStatuses={catalog.assetMountStatuses}
-        assets={catalog.filteredAssets}
+        assets={visibleAssets}
         expandedIds={catalog.expandedIds}
         onDeleteAsset={setDeletingAsset}
         onEditAsset={setEditingAsset}
@@ -268,4 +349,22 @@ export function CatalogPage({
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function toggleFilterValue<Value extends string>(current: Value[], value: Value) {
+  if (current.includes(value)) {
+    return current.filter((item) => item !== value);
+  }
+  return [...current, value];
+}
+
+function buildKindFilterOptions(assets: Asset[]) {
+  const countByKind = new Map<AssetKind, number>();
+  assets.forEach((asset) => {
+    countByKind.set(asset.kind, (countByKind.get(asset.kind) ?? 0) + 1);
+  });
+
+  return [...countByKind.entries()]
+    .map(([kind, count]) => ({ count, kind }))
+    .sort((first, second) => first.kind.localeCompare(second.kind));
 }

@@ -4,7 +4,6 @@ import {
   ToolbarActionButton,
   ToolbarSearch,
   ToolbarSeparator,
-  ToolbarTextButton,
   ToolbarViewToggle,
   type ToolbarViewOption,
   type ToolbarViewMode,
@@ -22,16 +21,10 @@ export interface AssetToolbarAction {
   text?: string;
 }
 
-export interface AssetToolbarFilter {
-  icon: ReactNode;
-  label: string;
-  onClick?: () => void;
-}
-
 export function AssetToolbar<Value extends AssetToolbarViewMode = AssetToolbarViewMode>({
   actionGroups = [],
   ariaLabel,
-  filters = [],
+  filterControls,
   onQueryChange,
   onViewModeChange,
   query,
@@ -45,7 +38,7 @@ export function AssetToolbar<Value extends AssetToolbarViewMode = AssetToolbarVi
 }: {
   actionGroups?: AssetToolbarAction[][];
   ariaLabel: string;
-  filters?: AssetToolbarFilter[];
+  filterControls?: ReactNode;
   onQueryChange: (query: string) => void;
   onViewModeChange?: (viewMode: Value) => void;
   query: string;
@@ -85,9 +78,7 @@ export function AssetToolbar<Value extends AssetToolbarViewMode = AssetToolbarVi
               value={viewMode}
             />
           )}
-          {filters.map((filter) => (
-            <ToolbarTextButton icon={filter.icon} key={filter.label} label={filter.label} onClick={filter.onClick} />
-          ))}
+          {filterControls}
         </>
       }
       sticky={sticky}
