@@ -2,10 +2,20 @@
 
 ## Project Structure & Module Organization
 
-- `frontend/src/` contains the React 19 and TypeScript UI. Put reusable controls in `components/ui`, design-system primitives in `components/foundation`, cross-domain composites in `components/common`, and feature code in domain folders such as `components/groups`.
-- `src-tauri/src/` contains the complete Rust backend: shared models, Tauri commands, Engine protocol, persistence, mount operations, and conversation processing.
-- `cli/` is the Go/Cobra client. It must call the Rust Engine rather than writing SQLite or mount links directly.
+- `frontend/src/` contains the React 19 and TypeScript UI. Put reusable controls in `components/ui`, design-system primitives in `components/foundation`, cross-domain composites in `components/common`, and feature code in domain folders such as `components/groups`, `components/assets`, `components/sources`, and `components/conversations`.
+- `frontend/src/services/` is the only frontend boundary for Tauri/Engine calls. Pages, hooks, components, schemas, and utils must not bypass it with direct `invoke(...)` calls.
+- `src-tauri/src/` contains the complete Rust backend. `adapters/` exposes Tauri commands, stdio Engine protocol, platform glue, CLI tooling, and background task state. `backend/` contains application workflows, capabilities, models, scanner, planner, executor, persistence, conversations, settings, backups, logs, and targeting.
+- `cli/` is the Go/Cobra client. It must call the Rust Engine rather than writing SQLite or mount links directly. CLI-specific code may own command UX, plugins, policies, output formatting, update flow, and external harvester orchestration.
 - Tests are colocated with source. Supporting material lives in `docs/`, `specs/`, and `scripts/`. See `docs/repository-structure.md` for ownership and migration guidance.
+
+## Runtime Architecture & Data Flow
+
+- Desktop UI flow: `React pages/hooks -> frontend services -> Tauri commands -> AppService -> backend capabilities/store -> SQLite and filesystem`.
+- CLI flow: `Go Cobra command -> Engine client -> assetiweave-engine stdio JSON protocol -> command registry/runtime -> AppService -> same backend capabilities/store`.
+- `AppService` in `src-tauri/src/backend/application/` is the shared application workflow boundary for Tauri and Engine. Do not create frontend-only or CLI-only business workflows when the action changes persisted app state.
+- SQLite is the source of truth for catalog state, tenants, sources, assets, profiles, groups, mounts, navigation, app shortcuts, conversation records, settings, backup metadata, operation logs, and remote Skill records. Schema changes go through `src-tauri/migrations/`.
+- `cli/internal/schema/contract.json` is generated from the Rust Engine contract. When Engine methods, DTOs, risks, confirmation requirements, or exposure change, run `pnpm cli:contract`; do not hand-edit generated contracts.
+- Browser preview may use `frontend/src/mock/` fallbacks. Mock data must not become a second persistence or rule engine.
 
 ## Build, Test, and Development Commands
 
@@ -17,7 +27,18 @@
 - `pnpm cli:contract`: rebuild the Rust Engine and regenerate `cli/internal/schema/contract.json`.
 - `pnpm cli:test:e2e`: run installed CLI-to-Engine integration tests.
 
-Use Node 22, pnpm 10, Go 1.24, and the stable Rust toolchain.
+Use Node 22, pnpm 10, Go 1.24, and a stable Rust toolchain satisfying `src-tauri/Cargo.toml` (`rust-version = "1.96.0"` at the current release line).
+
+## Product Architecture Constraints
+
+- AssetIWeave is a local-first AI file asset mount manager. It manages prompts, rules, memory, skills, MCP config, agent definitions, commands, workflows, conversation records, and related metadata as local assets and records.
+- Source directories are read-only by default. Metadata, labels, groups, mount intent, observations, conversation indexes, and settings belong in SQLite or app-owned backup/library directories, not in third-party source repos.
+- Default deployment is a single symlink from target App directory to the real source asset. Do not introduce an intermediate symlink pool unless a spec explicitly changes the product decision.
+- `asset_mounts` is the single source of mount intent for asset/profile relationships. Catalog quick icons, mount cards, source-level batch mount, group batch mount, group exclusive mount, CLI commands, plan generation, and execution must converge on this model.
+- App-local or app-owned source directories have stricter mount rules: avoid directly cross-mounting one App's target directory into another App unless the backend policy explicitly allows it.
+- Long-running work such as scanning, backup, import/export, remote acquisition, conversation sync, catalog refresh, batch mount/unmount, and network calls must be background-capable and must not hold the global app lock while doing blocking I/O.
+- Conversation records are a separate domain, not Catalog assets. They flow through adapters/sources into normalized Session, Turn, Part, Question, and QuestionTurn records, then search/export/grouping surfaces.
+- Remote Skill discovery/import is not a marketplace and not a trust shortcut. GitHub/provider results must be previewed, confirmed, imported into an app-owned library/backup path, recorded with remote metadata, and scanned before use.
 
 ## Coding Style & Naming Conventions
 
@@ -52,6 +73,16 @@ Any feature that can scan directories, copy files, sync external records, refres
 ## Testing Guidelines
 
 Name frontend tests `*.test.ts(x)` and Go tests `*_test.go`; keep Rust unit tests near the module under test. Add regression coverage for behavior changes. Use a temporary `ASSETIWEAVE_DB_PATH` for tests that could alter local application state.
+
+For behavior that crosses UI, Engine, and filesystem boundaries, prefer layered coverage: pure utility tests first, backend repository/service tests next, CLI contract/e2e tests when public commands change, and browser/Tauri manual verification for visible UI or desktop APIs.
+
+## Documentation & Specs
+
+- `docs/` describes current maintenance and usage facts.
+- `specs/requirements.md` describes product goals, non-goals, acceptance criteria, and current product phase.
+- `specs/design.md` describes the intended architecture and should be kept aligned with real module boundaries.
+- `specs/tasks.md` tracks milestone state; update it when Git history or implemented code proves a task changed state.
+- When code and specs disagree, inspect code and Git first. Mark unfinished goals as pending rather than documenting them as current behavior.
 
 ## Commit & Pull Request Guidelines
 

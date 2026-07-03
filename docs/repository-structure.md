@@ -1,6 +1,6 @@
 # 仓库目录与架构边界
 
-> 最后核对：2026-06-12
+> 最后核对：2026-07-02
 
 本文描述 AssetIWeave **当前代码实际采用的目录结构和职责边界**。它用于回答两个问题：
 
@@ -15,14 +15,16 @@
 React frontend
   -> frontend/src/services
   -> Tauri commands
-  -> src-tauri/src/service.rs
-  -> scanner / planner / executor / conversations / store
+  -> src-tauri/src/adapters/tauri
+  -> src-tauri/src/backend/application/AppService
+  -> backend capabilities / scanner / planner / executor / conversations / store
   -> SQLx-managed SQLite and local filesystem
 
 Go CLI
   -> Rust JSON-RPC engine
   -> command registry
-  -> src-tauri/src/service.rs
+  -> src-tauri/src/adapters/engine
+  -> src-tauri/src/backend/application/AppService
   -> the same business and storage layers
 ```
 
@@ -30,7 +32,7 @@ Go CLI
 
 - 前端和 Go CLI 都不能直接写 SQLite，也不能各自实现挂载规则。
 - App 自有数据库 schema 只能通过 `src-tauri/migrations/` 中的 SQLx migration 演进。
-- `AppService` 是桌面命令与 Engine 共用的应用服务入口。
+- `AppService` 位于 `src-tauri/src/backend/application/`，是桌面命令与 Engine 共用的应用服务入口。
 - 文件扫描、挂载判断、计划和执行规则以 Rust 实现为准。
 - Go CLI 负责命令体验、插件、策略接入和自更新，不复制 Rust 业务逻辑。
 - `frontend/src/mock/` 只用于浏览器预览和后端不可用时的兜底，不是另一套数据源。
@@ -106,7 +108,7 @@ Go CLI
 仓库只维护一个 Rust package：`src-tauri/`。桌面程序和 stdio Engine 都通过
 `assetiweave_lib` 复用同一套后端代码，不再拆分独立 core crate。
 
-`src-tauri/src/models/` 是普通的后端共享模型模块，不代表 DDD 分层：
+`src-tauri/src/backend/models/` 是普通的后端共享模型模块，不代表 DDD 分层：
 
 - `assets.rs`：Source、Asset、Profile、Mount、Deployment 等共享数据结构。
 - `conversation.rs`：Conversation 标准化模型和纯辅助函数。
@@ -121,40 +123,42 @@ Go CLI
 | --- | --- |
 | `main.rs` | 桌面二进制入口，不放业务逻辑 |
 | `bin/assetiweave-engine.rs` | Engine 二进制入口，不放业务逻辑 |
-| `models/` | 后端共享数据模型和无副作用辅助函数 |
-| `lib.rs` | Tauri 插件、状态和 command 注册 |
-| `commands.rs` | Tauri Controller：参数接收、锁、调用 `AppService` |
-| `service.rs` | 桌面和 Engine 共用的应用服务门面与工作流编排 |
-| `command_registry.rs` | Engine 方法、风险、schema 和 handler 的权威注册表 |
-| `engine.rs`、`protocol.rs` | JSON-RPC stdio 和版本兼容协议 |
-| `policy.rs`、`runtime.rs` | Engine 策略与调用生命周期 |
-| `scanner/` | Source 遍历、分类、描述和 hash |
-| `planner/` | 根据 mount/profile 生成可解释部署计划 |
-| `targeting.rs` | 目标路径计算和真实挂载状态判断 |
-| `executor/` | 执行计划、文件系统安全边界和部署状态写入 |
-| `store/` | SQLx database 初始化、migration、SQL 常量、codec 和各领域 repository |
-| `conversations/` | Conversation adapter、解析和标准化 |
-| `defaults.rs` | 内置 Source、Profile、导航等默认值 |
-| `path_utils.rs` | 路径展开、Git 路径和 hash 等共享工具 |
-| `platform.rs` | 文件管理器等平台集成 |
-| `app_settings.rs`、`logs.rs` | 独立基础能力 |
-| `types.rs` | Tauri/App DTO、AppState 和非 core 类型 |
+| `lib.rs` | Tauri 插件、状态、关闭前同步/备份和 command handler 装配 |
+| `adapters/tauri/` | Tauri command handler、command 函数和后台任务注册表 |
+| `adapters/engine/` | stdio JSON protocol、command registry/runtime、风险策略和 transport |
+| `adapters/app_state.rs` | Tauri 共享状态和后台任务/退出控制 |
+| `adapters/platform.rs`、`adapters/cli_tools.rs` | 平台集成和本地 CLI 工具辅助 |
+| `backend/application/` | `AppService` 和按领域拆分的应用工作流入口 |
+| `backend/capabilities/` | catalog、sources、profiles、groups、mounts、fs utils 等可复用能力 |
+| `backend/models/` | 后端共享数据模型和无副作用辅助函数 |
+| `backend/dto/` | 跨 Tauri/Engine 暴露的 DTO |
+| `backend/scanner/` | Source 遍历、分类、描述、Git/source metadata 和 hash |
+| `backend/planner/` | 根据 `asset_mounts`、profile 和目标状态生成可解释部署计划 |
+| `backend/targeting.rs` | 目标路径计算和真实挂载状态判断 |
+| `backend/executor/` | 执行计划、文件系统安全边界和部署状态写入 |
+| `backend/store/` | SQLx database 初始化、migration、SQL 常量、codec 和各领域 repository |
+| `backend/conversations/` | Conversation adapter、官方/外部来源读取、harvester 和标准化 |
+| `backend/defaults.rs` | 内置 Source、Profile、导航等默认值 |
+| `backend/path_utils.rs` | 路径展开、Git 路径和 hash 等共享工具 |
+| `backend/app_settings.rs`、`data_backup.rs`、`logs.rs`、`operation_log.rs` | 设置、备份、日志和操作记录 |
 
 ### 4.3 当前过渡热点
 
 以下文件是正式入口，但已经是集中度较高的过渡热点：
 
-- `src-tauri/src/service.rs`
-- `src-tauri/src/commands.rs`
-- `src-tauri/src/types.rs`
+- `src-tauri/src/backend/application/*.rs`
+- `src-tauri/src/adapters/tauri/commands.rs`
+- `src-tauri/src/backend/dto/types.rs`
 - `frontend/src/types/index.ts`
 - `frontend/src/manuals/registry.ts`
 
 它们不是 legacy，也不能另建 `service_v2.rs`、`commands_new.rs` 或第二套 `types/` 来绕开。新增代码应遵循：
 
-- `service.rs` 只保留跨 repository/领域模块的工作流编排；
+- `backend/application` 只保留跨 repository/领域模块的工作流编排；
+- `adapters/tauri` 只保留接口适配、状态读取和后台任务编排；
+- `adapters/engine` 只保留协议、风险策略、schema 和 handler 注册；
 - 纯扫描、计划、执行、解析逻辑进入对应领域模块；
-- SQL 进入 `store/` 对应 repository；
+- SQL 进入 `backend/store/` 对应 repository；
 - 领域增长到难以浏览时，拆分现有模块并通过 `mod.rs` re-export；
 - 拆分必须同步迁移调用方和测试，不保留永久双轨入口。
 
@@ -192,7 +196,7 @@ Go CLI
 `cli/internal/schema/contract.json` 是生成后提交的契约文件：
 
 ```text
-src-tauri/src/command_registry.rs
+src-tauri/src/adapters/engine/registry.rs
   -> pnpm cli:contract
   -> cli/internal/schema/contract.json
   -> Go generated App commands
@@ -222,7 +226,7 @@ src-tauri/src/command_registry.rs
 3. 如果设计已变更，更新 spec 或明确标记旧段落。
 4. 如果目标尚未实现，把它作为待办，不把文档描述成现状。
 
-已知例子：旧 `specs/design.md` 曾描述 scanner/planner 位于共享 core；当前实际实现位于 `src-tauri/src/scanner` 和 `src-tauri/src/planner`。本文以当前代码边界为准。
+已知例子：旧 `specs/design.md` 曾描述 Rust workspace/core crate、顶层 `commands.rs` / `service.rs`。当前实际实现位于单一 `src-tauri` package，接口在 `src-tauri/src/adapters/`，业务在 `src-tauri/src/backend/`。本文以当前代码边界为准。
 
 ## 8. 新文件落点决策
 
@@ -237,10 +241,10 @@ src-tauri/src/command_registry.rs
    - 前端调用统一放 `services/`；
    - 不允许页面或 utils 直接新增 `invoke(...)`。
 3. **是否是 Rust 业务规则？**
-   - 纯共享模型/算法放 core；
-   - 应用工作流放 `service.rs` 或拆出的领域 service；
-   - App 自有 SQLite 读写放 `store/`，schema 变化放 `src-tauri/migrations/`；
-   - 文件扫描/计划/执行放现有领域模块。
+   - 纯共享模型/算法放 `backend/models/` 或对应领域模块；
+   - 应用工作流放 `backend/application/`；
+   - App 自有 SQLite 读写放 `backend/store/`，schema 变化放 `src-tauri/migrations/`；
+   - 文件扫描/计划/执行放 `backend/scanner/`、`backend/planner/`、`backend/executor/`。
 4. **是否是 CLI 特有体验？**
    - 放 `cli/`；
    - 若会改变业务数据，最终必须调用 Engine。
@@ -294,10 +298,10 @@ src-tauri/src/command_registry.rs
 
 ## 11. 当前审计结论
 
-截至 2026-06-12，仓库中没有发现被 Git 跟踪的 `old/`、`legacy/`、`v2/` 或完整重复前后端源码树。当前风险主要不是“遗留目录太多”，而是职责在少数大文件中再次混合：
+截至 2026-07-02，仓库中没有发现被 Git 跟踪的 `old/`、`legacy/`、`v2/` 或完整重复前后端源码树。当前风险主要不是“遗留目录太多”，而是少数应用入口、DTO 和前端类型仍容易再次变成职责汇聚点：
 
-1. `commands.rs` 与 `service.rs` 仍存在部分工作流集中和历史职责交叠。新能力应优先进入 `AppService` 与领域模块，不能继续把非 Controller 逻辑堆入 command。
-2. `specs/design.md` 的部分目录描述已落后于实际代码。它应作为设计演进记录维护，不能覆盖当前目录事实。
+1. `adapters/tauri/commands.rs` 与 `backend/application/*.rs` 需要继续保持接口适配和业务编排分离。新能力不能把非 Controller 逻辑堆入 command。
+2. `specs/design.md` 与 `AGENTS.md` 已同步到当前 `adapters` + `backend` 结构；后续代码移动必须同步更新这些入口文档。
 3. Rust core、Tauri DTO 和 TypeScript 类型之间存在跨进程必要映射。新增字段应从 Rust 模型/DTO、command contract、前端 schema 到 TypeScript 使用方成链更新，不能只复制一个新接口。
 4. `frontend/src/mock/` 与真实 Tauri service 并存是预览机制，不是双后端。正式运行时错误不能通过新增 mock 分支掩盖。
 5. `.specstory/`、`.DS_Store`、`dist/`、`target/` 和 `node_modules/` 均属于本地历史或生成内容，已经通过 `.gitignore` 隔离，不构成正式架构。

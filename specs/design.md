@@ -25,38 +25,57 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 ### 3.1 技术选型
 
 - 桌面壳：Tauri 2。
-- 前端运行时：React + TypeScript + Vite。
-- 前端样式：Tailwind CSS，设计 token 统一放在 `frontend/tailwind.config.ts`，页面组件优先使用 Tailwind utility classes，`frontend/src/styles/index.css` 仅保留 Tailwind layers、全局背景和少量工具类。
-- 图标：`lucide-react`。
-- 后端核心：单一 Rust package `src-tauri`，桌面 App 和 stdio Engine 共享同一个 library，后端代码按模型、存储、服务和接口模块组织。
-- 本地存储：SQLx 管理的 SQLite 主存储，schema 通过 `src-tauri/migrations/` 演进，后续提供 JSON 导出/导入。
-- 包管理与构建：pnpm、Cargo。
+- 前端运行时：React 19 + TypeScript 5 + Vite 6。
+- 前端样式：Tailwind CSS 3 + 语义主题 token。全局 Tailwind layers 和少量工具类放在 `frontend/src/styles/index.css`；主题 schema、CSS 变量、配色校验和 recipe 放在 `frontend/src/theme/`。
+- 前端组件基础：Radix UI、class-variance-authority、tailwind-merge 和项目内 `components/ui` / `components/foundation` 分层。
+- 后端核心：单一 Rust package `src-tauri`，桌面 App 和 stdio Engine 共享 `assetiweave_lib`。接口适配放在 `src-tauri/src/adapters/`，业务核心放在 `src-tauri/src/backend/`。
+- Rust 异步与本地能力：Tauri plugins、Tokio、SQLx、rusqlite、globset、walkdir、sha2、serde、schemars、ureq。
+- 本地存储：SQLx-managed SQLite 主存储，schema 通过 `src-tauri/migrations/` 演进；备份、导出和导入能力围绕 app-owned 数据目录实现。
+- CLI：Go 1.24 + Cobra。CLI 只负责命令体验、策略、插件、自更新和外部采集编排，所有业务写入通过 Rust Engine。
+- 契约：Rust Engine command registry 暴露方法、schema、风险等级、dry-run 和确认要求；`pnpm cli:contract` 生成 `cli/internal/schema/contract.json`。
+- 包管理与构建：pnpm 10、Cargo、Go toolchain。
 
 ### 3.2 Tauri 后端模块边界
 
-`src-tauri` 不把所有职责堆在 `lib.rs`。入口文件只负责装配 Tauri builder、插件、状态和命令注册；业务按以下边界拆分：
+`src-tauri` 不把职责堆在入口文件。`lib.rs` 只装配 Tauri builder、插件、状态、关闭前同步/备份和 command handler；业务通过 adapters 和 backend 分层。
 
-- `commands.rs`：Tauri command 层，类似 Controller，只做参数接收、状态锁定和调用下层服务。
-- `store/`：SQLx-backed SQLite repository 模块目录。`mod.rs` 只导出门面；`database.rs` 负责数据库打开、migration 和默认数据 seed；`sql.rs` 集中 SQL 常量；`source_repo.rs`、`asset_repo.rs`、`profile_repo.rs`、`deployment_repo.rs` 等领域 repository 承载对应聚合的读写；`codec.rs` 负责 JSON/enum 编解码。
-- `scanner/`：资产扫描与分类模块目录，负责 Source 目录遍历、include/exclude glob、`SKILL.md` 目录识别和资产描述提取。后续按规模继续拆分为 walker、classifier、extractor。
-- `planner/`：部署计划生成模块目录，负责 create/skip/conflict 决策和解释文本。后续按 Profile 匹配、目标路径解析、冲突判断继续拆分。
-- `executor/`：部署执行模块目录，负责 `symlink_to_source`、`copy_to_target`、安全边界、非托管文件冲突和 deployment state 记录。后续按 filesystem、strategy、state recorder 继续拆分。
-- `conversations/`：对话记录适配器模块，负责外部适配器 manifest 校验、可信注册、NDJSON try-run、标准化 Session/Turn/Part 输出，以及 Codex/OpenCode 的内置兜底解析。
-- `defaults.rs`：默认 Source/Profile 模板。
-- `path_utils.rs`：路径展开、相对路径归一化、hash 等跨模块工具。
-- `platform.rs`：平台集成，例如在文件管理器中显示路径。
-- `types.rs`：Tauri 层 DTO 和共享 AppState。
+当前真实模块边界：
+
+- `adapters/tauri/`：Tauri command handler、command 函数和 background task registry。它是桌面 UI 的接口层，只做参数接收、状态访问、后台任务编排和调用 `AppService`。
+- `adapters/engine/`：stdio JSON protocol、command registry/runtime、风险策略和 transport。它是 Go CLI 的接口层，负责 protocol/contract，而不是业务规则。
+- `adapters/app_state.rs`、`adapters/platform.rs`、`adapters/cli_tools.rs`：Tauri 状态、平台集成和本地 CLI 工具辅助。
+- `backend/application/`：`AppService` 及其按领域拆分的工作流入口。Tauri 与 Engine 都应通过这里进入业务逻辑。
+- `backend/capabilities/`：可被多个工作流复用的能力模块，例如 catalog、sources、profiles、groups、mounts 和 filesystem utils。
+- `backend/models/`：后端共享模型，当前包含 asset、conversation、tenant 等领域结构和纯辅助函数。
+- `backend/dto/`：跨接口输出的 DTO 类型，避免把存储内部结构直接泄漏给前端或 CLI。
+- `backend/store/`：SQLx-backed SQLite repository 模块目录。`database.rs` 负责数据库打开、migration 和默认 seed；`sql.rs` 集中 SQL；各领域 repo 承载 Source、Asset、Profile、Deployment、Mount、Group、Conversation、Tenant、Backup、Remote Skill 等读写；`codec.rs` 负责 JSON/enum 编解码。
+- `backend/scanner/`：资产扫描与分类，包含 dispatcher、glob、mixed scanner、skill scanner、asset builder、classifier、Git/source metadata 和目录 hash。
+- `backend/planner/`：部署计划生成，基于 `asset_mounts`、Profile 能力、目标状态和安全规则输出可解释动作。
+- `backend/executor/`：部署执行，负责 `symlink_to_source`、`copy_to_target`、目标路径安全、非托管文件保护和 deployment state 写入。
+- `backend/targeting.rs`：目标路径解析、App/Profile 挂载目录、实际挂载状态和断链/冲突判断。
+- `backend/conversations/`：对话记录适配器、官方/外部来源读取、NDJSON try-run、harvester 接入和标准化 Session/Turn/Part 处理。
+- `backend/app_settings.rs`、`data_backup.rs`、`logs.rs`、`operation_log.rs`、`card_translation.rs`：设置、备份、日志、操作记录和卡片翻译等独立基础能力。
+- `backend/defaults.rs`、`path_utils.rs`：内置模板、路径展开、Git 路径和 hash 等共享工具。
+
+架构约束：
+
+- 不再描述或新建独立 core crate；当前后端是单一 `src-tauri` package。
+- 不再使用旧式顶层 `commands.rs` / `service.rs` 作为新功能落点；新入口应进入 `adapters/*` 或 `backend/application/*`。
+- 前端和 Go CLI 不能直接写 SQLite、不能自行判断挂载安全、不能复制扫描/计划/执行规则。
+- Engine contract、CLI schema 和 Tauri command DTO 需要随公共能力同步演进。
 
 ### 3.3 当前开发状态
 
-当前已经完成的产品开发基础：
+当前 Git 历史已经进入 `0.5.0` 后的具体功能扩展阶段。近期提交显示重点集中在版本同步、Engine/CLI contract、批量 catalog/mount 刷新、harvester register probe、source display assets、Conversation 搜索筛选和翻译 provider/CLI/model/prompt 模式。
 
-- Tauri 2 + React + TypeScript + Vite + Tailwind CSS + shadcn/ui  应用框架。
+当前已经完成或基本打通的产品开发基础：
+
+- Tauri 2 + React 19 + TypeScript + Vite + Tailwind CSS 应用框架。
 - 单一 `src-tauri` Rust 后端包，以及其内部共享模型模块。
-- 前端采用组件化思想，页面元素首先考虑组件化。
-- SQLx-managed SQLite 主存储，包含 Source、Asset、Profile、DeploymentState、Navigation、App Shortcut 等基础表。
+- 前端组件化分层，包含 `components/ui`、`foundation`、`common` 和领域组件目录。
+- SQLx-managed SQLite 主存储，包含 Tenant、Source、Asset、Profile、DeploymentState、Navigation、App Shortcut、AssetMount、AssetGroup、Conversation、Settings、Backup、OperationLog、Remote Skill 等基础表。
 - Source seed、Profile seed、Navigation seed、App Shortcut seed 和 `asset_mounts` 持久化。
-- 真实目录扫描、`SKILL.md` 目录识别、基础资产分类、描述提取。
+- 真实目录扫描、`SKILL.md` 目录识别、基础资产分类、描述提取、Git 仓库 root/scan root 推断、目录资产 hash。
 - Catalog 页面：搜索、指标、部署计划预览、资产行默认展示路径/描述/来源。
 - Catalog 页面当前支持列表视图和卡片视图；卡片视图用于资产总览，不表达文件树或来源层级。
 - 资产行右侧可配置 App 快捷挂载图标，配置来自 SQLite。
@@ -72,13 +91,16 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - 路径展示 home 缩写，点击路径在文件管理器中显示。
 - 部署计划生成和执行基础链路，计划输入已收敛到启用的挂载关系。
 - 部署执行默认将目标 App 目录直接 symlink 到源资产真实路径。
+- 启动和关闭路径会刷新已记录资产/挂载观测；关闭前执行数据库备份，并在后台任务运行时提示用户确认退出。
 - 通知消息渲染出口。
 - 中英文 i18n 基础。
 - 前端目录架构已收敛：保留 `services` 和 `pages` 作为项目约定，新增/明确 `layouts`、`router`、`mock`、`store`、`styles`、`types` 等顶层边界。
 - 当前验证基线：`pnpm typecheck`、`pnpm test`、`cargo test`、`pnpm build` 通过；Vite 单 chunk 超过 500 kB 的提示保留为后续性能优化项。
 - Conversation v1 已接入独立领域模型、SQLite 表、Engine/Go CLI 方法、Tauri commands、Session-first 前端页面、Markdown Session 导出和双向导航入口。
+- CLI 已形成分层：手写快捷命令、生成式 App 命令、Raw Engine API、稳定错误分类、命令策略、hook、插件平台、harvester/webharvester 和自更新。
+- Skill 互联网发现/导入已覆盖 GitHub 搜索、候选评分/解释、dry-run、确认导入、备份库导入、remote source 记录、drift 检测和前端入口。
 
-下一阶段重点不是继续搭框架，而是补齐挂载闭环的验证和产品边界：更多存储/扫描测试、Profile 规则细化、执行确认与结果展示、导出复制。
+下一阶段重点不是继续搭框架，而是继续补齐产品边界和可靠性：Profile 规则细化、执行确认与结果展示、导出复制、后台任务可观测性、批量流程测试、性能拆包和更完整的跨端契约验证。
 
 ### 3.4 前端目录边界
 

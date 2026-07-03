@@ -1,5 +1,20 @@
 # 任务清单：AssetIWeave
 
+## Milestone：2026-07-02 架构文档与 Engine/CLI 现状对齐
+
+- [X] M2.1 将 `AGENTS.md` 从通用仓库规范更新为当前 Agent 操作准则
+- [X] M2.2 明确真实运行时调用链：React services -> Tauri commands -> AppService -> backend store/filesystem
+- [X] M2.3 明确 Go CLI 通过 stdio Rust Engine 调用共享后端，不直接写 SQLite 或挂载文件
+- [X] M2.4 将后端模块描述更新为 `adapters/` + `backend/application/capabilities/store/scanner/planner/executor/conversations`
+- [X] M2.5 修正旧 spec 中“Rust workspace/core crate”描述，当前实现为单一 `src-tauri` package
+- [X] M2.6 记录 `asset_mounts` 作为挂载意图唯一来源，批量挂载、分组挂载、快捷挂载和计划生成必须复用它
+- [X] M2.7 记录长任务设计约束：扫描、备份、导入导出、远程获取、Conversation 同步和批量操作必须后台化
+- [X] M2.8 更新 specs 中当前阶段状态：0.5.0 后进入功能扩展和可靠性补齐阶段
+- [X] M2.9 记录 CLI contract、命令策略、插件平台、harvester/webharvester、自更新和稳定错误分类现状
+- [X] M2.10 记录近期 Git 现状：contract 同步、catalog/mount 批量刷新、harvester register probe、source display assets、Conversation 卡片类型筛选、翻译 provider/CLI/model/prompt 模式
+- [X] M2.11 跟进更新 `docs/repository-structure.md` 中仍残留的旧 `service.rs` / `commands.rs` 路径描述
+- [ ] M2.12 用一次完整验证基线刷新 docs/specs 中的“当前已通过”命令清单
+
 ## Milestone：2026-05-30 前端工程分层与视图工作流
 
 - [X] M1.1 将当前代码状态确认为“资产总览列表/卡片 + 技能源管理列表/分栏”的视图语义里程碑
@@ -306,3 +321,9 @@
 - [X] 18.12 增加远程 Skill 来源记录、drift 检测和更新提醒入口
 - [X] 18.13 增加更多 provider 或外部 Agent/插件搜索入口
 - [X] 18.14 对真实导入流程补充隔离目录集成测试和安全提示验收
+- [X] 18.15 同步 Rust Engine contract 到 Go CLI schema 和方法常量
+- [X] 18.16 为 harvester adapter/register 流程增加 probe 验证
+- [X] 18.17 增加 catalog 与 mount state 的批量刷新方法，避免逐项刷新放大成本
+- [X] 18.18 提取 `groupSourceDisplayAssets`，统一来源展示资产的分组逻辑
+- [X] 18.19 Conversation 内容搜索支持卡片类型筛选和即时提交
+- [X] 18.20 翻译功能扩展为 provider/cli/model/prompt 配置模式
