@@ -1,6 +1,8 @@
 import clsx from "clsx";
 import {
+  ArrowDownWideNarrow,
   Archive,
+  AppWindow,
   Boxes,
   ChevronDown,
   ChevronRight,
@@ -8,6 +10,7 @@ import {
   FolderOpen,
   LayoutList,
   Pencil,
+  Power,
   Plus,
   RefreshCw,
   Settings,
@@ -27,6 +30,7 @@ import {
   SkillBackupButtonContent,
 } from "../../components/backup/SkillBackupProgress";
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
+import { ToolbarMultiSelectDropdown, ToolbarSingleSelectDropdown, ToolbarSortDirectionButton } from "../../components/common/DataToolbar";
 import { PageMetrics } from "../../components/common/PageMetrics";
 import { PathPickerInput } from "../../components/common/PathPickerInput";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
@@ -70,6 +74,8 @@ import { kindBadgeClass } from "../../utils/styles";
 
 type SkillMountViewMode = Extract<AssetToolbarViewMode, "list" | "columns">;
 type MountScopeKind = "source" | "group";
+type ProfileStatusFilter = "enabled" | "disabled";
+type ProfileSortBy = "name" | "app-kind" | "mounted-count";
 
 interface MountScope {
   assetIds: string[];
@@ -128,6 +134,10 @@ export function SkillMountsPage({
   const { startBackup, task: backupTask } = useSkillBackup();
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<SkillMountViewMode>("list");
+  const [appKindFilters, setAppKindFilters] = useState<AppKind[]>([]);
+  const [statusFilters, setStatusFilters] = useState<ProfileStatusFilter[]>([]);
+  const [sortBy, setSortBy] = useState<ProfileSortBy>("name");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [groups, setGroups] = useState<AssetGroupDetail[]>([]);
   const [expandedProfileIds, setExpandedProfileIds] = useState<Set<string>>(new Set());
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
@@ -149,17 +159,37 @@ export function SkillMountsPage({
   );
   const filteredProfiles = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) {
-      return profiles;
-    }
-
-    return profiles.filter((profile) =>
-      [profile.name, profile.id, profile.app_kind, profile.target_paths.join(" ")]
-        .join(" ")
-        .toLowerCase()
-        .includes(normalizedQuery),
-    );
-  }, [profiles, query]);
+    return filterAndSortProfiles({
+      appKindFilters,
+      mountStatusesByAssetId,
+      profiles,
+      query: normalizedQuery,
+      skillAssets,
+      sortBy,
+      sortDirection,
+      statusFilters,
+    });
+  }, [appKindFilters, mountStatusesByAssetId, profiles, query, skillAssets, sortBy, sortDirection, statusFilters]);
+  const appKindFilterOptions = useMemo(() => {
+    const countByKind = new Map<AppKind, number>();
+    profiles.forEach((profile) => countByKind.set(profile.app_kind, (countByKind.get(profile.app_kind) ?? 0) + 1));
+    return [...countByKind.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([kind, count]) => ({ label: `${formatAppKindLabel(kind)} (${count})`, value: kind }));
+  }, [profiles]);
+  const profileStatusOptions = useMemo(
+    () => [
+      {
+        label: t("toolbar.filter.enabled", { count: profiles.filter((profile) => profile.enabled).length }),
+        value: "enabled" as const,
+      },
+      {
+        label: t("toolbar.filter.disabled", { count: profiles.filter((profile) => !profile.enabled).length }),
+        value: "disabled" as const,
+      },
+    ],
+    [profiles, t],
+  );
   const selectedProfile = useMemo(
     () => filteredProfiles.find((profile) => profile.id === selectedProfileId) ?? filteredProfiles[0] ?? null,
     [filteredProfiles, selectedProfileId],
@@ -325,6 +355,51 @@ export function SkillMountsPage({
           ],
         ]}
         ariaLabel={t("appMount.page.title")}
+        filterControls={
+          <>
+            <ToolbarMultiSelectDropdown
+              allLabel={t("appMount.toolbar.appKindAll", { count: profiles.length })}
+              ariaLabel={t("appMount.toolbar.appKindFilter")}
+              clearLabel={t("toolbar.filter.clear")}
+              emptyLabel={t("toolbar.filter.empty")}
+              icon={<AppWindow size={15} />}
+              label={t("appMount.toolbar.appKindFilter")}
+              onClear={() => setAppKindFilters([])}
+              onToggleValue={(value) => setAppKindFilters((current) => toggleFilterValue(current, value))}
+              options={appKindFilterOptions}
+              selectedValues={appKindFilters}
+            />
+            <ToolbarMultiSelectDropdown
+              allLabel={t("toolbar.filter.statusAll", { count: profiles.length })}
+              ariaLabel={t("appMount.toolbar.statusFilter")}
+              clearLabel={t("toolbar.filter.clear")}
+              emptyLabel={t("toolbar.filter.empty")}
+              icon={<Power size={15} />}
+              label={t("appMount.toolbar.statusFilter")}
+              onClear={() => setStatusFilters([])}
+              onToggleValue={(value) => setStatusFilters((current) => toggleFilterValue(current, value))}
+              options={profileStatusOptions}
+              selectedValues={statusFilters}
+            />
+            <ToolbarSingleSelectDropdown
+              ariaLabel={t("toolbar.sort.label")}
+              icon={<ArrowDownWideNarrow size={15} />}
+              onChange={setSortBy}
+              options={[
+                { label: t("toolbar.sort.name"), value: "name" },
+                { label: t("appMount.toolbar.sort.appKind"), value: "app-kind" },
+                { label: t("appMount.toolbar.sort.mountedCount"), value: "mounted-count" },
+              ]}
+              value={sortBy}
+            />
+            <ToolbarSortDirectionButton
+              direction={sortDirection}
+              label={t("toolbar.sort.direction.label")}
+              onClick={() => setSortDirection((current) => (current === "desc" ? "asc" : "desc"))}
+              title={t(sortDirection === "desc" ? "toolbar.sort.direction.descTitle" : "toolbar.sort.direction.ascTitle")}
+            />
+          </>
+        }
         onQueryChange={setQuery}
         onViewModeChange={setViewMode}
         query={query}
@@ -1245,6 +1320,99 @@ function initialDialogValues(profile: TargetProfile | null, shortcut: AppShortcu
 
 function hasTargetPathChanged(profile: TargetProfile, nextTargetPath: string) {
   return (profile.target_paths[0] ?? "").trim() !== nextTargetPath.trim();
+}
+
+function filterAndSortProfiles({
+  appKindFilters,
+  mountStatusesByAssetId,
+  profiles,
+  query,
+  skillAssets,
+  sortBy,
+  sortDirection,
+  statusFilters,
+}: {
+  appKindFilters: AppKind[];
+  mountStatusesByAssetId: Map<string, AssetMountStatus[]>;
+  profiles: TargetProfile[];
+  query: string;
+  skillAssets: Asset[];
+  sortBy: ProfileSortBy;
+  sortDirection: "asc" | "desc";
+  statusFilters: ProfileStatusFilter[];
+}) {
+  const appKindSet = new Set(appKindFilters);
+  const statusSet = new Set(statusFilters);
+
+  return profiles
+    .filter((profile) => {
+      if (appKindSet.size > 0 && !appKindSet.has(profile.app_kind)) {
+        return false;
+      }
+      if (
+        statusSet.size > 0 &&
+        !((statusSet.has("enabled") && profile.enabled) || (statusSet.has("disabled") && !profile.enabled))
+      ) {
+        return false;
+      }
+      if (!query) {
+        return true;
+      }
+
+      return [profile.name, profile.id, profile.app_kind, profile.target_paths.join(" ")]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+    })
+    .sort((left, right) => compareProfiles(left, right, sortBy, sortDirection, skillAssets, mountStatusesByAssetId));
+}
+
+function compareProfiles(
+  left: TargetProfile,
+  right: TargetProfile,
+  sortBy: ProfileSortBy,
+  sortDirection: "asc" | "desc",
+  skillAssets: Asset[],
+  mountStatusesByAssetId: Map<string, AssetMountStatus[]>,
+) {
+  const direction = sortDirection === "asc" ? 1 : -1;
+  let primary = 0;
+
+  if (sortBy === "app-kind") {
+    primary = left.app_kind.localeCompare(right.app_kind);
+  } else if (sortBy === "mounted-count") {
+    primary =
+      getProfileMountCounts(left.id, skillAssets, mountStatusesByAssetId).mounted -
+      getProfileMountCounts(right.id, skillAssets, mountStatusesByAssetId).mounted;
+  } else {
+    primary = left.name.localeCompare(right.name);
+  }
+
+  if (primary !== 0) {
+    return primary * direction;
+  }
+
+  return left.name.localeCompare(right.name) || left.id.localeCompare(right.id);
+}
+
+function formatAppKindLabel(kind: AppKind) {
+  if (kind === "opencode") {
+    return "OpenCode";
+  }
+  if (kind === "openclaw") {
+    return "OpenClaw";
+  }
+  if (kind === "antigravity") {
+    return "Antigravity";
+  }
+  return kind.charAt(0).toUpperCase() + kind.slice(1);
+}
+
+function toggleFilterValue<Value extends string>(current: Value[], value: Value) {
+  if (current.includes(value)) {
+    return current.filter((item) => item !== value);
+  }
+  return [...current, value];
 }
 
 function buildMountScopes({

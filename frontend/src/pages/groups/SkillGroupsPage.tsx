@@ -1,12 +1,14 @@
 import clsx from "clsx";
 import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
 import {
+  ArrowDownWideNarrow,
   ChevronDown,
   ChevronRight,
   Columns3,
   Layers3,
   LayoutList,
   Pencil,
+  Power,
   Plus,
   RefreshCw,
   Settings,
@@ -17,6 +19,7 @@ import { assetKindLabel } from "../../i18n/domain";
 import { AssetRow } from "../../components/assets/AssetRow";
 import { AssetToolbar } from "../../components/assets/AssetToolbar";
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
+import { ToolbarMultiSelectDropdown, ToolbarSingleSelectDropdown, ToolbarSortDirectionButton } from "../../components/common/DataToolbar";
 import { PageMetrics } from "../../components/common/PageMetrics";
 import { MountStatePill } from "../../components/assets/MountStatePill";
 import { QuickMountButtons } from "../../components/assets/QuickMountButtons";
@@ -83,6 +86,8 @@ interface SkillGroupsPageProps {
 }
 
 type GroupViewMode = "list" | "columns";
+type GroupStatusFilter = "enabled" | "disabled";
+type GroupSortBy = "sort-order" | "name" | "member-count" | "updated";
 
 export function SkillGroupsPage({
   appShortcuts,
@@ -111,6 +116,9 @@ export function SkillGroupsPage({
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [groupQuery, setGroupQuery] = useState("");
   const [viewMode, setViewMode] = useState<GroupViewMode>("list");
+  const [statusFilters, setStatusFilters] = useState<GroupStatusFilter[]>([]);
+  const [sortBy, setSortBy] = useState<GroupSortBy>("sort-order");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<AssetGroupDetail | null>(null);
   const [deletingGroup, setDeletingGroup] = useState<AssetGroupDetail | null>(null);
@@ -167,20 +175,28 @@ export function SkillGroupsPage({
 
   const filteredGroups = useMemo(() => {
     const normalizedQuery = groupQuery.trim().toLowerCase();
-    if (!normalizedQuery) {
-      return groups;
-    }
-
-    return groups.filter((detail) => {
-      const memberNames = resolveGroupAssets(detail, skillAssetsById)
-        .map((asset) => asset.name)
-        .join(" ");
-      return [detail.group.name, detail.group.description ?? "", memberNames]
-        .join(" ")
-        .toLowerCase()
-        .includes(normalizedQuery);
+    return filterAndSortGroups({
+      groups,
+      query: normalizedQuery,
+      skillAssetsById,
+      sortBy,
+      sortDirection,
+      statusFilters,
     });
-  }, [groupQuery, groups, skillAssetsById]);
+  }, [groupQuery, groups, skillAssetsById, sortBy, sortDirection, statusFilters]);
+  const groupStatusOptions = useMemo(
+    () => [
+      {
+        label: t("toolbar.filter.enabled", { count: groups.filter((detail) => detail.group.enabled).length }),
+        value: "enabled" as const,
+      },
+      {
+        label: t("toolbar.filter.disabled", { count: groups.filter((detail) => !detail.group.enabled).length }),
+        value: "disabled" as const,
+      },
+    ],
+    [groups, t],
+  );
   const selectableFilteredGroupIds = useMemo(() => enabledGroupIds(filteredGroups), [filteredGroups]);
   const allFilteredGroupsSelected = useMemo(
     () => selectableFilteredGroupIds.length > 0 && selectableFilteredGroupIds.every((groupId) => selectedGroupIds.has(groupId)),
@@ -460,6 +476,40 @@ export function SkillGroupsPage({
           ],
         ]}
         ariaLabel={t("group.page.title")}
+        filterControls={
+          <>
+            <ToolbarMultiSelectDropdown
+              allLabel={t("toolbar.filter.statusAll", { count: groups.length })}
+              ariaLabel={t("group.toolbar.statusFilter")}
+              clearLabel={t("toolbar.filter.clear")}
+              emptyLabel={t("toolbar.filter.empty")}
+              icon={<Power size={15} />}
+              label={t("group.toolbar.statusFilter")}
+              onClear={() => setStatusFilters([])}
+              onToggleValue={(value) => setStatusFilters((current) => toggleFilterValue(current, value))}
+              options={groupStatusOptions}
+              selectedValues={statusFilters}
+            />
+            <ToolbarSingleSelectDropdown
+              ariaLabel={t("toolbar.sort.label")}
+              icon={<ArrowDownWideNarrow size={15} />}
+              onChange={setSortBy}
+              options={[
+                { label: t("group.toolbar.sort.sortOrder"), value: "sort-order" },
+                { label: t("toolbar.sort.name"), value: "name" },
+                { label: t("group.toolbar.sort.memberCount"), value: "member-count" },
+                { label: t("group.toolbar.sort.updated"), value: "updated" },
+              ]}
+              value={sortBy}
+            />
+            <ToolbarSortDirectionButton
+              direction={sortDirection}
+              label={t("toolbar.sort.direction.label")}
+              onClick={() => setSortDirection((current) => (current === "desc" ? "asc" : "desc"))}
+              title={t(sortDirection === "desc" ? "toolbar.sort.direction.descTitle" : "toolbar.sort.direction.ascTitle")}
+            />
+          </>
+        }
         onQueryChange={setGroupQuery}
         onViewModeChange={setViewMode}
         query={groupQuery}
@@ -1112,6 +1162,90 @@ function resolveGroupAssets(detail: AssetGroupDetail, assetById: Map<string, Ass
     const asset = assetById.get(assetId);
     return asset ? [asset] : [];
   });
+}
+
+function filterAndSortGroups({
+  groups,
+  query,
+  skillAssetsById,
+  sortBy,
+  sortDirection,
+  statusFilters,
+}: {
+  groups: AssetGroupDetail[];
+  query: string;
+  skillAssetsById: Map<string, Asset>;
+  sortBy: GroupSortBy;
+  sortDirection: "asc" | "desc";
+  statusFilters: GroupStatusFilter[];
+}) {
+  const statusSet = new Set(statusFilters);
+
+  return groups
+    .filter((detail) => {
+      if (
+        statusSet.size > 0 &&
+        !((statusSet.has("enabled") && detail.group.enabled) || (statusSet.has("disabled") && !detail.group.enabled))
+      ) {
+        return false;
+      }
+      if (!query) {
+        return true;
+      }
+
+      const memberNames = resolveGroupAssets(detail, skillAssetsById)
+        .map((asset) => asset.name)
+        .join(" ");
+      return [detail.group.name, detail.group.description ?? "", memberNames]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+    })
+    .sort((left, right) => compareGroups(left, right, sortBy, sortDirection, skillAssetsById));
+}
+
+function compareGroups(
+  left: AssetGroupDetail,
+  right: AssetGroupDetail,
+  sortBy: GroupSortBy,
+  sortDirection: "asc" | "desc",
+  skillAssetsById: Map<string, Asset>,
+) {
+  const direction = sortDirection === "asc" ? 1 : -1;
+  let primary = 0;
+
+  if (sortBy === "name") {
+    primary = left.group.name.localeCompare(right.group.name);
+  } else if (sortBy === "member-count") {
+    primary = countResolvedGroupMembers(left, skillAssetsById) - countResolvedGroupMembers(right, skillAssetsById);
+  } else if (sortBy === "updated") {
+    primary = compareOptionalDate(left.group.updated_at, right.group.updated_at);
+  } else {
+    primary = left.group.sort_order - right.group.sort_order;
+  }
+
+  if (primary !== 0) {
+    return primary * direction;
+  }
+
+  return left.group.name.localeCompare(right.group.name) || left.group.id.localeCompare(right.group.id);
+}
+
+function countResolvedGroupMembers(detail: AssetGroupDetail, skillAssetsById: Map<string, Asset>) {
+  return groupMemberAssetIds(detail).filter((assetId) => skillAssetsById.has(assetId)).length;
+}
+
+function compareOptionalDate(left: string | null | undefined, right: string | null | undefined) {
+  const leftTime = left ? Date.parse(left) : 0;
+  const rightTime = right ? Date.parse(right) : 0;
+  return leftTime - rightTime;
+}
+
+function toggleFilterValue<Value extends string>(current: Value[], value: Value) {
+  if (current.includes(value)) {
+    return current.filter((item) => item !== value);
+  }
+  return [...current, value];
 }
 
 function summarizeRules(
