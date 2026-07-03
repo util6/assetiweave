@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import {
-  ArrowDownUp,
+  ArrowDownWideNarrow,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -12,8 +12,8 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCw,
   Sparkles,
-  Tags,
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
@@ -23,8 +23,9 @@ import { PageHeader } from "../../components/foundation/PageHeader";
 import {
   DataToolbar,
   ToolbarActionButton,
-  ToolbarCluster,
   ToolbarSearch,
+  ToolbarSingleSelectDropdown,
+  ToolbarSortDirectionButton,
 } from "../../components/common/DataToolbar";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import {
@@ -48,12 +49,14 @@ export interface PromptNote {
   sessionName: string;
   tags: string[];
   title: string;
+  optimizedText?: string;
   translatedText?: string;
   updatedAt: string;
 }
 
 type PromptAction = "translate" | "optimize";
-type PromptSortMode = "updated" | "copy-count" | "created";
+type PromptCardFace = "front" | "back";
+type PromptSortMode = "updated" | "copy-count" | "created" | "title";
 type PromptSwitchDirection = "next" | "previous";
 type TranslationAvailabilityStatus = "idle" | "checking" | "available" | "unavailable";
 type PromptNoteDraft = Pick<PromptNote, "content" | "projectPath" | "sessionName" | "tags" | "title">;
@@ -88,8 +91,8 @@ export function PromptOverviewPage({
   const [creatingNew, setCreatingNew] = useState(false);
   const [query, setQuery] = useState("");
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
-  const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<PromptSortMode>("updated");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [copiedNoteId, setCopiedNoteId] = useState<string | null>(null);
   const [busyActions, setBusyActions] = useState<Record<string, PromptAction | undefined>>({});
   const [availability, setAvailability] = useState<TranslationAvailabilityStatus>("idle");
@@ -139,28 +142,20 @@ export function PromptOverviewPage({
     settings.conversationTranslation.provider,
   ]);
 
-  const tagStats = useMemo(() => buildTagStats(notes), [notes]);
-  const totalCopies = useMemo(
-    () => notes.reduce((total, note) => total + note.copyCount, 0),
-    [notes],
-  );
   const filteredNotes = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     const filtered = notes.filter((note) => {
-      if (selectedTag && !note.tags.includes(selectedTag)) {
-        return false;
-      }
       if (!normalizedQuery) {
         return true;
       }
 
-      return [note.content, note.projectPath, note.sessionName, note.translatedText ?? "", note.tags.join(" ")]
+      return [note.content, note.optimizedText ?? "", note.projectPath, note.sessionName, note.translatedText ?? "", note.tags.join(" ")]
         .join(" ")
         .toLowerCase()
         .includes(normalizedQuery);
     });
-    return sortPromptNotes(filtered, sortMode);
-  }, [notes, query, selectedTag, sortMode]);
+    return sortPromptNotes(filtered, sortMode, sortDirection);
+  }, [notes, query, sortDirection, sortMode]);
   const translationTarget = normalizeConversationTranslationTargetLanguage(
     settings.conversationTranslation.targetLanguage,
   );
@@ -168,7 +163,7 @@ export function PromptOverviewPage({
   const activeNote = creatingNew ? null : filteredNotes.find((note) => note.id === selectedNoteId) ?? filteredNotes[0] ?? null;
   const activeNoteIndex = activeNote ? filteredNotes.findIndex((note) => note.id === activeNote.id) : -1;
 
-  function handleSaveNote(values: PromptNoteDraft) {
+  function handleSaveNote(values: PromptNoteDraft, targetFace: PromptCardFace = "front") {
     const normalizedContent = values.content.trim();
     if (!normalizedContent) {
       return;
@@ -181,7 +176,8 @@ export function PromptOverviewPage({
           note.id === activeNote.id
             ? {
                 ...note,
-                content: normalizedContent,
+                content: targetFace === "front" ? normalizedContent : note.content,
+                optimizedText: targetFace === "back" ? normalizedContent : note.optimizedText,
                 projectPath: values.projectPath.trim(),
                 sessionName: values.sessionName.trim(),
                 tags: values.tags,
@@ -215,9 +211,9 @@ export function PromptOverviewPage({
     setSelectedNoteId((current) => (current === noteId ? null : current));
   }
 
-  async function handleCopyNote(note: PromptNote) {
+  async function handleCopyNote(note: PromptNote, text: string) {
     try {
-      await navigator.clipboard.writeText(note.content);
+      await navigator.clipboard.writeText(text);
       setNotes((current) =>
         current.map((candidate) =>
           candidate.id === note.id
@@ -249,10 +245,11 @@ export function PromptOverviewPage({
     });
   }
 
-  async function handleOptimizeNote(note: PromptNote) {
-    await runPromptAction(note, "optimize", {
+  async function handleOptimizeNote(note: PromptNote, sourceText: string) {
+    return runPromptAction(note, "optimize", {
       promptTemplate: OPTIMIZE_PROMPT_TEMPLATE,
       targetLanguage: settings.conversationTranslation.targetLanguage,
+      text: sourceText,
     });
   }
 
@@ -280,10 +277,10 @@ export function PromptOverviewPage({
   async function runPromptAction(
     note: PromptNote,
     action: PromptAction,
-    request: Pick<ConversationCardTranslationRequest, "promptTemplate" | "targetLanguage">,
+    request: Pick<ConversationCardTranslationRequest, "promptTemplate" | "targetLanguage"> & { text?: string },
   ) {
     if (actionsDisabled) {
-      return;
+      return false;
     }
 
     setActionError(null);
@@ -295,7 +292,7 @@ export function PromptOverviewPage({
         provider: settings.conversationTranslation.provider,
         promptTemplate: request.promptTemplate,
         targetLanguage: request.targetLanguage,
-        text: note.content,
+        text: request.text ?? note.content,
       });
       setNotes((current) =>
         current.map((candidate) => {
@@ -305,18 +302,20 @@ export function PromptOverviewPage({
 
           return {
             ...candidate,
-            content: action === "optimize" ? result.translated_text : candidate.content,
+            optimizedText: action === "optimize" ? result.translated_text : candidate.optimizedText,
             translatedText: action === "translate" ? result.translated_text : candidate.translatedText,
             updatedAt: new Date().toISOString(),
           };
         }),
       );
+      return true;
     } catch (error) {
       setActionError(
         action === "translate"
           ? t("prompt.action.translateFailed", { message: errorMessage(error) })
           : t("prompt.action.optimizeFailed", { message: errorMessage(error) }),
       );
+      return false;
     } finally {
       setBusyActions((current) => {
         const next = { ...current };
@@ -329,7 +328,6 @@ export function PromptOverviewPage({
   return (
     <section className="flex flex-1 flex-col gap-[var(--app-section-gap)] px-[var(--app-page-x)] py-[var(--app-page-y)]">
       <PageHeader
-        description={t("prompt.page.description")}
         eyebrow={t("prompt.page.eyebrow")}
         icon={<Lightbulb size={16} />}
         title={t("prompt.page.title")}
@@ -343,20 +341,13 @@ export function PromptOverviewPage({
       ) : null}
 
       <PromptOverviewToolbar
-        availability={availability}
-        filteredCount={filteredNotes.length}
-        notesCount={notes.length}
         onCreateNew={handleCreateNewNote}
         onQueryChange={setQuery}
-        onSelectTag={setSelectedTag}
+        onSortDirectionChange={setSortDirection}
         onSortModeChange={setSortMode}
         query={query}
-        selectedTag={selectedTag}
+        sortDirection={sortDirection}
         sortMode={sortMode}
-        tagStats={tagStats}
-        totalCopies={totalCopies}
-        translationCli={settings.conversationTranslation.cli}
-        translationTarget={translationTarget}
       />
 
       <div className="-mt-4 mx-auto flex w-full max-w-7xl flex-1 flex-col gap-2 overflow-visible">
@@ -368,9 +359,9 @@ export function PromptOverviewPage({
           copied={activeNote ? copiedNoteId === activeNote.id : false}
           filteredCount={filteredNotes.length}
           notes={filteredNotes}
-          onCopyActive={() => {
+          onCopyActive={(text) => {
             if (activeNote) {
-              void handleCopyNote(activeNote);
+              void handleCopyNote(activeNote, text);
             }
           }}
           onDeleteActive={() => {
@@ -378,10 +369,11 @@ export function PromptOverviewPage({
               handleDeleteNote(activeNote.id);
             }
           }}
-          onOptimizeActive={() => {
+          onOptimizeActive={(sourceText) => {
             if (activeNote) {
-              void handleOptimizeNote(activeNote);
+              return handleOptimizeNote(activeNote, sourceText);
             }
+            return Promise.resolve(false);
           }}
           onNextNote={() => handleSelectAdjacentNote(1)}
           onPreviousNote={() => handleSelectAdjacentNote(-1)}
@@ -408,35 +400,21 @@ export function PromptOverviewPage({
 }
 
 function PromptOverviewToolbar({
-  availability,
-  filteredCount,
-  notesCount,
   onCreateNew,
   onQueryChange,
-  onSelectTag,
+  onSortDirectionChange,
   onSortModeChange,
   query,
-  selectedTag,
+  sortDirection,
   sortMode,
-  tagStats,
-  totalCopies,
-  translationCli,
-  translationTarget,
 }: {
-  availability: TranslationAvailabilityStatus;
-  filteredCount: number;
-  notesCount: number;
   onCreateNew: () => void;
   onQueryChange: (value: string) => void;
-  onSelectTag: (tag: string | null) => void;
+  onSortDirectionChange: (direction: "asc" | "desc") => void;
   onSortModeChange: (mode: PromptSortMode) => void;
   query: string;
-  selectedTag: string | null;
+  sortDirection: "asc" | "desc";
   sortMode: PromptSortMode;
-  tagStats: Array<{ count: number; tag: string }>;
-  totalCopies: number;
-  translationCli: string;
-  translationTarget: string;
 }) {
   const { t } = useI18n();
 
@@ -451,21 +429,6 @@ function PromptOverviewToolbar({
             primary
             text={t("prompt.action.new")}
           />
-          <ToolbarCluster ariaLabel={t("prompt.metric.notes")} className="text-code-sm">
-            <span>{t("prompt.metric.notes")} {notesCount}</span>
-            <span className="text-outline">/</span>
-            <span>{t("prompt.metric.filtered")} {filteredCount}</span>
-            <span className="text-outline">/</span>
-            <span>{t("prompt.metric.copies")} {totalCopies}</span>
-          </ToolbarCluster>
-          <ToolbarCluster ariaLabel={t("prompt.translation.status")} className="text-code-sm">
-            <span>
-              {availabilityLabel(availability, t("prompt.translation.available"), t("prompt.translation.checking"), t("prompt.translation.unavailable"))}
-            </span>
-            <span className="rounded-md border border-theme-control-border bg-theme-panel px-2 py-0.5 text-theme-control-fg">
-              {translationCli} · {translationTarget}
-            </span>
-          </ToolbarCluster>
         </>
       }
       ariaLabel={t("prompt.page.title")}
@@ -478,44 +441,24 @@ function PromptOverviewToolbar({
             placeholder={t("prompt.search.placeholder")}
             value={query}
           />
-          <ToolbarCluster ariaLabel={t("prompt.sort.label")}>
-            <ArrowDownUp size={15} />
-            <span className="text-label-caps uppercase text-outline">{t("prompt.sort.label")}</span>
-            <select
-              aria-label={t("prompt.sort.aria")}
-              className="min-w-[7.5rem] border-0 bg-transparent text-body-sm text-on-surface outline-none"
-              onChange={(event) => onSortModeChange(event.currentTarget.value as PromptSortMode)}
-              value={sortMode}
-            >
-              <option value="updated">{t("prompt.sort.updated")}</option>
-              <option value="copy-count">{t("prompt.sort.copyCount")}</option>
-              <option value="created">{t("prompt.sort.created")}</option>
-            </select>
-          </ToolbarCluster>
-          <ToolbarCluster ariaLabel={t("prompt.tags.groupTitle")} className="max-w-[32rem]">
-            <Tags size={15} />
-            <button
-              aria-pressed={selectedTag === null}
-              className={tagFilterButtonClass(selectedTag === null)}
-              onClick={() => onSelectTag(null)}
-              type="button"
-            >
-              {t("prompt.tags.all")}
-            </button>
-            {tagStats.map(({ count, tag }) => (
-              <button
-                aria-label={t("prompt.tags.filterAria", { count, tag })}
-                aria-pressed={selectedTag === tag}
-                className={tagFilterButtonClass(selectedTag === tag)}
-                key={tag}
-                onClick={() => onSelectTag(tag)}
-                type="button"
-              >
-                <span>{tag}</span>
-                <span className="rounded bg-theme-panel px-1 text-code-sm">{count}</span>
-              </button>
-            ))}
-          </ToolbarCluster>
+          <ToolbarSingleSelectDropdown
+            ariaLabel={t("toolbar.sort.label")}
+            icon={<ArrowDownWideNarrow size={15} />}
+            onChange={onSortModeChange}
+            options={[
+              { label: t("toolbar.sort.updatedAt"), value: "updated" },
+              { label: t("toolbar.sort.createdAt"), value: "created" },
+              { label: t("toolbar.sort.name"), value: "title" },
+              { label: t("prompt.toolbar.sort.copyCount"), value: "copy-count" },
+            ]}
+            value={sortMode}
+          />
+          <ToolbarSortDirectionButton
+            direction={sortDirection}
+            label={t("toolbar.sort.direction.label")}
+            onClick={() => onSortDirectionChange(sortDirection === "desc" ? "asc" : "desc")}
+            title={t(sortDirection === "desc" ? "toolbar.sort.direction.descTitle" : "toolbar.sort.direction.ascTitle")}
+          />
         </>
       }
       sticky
@@ -549,12 +492,12 @@ function PromptStageCard({
   copied: boolean;
   filteredCount: number;
   notes: PromptNote[];
-  onCopyActive: () => void;
+  onCopyActive: (text: string) => void;
   onDeleteActive: () => void;
   onNextNote: () => void;
-  onOptimizeActive: () => void;
+  onOptimizeActive: (sourceText: string) => Promise<boolean>;
   onPreviousNote: () => void;
-  onSaveActive: (values: PromptNoteDraft) => void;
+  onSaveActive: (values: PromptNoteDraft, targetFace?: PromptCardFace) => void;
   onSelectNote: (noteId: string) => void;
   onTranslateActive: () => void;
   translationTarget: string;
@@ -563,11 +506,15 @@ function PromptStageCard({
   const [infoOpen, setInfoOpen] = useState(false);
   const [editable, setEditable] = useState(() => !activeNote);
   const [draftContent, setDraftContent] = useState(() => activeNote?.content ?? "");
+  const [cardFace, setCardFace] = useState<PromptCardFace>("front");
   const [switchDirection, setSwitchDirection] = useState<PromptSwitchDirection>("next");
   const activeBusy = Boolean(busyAction);
+  const optimizedText = activeNote?.optimizedText?.trim() ?? "";
+  const hasOptimizedText = optimizedText.length > 0;
+  const visibleContent = cardFace === "back" ? optimizedText : activeNote?.content ?? "";
   const translated = Boolean(activeNote?.translatedText);
   const updatedAt = activeNote?.updatedAt ?? new Date().toISOString();
-  const displayContent = editable ? draftContent : activeNote?.content ?? "";
+  const displayContent = editable ? draftContent : visibleContent;
   const characterCount = displayContent.length;
   const lineCount = displayContent ? displayContent.split("\n").length : 0;
   const canSave = draftContent.trim().length > 0;
@@ -579,6 +526,11 @@ function PromptStageCard({
   const translateLabel = activeNote && translated
     ? t("prompt.action.retranslate", { language: translationTarget })
     : t("prompt.action.translate", { language: translationTarget });
+  const optimizeLabel = cardFace === "front" && hasOptimizedText
+    ? t("prompt.action.showOptimized")
+    : cardFace === "back"
+      ? t("prompt.action.reoptimize")
+      : t("prompt.action.optimize");
   const saveLabel = editable
     ? activeNote
       ? t("prompt.editDialog.submit")
@@ -589,9 +541,13 @@ function PromptStageCard({
   const sideCards = useMemo(() => buildPromptSwitcherCards(notes, activeIndex), [activeIndex, notes]);
 
   useEffect(() => {
-    setDraftContent(activeNote?.content ?? "");
+    setDraftContent(cardFace === "back" ? activeNote?.optimizedText ?? "" : activeNote?.content ?? "");
     setEditable(!activeNote);
-  }, [activeNote?.content, activeNote?.id]);
+  }, [activeNote?.content, activeNote?.id, activeNote?.optimizedText, cardFace]);
+
+  useEffect(() => {
+    setCardFace("front");
+  }, [activeNote?.id]);
 
   function handleSaveToggle() {
     if (!editable) {
@@ -607,8 +563,30 @@ function PromptStageCard({
       sessionName: activeNote?.sessionName ?? "",
       tags: activeNote?.tags ?? [],
       title: activeNote?.title ?? "",
-    });
+    }, cardFace);
     setEditable(false);
+  }
+
+  async function handleOptimizeVisibleFace() {
+    if (!activeNote || activeBusy || actionsDisabled) {
+      return;
+    }
+    if (cardFace === "front" && hasOptimizedText) {
+      setEditable(false);
+      setCardFace("back");
+      return;
+    }
+
+    const sourceText = (cardFace === "back" ? optimizedText : activeNote.content).trim();
+    if (!sourceText) {
+      return;
+    }
+
+    const optimized = await onOptimizeActive(sourceText);
+    if (optimized) {
+      setEditable(false);
+      setCardFace("back");
+    }
   }
 
   function handlePreviousNote() {
@@ -624,6 +602,164 @@ function PromptStageCard({
   function handleSelectSwitcherNote(noteId: string, offset: number) {
     setSwitchDirection(offset < 0 ? "previous" : "next");
     onSelectNote(noteId);
+  }
+
+  function renderActiveCardFace(face: PromptCardFace, faceContent: string, faceLabel: string) {
+    const activeSurface = face === cardFace;
+    const faceDisplayContent = activeSurface ? displayContent : faceContent;
+    const faceCharacterCount = faceDisplayContent.length;
+    const faceLineCount = faceDisplayContent ? faceDisplayContent.split("\n").length : 0;
+    const emptyBackFace = face === "back" && !faceContent;
+    const faceTitle = face === "back" ? t("prompt.optimized.label") : activeNote?.title || t("prompt.composer.title");
+
+    return (
+      <article
+        aria-hidden={!activeSurface}
+        className="absolute inset-0 flex flex-col overflow-hidden rounded-[2rem] border border-theme-card-border bg-[linear-gradient(145deg,rgb(var(--theme-card-bg)/0.99),rgb(var(--theme-card-header)/0.98))] shadow-[0_38px_96px_rgb(var(--theme-panel-shadow)/0.46)] max-md:rounded-[1.5rem]"
+        style={promptCardFaceStyle(face, activeSurface)}
+      >
+        <span className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-[radial-gradient(circle_at_50%_0%,rgb(var(--theme-glow)/0.16),transparent_62%)]" />
+        <span className="pointer-events-none absolute left-1/2 top-2 z-20 h-1 w-14 -translate-x-1/2 rounded-full bg-theme-control-border/65" />
+        <header className="relative z-10 grid min-h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-theme-card-border bg-theme-card-header/82 px-4 py-3">
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-body-sm font-semibold text-on-surface">
+                {faceTitle}
+              </span>
+              <span className="shrink-0 rounded-md border border-theme-control-border bg-theme-control/70 px-1.5 py-0.5 text-code-sm text-theme-control-fg max-sm:hidden">
+                {faceLabel}
+              </span>
+            </div>
+            <div className="mt-1 flex min-w-0 items-center gap-1.5 text-code-sm text-on-surface-muted">
+              <FolderOpen size={13} />
+              <span className="truncate">
+                {activeNote?.projectPath || t("prompt.field.noProject")}
+              </span>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {face === "back" ? (
+              <>
+                <PromptCardActionButton
+                  disabled={!activeSurface}
+                  icon={<RotateCw size={15} />}
+                  label={t("prompt.action.showOriginal")}
+                  onClick={() => {
+                    setEditable(false);
+                    setCardFace("front");
+                  }}
+                />
+                <PromptCardActionButton
+                  disabled={!activeSurface || !activeNote || actionsDisabled || activeBusy || emptyBackFace}
+                  icon={busyAction === "optimize" ? <RefreshCw className="animate-spin" size={15} /> : <Sparkles size={15} />}
+                  label={t("prompt.action.reoptimize")}
+                  onClick={() => {
+                    void handleOptimizeVisibleFace();
+                  }}
+                />
+              </>
+            ) : null}
+            {face === "front" ? (
+              <>
+                <PromptCardActionButton
+                  disabled={!activeSurface || !activeNote}
+                  icon={<Pencil size={15} />}
+                  label={t("prompt.action.editInfo")}
+                  onClick={() => setInfoOpen(true)}
+                />
+                <PromptCardActionButton
+                  disabled={!activeSurface || !activeNote || actionsDisabled || activeBusy}
+                  icon={<Languages className={busyAction === "translate" ? "animate-pulse" : undefined} size={15} />}
+                  label={translateLabel}
+                  onClick={onTranslateActive}
+                />
+                <PromptCardActionButton
+                  disabled={!activeSurface || !activeNote || actionsDisabled || activeBusy}
+                  icon={busyAction === "optimize" ? <RefreshCw className="animate-spin" size={15} /> : hasOptimizedText ? <RotateCw size={15} /> : <Sparkles size={15} />}
+                  label={optimizeLabel}
+                  onClick={() => {
+                    void handleOptimizeVisibleFace();
+                  }}
+                />
+              </>
+            ) : null}
+            <PromptCardActionButton
+              disabled={!activeSurface || !activeNote}
+              icon={<Trash2 size={15} />}
+              label={t("prompt.action.delete")}
+              onClick={onDeleteActive}
+              tone="danger"
+            />
+          </div>
+        </header>
+
+        <div className="relative z-10 flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-5 py-4">
+          {editable && activeSurface ? (
+            <textarea
+              aria-label={face === "back" ? t("prompt.optimized.label") : t("prompt.composer.eyebrow")}
+              className="min-h-0 flex-1 resize-none rounded-lg border border-theme-control-border bg-theme-control/45 px-3 py-2 font-mono text-[0.95rem] leading-7 text-on-surface outline-none placeholder:text-outline focus:border-primary/60"
+              onChange={(event) => setDraftContent(event.currentTarget.value)}
+              placeholder={face === "back" ? t("prompt.optimized.empty") : t("prompt.composer.contentPlaceholder")}
+              value={draftContent}
+            />
+          ) : faceDisplayContent ? (
+            <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.95rem] leading-7 text-on-surface-variant">
+              {faceDisplayContent}
+            </pre>
+          ) : (
+            <button
+              className="grid min-h-0 flex-1 place-items-center rounded-xl border border-dashed border-theme-card-border bg-theme-control/35 px-4 text-center text-body-sm text-on-surface-muted transition-colors hover:border-primary/45 hover:bg-theme-control/60 hover:text-on-surface disabled:pointer-events-none"
+              disabled={!activeSurface}
+              onClick={() => setEditable(true)}
+              type="button"
+            >
+              {face === "back" ? t("prompt.optimized.empty") : t("prompt.empty.description")}
+            </button>
+          )}
+          {face === "front" && activeNote?.translatedText ? (
+            <div className="max-h-24 overflow-auto rounded-lg border border-theme-control-border bg-theme-control/70 px-3 py-2">
+              <div className="mb-1 text-label-caps uppercase text-outline">
+                {t("prompt.translation.result", { language: translationTarget })}
+              </div>
+              <pre className="whitespace-pre-wrap break-words text-code-sm leading-5 text-on-surface">
+                <code>{activeNote.translatedText}</code>
+              </pre>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="relative z-10 flex min-h-11 items-center justify-between gap-3 border-t border-theme-card-border bg-theme-card-header/45 px-5 py-3 text-code-sm text-on-surface-muted">
+          <span className="min-w-0 truncate">
+            {faceCharacterCount} chars · {faceLineCount} lines
+          </span>
+          <span className="shrink-0">{t("prompt.copy.count", { count: activeNote?.copyCount ?? 0 })}</span>
+        </div>
+
+        <footer className="relative z-10 grid grid-cols-2 border-t border-theme-card-border bg-theme-toolbar/95">
+          <button
+            aria-label={copyLabel}
+            className="inline-flex h-12 items-center justify-center gap-2 border-r border-theme-card-border text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45"
+            disabled={!activeSurface || !activeNote || !faceDisplayContent}
+            onClick={() => onCopyActive(faceDisplayContent)}
+            type="button"
+          >
+            {copied ? <Check size={16} /> : <Copy size={16} />}
+            <span>{copied ? t("prompt.action.copied") : t("prompt.action.copy")}</span>
+          </button>
+          <button
+            aria-label={saveLabel}
+            aria-pressed={editable && activeSurface}
+            className="inline-flex h-12 items-center justify-center gap-2 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45"
+            disabled={!activeSurface || (editable && !canSave)}
+            onClick={handleSaveToggle}
+            type="button"
+          >
+            {editable && activeSurface ? <Check size={16} /> : <Pencil size={16} />}
+            <span>{saveLabel}</span>
+          </button>
+        </footer>
+      </article>
+    );
   }
 
   return (
@@ -650,17 +786,18 @@ function PromptStageCard({
           <button
             aria-label={note.title || previewText(note.content) || t("prompt.list.empty")}
             className={clsx(
-              "prompt-side-card-in absolute left-1/2 top-[5.25rem] hidden h-[23.5rem] w-[16.5rem] overflow-hidden rounded-[2rem] border border-theme-card-border bg-theme-card/70 px-4 py-4 text-left text-on-surface-variant shadow-[0_28px_74px_rgb(var(--theme-panel-shadow)/0.34)] backdrop-blur transition-[transform,opacity,filter,border-color,background-color] duration-500 ease-[cubic-bezier(.2,.8,.2,1)] hover:border-theme-nav-active-border hover:bg-theme-card/92 hover:text-on-surface min-[1360px]:grid",
+              "prompt-side-card-in pointer-events-auto absolute left-1/2 top-[7.75rem] hidden h-[13.75rem] w-[9.75rem] overflow-hidden rounded-[1.25rem] border border-theme-card-border bg-theme-card/58 px-3 py-3 text-left text-on-surface-variant shadow-[0_22px_58px_rgb(var(--theme-panel-shadow)/0.2)] backdrop-blur transition-[transform,opacity,filter,border-color,background-color] duration-500 ease-[cubic-bezier(.2,.8,.2,1)] hover:border-theme-nav-active-border hover:bg-theme-card/88 hover:text-on-surface lg:top-[7.35rem] lg:h-[15rem] lg:w-[10.75rem] min-[1360px]:top-[5.25rem] min-[1360px]:h-[23.5rem] min-[1360px]:w-[16.5rem] min-[1360px]:rounded-[2rem] min-[1360px]:px-4 min-[1360px]:py-4",
+              Math.abs(offset) === 1 ? "min-[680px]:grid" : "min-[1360px]:grid",
             )}
             key={`${note.id}-${offset}`}
             onClick={() => handleSelectSwitcherNote(note.id, offset)}
             style={promptSideCardStyle(offset)}
             type="button"
           >
-            <span className="pointer-events-none absolute inset-2 rounded-[1.55rem] border border-theme-control-border/42" />
-            <span className="pointer-events-none absolute left-1/2 top-3 h-1 w-12 -translate-x-1/2 rounded-full bg-theme-control-border/70" />
+            <span className="pointer-events-none absolute inset-2 rounded-[1.25rem] border border-theme-control-border/42 min-[1360px]:rounded-[1.55rem]" />
+            <span className="pointer-events-none absolute left-1/2 top-3 h-1 w-10 -translate-x-1/2 rounded-full bg-theme-control-border/70 min-[1360px]:w-12" />
             <span className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-[linear-gradient(0deg,rgb(var(--theme-card-header)/0.92),transparent)]" />
-            <span className="relative z-10 grid h-full grid-rows-[auto_minmax(0,1fr)_auto] gap-4 pt-5">
+            <span className="relative z-10 grid h-full grid-rows-[auto_minmax(0,1fr)_auto] gap-3 pt-5 min-[1360px]:gap-4">
               <span className="min-w-0">
                 <span className="block truncate text-body-sm font-semibold text-on-surface">
                   {note.title || t("prompt.note.untitled")}
@@ -669,7 +806,7 @@ function PromptStageCard({
                   {formatDateTime(note.updatedAt)}
                 </span>
               </span>
-              <span className="line-clamp-6 min-h-0 font-mono text-body-sm leading-6">{note.content || t("prompt.list.empty")}</span>
+              <span className="line-clamp-5 min-h-0 font-mono text-code-sm leading-5 min-[1360px]:line-clamp-6 min-[1360px]:text-body-sm min-[1360px]:leading-6">{note.content || t("prompt.list.empty")}</span>
               <span className="flex min-w-0 items-center gap-1 text-code-sm text-on-surface-muted">
                 <FolderOpen size={13} />
                 <span className="truncate">{note.projectPath || t("prompt.field.noProject")}</span>
@@ -728,120 +865,20 @@ function PromptStageCard({
             </span>
           </div>
 
-          <article
-            className="prompt-active-card-in relative flex h-[28.5rem] w-full flex-col overflow-hidden rounded-[2rem] border border-theme-card-border bg-theme-card shadow-[0_38px_96px_rgb(var(--theme-panel-shadow)/0.46)] transition-[transform,box-shadow,border-color] duration-500 ease-[cubic-bezier(.2,.8,.2,1)] [transform:translateZ(132px)] max-[1359px]:h-[23rem] max-lg:h-[22rem] max-md:rounded-[1.5rem]"
+          <div
+            className="prompt-active-card-in relative h-[28.5rem] w-full [perspective:1800px] transition-[transform] duration-500 ease-[cubic-bezier(.2,.8,.2,1)] [transform:translateZ(132px)] max-[1359px]:h-[23rem] max-lg:h-[22rem]"
             data-testid="prompt-active-card"
             key={activeNote?.id ?? "new-prompt-card"}
             style={promptActiveCardStyle(switchDirection)}
           >
-            <span className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-[radial-gradient(circle_at_50%_0%,rgb(var(--theme-glow)/0.16),transparent_62%)]" />
-            <span className="pointer-events-none absolute left-1/2 top-2 z-20 h-1 w-14 -translate-x-1/2 rounded-full bg-theme-control-border/65" />
-            <header className="relative z-10 grid min-h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-theme-card-border bg-theme-card-header/72 px-4 py-3">
-              <div className="min-w-0">
-                <div className="truncate text-body-sm font-semibold text-on-surface">
-                  {activeNote?.title || t("prompt.composer.title")}
-                </div>
-                <div className="mt-1 flex min-w-0 items-center gap-1.5 text-code-sm text-on-surface-muted">
-                  <FolderOpen size={13} />
-                  <span className="truncate">
-                    {activeNote?.projectPath || t("prompt.field.noProject")}
-                  </span>
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <PromptCardActionButton
-                  disabled={!activeNote}
-                  icon={<Pencil size={15} />}
-                  label={t("prompt.action.editInfo")}
-                  onClick={() => setInfoOpen(true)}
-                />
-                <PromptCardActionButton
-                  disabled={!activeNote || actionsDisabled || activeBusy}
-                  icon={<Languages className={busyAction === "translate" ? "animate-pulse" : undefined} size={15} />}
-                  label={translateLabel}
-                  onClick={onTranslateActive}
-                />
-                <PromptCardActionButton
-                  disabled={!activeNote || actionsDisabled || activeBusy}
-                  icon={busyAction === "optimize" ? <RefreshCw className="animate-spin" size={15} /> : <Sparkles size={15} />}
-                  label={t("prompt.action.optimize")}
-                  onClick={onOptimizeActive}
-                />
-                <PromptCardActionButton
-                  disabled={!activeNote}
-                  icon={<Trash2 size={15} />}
-                  label={t("prompt.action.delete")}
-                  onClick={onDeleteActive}
-                  tone="danger"
-                />
-              </div>
-            </header>
-
-            <div className="relative z-10 flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-5 py-4">
-              {editable ? (
-                <textarea
-                  aria-label={t("prompt.composer.eyebrow")}
-                  className="min-h-0 flex-1 resize-none rounded-lg border border-theme-control-border bg-theme-control/45 px-3 py-2 font-mono text-[0.95rem] leading-7 text-on-surface outline-none placeholder:text-outline focus:border-primary/60"
-                  onChange={(event) => setDraftContent(event.currentTarget.value)}
-                  placeholder={t("prompt.composer.contentPlaceholder")}
-                  value={draftContent}
-                />
-              ) : displayContent ? (
-                <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.95rem] leading-7 text-on-surface-variant">
-                  {displayContent}
-                </pre>
-              ) : (
-                <button
-                  className="grid min-h-0 flex-1 place-items-center rounded-xl border border-dashed border-theme-card-border bg-theme-control/35 px-4 text-center text-body-sm text-on-surface-muted transition-colors hover:border-primary/45 hover:bg-theme-control/60 hover:text-on-surface"
-                  onClick={() => setEditable(true)}
-                  type="button"
-                >
-                  {t("prompt.empty.description")}
-                </button>
-              )}
-              {activeNote?.translatedText ? (
-                <div className="max-h-24 overflow-auto rounded-lg border border-theme-control-border bg-theme-control/70 px-3 py-2">
-                  <div className="mb-1 text-label-caps uppercase text-outline">
-                    {t("prompt.translation.result", { language: translationTarget })}
-                  </div>
-                  <pre className="whitespace-pre-wrap break-words text-code-sm leading-5 text-on-surface">
-                    <code>{activeNote.translatedText}</code>
-                  </pre>
-                </div>
-              ) : null}
+            <div
+              className="relative h-full w-full transition-transform duration-700 ease-[cubic-bezier(.2,.8,.2,1)]"
+              style={promptCardRotatorStyle(cardFace)}
+            >
+              {renderActiveCardFace("front", activeNote?.content ?? "", t("prompt.original.label"))}
+              {renderActiveCardFace("back", activeNote?.optimizedText ?? "", t("prompt.optimized.label"))}
             </div>
-
-            <div className="relative z-10 flex min-h-11 items-center justify-between gap-3 border-t border-theme-card-border bg-theme-card-header/45 px-5 py-3 text-code-sm text-on-surface-muted">
-              <span className="min-w-0 truncate">
-                {characterCount} chars · {lineCount} lines
-              </span>
-              <span className="shrink-0">{t("prompt.copy.count", { count: activeNote?.copyCount ?? 0 })}</span>
-            </div>
-
-            <footer className="relative z-10 grid grid-cols-2 border-t border-theme-card-border bg-theme-toolbar/95">
-              <button
-                aria-label={copyLabel}
-                className="inline-flex h-12 items-center justify-center gap-2 border-r border-theme-card-border text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45"
-                disabled={!activeNote}
-                onClick={onCopyActive}
-                type="button"
-              >
-                {copied ? <Check size={16} /> : <Copy size={16} />}
-                <span>{copied ? t("prompt.action.copied") : t("prompt.action.copy")}</span>
-              </button>
-              <button
-                aria-label={saveLabel}
-                aria-pressed={editable}
-                className="inline-flex h-12 items-center justify-center gap-2 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45"
-                disabled={editable && !canSave}
-                onClick={handleSaveToggle}
-                type="button"
-              >
-                {editable ? <Check size={16} /> : <Pencil size={16} />}
-                <span>{saveLabel}</span>
-              </button>
-            </footer>
-          </article>
+          </div>
         </div>
       </div>
 
@@ -963,13 +1000,17 @@ function buildPromptSwitcherCards(notes: PromptNote[], activeIndex: number) {
 function promptSideCardStyle(offset: number) {
   const direction = Math.sign(offset);
   const distance = Math.abs(offset);
-  const offsetX = direction * (distance === 1 ? 432 : 560);
-  const offsetY = distance === 1 ? 58 : 88;
-  const rotateY = direction * (distance === 1 ? -42 : -58);
-  const rotateZ = direction * (distance === 1 ? 2 : 4.5);
-  const scale = distance === 1 ? 0.9 : 0.78;
-  const opacity = distance === 1 ? 0.86 : 0.42;
-  const filter = distance === 1 ? "saturate(0.94)" : "saturate(0.72) blur(0.3px)";
+  const offsetX = direction < 0
+    ? `calc(-1 * ${distance === 1 ? "clamp(24rem, 42vw, 31rem)" : "clamp(28rem, 50vw, 40rem)"})`
+    : distance === 1
+      ? "clamp(24rem, 42vw, 31rem)"
+      : "clamp(28rem, 50vw, 40rem)";
+  const offsetY = distance === 1 ? 130 : 108;
+  const rotateY = direction * (distance === 1 ? -50 : -62);
+  const rotateZ = direction * (distance === 1 ? 2.5 : 5);
+  const scale = distance === 1 ? "0.66" : "0.72";
+  const opacity = distance === 1 ? 0.52 : 0.3;
+  const filter = distance === 1 ? "saturate(0.78)" : "saturate(0.64) blur(0.4px)";
 
   return {
     "--prompt-side-delay": `${(distance - 1) * 52}ms`,
@@ -978,8 +1019,8 @@ function promptSideCardStyle(offset: number) {
     "--prompt-side-opacity": String(opacity),
     "--prompt-side-rotate-y": `${rotateY}deg`,
     "--prompt-side-rotate-z": `${rotateZ}deg`,
-    "--prompt-side-scale": String(scale),
-    "--prompt-side-x": `calc(-50% + ${offsetX}px)`,
+    "--prompt-side-scale": scale,
+    "--prompt-side-x": `calc(-50% + ${offsetX})`,
     "--prompt-side-y": `${offsetY}px`,
     filter: "var(--prompt-side-filter)",
     opacity: "var(--prompt-side-opacity)",
@@ -991,7 +1032,7 @@ function promptSideCardStyle(offset: number) {
       "scale(var(--prompt-side-scale))",
     ].join(" "),
     transformOrigin: direction < 0 ? "right center" : "left center",
-    zIndex: 28 - distance,
+    zIndex: 4 - distance,
   } as CSSProperties;
 }
 
@@ -999,6 +1040,22 @@ function promptActiveCardStyle(direction: PromptSwitchDirection) {
   return {
     "--prompt-active-from-rotate": direction === "next" ? "-2deg" : "2deg",
     "--prompt-active-from-x": direction === "next" ? "38px" : "-38px",
+  } as CSSProperties;
+}
+
+function promptCardRotatorStyle(face: PromptCardFace) {
+  return {
+    transform: face === "back" ? "rotateY(180deg)" : "rotateY(0deg)",
+    transformStyle: "preserve-3d",
+  } as CSSProperties;
+}
+
+function promptCardFaceStyle(face: PromptCardFace, active: boolean) {
+  return {
+    backfaceVisibility: "hidden",
+    pointerEvents: active ? "auto" : "none",
+    transform: face === "back" ? "rotateY(180deg)" : "rotateY(0deg)",
+    WebkitBackfaceVisibility: "hidden",
   } as CSSProperties;
 }
 
@@ -1038,42 +1095,31 @@ function PromptCardActionButton({
   );
 }
 
-function tagFilterButtonClass(active: boolean) {
-  return clsx(
-    "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-body-sm transition-colors",
-    active
-      ? "border-primary/55 bg-theme-control-hover text-on-surface"
-      : "border-theme-control-border bg-theme-control/75 text-theme-control-fg hover:bg-theme-control-hover hover:text-on-surface",
-  );
-}
-
-function buildTagStats(notes: PromptNote[]) {
-  const counts = new Map<string, number>();
-  for (const note of notes) {
-    for (const tag of note.tags) {
-      counts.set(tag, (counts.get(tag) ?? 0) + 1);
-    }
-  }
-
-  return [...counts.entries()]
-    .map(([tag, count]) => ({ count, tag }))
-    .sort((first, second) => second.count - first.count || first.tag.localeCompare(second.tag));
-}
-
-function sortPromptNotes(notes: PromptNote[], sortMode: PromptSortMode) {
+function sortPromptNotes(notes: PromptNote[], sortMode: PromptSortMode, sortDirection: "asc" | "desc") {
   return [...notes].sort((first, second) => {
+    const direction = sortDirection === "asc" ? 1 : -1;
+    let primary = 0;
+
     if (sortMode === "copy-count") {
-      return second.copyCount - first.copyCount || compareTimeDesc(first.updatedAt, second.updatedAt);
+      primary = first.copyCount - second.copyCount;
+    } else if (sortMode === "created") {
+      primary = compareTimeAsc(first.createdAt, second.createdAt);
+    } else if (sortMode === "title") {
+      primary = first.title.localeCompare(second.title);
+    } else {
+      primary = compareTimeAsc(first.updatedAt, second.updatedAt);
     }
-    if (sortMode === "created") {
-      return compareTimeDesc(first.createdAt, second.createdAt);
+
+    if (primary !== 0) {
+      return primary * direction;
     }
-    return compareTimeDesc(first.updatedAt, second.updatedAt);
+
+    return first.title.localeCompare(second.title) || first.id.localeCompare(second.id);
   });
 }
 
-function compareTimeDesc(first: string, second: string) {
-  return new Date(second).getTime() - new Date(first).getTime();
+function compareTimeAsc(first: string, second: string) {
+  return new Date(first).getTime() - new Date(second).getTime();
 }
 
 export function readPromptNotes(): PromptNote[] {
@@ -1121,6 +1167,7 @@ function normalizePromptNote(value: unknown): PromptNote | null {
     createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : now,
     id: candidate.id,
     lastCopiedAt: typeof candidate.lastCopiedAt === "string" ? candidate.lastCopiedAt : undefined,
+    optimizedText: typeof candidate.optimizedText === "string" ? candidate.optimizedText : undefined,
     projectPath: typeof candidate.projectPath === "string" ? candidate.projectPath : "",
     sessionName: typeof candidate.sessionName === "string" ? candidate.sessionName : "",
     tags: Array.isArray(candidate.tags) ? candidate.tags.filter((tag): tag is string => typeof tag === "string") : [],
@@ -1144,21 +1191,6 @@ function createPromptNoteId() {
   }
 
   return `prompt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function availabilityLabel(
-  status: TranslationAvailabilityStatus,
-  available: string,
-  checking: string,
-  unavailable: string,
-) {
-  if (status === "available") {
-    return available;
-  }
-  if (status === "checking" || status === "idle") {
-    return checking;
-  }
-  return unavailable;
 }
 
 function previewText(value: string) {

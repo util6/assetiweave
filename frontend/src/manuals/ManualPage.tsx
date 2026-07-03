@@ -122,7 +122,6 @@ export function ManualPage({
           </button>
         }
         actionsClassName="flex justify-end"
-        description={content.subtitle}
         eyebrow={eyebrow}
         icon={<BookOpen size={21} />}
         title={content.title}

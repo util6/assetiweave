@@ -63,7 +63,7 @@ describe("PromptOverviewPage", () => {
     });
   });
 
-  it("counts copies and can sort prompt cards by usage", async () => {
+  it("counts copies for the active prompt card", async () => {
     seedPromptCards([
       createStoredPromptCard("Low use", "first prompt", ["work"], "/tmp/a", "session-a", "2026-01-01T00:00:00.000Z"),
       createStoredPromptCard("High use", "second prompt", ["ops"], "/tmp/b", "session-b", "2026-01-02T00:00:00.000Z"),
@@ -73,9 +73,6 @@ describe("PromptOverviewPage", () => {
     const copyButton = screen.getByRole("button", { name: "复制" });
     fireEvent.click(copyButton);
     fireEvent.click(copyButton);
-    fireEvent.change(screen.getByLabelText("提示词排序"), {
-      target: { value: "copy-count" },
-    });
 
     await waitFor(() => {
       expect(screen.getByTestId("prompt-active-card").textContent).toContain("second prompt");
@@ -91,14 +88,16 @@ describe("PromptOverviewPage", () => {
     });
   });
 
-  it("filters the card list by tag group", () => {
+  it("filters prompt cards by tags through search", () => {
     seedPromptCards([
       createStoredPromptCard("Feature prompt", "feature prompt", ["feature"], "/tmp/project", "s1", "2026-01-01T00:00:00.000Z"),
       createStoredPromptCard("Ops prompt", "ops prompt", ["ops"], "/tmp/project", "s2", "2026-01-02T00:00:00.000Z"),
     ]);
     renderPromptPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "标签 feature，1 张卡片" }));
+    fireEvent.change(screen.getByPlaceholderText("搜索正文、标签或翻译结果..."), {
+      target: { value: "feature" },
+    });
 
     expect(screen.getAllByText("feature prompt").length).toBeGreaterThan(0);
     expect(screen.queryAllByText("ops prompt")).toHaveLength(0);
@@ -143,8 +142,11 @@ describe("PromptOverviewPage", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "保存卡片" }));
 
-    await screen.findByText("可用，可执行翻译和优化");
-    fireEvent.click(screen.getByRole("button", { name: "翻译到 简体中文" }));
+    const translateButton = screen.getByRole("button", { name: "翻译到 简体中文" }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(translateButton.disabled).toBe(false);
+    });
+    fireEvent.click(translateButton);
 
     expect(await screen.findByText("为提示词卡片编写功能规格。")).toBeTruthy();
 
@@ -153,7 +155,35 @@ describe("PromptOverviewPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Write a concise implementation plan for prompt cards.")).toBeTruthy();
     });
+    const stored = JSON.parse(localStorage.getItem("assetiweave.promptNotes") ?? "[]");
+    expect(stored[0]).toMatchObject({
+      content: "make prompt card feature",
+      optimizedText: "Write a concise implementation plan for prompt cards.",
+    });
     expect(translator).toHaveBeenCalledTimes(2);
+  });
+
+  it("flips to an existing optimized prompt without running optimization again", async () => {
+    const translator = vi.fn(async () => ({ translated_text: "should not run" }));
+    seedPromptCards([
+      createStoredPromptCard(
+        "Optimized prompt",
+        "raw prompt",
+        ["feature"],
+        "/tmp/project",
+        "s1",
+        "2026-01-01T00:00:00.000Z",
+        "stored optimized prompt",
+      ),
+    ]);
+    renderPromptPage({ translator });
+
+    const showOptimizedButton = await screen.findByRole("button", { name: "查看优化稿" });
+    fireEvent.click(showOptimizedButton);
+
+    expect(screen.getByText("stored optimized prompt")).toBeTruthy();
+    expect(translator).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "再次优化" })).toBeTruthy();
   });
 
   it("deduplicates comma and space separated tags", () => {
@@ -172,6 +202,7 @@ function createStoredPromptCard(
   projectPath: string,
   sessionName: string,
   timestamp: string,
+  optimizedText?: string,
 ) {
   return {
     content,
@@ -182,6 +213,7 @@ function createStoredPromptCard(
     sessionName,
     tags,
     title,
+    optimizedText,
     updatedAt: timestamp,
   };
 }
