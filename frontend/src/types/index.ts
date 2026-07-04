@@ -194,6 +194,7 @@ export type AppKind =
 export type ConversationAdapterKind = "external";
 export type ConversationSourceKind = "live" | "file" | "directory" | "sqlite" | "custom";
 export type ConversationAdapterTrustState = "built_in" | "trusted" | "changed" | "untrusted";
+export type ConversationAdapterPackageRecordKind = "session" | "web";
 export type ConversationPartRole = "user" | "assistant" | "tool" | "system";
 export type ConversationPartKind = "text" | "code_block" | "command" | "tool" | "file_change" | "subagent" | "metadata";
 export type ConversationGroupingOrigin = "imported" | "auto_merged" | "manual";
@@ -212,6 +213,24 @@ export interface ConversationAdapter {
   protocol_version?: number | null;
   capabilities: string[];
   input_kinds: ConversationSourceKind[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationAdapterPackage {
+  package_id: string;
+  adapter_id: string;
+  name: string;
+  version: string;
+  record_kind: ConversationAdapterPackageRecordKind;
+  install_dir: string;
+  manifest_path: string;
+  adapter_manifest_path: string;
+  runtime_protocol: string;
+  runtime_ready: boolean;
+  installed_content_hash?: string | null;
+  trusted_package_hash?: string | null;
+  error_message?: string | null;
   created_at: string;
   updated_at: string;
 }

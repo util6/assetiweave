@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  getConversationAdapterPackageTask,
   getConversationSyncTask,
+  installConversationAdapterPackage,
   installConversationScript,
   importConversationSource,
+  listConversationAdapterPackages,
   listConversationScriptCatalog,
   listConversationAdapterRuntimeStatuses,
   mergeConversationQuestions,
@@ -93,6 +96,17 @@ describe("conversation services", () => {
     });
   });
 
+  it("loads conversation adapter packages with an optional catalog URL", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValueOnce([]);
+
+    await expect(listConversationAdapterPackages("https://example.test/catalog.json")).resolves.toEqual([]);
+
+    expect(invokeMock).toHaveBeenCalledWith("list_conversation_adapter_packages", {
+      params: { catalog_url: "https://example.test/catalog.json" },
+    });
+  });
+
   it("returns the bundled script catalog fallback for browser previews", async () => {
     vi.stubGlobal("window", {});
     invokeMock.mockRejectedValueOnce(new Error("preview backend missing"));
@@ -142,6 +156,47 @@ describe("conversation services", () => {
         yes: true,
       },
     });
+  });
+
+  it("starts conversation adapter package installs as background tasks", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValueOnce({
+      id: "install-1",
+      status: "running",
+      item_id: "codex-session",
+      package_id: "codex-session",
+      catalog_url: null,
+      dry_run: false,
+      phase: "installing",
+      started_at: "2026-06-28T00:00:00Z",
+      finished_at: null,
+      result: null,
+      error: null,
+    });
+
+    await expect(installConversationAdapterPackage({ packageId: "codex-session" })).resolves.toMatchObject({
+      id: "install-1",
+      package_id: "codex-session",
+      status: "running",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("install_conversation_adapter_package", {
+      params: {
+        catalog_url: null,
+        dry_run: false,
+        package_id: "codex-session",
+        yes: true,
+      },
+    });
+  });
+
+  it("polls the conversation adapter package task", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValueOnce(null);
+
+    await expect(getConversationAdapterPackageTask()).resolves.toBeNull();
+
+    expect(invokeMock).toHaveBeenCalledWith("get_conversation_adapter_package_task");
   });
 
   it("imports a conversation source by validating the adapter, adding the source, then starting background sync", async () => {

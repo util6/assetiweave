@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ConversationAdapter,
+  ConversationAdapterPackage,
   ConversationSourceKind,
   ConversationMutationResult,
   ConversationQuestionDetail,
@@ -147,8 +148,30 @@ export interface ConversationScriptCatalogItem {
   repository_url?: string | null;
   tags: string[];
   manifest_file?: string | null;
+  package_manifest_file?: string | null;
   expected_content_hash?: string | null;
+  expected_package_hash?: string | null;
   source: ConversationScriptCatalogSource;
+}
+
+export type ConversationAdapterPackageCatalogStatus =
+  | "not_installed"
+  | "legacy_installed"
+  | "installed"
+  | "update_available"
+  | "runtime_missing"
+  | "verification_failed";
+
+export interface ConversationAdapterPackageCatalogEntry {
+  item: ConversationScriptCatalogItem;
+  installed: boolean;
+  update_available: boolean;
+  runtime_ready: boolean;
+  status: ConversationAdapterPackageCatalogStatus;
+  installed_package?: ConversationAdapterPackage | null;
+  installed_adapter?: ConversationAdapter | null;
+  install_path?: string | null;
+  error_message?: string | null;
 }
 
 export interface ConversationScriptCatalogEntry {
@@ -165,8 +188,10 @@ export interface ConversationScriptInstallTaskSnapshot {
   id: string;
   status: ConversationScriptInstallTaskStatus;
   item_id: string;
+  package_id?: string;
   catalog_url?: string | null;
   dry_run: boolean;
+  phase?: string | null;
   started_at: string;
   finished_at: string | null;
   result: unknown | null;
@@ -504,6 +529,81 @@ export async function listConversationScriptCatalog(
   }
 }
 
+export async function listConversationAdapterPackages(
+  catalogUrl?: string | null,
+): Promise<ConversationAdapterPackageCatalogEntry[]> {
+  try {
+    return await invoke<ConversationAdapterPackageCatalogEntry[]>("list_conversation_adapter_packages", {
+      params: { catalog_url: catalogUrl?.trim() || null },
+    });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return fallbackConversationAdapterPackageCatalogEntries();
+  }
+}
+
+export async function installConversationAdapterPackage(params: {
+  packageId: string;
+  catalogUrl?: string | null;
+  dryRun?: boolean;
+}): Promise<ConversationScriptInstallTaskSnapshot> {
+  try {
+    return await invoke<ConversationScriptInstallTaskSnapshot>("install_conversation_adapter_package", {
+      params: {
+        catalog_url: params.catalogUrl?.trim() || null,
+        dry_run: params.dryRun ?? false,
+        package_id: params.packageId,
+        yes: params.dryRun ? false : true,
+      },
+    });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return fallbackPackageTask(params.packageId, params.catalogUrl, params.dryRun);
+  }
+}
+
+export async function updateConversationAdapterPackage(params: {
+  packageId: string;
+  catalogUrl?: string | null;
+  dryRun?: boolean;
+}): Promise<ConversationScriptInstallTaskSnapshot> {
+  try {
+    return await invoke<ConversationScriptInstallTaskSnapshot>("update_conversation_adapter_package", {
+      params: {
+        catalog_url: params.catalogUrl?.trim() || null,
+        dry_run: params.dryRun ?? false,
+        package_id: params.packageId,
+        yes: params.dryRun ? false : true,
+      },
+    });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return fallbackPackageTask(params.packageId, params.catalogUrl, params.dryRun);
+  }
+}
+
+export async function uninstallConversationAdapterPackage(params: {
+  packageId: string;
+  dryRun?: boolean;
+}): Promise<unknown> {
+  return await invoke("uninstall_conversation_adapter_package", {
+    params: {
+      dry_run: params.dryRun ?? false,
+      package_id: params.packageId,
+      yes: params.dryRun ? false : true,
+    },
+  });
+}
+
 export async function installConversationScript(params: {
   itemId: string;
   catalogUrl?: string | null;
@@ -527,13 +627,30 @@ export async function installConversationScript(params: {
       id: `preview-script-install-${Date.now()}`,
       status: "completed",
       item_id: params.itemId,
+      package_id: params.itemId,
       catalog_url: params.catalogUrl ?? null,
       dry_run: Boolean(params.dryRun),
+      phase: "completed",
       started_at: new Date().toISOString(),
       finished_at: new Date().toISOString(),
       result: { installed: true },
       error: null,
     };
+  }
+}
+
+export async function getConversationAdapterPackageTask(): Promise<
+  ConversationScriptInstallTaskSnapshot | null
+> {
+  try {
+    return await invoke<ConversationScriptInstallTaskSnapshot | null>(
+      "get_conversation_adapter_package_task",
+    );
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+    return null;
   }
 }
 
@@ -1182,6 +1299,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       description: "Reads local Codex session records and exports normalized conversation turns.",
       repository_url: "https://github.com/util6/assetiweave",
       tags: ["session", "codex", "node"],
+      expected_package_hash: "9289a6e3da31a0f0b5d1880921e0237efdecf8fcadd6a96f439e60209ce42f78",
       expected_content_hash: "7cc193fcb5db8f7536792fd7480e376a9ca1acbca9c201736744304b599db094",
       source: {
         type: "github",
@@ -1198,6 +1316,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       description: "Reads OpenCode SQLite state and converts sessions into conversation records.",
       repository_url: "https://github.com/util6/assetiweave",
       tags: ["session", "opencode", "sqlite", "node"],
+      expected_package_hash: "6ed55931a1e4f43506ac27838543a1fa2d045a63f395f00ea8a0a2d8dd63c344",
       expected_content_hash: "7402082acd6351b771383f98988bf0a88ae1c5093b278ecce5d946df6884bd7e",
       source: {
         type: "github",
@@ -1214,6 +1333,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       description: "Reads Claude Code project conversations and emits the shared external adapter protocol.",
       repository_url: "https://github.com/util6/assetiweave",
       tags: ["session", "claude-code", "node"],
+      expected_package_hash: "f1ca450d6936012f6cbf8cc1e0046b625fcfa7175025a08d3fe5c5bd82be2a97",
       expected_content_hash: "84768c83036672f6a6569f9b22914352f58dc677ca4764a7387788376d64a475",
       source: {
         type: "github",
@@ -1230,6 +1350,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       description: "Reads ZCode SQLite conversation records using the existing external adapter script.",
       repository_url: "https://github.com/util6/assetiweave",
       tags: ["session", "zcode", "sqlite", "python"],
+      expected_package_hash: "e81a32d1266f199faf37b267691de5b6c12e6dd9acc99b44e384b6bc7630abe5",
       expected_content_hash: "5a50814a30a7894ee5243873bce8cb175ffdce9fab8d6a75324b5d446837c044",
       source: {
         type: "github",
@@ -1246,6 +1367,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       description: "Collects ChatGPT web conversations and exposes normalized web records through the adapter protocol.",
       repository_url: "https://github.com/util6/assetiweave",
       tags: ["web", "chatgpt", "node", "browser-cookie-auth"],
+      expected_package_hash: "9d76886074b7835a3ce60e2a9081e3962d4a1681ad67724ed20f0137b4b6e90b",
       expected_content_hash: "1b00dd931991ecfbe19954b4dd59cb92513fc28f43a0d8d1f129f275e737aa31",
       source: {
         type: "github",
@@ -1262,6 +1384,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       description: "Collects Qwen web conversations and exposes normalized web records through the adapter protocol.",
       repository_url: "https://github.com/util6/assetiweave",
       tags: ["web", "qwen", "node", "browser-cookie-auth"],
+      expected_package_hash: "e4540023a6f615f79d5653bf166d1381fb5b779e083a8d11defdbea02e255770",
       expected_content_hash: "3c485df513a682713de1a946e69c19ddf2d6ed86e68e926e7af4f81338971756",
       source: {
         type: "github",
@@ -1278,6 +1401,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       description: "Collects Gemini web conversations and exposes normalized web records through the adapter protocol.",
       repository_url: "https://github.com/util6/assetiweave",
       tags: ["web", "gemini", "node", "browser-cookie-auth"],
+      expected_package_hash: "e0fd8d5c0add44370c3e3aef249e6cedd1eda20d87c389ddaefb86f3f83856ea",
       expected_content_hash: "20f277c789a111d06f87b30be7523905826d9cb63b7194f5bd18fcf6bc8bfd76",
       source: {
         type: "github",
@@ -1297,6 +1421,40 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       install_path: installedAdapter?.manifest_path?.replace(/\/conversation-adapter\.json$/, "") ?? null,
     };
   });
+}
+
+function fallbackConversationAdapterPackageCatalogEntries(): ConversationAdapterPackageCatalogEntry[] {
+  return fallbackConversationScriptCatalogEntries().map((entry) => ({
+    item: entry.item,
+    installed: entry.installed,
+    update_available: entry.update_available,
+    runtime_ready: Boolean(entry.installed_adapter?.enabled),
+    status: entry.installed ? "legacy_installed" : "not_installed",
+    installed_package: null,
+    installed_adapter: entry.installed_adapter ?? null,
+    install_path: entry.install_path ?? null,
+    error_message: null,
+  }));
+}
+
+function fallbackPackageTask(
+  packageId: string,
+  catalogUrl?: string | null,
+  dryRun?: boolean,
+): ConversationScriptInstallTaskSnapshot {
+  return {
+    id: `preview-package-install-${Date.now()}`,
+    status: "completed",
+    item_id: packageId,
+    package_id: packageId,
+    catalog_url: catalogUrl ?? null,
+    dry_run: Boolean(dryRun),
+    phase: "completed",
+    started_at: new Date().toISOString(),
+    finished_at: new Date().toISOString(),
+    result: { installed: true },
+    error: null,
+  };
 }
 
 const fallbackSources: ConversationSource[] = [
