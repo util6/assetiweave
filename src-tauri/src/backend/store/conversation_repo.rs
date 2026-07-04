@@ -5,10 +5,10 @@ use crate::backend::dto::{
 };
 use crate::backend::models::{
     conversation_turn_fingerprint, group_turn_ids_by_question, ConversationAdapter,
-    ConversationAdapterKind, ConversationAdapterTrustState, ConversationGroupingOrigin,
-    ConversationPart, ConversationQuestion, ConversationSession, ConversationSource,
-    ConversationSourceKind, ConversationSyncRun, ConversationSyncStatus, ConversationTurn,
-    NormalizedConversationSession,
+    ConversationAdapterKind, ConversationAdapterPackage, ConversationAdapterTrustState,
+    ConversationGroupingOrigin, ConversationPart, ConversationQuestion, ConversationSession,
+    ConversationSource, ConversationSourceKind, ConversationSyncRun, ConversationSyncStatus,
+    ConversationTurn, NormalizedConversationSession,
 };
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use sha2::{Digest, Sha256};
@@ -64,6 +64,62 @@ const DELETE_CONVERSATION_ADAPTER_SQL: &str =
 
 const DISABLE_CONVERSATION_SOURCES_BY_ADAPTER_SQL: &str =
     "UPDATE conversation_sources SET enabled = 0, updated_at = ?1 WHERE tenant_id = ?2 AND adapter_id = ?3";
+
+const LIST_CONVERSATION_ADAPTER_PACKAGES_SQL: &str = r#"
+    SELECT package_id, adapter_id, name, version, record_kind, install_dir,
+           manifest_path, adapter_manifest_path, runtime_protocol, runtime_ready,
+           installed_content_hash, trusted_package_hash, error_message,
+           created_at, updated_at
+    FROM conversation_adapter_packages
+    WHERE tenant_id = ?1
+    ORDER BY name ASC, package_id ASC
+    "#;
+
+const LOAD_CONVERSATION_ADAPTER_PACKAGE_SQL: &str = r#"
+    SELECT package_id, adapter_id, name, version, record_kind, install_dir,
+           manifest_path, adapter_manifest_path, runtime_protocol, runtime_ready,
+           installed_content_hash, trusted_package_hash, error_message,
+           created_at, updated_at
+    FROM conversation_adapter_packages
+    WHERE tenant_id = ?1 AND package_id = ?2
+    "#;
+
+const LOAD_CONVERSATION_ADAPTER_PACKAGE_BY_ADAPTER_SQL: &str = r#"
+    SELECT package_id, adapter_id, name, version, record_kind, install_dir,
+           manifest_path, adapter_manifest_path, runtime_protocol, runtime_ready,
+           installed_content_hash, trusted_package_hash, error_message,
+           created_at, updated_at
+    FROM conversation_adapter_packages
+    WHERE tenant_id = ?1 AND adapter_id = ?2
+    ORDER BY updated_at DESC, package_id ASC
+    LIMIT 1
+    "#;
+
+const UPSERT_CONVERSATION_ADAPTER_PACKAGE_SQL: &str = r#"
+    INSERT INTO conversation_adapter_packages (
+        tenant_id, package_id, adapter_id, name, version, record_kind, install_dir,
+        manifest_path, adapter_manifest_path, runtime_protocol, runtime_ready,
+        installed_content_hash, trusted_package_hash, error_message, created_at, updated_at
+    )
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+    ON CONFLICT(tenant_id, package_id) DO UPDATE SET
+        adapter_id = excluded.adapter_id,
+        name = excluded.name,
+        version = excluded.version,
+        record_kind = excluded.record_kind,
+        install_dir = excluded.install_dir,
+        manifest_path = excluded.manifest_path,
+        adapter_manifest_path = excluded.adapter_manifest_path,
+        runtime_protocol = excluded.runtime_protocol,
+        runtime_ready = excluded.runtime_ready,
+        installed_content_hash = excluded.installed_content_hash,
+        trusted_package_hash = excluded.trusted_package_hash,
+        error_message = excluded.error_message,
+        updated_at = excluded.updated_at
+    "#;
+
+const DELETE_CONVERSATION_ADAPTER_PACKAGE_SQL: &str =
+    "DELETE FROM conversation_adapter_packages WHERE tenant_id = ?1 AND package_id = ?2";
 
 const LIST_CONVERSATION_SOURCES_SQL: &str = r#"
     SELECT id, adapter_id, name, kind, location, config_json, enabled,
@@ -256,6 +312,95 @@ pub(crate) async fn load_conversation_adapter_sqlx(
         .as_ref()
         .map(map_sqlx_conversation_adapter)
         .transpose()
+}
+
+pub(crate) async fn list_conversation_adapter_packages_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> AppResult<Vec<ConversationAdapterPackage>> {
+    let rows = sqlx::query(LIST_CONVERSATION_ADAPTER_PACKAGES_SQL)
+        .bind(tenant_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    rows.iter()
+        .map(map_sqlx_conversation_adapter_package)
+        .collect()
+}
+
+pub(crate) async fn load_conversation_adapter_package_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    package_id: &str,
+) -> AppResult<Option<ConversationAdapterPackage>> {
+    sqlx::query(LOAD_CONVERSATION_ADAPTER_PACKAGE_SQL)
+        .bind(tenant_id)
+        .bind(package_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| error.to_string())?
+        .as_ref()
+        .map(map_sqlx_conversation_adapter_package)
+        .transpose()
+}
+
+pub(crate) async fn load_conversation_adapter_package_by_adapter_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    adapter_id: &str,
+) -> AppResult<Option<ConversationAdapterPackage>> {
+    sqlx::query(LOAD_CONVERSATION_ADAPTER_PACKAGE_BY_ADAPTER_SQL)
+        .bind(tenant_id)
+        .bind(adapter_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| error.to_string())?
+        .as_ref()
+        .map(map_sqlx_conversation_adapter_package)
+        .transpose()
+}
+
+pub(crate) async fn upsert_conversation_adapter_package_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    package: &ConversationAdapterPackage,
+) -> AppResult<()> {
+    sqlx::query(UPSERT_CONVERSATION_ADAPTER_PACKAGE_SQL)
+        .bind(tenant_id)
+        .bind(&package.package_id)
+        .bind(&package.adapter_id)
+        .bind(&package.name)
+        .bind(&package.version)
+        .bind(encode_enum(package.record_kind)?)
+        .bind(&package.install_dir)
+        .bind(&package.manifest_path)
+        .bind(&package.adapter_manifest_path)
+        .bind(&package.runtime_protocol)
+        .bind(if package.runtime_ready { 1 } else { 0 })
+        .bind(&package.installed_content_hash)
+        .bind(&package.trusted_package_hash)
+        .bind(&package.error_message)
+        .bind(&package.created_at)
+        .bind(&package.updated_at)
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub(crate) async fn delete_conversation_adapter_package_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    package_id: &str,
+) -> AppResult<Option<ConversationAdapterPackage>> {
+    let package = load_conversation_adapter_package_sqlx(pool, tenant_id, package_id).await?;
+    sqlx::query(DELETE_CONVERSATION_ADAPTER_PACKAGE_SQL)
+        .bind(tenant_id)
+        .bind(package_id)
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(package)
 }
 
 pub(crate) async fn list_conversation_sources_sqlx(
@@ -1166,6 +1311,32 @@ fn map_sqlx_conversation_adapter(row: &SqliteRow) -> AppResult<ConversationAdapt
             row.try_get::<String, _>(12)
                 .map_err(|error| error.to_string())?,
         )?,
+        created_at: row.try_get(13).map_err(|error| error.to_string())?,
+        updated_at: row.try_get(14).map_err(|error| error.to_string())?,
+    })
+}
+
+fn map_sqlx_conversation_adapter_package(row: &SqliteRow) -> AppResult<ConversationAdapterPackage> {
+    Ok(ConversationAdapterPackage {
+        package_id: row.try_get(0).map_err(|error| error.to_string())?,
+        adapter_id: row.try_get(1).map_err(|error| error.to_string())?,
+        name: row.try_get(2).map_err(|error| error.to_string())?,
+        version: row.try_get(3).map_err(|error| error.to_string())?,
+        record_kind: decode_enum(
+            row.try_get::<String, _>(4)
+                .map_err(|error| error.to_string())?,
+        )?,
+        install_dir: row.try_get(5).map_err(|error| error.to_string())?,
+        manifest_path: row.try_get(6).map_err(|error| error.to_string())?,
+        adapter_manifest_path: row.try_get(7).map_err(|error| error.to_string())?,
+        runtime_protocol: row.try_get(8).map_err(|error| error.to_string())?,
+        runtime_ready: row
+            .try_get::<i64, _>(9)
+            .map_err(|error| error.to_string())?
+            == 1,
+        installed_content_hash: row.try_get(10).map_err(|error| error.to_string())?,
+        trusted_package_hash: row.try_get(11).map_err(|error| error.to_string())?,
+        error_message: row.try_get(12).map_err(|error| error.to_string())?,
         created_at: row.try_get(13).map_err(|error| error.to_string())?,
         updated_at: row.try_get(14).map_err(|error| error.to_string())?,
     })
@@ -2687,8 +2858,8 @@ fn stable_id(prefix: &str, parts: &[&str]) -> String {
 mod tests {
     use super::*;
     use crate::backend::models::{
-        ConversationPartKind, ConversationPartRole, NormalizedConversationPart,
-        NormalizedConversationTurn,
+        ConversationAdapterPackageRecordKind, ConversationPartKind, ConversationPartRole,
+        NormalizedConversationPart, NormalizedConversationTurn,
     };
     use crate::backend::store::Database;
     use uuid::Uuid;
@@ -2802,6 +2973,78 @@ mod tests {
         assert_eq!(source_after_adapter_delete.id, source.id);
         assert!(!source_after_adapter_delete.enabled);
         assert!(missing_adapter.is_none());
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_conversation_adapter_packages_round_trip_by_package_and_adapter() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-package-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let package = ConversationAdapterPackage {
+            package_id: "codex-session".to_string(),
+            adapter_id: "codex".to_string(),
+            name: "Codex Session Parser".to_string(),
+            version: "1.0.0".to_string(),
+            record_kind: ConversationAdapterPackageRecordKind::Session,
+            install_dir: "/tmp/packages/codex-session/current".to_string(),
+            manifest_path: "/tmp/packages/codex-session/current/conversation-adapter-package.json"
+                .to_string(),
+            adapter_manifest_path: "/tmp/packages/codex-session/current/conversation-adapter.json"
+                .to_string(),
+            runtime_protocol: "stdio-ndjson-v1".to_string(),
+            runtime_ready: true,
+            installed_content_hash: Some("package-hash".to_string()),
+            trusted_package_hash: Some("package-hash".to_string()),
+            error_message: None,
+            created_at: "2026-07-04T00:00:00Z".to_string(),
+            updated_at: "2026-07-04T00:00:00Z".to_string(),
+        };
+
+        let (listed, by_package, by_adapter, deleted, missing) = database
+            .block_on(async {
+                upsert_conversation_adapter_package_sqlx(database.pool(), TEST_TENANT_ID, &package)
+                    .await?;
+                let listed =
+                    list_conversation_adapter_packages_sqlx(database.pool(), TEST_TENANT_ID)
+                        .await?;
+                let by_package = load_conversation_adapter_package_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &package.package_id,
+                )
+                .await?;
+                let by_adapter = load_conversation_adapter_package_by_adapter_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &package.adapter_id,
+                )
+                .await?;
+                let deleted = delete_conversation_adapter_package_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &package.package_id,
+                )
+                .await?;
+                let missing = load_conversation_adapter_package_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &package.package_id,
+                )
+                .await?;
+                AppResult::Ok((listed, by_package, by_adapter, deleted, missing))
+            })
+            .expect("round trip package");
+
+        assert_eq!(listed, vec![package.clone()]);
+        assert_eq!(by_package, Some(package.clone()));
+        assert_eq!(by_adapter, Some(package.clone()));
+        assert_eq!(deleted, Some(package));
+        assert!(missing.is_none());
 
         drop(database);
         cleanup_database(&db_path);

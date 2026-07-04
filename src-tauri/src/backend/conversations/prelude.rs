@@ -7,8 +7,9 @@ pub(super) use super::io_utils::*;
 pub(super) use super::types::*;
 pub(super) use crate::backend::dto::AppResult;
 pub(super) use crate::backend::models::{
-    ConversationAdapter, ConversationAdapterKind, ConversationAdapterTrustState,
-    ConversationSource, ConversationSourceKind, NormalizedConversationSession,
+    ConversationAdapter, ConversationAdapterKind, ConversationAdapterPackageRecordKind,
+    ConversationAdapterTrustState, ConversationSource, ConversationSourceKind,
+    NormalizedConversationSession,
 };
 pub(super) use chrono::Utc;
 pub(super) use schemars::JsonSchema;

@@ -21,15 +21,17 @@ pub(crate) use asset_repo::{
 };
 pub(crate) use backup_repo::{checkpoint_database_wal_sqlx, vacuum_database_into_sqlx};
 pub(crate) use conversation_repo::{
-    delete_conversation_adapter_sqlx, disable_conversation_source_sqlx,
-    import_conversation_sessions_sqlx, list_conversation_adapters_sqlx,
+    delete_conversation_adapter_package_sqlx, delete_conversation_adapter_sqlx,
+    disable_conversation_source_sqlx, import_conversation_sessions_sqlx,
+    list_conversation_adapter_packages_sqlx, list_conversation_adapters_sqlx,
     list_conversation_question_details_sqlx, list_conversation_sessions_sqlx,
-    list_conversation_sources_sqlx, load_conversation_adapter_sqlx,
+    list_conversation_sources_sqlx, load_conversation_adapter_package_by_adapter_sqlx,
+    load_conversation_adapter_package_sqlx, load_conversation_adapter_sqlx,
     load_conversation_question_detail_sqlx, load_conversation_session_detail_sqlx,
     load_conversation_source_sqlx, merge_conversation_questions_sqlx,
     search_conversation_cards_sqlx, split_conversation_question_sqlx,
-    update_conversation_part_translation_sqlx, upsert_conversation_adapter_sqlx,
-    upsert_conversation_source_sqlx,
+    update_conversation_part_translation_sqlx, upsert_conversation_adapter_package_sqlx,
+    upsert_conversation_adapter_sqlx, upsert_conversation_source_sqlx,
 };
 pub(crate) use database::{
     count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx,

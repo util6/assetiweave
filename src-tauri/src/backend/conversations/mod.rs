@@ -2,6 +2,7 @@ mod external;
 mod harvester;
 mod io_utils;
 mod official;
+mod package;
 mod prelude;
 mod readers;
 #[cfg(test)]
@@ -15,6 +16,10 @@ pub(crate) use external::{
 };
 pub(crate) use harvester::run_conversation_harvester_for_adapter_source;
 pub(crate) use official::ensure_official_conversation_adapters;
+pub(crate) use package::{
+    validate_conversation_adapter_package_dir, ConversationAdapterPackageRuntimeProtocol,
+    ConversationAdapterPackageValidationResult,
+};
 pub(crate) use readers::read_source_sessions_with_adapter;
 #[allow(unused_imports)]
 pub(crate) use types::{

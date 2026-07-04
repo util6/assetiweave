@@ -36,6 +36,13 @@ pub enum ConversationAdapterTrustState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+pub enum ConversationAdapterPackageRecordKind {
+    Session,
+    Web,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum ConversationPartRole {
     User,
     Assistant,
@@ -86,6 +93,25 @@ pub struct ConversationAdapter {
     pub protocol_version: Option<u32>,
     pub capabilities: Vec<String>,
     pub input_kinds: Vec<ConversationSourceKind>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ConversationAdapterPackage {
+    pub package_id: String,
+    pub adapter_id: String,
+    pub name: String,
+    pub version: String,
+    pub record_kind: ConversationAdapterPackageRecordKind,
+    pub install_dir: String,
+    pub manifest_path: String,
+    pub adapter_manifest_path: String,
+    pub runtime_protocol: String,
+    pub runtime_ready: bool,
+    pub installed_content_hash: Option<String>,
+    pub trusted_package_hash: Option<String>,
+    pub error_message: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
