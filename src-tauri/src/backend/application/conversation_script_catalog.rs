@@ -1,96 +1,573 @@
 use super::prelude::*;
+use crate::backend::models::ConversationAdapterPackageRecordKind;
 
 const DEFAULT_CONVERSATION_SCRIPT_CATALOG_URL: &str =
     "https://raw.githubusercontent.com/util6/assetiweave/main/parser-catalog/catalog.json";
 const LOCAL_DEFAULT_CONVERSATION_SCRIPT_CATALOG: &str =
     include_str!("../../../../parser-catalog/catalog.json");
 const CONVERSATION_SCRIPT_SECURITY_NOTICE: &str =
-    "Review remote conversation script contents before installing; AssetIWeave registers the downloaded adapter as trusted for local execution.";
+    "Review remote conversation adapter package contents before installing; AssetIWeave registers the downloaded adapter package as trusted for local execution.";
 
 impl AppService {
+    pub(crate) fn list_conversation_adapter_packages(
+        &self,
+        params: ConversationAdapterPackageCatalogParams,
+    ) -> AppResult<Vec<ConversationAdapterPackageCatalogEntry>> {
+        let catalog = load_conversation_script_catalog(params.catalog_url.as_deref())?;
+        let adapters = self.list_conversation_adapters()?;
+        let packages = self.load_conversation_adapter_packages()?;
+        Ok(resolve_conversation_adapter_package_catalog_entries(
+            catalog.items,
+            &adapters,
+            &packages,
+        ))
+    }
+
     pub(crate) fn list_conversation_script_catalog(
         &self,
         params: ConversationScriptCatalogParams,
     ) -> AppResult<Vec<ConversationScriptCatalogEntry>> {
+        let entries =
+            self.list_conversation_adapter_packages(ConversationAdapterPackageCatalogParams {
+                catalog_url: params.catalog_url,
+            })?;
+        Ok(entries
+            .into_iter()
+            .map(ConversationScriptCatalogEntry::from)
+            .collect())
+    }
+
+    pub(crate) fn install_conversation_adapter_package(
+        &self,
+        params: ConversationAdapterPackageInstallParams,
+    ) -> AppResult<Value> {
+        if !params.dry_run && !params.yes {
+            return Err("conversation adapter package install requires --yes".to_string());
+        }
+
         let catalog = load_conversation_script_catalog(params.catalog_url.as_deref())?;
-        let adapters = self.list_conversation_adapters()?;
-        Ok(resolve_conversation_script_catalog_entries(
-            catalog.items,
-            &adapters,
-        ))
+        let package_id = params.package_id.trim();
+        let item = catalog
+            .items
+            .into_iter()
+            .find(|item| item.package_id() == package_id)
+            .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))?;
+        validate_conversation_script_catalog_item(&item)?;
+
+        install_conversation_adapter_package_from_item(self, &item, params.dry_run)
+    }
+
+    pub(crate) fn update_conversation_adapter_package(
+        &self,
+        params: ConversationAdapterPackageInstallParams,
+    ) -> AppResult<Value> {
+        self.install_conversation_adapter_package(params)
+    }
+
+    pub(crate) fn uninstall_conversation_adapter_package(
+        &self,
+        params: ConversationAdapterPackageUninstallParams,
+    ) -> AppResult<Value> {
+        if !params.dry_run && !params.yes {
+            return Err("conversation adapter package uninstall requires --yes".to_string());
+        }
+        let package_id = params.package_id.trim();
+        if package_id.is_empty() {
+            return Err("conversation adapter package id is required".to_string());
+        }
+        let package = self
+            .load_conversation_adapter_package(package_id)?
+            .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))?;
+
+        if params.dry_run {
+            return Ok(json!({
+                "dry_run": true,
+                "uninstalled": false,
+                "package": package
+            }));
+        }
+
+        let adapter_result =
+            self.unregister_conversation_adapter(ConversationAdapterUnregisterParams {
+                adapter_id: package.adapter_id.clone(),
+                dry_run: false,
+                yes: true,
+            });
+        if let Err(error) = adapter_result {
+            if !error.contains("conversation adapter not found") {
+                return Err(error);
+            }
+        }
+
+        let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
+        let package_id = package.package_id.clone();
+        let deleted_package = self.db.block_on(async move {
+            crate::backend::store::delete_conversation_adapter_package_sqlx(
+                &pool,
+                &tenant_id,
+                &package_id,
+            )
+            .await
+        })?;
+        if let Some(package_root) = Path::new(&package.install_dir).parent() {
+            let _ = fs::remove_dir_all(package_root);
+        }
+        Ok(json!({
+            "dry_run": false,
+            "uninstalled": true,
+            "package": deleted_package.unwrap_or(package)
+        }))
     }
 
     pub(crate) fn install_conversation_script(
         &self,
         params: ConversationScriptInstallParams,
     ) -> AppResult<Value> {
-        if !params.dry_run && !params.yes {
-            return Err("conversation script install requires --yes".to_string());
+        self.install_conversation_adapter_package(ConversationAdapterPackageInstallParams {
+            catalog_url: params.catalog_url,
+            package_id: params.item_id,
+            dry_run: params.dry_run,
+            yes: params.yes,
+        })
+    }
+
+    pub(crate) fn load_conversation_adapter_packages(
+        &self,
+    ) -> AppResult<Vec<ConversationAdapterPackage>> {
+        let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
+        self.db.block_on(async move {
+            crate::backend::store::list_conversation_adapter_packages_sqlx(&pool, &tenant_id).await
+        })
+    }
+
+    pub(crate) fn load_conversation_adapter_package(
+        &self,
+        package_id: &str,
+    ) -> AppResult<Option<ConversationAdapterPackage>> {
+        let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
+        let package_id = package_id.to_string();
+        self.db.block_on(async move {
+            crate::backend::store::load_conversation_adapter_package_sqlx(
+                &pool,
+                &tenant_id,
+                &package_id,
+            )
+            .await
+        })
+    }
+
+    pub(crate) fn load_conversation_adapter_package_by_adapter(
+        &self,
+        adapter_id: &str,
+    ) -> AppResult<Option<ConversationAdapterPackage>> {
+        let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
+        let adapter_id = adapter_id.to_string();
+        self.db.block_on(async move {
+            crate::backend::store::load_conversation_adapter_package_by_adapter_sqlx(
+                &pool,
+                &tenant_id,
+                &adapter_id,
+            )
+            .await
+        })
+    }
+
+    pub(crate) fn save_conversation_adapter_package(
+        &self,
+        package: &ConversationAdapterPackage,
+    ) -> AppResult<()> {
+        let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
+        let package = package.clone();
+        self.db.block_on(async move {
+            crate::backend::store::upsert_conversation_adapter_package_sqlx(
+                &pool, &tenant_id, &package,
+            )
+            .await
+        })
+    }
+
+    pub(crate) fn ensure_conversation_adapter_package_runtime_ready(
+        &self,
+        adapter: &ConversationAdapter,
+    ) -> AppResult<()> {
+        let Some(mut package) = self.load_conversation_adapter_package_by_adapter(&adapter.id)?
+        else {
+            return Ok(());
+        };
+        if !package.runtime_ready {
+            return Err(format_package_not_ready_error(&package));
         }
 
-        let catalog = load_conversation_script_catalog(params.catalog_url.as_deref())?;
-        let item_id = params.item_id.trim();
-        let item = catalog
-            .items
-            .into_iter()
-            .find(|item| item.id == item_id)
-            .ok_or_else(|| format!("conversation script catalog item not found: {item_id}"))?;
-        validate_conversation_script_catalog_item(&item)?;
-        let install_dir = conversation_script_install_dir(&item)?;
-        let manifest_file = item.manifest_file_name()?;
-        let manifest_path = install_dir.join(&manifest_file);
+        let validation = crate::backend::conversations::validate_conversation_adapter_package_dir(
+            Path::new(&package.install_dir),
+        );
+        match validation {
+            Ok(validation) => {
+                let trusted_hash = package
+                    .trusted_package_hash
+                    .as_deref()
+                    .or(package.installed_content_hash.as_deref())
+                    .ok_or_else(|| {
+                        format!(
+                            "conversation adapter package has no trusted hash: {}",
+                            package.package_id
+                        )
+                    })?;
+                if validation.content_hash != trusted_hash {
+                    let error = format!(
+                        "conversation adapter package content hash mismatch: {}",
+                        package.package_id
+                    );
+                    package.runtime_ready = false;
+                    package.installed_content_hash = Some(validation.content_hash);
+                    package.error_message = Some(error.clone());
+                    package.updated_at = Utc::now().to_rfc3339();
+                    self.save_conversation_adapter_package(&package)?;
+                    return Err(error);
+                }
+                if validation.adapter_validation.manifest.id != adapter.id {
+                    return Err(format!(
+                        "conversation adapter package {} manifest adapter id {} does not match registered adapter {}",
+                        package.package_id,
+                        validation.adapter_validation.manifest.id,
+                        adapter.id
+                    ));
+                }
+                Ok(())
+            }
+            Err(error) => {
+                package.runtime_ready = false;
+                package.error_message = Some(error.clone());
+                package.updated_at = Utc::now().to_rfc3339();
+                self.save_conversation_adapter_package(&package)?;
+                Err(error)
+            }
+        }
+    }
+}
 
-        if params.dry_run {
-            return Ok(json!({
-                "dry_run": true,
-                "installed": false,
-                "item": item,
-                "install_path": install_dir,
-                "manifest_path": manifest_path,
-                "security_notice": CONVERSATION_SCRIPT_SECURITY_NOTICE,
-            }));
+fn install_conversation_adapter_package_from_item(
+    service: &AppService,
+    item: &ConversationScriptCatalogItem,
+    dry_run: bool,
+) -> AppResult<Value> {
+    let current_dir = conversation_adapter_package_current_dir(item)?;
+    let package_manifest_path = current_dir.join(item.package_manifest_file_name()?);
+    let adapter_manifest_path = current_dir.join(item.manifest_file_name()?);
+
+    if dry_run {
+        return Ok(json!({
+            "dry_run": true,
+            "installed": false,
+            "package_id": item.package_id(),
+            "item": item,
+            "install_path": current_dir,
+            "package_manifest_path": package_manifest_path,
+            "manifest_path": adapter_manifest_path,
+            "security_notice": CONVERSATION_SCRIPT_SECURITY_NOTICE,
+        }));
+    }
+
+    let installed = match install_conversation_adapter_package_files(item, &current_dir) {
+        Ok(installed) => installed,
+        Err(error) => {
+            if !current_dir.is_dir() {
+                persist_failed_conversation_adapter_package(service, item, &current_dir, &error)?;
+            }
+            return Err(error);
+        }
+    };
+
+    let preview = crate::backend::conversations::register_external_adapter(
+        crate::backend::conversations::ExternalAdapterRegisterParams {
+            manifest_path: installed.validation.adapter_manifest_path.clone(),
+            dry_run: false,
+            yes: true,
+        },
+    )?;
+    let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)?;
+    let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
+    let adapter_to_save = adapter.clone();
+    service.db.block_on(async move {
+        crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &adapter_to_save)
+            .await
+    })?;
+
+    let now = Utc::now().to_rfc3339();
+    let package = ConversationAdapterPackage {
+        package_id: item.package_id().to_string(),
+        adapter_id: adapter.id.clone(),
+        name: installed.validation.manifest.name.clone(),
+        version: installed.validation.manifest.version.clone(),
+        record_kind: item.record_kind.as_package_record_kind(),
+        install_dir: current_dir.to_string_lossy().to_string(),
+        manifest_path: installed.validation.manifest_path.clone(),
+        adapter_manifest_path: installed.validation.adapter_manifest_path.clone(),
+        runtime_protocol: installed
+            .validation
+            .manifest
+            .runtime
+            .protocol
+            .as_str()
+            .to_string(),
+        runtime_ready: true,
+        installed_content_hash: Some(installed.validation.content_hash.clone()),
+        trusted_package_hash: Some(
+            item.expected_package_hash
+                .as_deref()
+                .and_then(clean_non_empty_string)
+                .unwrap_or_else(|| installed.validation.content_hash.clone()),
+        ),
+        error_message: None,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    service.save_conversation_adapter_package(&package)?;
+
+    Ok(json!({
+        "dry_run": false,
+        "installed": true,
+        "package_id": item.package_id(),
+        "item": item,
+        "install_path": current_dir,
+        "package_manifest_path": installed.validation.manifest_path,
+        "manifest_path": installed.validation.adapter_manifest_path,
+        "package": package,
+        "adapter": adapter,
+        "validation": installed.validation,
+        "security_notice": CONVERSATION_SCRIPT_SECURITY_NOTICE,
+    }))
+}
+
+struct InstalledConversationAdapterPackage {
+    validation: crate::backend::conversations::ConversationAdapterPackageValidationResult,
+}
+
+fn install_conversation_adapter_package_files(
+    item: &ConversationScriptCatalogItem,
+    current_dir: &Path,
+) -> AppResult<InstalledConversationAdapterPackage> {
+    let location = parse_github_catalog_location(&item.source)?;
+    let staging_dir = conversation_script_staging_dir(item)?;
+    let prepared_dir = conversation_adapter_package_prepared_dir(item)?;
+    let install_result = (|| {
+        clone_github_catalog_source(&location, &staging_dir)?;
+        let source_dir = location.source_dir(&staging_dir);
+        if !source_dir.is_dir() {
+            return Err(format!(
+                "conversation adapter package source path is not a directory: {}",
+                source_dir.display()
+            ));
+        }
+        let package_manifest_file = item.package_manifest_file_name()?;
+        if !source_dir.join(&package_manifest_file).is_file() {
+            return Err(format!(
+                "conversation adapter package source does not contain {}: {}",
+                package_manifest_file,
+                source_dir.display()
+            ));
         }
 
-        install_conversation_script_files(&item, &install_dir)?;
-        let validation = crate::backend::conversations::validate_external_adapter(
-            crate::backend::conversations::ExternalAdapterValidateParams {
-                manifest_path: manifest_path.to_string_lossy().to_string(),
-            },
-        )?;
-        validate_installed_manifest_for_catalog_item(&item, &validation)?;
+        if prepared_dir.exists() {
+            return Err(format!(
+                "conversation adapter package prepared path already exists: {}",
+                prepared_dir.display()
+            ));
+        }
+        capabilities::copy_dir(&source_dir, &prepared_dir)?;
+        let prepared_validation =
+            crate::backend::conversations::validate_conversation_adapter_package_dir(
+                &prepared_dir,
+            )?;
+        validate_installed_package_for_catalog_item(item, &prepared_validation)?;
 
-        let preview = crate::backend::conversations::register_external_adapter(
+        crate::backend::conversations::register_external_adapter(
             crate::backend::conversations::ExternalAdapterRegisterParams {
-                manifest_path: manifest_path.to_string_lossy().to_string(),
+                manifest_path: prepared_validation.adapter_manifest_path.clone(),
                 dry_run: false,
                 yes: true,
             },
         )?;
-        let adapter =
-            crate::backend::conversations::adapter_from_registration_preview(preview.clone())?;
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let adapter_to_save = adapter.clone();
-        self.db.block_on(async move {
-            crate::backend::store::upsert_conversation_adapter_sqlx(
-                &pool,
-                &tenant_id,
-                &adapter_to_save,
-            )
-            .await
-        })?;
 
-        Ok(json!({
-            "dry_run": false,
-            "installed": true,
-            "item": item,
-            "install_path": install_dir,
-            "manifest_path": manifest_path,
-            "adapter": adapter,
-            "validation": validation,
-            "security_notice": CONVERSATION_SCRIPT_SECURITY_NOTICE,
-        }))
+        let replacement = replace_conversation_adapter_package_current(&prepared_dir, current_dir)?;
+        let final_validation = (|| {
+            let validation =
+                crate::backend::conversations::validate_conversation_adapter_package_dir(
+                    current_dir,
+                )?;
+            validate_installed_package_for_catalog_item(item, &validation)?;
+            Ok(validation)
+        })();
+        match final_validation {
+            Ok(validation) => {
+                commit_conversation_adapter_package_current_replacement(replacement)?;
+                Ok(InstalledConversationAdapterPackage { validation })
+            }
+            Err(error) => {
+                let rollback_result =
+                    rollback_conversation_adapter_package_current_replacement(replacement);
+                if let Err(rollback_error) = rollback_result {
+                    return Err(format!(
+                        "{error}; failed to restore previous conversation adapter package: {rollback_error}"
+                    ));
+                }
+                Err(error)
+            }
+        }
+    })();
+
+    let _ = fs::remove_dir_all(&staging_dir);
+    if install_result.is_err() {
+        let _ = fs::remove_dir_all(&prepared_dir);
     }
+    install_result
+}
+
+fn persist_failed_conversation_adapter_package(
+    service: &AppService,
+    item: &ConversationScriptCatalogItem,
+    current_dir: &Path,
+    error: &str,
+) -> AppResult<()> {
+    let now = Utc::now().to_rfc3339();
+    let package = ConversationAdapterPackage {
+        package_id: item.package_id().to_string(),
+        adapter_id: item.adapter_key().to_string(),
+        name: item.name.clone(),
+        version: item.version.clone(),
+        record_kind: item.record_kind.as_package_record_kind(),
+        install_dir: current_dir.to_string_lossy().to_string(),
+        manifest_path: current_dir
+            .join(item.package_manifest_file_name()?)
+            .to_string_lossy()
+            .to_string(),
+        adapter_manifest_path: current_dir
+            .join(item.manifest_file_name()?)
+            .to_string_lossy()
+            .to_string(),
+        runtime_protocol: "stdio-ndjson-v1".to_string(),
+        runtime_ready: false,
+        installed_content_hash: None,
+        trusted_package_hash: item
+            .expected_package_hash
+            .as_deref()
+            .and_then(clean_non_empty_string),
+        error_message: Some(error.to_string()),
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    service.save_conversation_adapter_package(&package)
+}
+
+struct ConversationAdapterPackageCurrentReplacement {
+    current_dir: PathBuf,
+    backup_dir: Option<PathBuf>,
+}
+
+fn replace_conversation_adapter_package_current(
+    prepared_dir: &Path,
+    current_dir: &Path,
+) -> AppResult<ConversationAdapterPackageCurrentReplacement> {
+    if let Some(parent) = current_dir.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let backup_dir = current_dir
+        .exists()
+        .then(|| current_dir.with_file_name(format!(".current-{}.previous", short_uuid())));
+    if current_dir.exists() {
+        fs::rename(current_dir, backup_dir.as_ref().expect("backup path"))
+            .map_err(|error| error.to_string())?;
+    }
+    match fs::rename(prepared_dir, current_dir) {
+        Ok(()) => Ok(ConversationAdapterPackageCurrentReplacement {
+            current_dir: current_dir.to_path_buf(),
+            backup_dir,
+        }),
+        Err(error) => {
+            if let Some(backup_dir) = backup_dir.as_ref() {
+                if backup_dir.exists() {
+                    let _ = fs::rename(backup_dir, current_dir);
+                }
+            }
+            Err(error.to_string())
+        }
+    }
+}
+
+fn commit_conversation_adapter_package_current_replacement(
+    replacement: ConversationAdapterPackageCurrentReplacement,
+) -> AppResult<()> {
+    if let Some(backup_dir) = replacement.backup_dir {
+        fs::remove_dir_all(&backup_dir).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn rollback_conversation_adapter_package_current_replacement(
+    replacement: ConversationAdapterPackageCurrentReplacement,
+) -> AppResult<()> {
+    if replacement.current_dir.exists() {
+        fs::remove_dir_all(&replacement.current_dir).map_err(|error| error.to_string())?;
+    }
+    if let Some(backup_dir) = replacement.backup_dir {
+        if backup_dir.exists() {
+            fs::rename(&backup_dir, &replacement.current_dir).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_installed_package_for_catalog_item(
+    item: &ConversationScriptCatalogItem,
+    validation: &crate::backend::conversations::ConversationAdapterPackageValidationResult,
+) -> AppResult<()> {
+    if validation.manifest.package_id != item.package_id() {
+        return Err(format!(
+            "installed package id {} does not match catalog package id {}",
+            validation.manifest.package_id,
+            item.package_id()
+        ));
+    }
+    if validation.manifest.version != item.version {
+        return Err(format!(
+            "installed package version {} does not match catalog version {}",
+            validation.manifest.version, item.version
+        ));
+    }
+    if validation.manifest.record_kind != item.record_kind.as_package_record_kind() {
+        return Err(format!(
+            "installed package record kind does not match catalog item: {}",
+            item.id
+        ));
+    }
+    if validation.manifest.runtime.protocol
+        != crate::backend::conversations::ConversationAdapterPackageRuntimeProtocol::StdioNdjsonV1
+    {
+        return Err(format!(
+            "conversation adapter package {} only supports stdio-ndjson-v1 in this release",
+            item.id
+        ));
+    }
+    validate_installed_manifest_for_catalog_item(item, &validation.adapter_validation)?;
+    if let Some(expected) = item
+        .expected_package_hash
+        .as_deref()
+        .and_then(clean_non_empty_string)
+    {
+        if validation.content_hash != expected {
+            return Err(format!(
+                "conversation adapter package {} content hash mismatch",
+                item.id
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -124,12 +601,20 @@ pub(crate) struct ConversationScriptCatalogItem {
     pub(crate) tags: Vec<String>,
     #[serde(default, alias = "manifestFile")]
     pub(crate) manifest_file: Option<String>,
+    #[serde(default, alias = "packageManifestFile")]
+    pub(crate) package_manifest_file: Option<String>,
     #[serde(default, alias = "expectedContentHash")]
     pub(crate) expected_content_hash: Option<String>,
+    #[serde(default, alias = "expectedPackageHash")]
+    pub(crate) expected_package_hash: Option<String>,
     pub(crate) source: ConversationScriptCatalogSource,
 }
 
 impl ConversationScriptCatalogItem {
+    fn package_id(&self) -> &str {
+        self.id.as_str()
+    }
+
     fn adapter_key(&self) -> &str {
         self.adapter_id.as_deref().unwrap_or(self.id.as_str())
     }
@@ -139,6 +624,14 @@ impl ConversationScriptCatalogItem {
             .manifest_file
             .as_deref()
             .unwrap_or("conversation-adapter.json");
+        clean_relative_file_name(value)
+    }
+
+    fn package_manifest_file_name(&self) -> AppResult<String> {
+        let value = self
+            .package_manifest_file
+            .as_deref()
+            .unwrap_or("conversation-adapter-package.json");
         clean_relative_file_name(value)
     }
 }
@@ -167,6 +660,28 @@ pub(crate) enum ConversationScriptRecordKind {
     Web,
 }
 
+impl ConversationScriptRecordKind {
+    fn as_package_record_kind(self) -> ConversationAdapterPackageRecordKind {
+        match self {
+            Self::Session => ConversationAdapterPackageRecordKind::Session,
+            Self::Web => ConversationAdapterPackageRecordKind::Web,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct ConversationAdapterPackageCatalogEntry {
+    pub(crate) item: ConversationScriptCatalogItem,
+    pub(crate) installed: bool,
+    pub(crate) update_available: bool,
+    pub(crate) runtime_ready: bool,
+    pub(crate) status: String,
+    pub(crate) installed_package: Option<ConversationAdapterPackage>,
+    pub(crate) installed_adapter: Option<ConversationAdapter>,
+    pub(crate) install_path: Option<String>,
+    pub(crate) error_message: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub(crate) struct ConversationScriptCatalogEntry {
     pub(crate) item: ConversationScriptCatalogItem,
@@ -174,6 +689,18 @@ pub(crate) struct ConversationScriptCatalogEntry {
     pub(crate) update_available: bool,
     pub(crate) installed_adapter: Option<ConversationAdapter>,
     pub(crate) install_path: Option<String>,
+}
+
+impl From<ConversationAdapterPackageCatalogEntry> for ConversationScriptCatalogEntry {
+    fn from(entry: ConversationAdapterPackageCatalogEntry) -> Self {
+        Self {
+            item: entry.item,
+            installed: entry.installed,
+            update_available: entry.update_available,
+            installed_adapter: entry.installed_adapter,
+            install_path: entry.install_path,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -211,22 +738,26 @@ fn load_conversation_script_catalog(
     } else {
         let path = crate::backend::path_utils::expand_path(&catalog_url)?;
         fs::read_to_string(&path)
-            .map_err(|error| format!("read conversation script catalog failed: {error}"))?
+            .map_err(|error| format!("read conversation adapter package catalog failed: {error}"))?
     };
-    let catalog: ConversationScriptCatalog = serde_json::from_str(&text)
-        .map_err(|error| format!("conversation script catalog was not valid JSON: {error}"))?;
+    let catalog: ConversationScriptCatalog = serde_json::from_str(&text).map_err(|error| {
+        format!("conversation adapter package catalog was not valid JSON: {error}")
+    })?;
     validate_conversation_script_catalog(&catalog)?;
     Ok(catalog)
 }
 
 fn fetch_catalog_text(url: &str) -> AppResult<String> {
     let response = ureq::get(url)
-        .set("User-Agent", "AssetIWeave/0.3 conversation-script-catalog")
+        .set(
+            "User-Agent",
+            "AssetIWeave/0.5 conversation-adapter-package-catalog",
+        )
         .call()
-        .map_err(|error| format!("conversation script catalog request failed: {error}"))?;
-    response
-        .into_string()
-        .map_err(|error| format!("conversation script catalog response was not text: {error}"))
+        .map_err(|error| format!("conversation adapter package catalog request failed: {error}"))?;
+    response.into_string().map_err(|error| {
+        format!("conversation adapter package catalog response was not text: {error}")
+    })
 }
 
 fn read_local_default_catalog() -> AppResult<String> {
@@ -235,14 +766,14 @@ fn read_local_default_catalog() -> AppResult<String> {
 
 fn validate_conversation_script_catalog(catalog: &ConversationScriptCatalog) -> AppResult<()> {
     if catalog.schema_version != 1 {
-        return Err("conversation script catalog schema_version must be 1".to_string());
+        return Err("conversation adapter package catalog schema_version must be 1".to_string());
     }
     let mut seen_ids = HashSet::new();
     for item in &catalog.items {
         validate_conversation_script_catalog_item(item)?;
         if !seen_ids.insert(item.id.clone()) {
             return Err(format!(
-                "duplicate conversation script catalog item: {}",
+                "duplicate conversation adapter package catalog item: {}",
                 item.id
             ));
         }
@@ -254,135 +785,153 @@ fn validate_conversation_script_catalog_item(
     item: &ConversationScriptCatalogItem,
 ) -> AppResult<()> {
     if item.id.trim().is_empty() {
-        return Err("conversation script catalog item id is required".to_string());
+        return Err("conversation adapter package catalog item id is required".to_string());
     }
     let slug = slug_path_segment(&item.id);
     if slug.is_empty() || slug != item.id {
         return Err(format!(
-            "conversation script catalog item id must be a safe path segment: {}",
+            "conversation adapter package catalog item id must be a safe path segment: {}",
             item.id
         ));
     }
     if item.name.trim().is_empty() {
         return Err(format!(
-            "conversation script catalog item name is required: {}",
+            "conversation adapter package catalog item name is required: {}",
             item.id
         ));
     }
     if item.version.trim().is_empty() {
         return Err(format!(
-            "conversation script catalog item version is required: {}",
+            "conversation adapter package catalog item version is required: {}",
             item.id
         ));
     }
     if let Some(adapter_id) = item.adapter_id.as_deref() {
         if adapter_id.trim().is_empty() {
             return Err(format!(
-                "conversation script catalog item adapter_id must not be empty: {}",
+                "conversation adapter package catalog item adapter_id must not be empty: {}",
                 item.id
             ));
         }
     }
     item.manifest_file_name()?;
+    item.package_manifest_file_name()?;
     parse_github_catalog_location(&item.source)?;
     Ok(())
 }
 
-fn resolve_conversation_script_catalog_entries(
+fn resolve_conversation_adapter_package_catalog_entries(
     items: Vec<ConversationScriptCatalogItem>,
     adapters: &[ConversationAdapter],
-) -> Vec<ConversationScriptCatalogEntry> {
+    packages: &[ConversationAdapterPackage],
+) -> Vec<ConversationAdapterPackageCatalogEntry> {
     items
         .into_iter()
         .map(|item| {
+            let installed_package = packages
+                .iter()
+                .find(|package| package.package_id == item.package_id())
+                .cloned();
             let installed_adapter = adapters
                 .iter()
                 .find(|adapter| adapter.id == item.adapter_key())
                 .cloned();
-            let install_path = installed_adapter
+            let install_path = installed_package
                 .as_ref()
-                .and_then(|adapter| adapter.manifest_path.as_deref())
-                .and_then(|path| Path::new(path).parent().map(|parent| parent.to_path_buf()))
-                .map(|path| path.to_string_lossy().to_string());
-            let update_available = installed_adapter
+                .map(|package| package.install_dir.clone())
+                .or_else(|| {
+                    installed_adapter
+                        .as_ref()
+                        .and_then(|adapter| adapter.manifest_path.as_deref())
+                        .and_then(|path| {
+                            Path::new(path).parent().map(|parent| parent.to_path_buf())
+                        })
+                        .map(|path| path.to_string_lossy().to_string())
+                });
+            let installed = installed_package.is_some() || installed_adapter.is_some();
+            let update_available = installed_package
                 .as_ref()
-                .is_some_and(|adapter| adapter.version != item.version);
-            ConversationScriptCatalogEntry {
-                item,
-                installed: installed_adapter.is_some(),
+                .map(|package| package.version != item.version)
+                .or_else(|| {
+                    installed_adapter
+                        .as_ref()
+                        .map(|adapter| adapter.version != item.version)
+                })
+                .unwrap_or(false);
+            let runtime_ready = installed_package
+                .as_ref()
+                .map(|package| package.runtime_ready)
+                .unwrap_or_else(|| {
+                    installed_adapter
+                        .as_ref()
+                        .is_some_and(|adapter| adapter.enabled)
+                });
+            let error_message = installed_package
+                .as_ref()
+                .and_then(|package| package.error_message.clone());
+            let status = conversation_adapter_package_status(
+                installed,
+                installed_package.as_ref(),
                 update_available,
+                runtime_ready,
+                installed_adapter.as_ref(),
+            );
+            ConversationAdapterPackageCatalogEntry {
+                item,
+                installed,
+                update_available,
+                runtime_ready,
+                status,
+                installed_package,
                 installed_adapter,
                 install_path,
+                error_message,
             }
         })
         .collect()
 }
 
-fn install_conversation_script_files(
-    item: &ConversationScriptCatalogItem,
-    install_dir: &Path,
-) -> AppResult<()> {
-    let location = parse_github_catalog_location(&item.source)?;
-    let staging_dir = conversation_script_staging_dir(item)?;
-    clone_github_catalog_source(&location, &staging_dir)?;
-    let source_dir = location.source_dir(&staging_dir);
-    if !source_dir.is_dir() {
-        let _ = fs::remove_dir_all(&staging_dir);
-        return Err(format!(
-            "conversation script source path is not a directory: {}",
-            source_dir.display()
-        ));
+fn conversation_adapter_package_status(
+    installed: bool,
+    package: Option<&ConversationAdapterPackage>,
+    update_available: bool,
+    runtime_ready: bool,
+    adapter: Option<&ConversationAdapter>,
+) -> String {
+    if !installed {
+        return "not_installed".to_string();
     }
+    if let Some(package) = package {
+        if !package.runtime_ready {
+            let error = package.error_message.as_deref().unwrap_or_default();
+            if error.contains("runtime") {
+                return "runtime_missing".to_string();
+            }
+            return "verification_failed".to_string();
+        }
+    } else if adapter.is_some() {
+        return "legacy_installed".to_string();
+    }
+    if update_available {
+        return "update_available".to_string();
+    }
+    if runtime_ready {
+        "installed".to_string()
+    } else {
+        "verification_failed".to_string()
+    }
+}
 
-    let manifest_file = item.manifest_file_name()?;
-    if !source_dir.join(&manifest_file).is_file() {
-        let _ = fs::remove_dir_all(&staging_dir);
-        return Err(format!(
-            "conversation script source does not contain {}: {}",
-            manifest_file,
-            source_dir.display()
-        ));
-    }
-
-    let temp_dir = install_dir.with_file_name(format!(
-        ".{}-{}.tmp",
-        install_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("conversation-script"),
-        short_uuid()
-    ));
-    if temp_dir.exists() {
-        let _ = fs::remove_dir_all(&staging_dir);
-        return Err(format!(
-            "conversation script temporary install path already exists: {}",
-            temp_dir.display()
-        ));
-    }
-    capabilities::copy_dir(&source_dir, &temp_dir)?;
-    let temp_manifest_path = temp_dir.join(&manifest_file);
-    let validation = crate::backend::conversations::validate_external_adapter(
-        crate::backend::conversations::ExternalAdapterValidateParams {
-            manifest_path: temp_manifest_path.to_string_lossy().to_string(),
-        },
-    );
-    if let Err(error) = validation
-        .and_then(|validation| validate_installed_manifest_for_catalog_item(item, &validation))
-    {
-        let _ = fs::remove_dir_all(&temp_dir);
-        let _ = fs::remove_dir_all(&staging_dir);
-        return Err(error);
-    }
-
-    if install_dir.exists() {
-        fs::remove_dir_all(install_dir).map_err(|error| error.to_string())?;
-    }
-    if let Some(parent) = install_dir.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    fs::rename(&temp_dir, install_dir).map_err(|error| error.to_string())?;
-    let _ = fs::remove_dir_all(&staging_dir);
-    Ok(())
+fn format_package_not_ready_error(package: &ConversationAdapterPackage) -> String {
+    format!(
+        "conversation adapter package runtime is not ready: {}{}",
+        package.package_id,
+        package
+            .error_message
+            .as_deref()
+            .map(|message| format!(": {message}"))
+            .unwrap_or_default()
+    )
 }
 
 fn validate_installed_manifest_for_catalog_item(
@@ -403,7 +952,7 @@ fn validate_installed_manifest_for_catalog_item(
         .any(|capability| capability == "read_session")
     {
         return Err(format!(
-            "conversation script {} must declare read_session",
+            "conversation adapter package {} must declare read_session",
             item.id
         ));
     }
@@ -415,7 +964,7 @@ fn validate_installed_manifest_for_catalog_item(
             .any(|capability| capability == "web_records")
     {
         return Err(format!(
-            "web conversation script {} must declare web_records",
+            "web conversation adapter package {} must declare web_records",
             item.id
         ));
     }
@@ -426,7 +975,7 @@ fn validate_installed_manifest_for_catalog_item(
     {
         if validation.content_hash != expected {
             return Err(format!(
-                "conversation script {} content hash mismatch",
+                "conversation adapter {} content hash mismatch",
                 item.id
             ));
         }
@@ -434,23 +983,41 @@ fn validate_installed_manifest_for_catalog_item(
     Ok(())
 }
 
-fn conversation_script_install_dir(item: &ConversationScriptCatalogItem) -> AppResult<PathBuf> {
+fn conversation_adapter_package_dir(item: &ConversationScriptCatalogItem) -> AppResult<PathBuf> {
     Ok(crate::backend::app_settings::conversation_adapter_dir()?
-        .join("market")
-        .join(slug_path_segment(&item.id)))
+        .join("packages")
+        .join(slug_path_segment(item.package_id())))
+}
+
+fn conversation_adapter_package_current_dir(
+    item: &ConversationScriptCatalogItem,
+) -> AppResult<PathBuf> {
+    Ok(conversation_adapter_package_dir(item)?.join("current"))
+}
+
+fn conversation_adapter_package_prepared_dir(
+    item: &ConversationScriptCatalogItem,
+) -> AppResult<PathBuf> {
+    Ok(conversation_adapter_package_dir(item)?
+        .join("prepared")
+        .join(short_uuid()))
 }
 
 fn conversation_script_staging_dir(item: &ConversationScriptCatalogItem) -> AppResult<PathBuf> {
     Ok(crate::backend::app_settings::conversation_adapter_dir()?
         .join("staging")
-        .join(format!("{}-{}", slug_path_segment(&item.id), short_uuid())))
+        .join(format!(
+            "{}-{}",
+            slug_path_segment(item.package_id()),
+            short_uuid()
+        )))
 }
 
 fn parse_github_catalog_location(
     source: &ConversationScriptCatalogSource,
 ) -> AppResult<GitHubCatalogLocation> {
     if source.kind != ConversationScriptCatalogSourceKind::Github {
-        return Err("conversation script source must be github".to_string());
+        return Err("conversation adapter package source must be github".to_string());
     }
     let trimmed = source
         .url
@@ -463,7 +1030,7 @@ fn parse_github_catalog_location(
         .unwrap_or_default()
         .trim_end_matches('/');
     let path = trimmed.strip_prefix("https://github.com/").ok_or_else(|| {
-        "conversation script source only supports https://github.com URLs".to_string()
+        "conversation adapter package source only supports https://github.com URLs".to_string()
     })?;
     let parts = path.split('/').collect::<Vec<_>>();
     if parts.len() < 2 || parts[0].is_empty() || parts[1].is_empty() {
@@ -495,7 +1062,7 @@ fn parse_github_catalog_location(
 fn clone_github_catalog_source(location: &GitHubCatalogLocation, target: &Path) -> AppResult<()> {
     if target.exists() {
         return Err(format!(
-            "conversation script staging path already exists: {}",
+            "conversation adapter package staging path already exists: {}",
             target.display()
         ));
     }
@@ -582,7 +1149,9 @@ mod tests {
             repository_url: None,
             tags: Vec::new(),
             manifest_file: None,
+            package_manifest_file: None,
             expected_content_hash: None,
+            expected_package_hash: None,
             source: ConversationScriptCatalogSource {
                 kind: ConversationScriptCatalogSourceKind::Github,
                 url: "https://github.com/util6/assetiweave/tree/main/src-tauri/bundled/conversation-adapters/codex".to_string(),
@@ -612,27 +1181,51 @@ mod tests {
         }
     }
 
+    fn package(id: &str, adapter_id: &str, version: &str) -> ConversationAdapterPackage {
+        ConversationAdapterPackage {
+            package_id: id.to_string(),
+            adapter_id: adapter_id.to_string(),
+            name: "Codex Session Parser".to_string(),
+            version: version.to_string(),
+            record_kind: ConversationAdapterPackageRecordKind::Session,
+            install_dir: format!("/tmp/{id}/current"),
+            manifest_path: format!("/tmp/{id}/current/conversation-adapter-package.json"),
+            adapter_manifest_path: format!("/tmp/{id}/current/conversation-adapter.json"),
+            runtime_protocol: "stdio-ndjson-v1".to_string(),
+            runtime_ready: true,
+            installed_content_hash: Some("package-hash".to_string()),
+            trusted_package_hash: Some("package-hash".to_string()),
+            error_message: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
     #[test]
     fn resolves_installed_state_from_declared_adapter_id() {
-        let entries = resolve_conversation_script_catalog_entries(
+        let entries = resolve_conversation_adapter_package_catalog_entries(
             vec![catalog_item("codex-session", Some("codex"))],
             &[adapter("codex", "1.0.0")],
+            &[],
         );
 
         assert!(entries[0].installed);
+        assert_eq!(entries[0].status, "legacy_installed");
         assert!(!entries[0].update_available);
         assert_eq!(entries[0].installed_adapter.as_ref().unwrap().id, "codex");
     }
 
     #[test]
-    fn marks_installed_adapter_with_different_version_as_update_available() {
-        let entries = resolve_conversation_script_catalog_entries(
+    fn marks_installed_package_with_different_version_as_update_available() {
+        let entries = resolve_conversation_adapter_package_catalog_entries(
             vec![catalog_item("codex-session", Some("codex"))],
-            &[adapter("codex", "0.9.0")],
+            &[],
+            &[package("codex-session", "codex", "0.9.0")],
         );
 
         assert!(entries[0].installed);
         assert!(entries[0].update_available);
+        assert_eq!(entries[0].status, "update_available");
     }
 
     #[test]
@@ -664,5 +1257,39 @@ mod tests {
         item.manifest_file = Some("../conversation-adapter.json".to_string());
 
         assert!(validate_conversation_script_catalog_item(&item).is_err());
+
+        let mut item = catalog_item("codex-session", Some("codex"));
+        item.package_manifest_file = Some("../conversation-adapter-package.json".to_string());
+
+        assert!(validate_conversation_script_catalog_item(&item).is_err());
+    }
+
+    #[test]
+    fn current_package_replacement_rolls_back_to_previous_current() {
+        let root =
+            std::env::temp_dir().join(format!("assetiweave-package-replace-{}", Uuid::new_v4()));
+        let current_dir = root.join("current");
+        let prepared_dir = root.join("prepared").join("next");
+        fs::create_dir_all(&current_dir).expect("create current");
+        fs::create_dir_all(&prepared_dir).expect("create prepared");
+        fs::write(current_dir.join("version.txt"), "old").expect("write old current");
+        fs::write(prepared_dir.join("version.txt"), "new").expect("write new prepared");
+
+        let replacement = replace_conversation_adapter_package_current(&prepared_dir, &current_dir)
+            .expect("replace current");
+        assert_eq!(
+            fs::read_to_string(current_dir.join("version.txt")).expect("read current"),
+            "new"
+        );
+
+        rollback_conversation_adapter_package_current_replacement(replacement)
+            .expect("rollback current");
+
+        assert_eq!(
+            fs::read_to_string(current_dir.join("version.txt")).expect("read restored current"),
+            "old"
+        );
+        assert!(!prepared_dir.exists());
+        let _ = fs::remove_dir_all(root);
     }
 }

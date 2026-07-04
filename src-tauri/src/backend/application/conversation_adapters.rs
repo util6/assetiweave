@@ -228,8 +228,12 @@ impl AppService {
             if !sync_source_matches_record_kind(adapter.as_ref(), &source.adapter_id, record_kind) {
                 continue;
             }
-            let sessions_result =
-                if !params.dry_run && is_web_record_adapter(adapter.as_ref(), &source.adapter_id) {
+            let sessions_result = adapter
+                .as_ref()
+                .map(|adapter| self.ensure_conversation_adapter_package_runtime_ready(adapter))
+                .unwrap_or(Ok(()))
+                .and_then(|_| {
+                    if !params.dry_run && is_web_record_adapter(adapter.as_ref(), &source.adapter_id) {
                     crate::backend::conversations::run_conversation_harvester_for_adapter_source(
                         adapter.as_ref(),
                         &source,
@@ -245,7 +249,8 @@ impl AppService {
                         adapter.as_ref(),
                         &source,
                     )
-                };
+                    }
+                });
             let sync_result = match sessions_result {
                 Ok(sessions) if is_web_record_adapter(adapter.as_ref(), &source.adapter_id) => {
                     let pool = self.db.pool().clone();

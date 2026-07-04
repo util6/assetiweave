@@ -163,6 +163,7 @@ impl AppService {
             let source = load_export_source_for_detail(&pool, &tenant_id, &detail).await?;
             AppResult::Ok((detail, adapter, source))
         })?;
+        self.ensure_conversation_adapter_package_runtime_ready(&adapter)?;
         export_loaded_conversation_markdown(
             detail,
             adapter,
@@ -191,6 +192,7 @@ impl AppService {
             let source = load_export_source_for_detail(&pool, &tenant_id, &detail).await?;
             AppResult::Ok((detail, adapter, source))
         })?;
+        self.ensure_conversation_adapter_package_runtime_ready(&adapter)?;
         export_loaded_conversation_markdown(detail, adapter, source, params, "web", "web")
     }
 

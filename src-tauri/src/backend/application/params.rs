@@ -330,6 +330,34 @@ pub(crate) struct ConversationScriptInstallParams {
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct ConversationAdapterPackageCatalogParams {
+    #[serde(default, alias = "catalogUrl")]
+    pub(crate) catalog_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct ConversationAdapterPackageInstallParams {
+    #[serde(default, alias = "catalogUrl")]
+    pub(crate) catalog_url: Option<String>,
+    #[serde(alias = "packageId", alias = "itemId")]
+    pub(crate) package_id: String,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+    #[serde(default)]
+    pub(crate) yes: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct ConversationAdapterPackageUninstallParams {
+    #[serde(alias = "packageId")]
+    pub(crate) package_id: String,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+    #[serde(default)]
+    pub(crate) yes: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct ConversationSyncParams {
     #[serde(alias = "sourceId")]
     pub(crate) source_id: Option<String>,
