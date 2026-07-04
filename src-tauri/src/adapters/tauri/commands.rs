@@ -13,7 +13,9 @@ use crate::backend::capabilities::{
 };
 use crate::{
     backend::application::{
-        AppService, ConversationAdapterUnregisterParams, ConversationPartTranslationUpdateParams,
+        AppService, ConversationAdapterPackageCatalogParams,
+        ConversationAdapterPackageInstallParams, ConversationAdapterPackageUninstallParams,
+        ConversationAdapterUnregisterParams, ConversationPartTranslationUpdateParams,
         ConversationQuestionGetParams, ConversationQuestionListParams,
         ConversationQuestionMergeParams, ConversationQuestionSplitParams,
         ConversationScriptCatalogParams, ConversationScriptInstallParams, ConversationSearchParams,
@@ -1362,6 +1364,134 @@ pub(crate) fn list_conversation_script_catalog(
 }
 
 #[tauri::command]
+pub(crate) fn list_conversation_adapter_packages(
+    state: State<'_, AppState>,
+    params: ConversationAdapterPackageCatalogParams,
+) -> AppResult<Vec<crate::backend::application::ConversationAdapterPackageCatalogEntry>> {
+    AppService::open_with_db_path(state.db_path.clone())?.list_conversation_adapter_packages(params)
+}
+
+#[tauri::command]
+pub(crate) fn install_conversation_adapter_package(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: ConversationAdapterPackageInstallParams,
+) -> AppResult<ConversationScriptInstallTaskSnapshot> {
+    let (snapshot, should_start) = state
+        .background_tasks
+        .begin_conversation_adapter_package_install(&params)?;
+    if !should_start {
+        return Ok(snapshot);
+    }
+
+    let db_path = state.db_path.clone();
+    let background_tasks = state.background_tasks.clone();
+    let task_id = snapshot.id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            AppService::open_with_db_path(db_path)
+                .and_then(|service| service.install_conversation_adapter_package(params))
+        }))
+        .unwrap_or_else(|_| Err("conversation adapter package install task panicked".to_string()));
+        match &result {
+            Ok(value) => log_info(
+                "conversation.adapter_package.install",
+                "后台安装对话适配器包成功",
+                &[("task_id", task_id.clone()), ("result", value.to_string())],
+            ),
+            Err(error) => log_error(
+                "conversation.adapter_package.install",
+                "后台安装对话适配器包失败",
+                error,
+                &[("task_id", task_id.clone())],
+            ),
+        }
+        match background_tasks.finish_conversation_script_install(&task_id, result) {
+            Ok(snapshot) => emit_conversation_script_install_task(&app, &snapshot),
+            Err(error) => {
+                log_error(
+                    "conversation.adapter_package.install",
+                    "更新对话适配器包后台安装任务状态失败",
+                    &error,
+                    &[("task_id", task_id)],
+                );
+            }
+        }
+    });
+
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub(crate) fn update_conversation_adapter_package(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: ConversationAdapterPackageInstallParams,
+) -> AppResult<ConversationScriptInstallTaskSnapshot> {
+    let (snapshot, should_start) = state
+        .background_tasks
+        .begin_conversation_adapter_package_install(&params)?;
+    if !should_start {
+        return Ok(snapshot);
+    }
+
+    let db_path = state.db_path.clone();
+    let background_tasks = state.background_tasks.clone();
+    let task_id = snapshot.id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            AppService::open_with_db_path(db_path)
+                .and_then(|service| service.update_conversation_adapter_package(params))
+        }))
+        .unwrap_or_else(|_| Err("conversation adapter package update task panicked".to_string()));
+        match &result {
+            Ok(value) => log_info(
+                "conversation.adapter_package.update",
+                "后台更新对话适配器包成功",
+                &[("task_id", task_id.clone()), ("result", value.to_string())],
+            ),
+            Err(error) => log_error(
+                "conversation.adapter_package.update",
+                "后台更新对话适配器包失败",
+                error,
+                &[("task_id", task_id.clone())],
+            ),
+        }
+        match background_tasks.finish_conversation_script_install(&task_id, result) {
+            Ok(snapshot) => emit_conversation_script_install_task(&app, &snapshot),
+            Err(error) => {
+                log_error(
+                    "conversation.adapter_package.update",
+                    "更新对话适配器包后台任务状态失败",
+                    &error,
+                    &[("task_id", task_id)],
+                );
+            }
+        }
+    });
+
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub(crate) fn uninstall_conversation_adapter_package(
+    state: State<'_, AppState>,
+    params: ConversationAdapterPackageUninstallParams,
+) -> AppResult<serde_json::Value> {
+    AppService::open_with_db_path(state.db_path.clone())?
+        .uninstall_conversation_adapter_package(params)
+}
+
+#[tauri::command]
+pub(crate) fn get_conversation_adapter_package_task(
+    state: State<'_, AppState>,
+) -> AppResult<Option<ConversationScriptInstallTaskSnapshot>> {
+    state
+        .background_tasks
+        .conversation_script_install_snapshot()
+}
+
+#[tauri::command]
 pub(crate) fn install_conversation_script(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -1807,6 +1937,11 @@ pub(crate) fn command_handler(
         upsert_conversation_source,
         disable_conversation_source,
         list_conversation_script_catalog,
+        list_conversation_adapter_packages,
+        install_conversation_adapter_package,
+        update_conversation_adapter_package,
+        uninstall_conversation_adapter_package,
+        get_conversation_adapter_package_task,
         install_conversation_script,
         get_conversation_script_install_task,
         sync_conversations,

@@ -1,5 +1,8 @@
 use crate::backend::{
-    application::{ConversationScriptInstallParams, ConversationSyncParams},
+    application::{
+        ConversationAdapterPackageInstallParams, ConversationScriptInstallParams,
+        ConversationSyncParams,
+    },
     dto::{AppResult, CatalogAsset},
 };
 use chrono::Utc;
@@ -34,8 +37,10 @@ pub(crate) struct ConversationScriptInstallTaskSnapshot {
     pub(crate) id: String,
     pub(crate) status: BackgroundTaskStatus,
     pub(crate) item_id: String,
+    pub(crate) package_id: String,
     pub(crate) catalog_url: Option<String>,
     pub(crate) dry_run: bool,
+    pub(crate) phase: Option<String>,
     pub(crate) started_at: String,
     pub(crate) finished_at: Option<String>,
     pub(crate) result: Option<Value>,
@@ -168,9 +173,48 @@ impl BackgroundTaskRegistry {
         let snapshot = ConversationScriptInstallTaskSnapshot {
             id: Uuid::new_v4().to_string(),
             status: BackgroundTaskStatus::Running,
-            item_id,
+            item_id: item_id.clone(),
+            package_id: item_id,
             catalog_url: params.catalog_url.clone(),
             dry_run: params.dry_run,
+            phase: Some("installing".to_string()),
+            started_at: Utc::now().to_rfc3339(),
+            finished_at: None,
+            result: None,
+            error: None,
+        };
+        *current = Some(snapshot.clone());
+        Ok((snapshot, true))
+    }
+
+    pub(crate) fn begin_conversation_adapter_package_install(
+        &self,
+        params: &ConversationAdapterPackageInstallParams,
+    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
+        let mut current = self
+            .conversation_script_install
+            .lock()
+            .map_err(|error| error.to_string())?;
+        if let Some(snapshot) = current
+            .as_ref()
+            .filter(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
+        {
+            return Ok((snapshot.clone(), false));
+        }
+
+        let package_id = params.package_id.trim().to_string();
+        if package_id.is_empty() {
+            return Err("conversation adapter package install requires a package id".to_string());
+        }
+
+        let snapshot = ConversationScriptInstallTaskSnapshot {
+            id: Uuid::new_v4().to_string(),
+            status: BackgroundTaskStatus::Running,
+            item_id: package_id.clone(),
+            package_id,
+            catalog_url: params.catalog_url.clone(),
+            dry_run: params.dry_run,
+            phase: Some("installing".to_string()),
             started_at: Utc::now().to_rfc3339(),
             finished_at: None,
             result: None,
@@ -202,11 +246,13 @@ impl BackgroundTaskRegistry {
         match result {
             Ok(value) => {
                 snapshot.status = BackgroundTaskStatus::Completed;
+                snapshot.phase = Some("completed".to_string());
                 snapshot.result = Some(value);
                 snapshot.error = None;
             }
             Err(error) => {
                 snapshot.status = BackgroundTaskStatus::Failed;
+                snapshot.phase = Some("failed".to_string());
                 snapshot.result = None;
                 snapshot.error = Some(error);
             }

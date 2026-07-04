@@ -262,7 +262,7 @@ fi
   "version": "0.1.0",
   "protocol_version": 1,
   "command": ["adapter.sh"],
-  "capabilities": ["read_session", "export_markdown"],
+  "capabilities": ["probe", "read_session", "export_markdown"],
   "input_kinds": ["directory"]
 }`
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {

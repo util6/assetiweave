@@ -19,6 +19,7 @@ func newCmdConversation(f *cmdutil.Factory) *cobra.Command {
 	cmd.AddCommand(newCmdConversationAdapter(f))
 	cmd.AddCommand(newCmdConversationSource(f))
 	cmd.AddCommand(newCmdConversationScript(f))
+	cmd.AddCommand(newCmdConversationPackage(f))
 	cmd.AddCommand(newCmdConversationSync(f))
 	cmd.AddCommand(newCmdConversationSearch(f))
 	cmd.AddCommand(newCmdConversationSession(f))
@@ -679,6 +680,118 @@ func newCmdConversationScriptInstall(f *cmdutil.Factory) *cobra.Command {
 	cmd.Flags().StringVar(&catalogURL, "catalog-url", "", "catalog JSON URL or local path")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview install target without downloading")
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm downloading and trusting this script")
+	return cmd
+}
+
+func newCmdConversationPackage(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "package", Short: "Manage conversation adapter packages"}
+	cmd.AddCommand(newCmdConversationPackageCatalog(f))
+	cmd.AddCommand(newCmdConversationPackageInstall(f))
+	cmd.AddCommand(newCmdConversationPackageUpdate(f))
+	cmd.AddCommand(newCmdConversationPackageUninstall(f))
+	return cmd
+}
+
+func newCmdConversationPackageCatalog(f *cmdutil.Factory) *cobra.Command {
+	var catalogURL string
+	cmd := &cobra.Command{
+		Use:   "catalog",
+		Short: "List downloadable conversation adapter packages",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			params := map[string]any{"catalog_url": nil}
+			if catalogURL != "" {
+				params["catalog_url"] = catalogURL
+			}
+			return callAndPrint(cmd, f, schema.MethodConversationAdapterPackageCatalog, params)
+		},
+	}
+	cmd.Flags().StringVar(&catalogURL, "catalog-url", "", "catalog JSON URL or local path")
+	return cmd
+}
+
+func newCmdConversationPackageInstall(f *cmdutil.Factory) *cobra.Command {
+	var catalogURL string
+	var dryRun, yes bool
+	cmd := &cobra.Command{
+		Use:   "install <package-id>",
+		Short: "Download and register a trusted conversation adapter package",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !dryRun {
+				if err := requireYes(yes, "conversation package install"); err != nil {
+					return err
+				}
+			}
+			params := map[string]any{
+				"catalog_url": nil,
+				"package_id":  args[0],
+				"dry_run":     dryRun,
+				"yes":         yes,
+			}
+			if catalogURL != "" {
+				params["catalog_url"] = catalogURL
+			}
+			return callAndPrint(cmd, f, schema.MethodConversationAdapterPackageInstall, params)
+		},
+	}
+	cmd.Flags().StringVar(&catalogURL, "catalog-url", "", "catalog JSON URL or local path")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview install target without downloading")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm downloading and trusting this package")
+	return cmd
+}
+
+func newCmdConversationPackageUpdate(f *cmdutil.Factory) *cobra.Command {
+	var catalogURL string
+	var dryRun, yes bool
+	cmd := &cobra.Command{
+		Use:   "update <package-id>",
+		Short: "Update a trusted conversation adapter package",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !dryRun {
+				if err := requireYes(yes, "conversation package update"); err != nil {
+					return err
+				}
+			}
+			params := map[string]any{
+				"catalog_url": nil,
+				"package_id":  args[0],
+				"dry_run":     dryRun,
+				"yes":         yes,
+			}
+			if catalogURL != "" {
+				params["catalog_url"] = catalogURL
+			}
+			return callAndPrint(cmd, f, schema.MethodConversationAdapterPackageUpdate, params)
+		},
+	}
+	cmd.Flags().StringVar(&catalogURL, "catalog-url", "", "catalog JSON URL or local path")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview update target without downloading")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm downloading and trusting this package")
+	return cmd
+}
+
+func newCmdConversationPackageUninstall(f *cmdutil.Factory) *cobra.Command {
+	var dryRun, yes bool
+	cmd := &cobra.Command{
+		Use:   "uninstall <package-id>",
+		Short: "Uninstall a conversation adapter package",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !dryRun {
+				if err := requireYes(yes, "conversation package uninstall"); err != nil {
+					return err
+				}
+			}
+			return callAndPrint(cmd, f, schema.MethodConversationAdapterPackageUninstall, map[string]any{
+				"package_id": args[0],
+				"dry_run":    dryRun,
+				"yes":        yes,
+			})
+		},
+	}
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview uninstall without changing state")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm unregistering this package")
 	return cmd
 }
 

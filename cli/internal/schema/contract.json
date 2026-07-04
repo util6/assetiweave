@@ -2142,6 +2142,187 @@
       "supports_dry_run": true
     },
     {
+      "canonical_method": "conversation.adapter_package.catalog",
+      "cli": "assetiweave-cli conversation package catalog",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List downloadable conversation adapter packages from a catalog",
+      "exposure": "friendly",
+      "method": "conversation.adapter_package.catalog",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_url": {
+            "aliases": [
+              "catalogUrl"
+            ],
+            "default": null,
+            "description": "Optional catalog JSON URL or local path",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.adapter_package.install",
+      "cli": "assetiweave-cli conversation package install <package-id> --yes",
+      "confirmation_required": true,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Download and register a trusted conversation adapter package",
+      "exposure": "friendly",
+      "method": "conversation.adapter_package.install",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_url": {
+            "aliases": [
+              "catalogUrl"
+            ],
+            "default": null,
+            "description": "Optional catalog JSON URL or local path",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview install target without downloading",
+            "type": "boolean"
+          },
+          "package_id": {
+            "aliases": [
+              "packageId",
+              "itemId"
+            ],
+            "description": "Catalog package identifier",
+            "type": "string"
+          },
+          "yes": {
+            "default": false,
+            "description": "Confirm downloading and trusting this package",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": true
+    },
+    {
+      "canonical_method": "conversation.adapter_package.update",
+      "cli": "assetiweave-cli conversation package update <package-id> --yes",
+      "confirmation_required": true,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Update a trusted conversation adapter package",
+      "exposure": "friendly",
+      "method": "conversation.adapter_package.update",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_url": {
+            "aliases": [
+              "catalogUrl"
+            ],
+            "default": null,
+            "description": "Optional catalog JSON URL or local path",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview update target without downloading",
+            "type": "boolean"
+          },
+          "package_id": {
+            "aliases": [
+              "packageId",
+              "itemId"
+            ],
+            "description": "Catalog package identifier",
+            "type": "string"
+          },
+          "yes": {
+            "default": false,
+            "description": "Confirm downloading and trusting this package",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": true
+    },
+    {
+      "canonical_method": "conversation.adapter_package.uninstall",
+      "cli": "assetiweave-cli conversation package uninstall <package-id> --yes",
+      "confirmation_required": true,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Uninstall a conversation adapter package and unregister its adapter",
+      "exposure": "friendly",
+      "method": "conversation.adapter_package.uninstall",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview uninstall without changing state",
+            "type": "boolean"
+          },
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "description": "Installed package identifier",
+            "type": "string"
+          },
+          "yes": {
+            "default": false,
+            "description": "Confirm unregistering this package",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": true
+    },
+    {
       "canonical_method": "conversation.sync",
       "cli": "assetiweave-cli conversation sync",
       "confirmation_required": false,
@@ -6355,6 +6536,187 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.adapter_package.catalog",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List downloadable conversation adapter packages from a catalog",
+      "exposure": "app",
+      "method": "list_conversation_adapter_packages",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_url": {
+            "aliases": [
+              "catalogUrl"
+            ],
+            "default": null,
+            "description": "Optional catalog JSON URL or local path",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.adapter_package.install",
+      "cli": null,
+      "confirmation_required": true,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Download and register a trusted conversation adapter package",
+      "exposure": "app",
+      "method": "install_conversation_adapter_package",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_url": {
+            "aliases": [
+              "catalogUrl"
+            ],
+            "default": null,
+            "description": "Optional catalog JSON URL or local path",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview install target without downloading",
+            "type": "boolean"
+          },
+          "package_id": {
+            "aliases": [
+              "packageId",
+              "itemId"
+            ],
+            "description": "Catalog package identifier",
+            "type": "string"
+          },
+          "yes": {
+            "default": false,
+            "description": "Confirm downloading and trusting this package",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.adapter_package.update",
+      "cli": null,
+      "confirmation_required": true,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Update a trusted conversation adapter package",
+      "exposure": "app",
+      "method": "update_conversation_adapter_package",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_url": {
+            "aliases": [
+              "catalogUrl"
+            ],
+            "default": null,
+            "description": "Optional catalog JSON URL or local path",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview update target without downloading",
+            "type": "boolean"
+          },
+          "package_id": {
+            "aliases": [
+              "packageId",
+              "itemId"
+            ],
+            "description": "Catalog package identifier",
+            "type": "string"
+          },
+          "yes": {
+            "default": false,
+            "description": "Confirm downloading and trusting this package",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.adapter_package.uninstall",
+      "cli": null,
+      "confirmation_required": true,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Uninstall a conversation adapter package and unregister its adapter",
+      "exposure": "app",
+      "method": "uninstall_conversation_adapter_package",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview uninstall without changing state",
+            "type": "boolean"
+          },
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "description": "Installed package identifier",
+            "type": "string"
+          },
+          "yes": {
+            "default": false,
+            "description": "Confirm unregistering this package",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.script.install",
       "cli": null,
       "confirmation_required": true,
@@ -6416,6 +6778,25 @@
       "description": "Get the current desktop conversation script install background task",
       "exposure": "app",
       "method": "get_conversation_script_install_task",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "get_conversation_adapter_package_task",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Get the current desktop conversation adapter package background task",
+      "exposure": "app",
+      "method": "get_conversation_adapter_package_task",
       "params_schema": {
         "additionalProperties": false,
         "properties": {},
@@ -7599,6 +7980,10 @@
     "conversation.source.disable",
     "conversation.script.catalog",
     "conversation.script.install",
+    "conversation.adapter_package.catalog",
+    "conversation.adapter_package.install",
+    "conversation.adapter_package.update",
+    "conversation.adapter_package.uninstall",
     "conversation.sync",
     "conversation.session.list",
     "conversation.search",
@@ -7682,8 +8067,13 @@
     "upsert_conversation_source",
     "disable_conversation_source",
     "list_conversation_script_catalog",
+    "list_conversation_adapter_packages",
+    "install_conversation_adapter_package",
+    "update_conversation_adapter_package",
+    "uninstall_conversation_adapter_package",
     "install_conversation_script",
     "get_conversation_script_install_task",
+    "get_conversation_adapter_package_task",
     "sync_conversations",
     "get_conversation_sync_task",
     "list_conversation_sessions",

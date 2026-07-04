@@ -894,6 +894,80 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli conversation script install <item-id> --yes")
     ),
     command!(
+        "conversation.adapter_package.catalog",
+        "conversation.adapter_package.catalog",
+        "List downloadable conversation adapter packages from a catalog",
+        Read,
+        Friendly,
+        false,
+        crate::backend::application::ConversationAdapterPackageCatalogParams,
+        Service => |service, params| service.list_conversation_adapter_packages(params),
+        &[param!(
+            "catalog_url",
+            "Optional catalog JSON URL or local path",
+            ["catalogUrl"]
+        )],
+        Some("assetiweave-cli conversation package catalog")
+    ),
+    command!(
+        "conversation.adapter_package.install",
+        "conversation.adapter_package.install",
+        "Download and register a trusted conversation adapter package",
+        HighRiskWrite,
+        Friendly,
+        true,
+        crate::backend::application::ConversationAdapterPackageInstallParams,
+        Service => |service, params| service.install_conversation_adapter_package(params),
+        &[
+            param!(
+                "catalog_url",
+                "Optional catalog JSON URL or local path",
+                ["catalogUrl"]
+            ),
+            param!("package_id", "Catalog package identifier", ["packageId", "itemId"]),
+            param!("dry_run", "Preview install target without downloading", ["dryRun"]),
+            param!("yes", "Confirm downloading and trusting this package"),
+        ],
+        Some("assetiweave-cli conversation package install <package-id> --yes")
+    ),
+    command!(
+        "conversation.adapter_package.update",
+        "conversation.adapter_package.update",
+        "Update a trusted conversation adapter package",
+        HighRiskWrite,
+        Friendly,
+        true,
+        crate::backend::application::ConversationAdapterPackageInstallParams,
+        Service => |service, params| service.update_conversation_adapter_package(params),
+        &[
+            param!(
+                "catalog_url",
+                "Optional catalog JSON URL or local path",
+                ["catalogUrl"]
+            ),
+            param!("package_id", "Catalog package identifier", ["packageId", "itemId"]),
+            param!("dry_run", "Preview update target without downloading", ["dryRun"]),
+            param!("yes", "Confirm downloading and trusting this package"),
+        ],
+        Some("assetiweave-cli conversation package update <package-id> --yes")
+    ),
+    command!(
+        "conversation.adapter_package.uninstall",
+        "conversation.adapter_package.uninstall",
+        "Uninstall a conversation adapter package and unregister its adapter",
+        HighRiskWrite,
+        Friendly,
+        true,
+        crate::backend::application::ConversationAdapterPackageUninstallParams,
+        Service => |service, params| service.uninstall_conversation_adapter_package(params),
+        &[
+            param!("package_id", "Installed package identifier", ["packageId"]),
+            param!("dry_run", "Preview uninstall without changing state", ["dryRun"]),
+            param!("yes", "Confirm unregistering this package"),
+        ],
+        Some("assetiweave-cli conversation package uninstall <package-id> --yes")
+    ),
+    command!(
         "conversation.sync",
         "conversation.sync",
         "Synchronize conversation sources",
@@ -2060,6 +2134,80 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "list_conversation_adapter_packages",
+        "conversation.adapter_package.catalog",
+        "List downloadable conversation adapter packages from a catalog",
+        Read,
+        App,
+        false,
+        crate::backend::application::ConversationAdapterPackageCatalogParams,
+        Service => |service, params| service.list_conversation_adapter_packages(params),
+        &[param!(
+            "catalog_url",
+            "Optional catalog JSON URL or local path",
+            ["catalogUrl"]
+        )],
+        None
+    ),
+    command!(
+        "install_conversation_adapter_package",
+        "conversation.adapter_package.install",
+        "Download and register a trusted conversation adapter package",
+        HighRiskWrite,
+        App,
+        false,
+        crate::backend::application::ConversationAdapterPackageInstallParams,
+        Service => |service, params| service.install_conversation_adapter_package(params),
+        &[
+            param!(
+                "catalog_url",
+                "Optional catalog JSON URL or local path",
+                ["catalogUrl"]
+            ),
+            param!("package_id", "Catalog package identifier", ["packageId", "itemId"]),
+            param!("dry_run", "Preview install target without downloading", ["dryRun"]),
+            param!("yes", "Confirm downloading and trusting this package"),
+        ],
+        None
+    ),
+    command!(
+        "update_conversation_adapter_package",
+        "conversation.adapter_package.update",
+        "Update a trusted conversation adapter package",
+        HighRiskWrite,
+        App,
+        false,
+        crate::backend::application::ConversationAdapterPackageInstallParams,
+        Service => |service, params| service.update_conversation_adapter_package(params),
+        &[
+            param!(
+                "catalog_url",
+                "Optional catalog JSON URL or local path",
+                ["catalogUrl"]
+            ),
+            param!("package_id", "Catalog package identifier", ["packageId", "itemId"]),
+            param!("dry_run", "Preview update target without downloading", ["dryRun"]),
+            param!("yes", "Confirm downloading and trusting this package"),
+        ],
+        None
+    ),
+    command!(
+        "uninstall_conversation_adapter_package",
+        "conversation.adapter_package.uninstall",
+        "Uninstall a conversation adapter package and unregister its adapter",
+        HighRiskWrite,
+        App,
+        false,
+        crate::backend::application::ConversationAdapterPackageUninstallParams,
+        Service => |service, params| service.uninstall_conversation_adapter_package(params),
+        &[
+            param!("package_id", "Installed package identifier", ["packageId"]),
+            param!("dry_run", "Preview uninstall without changing state", ["dryRun"]),
+            param!("yes", "Confirm unregistering this package"),
+        ],
+        None
+    ),
+    command!(
         "install_conversation_script",
         "conversation.script.install",
         "Download and register a trusted conversation parser script",
@@ -2084,6 +2232,18 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         "get_conversation_script_install_task",
         "get_conversation_script_install_task",
         "Get the current desktop conversation script install background task",
+        Read,
+        App,
+        false,
+        NoParams,
+        System => |_params| Value::Null,
+        &[],
+        None
+    ),
+    command!(
+        "get_conversation_adapter_package_task",
+        "get_conversation_adapter_package_task",
+        "Get the current desktop conversation adapter package background task",
         Read,
         App,
         false,

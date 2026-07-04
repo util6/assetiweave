@@ -145,6 +145,104 @@ func TestConversationScriptInstallRequiresConfirmation(t *testing.T) {
 	}
 }
 
+func TestConversationPackageCatalogBuildsParams(t *testing.T) {
+	client := &recordingClient{}
+	err := executeSkillGroupTestCommand(t, client,
+		"conversation", "package", "catalog",
+		"--catalog-url", "/tmp/catalog.json",
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if client.method != "conversation.adapter_package.catalog" {
+		t.Fatalf("method = %q, want conversation.adapter_package.catalog", client.method)
+	}
+	params := recordedSkillGroupParams(t, client)
+	if params["catalog_url"] != "/tmp/catalog.json" {
+		t.Fatalf("params = %#v", params)
+	}
+}
+
+func TestConversationPackageInstallRequiresConfirmation(t *testing.T) {
+	client := &recordingClient{}
+	err := executeSkillGroupTestCommand(t, client,
+		"conversation", "package", "install", "codex-session",
+	)
+	if err == nil {
+		t.Fatal("Execute() error = nil, want confirmation error")
+	}
+
+	client = &recordingClient{}
+	err = executeSkillGroupTestCommand(t, client,
+		"conversation", "package", "install", "codex-session",
+		"--catalog-url", "/tmp/catalog.json",
+		"--yes",
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if client.method != "conversation.adapter_package.install" {
+		t.Fatalf("method = %q, want conversation.adapter_package.install", client.method)
+	}
+	params := recordedSkillGroupParams(t, client)
+	if params["package_id"] != "codex-session" ||
+		params["catalog_url"] != "/tmp/catalog.json" ||
+		params["dry_run"] != false ||
+		params["yes"] != true {
+		t.Fatalf("params = %#v", params)
+	}
+}
+
+func TestConversationPackageUpdateAllowsDryRunWithoutConfirmation(t *testing.T) {
+	client := &recordingClient{}
+	err := executeSkillGroupTestCommand(t, client,
+		"conversation", "package", "update", "codex-session",
+		"--catalog-url", "/tmp/catalog.json",
+		"--dry-run",
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if client.method != "conversation.adapter_package.update" {
+		t.Fatalf("method = %q, want conversation.adapter_package.update", client.method)
+	}
+	params := recordedSkillGroupParams(t, client)
+	if params["package_id"] != "codex-session" ||
+		params["catalog_url"] != "/tmp/catalog.json" ||
+		params["dry_run"] != true ||
+		params["yes"] != false {
+		t.Fatalf("params = %#v", params)
+	}
+}
+
+func TestConversationPackageUninstallRequiresConfirmation(t *testing.T) {
+	client := &recordingClient{}
+	err := executeSkillGroupTestCommand(t, client,
+		"conversation", "package", "uninstall", "codex-session",
+	)
+	if err == nil {
+		t.Fatal("Execute() error = nil, want confirmation error")
+	}
+
+	client = &recordingClient{}
+	err = executeSkillGroupTestCommand(t, client,
+		"conversation", "package", "uninstall", "codex-session",
+		"--yes",
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if client.method != "conversation.adapter_package.uninstall" {
+		t.Fatalf("method = %q, want conversation.adapter_package.uninstall", client.method)
+	}
+	params := recordedSkillGroupParams(t, client)
+	if params["package_id"] != "codex-session" ||
+		params["dry_run"] != false ||
+		params["yes"] != true {
+		t.Fatalf("params = %#v", params)
+	}
+}
+
 func TestConversationSearchWritesMarkdownForAIContext(t *testing.T) {
 	stdout, client := executeConversationSearchOutputCommand(t,
 		conversationSearchFixtureData(),
