@@ -625,11 +625,11 @@ export function GlobalSettingsDialog({
   const editingShortcutIcon = appShortcuts.find((shortcut) => shortcut.profileId === editingShortcutIconId) ?? null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-background text-on-surface">
+    <div className="fixed inset-x-0 bottom-0 top-[var(--app-window-titlebar-height)] z-50 bg-background text-on-surface">
       <section
         aria-labelledby="global-settings-title"
         aria-modal="true"
-        className="grid h-screen w-screen grid-cols-[288px_minmax(0,1fr)] overflow-hidden bg-theme-card-header"
+        className="grid h-[calc(100vh-var(--app-window-titlebar-height))] w-screen grid-cols-[288px_minmax(0,1fr)] overflow-hidden bg-theme-card-header"
         role="dialog"
       >
         <aside className="flex min-h-0 flex-col border-r border-theme-card-border bg-theme-nav/95">

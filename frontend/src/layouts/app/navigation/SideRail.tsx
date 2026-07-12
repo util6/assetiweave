@@ -48,7 +48,7 @@ export function SideRail({
   return (
     <aside
       className={clsx(
-        "fixed inset-y-0 left-0 z-30 flex w-[var(--app-sidebar-width)] flex-col justify-between border-r border-theme-nav-active-border bg-theme-nav/95 px-2 py-4 backdrop-blur transition-[width] duration-200",
+        "fixed bottom-0 left-0 top-[var(--app-window-titlebar-height)] z-30 flex w-[var(--app-sidebar-width)] flex-col justify-between border-r border-theme-nav-active-border bg-theme-nav/95 px-2 py-4 backdrop-blur transition-[width] duration-200",
         expanded ? "items-stretch" : "items-center",
       )}
       aria-label={t("nav.aria.main")}

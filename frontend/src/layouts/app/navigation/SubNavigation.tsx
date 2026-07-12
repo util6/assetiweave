@@ -19,7 +19,7 @@ export function SubNavigation({
 
   return (
     <section
-      className="sticky top-0 z-10 flex shrink-0 items-center gap-3 border-b border-theme-card-border bg-theme-subnav/88 px-[var(--app-page-x)] py-[var(--app-subnav-y)] backdrop-blur"
+      className="sticky top-[var(--app-window-titlebar-height)] z-10 flex shrink-0 items-center gap-3 border-b border-theme-card-border bg-theme-subnav/88 px-[var(--app-page-x)] py-[var(--app-subnav-y)] backdrop-blur"
       aria-label={t("nav.aria.subNav")}
     >
       <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto">

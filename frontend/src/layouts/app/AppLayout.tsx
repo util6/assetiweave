@@ -7,6 +7,7 @@ import type { HeaderTabItem, NavigationModel, RailMenuItem } from "../../router/
 import type { SettingsPanelId } from "../../store/settings/AppSettingsProvider";
 import type { AppShortcut, Tenant, TenantCreateParams } from "../../types";
 import { TenantSwitcher, TenantSwitcherDialog } from "./TenantSwitcher";
+import { WindowTitleBar } from "./WindowTitleBar";
 import { SideRail, type SideRailBrandAction } from "./navigation/SideRail";
 import { SubNavigation } from "./navigation/SubNavigation";
 
@@ -87,37 +88,40 @@ export function AppLayout({
   }
 
   return (
-    <div className="grid-texture flex min-h-screen bg-background text-on-surface" style={layoutStyle}>
-      <SideRail
-        activeId={logViewerOpen ? "logs" : settingsOpen ? "settings" : navigationModel.activeRailId}
-        activeHeaderTabId={navigationModel.activeHeaderTabId}
-        brandAction={updateBrandAction}
-        expanded={sideRailExpanded}
-        headerTabs={navigationModel.headerTabs}
-        items={railItems}
-        onExpandedChange={setSideRailExpanded}
-        onHeaderTabSelect={onHeaderTabSelect}
-        onItemSelect={handleRailItemSelect}
-        primaryAction={
-          <TenantSwitcher
-            activeTenant={tenantControls.activeTenant}
-            busy={tenantControls.busy}
-            loading={tenantControls.loading}
-            onOpen={() => setTenantDialogOpen(true)}
-            open={tenantDialogOpen}
-          />
-        }
-      />
-
-      <main className="ml-[var(--app-sidebar-width)] flex min-h-screen w-[calc(100%-var(--app-sidebar-width))] flex-1 flex-col transition-[margin,width] duration-200">
-        <SubNavigation
-          activeId={activeSubNavId}
-          items={activeSubNavItems}
-          onSelect={(item) => onSubNavSelect(item.id)}
+    <div className="min-h-screen bg-background text-on-surface" style={layoutStyle}>
+      <WindowTitleBar />
+      <div className="grid-texture flex min-h-screen pt-[var(--app-window-titlebar-height)]">
+        <SideRail
+          activeId={logViewerOpen ? "logs" : settingsOpen ? "settings" : navigationModel.activeRailId}
+          activeHeaderTabId={navigationModel.activeHeaderTabId}
+          brandAction={updateBrandAction}
+          expanded={sideRailExpanded}
+          headerTabs={navigationModel.headerTabs}
+          items={railItems}
+          onExpandedChange={setSideRailExpanded}
+          onHeaderTabSelect={onHeaderTabSelect}
+          onItemSelect={handleRailItemSelect}
+          primaryAction={
+            <TenantSwitcher
+              activeTenant={tenantControls.activeTenant}
+              busy={tenantControls.busy}
+              loading={tenantControls.loading}
+              onOpen={() => setTenantDialogOpen(true)}
+              open={tenantDialogOpen}
+            />
+          }
         />
-        <NotificationBanner notification={notification} onDismiss={onDismissNotification} />
-        {children}
-      </main>
+
+        <main className="ml-[var(--app-sidebar-width)] flex min-h-[calc(100vh-var(--app-window-titlebar-height))] w-[calc(100%-var(--app-sidebar-width))] flex-1 flex-col transition-[margin,width] duration-200">
+          <SubNavigation
+            activeId={activeSubNavId}
+            items={activeSubNavItems}
+            onSelect={(item) => onSubNavSelect(item.id)}
+          />
+          <NotificationBanner notification={notification} onDismiss={onDismissNotification} />
+          {children}
+        </main>
+      </div>
 
       {tenantDialogOpen ? (
         <TenantSwitcherDialog
