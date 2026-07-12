@@ -2377,6 +2377,7 @@ async fn renumber_questions_for_session_sqlx_tx(
 #[derive(Debug, Clone, Copy)]
 struct ConversationRecordTables {
     sessions: &'static str,
+    session_project_path_expr: &'static str,
     turns: &'static str,
     parts: &'static str,
     questions: &'static str,
@@ -2388,6 +2389,7 @@ impl ConversationRecordKind {
         match self {
             ConversationRecordKind::Session => ConversationRecordTables {
                 sessions: "conversation_sessions",
+                session_project_path_expr: "s.project_path",
                 turns: "conversation_turns",
                 parts: "conversation_parts",
                 questions: "conversation_questions",
@@ -2395,6 +2397,7 @@ impl ConversationRecordKind {
             },
             ConversationRecordKind::Web => ConversationRecordTables {
                 sessions: "web_record_sessions",
+                session_project_path_expr: "NULL",
                 turns: "web_record_turns",
                 parts: "web_record_parts",
                 questions: "web_record_questions",
@@ -2413,7 +2416,7 @@ async fn load_search_sessions_sqlx(
 ) -> AppResult<Vec<ConversationSessionListItem>> {
     let query = format!(
         r#"
-        SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
+        SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, {project_path_expr} AS project_path,
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
                s.missing, s.created_at, s.imported_at,
                (
@@ -2433,6 +2436,7 @@ async fn load_search_sessions_sqlx(
         ORDER BY COALESCE(s.updated_at, s.imported_at) DESC, s.title ASC
         "#,
         sessions = tables.sessions,
+        project_path_expr = tables.session_project_path_expr,
         questions = tables.questions,
         turns = tables.turns,
     );

@@ -767,7 +767,7 @@ export async function listWebRecordSessions(params: ConversationSessionListParam
     return fallbackWebSessions.filter((session) => {
       if (params.adapter_id && session.adapter_id !== params.adapter_id) return false;
       if (params.source_id && session.source_id !== params.source_id) return false;
-      if (params.query && !`${session.title} ${session.project_path ?? ""}`.toLowerCase().includes(params.query.toLowerCase())) return false;
+      if (params.query && !session.title.toLowerCase().includes(params.query.toLowerCase())) return false;
       return true;
     });
   }
@@ -973,7 +973,7 @@ function fallbackConversationSearch(params: Required<Pick<ConversationSearchPara
   const detail = params.record_kind === "web" ? fallbackWebSessionDetail : fallbackSessionDetail;
   const session = params.record_kind === "web" ? fallbackWebSessions[0] : fallbackSessions[0];
   const needle = params.query.trim().toLowerCase();
-  if (params.project_path && session.project_path !== params.project_path) {
+  if (params.record_kind !== "web" && params.project_path && session.project_path !== params.project_path) {
     return {
       query: params.query,
       record_kind: params.record_kind,

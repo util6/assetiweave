@@ -99,13 +99,18 @@ impl AppService {
         let tenant_id = self.tenant_id().to_string();
         let adapter_id = params.adapter_id.clone();
         let source_id = params.source_id.clone();
-        let project_path = params.project_path.clone();
+        let project_path = if record_kind == crate::backend::dto::ConversationRecordKind::Web {
+            None
+        } else {
+            params.project_path.clone()
+        };
         let query = query.to_string();
         let search_query = query.clone();
         let content_types = params.content_types.clone();
         let since = params.since.clone();
         let until = params.until.clone();
         let timeline = params.timeline;
+        let search_project_path = project_path.clone();
         let page = self.db.block_on(async move {
             crate::backend::store::search_conversation_cards_sqlx(
                 &pool,
@@ -113,7 +118,7 @@ impl AppService {
                 record_kind,
                 adapter_id.as_deref(),
                 source_id.as_deref(),
-                project_path.as_deref(),
+                search_project_path.as_deref(),
                 &search_query,
                 &content_types,
                 since.as_deref(),
@@ -131,7 +136,7 @@ impl AppService {
                 record_kind: record_kind_label,
                 adapter_id: params.adapter_id,
                 source_id: params.source_id,
-                project_path: params.project_path,
+                project_path,
                 query: query.to_string(),
                 content_types: params.content_types,
                 since: params.since,

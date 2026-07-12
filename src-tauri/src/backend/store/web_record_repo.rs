@@ -156,7 +156,7 @@ pub(crate) async fn list_web_record_sessions_sqlx(
     let needle = normalize_query(query);
     let rows = sqlx::query(
         r#"
-        SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
+        SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, NULL AS project_path,
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
                s.missing, s.created_at, s.imported_at,
                (
@@ -176,7 +176,6 @@ pub(crate) async fn list_web_record_sessions_sqlx(
           AND (
               ?4 IS NULL
               OR instr(lower(s.title), ?4) > 0
-              OR instr(lower(COALESCE(s.project_path, '')), ?4) > 0
               OR instr(lower(s.external_id), ?4) > 0
               OR EXISTS (
                   SELECT 1
@@ -233,7 +232,7 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
 ) -> AppResult<ConversationSessionDetail> {
     let session_row = sqlx::query(
         r#"
-        SELECT id, source_id, adapter_id, external_id, title, project_path,
+        SELECT id, source_id, adapter_id, external_id, title, NULL AS project_path,
                started_at, updated_at, source_locator, source_fingerprint,
                missing, created_at, imported_at
         FROM web_record_sessions
@@ -382,7 +381,7 @@ fn web_record_session_from_normalized(
             .filter(|value| !value.is_empty())
             .unwrap_or("Untitled web conversation")
             .to_string(),
-        project_path: normalized.project_path.clone(),
+        project_path: None,
         started_at: normalized.started_at.clone(),
         updated_at: normalized.updated_at.clone(),
         source_locator: normalized.source_locator.clone(),
@@ -509,8 +508,7 @@ async fn web_record_session_is_unchanged_sqlx_tx(
     };
     let Some(row) = sqlx::query(
         r#"
-        SELECT title, project_path, started_at, updated_at, source_locator,
-               source_fingerprint, missing
+        SELECT title, started_at, updated_at, source_locator, source_fingerprint, missing
         FROM web_record_sessions
         WHERE tenant_id = ?1 AND id = ?2
         "#,
@@ -525,15 +523,13 @@ async fn web_record_session_is_unchanged_sqlx_tx(
     };
 
     let title: String = row.try_get(0).map_err(|error| error.to_string())?;
-    let project_path: Option<String> = row.try_get(1).map_err(|error| error.to_string())?;
-    let started_at: Option<String> = row.try_get(2).map_err(|error| error.to_string())?;
-    let updated_at: Option<String> = row.try_get(3).map_err(|error| error.to_string())?;
-    let source_locator: Option<String> = row.try_get(4).map_err(|error| error.to_string())?;
-    let existing_fingerprint: Option<String> = row.try_get(5).map_err(|error| error.to_string())?;
-    let missing: i64 = row.try_get(6).map_err(|error| error.to_string())?;
+    let started_at: Option<String> = row.try_get(1).map_err(|error| error.to_string())?;
+    let updated_at: Option<String> = row.try_get(2).map_err(|error| error.to_string())?;
+    let source_locator: Option<String> = row.try_get(3).map_err(|error| error.to_string())?;
+    let existing_fingerprint: Option<String> = row.try_get(4).map_err(|error| error.to_string())?;
+    let missing: i64 = row.try_get(5).map_err(|error| error.to_string())?;
 
     Ok(title == session.title
-        && project_path == session.project_path
         && started_at == session.started_at
         && updated_at == session.updated_at
         && source_locator == session.source_locator
@@ -680,10 +676,10 @@ async fn insert_web_record_session_sqlx_tx(
     sqlx::query(
         r#"
         INSERT INTO web_record_sessions (
-            tenant_id, id, source_id, adapter_id, external_id, title, project_path, started_at,
-            updated_at, source_locator, source_fingerprint, missing, created_at, imported_at
+            tenant_id, id, source_id, adapter_id, external_id, title, started_at, updated_at,
+            source_locator, source_fingerprint, missing, created_at, imported_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
         "#,
     )
     .bind(tenant_id)
@@ -692,7 +688,6 @@ async fn insert_web_record_session_sqlx_tx(
     .bind(&session.adapter_id)
     .bind(&session.external_id)
     .bind(&session.title)
-    .bind(&session.project_path)
     .bind(&session.started_at)
     .bind(&session.updated_at)
     .bind(&session.source_locator)
@@ -1039,6 +1034,67 @@ mod tests {
         assert_eq!(detail.questions.len(), 1);
         assert_eq!(detail.questions[0].turns[0].user_text, "Hello from the web");
         assert_eq!(detail.questions[0].question.answer_text, "Web answer");
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_web_record_sessions_do_not_store_project_paths() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-web-record-no-project-path-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let source = fixture_source();
+        let mut session = fixture_session();
+        session.project_path = Some("/tmp/web-project".to_string());
+
+        let (columns, sessions, detail) = database
+            .block_on(async {
+                super::super::conversation_repo::upsert_conversation_source_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                )
+                .await?;
+                import_web_record_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[session],
+                    false,
+                )
+                .await?;
+                let columns = sqlx::query_scalar::<_, String>(
+                    "SELECT name FROM pragma_table_info('web_record_sessions')",
+                )
+                .fetch_all(database.pool())
+                .await
+                .map_err(|error| error.to_string())?;
+                let sessions = list_web_record_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    None,
+                    Some(&source.id),
+                    None,
+                    20,
+                    0,
+                )
+                .await?;
+                let detail = load_web_record_session_detail_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &sessions[0].session.id,
+                )
+                .await?;
+                AppResult::Ok((columns, sessions, detail))
+            })
+            .expect("import web records without persisting project paths");
+
+        assert!(!columns.iter().any(|column| column == "project_path"));
+        assert_eq!(sessions[0].session.project_path, None);
+        assert_eq!(detail.session.project_path, None);
 
         drop(database);
         cleanup_database(&db_path);
