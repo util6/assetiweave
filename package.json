@@ -1,7 +1,7 @@
 {
   "name": "assetiweave",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.5.1",
   "type": "module",
   "scripts": {
     "dev": "vite --config frontend/vite.config.ts --host 127.0.0.1 --port 1420",

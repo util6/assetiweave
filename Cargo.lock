@@ -64,7 +64,7 @@ dependencies = [
 
 [[package]]
 name = "assetiweave"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",

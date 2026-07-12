@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.1
+
+- Add debounced search controls and tighter toolbar layouts across catalog, source, group, mount, manual, conversation, and prompt workflows.
+- Remove project paths from web conversation records with a forward SQLite migration and aligned search behavior.
+- Improve ChatGPT and Gemini web harvesting through reusable CDP browser helpers and stronger authentication probing.
+- Improve Codex conversation extraction, preserve useful browse results, and filter internal adapter truncation markers from content cards.
+- Enhance conversation browsing with denser navigation, collapsible question lists, richer result context, and improved filtering.
+- Add native prompt image clipboard support, pasted image attachments, draft recovery, tag libraries, project selection, and card interaction refinements.
+- Add Windows frameless window chrome with native drag, minimize, maximize, and close controls.
+
 ## v0.5.0
 
 - 新增灵感夜航（promptStudio）主题作为默认主题，面板卡片采用渐变背景，按钮使用渐变高亮。
