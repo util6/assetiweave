@@ -100,6 +100,25 @@ describe("ConversationContentCards", () => {
     expect(blocks).toEqual([]);
   });
 
+  it("filters adapter browse truncation markers from every declared card type", () => {
+    const marker = "[AssetIWeave adapter truncated 10363 characters for browsing.]";
+    const blocks = buildConversationContentBlocks([
+      declaredPart("part-answer-marker", "answer", marker),
+      declaredPart("part-tool-marker", "tool", marker),
+      declaredPart("part-command-marker", "command", marker),
+      declaredPart("part-code-marker", "code", marker),
+      declaredPart("part-result-marker", "result", marker),
+      declaredPart("part-result-useful", "result", `useful result\n\n${marker}`),
+    ]);
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      id: "part-result-useful-result",
+      text: "useful result",
+      type: "result",
+    });
+  });
+
   it("keeps adapter-declared command output as one plain result", () => {
     const blocks = buildConversationContentBlocks([
       commandPart(),
@@ -388,6 +407,27 @@ function resultPart(text: string): ConversationPart {
         type: "result",
         format: "plain",
         suffix: "result",
+      },
+    }),
+  };
+}
+
+function declaredPart(
+  id: string,
+  type: "answer" | "tool" | "command" | "code" | "result",
+  text: string,
+): ConversationPart {
+  return {
+    id,
+    turn_id: "turn-1",
+    part_index: 0,
+    role: type === "answer" || type === "code" ? "assistant" : "tool",
+    kind: type === "code" ? "code_block" : "text",
+    text,
+    metadata_json: JSON.stringify({
+      content_card: {
+        type,
+        format: type === "answer" || type === "code" ? "markdown" : "plain",
       },
     }),
   };

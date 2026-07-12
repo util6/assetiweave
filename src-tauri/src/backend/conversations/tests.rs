@@ -1466,6 +1466,202 @@ fn official_codex_adapter_truncates_large_browse_text() {
 
 #[cfg(unix)]
 #[test]
+fn official_codex_adapter_preserves_useful_browse_cards_after_large_tool_output() {
+    if !command_available("node") || !command_available("sqlite3") {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-official-codex-useful-browse-fixture");
+    let rollout = fixture.path().join("rollout.jsonl");
+    let large_outputs = (0..5)
+        .map(|index| {
+            json!({
+                "payload": {
+                    "type": "exec",
+                    "command": format!("pnpm test -- shard-{index}"),
+                    "output": format!(
+                        "shard-{index}-start\n{}\nerror[E0425]: cannot find value `useful_signal_{index}` in this scope\n  --> src/lib.rs:42:13\n{}\nshard-{index}-end",
+                        "noise\n".repeat(80 * 1024),
+                        "more-noise\n".repeat(80 * 1024)
+                    ),
+                    "status": "failed",
+                    "exit_code": 1
+                }
+            })
+            .to_string()
+        })
+        .collect::<Vec<_>>();
+    let final_answer = format!(
+        "Final useful answer: {}\n\n{}",
+        "keep this diagnostic summary",
+        "answer body ".repeat(180)
+    );
+    let mut lines = vec![
+        r#"{"payload":{"type":"message","role":"user","id":"turn-1","content":"Diagnose the failures"}}"#
+            .to_string(),
+    ];
+    lines.extend(large_outputs);
+    lines.push(
+        json!({
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": final_answer
+            }
+        })
+        .to_string(),
+    );
+    fs::write(&rollout, lines.join("\n")).unwrap();
+    let db_path = fixture.path().join("state_5.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                "codex-session-1",
+                rollout.to_string_lossy().to_string(),
+                "Codex useful browse fixture"
+            ],
+        )
+        .unwrap();
+    }
+    let adapter = official_adapter_fixture(
+        "codex",
+        "Codex",
+        "bundled/conversation-adapters/codex/conversation-adapter.json",
+        vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+    );
+    let source = source_fixture(
+        "codex",
+        ConversationSourceKind::Live,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+
+    let parts = &sessions[0].turns[0].parts;
+    assert!(parts
+        .iter()
+        .filter_map(|part| part.text.as_deref())
+        .any(|text| text.contains("Final useful answer: keep this diagnostic summary")));
+    assert!(parts
+        .iter()
+        .filter_map(|part| part.text.as_deref())
+        .any(|text| text.contains("error[E0425]: cannot find value `useful_signal_3`")));
+    let answer_part = parts
+        .iter()
+        .find(|part| {
+            part.text.as_deref().is_some_and(|text| {
+                text.contains("Final useful answer: keep this diagnostic summary")
+            })
+        })
+        .expect("final answer part");
+    assert!(!answer_part
+        .text
+        .as_deref()
+        .unwrap()
+        .contains("AssetIWeave adapter truncated"));
+}
+
+#[cfg(unix)]
+#[test]
+fn official_codex_adapter_does_not_emit_internal_truncation_markers_as_card_text() {
+    if !command_available("node") || !command_available("sqlite3") {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-official-codex-no-marker-fixture");
+    let rollout = fixture.path().join("rollout.jsonl");
+    let huge_answer = format!("answer-start\n{}", "answer noise\n".repeat(140 * 1024));
+    let useful_result = format!(
+        "result-start\n{}\nerror[E0425]: critical_result_signal is missing\n  --> src/lib.rs:9:5\n{}",
+        "result noise\n".repeat(8 * 1024),
+        "result tail\n".repeat(8 * 1024)
+    );
+    fs::write(
+        &rollout,
+        [
+            r#"{"payload":{"type":"message","role":"user","id":"turn-1","content":"Summarize everything useful"}}"#
+                .to_string(),
+            json!({
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": huge_answer
+                }
+            })
+            .to_string(),
+            json!({
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": format!("```rs\n{}\n```", "fn noisy() {}\n".repeat(140 * 1024))
+                }
+            })
+            .to_string(),
+            json!({
+                "payload": {
+                    "type": "exec",
+                    "command": "cargo test",
+                    "output": useful_result,
+                    "status": "failed",
+                    "exit_code": 1
+                }
+            })
+            .to_string(),
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let db_path = fixture.path().join("state_5.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                "codex-session-1",
+                rollout.to_string_lossy().to_string(),
+                "Codex no marker fixture"
+            ],
+        )
+        .unwrap();
+    }
+    let adapter = official_adapter_fixture(
+        "codex",
+        "Codex",
+        "bundled/conversation-adapters/codex/conversation-adapter.json",
+        vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+    );
+    let source = source_fixture(
+        "codex",
+        ConversationSourceKind::Live,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+
+    let text = sessions[0].turns[0]
+        .parts
+        .iter()
+        .filter_map(|part| part.text.as_deref())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!text.contains("AssetIWeave adapter truncated"));
+    assert!(text.contains("answer-start"));
+    assert!(text.contains("fn noisy()"));
+    assert!(text.contains("critical_result_signal"));
+}
+
+#[cfg(unix)]
+#[test]
 fn official_opencode_adapter_splits_command_and_result_cards() {
     if !command_available("node") || !command_available("sqlite3") {
         return;

@@ -9,6 +9,13 @@ const input = JSON.parse(readFileSync(0, "utf8") || "{}");
 const CONTENT_CARD_SCHEMA_VERSION = "codex-content-cards-v4";
 const MAX_PART_TEXT_CHARS = 96 * 1024;
 const MAX_SESSION_TEXT_CHARS = 384 * 1024;
+const MAX_COMPACTED_TOOL_TEXT_CHARS = 24 * 1024;
+const MIN_STANDARD_SESSION_TEXT_CHARS = 96 * 1024;
+const BROWSE_OUTPUT_EDGE_LINES = 24;
+const BROWSE_OUTPUT_CONTEXT_LINES = 2;
+const MAX_BROWSE_OUTPUT_LINE_CHARS = 1200;
+const SIGNAL_LINE_PATTERN =
+  /\b(error|failed|failure|panic|exception|traceback|warning|warn|denied|not found|cannot|could not|timeout|timed out|exit code|failures?|caused by|compilation|syntaxerror|typeerror|referenceerror|assertionerror)\b|error\[[A-Za-z0-9_-]+\]|\b[A-Za-z0-9_./-]+:\d+:\d+\b/i;
 
 function emit(type, payload = {}) {
   process.stdout.write(`${JSON.stringify({ type, ...payload })}\n`);
@@ -111,17 +118,11 @@ function smallMetadata(value) {
   });
 }
 
-function truncationNotice(omittedChars) {
-  return `\n\n[AssetIWeave adapter truncated ${omittedChars} characters for browsing.]`;
-}
-
 function truncateText(value, maxChars) {
   const text = String(value ?? "");
   if (text.length <= maxChars) return { text, truncated: false, originalChars: text.length };
-  const notice = truncationNotice(text.length - maxChars);
-  const keepChars = Math.max(0, maxChars - notice.length);
   return {
-    text: `${text.slice(0, keepChars)}${notice}`,
+    text: maxChars > 0 ? text.slice(0, maxChars).trimEnd() : "",
     truncated: true,
     originalChars: text.length,
   };
@@ -130,22 +131,141 @@ function truncateText(value, maxChars) {
 function markPartTruncated(part, originalChars, budget) {
   const metadataValue = parseJsonValue(part.metadata_json) ?? {};
   metadataValue.truncated = true;
-  metadataValue.original_chars = originalChars;
+  metadataValue.original_chars = Math.max(Number(metadataValue.original_chars) || 0, originalChars);
   metadataValue.display_chars = String(part.text ?? "").length;
   metadataValue.display_budget_chars = budget;
   part.metadata_json = JSON.stringify(metadataValue);
 }
 
+function markPartCompactedForBrowsing(part, originalChars, budget) {
+  const metadataValue = parseJsonValue(part.metadata_json) ?? {};
+  metadataValue.truncated = true;
+  metadataValue.compacted_for_browsing = true;
+  metadataValue.original_chars = Math.max(Number(metadataValue.original_chars) || 0, originalChars);
+  metadataValue.display_chars = String(part.text ?? "").length;
+  metadataValue.compaction_budget_chars = budget;
+  part.metadata_json = JSON.stringify(metadataValue);
+}
+
+function contentCardType(part) {
+  const metadataValue = parseJsonValue(part.metadata_json);
+  const card = metadataValue?.content_card ?? metadataValue?.contentCard;
+  const type = card && typeof card === "object" && !Array.isArray(card) ? card.type : null;
+  return typeof type === "string" ? type : null;
+}
+
+function isHighPriorityBrowsePart(part) {
+  const type = contentCardType(part);
+  return part.role === "assistant" || type === "answer" || type === "code";
+}
+
+function highPriorityTextBudget(session) {
+  let highPriorityTotal = 0;
+  let standardTotal = 0;
+  for (const turn of session.turns) {
+    for (const part of turn.parts) {
+      if (typeof part.text !== "string" || !part.text) continue;
+      if (isHighPriorityBrowsePart(part)) {
+        highPriorityTotal += Math.min(MAX_PART_TEXT_CHARS, part.text.length);
+      } else {
+        standardTotal += Math.min(MAX_PART_TEXT_CHARS, part.text.length);
+      }
+    }
+  }
+  const standardFloor = Math.min(standardTotal, MIN_STANDARD_SESSION_TEXT_CHARS, MAX_SESSION_TEXT_CHARS);
+  const highPriorityBudget = Math.min(highPriorityTotal, MAX_SESSION_TEXT_CHARS - standardFloor);
+  return {
+    highPriority: highPriorityBudget,
+    standard: Math.min(standardTotal, MAX_SESSION_TEXT_CHARS - highPriorityBudget),
+  };
+}
+
+function browseLine(value) {
+  const text = String(value ?? "");
+  if (text.length <= MAX_BROWSE_OUTPUT_LINE_CHARS) return text;
+  return `${text.slice(0, MAX_BROWSE_OUTPUT_LINE_CHARS)} [line truncated]`;
+}
+
+function mergedRanges(ranges) {
+  return ranges
+    .filter((range) => range.end > range.start)
+    .sort((a, b) => a.start - b.start)
+    .reduce((merged, range) => {
+      const previous = merged.at(-1);
+      if (!previous || range.start > previous.end) {
+        merged.push({ ...range });
+      } else {
+        previous.end = Math.max(previous.end, range.end);
+      }
+      return merged;
+    }, []);
+}
+
+function compactToolTextForBrowsing(value, maxChars) {
+  const text = String(value ?? "");
+  if (text.length <= maxChars) return { text, compacted: false, originalChars: text.length };
+
+  const lines = text.split(/\r?\n/);
+  const ranges = [
+    { start: 0, end: Math.min(BROWSE_OUTPUT_EDGE_LINES, lines.length) },
+    { start: Math.max(0, lines.length - BROWSE_OUTPUT_EDGE_LINES), end: lines.length },
+  ];
+  lines.forEach((line, index) => {
+    if (!SIGNAL_LINE_PATTERN.test(line)) return;
+    ranges.push({
+      start: Math.max(0, index - BROWSE_OUTPUT_CONTEXT_LINES),
+      end: Math.min(lines.length, index + BROWSE_OUTPUT_CONTEXT_LINES + 1),
+    });
+  });
+
+  const budget = Math.max(0, maxChars);
+  const pieces = [];
+  let previousEnd = 0;
+  for (const range of mergedRanges(ranges)) {
+    const prefix = range.start > previousEnd ? `\n... omitted ${range.start - previousEnd} low-signal lines ...\n` : "";
+    const block = `${prefix}${lines.slice(range.start, range.end).map(browseLine).join("\n")}`;
+    const candidate = `${pieces.join("\n")}${pieces.length ? "\n" : ""}${block}`;
+    if (candidate.length > budget) break;
+    pieces.push(block);
+    previousEnd = range.end;
+  }
+  const compacted = pieces.join("\n") || text.slice(0, budget).trimEnd();
+  return { text: compacted, compacted: true, originalChars: text.length };
+}
+
+function compactLowSignalToolOutput(session) {
+  for (const turn of session.turns) {
+    for (const part of turn.parts) {
+      if (typeof part.text !== "string" || !part.text) continue;
+      const type = contentCardType(part);
+      if (part.role !== "tool" && type !== "result" && type !== "tool") continue;
+      const compacted = compactToolTextForBrowsing(part.text, MAX_COMPACTED_TOOL_TEXT_CHARS);
+      if (!compacted.compacted) continue;
+      part.text = compacted.text;
+      markPartCompactedForBrowsing(part, compacted.originalChars, MAX_COMPACTED_TOOL_TEXT_CHARS);
+    }
+  }
+}
+
 function applyTextBudgets(session) {
-  let remaining = MAX_SESSION_TEXT_CHARS;
+  compactLowSignalToolOutput(session);
+  const budgets = highPriorityTextBudget(session);
+  let highPriorityRemaining = budgets.highPriority;
+  let standardRemaining = budgets.standard;
   for (const turn of session.turns) {
     for (const part of turn.parts) {
       if (typeof part.text !== "string" || !part.text) continue;
       const original = part.text;
-      const maxChars = Math.max(0, Math.min(MAX_PART_TEXT_CHARS, remaining));
+      const highPriority = isHighPriorityBrowsePart(part);
+      const available = highPriority ? highPriorityRemaining : standardRemaining;
+      const maxChars = Math.max(0, Math.min(MAX_PART_TEXT_CHARS, available));
       const truncated = truncateText(original, maxChars);
       part.text = truncated.text;
-      remaining = Math.max(0, remaining - part.text.length);
+      if (highPriority) {
+        highPriorityRemaining = Math.max(0, highPriorityRemaining - part.text.length);
+      } else {
+        standardRemaining = Math.max(0, standardRemaining - part.text.length);
+      }
       if (truncated.truncated || original.length !== part.text.length) {
         markPartTruncated(part, truncated.originalChars, maxChars);
       }

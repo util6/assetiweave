@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-06-28T00:00:00Z",
+  "updated_at": "2026-07-06T00:00:00Z",
   "items": [
     {
       "id": "codex-session",
       "name": "Codex Session Parser",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "record_kind": "session",
       "provider": "codex",
       "adapter_id": "codex",
       "description": "Reads local Codex session records and exports normalized conversation turns.",
       "repository_url": "https://github.com/util6/assetiweave",
       "tags": ["session", "codex", "node"],
-      "expected_package_hash": "9289a6e3da31a0f0b5d1880921e0237efdecf8fcadd6a96f439e60209ce42f78",
-      "expected_content_hash": "7cc193fcb5db8f7536792fd7480e376a9ca1acbca9c201736744304b599db094",
+      "expected_package_hash": "5e9061c2a563479911c3e20f857628415e405eed0229fdd5e8128691d78a34dc",
+      "expected_content_hash": "5e9061c2a563479911c3e20f857628415e405eed0229fdd5e8128691d78a34dc",
       "source": {
         "type": "github",
         "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"

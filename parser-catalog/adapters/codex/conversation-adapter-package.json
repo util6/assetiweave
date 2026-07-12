@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package_id": "codex-session",
   "name": "Codex Session Parser",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "min_core_version": "0.5.0",
   "record_kind": "session",
   "adapter_manifest": "conversation-adapter.json",
@@ -11,6 +11,14 @@
     "protocol": "stdio-ndjson-v1"
   },
   "changelog": [
+    {
+      "version": "1.0.1",
+      "date": "2026-07-06",
+      "notes": [
+        "Compact low-signal tool output while preserving diagnostic lines.",
+        "Stop emitting internal browse truncation markers as card text."
+      ]
+    },
     {
       "version": "1.0.0",
       "date": "2026-06-28",

@@ -69,6 +69,9 @@ const icons: Record<ConversationContentType, ReactNode> = {
   result: <CheckCircle2 size={15} />,
 };
 
+const adapterBrowseMarkerPattern =
+  /\s*\[AssetIWeave adapter (?:truncated \d+ characters for browsing|compacted low-signal tool output for browsing; original \d+ characters)\.\]/g;
+
 export function buildConversationContentBlocks(parts: ConversationPart[]): ConversationContentBlock[] {
   return parts.flatMap(createDeclaredContentBlock);
 }
@@ -531,7 +534,7 @@ function createBlock(
   metadataMode: "all" | "command" | "result" = "all",
   overrides: Partial<ConversationContentBlock> = {},
 ): ConversationContentBlock[] {
-  const text = value?.trim();
+  const text = visibleCardText(value);
   if (!text) return [];
   const hasOverride = (key: keyof ConversationContentBlock) =>
     Object.prototype.hasOwnProperty.call(overrides, key);
@@ -628,6 +631,11 @@ function defaultContentCardText(part: ConversationPart, type: ConversationConten
 
 function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function visibleCardText(value?: string | null) {
+  const text = value?.replace(adapterBrowseMarkerPattern, "").trim();
+  return text || undefined;
 }
 
 function numberValue(value: unknown) {
