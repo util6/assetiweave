@@ -65,12 +65,13 @@
     --theme-shadow-dialog: 0 32px 90px rgb(var(--theme-panel-shadow) / 0.62);
     --theme-shadow-control-inset: inset 0 1px 0 rgb(var(--theme-inset-highlight) / 0.2);
     --theme-shadow-active: 0 14px 34px rgb(var(--theme-glow) / 0.26);
+    --app-window-titlebar-height: 0rem;
     --app-header-height: 4rem;
     --app-page-x: 2rem;
     --app-page-y: 1.5rem;
     --app-section-gap: 1rem;
     --app-subnav-y: 0.75rem;
-    --app-toolbar-top: 57px;
+    --app-toolbar-top: calc(var(--app-window-titlebar-height) + 57px);
     --app-toolbar-y: 1rem;
   }
 
@@ -80,8 +81,12 @@
     --app-page-y: 1rem;
     --app-section-gap: 0.75rem;
     --app-subnav-y: 0.5rem;
-    --app-toolbar-top: 49px;
+    --app-toolbar-top: calc(var(--app-window-titlebar-height) + 49px);
     --app-toolbar-y: 0.75rem;
+  }
+
+  :root[data-window-chrome="windows-frameless"] {
+    --app-window-titlebar-height: 2rem;
   }
 
   :root[data-motion="reduced"] *,
@@ -162,64 +167,122 @@
   }
 
   .prompt-active-card-in {
-    animation: prompt-active-card-in 460ms cubic-bezier(0.18, 0.86, 0.24, 1);
-    transform-origin: center 68%;
-    will-change: transform, opacity, filter;
+    animation: prompt-active-card-in 600ms cubic-bezier(0.22, 1.2, 0.36, 1);
+    transform-origin: center 55%;
+    will-change: transform, opacity;
   }
 
   .prompt-side-card-in {
-    animation: prompt-side-card-in 520ms cubic-bezier(0.18, 0.86, 0.24, 1) both;
+    animation: prompt-side-card-in 560ms cubic-bezier(0.22, 1.15, 0.36, 1) both;
     animation-delay: var(--prompt-side-delay, 0ms);
-    will-change: transform, opacity, filter;
+    will-change: transform, opacity;
+  }
+
+  .prompt-card-glow-pulse {
+    animation: prompt-card-glow-pulse 900ms cubic-bezier(0.16, 0.84, 0.22, 1) both;
+    pointer-events: none;
   }
 
   @keyframes prompt-active-card-in {
-    from {
-      opacity: 0.62;
-      filter: blur(1.2px) saturate(0.82);
-      transform: translateX(var(--prompt-active-from-x, 0)) translateY(36px) rotate(var(--prompt-active-from-rotate, 0deg)) scale(0.93) translateZ(36px);
+    0% {
+      opacity: 0;
+      transform:
+        translateX(var(--prompt-active-from-x, 0))
+        translateY(28px)
+        rotate(var(--prompt-active-from-rotate, 0deg))
+        scale(var(--prompt-active-from-scale, 0.88))
+        translateZ(0px);
     }
 
-    68% {
+    45% {
       opacity: 1;
-      filter: blur(0) saturate(1);
-      transform: translateX(0) translateY(-3px) rotate(0deg) scale(1.008) translateZ(142px);
+      transform:
+        translateX(calc(var(--prompt-active-from-x, 0) * -0.08))
+        translateY(-6px)
+        rotate(0deg)
+        scale(1.028)
+        translateZ(72px);
     }
 
-    to {
+    72% {
+      transform:
+        translateX(0)
+        translateY(1px)
+        rotate(0deg)
+        scale(0.997)
+        translateZ(58px);
+    }
+
+    100% {
       opacity: 1;
-      filter: blur(0);
-      transform: translateX(0) translateY(0) rotate(0deg) scale(1) translateZ(132px);
+      transform:
+        translateX(0)
+        translateY(0)
+        rotate(0deg)
+        scale(1)
+        translateZ(60px);
     }
   }
 
   @keyframes prompt-side-card-in {
-    from {
+    0% {
       opacity: 0;
-      filter: blur(2px) saturate(0.62);
       transform:
         translateX(calc(var(--prompt-side-x) + var(--prompt-side-enter-x, 0px)))
-        translateY(calc(var(--prompt-side-y) + 34px))
-        rotateY(var(--prompt-side-rotate-y))
-        rotateZ(var(--prompt-side-rotate-z))
-        scale(var(--prompt-side-scale));
+        translateY(calc(var(--prompt-side-y) + 32px))
+        rotate(var(--prompt-side-enter-rotate, 0deg))
+        scale(calc(var(--prompt-side-scale) * 0.82));
     }
 
-    to {
-      opacity: var(--prompt-side-opacity, 0.86);
-      filter: var(--prompt-side-filter, saturate(0.94));
+    60% {
+      opacity: var(--prompt-side-opacity, 0.75);
+      transform:
+        translateX(calc(var(--prompt-side-x) + var(--prompt-side-enter-x, 0px) * -0.06))
+        translateY(calc(var(--prompt-side-y) - 3px))
+        rotate(calc(var(--prompt-side-rotate-z, 0deg) * 1.08))
+        scale(calc(var(--prompt-side-scale) * 1.015));
+    }
+
+    100% {
+      opacity: var(--prompt-side-opacity, 0.75);
+      filter: var(--prompt-side-filter, brightness(0.92));
       transform:
         translateX(var(--prompt-side-x))
         translateY(var(--prompt-side-y))
-        rotateY(var(--prompt-side-rotate-y))
-        rotateZ(var(--prompt-side-rotate-z))
+        rotate(var(--prompt-side-rotate-z, 0deg))
         scale(var(--prompt-side-scale));
+    }
+  }
+
+  @keyframes prompt-card-glow-pulse {
+    0% {
+      opacity: 0;
+      box-shadow:
+        0 0 0 0 transparent,
+        inset 0 0 0 0 transparent;
+    }
+
+    30% {
+      opacity: 1;
+      box-shadow:
+        0 0 32px 4px rgb(var(--theme-glow) / 0.28),
+        0 0 64px 12px rgb(var(--theme-glow) / 0.12),
+        inset 0 0 16px 0 rgb(var(--theme-glow) / 0.08);
+    }
+
+    100% {
+      opacity: 0;
+      box-shadow:
+        0 0 0 0 transparent,
+        0 0 0 0 transparent,
+        inset 0 0 0 0 transparent;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .prompt-active-card-in,
-    .prompt-side-card-in {
+    .prompt-side-card-in,
+    .prompt-card-glow-pulse {
       animation: none;
     }
   }
