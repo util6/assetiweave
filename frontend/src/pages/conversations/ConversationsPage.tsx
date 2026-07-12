@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CompositionEvent, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   AppWindow,
   ArrowDownWideNarrow,
@@ -10,17 +10,18 @@ import {
   Folder,
   GitMerge,
   Layers3,
+  PanelLeftClose,
+  PanelLeftOpen,
   RefreshCw,
   Scissors,
-  Search,
   Settings,
   UploadCloud,
   X,
 } from "lucide-react";
 import {
   DataToolbar,
+  DebouncedToolbarSearch,
   ToolbarActionButton,
-  ToolbarSearch,
   ToolbarSingleSelectDropdown,
   ToolbarSortDirectionButton,
   ToolbarTextButton,
@@ -97,6 +98,7 @@ import { abbreviateHomePath } from "../../utils/path";
 export { MarkdownContent } from "../../components/conversations/ConversationMarkdown";
 
 const SESSION_PAGE_SIZE = 100;
+const SESSION_SEARCH_COMMIT_DELAY_MS = 700;
 const CONTENT_SEARCH_COMMIT_DELAY_MS = 700;
 const CONVERSATION_SEARCH_CARD_TYPES: ConversationSearchCardType[] = [
   "question",
@@ -117,6 +119,7 @@ type ListConversationSessionPage = (params: {
 
 interface ConversationSearchResultState {
   contentTypes: ConversationSearchCardType[];
+  recordKind: ConversationRecordKind;
   query: string;
   totalCount: number;
   hits: ConversationSearchHit[];
@@ -127,6 +130,11 @@ interface ConversationSearchTarget {
   cardType: ConversationSearchCardType;
   questionId: string;
   sessionId: string;
+}
+
+interface ConversationSearchAppChipMeta {
+  accentColor?: string | null;
+  name: string;
 }
 
 type ConversationPageNotification = Omit<NotificationMessage, "id">;
@@ -197,7 +205,9 @@ export function ConversationsPage({
   );
   const [exporting, setExporting] = useState(false);
   const handledSyncTaskIdRef = useRef<string | null>(null);
+  const sessionSearchRequestIdRef = useRef(0);
   const syncRunning = syncTask?.status === "running";
+  const [sessionSearchLoading, setSessionSearchLoading] = useState(false);
   const [contentQuery, setContentQuery] = useState("");
   const [contentSearchCardTypes, setContentSearchCardTypes] =
     useState<ConversationSearchCardType[]>(CONVERSATION_SEARCH_CARD_TYPES);
@@ -216,6 +226,22 @@ export function ConversationsPage({
     [sessionSortBy, sessionSortDirection, sessions],
   );
   const appGroups = useMemo(() => groupConversationSessionsByApp(adapters, sortedSessions), [adapters, sortedSessions]);
+  const appMetaById = useMemo(
+    () =>
+      new Map(
+        appGroups.map((group) => {
+          const shortcut = findConversationAppShortcut(appShortcuts, group.app);
+          return [
+            group.app.id,
+            {
+              accentColor: shortcut?.accentColor ?? null,
+              name: group.app.name,
+            },
+          ] as const;
+        }),
+      ),
+    [appGroups, appShortcuts],
+  );
   const selectedAppGroup = useMemo(
     () => appGroups.find((group) => group.app.id === selectedAppId) ?? null,
     [appGroups, selectedAppId],
@@ -258,6 +284,8 @@ export function ConversationsPage({
     setContentQuery("");
     setContentSearchCardTypes(CONVERSATION_SEARCH_CARD_TYPES);
     setContentSearchResult(null);
+    sessionSearchRequestIdRef.current += 1;
+    setSessionSearchLoading(false);
     setActiveSearchTarget(null);
     setImportDialogOpen(false);
     setImportStep("idle");
@@ -299,6 +327,7 @@ export function ConversationsPage({
         setContentSearchResult({
           contentTypes: result.scope?.content_types ?? contentTypes,
           hits: result.hits,
+          recordKind: result.record_kind,
           query: result.query,
           totalCount: result.total_count,
         });
@@ -349,12 +378,16 @@ export function ConversationsPage({
       setSelectedProjectKey(null);
       return;
     }
+    if (webRecordMode) {
+      setSelectedProjectKey(null);
+      return;
+    }
     setSelectedProjectKey((current) =>
       current && selectedAppGroup.projectGroups.some((group) => group.key === current)
         ? current
         : selectedAppGroup.projectGroups[0]?.key ?? null,
     );
-  }, [selectedAppGroup]);
+  }, [selectedAppGroup, webRecordMode]);
 
   useEffect(() => {
     if (!selectedSessionId) {
@@ -479,14 +512,24 @@ export function ConversationsPage({
   }
 
   async function refreshSessions(options: { rethrow?: boolean } = {}) {
+    const requestId = sessionSearchRequestIdRef.current + 1;
+    sessionSearchRequestIdRef.current = requestId;
+    setSessionSearchLoading(true);
     try {
       const listSessions = webRecordMode ? listWebRecordSessions : listConversationSessions;
       const nextSessions = await loadAllConversationSessionPages(listSessions, query || null);
+      if (sessionSearchRequestIdRef.current !== requestId) return;
       setSessions(nextSessions);
       setSelectedSessionId((current) => current && nextSessions.some((session) => session.id === current) ? current : null);
     } catch (error) {
       if (options.rethrow) throw error;
-      onNotifyError(errorMessage(error));
+      if (sessionSearchRequestIdRef.current === requestId) {
+        onNotifyError(errorMessage(error));
+      }
+    } finally {
+      if (sessionSearchRequestIdRef.current === requestId) {
+        setSessionSearchLoading(false);
+      }
     }
   }
 
@@ -691,7 +734,9 @@ export function ConversationsPage({
 
   const handleOpenSearchHit = useCallback((hit: ConversationSearchHit) => {
     setSelectedAppId(hit.session.adapter_id);
-    setSelectedProjectKey(normalizedProjectPath(hit.session) ?? NO_PROJECT_GROUP_KEY);
+    setSelectedProjectKey(
+      currentRecordKind === "web" ? null : normalizedProjectPath(hit.session) ?? NO_PROJECT_GROUP_KEY,
+    );
     setSelectedSessionId(hit.session.id);
     setSelectedQuestionId(hit.question_id);
     setDetailQuery("");
@@ -706,7 +751,7 @@ export function ConversationsPage({
     if (hit.card_type !== "question") {
       setContentVisibility((current) => ({ ...current, [hit.card_type]: true }));
     }
-  }, []);
+  }, [currentRecordKind]);
 
   function handleQuestionSelectionChange(questionId: string, checked: boolean) {
     setSelectedQuestionIds((current) => {
@@ -795,10 +840,14 @@ export function ConversationsPage({
           compact={appSettings.conversations.sessionToolbarCompact}
           leading={
             <>
-              <ToolbarSearch
+              <DebouncedToolbarSearch
                 className="w-[min(22rem,100%)] max-[980px]:w-64"
+                commitDelayMs={SESSION_SEARCH_COMMIT_DELAY_MS}
                 onChange={setQuery}
                 placeholder={t("conversation.toolbar.searchPlaceholder")}
+                resetSignal={currentRecordKind}
+                searching={sessionSearchLoading}
+                submitLabel={t("conversation.toolbar.searchSubmit")}
                 value={query}
               />
               <DebouncedToolbarSearch
@@ -901,10 +950,13 @@ export function ConversationsPage({
             compact={appSettings.conversations.sessionToolbarCompact}
             leading={
               <>
-                <ToolbarSearch
+                <DebouncedToolbarSearch
                   className="w-[min(22rem,100%)] max-[980px]:w-64"
+                  commitDelayMs={SESSION_SEARCH_COMMIT_DELAY_MS}
                   onChange={setDetailQuery}
                   placeholder={t("conversation.question.searchPlaceholder")}
+                  resetSignal={selectedSessionId ?? currentRecordKind}
+                  submitLabel={t("conversation.question.searchSubmit")}
                   value={detailQuery}
                 />
                 <ToolbarSingleSelectDropdown
@@ -944,6 +996,7 @@ export function ConversationsPage({
       ) : null}
       {sessionView === "browser" && (contentSearchResult || contentSearchLoading || contentQuery.trim()) ? (
         <ConversationContentSearchResults
+          appMetaById={appMetaById}
           contentCardColors={appSettings.conversations.contentCardColors}
           loading={contentSearchLoading}
           onCardTypeToggle={handleToggleContentSearchCardType}
@@ -1003,6 +1056,7 @@ export function ConversationsPage({
           onAppSelect={handleAppSelect}
           onProjectSelect={setSelectedProjectKey}
           onSessionOpen={handleOpenSession}
+          recordKind={currentRecordKind}
           selectedAppId={selectedAppId}
           selectedProjectKey={selectedProjectKey}
           t={t}
@@ -1069,146 +1123,27 @@ function ConversationShell({
   );
 }
 
-export function DebouncedToolbarSearch({
-  className,
-  commitDelayMs,
-  onChange,
-  placeholder,
-  resetSignal,
-  searching = false,
-  submitLabel,
-  value,
+function ColumnPanel({
+  actions,
+  children,
+  className = "",
+  icon,
+  title,
 }: {
+  actions?: ReactNode;
+  children: ReactNode;
   className?: string;
-  commitDelayMs: number;
-  onChange: (value: string) => void;
-  placeholder: string;
-  resetSignal?: string;
-  searching?: boolean;
-  submitLabel?: string;
-  value: string;
+  icon: ReactNode;
+  title: string;
 }) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const committedValueRef = useRef(value);
-  const composingRef = useRef(false);
-  const draftRef = useRef(value);
-  const resetSignalRef = useRef(resetSignal);
-  const onChangeRef = useRef(onChange);
-  const timerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    onChangeRef.current = onChange;
-  }, [onChange]);
-
-  useEffect(() => {
-    const resetSignalChanged = resetSignalRef.current !== resetSignal;
-    resetSignalRef.current = resetSignal;
-    if (!resetSignalChanged && value === committedValueRef.current) return;
-    clearDebouncedSearchTimer(timerRef);
-    composingRef.current = false;
-    committedValueRef.current = value;
-    draftRef.current = value;
-    if (inputRef.current && inputRef.current.value !== value) {
-      inputRef.current.value = value;
-    }
-  }, [resetSignal, value]);
-
-  useEffect(() => {
-    return () => clearDebouncedSearchTimer(timerRef);
-  }, []);
-
-  function commitDraft(nextValue: string) {
-    if (nextValue === committedValueRef.current) return;
-    committedValueRef.current = nextValue;
-    onChangeRef.current(nextValue);
-  }
-
-  function commitCurrentDraft() {
-    clearDebouncedSearchTimer(timerRef);
-    commitDraft(draftRef.current);
-  }
-
-  function scheduleCommit(nextValue: string) {
-    clearDebouncedSearchTimer(timerRef);
-    timerRef.current = window.setTimeout(() => {
-      timerRef.current = null;
-      if (!composingRef.current) {
-        commitDraft(nextValue);
-      }
-    }, commitDelayMs);
-  }
-
-  function handleChange(nextValue: string, event: ChangeEvent<HTMLInputElement>) {
-    draftRef.current = nextValue;
-    if (composingRef.current || inputEventIsComposing(event)) {
-      clearDebouncedSearchTimer(timerRef);
-      return;
-    }
-    scheduleCommit(nextValue);
-  }
-
-  function handleCompositionStart() {
-    composingRef.current = true;
-    clearDebouncedSearchTimer(timerRef);
-  }
-
-  function handleCompositionEnd(event: CompositionEvent<HTMLInputElement>) {
-    composingRef.current = false;
-    const nextValue = event.currentTarget.value;
-    draftRef.current = nextValue;
-    scheduleCommit(nextValue);
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== "Enter" || composingRef.current) return;
-    event.preventDefault();
-    commitCurrentDraft();
-  }
-
-  return (
-    <ToolbarSearch
-      className={className}
-      defaultValue={value}
-      inputRef={inputRef}
-      onChange={handleChange}
-      onCompositionEnd={handleCompositionEnd}
-      onCompositionStart={handleCompositionStart}
-      onKeyDown={handleKeyDown}
-      placeholder={placeholder}
-      trailing={
-        submitLabel ? (
-          <button
-            aria-label={submitLabel}
-            className="grid size-7 shrink-0 place-items-center rounded-lg text-on-surface-muted transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-wait disabled:opacity-70"
-            disabled={searching}
-            onClick={commitCurrentDraft}
-            title={submitLabel}
-            type="button"
-          >
-            {searching ? <RefreshCw className="animate-spin" size={15} /> : <Search size={15} />}
-          </button>
-        ) : undefined
-      }
-    />
-  );
-}
-
-function clearDebouncedSearchTimer(timerRef: { current: number | null }) {
-  if (timerRef.current === null) return;
-  window.clearTimeout(timerRef.current);
-  timerRef.current = null;
-}
-
-function inputEventIsComposing(event: ChangeEvent<HTMLInputElement>) {
-  return Boolean((event.nativeEvent as InputEvent).isComposing);
-}
-
-function ColumnPanel({ children, className = "", icon, title }: { children: ReactNode; className?: string; icon: ReactNode; title: string }) {
   return (
     <section className={`flex min-h-0 flex-col border-r border-theme-card-border last:border-r-0 max-[860px]:border-r-0 max-[860px]:border-b ${className}`}>
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-theme-card-border bg-theme-card-header/72 px-4">
-        <span className="text-primary">{icon}</span>
-        <h2 className="text-label-caps text-on-surface-variant">{title}</h2>
+      <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-theme-card-border bg-theme-card-header/72 px-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-primary">{icon}</span>
+          <h2 className="truncate text-label-caps text-on-surface-variant">{title}</h2>
+        </div>
+        {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
       </header>
       <div className="min-h-0 flex-1 overflow-auto">{children}</div>
     </section>
@@ -1499,6 +1434,7 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
   onAppSelect,
   onProjectSelect,
   onSessionOpen,
+  recordKind = "session",
   selectedAppId,
   selectedProjectKey,
   t,
@@ -1509,33 +1445,58 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
   onAppSelect: (appId: string) => void;
   onProjectSelect: (projectKey: string) => void;
   onSessionOpen: (sessionId: string) => void;
+  recordKind?: ConversationRecordKind;
   selectedAppId: string | null;
   selectedProjectKey: string | null;
   t: Translator;
 }) {
+  const showProjectColumn = recordKind !== "web";
   const selectedGroup = groups.find((group) => group.app.id === selectedAppId) ?? null;
-  const selectedProjectGroup =
-    selectedGroup?.projectGroups.find((group) => group.key === selectedProjectKey) ??
-    selectedGroup?.projectGroups[0] ??
-    null;
+  const selectedProjectGroup = showProjectColumn
+    ? selectedGroup?.projectGroups.find((group) => group.key === selectedProjectKey) ??
+      selectedGroup?.projectGroups[0] ??
+      null
+    : selectedGroup
+      ? {
+          key: selectedGroup.app.id,
+          projectPath: null,
+          sessions: selectedGroup.sessions,
+          questionCount: selectedGroup.questionCount,
+          turnCount: selectedGroup.turnCount,
+        }
+      : null;
   const selectedShortcut = selectedGroup ? findConversationAppShortcut(appShortcuts, selectedGroup.app) : null;
+  const browserColumns = showProjectColumn
+    ? [
+        { defaultWeight: 0.3 },
+        { defaultWeight: 0.62 },
+        { defaultWeight: 1.08, minWidthScale: 1.25 },
+      ]
+    : [
+        { defaultWeight: 0.36 },
+        { defaultWeight: 1.64, minWidthScale: 1.25 },
+      ];
+  const sessionHeaderTitle = showProjectColumn
+    ? selectedProjectGroup
+      ? projectGroupLabel(selectedProjectGroup, t)
+      : t("conversation.project.select")
+    : selectedGroup?.app.name ?? t("conversation.app.select");
+  const emptySessionsMessage = showProjectColumn
+    ? t("conversation.session.emptyForProject")
+    : t("conversation.session.emptyForApp");
 
   return (
     <ResizableColumns
       ariaLabel={t("layout.resizeColumns")}
       className="conversation-session-browser mt-5 min-h-[620px] rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
-      columns={[
-        { defaultWeight: 0.3 },
-        { defaultWeight: 0.62 },
-        { defaultWeight: 1.08, minWidthScale: 1.25 },
-      ]}
+      columns={browserColumns}
       handleClassName="max-[1040px]:hidden"
       minimumWidth={columnMinWidth}
       responsiveClassName="max-[1040px]:w-full max-[1040px]:grid-cols-1"
       scrollBarLabel={t("layout.scrollColumns")}
       scrollLeftLabel={t("layout.scrollColumnsLeft")}
       scrollRightLabel={t("layout.scrollColumnsRight")}
-      storageKey="assetiweave.conversationBrowserColumns.v2"
+      storageKey={showProjectColumn ? "assetiweave.conversationBrowserColumns.v2" : "assetiweave.webRecordBrowserColumns.v1"}
     >
       <ColumnPanel title={t("conversation.column.apps")} icon={<AppWindow size={16} />}>
         {groups.length === 0 ? (
@@ -1553,32 +1514,32 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
           ))
         )}
       </ColumnPanel>
-      <ColumnPanel title={t("conversation.column.projects")} icon={<Folder size={16} />}>
-        {!selectedGroup ? (
-          <EmptyPanel>{t("conversation.app.select")}</EmptyPanel>
-        ) : selectedGroup.projectGroups.length === 0 ? (
-          <EmptyPanel>{t("conversation.session.emptyForApp")}</EmptyPanel>
-        ) : (
-          selectedGroup.projectGroups.map((group) => (
-            <ProjectListItem
-              key={group.key}
-              group={group}
-              onSelect={() => onProjectSelect(group.key)}
-              selected={group.key === selectedProjectGroup?.key}
-              t={t}
-            />
-          ))
-        )}
-      </ColumnPanel>
+      {showProjectColumn ? (
+        <ColumnPanel title={t("conversation.column.projects")} icon={<Folder size={16} />}>
+          {!selectedGroup ? (
+            <EmptyPanel>{t("conversation.app.select")}</EmptyPanel>
+          ) : selectedGroup.projectGroups.length === 0 ? (
+            <EmptyPanel>{t("conversation.session.emptyForApp")}</EmptyPanel>
+          ) : (
+            selectedGroup.projectGroups.map((group) => (
+              <ProjectListItem
+                key={group.key}
+                group={group}
+                onSelect={() => onProjectSelect(group.key)}
+                selected={group.key === selectedProjectGroup?.key}
+                t={t}
+              />
+            ))
+          )}
+        </ColumnPanel>
+      ) : null}
       <section className="flex min-h-0 flex-col">
         <header className="flex min-h-16 shrink-0 items-center justify-between gap-4 border-b border-theme-card-border bg-theme-card-header/72 px-5 py-3">
           <div className="flex min-w-0 items-center gap-3">
             {selectedGroup ? <ConversationAppIcon appName={selectedGroup.app.name} shortcut={selectedShortcut} /> : null}
             <div className="min-w-0">
               <p className="text-label-caps text-primary">{t("conversation.column.sessions")}</p>
-              <h2 className="mt-1 truncate text-title-sm text-on-surface">
-                {selectedProjectGroup ? projectGroupLabel(selectedProjectGroup, t) : t("conversation.project.select")}
-              </h2>
+              <h2 className="mt-1 truncate text-title-sm text-on-surface">{sessionHeaderTitle}</h2>
             </div>
           </div>
           {selectedProjectGroup ? (
@@ -1594,12 +1555,12 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
         <div className="min-h-0 flex-1 overflow-auto p-4">
           {!selectedGroup ? (
             <EmptyPanel>{t("conversation.app.select")}</EmptyPanel>
-          ) : selectedGroup.projectGroups.length === 0 ? (
+          ) : showProjectColumn && selectedGroup.projectGroups.length === 0 ? (
             <EmptyPanel>{t("conversation.session.emptyForApp")}</EmptyPanel>
           ) : !selectedProjectGroup ? (
-            <EmptyPanel>{t("conversation.project.select")}</EmptyPanel>
+            <EmptyPanel>{showProjectColumn ? t("conversation.project.select") : t("conversation.app.select")}</EmptyPanel>
           ) : selectedProjectGroup.sessions.length === 0 ? (
-            <EmptyPanel>{t("conversation.session.emptyForProject")}</EmptyPanel>
+            <EmptyPanel>{emptySessionsMessage}</EmptyPanel>
           ) : (
             <div className="grid gap-3">
               {selectedProjectGroup.sessions.map((session) => (
@@ -1607,6 +1568,7 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
                   key={session.id}
                   onOpen={() => onSessionOpen(session.id)}
                   session={session}
+                  showProjectPath={showProjectColumn}
                   t={t}
                 />
               ))}
@@ -1681,7 +1643,8 @@ function allConversationSearchCardTypesSelected(selectedCardTypes: ConversationS
   return searchResultMatchesSelectedCardTypes(CONVERSATION_SEARCH_CARD_TYPES, selectedCardTypes);
 }
 
-function ConversationContentSearchResults({
+export function ConversationContentSearchResults({
+  appMetaById,
   contentCardColors,
   loading,
   onCardTypeToggle,
@@ -1691,6 +1654,7 @@ function ConversationContentSearchResults({
   selectedCardTypes,
   t,
 }: {
+  appMetaById?: ReadonlyMap<string, ConversationSearchAppChipMeta>;
   contentCardColors: ConversationContentCardColorSettings;
   loading: boolean;
   onCardTypeToggle: (cardType: ConversationSearchCardType) => void;
@@ -1701,6 +1665,7 @@ function ConversationContentSearchResults({
   t: Translator;
 }) {
   const hits = result?.hits ?? [];
+  const showProjectPath = result?.recordKind !== "web";
   const allCardTypesSelected = allConversationSearchCardTypesSelected(selectedCardTypes);
   const visibleHits = allCardTypesSelected
     ? hits
@@ -1787,34 +1752,46 @@ function ConversationContentSearchResults({
                 </span>
               </header>
               <div className="grid divide-y divide-theme-card-border/70">
-                {group.hits.map((hit) => (
-                  <button
-                    aria-label={t("conversation.search.openHit", {
-                      title: hit.session.title,
-                      type: conversationSearchCardTypeLabel(hit.card_type, t),
-                    })}
-                    className="grid gap-2 px-4 py-3 text-left transition-colors hover:bg-theme-card-header/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-                    key={`${hit.session.id}-${hit.block_id}-${hit.question_id}`}
-                    onClick={() => onOpenHit(hit)}
-                    type="button"
-                  >
-                    <span className="flex min-w-0 flex-wrap items-center gap-2">
-                      <SearchCardTypeBadge cardType={hit.card_type} colors={contentCardColors} t={t} />
-                      <span className="min-w-0 truncate text-body-sm font-semibold text-on-surface">
-                        {hit.session.title}
+                {group.hits.map((hit) => {
+                  const appMeta = appMetaById?.get(hit.session.adapter_id);
+                  const appName = appMeta?.name ?? hit.session.adapter_id;
+                  return (
+                    <button
+                      aria-label={t("conversation.search.openHit", {
+                        title: hit.session.title,
+                        type: conversationSearchCardTypeLabel(hit.card_type, t),
+                      })}
+                      className="grid gap-2 px-4 py-3 text-left transition-colors hover:bg-theme-card-header/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                      key={`${hit.session.id}-${hit.block_id}-${hit.question_id}`}
+                      onClick={() => onOpenHit(hit)}
+                      type="button"
+                    >
+                      <span className="flex min-w-0 flex-wrap items-center gap-2">
+                        <SearchCardTypeBadge cardType={hit.card_type} colors={contentCardColors} t={t} />
+                        <SearchHitMetaChip
+                          accentColor={appMeta?.accentColor}
+                          label={t("conversation.search.appChip", { app: appName })}
+                        />
+                        <SearchHitMetaChip
+                          className="font-mono"
+                          label={t("conversation.search.sessionChip", { sessionId: shortSessionHashId(hit.session.id) })}
+                        />
+                        <span className="min-w-0 truncate text-body-sm font-semibold text-on-surface">
+                          {hit.session.title}
+                        </span>
+                        <span className="min-w-0 truncate text-code-sm text-on-surface-muted">
+                          {hit.question_title}
+                        </span>
                       </span>
-                      <span className="min-w-0 truncate text-code-sm text-on-surface-muted">
-                        {hit.question_title}
-                      </span>
-                    </span>
-                    <span className="line-clamp-2 text-body-sm text-on-surface-variant">{hit.snippet}</span>
-                    {hit.session.project_path ? (
-                      <span className="truncate font-mono text-code-sm text-on-surface-muted">
-                        {abbreviateHomePath(hit.session.project_path)}
-                      </span>
-                    ) : null}
-                  </button>
-                ))}
+                      <span className="line-clamp-2 text-body-sm text-on-surface-variant">{hit.snippet}</span>
+                      {showProjectPath && hit.session.project_path ? (
+                        <span className="truncate font-mono text-code-sm text-on-surface-muted">
+                          {abbreviateHomePath(hit.session.project_path)}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
               </div>
             </section>
           ))}
@@ -1822,6 +1799,34 @@ function ConversationContentSearchResults({
       )}
     </section>
   );
+}
+
+function SearchHitMetaChip({
+  accentColor,
+  className = "",
+  label,
+}: {
+  accentColor?: string | null;
+  className?: string;
+  label: string;
+}) {
+  return (
+    <span
+      className={`inline-flex h-6 min-w-0 max-w-full items-center overflow-hidden text-ellipsis whitespace-nowrap rounded-md border border-theme-control-border bg-theme-control/80 px-2 text-code-sm font-medium text-on-surface-variant shadow-[var(--theme-shadow-control-inset)] ${className}`}
+      style={accentColor ? searchHitMetaChipAccentStyle(accentColor) : undefined}
+      title={label}
+    >
+      {label}
+    </span>
+  );
+}
+
+function searchHitMetaChipAccentStyle(accentColor: string): CSSProperties {
+  return {
+    backgroundColor: `${accentColor}1f`,
+    borderColor: `${accentColor}66`,
+    color: accentColor,
+  };
 }
 
 function SearchCardTypeFilterButton({
@@ -2016,36 +2021,80 @@ function inferAppKindFromAdapterId(adapterId: string): AppKind {
 function SessionCard({
   onOpen,
   session,
+  showProjectPath = true,
   t,
 }: {
   onOpen: () => void;
   session: ConversationSessionListItem;
+  showProjectPath?: boolean;
   t: Translator;
 }) {
   const hashId = shortSessionHashId(session.id);
 
   return (
-    <button
-      aria-label={t("conversation.session.open", { title: session.title })}
-      className="group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-xl border border-theme-card-border bg-theme-card/75 px-4 py-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/45 hover:bg-theme-card"
-      onClick={onOpen}
-      type="button"
-    >
-      <span className="min-w-0">
+    <article className="group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-xl border border-theme-card-border bg-theme-card/75 px-4 py-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/45 hover:bg-theme-card">
+      <span className="min-w-0 select-text">
         <span className="block truncate text-body-sm font-semibold text-on-surface">{session.title}</span>
-        <span className="mt-1 block truncate font-mono text-code-sm text-on-surface-variant">
-          {session.project_path ? abbreviateHomePath(session.project_path) : t("conversation.session.noProject")}
-        </span>
-        <span className="mt-3 inline-flex rounded-full bg-theme-control px-2 py-1 text-code-sm text-on-surface-muted">
-          <span className="font-mono">{hashId}</span>
-          <span className="px-1.5">·</span>
-          <span>{t("conversation.session.counts", { questions: session.question_count, turns: session.turn_count })}</span>
-        </span>
+        {showProjectPath ? (
+          <span className="mt-1 block truncate font-mono text-code-sm text-on-surface-variant">
+            {session.project_path ? abbreviateHomePath(session.project_path) : t("conversation.session.noProject")}
+          </span>
+        ) : null}
+        <SessionMetaChips
+          hashId={hashId}
+          questions={session.question_count}
+          t={t}
+          turns={session.turn_count}
+        />
       </span>
-      <span className="grid size-9 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-on-surface-variant transition-colors group-hover:text-primary">
+      <button
+        aria-label={t("conversation.session.open", { title: session.title })}
+        className="grid size-9 shrink-0 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 group-hover:text-primary"
+        onClick={onOpen}
+        type="button"
+      >
         <ChevronRight size={17} />
-      </span>
-    </button>
+      </button>
+    </article>
+  );
+}
+
+function SessionMetaChips({
+  hashId,
+  questions,
+  t,
+  turns,
+}: {
+  hashId: string;
+  questions: number;
+  t: Translator;
+  turns: number;
+}) {
+  return (
+    <span
+      aria-label={t("conversation.session.counts", { questions, turns })}
+      className="mt-3 flex min-w-0 flex-wrap items-center gap-1.5"
+    >
+      <SessionMetaChip className="font-mono" label={hashId} />
+      <SessionMetaChip label={t("conversation.session.questionCountChip", { count: questions })} />
+      <SessionMetaChip label={t("conversation.session.turnCountChip", { count: turns })} />
+    </span>
+  );
+}
+
+function SessionMetaChip({
+  className = "",
+  label,
+}: {
+  className?: string;
+  label: string;
+}) {
+  return (
+    <span
+      className={`inline-flex h-7 max-w-full items-center rounded-md border border-theme-control-border bg-theme-control/80 px-2.5 text-code-sm font-medium text-on-surface-variant shadow-[var(--theme-shadow-control-inset)] ${className}`}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -2103,6 +2152,52 @@ export function SessionQuestionWorkspace({
   translationSettings?: ConversationTranslationSettings;
   visibility: ConversationContentVisibility;
 }) {
+  const [questionListCollapsed, setQuestionListCollapsed] = useState(false);
+  const toggleQuestionList = useCallback(() => {
+    setQuestionListCollapsed((current) => !current);
+  }, []);
+  const questionListToggle = (
+    <QuestionListToggleButton
+      collapsed={questionListCollapsed}
+      onClick={toggleQuestionList}
+      t={t}
+    />
+  );
+  const previewPanel = (
+    <section className="min-h-0 min-w-0">
+      {session && question ? (
+        <QuestionPreview
+          activeSearchTarget={activeSearchTarget}
+          contentCardColors={contentCardColors}
+          onExport={onExport}
+          onCopyError={onCopyError}
+          onPickOutputRoot={onPickOutputRoot}
+          onSplit={onSplit}
+          outputRoot={outputRoot}
+          question={question}
+          questionListToggle={questionListCollapsed ? questionListToggle : undefined}
+          resultPreviewLineLimit={resultPreviewLineLimit}
+          recordKind={recordKind}
+          session={session}
+          setOutputRoot={setOutputRoot}
+          t={t}
+          translationSettings={translationSettings}
+          visibility={visibility}
+        />
+      ) : (
+        <EmptyPanel>{t("conversation.question.noSelection")}</EmptyPanel>
+      )}
+    </section>
+  );
+
+  if (questionListCollapsed) {
+    return (
+      <section className="conversation-readable mt-5 min-h-[680px] overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]">
+        {previewPanel}
+      </section>
+    );
+  }
+
   return (
     <ResizableColumns
       ariaLabel={t("layout.resizeColumns")}
@@ -2120,6 +2215,7 @@ export function SessionQuestionWorkspace({
       storageKey="assetiweave.conversationDetailColumns.v1"
     >
       <ColumnPanel
+        actions={questionListToggle}
         className="max-[920px]:border-r-0 max-[920px]:border-b"
         title={t("conversation.column.questions")}
         icon={<Layers3 size={16} />}
@@ -2155,30 +2251,33 @@ export function SessionQuestionWorkspace({
           })
         )}
       </ColumnPanel>
-      <section className="min-h-0 min-w-0">
-        {session && question ? (
-          <QuestionPreview
-            activeSearchTarget={activeSearchTarget}
-            contentCardColors={contentCardColors}
-            onExport={onExport}
-            onCopyError={onCopyError}
-            onPickOutputRoot={onPickOutputRoot}
-            onSplit={onSplit}
-            outputRoot={outputRoot}
-            question={question}
-            resultPreviewLineLimit={resultPreviewLineLimit}
-            recordKind={recordKind}
-            session={session}
-            setOutputRoot={setOutputRoot}
-            t={t}
-            translationSettings={translationSettings}
-            visibility={visibility}
-          />
-        ) : (
-          <EmptyPanel>{t("conversation.question.noSelection")}</EmptyPanel>
-        )}
-      </section>
+      {previewPanel}
     </ResizableColumns>
+  );
+}
+
+function QuestionListToggleButton({
+  collapsed,
+  onClick,
+  t,
+}: {
+  collapsed: boolean;
+  onClick: () => void;
+  t: Translator;
+}) {
+  const label = t(collapsed ? "conversation.questionSidebar.expand" : "conversation.questionSidebar.collapse");
+
+  return (
+    <button
+      aria-expanded={!collapsed}
+      aria-label={label}
+      className="grid size-8 shrink-0 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-on-surface-variant shadow-[var(--theme-shadow-control-inset)] transition-colors hover:bg-theme-control-hover hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
+      onClick={onClick}
+      title={label}
+      type="button"
+    >
+      {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+    </button>
   );
 }
 
@@ -2249,6 +2348,7 @@ export function QuestionPreview({
   onSplit,
   outputRoot,
   question,
+  questionListToggle,
   recordKind = "session",
   resultPreviewLineLimit,
   session,
@@ -2265,6 +2365,7 @@ export function QuestionPreview({
   onSplit?: (question: ConversationQuestionDetail, turnId: string) => Promise<void>;
   outputRoot: string;
   question: ConversationQuestionDetail;
+  questionListToggle?: ReactNode;
   recordKind?: ConversationRecordKind;
   resultPreviewLineLimit?: number;
   session: ConversationSessionDetail;
@@ -2328,12 +2429,17 @@ export function QuestionPreview({
     <div className="conversation-readable flex min-h-full flex-col">
       <header className="border-b border-theme-card-border bg-theme-card/74 px-5 py-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-label-caps text-primary">{questionOriginLabel(question.question.grouping_origin, t)}</p>
-            <h2 className="mt-1 text-title-md text-on-surface">{title}</h2>
-            <p className="mt-1 text-body-sm text-on-surface-variant">
-              {session.session.project_path ? abbreviateHomePath(session.session.project_path) : t("conversation.session.noProject")}
-            </p>
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+            {questionListToggle}
+            <div className="min-w-0">
+              <p className="text-label-caps text-primary">{questionOriginLabel(question.question.grouping_origin, t)}</p>
+              <h2 className="mt-1 text-title-md text-on-surface">{title}</h2>
+              {recordKind !== "web" ? (
+                <p className="mt-1 text-body-sm text-on-surface-variant">
+                  {session.session.project_path ? abbreviateHomePath(session.session.project_path) : t("conversation.session.noProject")}
+                </p>
+              ) : null}
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <PathPickerInput

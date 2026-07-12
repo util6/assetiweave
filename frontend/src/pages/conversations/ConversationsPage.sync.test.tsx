@@ -176,6 +176,93 @@ describe("ConversationsPage sync scope", () => {
   });
 
   it.each(["session", "web"] as const)(
+    "coalesces session list typing before refreshing %s pages",
+    async (recordKind) => {
+      vi.useFakeTimers();
+      try {
+        renderConversationsPage(recordKind);
+
+        await act(async () => undefined);
+        const listSessionsMock = recordKind === "web" ? listWebRecordSessionsMock : listConversationSessionsMock;
+        listSessionsMock.mockClear();
+
+        const searchInput = screen.getByPlaceholderText("Search sessions or projects...") as HTMLInputElement;
+        fireEvent.change(searchInput, { target: { value: "d" } });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(300);
+        });
+        fireEvent.change(searchInput, { target: { value: "de" } });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(300);
+        });
+        fireEvent.change(searchInput, { target: { value: "deploy" } });
+
+        expect(searchInput.value).toBe("deploy");
+        expect(listSessionsMock).not.toHaveBeenCalled();
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(699);
+        });
+
+        expect(listSessionsMock).not.toHaveBeenCalled();
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1);
+        });
+        await act(async () => undefined);
+
+        expect(listSessionsMock).toHaveBeenCalledWith({
+          limit: 100,
+          offset: 0,
+          query: "deploy",
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("submits session list search immediately from Enter or the search button", async () => {
+    vi.useFakeTimers();
+    try {
+      renderConversationsPage("session");
+
+      await act(async () => undefined);
+      listConversationSessionsMock.mockClear();
+
+      const searchInput = screen.getByPlaceholderText("Search sessions or projects...") as HTMLInputElement;
+      fireEvent.change(searchInput, { target: { value: "deploy" } });
+      fireEvent.keyDown(searchInput, { key: "Enter" });
+      await act(async () => undefined);
+
+      expect(listConversationSessionsMock).toHaveBeenCalledWith({
+        limit: 100,
+        offset: 0,
+        query: "deploy",
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(700);
+      });
+
+      expect(listConversationSessionsMock).toHaveBeenCalledTimes(1);
+      listConversationSessionsMock.mockClear();
+
+      fireEvent.change(searchInput, { target: { value: "rollback" } });
+      fireEvent.click(screen.getByRole("button", { name: "Search sessions" }));
+      await act(async () => undefined);
+
+      expect(listConversationSessionsMock).toHaveBeenCalledWith({
+        limit: 100,
+        offset: 0,
+        query: "rollback",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["session", "web"] as const)(
     "coalesces content card typing before searching on %s pages",
     async (recordKind) => {
       vi.useFakeTimers();

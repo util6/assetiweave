@@ -15,18 +15,21 @@ import {
   ConversationSyncProgress,
 } from "../../components/conversations/ConversationToolbarControls";
 import { ConversationImportDialog } from "../../components/conversations/ConversationImportDialog";
+import { DebouncedToolbarSearch } from "../../components/common/DataToolbar";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import type { Translator } from "../../i18n/I18nProvider";
 import { messages, type TranslationParams } from "../../i18n/messages";
+import { DEFAULT_CONVERSATION_CONTENT_CARD_COLORS } from "../../store/settings/AppSettingsProvider";
 import type {
   AppShortcut,
   ConversationAdapter,
   ConversationQuestionDetail,
+  ConversationSearchHit,
   ConversationSessionDetail,
 } from "../../types";
 import {
   AppSessionBrowser,
-  DebouncedToolbarSearch,
+  ConversationContentSearchResults,
   groupConversationSessionsByApp,
   ConversationExportDialog,
   loadAllConversationSessionPages,
@@ -170,6 +173,24 @@ describe("MarkdownContent", () => {
     expect(html).toContain("assetiweave-cli conversation sync --dry-run");
     expect(html).toContain("从这里拆分");
     expect(html).toContain("导出");
+  });
+
+  it("omits project path from web record question previews", () => {
+    const html = renderToStaticMarkup(
+      <QuestionPreview
+        onExport={async () => undefined}
+        onPickOutputRoot={async () => null}
+        outputRoot="/tmp/web-record-export"
+        question={questionDetail}
+        recordKind="web"
+        session={sessionDetail}
+        setOutputRoot={vi.fn()}
+        t={t}
+      />,
+    );
+
+    expect(html).not.toContain("code-space/assetiweave");
+    expect(html).not.toContain("无项目路径");
   });
 
   it("selects the first question with adapter-declared content by default", () => {
@@ -326,9 +347,10 @@ describe("MarkdownContent", () => {
     expect(html).toContain("水平浏览分栏");
     expect(html).toContain('role="scrollbar"');
     expect(html).toContain("sticky bottom-0");
+    expect(html).toContain("min-h-[620px]");
   });
 
-  it("shows the short stable hash id before the session counts", () => {
+  it("shows the session summary as separate chips", () => {
     vi.stubGlobal("ResizeObserver", class {
       disconnect() {}
       observe() {}
@@ -357,9 +379,131 @@ describe("MarkdownContent", () => {
     );
     const hashId = screen.getByText("abcdef12");
 
-    expect(hashId.parentElement?.textContent).toBe("abcdef12·1 个问题 · 2 个 Turn");
+    expect(hashId.className).toContain("font-mono");
+    expect(screen.getByText("1 个问题").className).toContain("rounded-md");
+    expect(screen.getByText("2 个 Turn").className).toContain("rounded-md");
+    expect(hashId.parentElement?.getAttribute("aria-label")).toBe("1 个问题 · 2 个 Turn");
     expect(screen.queryByText(/Hash ID/)).toBeNull();
     expect(screen.queryByText(/abcdef123/)).toBeNull();
+  });
+
+  it("shows app and session id chips on content search result entries", () => {
+    const hit: ConversationSearchHit = {
+      block_id: "part-1-answer",
+      card_type: "answer",
+      part_id: "part-1",
+      question_id: "question-1",
+      question_index: 0,
+      question_title: "同步流程",
+      score: 100,
+      session: {
+        ...sessionDetail.session,
+        id: "conversation-session-abcdef1234567890abcdef1234567890",
+        question_count: 1,
+        turn_count: 2,
+      },
+      snippet: "导入后按问题预览。",
+      turn_id: "turn-1",
+    };
+
+    render(
+      <ConversationContentSearchResults
+        appMetaById={new Map([["codex", { accentColor: "#10b981", name: "Codex" }]])}
+        contentCardColors={DEFAULT_CONVERSATION_CONTENT_CARD_COLORS}
+        loading={false}
+        onCardTypeToggle={vi.fn()}
+        onOpenHit={vi.fn()}
+        onShowAllCardTypes={vi.fn()}
+        result={{
+          contentTypes: ["answer"],
+          hits: [hit],
+          query: "导入",
+          recordKind: "session",
+          totalCount: 1,
+        }}
+        selectedCardTypes={["answer"]}
+        t={t}
+      />,
+    );
+
+    const appChip = screen.getByText("Codex");
+
+    expect(appChip.className).toContain("rounded-md");
+    expect(appChip.getAttribute("style")).toContain("rgb(16, 185, 129)");
+    expect(screen.queryByText("APP Codex")).toBeNull();
+    expect(screen.getByText("abcdef12").className).toContain("font-mono");
+    expect(screen.queryByText("Session abcdef12")).toBeNull();
+    expect(screen.queryByText(/abcdef123/)).toBeNull();
+  });
+
+  it("omits project path UI when browsing web record sessions", () => {
+    const html = renderToStaticMarkup(
+      <AppSessionBrowser
+        appShortcuts={[]}
+        columnMinWidth={300}
+        groups={groupConversationSessionsByApp(adapters, [
+          {
+            ...sessionDetail.session,
+            id: "web-session-1",
+            project_path: "/Users/util6/code-space/assetiweave",
+            question_count: 1,
+            turn_count: 2,
+          },
+        ])}
+        onAppSelect={vi.fn()}
+        onProjectSelect={vi.fn()}
+        onSessionOpen={vi.fn()}
+        recordKind="web"
+        selectedAppId="codex"
+        selectedProjectKey={null}
+        t={t}
+      />,
+    );
+
+    expect(html).not.toContain("项目文件夹");
+    expect(html).not.toContain("code-space/assetiweave");
+    expect(html).toContain("Conversation fixture");
+  });
+
+  it("opens sessions only from the explicit action so card text can be selected", () => {
+    vi.stubGlobal("ResizeObserver", class {
+      disconnect() {}
+      observe() {}
+      unobserve() {}
+    });
+    const onSessionOpen = vi.fn();
+
+    render(
+      <AppSessionBrowser
+        appShortcuts={[]}
+        columnMinWidth={300}
+        groups={groupConversationSessionsByApp(adapters, [
+          {
+            ...sessionDetail.session,
+            id: "conversation-session-abcdef1234567890abcdef1234567890",
+            question_count: 1,
+            turn_count: 2,
+          },
+        ])}
+        onAppSelect={vi.fn()}
+        onProjectSelect={vi.fn()}
+        onSessionOpen={onSessionOpen}
+        selectedAppId="codex"
+        selectedProjectKey="/Users/util6/code-space/assetiweave"
+        t={t}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Conversation fixture"));
+    fireEvent.click(screen.getByText("abcdef12"));
+    fireEvent.click(screen.getByText("1 个问题"));
+
+    expect(onSessionOpen).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "打开 Session Conversation fixture" }));
+
+    expect(onSessionOpen).toHaveBeenCalledTimes(1);
+    expect(onSessionOpen).toHaveBeenCalledWith("conversation-session-abcdef1234567890abcdef1234567890");
   });
 
   it("does not re-render the session browser for unrelated parent search updates", () => {
@@ -747,6 +891,61 @@ describe("MarkdownContent", () => {
     expect(html).toContain("sticky bottom-0");
     expect(html).toContain("flex h-48 flex-col overflow-hidden");
     expect(html).toContain("line-clamp-2 min-w-0 break-words");
+  });
+
+  it("collapses the question list so the selected question preview can use the full width", () => {
+    vi.stubGlobal("ResizeObserver", class {
+      disconnect() {}
+      observe() {}
+      unobserve() {}
+    });
+
+    render(
+      <SessionQuestionWorkspace
+        contentCardColors={{
+          answer: "#facc15",
+          code: "#60a5fa",
+          command: "#f59e0b",
+          result: "#34d399",
+          tool: "#22c55e",
+        }}
+        onExport={async () => undefined}
+        onPickOutputRoot={async () => null}
+        onQuestionSelect={vi.fn()}
+        onQuestionSelectionChange={vi.fn()}
+        outputRoot="/tmp/conversation-export"
+        question={questionDetail}
+        questions={[questionDetail]}
+        selectedQuestionId={questionDetail.question.id}
+        selectedQuestionIds={new Set()}
+        session={sessionDetail}
+        setOutputRoot={vi.fn()}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "问题" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "预览问题 同步流程" })).toBeTruthy();
+    expect(screen.getByRole("scrollbar", { name: "水平浏览分栏" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "收起问题列表" }));
+
+    expect(screen.queryByRole("heading", { name: "问题" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "预览问题 同步流程" })).toBeNull();
+    expect(screen.queryByRole("scrollbar", { name: "水平浏览分栏" })).toBeNull();
+    expect(screen.getByRole("button", { name: "展开问题列表" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "展开问题列表" }));
+
+    expect(screen.getByRole("heading", { name: "问题" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "收起问题列表" })).toBeTruthy();
   });
 
   it("renders an export dialog that reuses content visibility controls", () => {
