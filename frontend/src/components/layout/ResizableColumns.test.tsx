@@ -40,6 +40,7 @@ describe("ResizableColumns", () => {
     expect(html).toContain("Scroll columns left");
     expect(html).toContain("Scroll columns right");
     expect(html).toContain('data-resizable-columns-scroll-controls=""');
+    expect(html).toContain("isolate");
     expect(html).toContain("sticky bottom-0");
     expect(html).toContain("--resizable-columns-template");
     expect(html).toContain("--resizable-columns-min-width");

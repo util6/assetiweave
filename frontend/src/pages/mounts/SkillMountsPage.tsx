@@ -405,6 +405,7 @@ export function SkillMountsPage({
         query={query}
         searchClassName="w-72 max-[1160px]:w-full"
         searchPlaceholder={t("appMount.searchPlaceholder")}
+        searchSubmitLabel={t("appMount.searchSubmit")}
         sticky
         stickyBleed
         viewAriaLabel={t("toolbar.view.aria")}

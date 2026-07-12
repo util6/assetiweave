@@ -378,6 +378,7 @@ export function SourcesPage({
         query={sources.query}
         searchClassName="flex-1"
         searchPlaceholder={t("source.toolbar.searchPlaceholder")}
+        searchSubmitLabel={t("source.toolbar.searchSubmit")}
         sticky
         stickyBleed
         viewAriaLabel={t("toolbar.view.aria")}

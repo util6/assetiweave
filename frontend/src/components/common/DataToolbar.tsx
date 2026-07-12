@@ -1,9 +1,12 @@
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import clsx from "clsx";
-import { Check, ChevronDown, Search } from "lucide-react";
+import { Check, ChevronDown, RefreshCw, Search } from "lucide-react";
 import {
+  useEffect,
   useMemo,
+  useRef,
   useState,
+  useTransition,
   forwardRef,
   type ButtonHTMLAttributes,
   type ChangeEvent,
@@ -23,6 +26,7 @@ export interface ToolbarViewOption<Value extends ToolbarViewMode = ToolbarViewMo
 
 export interface ToolbarSelectOption<Value extends string = string> {
   label: string;
+  swatchClassName?: string;
   value: Value;
 }
 
@@ -62,7 +66,7 @@ export function DataToolbar({
       >
         {leading}
       </div>
-      <div className="flex min-w-max shrink-0 flex-nowrap items-center justify-end gap-2" data-toolbar-actions="">
+      <div className="flex min-w-max shrink-0 flex-nowrap items-center justify-end gap-1.5" data-toolbar-actions="">
         {actions}
       </div>
     </section>
@@ -82,7 +86,7 @@ export function ToolbarCluster({
     <div
       aria-label={ariaLabel}
       className={clsx(
-        "toolbar-overflow-viewport inline-flex min-h-10 min-w-0 max-w-full flex-nowrap items-center gap-2 overflow-x-auto overflow-y-hidden rounded-xl border border-theme-control-border bg-theme-control/95 px-3 py-1.5 text-body-sm text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] [&>*]:shrink-0 [&>*]:whitespace-nowrap",
+        "toolbar-overflow-viewport inline-flex min-h-10 min-w-0 max-w-full flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-hidden rounded-xl border border-theme-control-border bg-theme-control/95 px-2.5 py-1.5 text-body-sm text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] [&>*]:shrink-0 [&>*]:whitespace-nowrap",
         className,
       )}
       role="group"
@@ -144,6 +148,151 @@ export function ToolbarSearch({
   );
 }
 
+export function DebouncedToolbarSearch({
+  ariaLabel,
+  className,
+  commitDelayMs,
+  onChange,
+  placeholder,
+  resetSignal,
+  searching = false,
+  submitLabel,
+  value,
+}: {
+  ariaLabel?: string;
+  className?: string;
+  commitDelayMs: number;
+  onChange: (value: string) => void;
+  placeholder: string;
+  resetSignal?: string;
+  searching?: boolean;
+  submitLabel?: string;
+  value: string;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const committedValueRef = useRef(value);
+  const composingRef = useRef(false);
+  const draftRef = useRef(value);
+  const resetSignalRef = useRef(resetSignal);
+  const onChangeRef = useRef(onChange);
+  const timerRef = useRef<number | null>(null);
+  const [pending, setPending] = useState(false);
+  const [transitionPending, startSearchTransition] = useTransition();
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  useEffect(() => {
+    const resetSignalChanged = resetSignalRef.current !== resetSignal;
+    resetSignalRef.current = resetSignal;
+    if (!resetSignalChanged && value === committedValueRef.current) return;
+    clearDebouncedSearchTimer(timerRef);
+    setPending(false);
+    composingRef.current = false;
+    committedValueRef.current = value;
+    draftRef.current = value;
+    if (inputRef.current && inputRef.current.value !== value) {
+      inputRef.current.value = value;
+    }
+  }, [resetSignal, value]);
+
+  useEffect(() => {
+    return () => clearDebouncedSearchTimer(timerRef);
+  }, []);
+
+  function commitDraft(nextValue: string) {
+    setPending(false);
+    if (nextValue === committedValueRef.current) return;
+    committedValueRef.current = nextValue;
+    startSearchTransition(() => onChangeRef.current(nextValue));
+  }
+
+  function commitCurrentDraft() {
+    clearDebouncedSearchTimer(timerRef);
+    commitDraft(draftRef.current);
+  }
+
+  function scheduleCommit(nextValue: string) {
+    clearDebouncedSearchTimer(timerRef);
+    setPending(nextValue !== committedValueRef.current);
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      if (!composingRef.current) {
+        commitDraft(nextValue);
+      }
+    }, commitDelayMs);
+  }
+
+  function handleChange(nextValue: string, event: ChangeEvent<HTMLInputElement>) {
+    draftRef.current = nextValue;
+    if (composingRef.current || inputEventIsComposing(event)) {
+      clearDebouncedSearchTimer(timerRef);
+      return;
+    }
+    scheduleCommit(nextValue);
+  }
+
+  function handleCompositionStart() {
+    composingRef.current = true;
+    clearDebouncedSearchTimer(timerRef);
+    setPending(false);
+  }
+
+  function handleCompositionEnd(event: CompositionEvent<HTMLInputElement>) {
+    composingRef.current = false;
+    const nextValue = event.currentTarget.value;
+    draftRef.current = nextValue;
+    scheduleCommit(nextValue);
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter" || composingRef.current) return;
+    event.preventDefault();
+    commitCurrentDraft();
+  }
+
+  const showSearching = searching || pending || transitionPending;
+
+  return (
+    <ToolbarSearch
+      ariaLabel={ariaLabel}
+      className={className}
+      defaultValue={value}
+      inputRef={inputRef}
+      onChange={handleChange}
+      onCompositionEnd={handleCompositionEnd}
+      onCompositionStart={handleCompositionStart}
+      onKeyDown={handleKeyDown}
+      placeholder={placeholder}
+      trailing={
+        submitLabel ? (
+          <button
+            aria-label={submitLabel}
+            className="grid size-7 shrink-0 place-items-center rounded-lg text-on-surface-muted transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-wait disabled:opacity-70"
+            disabled={searching}
+            onClick={commitCurrentDraft}
+            title={submitLabel}
+            type="button"
+          >
+            {showSearching ? <RefreshCw className="animate-spin" size={15} /> : <Search size={15} />}
+          </button>
+        ) : undefined
+      }
+    />
+  );
+}
+
+function clearDebouncedSearchTimer(timerRef: { current: number | null }) {
+  if (timerRef.current === null) return;
+  window.clearTimeout(timerRef.current);
+  timerRef.current = null;
+}
+
+function inputEventIsComposing(event: ChangeEvent<HTMLInputElement>) {
+  return Boolean((event.nativeEvent as InputEvent).isComposing);
+}
+
 export function ToolbarViewToggle<Value extends ToolbarViewMode>({
   ariaLabel,
   onChange,
@@ -196,8 +345,8 @@ export function ToolbarActionButton({
     <button
       aria-label={label}
       className={clsx(
-        "inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-55",
-        text ? "min-w-[5.75rem] px-3 text-body-sm font-semibold" : "w-10",
+        "inline-flex h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-55",
+        text ? "min-w-[5.25rem] px-2.5 text-body-sm font-semibold" : "w-9",
         primary
           ? "theme-primary-gradient text-theme-button-primary-fg hover:-translate-y-0.5"
           : "border border-theme-control-border bg-theme-control/95 text-theme-control-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] hover:bg-theme-control-hover hover:text-on-surface",
@@ -227,7 +376,7 @@ export function ToolbarTextButton({
 }) {
   return (
     <button
-      className="inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-theme-control-border bg-theme-control/95 px-3 text-body-sm text-theme-control-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-55"
+      className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-theme-control-border bg-theme-control/95 px-2.5 text-body-sm text-theme-control-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-55"
       disabled={disabled}
       data-toolbar-control="text"
       onClick={onClick}
@@ -290,6 +439,7 @@ export function ToolbarMultiSelectDropdown<Value extends string>({
                   key={option.value}
                   label={option.label}
                   onChange={() => onToggleValue(option.value)}
+                  swatchClassName={option.swatchClassName}
                 />
               ))
             )}
@@ -383,7 +533,7 @@ export function ToolbarSortDirectionButton({
   return (
     <button
       aria-label={label}
-      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-theme-control-border bg-theme-control/95 text-body-sm font-semibold text-theme-control-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors hover:bg-theme-control-hover hover:text-on-surface"
+      className="inline-flex h-10 w-9 shrink-0 items-center justify-center rounded-xl border border-theme-control-border bg-theme-control/95 text-body-sm font-semibold text-theme-control-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors hover:bg-theme-control-hover hover:text-on-surface"
       data-toolbar-control="sort-direction"
       onClick={onClick}
       title={title}
@@ -411,7 +561,7 @@ const ToolbarDropdownButton = forwardRef<HTMLButtonElement, ToolbarDropdownButto
       {...buttonProps}
       aria-label={ariaLabel}
       className={clsx(
-        "inline-flex h-10 max-w-[13rem] shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl border px-3 text-body-sm shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors",
+        "inline-flex h-10 max-w-[11.5rem] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border px-2.5 text-body-sm shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors",
         active
           ? "border-primary/45 bg-theme-control-hover text-primary"
           : "border-theme-control-border bg-theme-control/95 text-theme-control-fg hover:bg-theme-control-hover hover:text-on-surface",
@@ -457,10 +607,12 @@ function ToolbarDropdownCheckItem({
   checked,
   label,
   onChange,
+  swatchClassName,
 }: {
   checked: boolean;
   label: string;
   onChange: () => void;
+  swatchClassName?: string;
 }) {
   return (
     <DropdownMenuPrimitive.CheckboxItem
@@ -477,7 +629,16 @@ function ToolbarDropdownCheckItem({
           <Check size={11} />
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
-      <span className="min-w-0 truncate">{label}</span>
+      <span className="flex min-w-0 items-center gap-2">
+        {swatchClassName ? (
+          <span
+            aria-hidden="true"
+            className={clsx("size-2.5 shrink-0 rounded-full border", swatchClassName)}
+            data-toolbar-option-swatch=""
+          />
+        ) : null}
+        <span className="min-w-0 truncate">{label}</span>
+      </span>
     </DropdownMenuPrimitive.CheckboxItem>
   );
 }

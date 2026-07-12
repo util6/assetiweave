@@ -515,6 +515,7 @@ export function SkillGroupsPage({
         query={groupQuery}
         searchClassName="w-72 max-[1160px]:w-full"
         searchPlaceholder={t("group.search.groups")}
+        searchSubmitLabel={t("group.search.submitGroups")}
         sticky
         stickyBleed
         viewAriaLabel={t("toolbar.view.aria")}

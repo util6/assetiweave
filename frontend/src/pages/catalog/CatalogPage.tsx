@@ -297,6 +297,7 @@ export function CatalogPage({
         onViewModeChange={setAssetViewMode}
         query={catalog.query}
         searchPlaceholder={t("toolbar.searchPlaceholder")}
+        searchSubmitLabel={t("toolbar.searchSubmit")}
         sticky
         stickyBleed
         viewAriaLabel={t("toolbar.view.aria")}

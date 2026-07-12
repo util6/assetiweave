@@ -1,8 +1,11 @@
-import { CheckSquare, Search } from "lucide-react";
+import { CheckSquare } from "lucide-react";
 import type { ReactNode } from "react";
+import { DebouncedToolbarSearch } from "../common/DataToolbar";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { Asset } from "../../types";
 import { displayAssetPath } from "../../utils/path";
+
+const ASSET_PICKER_SEARCH_COMMIT_DELAY_MS = 700;
 
 export function GroupField({ children, label }: { children: ReactNode; label: string }) {
   return (
@@ -63,15 +66,14 @@ export function AssetPickerHeader({
           </button>
         )}
       </div>
-      <label className="flex h-10 min-w-0 items-center gap-2 rounded-xl border border-theme-control-border bg-theme-control/90 px-3 text-outline transition-colors focus-within:border-primary/60 focus-within:text-primary">
-        <Search size={16} />
-        <input
-          className="min-w-0 flex-1 border-0 bg-transparent text-body-sm text-on-surface outline-none placeholder:text-outline"
-          onChange={(event) => onQueryChange(event.target.value)}
-          placeholder={t("group.search.skills")}
-          value={query}
-        />
-      </label>
+      <DebouncedToolbarSearch
+        className="w-full min-w-0"
+        commitDelayMs={ASSET_PICKER_SEARCH_COMMIT_DELAY_MS}
+        onChange={onQueryChange}
+        placeholder={t("group.search.skills")}
+        submitLabel={t("group.search.submitSkills")}
+        value={query}
+      />
     </div>
   );
 }

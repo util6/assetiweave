@@ -1,14 +1,15 @@
 import type { ReactNode } from "react";
 import {
   DataToolbar,
+  DebouncedToolbarSearch,
   ToolbarActionButton,
-  ToolbarSearch,
   ToolbarSeparator,
   ToolbarViewToggle,
   type ToolbarViewOption,
   type ToolbarViewMode,
 } from "../common/DataToolbar";
 
+export const ASSET_TOOLBAR_SEARCH_COMMIT_DELAY_MS = 700;
 export type AssetToolbarViewMode = ToolbarViewMode;
 export type AssetViewMode = Extract<AssetToolbarViewMode, "list" | "grid">;
 
@@ -28,8 +29,10 @@ export function AssetToolbar<Value extends AssetToolbarViewMode = AssetToolbarVi
   onQueryChange,
   onViewModeChange,
   query,
+  searchCommitDelayMs = ASSET_TOOLBAR_SEARCH_COMMIT_DELAY_MS,
   searchClassName = "w-64 max-[1160px]:w-72",
   searchPlaceholder,
+  searchSubmitLabel,
   sticky = false,
   stickyBleed = false,
   viewAriaLabel,
@@ -42,8 +45,10 @@ export function AssetToolbar<Value extends AssetToolbarViewMode = AssetToolbarVi
   onQueryChange: (query: string) => void;
   onViewModeChange?: (viewMode: Value) => void;
   query: string;
+  searchCommitDelayMs?: number;
   searchClassName?: string;
   searchPlaceholder: string;
+  searchSubmitLabel?: string;
   sticky?: boolean;
   stickyBleed?: boolean;
   viewAriaLabel?: string;
@@ -64,10 +69,12 @@ export function AssetToolbar<Value extends AssetToolbarViewMode = AssetToolbarVi
       ariaLabel={ariaLabel}
       leading={
         <>
-          <ToolbarSearch
+          <DebouncedToolbarSearch
             className={searchClassName}
+            commitDelayMs={searchCommitDelayMs}
             onChange={onQueryChange}
             placeholder={searchPlaceholder}
+            submitLabel={searchSubmitLabel}
             value={query}
           />
           {showViewToggle && (

@@ -311,7 +311,7 @@ export function ResizableColumns({
   }
 
   return (
-    <div className={cn("grid min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-visible", className, "overflow-visible")}>
+    <div className={cn("relative isolate z-0 grid min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-visible", className, "overflow-visible")}>
       <div className="min-h-0 min-w-0 overflow-hidden rounded-t-[inherit]">
         <div className="resizable-columns-viewport min-h-0 min-w-0 overflow-x-auto overflow-y-hidden" ref={scrollViewportRef}>
           <div

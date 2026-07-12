@@ -8,9 +8,9 @@ import {
   Lightbulb,
   ListChecks,
   Route,
-  Search,
   Target,
 } from "lucide-react";
+import { DebouncedToolbarSearch } from "../components/common/DataToolbar";
 import { PageHeader } from "../components/foundation/PageHeader";
 import { useI18n } from "../i18n/I18nProvider";
 import { getManualContent, getManualDocument } from "./registry";
@@ -63,6 +63,7 @@ export function ManualPage({
   const routeLabel = locale === "zh" ? "路由" : "Route";
   const searchLabel = locale === "zh" ? "搜索本页手册" : "Search this manual";
   const searchPlaceholder = locale === "zh" ? "搜索流程、状态、风险或操作..." : "Search workflow, state, risk, or actions...";
+  const searchSubmitLabel = locale === "zh" ? "搜索手册" : "Search manual";
   const sectionLabel = locale === "zh" ? "章节" : "Sections";
   const stepLabel = locale === "zh" ? "条目" : "Items";
   const overviewLabel = locale === "zh" ? "页面概览" : "Overview";
@@ -142,17 +143,15 @@ export function ManualPage({
         </div>
         <p className="max-w-4xl text-body-md leading-7 text-on-surface">{content.overview}</p>
 
-        <label className="relative block max-w-2xl">
-          <span className="sr-only">{searchLabel}</span>
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-on-surface-muted" />
-          <input
-            className="h-11 w-full rounded-xl border border-theme-control-border bg-theme-control/85 pl-10 pr-3 text-body-sm text-on-surface outline-none shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.35)] transition-colors placeholder:text-on-surface-muted focus:border-primary/70"
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={searchPlaceholder}
-            type="search"
-            value={query}
-          />
-        </label>
+        <DebouncedToolbarSearch
+          ariaLabel={searchLabel}
+          className="max-w-2xl"
+          commitDelayMs={700}
+          onChange={setQuery}
+          placeholder={searchPlaceholder}
+          submitLabel={searchSubmitLabel}
+          value={query}
+        />
         <div>
           <button
             className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface"
