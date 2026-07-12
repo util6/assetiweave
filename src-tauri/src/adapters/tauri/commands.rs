@@ -1,4 +1,7 @@
 use crate::adapters::app_state::AppState;
+use crate::adapters::prompt_clipboard::{
+    copy_prompt_card_to_clipboard as copy_prompt_card_to_clipboard_impl, PromptClipboardParams,
+};
 use crate::adapters::tauri::background_tasks::{
     ConversationScriptInstallTaskSnapshot, ConversationSyncTaskSnapshot, SkillBackupTaskSnapshot,
 };
@@ -1617,21 +1620,29 @@ pub(crate) fn get_conversation_sync_task(
 }
 
 #[tauri::command]
-pub(crate) fn list_conversation_sessions(
+pub(crate) async fn list_conversation_sessions(
     state: State<'_, AppState>,
     params: ConversationSessionListParams,
 ) -> AppResult<Vec<crate::backend::dto::ConversationSessionListItem>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_conversation_sessions(params)
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?.list_conversation_sessions(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn get_conversation_session(
+pub(crate) async fn get_conversation_session(
     state: State<'_, AppState>,
     params: ConversationSessionGetParams,
 ) -> AppResult<crate::backend::dto::ConversationSessionDetail> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.get_conversation_session(params)
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?.get_conversation_session(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1644,21 +1655,29 @@ pub(crate) fn export_conversation_session(
 }
 
 #[tauri::command]
-pub(crate) fn list_web_record_sessions(
+pub(crate) async fn list_web_record_sessions(
     state: State<'_, AppState>,
     params: ConversationSessionListParams,
 ) -> AppResult<Vec<crate::backend::dto::ConversationSessionListItem>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_web_record_sessions(params)
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?.list_web_record_sessions(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn get_web_record_session(
+pub(crate) async fn get_web_record_session(
     state: State<'_, AppState>,
     params: ConversationSessionGetParams,
 ) -> AppResult<crate::backend::dto::ConversationSessionDetail> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.get_web_record_session(params)
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?.get_web_record_session(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1868,6 +1887,11 @@ pub(crate) fn logs_write_operation(
     crate::backend::logs::logs_write_operation(level, operation, message, fields)
 }
 
+#[tauri::command]
+pub(crate) fn copy_prompt_card_to_clipboard(params: PromptClipboardParams) -> AppResult<()> {
+    copy_prompt_card_to_clipboard_impl(params)
+}
+
 pub(crate) fn command_handler(
 ) -> impl Fn(::tauri::ipc::Invoke<::tauri::Wry>) -> bool + Send + Sync + 'static {
     ::tauri::generate_handler![
@@ -1965,6 +1989,7 @@ pub(crate) fn command_handler(
         logs_get_snapshot,
         logs_open_log_directory,
         logs_write_operation,
+        copy_prompt_card_to_clipboard,
         reveal_path
     ]
 }
