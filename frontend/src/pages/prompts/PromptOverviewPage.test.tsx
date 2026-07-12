@@ -436,10 +436,12 @@ describe("PromptOverviewPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Write a concise implementation plan for prompt cards.")).toBeTruthy();
     });
-    const stored = JSON.parse(localStorage.getItem("assetiweave.promptNotes") ?? "[]");
-    expect(stored[0]).toMatchObject({
-      content: "make prompt card feature",
-      optimizedText: "Write a concise implementation plan for prompt cards.",
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem("assetiweave.promptNotes") ?? "[]");
+      expect(stored[0]).toMatchObject({
+        content: "make prompt card feature",
+        optimizedText: "Write a concise implementation plan for prompt cards.",
+      });
     });
     expect(translator).toHaveBeenCalledTimes(2);
   });
