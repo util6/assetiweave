@@ -3,13 +3,26 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { parseDetailBody } = require("./gemini-normalize.cjs");
+const { acquireCDPTarget, tryRefreshAuth } = require("./cdp-browser.cjs");
 
 const root = process.env.ASSETIWEAVE_HARVESTER_DIR || process.cwd();
-const runID = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+const runID = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\\d{3}Z$/, "Z");
 const rawDir = path.join(root, "output", "raw", runID);
 const detailDir = path.join(rawDir, "details");
 const normalizedDir = path.join(root, "output", "normalized");
 const normalizedFile = path.join(normalizedDir, "sessions.json");
+
+const existingSessions = new Map();
+try {
+  if (fs.existsSync(normalizedFile)) {
+    const data = JSON.parse(fs.readFileSync(normalizedFile, "utf8"));
+    if (Array.isArray(data.sessions)) {
+      for (const s of data.sessions) {
+        existingSessions.set(s.external_id, s);
+      }
+    }
+  }
+} catch {}
 
 function mkdirp(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -101,6 +114,10 @@ function parseDetailSnapshot(cid, snapshot) {
   return [];
 }
 
+// ---------------------------------------------------------------------------
+// Direct cookie-based collection helpers
+// ---------------------------------------------------------------------------
+
 async function fetchAppContext(baseHeaders) {
   const response = await fetch("https://gemini.google.com/app", { headers: baseHeaders });
   const html = await response.text();
@@ -166,41 +183,9 @@ async function batch(ctx, headers, rpcid, payload) {
   };
 }
 
-async function readRemoteDebugJSON(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`DevTools endpoint ${url} returned ${response.status}`);
-  return response.json();
-}
-
-function createCDPClient(webSocketDebuggerURL) {
-  let nextID = 1;
-  const pending = new Map();
-  const ws = new WebSocket(webSocketDebuggerURL);
-  const opened = new Promise((resolve, reject) => {
-    ws.onopen = resolve;
-    ws.onerror = () => reject(new Error("failed to connect to DevTools websocket"));
-  });
-  ws.onmessage = (event) => {
-    const message = JSON.parse(event.data);
-    if (!message.id || !pending.has(message.id)) return;
-    const { resolve, reject } = pending.get(message.id);
-    pending.delete(message.id);
-    if (message.error) reject(new Error(message.error.message || JSON.stringify(message.error)));
-    else resolve(message.result);
-  };
-  return {
-    async send(method, params = {}) {
-      await opened;
-      const id = nextID++;
-      const promise = new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
-      ws.send(JSON.stringify({ id, method, params }));
-      return promise;
-    },
-    close() {
-      ws.close();
-    }
-  };
-}
+// ---------------------------------------------------------------------------
+// Direct cookie-based collection
+// ---------------------------------------------------------------------------
 
 async function collectDirect() {
   const authProbe = readJSON(path.join(root, "requests", "auth-probe.json"));
@@ -250,6 +235,14 @@ async function collectDirect() {
   let detailFailures = 0;
   for (let index = 0; index < listItems.length; index++) {
     const item = listItems[index];
+    
+    // Check local cache
+    const existing = existingSessions.get(item.cid);
+    if (existing && existing.updated_at === item.updatedAt) {
+      sessions.push(existing);
+      continue;
+    }
+
     const snapshot = await batch(ctx, headers, "hNvQHb", [item.cid, 1000, null, 1, [1], [4], null, 1]);
     writeJSON(path.join(detailDir, `${String(index + 1).padStart(4, "0")}-${safeName(item.cid)}.json`), {
       status_code: snapshot.status_code,
@@ -279,24 +272,42 @@ async function collectDirect() {
   return { listItems, sessions, detailFailures, usedBrowserContext: false };
 }
 
-async function collectViaBrowserContext() {
-  const endpoint = process.env.ASSETIWEAVE_GEMINI_CDP_ENDPOINT || "http://127.0.0.1:9222";
-  const targets = await readRemoteDebugJSON(endpoint.replace(/\/$/, "") + "/json/list");
-  const target = targets.find((item) =>
-    item.type === "page" &&
-    typeof item.url === "string" &&
-    /^https:\/\/gemini\.google\.com\/app(?:\/|$|\?)/.test(item.url) &&
-    item.webSocketDebuggerUrl
-  );
-  if (!target) {
-    throw new Error("Gemini page was not found on DevTools endpoint " + endpoint);
-  }
+// ---------------------------------------------------------------------------
+// Direct collection with auto auth-detect retry
+// ---------------------------------------------------------------------------
 
-  const client = createCDPClient(target.webSocketDebuggerUrl);
+async function collectDirectWithRetry() {
+  try {
+    return await collectDirect();
+  } catch (firstError) {
+    process.stderr.write(`[gemini-web] direct collection failed: ${firstError.message}; attempting auth-detect refresh...\n`);
+    const refreshed = tryRefreshAuth(root, "google.com", {
+      probeURL: "https://gemini.google.com/app"
+    });
+    if (!refreshed) throw firstError;
+    return await collectDirect();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CDP browser collection
+// ---------------------------------------------------------------------------
+
+async function collectViaBrowserContext() {
+  const { client, target, launched } = await acquireCDPTarget({
+    urlPattern: /^https:\/\/gemini\.google\.com\/app(?:\/|$|\?)/,
+    siteURL: "https://gemini.google.com/app",
+    endpointEnv: "ASSETIWEAVE_GEMINI_CDP_ENDPOINT",
+  });
+
   try {
     await client.send("Runtime.enable");
     const expression = String.raw`(async () => {
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      for (let i = 0; i < 40; i++) {
+        if (window.location.hostname.includes("gemini.google.com")) break;
+        await sleep(250);
+      }
       const text = (value) => typeof value === "string" ? value.trim() : "";
       const nested = (value, path, fallback = undefined) => {
         let current = value;
@@ -415,9 +426,13 @@ async function collectViaBrowserContext() {
           cursor = parsed.cursor;
         }
       }
+      const cache = ${JSON.stringify(Object.fromEntries(Array.from(existingSessions.entries()).map(([k, v]) => [k, v.updated_at])))};
       const details = [];
       for (let index = 0; index < listItems.length; index++) {
         const item = listItems[index];
+        if (cache[item.cid] === item.updatedAt) {
+          continue; // Skip fetch as local cache is up to date
+        }
         const snapshot = await batch("hNvQHb", [item.cid, 1000, null, 1, [1], [4], null, 1]);
         details.push({
           index: index + 1,
@@ -456,6 +471,7 @@ async function collectViaBrowserContext() {
     writeJSON(path.join(rawDir, "context.json"), {
       browser_context: true,
       browser_target_url: value.target_url,
+      browser_launched: launched,
       token_found: Boolean(value.rpc_config && value.rpc_config.token_found),
       sid_found: Boolean(value.rpc_config && value.rpc_config.sid_found),
       bl_found: Boolean(value.rpc_config && value.rpc_config.bl_found),
@@ -469,32 +485,40 @@ async function collectViaBrowserContext() {
     }
     const sessions = [];
     let detailFailures = 0;
-    for (const detail of value.details) {
-      writeJSON(path.join(detailDir, `${String(detail.index).padStart(4, "0")}-${safeName(detail.cid)}.json`), {
-        status_code: detail.status_code,
-        body: detail.body
-      });
-      if (detail.status_code !== 200 || !detail.detailBody) {
-        detailFailures++;
-        continue;
-      }
-      const turns = parseDetailBody(detail.cid, detail.detailBody);
-      if (!turns.length) continue;
-      const item = value.listItems.find((candidate) => candidate.cid === detail.cid) || {};
-      sessions.push({
-        external_id: detail.cid,
-        title: item.title || null,
-        project_path: null,
-        started_at: null,
-        updated_at: item.updatedAt || null,
-        source_locator: `https://gemini.google.com/app/${encodeURIComponent(detail.cid)}`,
-        source_fingerprint: crypto.createHash("sha256").update(JSON.stringify({
-          cid: detail.cid,
-          updatedAt: item.updatedAt || null,
+    
+    for (const item of value.listItems) {
+      const detail = value.details.find((d) => d.cid === item.cid);
+      if (detail) {
+        writeJSON(path.join(detailDir, `${String(detail.index).padStart(4, "0")}-${safeName(detail.cid)}.json`), {
+          status_code: detail.status_code,
+          body: detail.body
+        });
+        if (detail.status_code !== 200 || !detail.detailBody) {
+          detailFailures++;
+          continue;
+        }
+        const turns = parseDetailBody(detail.cid, detail.detailBody);
+        if (!turns.length) continue;
+        sessions.push({
+          external_id: detail.cid,
+          title: item.title || null,
+          project_path: null,
+          started_at: null,
+          updated_at: item.updatedAt || null,
+          source_locator: `https://gemini.google.com/app/${encodeURIComponent(detail.cid)}`,
+          source_fingerprint: crypto.createHash("sha256").update(JSON.stringify({
+            cid: detail.cid,
+            updatedAt: item.updatedAt || null,
+            turns
+          })).digest("hex"),
           turns
-        })).digest("hex"),
-        turns
-      });
+        });
+      } else {
+        const existing = existingSessions.get(item.cid);
+        if (existing) {
+          sessions.push(existing);
+        }
+      }
     }
     return { listItems: value.listItems, sessions, detailFailures, usedBrowserContext: true };
   } finally {
@@ -502,21 +526,37 @@ async function collectViaBrowserContext() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Main — CDP-first for consistency, direct cookie as fast fallback
+// ---------------------------------------------------------------------------
+
 (async () => {
   mkdirp(detailDir);
   mkdirp(normalizedDir);
 
   let collection;
-  let fallbackError = null;
+  let directFailed = false;
+
+  // Strategy: try direct cookie collection first (still works reliably for Gemini
+  // when cookies are fresh), then CDP browser as fallback with auto-discovery.
+  // This differs from chatgpt-web which must use CDP-first due to Cloudflare.
   try {
-    collection = await collectDirect();
-  } catch (error) {
-    fallbackError = error;
-    collection = await collectViaBrowserContext().catch((browserError) => {
-      const directMessage = error && error.message ? error.message : String(error);
+    collection = await collectDirectWithRetry();
+  } catch (directError) {
+    directFailed = true;
+    process.stderr.write(`[gemini-web] direct collection failed: ${directError.message}; falling back to CDP browser...\n`);
+    try {
+      collection = await collectViaBrowserContext();
+    } catch (browserError) {
+      const directMessage = directError && directError.message ? directError.message : String(directError);
       const browserMessage = browserError && browserError.message ? browserError.message : String(browserError);
-      throw new Error(`Gemini direct collection failed: ${directMessage}; browser-context fallback failed: ${browserMessage}. Start Edge/Chrome with --remote-debugging-port=9222 and keep https://gemini.google.com/app open.`);
-    });
+      throw new Error(
+        `Gemini direct collection failed: ${directMessage}; ` +
+        `CDP browser collection also failed: ${browserMessage}. ` +
+        `Start Edge/Chrome with --remote-debugging-port=9222 and keep https://gemini.google.com/app open, ` +
+        `or run: assetiweave-cli conversation web auth-detect ${root} --domain google.com --credential cookie --probe-url https://gemini.google.com/app`
+      );
+    }
   }
 
   writeJSON(normalizedFile, { sessions: collection.sessions });
@@ -531,7 +571,7 @@ async function collectViaBrowserContext() {
     turn_count: turnCount,
     detail_failures: collection.detailFailures,
     used_browser_context: collection.usedBrowserContext,
-    direct_collection_failed: Boolean(fallbackError)
+    direct_collection_failed: directFailed
   }));
 })().catch((error) => {
   console.error(error && error.message ? error.message : String(error));

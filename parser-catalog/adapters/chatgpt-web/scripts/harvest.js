@@ -3,13 +3,26 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { parseConversation, timestamp } = require("./chatgpt-normalize.cjs");
+const { acquireCDPTarget, tryRefreshAuth } = require("./cdp-browser.cjs");
 
 const root = process.env.ASSETIWEAVE_HARVESTER_DIR || process.cwd();
-const runID = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+const runID = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\\d{3}Z$/, "Z");
 const rawDir = path.join(root, "output", "raw", runID);
 const detailDir = path.join(rawDir, "details");
 const normalizedDir = path.join(root, "output", "normalized");
 const normalizedFile = path.join(normalizedDir, "sessions.json");
+
+const existingSessions = new Map();
+try {
+  if (fs.existsSync(normalizedFile)) {
+    const data = JSON.parse(fs.readFileSync(normalizedFile, "utf8"));
+    if (Array.isArray(data.sessions)) {
+      for (const s of data.sessions) {
+        existingSessions.set(s.external_id, s);
+      }
+    }
+  }
+} catch {}
 
 function mkdirp(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -120,66 +133,36 @@ function totalFromSnapshot(snapshot) {
   return null;
 }
 
-async function readRemoteDebugJSON(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`DevTools endpoint ${url} returned ${response.status}`);
-  return response.json();
-}
-
-function createCDPClient(webSocketDebuggerURL) {
-  let nextID = 1;
-  const pending = new Map();
-  const ws = new WebSocket(webSocketDebuggerURL);
-  const opened = new Promise((resolve, reject) => {
-    ws.onopen = resolve;
-    ws.onerror = () => reject(new Error("failed to connect to DevTools websocket"));
-  });
-  ws.onmessage = (event) => {
-    const message = JSON.parse(event.data);
-    if (!message.id || !pending.has(message.id)) return;
-    const { resolve, reject } = pending.get(message.id);
-    pending.delete(message.id);
-    if (message.error) reject(new Error(message.error.message || JSON.stringify(message.error)));
-    else resolve(message.result);
-  };
-  return {
-    async send(method, params = {}) {
-      await opened;
-      const id = nextID++;
-      const promise = new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
-      ws.send(JSON.stringify({ id, method, params }));
-      return promise;
-    },
-    close() {
-      ws.close();
-    }
-  };
-}
+// ---------------------------------------------------------------------------
+// CDP browser collection (PRIMARY path)
+// ---------------------------------------------------------------------------
 
 async function collectViaBrowserContext() {
-  const endpoint = process.env.ASSETIWEAVE_CHATGPT_CDP_ENDPOINT || "http://127.0.0.1:9222";
-  const targets = await readRemoteDebugJSON(endpoint.replace(/\/$/, "") + "/json/list");
-  const target = targets.find((item) =>
-    item.type === "page" &&
-    typeof item.url === "string" &&
-    /^https:\/\/chatgpt\.com\/?/.test(item.url) &&
-    item.webSocketDebuggerUrl
-  );
-  if (!target) {
-    throw new Error("ChatGPT page was not found on DevTools endpoint " + endpoint);
-  }
+  const { client, target, launched } = await acquireCDPTarget({
+    urlPattern: /^https:\/\/chatgpt\.com\/?/,
+    siteURL: "https://chatgpt.com",
+    endpointEnv: "ASSETIWEAVE_CHATGPT_CDP_ENDPOINT",
+  });
 
-  const client = createCDPClient(target.webSocketDebuggerUrl);
   try {
     await client.send("Runtime.enable");
     const limit = Number(process.env.ASSETIWEAVE_CHATGPT_LIMIT || 100);
     const expression = String.raw`(async (limit) => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      for (let i = 0; i < 40; i++) {
+        if (window.location.hostname.includes("chatgpt.com")) break;
+        await sleep(250);
+      }
       const readJSON = async (url, init) => {
         const response = await fetch(url, init);
         const body = await response.text();
         let json = null;
         try { json = JSON.parse(body); } catch {}
         return { status_code: response.status, body, json };
+      };
+      const timestamp = (sec) => {
+        if (typeof sec !== "number") return null;
+        return new Date(sec * 1000).toISOString();
       };
       const session = await readJSON("/api/auth/session", {
         credentials: "include",
@@ -213,10 +196,16 @@ async function collectViaBrowserContext() {
           : Array.isArray(body.conversations)
             ? body.conversations
             : [];
+      const cache = ${JSON.stringify(Object.fromEntries(Array.from(existingSessions.entries()).map(([k, v]) => [k, v.updated_at])))};
       const details = [];
       for (let index = 0; index < items.length; index++) {
         const id = typeof items[index].id === "string" ? items[index].id : "";
         if (!id) continue;
+        const item = items[index];
+        const updatedAt = timestamp(item.update_time);
+        if (cache[id] === updatedAt) {
+          continue; // Skip fetch as local cache is up to date
+        }
         const detail = await readJSON("/backend-api/conversation/" + encodeURIComponent(id), {
           credentials: "include",
           headers
@@ -241,6 +230,7 @@ async function collectViaBrowserContext() {
     writeJSON(path.join(rawDir, "context.json"), {
       browser_context: true,
       browser_target_url: value.target_url,
+      browser_launched: launched,
       access_token_found: true
     });
     writeJSON(path.join(rawDir, "list-page-1.json"), {
@@ -255,6 +245,10 @@ async function collectViaBrowserContext() {
     client.close();
   }
 }
+
+// ---------------------------------------------------------------------------
+// Direct cookie-based collection (FALLBACK path)
+// ---------------------------------------------------------------------------
 
 async function collectDirect() {
   const authProbe = readJSON(path.join(root, "requests", "auth-probe.json"));
@@ -300,6 +294,14 @@ async function collectDirect() {
   for (let index = 0; index < listItems.length; index++) {
     const item = listItems[index];
     const sessionID = text(item.id);
+    
+    // Check local cache
+    const existing = existingSessions.get(sessionID);
+    const updatedAt = timestamp(item.update_time);
+    if (existing && existing.updated_at === updatedAt) {
+      continue;
+    }
+
     const url = "https://chatgpt.com/backend-api/conversation/" + encodeURIComponent(sessionID);
     const snapshot = await requestJSON(url, headers);
     details.push({ index: index + 1, id: sessionID, snapshot });
@@ -307,58 +309,102 @@ async function collectDirect() {
   return { listItems, details };
 }
 
+// ---------------------------------------------------------------------------
+// Direct collection with auto auth-detect retry
+// ---------------------------------------------------------------------------
+
+async function collectDirectWithRetry() {
+  try {
+    return await collectDirect();
+  } catch (firstError) {
+    // Attempt to refresh auth credentials automatically
+    process.stderr.write(`[chatgpt-web] direct collection failed: ${firstError.message}; attempting auth-detect refresh...\n`);
+    const refreshed = tryRefreshAuth(root, "chatgpt.com");
+    if (!refreshed) throw firstError;
+    // Retry once with refreshed cookies
+    return await collectDirect();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Normalization
+// ---------------------------------------------------------------------------
+
 function normalizeCollection(listItems, details) {
   const sessions = [];
   let detailFailures = 0;
-  const itemByID = new Map(listItems.map((item) => [text(item.id), item]));
-  for (const detail of details) {
-    const item = itemByID.get(text(detail.id)) || {};
-    const sessionID = text(detail.id);
-    const snapshot = detail.snapshot;
-    writeJSON(path.join(detailDir, `${String(detail.index).padStart(4, "0")}-${safeName(sessionID)}.json`), {
-      status_code: snapshot.status_code,
-      body: snapshot.body
-    });
-    if (snapshot.status_code !== 200 || !snapshot.json) {
-      detailFailures++;
-      continue;
-    }
-    const turns = parseConversation(snapshot.json);
-    if (!turns.length) continue;
-    const updatedAt = timestamp(snapshot.json.update_time) || timestamp(item.update_time);
-    sessions.push({
-      external_id: sessionID,
-      title: text(snapshot.json.title) || text(item.title) || null,
-      project_path: null,
-      started_at: timestamp(snapshot.json.create_time) || timestamp(item.create_time),
-      updated_at: updatedAt,
-      source_locator: `https://chatgpt.com/c/${encodeURIComponent(sessionID)}`,
-      source_fingerprint: crypto.createHash("sha256").update(JSON.stringify({
-        id: sessionID,
-        updatedAt,
+  for (const item of listItems) {
+    const sessionID = text(item.id);
+    const detail = details.find((d) => text(d.id) === sessionID);
+    if (detail) {
+      const snapshot = detail.snapshot;
+      writeJSON(path.join(detailDir, `${String(detail.index).padStart(4, "0")}-${safeName(sessionID)}.json`), {
+        status_code: snapshot.status_code,
+        body: snapshot.body
+      });
+      if (snapshot.status_code !== 200 || !snapshot.json) {
+        detailFailures++;
+        continue;
+      }
+      const turns = parseConversation(snapshot.json);
+      if (!turns.length) continue;
+      const updatedAt = timestamp(snapshot.json.update_time) || timestamp(item.update_time);
+      sessions.push({
+        external_id: sessionID,
+        title: text(snapshot.json.title) || text(item.title) || null,
+        project_path: null,
+        started_at: timestamp(snapshot.json.create_time) || timestamp(item.create_time),
+        updated_at: updatedAt,
+        source_locator: `https://chatgpt.com/c/${encodeURIComponent(sessionID)}`,
+        source_fingerprint: crypto.createHash("sha256").update(JSON.stringify({
+          id: sessionID,
+          updatedAt,
+          turns
+        })).digest("hex"),
         turns
-      })).digest("hex"),
-      turns
-    });
+      });
+    } else {
+      const existing = existingSessions.get(sessionID);
+      if (existing) {
+        sessions.push(existing);
+      }
+    }
   }
   return { sessions, detailFailures };
 }
+
+// ---------------------------------------------------------------------------
+// Main — CDP-first, direct-cookie as fallback
+// ---------------------------------------------------------------------------
 
 (async () => {
   mkdirp(detailDir);
   mkdirp(normalizedDir);
 
   let collection;
-  let fallbackError = null;
+  let usedBrowserContext = false;
+  let directFailed = false;
+
+  // Strategy: try CDP browser first (most reliable for ChatGPT),
+  // fall back to direct cookie-based collection if no browser available.
   try {
-    collection = await collectDirect();
-  } catch (error) {
-    fallbackError = error;
-    collection = await collectViaBrowserContext().catch((browserError) => {
-      const directMessage = error && error.message ? error.message : String(error);
+    collection = await collectViaBrowserContext();
+    usedBrowserContext = true;
+  } catch (browserError) {
+    process.stderr.write(`[chatgpt-web] CDP browser collection failed: ${browserError.message}; falling back to direct collection...\n`);
+    directFailed = true;
+    try {
+      collection = await collectDirectWithRetry();
+    } catch (directError) {
       const browserMessage = browserError && browserError.message ? browserError.message : String(browserError);
-      throw new Error(`ChatGPT direct collection failed: ${directMessage}; browser-context fallback failed: ${browserMessage}. Start Edge/Chrome with --remote-debugging-port=9222 and keep https://chatgpt.com open.`);
-    });
+      const directMessage = directError && directError.message ? directError.message : String(directError);
+      throw new Error(
+        `ChatGPT CDP browser collection failed: ${browserMessage}; ` +
+        `direct collection also failed: ${directMessage}. ` +
+        `Start Edge/Chrome with --remote-debugging-port=9222 and keep https://chatgpt.com open, ` +
+        `or run: assetiweave-cli conversation web auth-detect ${root} --domain chatgpt.com --credential cookie`
+      );
+    }
   }
 
   const { sessions, detailFailures } = normalizeCollection(collection.listItems, collection.details);
@@ -374,7 +420,8 @@ function normalizeCollection(listItems, details) {
     session_count: sessions.length,
     turn_count: turnCount,
     detail_failures: detailFailures,
-    used_browser_context: Boolean(fallbackError)
+    used_browser_context: usedBrowserContext,
+    direct_collection_failed: directFailed
   }));
 })().catch((error) => {
   console.error(error && error.message ? error.message : String(error));
