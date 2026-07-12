@@ -1316,7 +1316,11 @@ mod tests {
     }
 
     fn desktop_only_tauri_methods() -> BTreeSet<&'static str> {
-        BTreeSet::from(["get_cli_tools_status", "install_cli_tools"])
+        BTreeSet::from([
+            "copy_prompt_card_to_clipboard",
+            "get_cli_tools_status",
+            "install_cli_tools",
+        ])
     }
 
     fn extract_tauri_handler_methods(content: &str) -> BTreeSet<String> {
