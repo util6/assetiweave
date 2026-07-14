@@ -874,17 +874,18 @@ pub(super) fn parse_external_adapter_output(
     let mut item_count = 0usize;
 
     for (index, line) in stdout.lines().enumerate() {
-        if line.as_bytes().len() > DEFAULT_MAX_LINE_BYTES {
-            return Err(format!(
-                "adapter output line {} exceeds max line size",
-                index + 1
-            ));
-        }
+        let line_bytes = line.as_bytes().len();
+        validate_external_adapter_item_line_size(index + 1, line_bytes)?;
         if line.trim().is_empty() {
             continue;
         }
         let parsed: ExternalAdapterLine = serde_json::from_str(line)
             .map_err(|error| format!("invalid adapter NDJSON line {}: {error}", index + 1))?;
+        let is_large_item = parsed.kind == "item"
+            && parsed.item.as_ref().is_some_and(|item| {
+                matches!(adapter_item_kind(item), "session" | "markdown_export")
+            });
+        validate_external_adapter_line_size(index + 1, line_bytes, is_large_item)?;
         match parsed.kind.as_str() {
             "item" => {
                 item_count += 1;
@@ -946,6 +947,32 @@ pub(super) fn parse_external_adapter_output(
         warnings,
         stderr,
     })
+}
+
+pub(super) fn validate_external_adapter_line_size(
+    line_number: usize,
+    line_bytes: usize,
+    is_large_item: bool,
+) -> AppResult<()> {
+    validate_external_adapter_item_line_size(line_number, line_bytes)?;
+    if line_bytes > DEFAULT_MAX_CONTROL_LINE_BYTES && !is_large_item {
+        return Err(format!(
+            "adapter output line {line_number} exceeds max control line size ({line_bytes} bytes > {DEFAULT_MAX_CONTROL_LINE_BYTES} bytes)"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_external_adapter_item_line_size(
+    line_number: usize,
+    line_bytes: usize,
+) -> AppResult<()> {
+    if line_bytes > DEFAULT_MAX_ITEM_LINE_BYTES {
+        return Err(format!(
+            "adapter output line {line_number} exceeds max item line size ({line_bytes} bytes > {DEFAULT_MAX_ITEM_LINE_BYTES} bytes)"
+        ));
+    }
+    Ok(())
 }
 
 fn adapter_item_kind(item: &Value) -> &str {

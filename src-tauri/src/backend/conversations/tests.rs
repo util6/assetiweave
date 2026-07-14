@@ -77,11 +77,57 @@ fn adapter_with_manifest_runtime(
 fn adapter_output_rejects_oversized_line() {
     let line = format!(
         "{{\"type\":\"warning\",\"message\":\"{}\"}}\n{{\"type\":\"complete\",\"item\":{{}}}}\n",
-        "x".repeat(DEFAULT_MAX_LINE_BYTES + 1)
+        "x".repeat(DEFAULT_MAX_CONTROL_LINE_BYTES + 1)
     );
     let error = parse_external_adapter_output("probe", line.into_bytes(), Vec::new()).unwrap_err();
 
-    assert!(error.contains("exceeds max line size"));
+    assert!(error.contains("exceeds max control line size"));
+}
+
+#[test]
+fn adapter_output_accepts_large_atomic_session_item() {
+    let output = format!(
+        "{}\n{}\n",
+        json!({
+            "type": "item",
+            "item": {
+                "kind": "session",
+                "session": {
+                    "external_id": "large-session",
+                    "title": null,
+                    "project_path": null,
+                    "started_at": null,
+                    "updated_at": null,
+                    "source_locator": null,
+                    "source_fingerprint": null,
+                    "turns": [{
+                        "external_id": "turn-1",
+                        "turn_index": 0,
+                        "user_text": "x".repeat(DEFAULT_MAX_CONTROL_LINE_BYTES + 1),
+                        "title": null,
+                        "started_at": null,
+                        "ended_at": null,
+                        "parts": []
+                    }]
+                }
+            }
+        }),
+        json!({ "type": "complete", "item": { "session_count": 1 } })
+    );
+
+    let result = parse_external_adapter_output("read_session", output.into_bytes(), Vec::new())
+        .expect("an atomic session item may exceed the generic control-line budget");
+
+    assert_eq!(result.sessions.len(), 1);
+    assert_eq!(result.sessions[0].external_id, "large-session");
+}
+
+#[test]
+fn adapter_line_size_rejects_item_above_atomic_limit() {
+    let error = validate_external_adapter_line_size(1, DEFAULT_MAX_ITEM_LINE_BYTES + 1, true)
+        .expect_err("session items must still respect the atomic line safety cap");
+
+    assert!(error.contains("exceeds max item line size"));
 }
 
 #[test]

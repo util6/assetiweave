@@ -1,7 +1,8 @@
 pub(super) use super::external::read_external_adapter_sessions;
 #[cfg(test)]
 pub(super) use super::external::{
-    parse_external_adapter_output, run_external_adapter, validate_external_adapter_manifest,
+    parse_external_adapter_output, run_external_adapter, validate_external_adapter_line_size,
+    validate_external_adapter_manifest,
 };
 pub(super) use super::io_utils::*;
 pub(super) use super::types::*;

@@ -4,7 +4,8 @@ pub(super) const EXTERNAL_ADAPTER_PROTOCOL_VERSION: u32 = 1;
 pub(super) const DEFAULT_PROBE_TIMEOUT_MS: u64 = 10_000;
 pub(super) const DEFAULT_LIST_TIMEOUT_MS: u64 = 30_000;
 pub(super) const DEFAULT_READ_TIMEOUT_MS: u64 = 120_000;
-pub(super) const DEFAULT_MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
+pub(super) const DEFAULT_MAX_CONTROL_LINE_BYTES: usize = 8 * 1024 * 1024;
+pub(super) const DEFAULT_MAX_ITEM_LINE_BYTES: usize = 64 * 1024 * 1024;
 pub(super) const DEFAULT_MAX_TOTAL_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
