@@ -106,6 +106,7 @@ export interface ConversationSourceUpsertResult {
 }
 
 export interface ImportConversationSourceParams {
+  confirmed?: boolean;
   config_json?: string | null;
   manifest_path: string;
   record_kind?: ConversationRecordKind;
@@ -127,7 +128,7 @@ export type StartConversationSync = typeof syncConversations;
 
 export type ConversationSyncTaskStatus = "running" | "completed" | "failed";
 
-export type ConversationScriptCatalogSourceKind = "github";
+export type ConversationScriptCatalogSourceKind = "github" | "artifact_zip" | "local_directory";
 
 export interface ConversationScriptCatalogSource {
   type: ConversationScriptCatalogSourceKind;
@@ -160,7 +161,14 @@ export type ConversationAdapterPackageCatalogStatus =
   | "installed"
   | "update_available"
   | "runtime_missing"
-  | "verification_failed";
+  | "verification_failed"
+  | "hash_mismatch"
+  | "manifest_invalid"
+  | "core_incompatible"
+  | "built_in"
+  | "local_registered"
+  | "git_registered"
+  | "dev_override";
 
 export interface ConversationAdapterPackageCatalogEntry {
   item: ConversationScriptCatalogItem;
@@ -202,6 +210,38 @@ export interface ConversationAdapterPackageChangePreflight {
   confirmation_required: boolean;
 }
 
+export interface ConversationAdapterCatalogRelease {
+  catalog_url: string;
+  package_id: string;
+  adapter_id: string;
+  name: string;
+  publisher: string;
+  version: string;
+  channel: "stable" | "beta";
+  released_at?: string | null;
+  core_compatibility: string;
+  artifact_url: string;
+  artifact_size?: number | null;
+  artifact_sha256: string;
+  changelog_markdown: string;
+  breaking_change: boolean;
+  runtime_protocol: string;
+  record_kind: ConversationRecordKind;
+  package_manifest_file: string;
+  adapter_manifest_file: string;
+  adapter_manifest_json?: string | null;
+  source_json?: string | null;
+  etag?: string | null;
+  fetched_at: string;
+}
+
+export interface ConversationAdapterPackageUpdateStatus {
+  package_id: string;
+  current_version: string;
+  latest_compatible_release?: ConversationAdapterCatalogRelease | null;
+  update_available: boolean;
+}
+
 export interface ConversationScriptCatalogEntry {
   item: ConversationScriptCatalogItem;
   installed: boolean;
@@ -217,6 +257,8 @@ export interface ConversationScriptInstallTaskSnapshot {
   status: ConversationScriptInstallTaskStatus;
   item_id: string;
   package_id?: string;
+  action?: "install" | "update" | "uninstall";
+  version?: string | null;
   catalog_url?: string | null;
   dry_run: boolean;
   phase?: string | null;
@@ -362,10 +404,11 @@ export async function listConversationAdapterRuntimeStatuses(): Promise<
 export async function registerConversationAdapter(
   manifestPath: string,
   dryRun = false,
+  confirmed = false,
 ): Promise<ConversationAdapterRegisterResult> {
   try {
     return await invoke<ConversationAdapterRegisterResult>("register_conversation_adapter", {
-      params: { dry_run: dryRun, manifest_path: manifestPath, yes: true },
+      params: { dry_run: dryRun, manifest_path: manifestPath, yes: confirmed },
     });
   } catch (error) {
     if (isTauriRuntime()) {
@@ -419,7 +462,11 @@ export async function importConversationSource(
   }
 
   onProgress?.("source");
-  const registration = await registerConversationAdapter(validation.manifest_path, false);
+  const registration = await registerConversationAdapter(
+    validation.manifest_path,
+    false,
+    params.confirmed ?? false,
+  );
   const nowIso = new Date().toISOString();
   const source: ConversationSource = {
     id:
@@ -602,8 +649,56 @@ export async function prepareConversationAdapterPackageChange(params: {
   );
 }
 
+export async function listConversationAdapterPackageReleases(params: {
+  packageId: string;
+  catalogUrl?: string | null;
+  refresh?: boolean;
+}): Promise<ConversationAdapterCatalogRelease[]> {
+  return await invoke<ConversationAdapterCatalogRelease[]>(
+    "list_conversation_adapter_package_releases",
+    {
+      params: {
+        catalog_url: params.catalogUrl?.trim() || null,
+        package_id: params.packageId,
+        refresh: params.refresh ?? false,
+      },
+    },
+  );
+}
+
+export async function refreshConversationAdapterCatalogs(params?: {
+  catalogUrl?: string | null;
+  force?: boolean;
+}): Promise<ConversationAdapterCatalogRelease[]> {
+  return await invoke<ConversationAdapterCatalogRelease[]>(
+    "refresh_conversation_adapter_catalogs",
+    {
+      params: {
+        catalog_url: params?.catalogUrl?.trim() || null,
+        force: params?.force ?? true,
+      },
+    },
+  );
+}
+
+export async function checkConversationAdapterPackageUpdates(params?: {
+  catalogUrl?: string | null;
+  force?: boolean;
+}): Promise<ConversationAdapterPackageUpdateStatus[]> {
+  return await invoke<ConversationAdapterPackageUpdateStatus[]>(
+    "check_conversation_adapter_package_updates",
+    {
+      params: {
+        catalog_url: params?.catalogUrl?.trim() || null,
+        force: params?.force ?? false,
+      },
+    },
+  );
+}
+
 export async function installConversationAdapterPackage(params: {
   packageId: string;
+  version?: string | null;
   catalogUrl?: string | null;
   dryRun?: boolean;
   confirmed?: boolean;
@@ -614,6 +709,7 @@ export async function installConversationAdapterPackage(params: {
         catalog_url: params.catalogUrl?.trim() || null,
         dry_run: params.dryRun ?? false,
         package_id: params.packageId,
+        version: params.version?.trim() || null,
         yes: params.confirmed ?? false,
       },
     });
@@ -628,6 +724,7 @@ export async function installConversationAdapterPackage(params: {
 
 export async function updateConversationAdapterPackage(params: {
   packageId: string;
+  version?: string | null;
   catalogUrl?: string | null;
   dryRun?: boolean;
   confirmed?: boolean;
@@ -638,6 +735,7 @@ export async function updateConversationAdapterPackage(params: {
         catalog_url: params.catalogUrl?.trim() || null,
         dry_run: params.dryRun ?? false,
         package_id: params.packageId,
+        version: params.version?.trim() || null,
         yes: params.confirmed ?? false,
       },
     });
@@ -654,11 +752,25 @@ export async function uninstallConversationAdapterPackage(params: {
   packageId: string;
   dryRun?: boolean;
   confirmed?: boolean;
-}): Promise<unknown> {
-  return await invoke("uninstall_conversation_adapter_package", {
+}): Promise<ConversationScriptInstallTaskSnapshot> {
+  return await invoke<ConversationScriptInstallTaskSnapshot>("uninstall_conversation_adapter_package", {
     params: {
       dry_run: params.dryRun ?? false,
       package_id: params.packageId,
+      yes: params.confirmed ?? false,
+    },
+  });
+}
+
+export async function unregisterConversationAdapter(params: {
+  adapterId: string;
+  dryRun?: boolean;
+  confirmed?: boolean;
+}): Promise<unknown> {
+  return await invoke("unregister_conversation_adapter", {
+    params: {
+      adapter_id: params.adapterId,
+      dry_run: params.dryRun ?? false,
       yes: params.confirmed ?? false,
     },
   });

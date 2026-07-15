@@ -6,6 +6,7 @@ import {
   installConversationScript,
   importConversationSource,
   listConversationAdapterPackages,
+  listConversationAdapterPackageReleases,
   listConversationScriptCatalog,
   listConversationAdapterRuntimeStatuses,
   mergeConversationQuestions,
@@ -189,6 +190,7 @@ describe("conversation services", () => {
         catalog_url: null,
         dry_run: false,
         package_id: "codex-session",
+        version: null,
         yes: true,
       },
     });
@@ -219,6 +221,24 @@ describe("conversation services", () => {
         action: "install",
         adapter_id: null,
         package_id: "codex-session",
+      },
+    });
+  });
+
+  it("lists Catalog v2 releases for an exact package", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValueOnce([]);
+
+    await listConversationAdapterPackageReleases({
+      packageId: "io.github.util6.codex-session",
+      refresh: true,
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("list_conversation_adapter_package_releases", {
+      params: {
+        catalog_url: null,
+        package_id: "io.github.util6.codex-session",
+        refresh: true,
       },
     });
   });
@@ -324,7 +344,7 @@ describe("conversation services", () => {
       params: {
         dry_run: false,
         manifest_path: "/tmp/adapter/conversation-adapter.json",
-        yes: true,
+        yes: false,
       },
     });
     expect(invokeMock).toHaveBeenNthCalledWith(3, "upsert_conversation_source", {

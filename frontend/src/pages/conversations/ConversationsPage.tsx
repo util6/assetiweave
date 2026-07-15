@@ -592,6 +592,7 @@ export function ConversationsPage({
     try {
       const result = await importConversationSource(
         {
+          confirmed: true,
           config_json: values.config_json,
           manifest_path: values.manifest_path,
           record_kind: currentRecordKind,
