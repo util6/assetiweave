@@ -252,6 +252,7 @@ export function PromptOverviewPage({
   const actionsDisabled = availability !== "available";
   const activeNote = creatingNew ? null : filteredNotes.find((note) => note.id === selectedNoteId) ?? filteredNotes[0] ?? null;
   const activeNoteIndex = activeNote ? filteredNotes.findIndex((note) => note.id === activeNote.id) : -1;
+  const newNoteTags = getPromptNewNoteTags(selectedTagGroups);
 
   function handleSaveNote(values: PromptNoteDraft, targetFace: PromptCardFace = "front") {
     const normalizedContent = values.content.trim();
@@ -467,6 +468,7 @@ export function PromptOverviewPage({
           copiedStep={activeNote && copiedState?.noteId === activeNote.id ? copiedState.step : null}
           filteredCount={filteredNotes.length}
           newDraft={newDraft}
+          newNoteTags={newNoteTags}
           notes={filteredNotes}
           onCopyActive={(step, text, attachments) => {
             if (activeNote) {
@@ -608,6 +610,7 @@ function PromptStageCard({
   copiedStep,
   filteredCount,
   newDraft,
+  newNoteTags,
   notes,
   onCopyActive,
   onDeleteActive,
@@ -628,6 +631,7 @@ function PromptStageCard({
   copiedStep: PromptCopyStep | null;
   filteredCount: number;
   newDraft: PromptNoteDraftCache;
+  newNoteTags: string[];
   notes: PromptNote[];
   onCopyActive: (step: PromptCopyStep, text: string, attachments: PromptImageAttachment[]) => void;
   onDeleteActive: () => void;
@@ -713,7 +717,7 @@ function PromptStageCard({
       attachments: draftAttachments,
       projectPath: activeNote?.projectPath ?? "",
       sessionName: activeNote?.sessionName ?? "",
-      tags: activeNote?.tags ?? [],
+      tags: activeNote?.tags ?? newNoteTags,
       title: activeNote?.title ?? "",
     }, cardFace);
     setEditable(false);
@@ -816,7 +820,7 @@ function PromptStageCard({
     const faceCharacterCount = faceDisplayContent.length;
     const faceLineCount = faceDisplayContent ? faceDisplayContent.split("\n").length : 0;
     const emptyBackFace = face === "back" && !faceContent;
-    const tagGroupIds = activeNote ? getPromptNoteTagGroupIds(activeNote) : [DEFAULT_PROMPT_TAG_GROUP_ID];
+    const tagGroupIds = activeNote ? getPromptNoteTagGroupIds(activeNote) : getPromptNoteTagGroupIds({ tags: newNoteTags });
 
     return (
       <article
@@ -1714,6 +1718,12 @@ function buildPromptTagGroupOptions(notes: PromptNote[], defaultLabel: string): 
 
 function buildPromptTagLibrary(notes: PromptNote[]) {
   return normalizePromptTagLibrary(notes.flatMap((note) => note.tags));
+}
+
+function getPromptNewNoteTags(selectedTagGroups: PromptTagGroupId[]) {
+  return normalizeEditablePromptTags(
+    selectedTagGroups.filter((groupId) => groupId !== DEFAULT_PROMPT_TAG_GROUP_ID),
+  );
 }
 
 function getPromptNoteTagGroupIds(note: Pick<PromptNote, "tags">): PromptTagGroupId[] {

@@ -247,6 +247,30 @@ describe("PromptOverviewPage", () => {
     });
   });
 
+  it("applies the active tag when creating a prompt card from a tag filter", async () => {
+    seedPromptCards([
+      createStoredPromptCard("Ops prompt", "ops grouped prompt", ["ops"], "/tmp/project", "s1", "2026-01-01T00:00:00.000Z"),
+      createStoredPromptCard("Design prompt", "design grouped prompt", ["design"], "/tmp/project", "s2", "2026-01-02T00:00:00.000Z"),
+    ]);
+    renderPromptPage();
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "标签筛选" }));
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "ops" }));
+    fireEvent.keyDown(screen.getByRole("menu", { name: "标签筛选" }), { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "新建卡片" }));
+    expect(screen.getByTestId("prompt-active-card").textContent).toContain("ops");
+    fireEvent.change(screen.getByPlaceholderText("粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。"), {
+      target: { value: "new ops prompt" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存卡片" }));
+
+    const stored = JSON.parse(localStorage.getItem("assetiweave.promptNotes") ?? "[]");
+    expect(stored[0]).toMatchObject({
+      content: "new ops prompt",
+      tags: ["ops"],
+    });
+  });
+
   it("shows random color swatches for toolbar tag group options", async () => {
     seedPromptCards([
       createStoredPromptCard("Ops prompt", "ops grouped prompt", ["ops"], "/tmp/project", "s1", "2026-01-01T00:00:00.000Z"),
