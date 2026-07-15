@@ -73,6 +73,25 @@ pub enum ConversationPackageUpdatePolicy {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+pub enum ConversationAdapterPackageChangeAction {
+    Register,
+    Unregister,
+    Install,
+    Update,
+    Uninstall,
+    Revalidate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationAdapterPackageChangeRisk {
+    ReadOnly,
+    Write,
+    HighRiskWrite,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum ConversationPartRole {
     User,
     Assistant,

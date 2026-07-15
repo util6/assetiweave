@@ -2142,6 +2142,104 @@
       "supports_dry_run": true
     },
     {
+      "canonical_method": "conversation.adapter_package.inspect",
+      "cli": "assetiweave-cli conversation adapter inspect <package-or-adapter-id>",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Inspect an active conversation adapter package or adapter runtime",
+      "exposure": "friendly",
+      "method": "conversation.adapter_package.inspect",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter_id": {
+            "aliases": [
+              "adapterId"
+            ],
+            "default": null,
+            "description": "Optional adapter identifier",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "default": null,
+            "description": "Optional package identifier",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.adapter_package.prepare_change",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Preview a conversation adapter package lifecycle change",
+      "exposure": "friendly",
+      "method": "conversation.adapter_package.prepare_change",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "description": "Lifecycle action to preview",
+            "enum": [
+              "register",
+              "unregister",
+              "install",
+              "update",
+              "uninstall",
+              "revalidate"
+            ],
+            "type": "string"
+          },
+          "adapter_id": {
+            "aliases": [
+              "adapterId"
+            ],
+            "default": null,
+            "description": "Optional adapter identifier",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "default": null,
+            "description": "Optional package identifier",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.adapter_package.catalog",
       "cli": "assetiweave-cli conversation package catalog",
       "confirmation_required": false,
@@ -6536,6 +6634,104 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.adapter_package.inspect",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Inspect an active conversation adapter package or adapter runtime",
+      "exposure": "app",
+      "method": "inspect_conversation_adapter_package",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter_id": {
+            "aliases": [
+              "adapterId"
+            ],
+            "default": null,
+            "description": "Optional adapter identifier",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "default": null,
+            "description": "Optional package identifier",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.adapter_package.prepare_change",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Preview a conversation adapter package lifecycle change",
+      "exposure": "app",
+      "method": "prepare_conversation_adapter_package_change",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "description": "Lifecycle action to preview",
+            "enum": [
+              "register",
+              "unregister",
+              "install",
+              "update",
+              "uninstall",
+              "revalidate"
+            ],
+            "type": "string"
+          },
+          "adapter_id": {
+            "aliases": [
+              "adapterId"
+            ],
+            "default": null,
+            "description": "Optional adapter identifier",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "default": null,
+            "description": "Optional package identifier",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.adapter_package.catalog",
       "cli": null,
       "confirmation_required": false,
@@ -7980,6 +8176,8 @@
     "conversation.source.disable",
     "conversation.script.catalog",
     "conversation.script.install",
+    "conversation.adapter_package.inspect",
+    "conversation.adapter_package.prepare_change",
     "conversation.adapter_package.catalog",
     "conversation.adapter_package.install",
     "conversation.adapter_package.update",
@@ -8067,6 +8265,8 @@
     "upsert_conversation_source",
     "disable_conversation_source",
     "list_conversation_script_catalog",
+    "inspect_conversation_adapter_package",
+    "prepare_conversation_adapter_package_change",
     "list_conversation_adapter_packages",
     "install_conversation_adapter_package",
     "update_conversation_adapter_package",

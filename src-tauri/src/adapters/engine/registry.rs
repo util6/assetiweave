@@ -894,6 +894,37 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli conversation script install <item-id> --yes")
     ),
     command!(
+        "conversation.adapter_package.inspect",
+        "conversation.adapter_package.inspect",
+        "Inspect an active conversation adapter package or adapter runtime",
+        Read,
+        Friendly,
+        false,
+        crate::backend::application::ConversationAdapterPackageInspectParams,
+        Service => |service, params| service.inspect_conversation_adapter_package(params),
+        &[
+            param!("package_id", "Optional package identifier", ["packageId"]),
+            param!("adapter_id", "Optional adapter identifier", ["adapterId"]),
+        ],
+        Some("assetiweave-cli conversation adapter inspect <package-or-adapter-id>")
+    ),
+    command!(
+        "conversation.adapter_package.prepare_change",
+        "conversation.adapter_package.prepare_change",
+        "Preview a conversation adapter package lifecycle change",
+        Read,
+        Friendly,
+        false,
+        crate::backend::application::ConversationAdapterPackageChangeParams,
+        Service => |service, params| service.prepare_conversation_adapter_package_change(params),
+        &[
+            param!("action", "Lifecycle action to preview"),
+            param!("package_id", "Optional package identifier", ["packageId"]),
+            param!("adapter_id", "Optional adapter identifier", ["adapterId"]),
+        ],
+        None
+    ),
+    command!(
         "conversation.adapter_package.catalog",
         "conversation.adapter_package.catalog",
         "List downloadable conversation adapter packages from a catalog",
@@ -2131,6 +2162,37 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             "Optional catalog JSON URL or local path",
             ["catalogUrl"]
         )],
+        None
+    ),
+    command!(
+        "inspect_conversation_adapter_package",
+        "conversation.adapter_package.inspect",
+        "Inspect an active conversation adapter package or adapter runtime",
+        Read,
+        App,
+        false,
+        crate::backend::application::ConversationAdapterPackageInspectParams,
+        Service => |service, params| service.inspect_conversation_adapter_package(params),
+        &[
+            param!("package_id", "Optional package identifier", ["packageId"]),
+            param!("adapter_id", "Optional adapter identifier", ["adapterId"]),
+        ],
+        None
+    ),
+    command!(
+        "prepare_conversation_adapter_package_change",
+        "conversation.adapter_package.prepare_change",
+        "Preview a conversation adapter package lifecycle change",
+        Read,
+        App,
+        false,
+        crate::backend::application::ConversationAdapterPackageChangeParams,
+        Service => |service, params| service.prepare_conversation_adapter_package_change(params),
+        &[
+            param!("action", "Lifecycle action to preview"),
+            param!("package_id", "Optional package identifier", ["packageId"]),
+            param!("adapter_id", "Optional adapter identifier", ["adapterId"]),
+        ],
         None
     ),
     command!(

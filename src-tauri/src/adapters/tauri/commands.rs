@@ -17,6 +17,7 @@ use crate::backend::capabilities::{
 use crate::{
     backend::application::{
         AppService, ConversationAdapterPackageCatalogParams,
+        ConversationAdapterPackageChangeParams, ConversationAdapterPackageInspectParams,
         ConversationAdapterPackageInstallParams, ConversationAdapterPackageUninstallParams,
         ConversationAdapterUnregisterParams, ConversationPartTranslationUpdateParams,
         ConversationQuestionGetParams, ConversationQuestionListParams,
@@ -1367,6 +1368,24 @@ pub(crate) fn list_conversation_script_catalog(
 }
 
 #[tauri::command]
+pub(crate) fn inspect_conversation_adapter_package(
+    state: State<'_, AppState>,
+    params: ConversationAdapterPackageInspectParams,
+) -> AppResult<crate::backend::application::ConversationAdapterPackageInspection> {
+    AppService::open_with_db_path(state.db_path.clone())?
+        .inspect_conversation_adapter_package(params)
+}
+
+#[tauri::command]
+pub(crate) fn prepare_conversation_adapter_package_change(
+    state: State<'_, AppState>,
+    params: ConversationAdapterPackageChangeParams,
+) -> AppResult<crate::backend::application::ConversationAdapterPackageChangePreflight> {
+    AppService::open_with_db_path(state.db_path.clone())?
+        .prepare_conversation_adapter_package_change(params)
+}
+
+#[tauri::command]
 pub(crate) fn list_conversation_adapter_packages(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageCatalogParams,
@@ -1961,6 +1980,8 @@ pub(crate) fn command_handler(
         upsert_conversation_source,
         disable_conversation_source,
         list_conversation_script_catalog,
+        inspect_conversation_adapter_package,
+        prepare_conversation_adapter_package_change,
         list_conversation_adapter_packages,
         install_conversation_adapter_package,
         update_conversation_adapter_package,

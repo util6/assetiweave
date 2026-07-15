@@ -434,6 +434,28 @@ pub(crate) async fn delete_conversation_adapter_package_sqlx(
     Ok(package)
 }
 
+pub(crate) async fn has_running_conversation_sync_for_adapter_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    adapter_id: &str,
+) -> AppResult<bool> {
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT EXISTS(
+            SELECT 1
+            FROM conversation_sync_runs
+            WHERE tenant_id = ?1 AND adapter_id = ?2 AND status = 'running'
+        )
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(adapter_id)
+    .fetch_one(pool)
+    .await
+    .map(|value| value == 1)
+    .map_err(|error| error.to_string())
+}
+
 pub(crate) async fn list_conversation_sources_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,

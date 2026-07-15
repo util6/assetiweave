@@ -358,6 +358,23 @@ pub(crate) struct ConversationAdapterPackageUninstallParams {
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct ConversationAdapterPackageInspectParams {
+    #[serde(default, alias = "packageId")]
+    pub(crate) package_id: Option<String>,
+    #[serde(default, alias = "adapterId")]
+    pub(crate) adapter_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct ConversationAdapterPackageChangeParams {
+    pub(crate) action: crate::backend::models::ConversationAdapterPackageChangeAction,
+    #[serde(default, alias = "packageId")]
+    pub(crate) package_id: Option<String>,
+    #[serde(default, alias = "adapterId")]
+    pub(crate) adapter_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct ConversationSyncParams {
     #[serde(alias = "sourceId")]
     pub(crate) source_id: Option<String>,

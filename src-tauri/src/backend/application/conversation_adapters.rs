@@ -39,9 +39,22 @@ impl AppService {
     ) -> AppResult<Value> {
         let dry_run = params.dry_run;
         let preview = crate::backend::conversations::register_external_adapter(params)?;
+        let adapter =
+            crate::backend::conversations::adapter_from_registration_preview(preview.clone())?;
+        let preflight = self.prepare_conversation_adapter_package_change(
+            ConversationAdapterPackageChangeParams {
+                action: crate::backend::models::ConversationAdapterPackageChangeAction::Register,
+                package_id: None,
+                adapter_id: Some(adapter.id.clone()),
+            },
+        )?;
+        if !preflight.task_conflicts.is_empty() {
+            return Err(format!(
+                "conversation adapter registration conflicts with running tasks: {}",
+                preflight.task_conflicts.join(", ")
+            ));
+        }
         if !dry_run {
-            let adapter =
-                crate::backend::conversations::adapter_from_registration_preview(preview.clone())?;
             let pool = self.db.pool().clone();
             let tenant_id = self.tenant_id().to_string();
             self.db.block_on(async move {
@@ -56,6 +69,19 @@ impl AppService {
         &self,
         params: ConversationAdapterUnregisterParams,
     ) -> AppResult<Value> {
+        let preflight = self.prepare_conversation_adapter_package_change(
+            ConversationAdapterPackageChangeParams {
+                action: crate::backend::models::ConversationAdapterPackageChangeAction::Unregister,
+                package_id: None,
+                adapter_id: Some(params.adapter_id.clone()),
+            },
+        )?;
+        if !preflight.task_conflicts.is_empty() {
+            return Err(format!(
+                "conversation adapter unregister conflicts with running tasks: {}",
+                preflight.task_conflicts.join(", ")
+            ));
+        }
         if !params.dry_run && !params.yes {
             return Err("conversation.adapter.unregister requires --yes".to_string());
         }
@@ -77,7 +103,8 @@ impl AppService {
             return Ok(json!({
                 "dry_run": true,
                 "unregistered": false,
-                "adapter": adapter
+                "adapter": adapter,
+                "preflight": preflight
             }));
         }
         let pool = self.db.pool().clone();
