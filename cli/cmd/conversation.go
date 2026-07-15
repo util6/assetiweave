@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -18,8 +19,6 @@ func newCmdConversation(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{Use: "conversation", Short: "Manage normalized conversation records"}
 	cmd.AddCommand(newCmdConversationAdapter(f))
 	cmd.AddCommand(newCmdConversationSource(f))
-	cmd.AddCommand(newCmdConversationScript(f))
-	cmd.AddCommand(newCmdConversationPackage(f))
 	cmd.AddCommand(newCmdConversationSync(f))
 	cmd.AddCommand(newCmdConversationSearch(f))
 	cmd.AddCommand(newCmdConversationSession(f))
@@ -387,21 +386,199 @@ func intParam(params map[string]any, key string) int {
 }
 
 func newCmdConversationAdapter(f *cmdutil.Factory) *cobra.Command {
-	cmd := &cobra.Command{Use: "adapter", Short: "Manage conversation adapters"}
-	cmd.AddCommand(&cobra.Command{
-		Use:   "list",
-		Short: "List conversation adapters",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return callAndPrint(cmd, f, schema.MethodConversationAdapterList, map[string]any{})
-		},
-	})
-	cmd.AddCommand(newCmdConversationAdapterScaffold(f))
-	cmd.AddCommand(newCmdConversationAdapterValidate(f))
-	cmd.AddCommand(newCmdConversationAdapterRuntimeStatus(f))
-	cmd.AddCommand(newCmdConversationAdapterRegister(f))
-	cmd.AddCommand(newCmdConversationAdapterUnregister(f))
-	cmd.AddCommand(newCmdConversationAdapterTryRun(f))
+	cmd := &cobra.Command{Use: "adapter", Short: "Inspect conversation adapter runtimes"}
+	cmd.AddCommand(newCmdConversationAdapterList(f))
+	cmd.AddCommand(newCmdConversationAdapterInspect(f))
 	return cmd
+}
+
+func newCmdConversationAdapterList(f *cmdutil.Factory) *cobra.Command {
+	var format string
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List active conversation adapter runtimes",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			inspections, err := loadConversationAdapterInspections(cmd, f)
+			if err != nil {
+				return err
+			}
+			if format == "json" {
+				output.WriteSuccess(f.IOStreams.Out, inspections)
+				return nil
+			}
+			if format != "table" {
+				return fmt.Errorf("unsupported conversation adapter list format %q: use table or json", format)
+			}
+			writeConversationAdapterInspectionTable(f.IOStreams.Out, inspections)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "table", "output format: table or json")
+	return cmd
+}
+
+func newCmdConversationAdapterInspect(f *cmdutil.Factory) *cobra.Command {
+	var format string
+	cmd := &cobra.Command{
+		Use:   "inspect <package-or-adapter-id>",
+		Short: "Inspect one active conversation adapter runtime",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			inspection, err := callConversationAdapterInspect(cmd, f, args[0])
+			if err != nil {
+				return err
+			}
+			if format == "json" {
+				output.WriteSuccess(f.IOStreams.Out, inspection)
+				return nil
+			}
+			if format != "table" {
+				return fmt.Errorf("unsupported conversation adapter inspect format %q: use table or json", format)
+			}
+			writeConversationAdapterInspection(f.IOStreams.Out, inspection)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "table", "output format: table or json")
+	return cmd
+}
+
+type conversationAdapterCatalogListEntry struct {
+	Installed        bool                        `json:"installed"`
+	InstalledPackage *conversationAdapterPackage `json:"installed_package"`
+	InstalledAdapter *conversationAdapterRuntime `json:"installed_adapter"`
+}
+
+type conversationAdapterInspection struct {
+	Origin          string                      `json:"origin"`
+	Package         *conversationAdapterPackage `json:"package"`
+	Adapter         *conversationAdapterRuntime `json:"adapter"`
+	AffectedSources []conversationAdapterSource `json:"affected_sources"`
+}
+
+type conversationAdapterPackage struct {
+	PackageID            string  `json:"package_id"`
+	AdapterID            string  `json:"adapter_id"`
+	Version              string  `json:"version"`
+	LatestVersion        *string `json:"latest_version"`
+	RuntimeGateStatus    string  `json:"runtime_gate_status"`
+	InstallDir           string  `json:"install_dir"`
+	InstalledContentHash *string `json:"installed_content_hash"`
+	TrustedPackageHash   *string `json:"trusted_package_hash"`
+	ErrorMessage         *string `json:"error_message"`
+}
+
+type conversationAdapterRuntime struct {
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	Version        string  `json:"version"`
+	ManifestPath   *string `json:"manifest_path"`
+	ExecutablePath *string `json:"executable_path"`
+	ContentHash    *string `json:"content_hash"`
+	TrustedHash    *string `json:"trusted_hash"`
+}
+
+type conversationAdapterSource struct {
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	Enabled        bool    `json:"enabled"`
+	LastSyncStatus *string `json:"last_sync_status"`
+}
+
+func loadConversationAdapterInspections(cmd *cobra.Command, f *cmdutil.Factory) ([]conversationAdapterInspection, error) {
+	result, err := callEngine(cmd, f, schema.MethodConversationAdapterPackageCatalog, map[string]any{"catalog_url": nil})
+	if err != nil {
+		return nil, err
+	}
+	var entries []conversationAdapterCatalogListEntry
+	if err := json.Unmarshal(result.Data, &entries); err != nil {
+		return nil, fmt.Errorf("decode conversation adapter list: %w", err)
+	}
+	inspections := make([]conversationAdapterInspection, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.Installed {
+			continue
+		}
+		id := ""
+		if entry.InstalledPackage != nil {
+			id = entry.InstalledPackage.PackageID
+		} else if entry.InstalledAdapter != nil {
+			id = entry.InstalledAdapter.ID
+		}
+		if id == "" {
+			continue
+		}
+		inspection, inspectErr := callConversationAdapterInspect(cmd, f, id)
+		if inspectErr != nil {
+			return nil, inspectErr
+		}
+		inspections = append(inspections, inspection)
+	}
+	return inspections, nil
+}
+
+func callConversationAdapterInspect(cmd *cobra.Command, f *cmdutil.Factory, id string) (conversationAdapterInspection, error) {
+	result, err := callEngine(cmd, f, schema.MethodConversationAdapterPackageInspect, map[string]any{
+		"package_id": id,
+		"adapter_id": id,
+	})
+	if err != nil {
+		return conversationAdapterInspection{}, err
+	}
+	var inspection conversationAdapterInspection
+	if err := json.Unmarshal(result.Data, &inspection); err != nil {
+		return conversationAdapterInspection{}, fmt.Errorf("decode conversation adapter inspection: %w", err)
+	}
+	return inspection, nil
+}
+
+func writeConversationAdapterInspectionTable(w io.Writer, inspections []conversationAdapterInspection) {
+	_, _ = fmt.Fprintln(w, "PACKAGE\tADAPTER\tORIGIN\tVERSION\tLATEST\tGATE\tSOURCES\tPATH")
+	for _, inspection := range inspections {
+		packageID, adapterID, version, latest, gate, installPath := inspection.summary()
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
+			packageID, adapterID, inspection.Origin, version, latest, gate, len(inspection.AffectedSources), installPath)
+	}
+}
+
+func writeConversationAdapterInspection(w io.Writer, inspection conversationAdapterInspection) {
+	packageID, adapterID, version, latest, gate, installPath := inspection.summary()
+	_, _ = fmt.Fprintf(w, "Package: %s\nAdapter: %s\nOrigin: %s\nVersion: %s\nLatest: %s\nRuntime gate: %s\nPath: %s\n",
+		packageID, adapterID, inspection.Origin, version, latest, gate, installPath)
+	if inspection.Package != nil {
+		_, _ = fmt.Fprintf(w, "Content hash: %s\nTrusted hash: %s\n",
+			stringValue(inspection.Package.InstalledContentHash), stringValue(inspection.Package.TrustedPackageHash))
+		if inspection.Package.ErrorMessage != nil {
+			_, _ = fmt.Fprintf(w, "Last error: %s\n", *inspection.Package.ErrorMessage)
+		}
+	} else if inspection.Adapter != nil {
+		_, _ = fmt.Fprintf(w, "Manifest: %s\nExecutable: %s\nContent hash: %s\nTrusted hash: %s\n",
+			stringValue(inspection.Adapter.ManifestPath), stringValue(inspection.Adapter.ExecutablePath),
+			stringValue(inspection.Adapter.ContentHash), stringValue(inspection.Adapter.TrustedHash))
+	}
+	_, _ = fmt.Fprintln(w, "Sources:")
+	for _, source := range inspection.AffectedSources {
+		_, _ = fmt.Fprintf(w, "- %s (%s), enabled=%t, last_status=%s\n",
+			source.Name, source.ID, source.Enabled, stringValue(source.LastSyncStatus))
+	}
+}
+
+func (inspection conversationAdapterInspection) summary() (string, string, string, string, string, string) {
+	if inspection.Package != nil {
+		return inspection.Package.PackageID, inspection.Package.AdapterID, inspection.Package.Version,
+			stringValue(inspection.Package.LatestVersion), inspection.Package.RuntimeGateStatus, inspection.Package.InstallDir
+	}
+	if inspection.Adapter != nil {
+		return "-", inspection.Adapter.ID, inspection.Adapter.Version, "-", "legacy", stringValue(inspection.Adapter.ManifestPath)
+	}
+	return "-", "-", "-", "-", "missing", "-"
+}
+
+func stringValue(value *string) string {
+	if value == nil || *value == "" {
+		return "-"
+	}
+	return *value
 }
 
 func newCmdConversationAdapterScaffold(f *cmdutil.Factory) *cobra.Command {

@@ -49,6 +49,7 @@ const (
 	MethodConversationScriptCatalog           = "conversation.script.catalog"
 	MethodConversationScriptInstall           = "conversation.script.install"
 	MethodConversationAdapterPackageCatalog   = "conversation.adapter_package.catalog"
+	MethodConversationAdapterPackageInspect   = "conversation.adapter_package.inspect"
 	MethodConversationAdapterPackageInstall   = "conversation.adapter_package.install"
 	MethodConversationAdapterPackageUpdate    = "conversation.adapter_package.update"
 	MethodConversationAdapterPackageUninstall = "conversation.adapter_package.uninstall"

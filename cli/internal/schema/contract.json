@@ -1525,7 +1525,7 @@
     },
     {
       "canonical_method": "conversation.adapter.list",
-      "cli": "assetiweave-cli conversation adapter list",
+      "cli": null,
       "confirmation_required": false,
       "contract_version": 3,
       "deprecated": false,
@@ -1544,7 +1544,7 @@
     },
     {
       "canonical_method": "conversation.adapter.scaffold",
-      "cli": "assetiweave-cli conversation adapter scaffold --directory <dir> --id <id> --name <name> --runtime node",
+      "cli": null,
       "confirmation_required": false,
       "contract_version": 3,
       "deprecated": false,
@@ -1627,7 +1627,7 @@
     },
     {
       "canonical_method": "conversation.adapter.validate",
-      "cli": "assetiweave-cli conversation adapter validate <manifest>",
+      "cli": null,
       "confirmation_required": false,
       "contract_version": 3,
       "deprecated": false,
@@ -1656,7 +1656,7 @@
     },
     {
       "canonical_method": "conversation.adapter.runtime-status",
-      "cli": "assetiweave-cli conversation adapter runtime-status",
+      "cli": null,
       "confirmation_required": false,
       "contract_version": 3,
       "deprecated": false,
@@ -1675,7 +1675,7 @@
     },
     {
       "canonical_method": "conversation.adapter.register",
-      "cli": "assetiweave-cli conversation adapter register <manifest> --yes",
+      "cli": null,
       "confirmation_required": true,
       "contract_version": 3,
       "deprecated": false,
@@ -1717,7 +1717,7 @@
     },
     {
       "canonical_method": "conversation.adapter.unregister",
-      "cli": "assetiweave-cli conversation adapter unregister <adapter-id> --yes",
+      "cli": null,
       "confirmation_required": true,
       "contract_version": 3,
       "deprecated": false,
@@ -1759,7 +1759,7 @@
     },
     {
       "canonical_method": "conversation.adapter.try-run",
-      "cli": "assetiweave-cli conversation adapter try-run <manifest> --method read_session --yes",
+      "cli": null,
       "confirmation_required": true,
       "contract_version": 3,
       "deprecated": false,
@@ -2059,7 +2059,7 @@
     },
     {
       "canonical_method": "conversation.script.catalog",
-      "cli": "assetiweave-cli conversation script catalog",
+      "cli": null,
       "confirmation_required": false,
       "contract_version": 3,
       "deprecated": false,
@@ -2090,7 +2090,7 @@
     },
     {
       "canonical_method": "conversation.script.install",
-      "cli": "assetiweave-cli conversation script install <item-id> --yes",
+      "cli": null,
       "confirmation_required": true,
       "contract_version": 3,
       "deprecated": false,
@@ -2329,7 +2329,7 @@
     },
     {
       "canonical_method": "conversation.adapter_package.catalog",
-      "cli": "assetiweave-cli conversation package catalog",
+      "cli": "assetiweave-cli conversation adapter list",
       "confirmation_required": false,
       "contract_version": 3,
       "deprecated": false,
@@ -2359,8 +2359,125 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.adapter_package.releases",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List version history and changelog for a conversation adapter package",
+      "exposure": "friendly",
+      "method": "conversation.adapter_package.releases",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_url": {
+            "aliases": [
+              "catalogUrl"
+            ],
+            "default": null,
+            "description": "Optional Catalog v2 index URL or local path",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "description": "Package identifier",
+            "type": "string"
+          },
+          "refresh": {
+            "default": false,
+            "description": "Refresh Catalog v2 before listing",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.adapter_package.refresh_catalogs",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Refresh conversation adapter Catalog v2 caches",
+      "exposure": "friendly",
+      "method": "conversation.adapter_package.refresh_catalogs",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_url": {
+            "aliases": [
+              "catalogUrl"
+            ],
+            "default": null,
+            "description": "Optional Catalog v2 index URL or local path",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "force": {
+            "default": false,
+            "description": "Ignore the 24 hour cache window",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.adapter_package.check_updates",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Check installed conversation adapter packages for compatible updates",
+      "exposure": "friendly",
+      "method": "conversation.adapter_package.check_updates",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_url": {
+            "aliases": [
+              "catalogUrl"
+            ],
+            "default": null,
+            "description": "Optional Catalog v2 index URL or local path",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "force": {
+            "default": false,
+            "description": "Force a remote Catalog v2 refresh",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.adapter_package.install",
-      "cli": "assetiweave-cli conversation package install <package-id> --yes",
+      "cli": null,
       "confirmation_required": true,
       "contract_version": 3,
       "deprecated": false,
@@ -2397,6 +2514,14 @@
             "description": "Catalog package identifier",
             "type": "string"
           },
+          "version": {
+            "default": null,
+            "description": "Optional exact compatible SemVer release",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "yes": {
             "default": false,
             "description": "Confirm downloading and trusting this package",
@@ -2414,7 +2539,7 @@
     },
     {
       "canonical_method": "conversation.adapter_package.update",
-      "cli": "assetiweave-cli conversation package update <package-id> --yes",
+      "cli": null,
       "confirmation_required": true,
       "contract_version": 3,
       "deprecated": false,
@@ -2451,6 +2576,14 @@
             "description": "Catalog package identifier",
             "type": "string"
           },
+          "version": {
+            "default": null,
+            "description": "Optional exact compatible SemVer release",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "yes": {
             "default": false,
             "description": "Confirm downloading and trusting this package",
@@ -2468,7 +2601,7 @@
     },
     {
       "canonical_method": "conversation.adapter_package.uninstall",
-      "cli": "assetiweave-cli conversation package uninstall <package-id> --yes",
+      "cli": null,
       "confirmation_required": true,
       "contract_version": 3,
       "deprecated": false,
@@ -6939,6 +7072,123 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.adapter_package.releases",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List version history and changelog for a conversation adapter package",
+      "exposure": "app",
+      "method": "list_conversation_adapter_package_releases",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_url": {
+            "aliases": [
+              "catalogUrl"
+            ],
+            "default": null,
+            "description": "Optional Catalog v2 index URL or local path",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "description": "Package identifier",
+            "type": "string"
+          },
+          "refresh": {
+            "default": false,
+            "description": "Refresh Catalog v2 before listing",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.adapter_package.refresh_catalogs",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Refresh conversation adapter Catalog v2 caches",
+      "exposure": "app",
+      "method": "refresh_conversation_adapter_catalogs",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_url": {
+            "aliases": [
+              "catalogUrl"
+            ],
+            "default": null,
+            "description": "Optional Catalog v2 index URL or local path",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "force": {
+            "default": false,
+            "description": "Ignore the 24 hour cache window",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.adapter_package.check_updates",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Check installed conversation adapter packages for compatible updates",
+      "exposure": "app",
+      "method": "check_conversation_adapter_package_updates",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_url": {
+            "aliases": [
+              "catalogUrl"
+            ],
+            "default": null,
+            "description": "Optional Catalog v2 index URL or local path",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "force": {
+            "default": false,
+            "description": "Force a remote Catalog v2 refresh",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.adapter_package.install",
       "cli": null,
       "confirmation_required": true,
@@ -6976,6 +7226,14 @@
             ],
             "description": "Catalog package identifier",
             "type": "string"
+          },
+          "version": {
+            "default": null,
+            "description": "Optional exact compatible SemVer release",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "yes": {
             "default": false,
@@ -7030,6 +7288,14 @@
             ],
             "description": "Catalog package identifier",
             "type": "string"
+          },
+          "version": {
+            "default": null,
+            "description": "Optional exact compatible SemVer release",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "yes": {
             "default": false,
@@ -8356,6 +8622,9 @@
     "conversation.adapter_package.inspect",
     "conversation.adapter_package.prepare_change",
     "conversation.adapter_package.catalog",
+    "conversation.adapter_package.releases",
+    "conversation.adapter_package.refresh_catalogs",
+    "conversation.adapter_package.check_updates",
     "conversation.adapter_package.install",
     "conversation.adapter_package.update",
     "conversation.adapter_package.uninstall",
@@ -8446,6 +8715,9 @@
     "inspect_conversation_adapter_package",
     "prepare_conversation_adapter_package_change",
     "list_conversation_adapter_packages",
+    "list_conversation_adapter_package_releases",
+    "refresh_conversation_adapter_catalogs",
+    "check_conversation_adapter_package_updates",
     "install_conversation_adapter_package",
     "update_conversation_adapter_package",
     "uninstall_conversation_adapter_package",

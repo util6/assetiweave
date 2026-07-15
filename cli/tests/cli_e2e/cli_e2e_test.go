@@ -271,7 +271,15 @@ fi
 	dbPath := filepath.Join(dir, "app.db")
 	env := []string{"ASSETIWEAVE_DB_PATH=" + dbPath}
 
-	register := runCLIWithEnv(t, env, "conversation", "adapter", "register", manifestPath, "--yes")
+	registerParams, err := json.Marshal(map[string]any{
+		"manifest_path": manifestPath,
+		"dry_run":       false,
+		"yes":           true,
+	})
+	if err != nil {
+		t.Fatalf("encode adapter register params: %v", err)
+	}
+	register := runCLIWithEnv(t, env, "api", "call", "conversation.adapter.register", "--json", string(registerParams), "--yes")
 	if !register.OK {
 		t.Fatalf("register adapter failed: %#v", register.Error)
 	}

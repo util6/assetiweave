@@ -97,149 +97,65 @@ func TestConversationSyncBuildsRecordKindParams(t *testing.T) {
 	}
 }
 
-func TestConversationScriptCatalogBuildsParams(t *testing.T) {
-	client := &recordingClient{}
+func TestConversationAdapterCommandExposesOnlyListAndInspect(t *testing.T) {
+	root := Build(context.Background(), &cmdutil.Factory{
+		IOStreams: &cmdutil.IOStreams{In: &bytes.Buffer{}, Out: &bytes.Buffer{}, ErrOut: &bytes.Buffer{}},
+		Client:    &recordingClient{},
+	})
+	command, _, err := root.Find([]string{"conversation", "adapter"})
+	if err != nil {
+		t.Fatalf("Find() error = %v", err)
+	}
+	names := make([]string, 0, len(command.Commands()))
+	for _, child := range command.Commands() {
+		names = append(names, child.Name())
+	}
+	if !reflect.DeepEqual(names, []string{"inspect", "list"}) {
+		t.Fatalf("conversation adapter commands = %#v, want inspect/list only", names)
+	}
+}
+
+func TestConversationAdapterInspectUsesSharedPackageInspection(t *testing.T) {
+	client := &recordingClient{data: json.RawMessage(`{
+		"origin":"managed_release",
+		"package":{"package_id":"io.github.util6.codex-session","adapter_id":"codex","version":"1.0.1","latest_version":"1.0.1","runtime_gate_status":"ready","install_dir":"/tmp/package","installed_content_hash":"content","trusted_package_hash":"trusted","error_message":null},
+		"adapter":{"id":"codex","name":"Codex","version":"1.0.1"},
+		"affected_sources":[]
+	}`)}
 	err := executeSkillGroupTestCommand(t, client,
-		"conversation", "script", "catalog",
-		"--catalog-url", "/tmp/catalog.json",
+		"conversation", "adapter", "inspect", "io.github.util6.codex-session", "--format", "json",
 	)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if client.method != "conversation.script.catalog" {
-		t.Fatalf("method = %q, want conversation.script.catalog", client.method)
+	if client.method != "conversation.adapter_package.inspect" {
+		t.Fatalf("method = %q, want conversation.adapter_package.inspect", client.method)
 	}
 	params := recordedSkillGroupParams(t, client)
-	if params["catalog_url"] != "/tmp/catalog.json" {
+	if params["package_id"] != "io.github.util6.codex-session" || params["adapter_id"] != "io.github.util6.codex-session" {
 		t.Fatalf("params = %#v", params)
 	}
 }
 
-func TestConversationScriptInstallRequiresConfirmation(t *testing.T) {
-	client := &recordingClient{}
-	err := executeSkillGroupTestCommand(t, client,
-		"conversation", "script", "install", "codex-session",
-	)
-	if err == nil {
-		t.Fatal("Execute() error = nil, want confirmation error")
-	}
-
-	client = &recordingClient{}
-	err = executeSkillGroupTestCommand(t, client,
-		"conversation", "script", "install", "codex-session",
-		"--catalog-url", "/tmp/catalog.json",
-		"--yes",
-	)
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	if client.method != "conversation.script.install" {
-		t.Fatalf("method = %q, want conversation.script.install", client.method)
-	}
-	params := recordedSkillGroupParams(t, client)
-	if params["item_id"] != "codex-session" ||
-		params["catalog_url"] != "/tmp/catalog.json" ||
-		params["dry_run"] != false ||
-		params["yes"] != true {
-		t.Fatalf("params = %#v", params)
-	}
-}
-
-func TestConversationPackageCatalogBuildsParams(t *testing.T) {
-	client := &recordingClient{}
-	err := executeSkillGroupTestCommand(t, client,
-		"conversation", "package", "catalog",
-		"--catalog-url", "/tmp/catalog.json",
-	)
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	if client.method != "conversation.adapter_package.catalog" {
-		t.Fatalf("method = %q, want conversation.adapter_package.catalog", client.method)
-	}
-	params := recordedSkillGroupParams(t, client)
-	if params["catalog_url"] != "/tmp/catalog.json" {
-		t.Fatalf("params = %#v", params)
-	}
-}
-
-func TestConversationPackageInstallRequiresConfirmation(t *testing.T) {
-	client := &recordingClient{}
-	err := executeSkillGroupTestCommand(t, client,
-		"conversation", "package", "install", "codex-session",
-	)
-	if err == nil {
-		t.Fatal("Execute() error = nil, want confirmation error")
-	}
-
-	client = &recordingClient{}
-	err = executeSkillGroupTestCommand(t, client,
-		"conversation", "package", "install", "codex-session",
-		"--catalog-url", "/tmp/catalog.json",
-		"--yes",
-	)
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	if client.method != "conversation.adapter_package.install" {
-		t.Fatalf("method = %q, want conversation.adapter_package.install", client.method)
-	}
-	params := recordedSkillGroupParams(t, client)
-	if params["package_id"] != "codex-session" ||
-		params["catalog_url"] != "/tmp/catalog.json" ||
-		params["dry_run"] != false ||
-		params["yes"] != true {
-		t.Fatalf("params = %#v", params)
-	}
-}
-
-func TestConversationPackageUpdateAllowsDryRunWithoutConfirmation(t *testing.T) {
-	client := &recordingClient{}
-	err := executeSkillGroupTestCommand(t, client,
-		"conversation", "package", "update", "codex-session",
-		"--catalog-url", "/tmp/catalog.json",
-		"--dry-run",
-	)
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	if client.method != "conversation.adapter_package.update" {
-		t.Fatalf("method = %q, want conversation.adapter_package.update", client.method)
-	}
-	params := recordedSkillGroupParams(t, client)
-	if params["package_id"] != "codex-session" ||
-		params["catalog_url"] != "/tmp/catalog.json" ||
-		params["dry_run"] != true ||
-		params["yes"] != false {
-		t.Fatalf("params = %#v", params)
-	}
-}
-
-func TestConversationPackageUninstallRequiresConfirmation(t *testing.T) {
-	client := &recordingClient{}
-	err := executeSkillGroupTestCommand(t, client,
-		"conversation", "package", "uninstall", "codex-session",
-	)
-	if err == nil {
-		t.Fatal("Execute() error = nil, want confirmation error")
-	}
-
-	client = &recordingClient{}
-	err = executeSkillGroupTestCommand(t, client,
-		"conversation", "package", "uninstall", "codex-session",
-		"--yes",
-	)
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	if client.method != "conversation.adapter_package.uninstall" {
-		t.Fatalf("method = %q, want conversation.adapter_package.uninstall", client.method)
-	}
-	params := recordedSkillGroupParams(t, client)
-	if params["package_id"] != "codex-session" ||
-		params["dry_run"] != false ||
-		params["yes"] != true {
-		t.Fatalf("params = %#v", params)
+func TestConversationAdapterInspectionTableIncludesRuntimeDiagnostics(t *testing.T) {
+	latest := "1.1.0"
+	contentHash := "content-hash"
+	trustedHash := "trusted-hash"
+	buffer := &bytes.Buffer{}
+	writeConversationAdapterInspection(buffer, conversationAdapterInspection{
+		Origin: "managed_release",
+		Package: &conversationAdapterPackage{
+			PackageID: "io.github.util6.codex-session", AdapterID: "codex", Version: "1.0.1",
+			LatestVersion: &latest, RuntimeGateStatus: "hash_mismatch", InstallDir: "/tmp/package",
+			InstalledContentHash: &contentHash, TrustedPackageHash: &trustedHash,
+		},
+		AffectedSources: []conversationAdapterSource{{ID: "codex-live", Name: "Codex", Enabled: true}},
+	})
+	output := buffer.String()
+	for _, expected := range []string{"io.github.util6.codex-session", "hash_mismatch", "/tmp/package", "content-hash", "codex-live"} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("output = %q, want %q", output, expected)
+		}
 	}
 }
 
