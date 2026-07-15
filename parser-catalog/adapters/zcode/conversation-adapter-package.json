@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "package_id": "zcode-session",
+  "package_id": "io.github.util6.zcode-session",
   "name": "ZCode Session Parser",
   "version": "0.1.0",
   "min_core_version": "0.5.0",

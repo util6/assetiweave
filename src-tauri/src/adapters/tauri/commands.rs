@@ -3,7 +3,8 @@ use crate::adapters::prompt_clipboard::{
     copy_prompt_card_to_clipboard as copy_prompt_card_to_clipboard_impl, PromptClipboardParams,
 };
 use crate::adapters::tauri::background_tasks::{
-    ConversationScriptInstallTaskSnapshot, ConversationSyncTaskSnapshot, SkillBackupTaskSnapshot,
+    BackgroundTaskStatus, ConversationScriptInstallTaskSnapshot, ConversationSyncTaskSnapshot,
+    SkillBackupTaskSnapshot,
 };
 #[cfg(test)]
 use crate::backend::capabilities::{
@@ -16,15 +17,16 @@ use crate::backend::capabilities::{
 };
 use crate::{
     backend::application::{
-        AppService, ConversationAdapterLocalRegisterParams,
-        ConversationAdapterPackageCatalogParams, ConversationAdapterPackageChangeParams,
-        ConversationAdapterPackageInspectParams, ConversationAdapterPackageInstallParams,
-        ConversationAdapterPackageUninstallParams, ConversationAdapterUnregisterParams,
-        ConversationPartTranslationUpdateParams, ConversationQuestionGetParams,
-        ConversationQuestionListParams, ConversationQuestionMergeParams,
-        ConversationQuestionSplitParams, ConversationScriptCatalogParams,
-        ConversationScriptInstallParams, ConversationSearchParams, ConversationSearchResult,
-        ConversationSessionExportParams, ConversationSessionGetParams,
+        AppService, ConversationAdapterCatalogRefreshParams,
+        ConversationAdapterLocalRegisterParams, ConversationAdapterPackageCatalogParams,
+        ConversationAdapterPackageChangeParams, ConversationAdapterPackageInspectParams,
+        ConversationAdapterPackageInstallParams, ConversationAdapterPackageReleaseListParams,
+        ConversationAdapterPackageUninstallParams, ConversationAdapterPackageUpdateCheckParams,
+        ConversationAdapterUnregisterParams, ConversationPartTranslationUpdateParams,
+        ConversationQuestionGetParams, ConversationQuestionListParams,
+        ConversationQuestionMergeParams, ConversationQuestionSplitParams,
+        ConversationScriptCatalogParams, ConversationScriptInstallParams, ConversationSearchParams,
+        ConversationSearchResult, ConversationSessionExportParams, ConversationSessionGetParams,
         ConversationSessionListParams, ConversationSourceDisableParams,
         ConversationSourceUpsertParams, ConversationSyncParams, ListAssetsParams,
         SkillAcquireParams, SkillRemoteCheckParams, SkillSearchParams, SkillSearchResult,
@@ -1391,8 +1393,16 @@ pub(crate) fn prepare_conversation_adapter_package_change(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageChangeParams,
 ) -> AppResult<crate::backend::application::ConversationAdapterPackageChangePreflight> {
-    AppService::open_with_db_path(state.db_path.clone())?
-        .prepare_conversation_adapter_package_change(params)
+    let mut preflight = AppService::open_with_db_path(state.db_path.clone())?
+        .prepare_conversation_adapter_package_change(params)?;
+    if state
+        .background_tasks
+        .conversation_script_install_snapshot()?
+        .is_some_and(|task| task.status == BackgroundTaskStatus::Running)
+    {
+        preflight.task_conflicts.push("package_change".to_string());
+    }
+    Ok(preflight)
 }
 
 #[tauri::command]
@@ -1401,6 +1411,33 @@ pub(crate) fn list_conversation_adapter_packages(
     params: ConversationAdapterPackageCatalogParams,
 ) -> AppResult<Vec<crate::backend::application::ConversationAdapterPackageCatalogEntry>> {
     AppService::open_with_db_path(state.db_path.clone())?.list_conversation_adapter_packages(params)
+}
+
+#[tauri::command]
+pub(crate) fn list_conversation_adapter_package_releases(
+    state: State<'_, AppState>,
+    params: ConversationAdapterPackageReleaseListParams,
+) -> AppResult<Vec<crate::backend::models::ConversationAdapterCatalogRelease>> {
+    AppService::open_with_db_path(state.db_path.clone())?
+        .list_conversation_adapter_package_releases(params)
+}
+
+#[tauri::command]
+pub(crate) fn refresh_conversation_adapter_catalogs(
+    state: State<'_, AppState>,
+    params: ConversationAdapterCatalogRefreshParams,
+) -> AppResult<Vec<crate::backend::models::ConversationAdapterCatalogRelease>> {
+    AppService::open_with_db_path(state.db_path.clone())?
+        .refresh_conversation_adapter_catalogs(params)
+}
+
+#[tauri::command]
+pub(crate) fn check_conversation_adapter_package_updates(
+    state: State<'_, AppState>,
+    params: ConversationAdapterPackageUpdateCheckParams,
+) -> AppResult<Vec<crate::backend::application::ConversationAdapterPackageUpdateStatus>> {
+    AppService::open_with_db_path(state.db_path.clone())?
+        .check_conversation_adapter_package_updates(params)
 }
 
 #[tauri::command]
@@ -1462,7 +1499,7 @@ pub(crate) fn update_conversation_adapter_package(
 ) -> AppResult<ConversationScriptInstallTaskSnapshot> {
     let (snapshot, should_start) = state
         .background_tasks
-        .begin_conversation_adapter_package_install(&params)?;
+        .begin_conversation_adapter_package_update(&params)?;
     if !should_start {
         return Ok(snapshot);
     }
@@ -1507,11 +1544,38 @@ pub(crate) fn update_conversation_adapter_package(
 
 #[tauri::command]
 pub(crate) fn uninstall_conversation_adapter_package(
+    app: AppHandle,
     state: State<'_, AppState>,
     params: ConversationAdapterPackageUninstallParams,
-) -> AppResult<serde_json::Value> {
-    AppService::open_with_db_path(state.db_path.clone())?
-        .uninstall_conversation_adapter_package(params)
+) -> AppResult<ConversationScriptInstallTaskSnapshot> {
+    let (snapshot, should_start) = state
+        .background_tasks
+        .begin_conversation_adapter_package_uninstall(&params)?;
+    if !should_start {
+        return Ok(snapshot);
+    }
+    let db_path = state.db_path.clone();
+    let background_tasks = state.background_tasks.clone();
+    let task_id = snapshot.id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            AppService::open_with_db_path(db_path)
+                .and_then(|service| service.uninstall_conversation_adapter_package(params))
+        }))
+        .unwrap_or_else(|_| {
+            Err("conversation adapter package uninstall task panicked".to_string())
+        });
+        match background_tasks.finish_conversation_script_install(&task_id, result) {
+            Ok(snapshot) => emit_conversation_script_install_task(&app, &snapshot),
+            Err(error) => log_error(
+                "conversation.adapter_package.uninstall",
+                "更新对话适配器包后台卸载任务状态失败",
+                &error,
+                &[("task_id", task_id)],
+            ),
+        }
+    });
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -1994,6 +2058,9 @@ pub(crate) fn command_handler(
         inspect_conversation_adapter_package,
         prepare_conversation_adapter_package_change,
         list_conversation_adapter_packages,
+        list_conversation_adapter_package_releases,
+        refresh_conversation_adapter_catalogs,
+        check_conversation_adapter_package_updates,
         install_conversation_adapter_package,
         update_conversation_adapter_package,
         uninstall_conversation_adapter_package,

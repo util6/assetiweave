@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "package_id": "qwen-web",
+  "package_id": "io.github.util6.qwen-web",
   "name": "Qwen Web Harvester",
   "version": "0.1.0",
   "min_core_version": "0.5.0",

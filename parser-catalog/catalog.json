@@ -3,7 +3,7 @@
   "updated_at": "2026-07-06T00:00:00Z",
   "items": [
     {
-      "id": "codex-session",
+      "id": "io.github.util6.codex-session",
       "name": "Codex Session Parser",
       "version": "1.0.1",
       "record_kind": "session",
@@ -11,8 +11,12 @@
       "adapter_id": "codex",
       "description": "Reads local Codex session records and exports normalized conversation turns.",
       "repository_url": "https://github.com/util6/assetiweave",
-      "tags": ["session", "codex", "node"],
-      "expected_package_hash": "5e9061c2a563479911c3e20f857628415e405eed0229fdd5e8128691d78a34dc",
+      "tags": [
+        "session",
+        "codex",
+        "node"
+      ],
+      "expected_package_hash": "b3281924ae8ef83302f0813ab9c0fe4b07a222e1e02f4fd1373978361f4f05b2",
       "expected_content_hash": "5e9061c2a563479911c3e20f857628415e405eed0229fdd5e8128691d78a34dc",
       "source": {
         "type": "github",
@@ -20,7 +24,7 @@
       }
     },
     {
-      "id": "opencode-session",
+      "id": "io.github.util6.opencode-session",
       "name": "OpenCode Session Parser",
       "version": "1.0.0",
       "record_kind": "session",
@@ -28,8 +32,13 @@
       "adapter_id": "opencode",
       "description": "Reads OpenCode SQLite state and converts sessions into AssetIWeave conversation records.",
       "repository_url": "https://github.com/util6/assetiweave",
-      "tags": ["session", "opencode", "sqlite", "node"],
-      "expected_package_hash": "6ed55931a1e4f43506ac27838543a1fa2d045a63f395f00ea8a0a2d8dd63c344",
+      "tags": [
+        "session",
+        "opencode",
+        "sqlite",
+        "node"
+      ],
+      "expected_package_hash": "cb00f33718836aaeb6c428479103cb0d069206226afa644c17c06d4c61f4d680",
       "expected_content_hash": "7402082acd6351b771383f98988bf0a88ae1c5093b278ecce5d946df6884bd7e",
       "source": {
         "type": "github",
@@ -37,7 +46,7 @@
       }
     },
     {
-      "id": "claude-code-session",
+      "id": "io.github.util6.claude-code-session",
       "name": "Claude Code Session Parser",
       "version": "1.0.0",
       "record_kind": "session",
@@ -45,8 +54,12 @@
       "adapter_id": "claude-code",
       "description": "Reads Claude Code project conversations and emits the shared external adapter protocol.",
       "repository_url": "https://github.com/util6/assetiweave",
-      "tags": ["session", "claude-code", "node"],
-      "expected_package_hash": "f1ca450d6936012f6cbf8cc1e0046b625fcfa7175025a08d3fe5c5bd82be2a97",
+      "tags": [
+        "session",
+        "claude-code",
+        "node"
+      ],
+      "expected_package_hash": "9bce351aa95d86598aa3c9957cf9a34d1de04a6eafbba7567dc94563ded73d33",
       "expected_content_hash": "84768c83036672f6a6569f9b22914352f58dc677ca4764a7387788376d64a475",
       "source": {
         "type": "github",
@@ -54,7 +67,7 @@
       }
     },
     {
-      "id": "zcode-session",
+      "id": "io.github.util6.zcode-session",
       "name": "ZCode Session Parser",
       "version": "0.1.0",
       "record_kind": "session",
@@ -62,8 +75,13 @@
       "adapter_id": "zcode",
       "description": "Reads ZCode SQLite conversation records using the existing external adapter script.",
       "repository_url": "https://github.com/util6/assetiweave",
-      "tags": ["session", "zcode", "sqlite", "python"],
-      "expected_package_hash": "e81a32d1266f199faf37b267691de5b6c12e6dd9acc99b44e384b6bc7630abe5",
+      "tags": [
+        "session",
+        "zcode",
+        "sqlite",
+        "python"
+      ],
+      "expected_package_hash": "df0d1ea1d7b5aeed5a0f3264e4efaee01eecd672ac7306554d00d7452905087e",
       "expected_content_hash": "5a50814a30a7894ee5243873bce8cb175ffdce9fab8d6a75324b5d446837c044",
       "source": {
         "type": "github",
@@ -71,7 +89,7 @@
       }
     },
     {
-      "id": "chatgpt-web",
+      "id": "io.github.util6.chatgpt-web",
       "name": "ChatGPT Web Harvester",
       "version": "0.1.0",
       "record_kind": "web",
@@ -79,8 +97,13 @@
       "adapter_id": "chatgpt-web",
       "description": "Collects ChatGPT web conversations and exposes normalized web records through the adapter protocol.",
       "repository_url": "https://github.com/util6/assetiweave",
-      "tags": ["web", "chatgpt", "node", "browser-cookie-auth"],
-      "expected_package_hash": "9d76886074b7835a3ce60e2a9081e3962d4a1681ad67724ed20f0137b4b6e90b",
+      "tags": [
+        "web",
+        "chatgpt",
+        "node",
+        "browser-cookie-auth"
+      ],
+      "expected_package_hash": "ab7f3021d1acb745e9b218423189ba11c7103edb27e79b87a4b7915f08a68fbd",
       "expected_content_hash": "1b00dd931991ecfbe19954b4dd59cb92513fc28f43a0d8d1f129f275e737aa31",
       "source": {
         "type": "github",
@@ -88,7 +111,7 @@
       }
     },
     {
-      "id": "qwen-web",
+      "id": "io.github.util6.qwen-web",
       "name": "Qwen Web Harvester",
       "version": "0.1.0",
       "record_kind": "web",
@@ -96,8 +119,13 @@
       "adapter_id": "qwen-web",
       "description": "Collects Qwen web conversations and exposes normalized web records through the adapter protocol.",
       "repository_url": "https://github.com/util6/assetiweave",
-      "tags": ["web", "qwen", "node", "browser-cookie-auth"],
-      "expected_package_hash": "e4540023a6f615f79d5653bf166d1381fb5b779e083a8d11defdbea02e255770",
+      "tags": [
+        "web",
+        "qwen",
+        "node",
+        "browser-cookie-auth"
+      ],
+      "expected_package_hash": "4de6708e1605ae818234fae8315fe66ea2dbddea96857536c44f1fce1cb3456e",
       "expected_content_hash": "3c485df513a682713de1a946e69c19ddf2d6ed86e68e926e7af4f81338971756",
       "source": {
         "type": "github",
@@ -105,7 +133,7 @@
       }
     },
     {
-      "id": "gemini-web",
+      "id": "io.github.util6.gemini-web",
       "name": "Gemini Web Harvester",
       "version": "0.1.2",
       "record_kind": "web",
@@ -113,8 +141,13 @@
       "adapter_id": "gemini-web",
       "description": "Collects Gemini web conversations and exposes normalized web records through the adapter protocol.",
       "repository_url": "https://github.com/util6/assetiweave",
-      "tags": ["web", "gemini", "node", "browser-cookie-auth"],
-      "expected_package_hash": "e0fd8d5c0add44370c3e3aef249e6cedd1eda20d87c389ddaefb86f3f83856ea",
+      "tags": [
+        "web",
+        "gemini",
+        "node",
+        "browser-cookie-auth"
+      ],
+      "expected_package_hash": "e634bb16c07392c7cc26ed46593ff0cbbfef6bb6fa6cd7490ad22d217e35eca6",
       "expected_content_hash": "20f277c789a111d06f87b30be7523905826d9cb63b7194f5bd18fcf6bc8bfd76",
       "source": {
         "type": "github",

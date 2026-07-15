@@ -1,7 +1,7 @@
 use crate::backend::{
     application::{
-        ConversationAdapterPackageInstallParams, ConversationScriptInstallParams,
-        ConversationSyncParams,
+        ConversationAdapterPackageInstallParams, ConversationAdapterPackageUninstallParams,
+        ConversationScriptInstallParams, ConversationSyncParams,
     },
     dto::{AppResult, CatalogAsset},
 };
@@ -38,6 +38,8 @@ pub(crate) struct ConversationScriptInstallTaskSnapshot {
     pub(crate) status: BackgroundTaskStatus,
     pub(crate) item_id: String,
     pub(crate) package_id: String,
+    pub(crate) action: String,
+    pub(crate) version: Option<String>,
     pub(crate) catalog_url: Option<String>,
     pub(crate) dry_run: bool,
     pub(crate) phase: Option<String>,
@@ -175,6 +177,8 @@ impl BackgroundTaskRegistry {
             status: BackgroundTaskStatus::Running,
             item_id: item_id.clone(),
             package_id: item_id,
+            action: "install".to_string(),
+            version: None,
             catalog_url: params.catalog_url.clone(),
             dry_run: params.dry_run,
             phase: Some("installing".to_string()),
@@ -190,6 +194,22 @@ impl BackgroundTaskRegistry {
     pub(crate) fn begin_conversation_adapter_package_install(
         &self,
         params: &ConversationAdapterPackageInstallParams,
+    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
+        self.begin_conversation_adapter_package_change(params, "install", "installing")
+    }
+
+    pub(crate) fn begin_conversation_adapter_package_update(
+        &self,
+        params: &ConversationAdapterPackageInstallParams,
+    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
+        self.begin_conversation_adapter_package_change(params, "update", "updating")
+    }
+
+    fn begin_conversation_adapter_package_change(
+        &self,
+        params: &ConversationAdapterPackageInstallParams,
+        action: &str,
+        phase: &str,
     ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
         let mut current = self
             .conversation_script_install
@@ -212,9 +232,48 @@ impl BackgroundTaskRegistry {
             status: BackgroundTaskStatus::Running,
             item_id: package_id.clone(),
             package_id,
+            action: action.to_string(),
+            version: params.version.clone(),
             catalog_url: params.catalog_url.clone(),
             dry_run: params.dry_run,
-            phase: Some("installing".to_string()),
+            phase: Some(phase.to_string()),
+            started_at: Utc::now().to_rfc3339(),
+            finished_at: None,
+            result: None,
+            error: None,
+        };
+        *current = Some(snapshot.clone());
+        Ok((snapshot, true))
+    }
+
+    pub(crate) fn begin_conversation_adapter_package_uninstall(
+        &self,
+        params: &ConversationAdapterPackageUninstallParams,
+    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
+        let mut current = self
+            .conversation_script_install
+            .lock()
+            .map_err(|error| error.to_string())?;
+        if let Some(snapshot) = current
+            .as_ref()
+            .filter(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
+        {
+            return Ok((snapshot.clone(), false));
+        }
+        let package_id = params.package_id.trim().to_string();
+        if package_id.is_empty() {
+            return Err("conversation adapter package uninstall requires a package id".to_string());
+        }
+        let snapshot = ConversationScriptInstallTaskSnapshot {
+            id: Uuid::new_v4().to_string(),
+            status: BackgroundTaskStatus::Running,
+            item_id: package_id.clone(),
+            package_id,
+            action: "uninstall".to_string(),
+            version: None,
+            catalog_url: None,
+            dry_run: params.dry_run,
+            phase: Some("uninstalling".to_string()),
             started_at: Utc::now().to_rfc3339(),
             finished_at: None,
             result: None,
@@ -559,5 +618,24 @@ mod tests {
             Some(serde_json::json!({ "installed": true }))
         );
         assert!(!registry.has_running_tasks());
+    }
+
+    #[test]
+    fn conversation_package_uninstall_uses_the_shared_background_task_registry() {
+        let registry = BackgroundTaskRegistry::default();
+        let params = ConversationAdapterPackageUninstallParams {
+            package_id: "io.github.util6.codex-session".to_string(),
+            dry_run: false,
+            yes: true,
+        };
+
+        let (running, should_start) = registry
+            .begin_conversation_adapter_package_uninstall(&params)
+            .expect("start uninstall task");
+
+        assert!(should_start);
+        assert_eq!(running.action, "uninstall");
+        assert_eq!(running.phase.as_deref(), Some("uninstalling"));
+        assert!(registry.has_running_tasks());
     }
 }

@@ -341,6 +341,8 @@ pub(crate) struct ConversationAdapterPackageInstallParams {
     pub(crate) catalog_url: Option<String>,
     #[serde(alias = "packageId", alias = "itemId")]
     pub(crate) package_id: String,
+    #[serde(default)]
+    pub(crate) version: Option<String>,
     #[serde(default, alias = "dryRun")]
     pub(crate) dry_run: bool,
     #[serde(default)]
@@ -355,6 +357,32 @@ pub(crate) struct ConversationAdapterPackageUninstallParams {
     pub(crate) dry_run: bool,
     #[serde(default)]
     pub(crate) yes: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct ConversationAdapterPackageReleaseListParams {
+    #[serde(default, alias = "catalogUrl")]
+    pub(crate) catalog_url: Option<String>,
+    #[serde(alias = "packageId")]
+    pub(crate) package_id: String,
+    #[serde(default)]
+    pub(crate) refresh: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct ConversationAdapterCatalogRefreshParams {
+    #[serde(default, alias = "catalogUrl")]
+    pub(crate) catalog_url: Option<String>,
+    #[serde(default)]
+    pub(crate) force: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct ConversationAdapterPackageUpdateCheckParams {
+    #[serde(default, alias = "catalogUrl")]
+    pub(crate) catalog_url: Option<String>,
+    #[serde(default)]
+    pub(crate) force: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

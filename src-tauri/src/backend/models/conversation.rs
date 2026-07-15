@@ -186,6 +186,39 @@ pub struct ConversationAdapterPackageVersion {
     pub installed_at: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationAdapterReleaseChannel {
+    Stable,
+    Beta,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ConversationAdapterCatalogRelease {
+    pub catalog_url: String,
+    pub package_id: String,
+    pub adapter_id: String,
+    pub name: String,
+    pub publisher: String,
+    pub version: String,
+    pub channel: ConversationAdapterReleaseChannel,
+    pub released_at: Option<String>,
+    pub core_compatibility: String,
+    pub artifact_url: String,
+    pub artifact_size: Option<i64>,
+    pub artifact_sha256: String,
+    pub changelog_markdown: String,
+    pub breaking_change: bool,
+    pub runtime_protocol: String,
+    pub record_kind: ConversationAdapterPackageRecordKind,
+    pub package_manifest_file: String,
+    pub adapter_manifest_file: String,
+    pub adapter_manifest_json: Option<String>,
+    pub source_json: Option<String>,
+    pub etag: Option<String>,
+    pub fetched_at: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ConversationSource {
     pub id: String,

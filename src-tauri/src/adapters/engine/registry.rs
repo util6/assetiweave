@@ -703,7 +703,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         NoParams,
         Service => |service, _params| service.list_conversation_adapters(),
         &[],
-        Some("assetiweave-cli conversation adapter list")
+        None
     ),
     command!(
         "conversation.adapter.scaffold",
@@ -723,7 +723,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("runtime_version", "Runtime version requirement such as >=20 or >=3.10", ["runtimeVersion"]),
             param!("dry_run", "Preview without writing files", ["dryRun"]),
         ],
-        Some("assetiweave-cli conversation adapter scaffold --directory <dir> --id <id> --name <name> --runtime node")
+        None
     ),
     command!(
         "conversation.adapter.validate",
@@ -735,7 +735,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         crate::backend::conversations::ExternalAdapterValidateParams,
         Service => |service, params| service.validate_conversation_adapter(params),
         &[param!("manifest_path", "Adapter manifest path", ["manifestPath"])],
-        Some("assetiweave-cli conversation adapter validate <manifest>")
+        None
     ),
     command!(
         "conversation.adapter.runtime-status",
@@ -747,7 +747,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         NoParams,
         Service => |service, _params| service.list_conversation_adapter_runtime_statuses(),
         &[],
-        Some("assetiweave-cli conversation adapter runtime-status")
+        None
     ),
     command!(
         "conversation.adapter.register",
@@ -763,7 +763,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("dry_run", "Preview without persisting", ["dryRun"]),
             param!("yes", "Confirm trusting this adapter"),
         ],
-        Some("assetiweave-cli conversation adapter register <manifest> --yes")
+        None
     ),
     command!(
         "conversation.adapter.unregister",
@@ -779,7 +779,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("dry_run", "Preview without unregistering", ["dryRun"]),
             param!("yes", "Confirm unregistering this adapter"),
         ],
-        Some("assetiweave-cli conversation adapter unregister <adapter-id> --yes")
+        None
     ),
     command!(
         "conversation.adapter.try-run",
@@ -797,7 +797,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("session_id", "Optional external session identifier", ["sessionId"]),
             param!("yes", "Confirm executing this adapter"),
         ],
-        Some("assetiweave-cli conversation adapter try-run <manifest> --method read_session --yes")
+        None
     ),
     command!(
         "conversation.source.list",
@@ -870,7 +870,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             "Optional catalog JSON URL or local path",
             ["catalogUrl"]
         )],
-        Some("assetiweave-cli conversation script catalog")
+        None
     ),
     command!(
         "conversation.script.install",
@@ -891,7 +891,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("dry_run", "Preview install target without downloading", ["dryRun"]),
             param!("yes", "Confirm downloading and trusting this script"),
         ],
-        Some("assetiweave-cli conversation script install <item-id> --yes")
+        None
     ),
     command!(
         "conversation.adapter_package.register_local",
@@ -958,7 +958,53 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             "Optional catalog JSON URL or local path",
             ["catalogUrl"]
         )],
-        Some("assetiweave-cli conversation package catalog")
+        Some("assetiweave-cli conversation adapter list")
+    ),
+    command!(
+        "conversation.adapter_package.releases",
+        "conversation.adapter_package.releases",
+        "List version history and changelog for a conversation adapter package",
+        Read,
+        Friendly,
+        false,
+        crate::backend::application::ConversationAdapterPackageReleaseListParams,
+        Service => |service, params| service.list_conversation_adapter_package_releases(params),
+        &[
+            param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
+            param!("package_id", "Package identifier", ["packageId"]),
+            param!("refresh", "Refresh Catalog v2 before listing"),
+        ],
+        None
+    ),
+    command!(
+        "conversation.adapter_package.refresh_catalogs",
+        "conversation.adapter_package.refresh_catalogs",
+        "Refresh conversation adapter Catalog v2 caches",
+        Write,
+        Friendly,
+        false,
+        crate::backend::application::ConversationAdapterCatalogRefreshParams,
+        Service => |service, params| service.refresh_conversation_adapter_catalogs(params),
+        &[
+            param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
+            param!("force", "Ignore the 24 hour cache window"),
+        ],
+        None
+    ),
+    command!(
+        "conversation.adapter_package.check_updates",
+        "conversation.adapter_package.check_updates",
+        "Check installed conversation adapter packages for compatible updates",
+        Read,
+        Friendly,
+        false,
+        crate::backend::application::ConversationAdapterPackageUpdateCheckParams,
+        Service => |service, params| service.check_conversation_adapter_package_updates(params),
+        &[
+            param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
+            param!("force", "Force a remote Catalog v2 refresh"),
+        ],
+        None
     ),
     command!(
         "conversation.adapter_package.install",
@@ -976,10 +1022,11 @@ const COMMAND_SPECS: &[CommandSpec] = &[
                 ["catalogUrl"]
             ),
             param!("package_id", "Catalog package identifier", ["packageId", "itemId"]),
+            param!("version", "Optional exact compatible SemVer release"),
             param!("dry_run", "Preview install target without downloading", ["dryRun"]),
             param!("yes", "Confirm downloading and trusting this package"),
         ],
-        Some("assetiweave-cli conversation package install <package-id> --yes")
+        None
     ),
     command!(
         "conversation.adapter_package.update",
@@ -997,10 +1044,11 @@ const COMMAND_SPECS: &[CommandSpec] = &[
                 ["catalogUrl"]
             ),
             param!("package_id", "Catalog package identifier", ["packageId", "itemId"]),
+            param!("version", "Optional exact compatible SemVer release"),
             param!("dry_run", "Preview update target without downloading", ["dryRun"]),
             param!("yes", "Confirm downloading and trusting this package"),
         ],
-        Some("assetiweave-cli conversation package update <package-id> --yes")
+        None
     ),
     command!(
         "conversation.adapter_package.uninstall",
@@ -1016,7 +1064,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("dry_run", "Preview uninstall without changing state", ["dryRun"]),
             param!("yes", "Confirm unregistering this package"),
         ],
-        Some("assetiweave-cli conversation package uninstall <package-id> --yes")
+        None
     ),
     command!(
         "conversation.sync",
@@ -2252,6 +2300,52 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "list_conversation_adapter_package_releases",
+        "conversation.adapter_package.releases",
+        "List version history and changelog for a conversation adapter package",
+        Read,
+        App,
+        false,
+        crate::backend::application::ConversationAdapterPackageReleaseListParams,
+        Service => |service, params| service.list_conversation_adapter_package_releases(params),
+        &[
+            param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
+            param!("package_id", "Package identifier", ["packageId"]),
+            param!("refresh", "Refresh Catalog v2 before listing"),
+        ],
+        None
+    ),
+    command!(
+        "refresh_conversation_adapter_catalogs",
+        "conversation.adapter_package.refresh_catalogs",
+        "Refresh conversation adapter Catalog v2 caches",
+        Write,
+        App,
+        false,
+        crate::backend::application::ConversationAdapterCatalogRefreshParams,
+        Service => |service, params| service.refresh_conversation_adapter_catalogs(params),
+        &[
+            param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
+            param!("force", "Ignore the 24 hour cache window"),
+        ],
+        None
+    ),
+    command!(
+        "check_conversation_adapter_package_updates",
+        "conversation.adapter_package.check_updates",
+        "Check installed conversation adapter packages for compatible updates",
+        Read,
+        App,
+        false,
+        crate::backend::application::ConversationAdapterPackageUpdateCheckParams,
+        Service => |service, params| service.check_conversation_adapter_package_updates(params),
+        &[
+            param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
+            param!("force", "Force a remote Catalog v2 refresh"),
+        ],
+        None
+    ),
+    command!(
         "install_conversation_adapter_package",
         "conversation.adapter_package.install",
         "Download and register a trusted conversation adapter package",
@@ -2267,6 +2361,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
                 ["catalogUrl"]
             ),
             param!("package_id", "Catalog package identifier", ["packageId", "itemId"]),
+            param!("version", "Optional exact compatible SemVer release"),
             param!("dry_run", "Preview install target without downloading", ["dryRun"]),
             param!("yes", "Confirm downloading and trusting this package"),
         ],
@@ -2288,6 +2383,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
                 ["catalogUrl"]
             ),
             param!("package_id", "Catalog package identifier", ["packageId", "itemId"]),
+            param!("version", "Optional exact compatible SemVer release"),
             param!("dry_run", "Preview update target without downloading", ["dryRun"]),
             param!("yes", "Confirm downloading and trusting this package"),
         ],

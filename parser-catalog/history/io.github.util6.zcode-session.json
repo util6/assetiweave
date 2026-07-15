@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "package_id": "io.github.util6.zcode-session",
+  "adapter_id": "zcode",
+  "name": "ZCode Session Parser",
+  "publisher": "util6",
+  "record_kind": "session",
+  "releases": [
+    {
+      "version": "0.1.0",
+      "channel": "stable",
+      "released_at": "2026-07-06T00:00:00Z",
+      "core_compatibility": ">=0.5.0, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.zcode-session-0.1.0-universal.zip",
+      "artifact_size": 5689,
+      "artifact_sha256": "2b8c70b6bc7c6562427c737878227c9bf5f515432b71bd731cbe38f1c9de8f6b",
+      "changelog_markdown": "## 0.1.0\n\n- Initial ZCode package release.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/zcode"
+      }
+    }
+  ]
+}

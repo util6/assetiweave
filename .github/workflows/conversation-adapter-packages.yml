@@ -1,0 +1,83 @@
+name: Conversation Adapter Packages
+
+on:
+  pull_request:
+    paths:
+      - "parser-catalog/**"
+      - "scripts/conversation-adapter-packages.mjs"
+      - ".github/workflows/conversation-adapter-packages.yml"
+  push:
+    branches: [main]
+    paths:
+      - "parser-catalog/**"
+      - "scripts/conversation-adapter-packages.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm conversation-adapters:check
+
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    concurrency:
+      group: conversation-adapter-packages-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm conversation-adapters:build --update
+      - name: Persist generated index and history metadata
+        run: |
+          if ! git diff --quiet -- parser-catalog/index.json parser-catalog/history parser-catalog/catalog.json; then
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add parser-catalog/index.json parser-catalog/history parser-catalog/catalog.json
+            git commit -m "chore: update conversation adapter catalog metadata [skip ci]"
+            git push
+          fi
+      - name: Reject mutable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view conversation-adapter-packages-main >/dev/null 2>&1; then
+            while IFS= read -r artifact; do
+              name="$(basename "$artifact")"
+              if gh release view conversation-adapter-packages-main --json assets --jq '.assets[].name' | grep -Fxq "$name"; then
+                echo "refusing to overwrite immutable artifact: $name" >&2
+                exit 1
+              fi
+            done < <(find target/conversation-adapter-packages -type f -name '*.zip' -print)
+          else
+            gh release create conversation-adapter-packages-main --title "Conversation adapter packages" --notes "Rolling immutable conversation adapter package artifacts."
+          fi
+      - name: Upload immutable artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload conversation-adapter-packages-main target/conversation-adapter-packages/*.zip

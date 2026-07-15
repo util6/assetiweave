@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "package_id": "io.github.util6.codex-session",
+  "adapter_id": "codex",
+  "name": "Codex Session Parser",
+  "publisher": "util6",
+  "record_kind": "session",
+  "releases": [
+    {
+      "version": "1.0.1",
+      "channel": "stable",
+      "released_at": "2026-07-06T00:00:00Z",
+      "core_compatibility": ">=0.5.0, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.0.1-universal.zip",
+      "artifact_size": 7621,
+      "artifact_sha256": "0e1a3cfa4bb371ed14dbc701d9b8b5ef3b9d87902174e4b362b6c70b0f7c7ef1",
+      "changelog_markdown": "## 1.0.1\n\n- Improve Codex session parsing compatibility.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+      }
+    }
+  ]
+}

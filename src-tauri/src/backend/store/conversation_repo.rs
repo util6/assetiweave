@@ -5,10 +5,11 @@ use crate::backend::dto::{
 };
 use crate::backend::models::{
     conversation_turn_fingerprint, group_turn_ids_by_question, ConversationAdapter,
-    ConversationAdapterKind, ConversationAdapterPackage, ConversationAdapterPackageVersion,
-    ConversationAdapterTrustState, ConversationGroupingOrigin, ConversationPart,
-    ConversationQuestion, ConversationSession, ConversationSource, ConversationSourceKind,
-    ConversationSyncRun, ConversationSyncStatus, ConversationTurn, NormalizedConversationSession,
+    ConversationAdapterCatalogRelease, ConversationAdapterKind, ConversationAdapterPackage,
+    ConversationAdapterPackageVersion, ConversationAdapterTrustState, ConversationGroupingOrigin,
+    ConversationPart, ConversationQuestion, ConversationSession, ConversationSource,
+    ConversationSourceKind, ConversationSyncRun, ConversationSyncStatus, ConversationTurn,
+    NormalizedConversationSession,
 };
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use sha2::{Digest, Sha256};
@@ -525,6 +526,180 @@ pub(crate) async fn activate_conversation_adapter_package_sqlx(
     .await
     .map_err(|error| error.to_string())?;
     tx.commit().await.map_err(|error| error.to_string())
+}
+
+pub(crate) async fn upsert_conversation_adapter_catalog_release_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    release: &ConversationAdapterCatalogRelease,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_adapter_catalog_releases (
+            tenant_id, catalog_url, package_id, version, channel, released_at,
+            core_compatibility, artifact_url, artifact_size, artifact_sha256,
+            changelog_markdown, breaking_change, runtime_protocol,
+            adapter_manifest_json, etag, fetched_at, adapter_id, name, publisher,
+            record_kind, package_manifest_file, adapter_manifest_file, source_json
+        ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+            ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23
+        )
+        ON CONFLICT(tenant_id, catalog_url, package_id, version) DO UPDATE SET
+            channel = excluded.channel,
+            released_at = excluded.released_at,
+            core_compatibility = excluded.core_compatibility,
+            artifact_url = excluded.artifact_url,
+            artifact_size = excluded.artifact_size,
+            artifact_sha256 = excluded.artifact_sha256,
+            changelog_markdown = excluded.changelog_markdown,
+            breaking_change = excluded.breaking_change,
+            runtime_protocol = excluded.runtime_protocol,
+            adapter_manifest_json = excluded.adapter_manifest_json,
+            etag = excluded.etag,
+            fetched_at = excluded.fetched_at,
+            adapter_id = excluded.adapter_id,
+            name = excluded.name,
+            publisher = excluded.publisher,
+            record_kind = excluded.record_kind,
+            package_manifest_file = excluded.package_manifest_file,
+            adapter_manifest_file = excluded.adapter_manifest_file,
+            source_json = excluded.source_json
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(&release.catalog_url)
+    .bind(&release.package_id)
+    .bind(&release.version)
+    .bind(encode_enum(release.channel)?)
+    .bind(&release.released_at)
+    .bind(&release.core_compatibility)
+    .bind(&release.artifact_url)
+    .bind(release.artifact_size)
+    .bind(&release.artifact_sha256)
+    .bind(&release.changelog_markdown)
+    .bind(if release.breaking_change { 1 } else { 0 })
+    .bind(&release.runtime_protocol)
+    .bind(&release.adapter_manifest_json)
+    .bind(&release.etag)
+    .bind(&release.fetched_at)
+    .bind(&release.adapter_id)
+    .bind(&release.name)
+    .bind(&release.publisher)
+    .bind(encode_enum(release.record_kind)?)
+    .bind(&release.package_manifest_file)
+    .bind(&release.adapter_manifest_file)
+    .bind(&release.source_json)
+    .execute(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub(crate) async fn list_conversation_adapter_catalog_releases_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    catalog_url: &str,
+    package_id: Option<&str>,
+) -> AppResult<Vec<ConversationAdapterCatalogRelease>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT catalog_url, package_id, adapter_id, name, publisher, version,
+               channel, released_at, core_compatibility, artifact_url,
+               artifact_size, artifact_sha256, changelog_markdown,
+               breaking_change, runtime_protocol, record_kind,
+               package_manifest_file, adapter_manifest_file,
+               adapter_manifest_json, source_json, etag, fetched_at
+        FROM conversation_adapter_catalog_releases
+        WHERE tenant_id = ?1 AND catalog_url = ?2
+          AND (?3 IS NULL OR package_id = ?3)
+        ORDER BY package_id ASC, released_at DESC, version DESC
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(catalog_url)
+    .bind(package_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    rows.iter()
+        .map(map_sqlx_conversation_adapter_catalog_release)
+        .collect()
+}
+
+pub(crate) async fn list_conversation_adapter_package_versions_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    package_id: &str,
+) -> AppResult<Vec<ConversationAdapterPackageVersion>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT package_id, version, install_dir, artifact_hash, content_hash,
+               runtime_gate_status, installed_at
+        FROM conversation_adapter_package_versions
+        WHERE tenant_id = ?1 AND package_id = ?2
+        ORDER BY installed_at DESC, version DESC
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(package_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    rows.iter()
+        .map(|row| {
+            Ok(ConversationAdapterPackageVersion {
+                package_id: row.try_get(0).map_err(|error| error.to_string())?,
+                version: row.try_get(1).map_err(|error| error.to_string())?,
+                install_dir: row.try_get(2).map_err(|error| error.to_string())?,
+                artifact_hash: row.try_get(3).map_err(|error| error.to_string())?,
+                content_hash: row.try_get(4).map_err(|error| error.to_string())?,
+                runtime_gate_status: decode_enum(
+                    row.try_get::<String, _>(5)
+                        .map_err(|error| error.to_string())?,
+                )?,
+                installed_at: row.try_get(6).map_err(|error| error.to_string())?,
+            })
+        })
+        .collect()
+}
+
+fn map_sqlx_conversation_adapter_catalog_release(
+    row: &SqliteRow,
+) -> AppResult<ConversationAdapterCatalogRelease> {
+    Ok(ConversationAdapterCatalogRelease {
+        catalog_url: row.try_get(0).map_err(|error| error.to_string())?,
+        package_id: row.try_get(1).map_err(|error| error.to_string())?,
+        adapter_id: row.try_get(2).map_err(|error| error.to_string())?,
+        name: row.try_get(3).map_err(|error| error.to_string())?,
+        publisher: row.try_get(4).map_err(|error| error.to_string())?,
+        version: row.try_get(5).map_err(|error| error.to_string())?,
+        channel: decode_enum(
+            row.try_get::<String, _>(6)
+                .map_err(|error| error.to_string())?,
+        )?,
+        released_at: row.try_get(7).map_err(|error| error.to_string())?,
+        core_compatibility: row.try_get(8).map_err(|error| error.to_string())?,
+        artifact_url: row.try_get(9).map_err(|error| error.to_string())?,
+        artifact_size: row.try_get(10).map_err(|error| error.to_string())?,
+        artifact_sha256: row.try_get(11).map_err(|error| error.to_string())?,
+        changelog_markdown: row.try_get(12).map_err(|error| error.to_string())?,
+        breaking_change: row
+            .try_get::<i64, _>(13)
+            .map_err(|error| error.to_string())?
+            == 1,
+        runtime_protocol: row.try_get(14).map_err(|error| error.to_string())?,
+        record_kind: decode_enum(
+            row.try_get::<String, _>(15)
+                .map_err(|error| error.to_string())?,
+        )?,
+        package_manifest_file: row.try_get(16).map_err(|error| error.to_string())?,
+        adapter_manifest_file: row.try_get(17).map_err(|error| error.to_string())?,
+        adapter_manifest_json: row.try_get(18).map_err(|error| error.to_string())?,
+        source_json: row.try_get(19).map_err(|error| error.to_string())?,
+        etag: row.try_get(20).map_err(|error| error.to_string())?,
+        fetched_at: row.try_get(21).map_err(|error| error.to_string())?,
+    })
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "package_id": "gemini-web",
+  "package_id": "io.github.util6.gemini-web",
   "name": "Gemini Web Harvester",
   "version": "0.1.2",
   "min_core_version": "0.5.0",

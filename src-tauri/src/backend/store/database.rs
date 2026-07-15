@@ -399,7 +399,7 @@ mod tests {
             .expect("query migrations");
 
         assert_eq!(source_table_count, 1);
-        assert_eq!(migration_count, 7);
+        assert_eq!(migration_count, 10);
         cleanup_database(&db_path);
     }
 
@@ -458,7 +458,7 @@ mod tests {
                 "local_folder".to_string()
             )
         );
-        assert_eq!(migration_count, 7);
+        assert_eq!(migration_count, 10);
         cleanup_database(&db_path);
     }
 

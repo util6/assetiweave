@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "package_id": "claude-code-session",
+  "package_id": "io.github.util6.claude-code-session",
   "name": "Claude Code Session Parser",
   "version": "1.0.0",
   "min_core_version": "0.5.0",

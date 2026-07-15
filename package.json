@@ -15,6 +15,8 @@
     "cli:run": "node scripts/run.js",
     "cli:test": "GOCACHE=$PWD/target/go-build go test -C cli ./...",
     "cli:test:e2e": "go test -C cli -tags=e2e ./tests/cli_e2e",
+    "conversation-adapters:check": "node scripts/conversation-adapter-packages.mjs check",
+    "conversation-adapters:build": "node scripts/conversation-adapter-packages.mjs build",
     "preview": "vite preview --config frontend/vite.config.ts --host 127.0.0.1",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

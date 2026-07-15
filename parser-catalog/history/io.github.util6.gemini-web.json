@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "package_id": "io.github.util6.gemini-web",
+  "adapter_id": "gemini-web",
+  "name": "Gemini Web Harvester",
+  "publisher": "util6",
+  "record_kind": "web",
+  "releases": [
+    {
+      "version": "0.1.2",
+      "channel": "stable",
+      "released_at": "2026-07-06T00:00:00Z",
+      "core_compatibility": ">=0.5.0, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.gemini-web-0.1.2-universal.zip",
+      "artifact_size": 17285,
+      "artifact_sha256": "c81587804357bfc3b36a737dab75576b6b511107dffb22f6cdd2350d9fd49571",
+      "changelog_markdown": "## 0.1.2\n\n- Improve Gemini web record compatibility.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/gemini-web"
+      }
+    }
+  ]
+}

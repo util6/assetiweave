@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "package_id": "io.github.util6.qwen-web",
+  "adapter_id": "qwen-web",
+  "name": "Qwen Web Harvester",
+  "publisher": "util6",
+  "record_kind": "web",
+  "releases": [
+    {
+      "version": "0.1.0",
+      "channel": "stable",
+      "released_at": "2026-07-06T00:00:00Z",
+      "core_compatibility": ">=0.5.0, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.qwen-web-0.1.0-universal.zip",
+      "artifact_size": 7306,
+      "artifact_sha256": "3c6aadb2c7622da3daae24207403f4785ef8fd6ffcd497b63e08a86dedb176bb",
+      "changelog_markdown": "## 0.1.0\n\n- Initial Qwen web harvester release.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/qwen-web"
+      }
+    }
+  ]
+}
