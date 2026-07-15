@@ -818,9 +818,9 @@ fn install_conversation_adapter_package_from_item(
     item: &ConversationScriptCatalogItem,
     dry_run: bool,
 ) -> AppResult<Value> {
-    let current_dir = conversation_adapter_package_current_dir(item)?;
-    let package_manifest_path = current_dir.join(item.package_manifest_file_name()?);
-    let adapter_manifest_path = current_dir.join(item.manifest_file_name()?);
+    let version_dir = conversation_adapter_package_version_dir(item)?;
+    let package_manifest_path = version_dir.join(item.package_manifest_file_name()?);
+    let adapter_manifest_path = version_dir.join(item.manifest_file_name()?);
 
     if dry_run {
         return Ok(json!({
@@ -828,18 +828,19 @@ fn install_conversation_adapter_package_from_item(
             "installed": false,
             "package_id": item.package_id(),
             "item": item,
-            "install_path": current_dir,
+            "install_path": version_dir,
             "package_manifest_path": package_manifest_path,
             "manifest_path": adapter_manifest_path,
             "security_notice": CONVERSATION_SCRIPT_SECURITY_NOTICE,
         }));
     }
 
-    let installed = match install_conversation_adapter_package_files(item, &current_dir) {
+    let previous_package = service.load_conversation_adapter_package(item.package_id())?;
+    let installed = match install_conversation_adapter_package_files(item, &version_dir) {
         Ok(installed) => installed,
         Err(error) => {
-            if !current_dir.is_dir() {
-                persist_failed_conversation_adapter_package(service, item, &current_dir, &error)?;
+            if previous_package.is_none() {
+                persist_failed_conversation_adapter_package(service, item, &version_dir, &error)?;
             }
             return Err(error);
         }
@@ -853,14 +854,6 @@ fn install_conversation_adapter_package_from_item(
         },
     )?;
     let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)?;
-    let pool = service.db.pool().clone();
-    let tenant_id = service.tenant_id().to_string();
-    let adapter_to_save = adapter.clone();
-    service.db.block_on(async move {
-        crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &adapter_to_save)
-            .await
-    })?;
-
     let now = Utc::now().to_rfc3339();
     let package = ConversationAdapterPackage {
         package_id: item.package_id().to_string(),
@@ -868,7 +861,7 @@ fn install_conversation_adapter_package_from_item(
         name: installed.validation.manifest.name.clone(),
         version: installed.validation.manifest.version.clone(),
         record_kind: item.record_kind.as_package_record_kind(),
-        install_dir: current_dir.to_string_lossy().to_string(),
+        install_dir: version_dir.to_string_lossy().to_string(),
         manifest_path: installed.validation.manifest_path.clone(),
         adapter_manifest_path: installed.validation.adapter_manifest_path.clone(),
         runtime_protocol: installed
@@ -897,17 +890,51 @@ fn install_conversation_adapter_package_from_item(
                 .unwrap_or_else(|| installed.validation.content_hash.clone()),
         ),
         error_message: None,
-        created_at: now.clone(),
+        created_at: previous_package
+            .as_ref()
+            .map(|package| package.created_at.clone())
+            .unwrap_or_else(|| now.clone()),
         updated_at: now,
     };
-    service.save_conversation_adapter_package(&package)?;
+    let version = crate::backend::models::ConversationAdapterPackageVersion {
+        package_id: package.package_id.clone(),
+        version: package.version.clone(),
+        install_dir: package.install_dir.clone(),
+        artifact_hash: package.trusted_package_hash.clone(),
+        content_hash: installed.validation.content_hash.clone(),
+        runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
+        installed_at: package.updated_at.clone(),
+    };
+    let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
+    let adapter_to_save = adapter.clone();
+    let package_to_save = package.clone();
+    let activation = service.db.block_on(async move {
+        crate::backend::store::activate_conversation_adapter_package_sqlx(
+            &pool,
+            &tenant_id,
+            &adapter_to_save,
+            &package_to_save,
+            &version,
+        )
+        .await
+    });
+    if let Err(error) = activation {
+        if installed.created_version_dir {
+            let _ = fs::remove_dir_all(&version_dir);
+        }
+        if previous_package.is_none() {
+            persist_failed_conversation_adapter_package(service, item, &version_dir, &error)?;
+        }
+        return Err(error);
+    }
 
     Ok(json!({
         "dry_run": false,
         "installed": true,
         "package_id": item.package_id(),
         "item": item,
-        "install_path": current_dir,
+        "install_path": version_dir,
         "package_manifest_path": installed.validation.manifest_path,
         "manifest_path": installed.validation.adapter_manifest_path,
         "package": package,
@@ -919,11 +946,12 @@ fn install_conversation_adapter_package_from_item(
 
 struct InstalledConversationAdapterPackage {
     validation: crate::backend::conversations::ConversationAdapterPackageValidationResult,
+    created_version_dir: bool,
 }
 
 fn install_conversation_adapter_package_files(
     item: &ConversationScriptCatalogItem,
-    current_dir: &Path,
+    version_dir: &Path,
 ) -> AppResult<InstalledConversationAdapterPackage> {
     let location = parse_github_catalog_location(&item.source)?;
     let staging_dir = conversation_script_staging_dir(item)?;
@@ -959,36 +987,43 @@ fn install_conversation_adapter_package_files(
             )?;
         validate_installed_package_for_catalog_item(item, &prepared_validation)?;
 
-        crate::backend::conversations::register_external_adapter(
-            crate::backend::conversations::ExternalAdapterRegisterParams {
-                manifest_path: prepared_validation.adapter_manifest_path.clone(),
-                dry_run: false,
-                yes: true,
-            },
-        )?;
-
-        let replacement = replace_conversation_adapter_package_current(&prepared_dir, current_dir)?;
-        let final_validation = (|| {
-            let validation =
+        if version_dir.exists() {
+            let existing =
                 crate::backend::conversations::validate_conversation_adapter_package_dir(
-                    current_dir,
+                    version_dir,
                 )?;
-            validate_installed_package_for_catalog_item(item, &validation)?;
-            Ok(validation)
-        })();
-        match final_validation {
-            Ok(validation) => {
-                commit_conversation_adapter_package_current_replacement(replacement)?;
-                Ok(InstalledConversationAdapterPackage { validation })
+            validate_installed_package_for_catalog_item(item, &existing)?;
+            if existing.content_hash != prepared_validation.content_hash {
+                return Err(format!(
+                    "conversation adapter package version is immutable: {}@{}",
+                    item.package_id(),
+                    item.version
+                ));
             }
+            fs::remove_dir_all(&prepared_dir).map_err(|error| error.to_string())?;
+            return Ok(InstalledConversationAdapterPackage {
+                validation: existing,
+                created_version_dir: false,
+            });
+        }
+        let parent = version_dir
+            .parent()
+            .ok_or_else(|| "conversation adapter version directory has no parent".to_string())?;
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        fs::rename(&prepared_dir, version_dir).map_err(|error| error.to_string())?;
+        let final_validation =
+            crate::backend::conversations::validate_conversation_adapter_package_dir(version_dir)
+                .and_then(|validation| {
+                    validate_installed_package_for_catalog_item(item, &validation)?;
+                    Ok(validation)
+                });
+        match final_validation {
+            Ok(validation) => Ok(InstalledConversationAdapterPackage {
+                validation,
+                created_version_dir: true,
+            }),
             Err(error) => {
-                let rollback_result =
-                    rollback_conversation_adapter_package_current_replacement(replacement);
-                if let Err(rollback_error) = rollback_result {
-                    return Err(format!(
-                        "{error}; failed to restore previous conversation adapter package: {rollback_error}"
-                    ));
-                }
+                let _ = fs::remove_dir_all(version_dir);
                 Err(error)
             }
         }
@@ -1045,64 +1080,6 @@ fn persist_failed_conversation_adapter_package(
         updated_at: now,
     };
     service.save_conversation_adapter_package(&package)
-}
-
-struct ConversationAdapterPackageCurrentReplacement {
-    current_dir: PathBuf,
-    backup_dir: Option<PathBuf>,
-}
-
-fn replace_conversation_adapter_package_current(
-    prepared_dir: &Path,
-    current_dir: &Path,
-) -> AppResult<ConversationAdapterPackageCurrentReplacement> {
-    if let Some(parent) = current_dir.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let backup_dir = current_dir
-        .exists()
-        .then(|| current_dir.with_file_name(format!(".current-{}.previous", short_uuid())));
-    if current_dir.exists() {
-        fs::rename(current_dir, backup_dir.as_ref().expect("backup path"))
-            .map_err(|error| error.to_string())?;
-    }
-    match fs::rename(prepared_dir, current_dir) {
-        Ok(()) => Ok(ConversationAdapterPackageCurrentReplacement {
-            current_dir: current_dir.to_path_buf(),
-            backup_dir,
-        }),
-        Err(error) => {
-            if let Some(backup_dir) = backup_dir.as_ref() {
-                if backup_dir.exists() {
-                    let _ = fs::rename(backup_dir, current_dir);
-                }
-            }
-            Err(error.to_string())
-        }
-    }
-}
-
-fn commit_conversation_adapter_package_current_replacement(
-    replacement: ConversationAdapterPackageCurrentReplacement,
-) -> AppResult<()> {
-    if let Some(backup_dir) = replacement.backup_dir {
-        fs::remove_dir_all(&backup_dir).map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
-fn rollback_conversation_adapter_package_current_replacement(
-    replacement: ConversationAdapterPackageCurrentReplacement,
-) -> AppResult<()> {
-    if replacement.current_dir.exists() {
-        fs::remove_dir_all(&replacement.current_dir).map_err(|error| error.to_string())?;
-    }
-    if let Some(backup_dir) = replacement.backup_dir {
-        if backup_dir.exists() {
-            fs::rename(&backup_dir, &replacement.current_dir).map_err(|error| error.to_string())?;
-        }
-    }
-    Ok(())
 }
 
 fn validate_installed_package_for_catalog_item(
@@ -1396,6 +1373,7 @@ fn validate_conversation_script_catalog_item(
             item.id
         ));
     }
+    validated_package_version(&item.version)?;
     if let Some(adapter_id) = item.adapter_id.as_deref() {
         if adapter_id.trim().is_empty() {
             return Err(format!(
@@ -1579,10 +1557,18 @@ fn conversation_adapter_package_dir(item: &ConversationScriptCatalogItem) -> App
         .join(item.package_id()))
 }
 
-fn conversation_adapter_package_current_dir(
+fn conversation_adapter_package_version_dir(
     item: &ConversationScriptCatalogItem,
 ) -> AppResult<PathBuf> {
-    Ok(conversation_adapter_package_dir(item)?.join("current"))
+    Ok(conversation_adapter_package_dir(item)?
+        .join("versions")
+        .join(validated_package_version(&item.version)?))
+}
+
+fn validated_package_version(value: &str) -> AppResult<String> {
+    semver::Version::parse(value.trim())
+        .map(|version| version.to_string())
+        .map_err(|error| format!("conversation adapter package version must be SemVer: {error}"))
 }
 
 fn conversation_adapter_package_prepared_dir(
@@ -1865,32 +1851,13 @@ mod tests {
     }
 
     #[test]
-    fn current_package_replacement_rolls_back_to_previous_current() {
-        let root =
-            std::env::temp_dir().join(format!("assetiweave-package-replace-{}", Uuid::new_v4()));
-        let current_dir = root.join("current");
-        let prepared_dir = root.join("prepared").join("next");
-        fs::create_dir_all(&current_dir).expect("create current");
-        fs::create_dir_all(&prepared_dir).expect("create prepared");
-        fs::write(current_dir.join("version.txt"), "old").expect("write old current");
-        fs::write(prepared_dir.join("version.txt"), "new").expect("write new prepared");
-
-        let replacement = replace_conversation_adapter_package_current(&prepared_dir, &current_dir)
-            .expect("replace current");
+    fn package_versions_require_semver_before_becoming_path_segments() {
         assert_eq!(
-            fs::read_to_string(current_dir.join("version.txt")).expect("read current"),
-            "new"
+            validated_package_version("1.2.3-beta.1").unwrap(),
+            "1.2.3-beta.1"
         );
-
-        rollback_conversation_adapter_package_current_replacement(replacement)
-            .expect("rollback current");
-
-        assert_eq!(
-            fs::read_to_string(current_dir.join("version.txt")).expect("read restored current"),
-            "old"
-        );
-        assert!(!prepared_dir.exists());
-        let _ = fs::remove_dir_all(root);
+        assert!(validated_package_version("latest").is_err());
+        assert!(validated_package_version("1/../../external").is_err());
     }
 
     #[test]

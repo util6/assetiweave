@@ -176,6 +176,17 @@ pub struct ConversationAdapterPackage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ConversationAdapterPackageVersion {
+    pub package_id: String,
+    pub version: String,
+    pub install_dir: String,
+    pub artifact_hash: Option<String>,
+    pub content_hash: String,
+    pub runtime_gate_status: ConversationAdapterRuntimeGateStatus,
+    pub installed_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ConversationSource {
     pub id: String,
     pub adapter_id: String,

@@ -5,14 +5,16 @@ use crate::backend::dto::{
 };
 use crate::backend::models::{
     conversation_turn_fingerprint, group_turn_ids_by_question, ConversationAdapter,
-    ConversationAdapterKind, ConversationAdapterPackage, ConversationAdapterTrustState,
-    ConversationGroupingOrigin, ConversationPart, ConversationQuestion, ConversationSession,
-    ConversationSource, ConversationSourceKind, ConversationSyncRun, ConversationSyncStatus,
-    ConversationTurn, NormalizedConversationSession,
+    ConversationAdapterKind, ConversationAdapterPackage, ConversationAdapterPackageVersion,
+    ConversationAdapterTrustState, ConversationGroupingOrigin, ConversationPart,
+    ConversationQuestion, ConversationSession, ConversationSource, ConversationSourceKind,
+    ConversationSyncRun, ConversationSyncStatus, ConversationTurn, NormalizedConversationSession,
 };
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use sha2::{Digest, Sha256};
-use sqlx::{sqlite::SqliteRow, AssertSqlSafe, Row as SqlxRow, Sqlite, SqlitePool, Transaction};
+use sqlx::{
+    sqlite::SqliteRow, AssertSqlSafe, Executor, Row as SqlxRow, Sqlite, SqlitePool, Transaction,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::codec::{decode_enum, decode_json, encode_enum, encode_json};
@@ -264,6 +266,17 @@ pub(crate) async fn upsert_conversation_adapter_sqlx(
     tenant_id: &str,
     adapter: &ConversationAdapter,
 ) -> AppResult<()> {
+    upsert_conversation_adapter_with_executor(pool, tenant_id, adapter).await
+}
+
+async fn upsert_conversation_adapter_with_executor<'e, E>(
+    executor: E,
+    tenant_id: &str,
+    adapter: &ConversationAdapter,
+) -> AppResult<()>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
     sqlx::query(UPSERT_CONVERSATION_ADAPTER_SQL)
         .bind(tenant_id)
         .bind(&adapter.id)
@@ -281,7 +294,7 @@ pub(crate) async fn upsert_conversation_adapter_sqlx(
         .bind(encode_json(&adapter.input_kinds)?)
         .bind(&adapter.created_at)
         .bind(&adapter.updated_at)
-        .execute(pool)
+        .execute(executor)
         .await
         .map_err(|error| error.to_string())?;
     Ok(())
@@ -410,6 +423,17 @@ pub(crate) async fn upsert_conversation_adapter_package_sqlx(
     tenant_id: &str,
     package: &ConversationAdapterPackage,
 ) -> AppResult<()> {
+    upsert_conversation_adapter_package_with_executor(pool, tenant_id, package).await
+}
+
+async fn upsert_conversation_adapter_package_with_executor<'e, E>(
+    executor: E,
+    tenant_id: &str,
+    package: &ConversationAdapterPackage,
+) -> AppResult<()>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
     sqlx::query(UPSERT_CONVERSATION_ADAPTER_PACKAGE_SQL)
         .bind(tenant_id)
         .bind(&package.package_id)
@@ -437,10 +461,70 @@ pub(crate) async fn upsert_conversation_adapter_package_sqlx(
         .bind(&package.error_message)
         .bind(&package.created_at)
         .bind(&package.updated_at)
-        .execute(pool)
+        .execute(executor)
         .await
         .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+pub(crate) async fn activate_conversation_adapter_package_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    adapter: &ConversationAdapter,
+    package: &ConversationAdapterPackage,
+    version: &ConversationAdapterPackageVersion,
+) -> AppResult<()> {
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let existing = sqlx::query(
+        r#"
+        SELECT artifact_hash, content_hash
+        FROM conversation_adapter_package_versions
+        WHERE tenant_id = ?1 AND package_id = ?2 AND version = ?3
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(&version.package_id)
+    .bind(&version.version)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    if let Some(existing) = existing {
+        let artifact_hash: Option<String> =
+            existing.try_get(0).map_err(|error| error.to_string())?;
+        let content_hash: String = existing.try_get(1).map_err(|error| error.to_string())?;
+        if artifact_hash != version.artifact_hash || content_hash != version.content_hash {
+            return Err(format!(
+                "conversation adapter package version is immutable: {}@{}",
+                version.package_id, version.version
+            ));
+        }
+    }
+
+    upsert_conversation_adapter_with_executor(&mut *tx, tenant_id, adapter).await?;
+    upsert_conversation_adapter_package_with_executor(&mut *tx, tenant_id, package).await?;
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_adapter_package_versions (
+            tenant_id, package_id, version, install_dir, artifact_hash,
+            content_hash, runtime_gate_status, installed_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ON CONFLICT(tenant_id, package_id, version) DO UPDATE SET
+            install_dir = excluded.install_dir,
+            runtime_gate_status = excluded.runtime_gate_status
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(&version.package_id)
+    .bind(&version.version)
+    .bind(&version.install_dir)
+    .bind(&version.artifact_hash)
+    .bind(&version.content_hash)
+    .bind(encode_enum(version.runtime_gate_status)?)
+    .bind(&version.installed_at)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    tx.commit().await.map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
@@ -3158,6 +3242,114 @@ mod tests {
         assert_eq!(by_adapter, Some(package.clone()));
         assert_eq!(deleted, Some(package));
         assert!(missing.is_none());
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn package_activation_rolls_back_adapter_and_active_version_when_version_insert_fails() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-package-activation-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let original_adapter = test_conversation_adapter(
+            "activation-adapter",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let package = ConversationAdapterPackage {
+            package_id: "com.util6.activation".to_string(),
+            adapter_id: original_adapter.id.clone(),
+            name: "Activation Adapter".to_string(),
+            version: "1.0.0".to_string(),
+            record_kind: ConversationAdapterPackageRecordKind::Session,
+            install_dir: "/tmp/packages/com.util6.activation/versions/1.0.0".to_string(),
+            manifest_path: "/tmp/packages/com.util6.activation/versions/1.0.0/conversation-adapter-package.json".to_string(),
+            adapter_manifest_path: "/tmp/packages/com.util6.activation/versions/1.0.0/conversation-adapter.json".to_string(),
+            runtime_protocol: "stdio-ndjson-v1".to_string(),
+            runtime_ready: true,
+            origin: ConversationAdapterPackageOrigin::ManagedRelease,
+            source_url: None,
+            git_ref: None,
+            git_commit: None,
+            catalog_url: None,
+            update_policy: ConversationPackageUpdatePolicy::Manual,
+            latest_version: Some("1.0.0".to_string()),
+            last_checked_at: None,
+            runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
+            runtime_validated_at: None,
+            installed_content_hash: Some("hash-v1".to_string()),
+            trusted_package_hash: Some("hash-v1".to_string()),
+            error_message: None,
+            created_at: "2026-07-15T00:00:00Z".to_string(),
+            updated_at: "2026-07-15T00:00:00Z".to_string(),
+        };
+        let version = ConversationAdapterPackageVersion {
+            package_id: package.package_id.clone(),
+            version: package.version.clone(),
+            install_dir: package.install_dir.clone(),
+            artifact_hash: Some("hash-v1".to_string()),
+            content_hash: "hash-v1".to_string(),
+            runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
+            installed_at: package.created_at.clone(),
+        };
+        database
+            .block_on(activate_conversation_adapter_package_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &original_adapter,
+                &package,
+                &version,
+            ))
+            .expect("activate original package");
+
+        let mut candidate_adapter = original_adapter.clone();
+        candidate_adapter.version = "2.0.0".to_string();
+        let mut candidate_package = package.clone();
+        candidate_package.version = "2.0.0".to_string();
+        candidate_package.install_dir =
+            "/tmp/packages/com.util6.activation/versions/2.0.0".to_string();
+        let invalid_version = ConversationAdapterPackageVersion {
+            package_id: "com.util6.missing-parent".to_string(),
+            version: "2.0.0".to_string(),
+            install_dir: candidate_package.install_dir.clone(),
+            artifact_hash: Some("hash-v2".to_string()),
+            content_hash: "hash-v2".to_string(),
+            runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
+            installed_at: "2026-07-15T01:00:00Z".to_string(),
+        };
+        database
+            .block_on(activate_conversation_adapter_package_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &candidate_adapter,
+                &candidate_package,
+                &invalid_version,
+            ))
+            .expect_err("foreign-key failure should roll back activation");
+
+        let (stored_adapter, stored_package) = database
+            .block_on(async {
+                AppResult::Ok((
+                    load_conversation_adapter_sqlx(
+                        database.pool(),
+                        TEST_TENANT_ID,
+                        &original_adapter.id,
+                    )
+                    .await?,
+                    load_conversation_adapter_package_sqlx(
+                        database.pool(),
+                        TEST_TENANT_ID,
+                        &package.package_id,
+                    )
+                    .await?,
+                ))
+            })
+            .expect("reload active package");
+        assert_eq!(stored_adapter, Some(original_adapter));
+        assert_eq!(stored_package, Some(package));
 
         drop(database);
         cleanup_database(&db_path);
