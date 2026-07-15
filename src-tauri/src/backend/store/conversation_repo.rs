@@ -68,6 +68,8 @@ const DISABLE_CONVERSATION_SOURCES_BY_ADAPTER_SQL: &str =
 const LIST_CONVERSATION_ADAPTER_PACKAGES_SQL: &str = r#"
     SELECT package_id, adapter_id, name, version, record_kind, install_dir,
            manifest_path, adapter_manifest_path, runtime_protocol, runtime_ready,
+           origin, source_url, git_ref, git_commit, catalog_url, update_policy,
+           latest_version, last_checked_at, runtime_gate_status, runtime_validated_at,
            installed_content_hash, trusted_package_hash, error_message,
            created_at, updated_at
     FROM conversation_adapter_packages
@@ -78,6 +80,8 @@ const LIST_CONVERSATION_ADAPTER_PACKAGES_SQL: &str = r#"
 const LOAD_CONVERSATION_ADAPTER_PACKAGE_SQL: &str = r#"
     SELECT package_id, adapter_id, name, version, record_kind, install_dir,
            manifest_path, adapter_manifest_path, runtime_protocol, runtime_ready,
+           origin, source_url, git_ref, git_commit, catalog_url, update_policy,
+           latest_version, last_checked_at, runtime_gate_status, runtime_validated_at,
            installed_content_hash, trusted_package_hash, error_message,
            created_at, updated_at
     FROM conversation_adapter_packages
@@ -87,6 +91,8 @@ const LOAD_CONVERSATION_ADAPTER_PACKAGE_SQL: &str = r#"
 const LOAD_CONVERSATION_ADAPTER_PACKAGE_BY_ADAPTER_SQL: &str = r#"
     SELECT package_id, adapter_id, name, version, record_kind, install_dir,
            manifest_path, adapter_manifest_path, runtime_protocol, runtime_ready,
+           origin, source_url, git_ref, git_commit, catalog_url, update_policy,
+           latest_version, last_checked_at, runtime_gate_status, runtime_validated_at,
            installed_content_hash, trusted_package_hash, error_message,
            created_at, updated_at
     FROM conversation_adapter_packages
@@ -99,9 +105,14 @@ const UPSERT_CONVERSATION_ADAPTER_PACKAGE_SQL: &str = r#"
     INSERT INTO conversation_adapter_packages (
         tenant_id, package_id, adapter_id, name, version, record_kind, install_dir,
         manifest_path, adapter_manifest_path, runtime_protocol, runtime_ready,
+        origin, source_url, git_ref, git_commit, catalog_url, update_policy,
+        latest_version, last_checked_at, runtime_gate_status, runtime_validated_at,
         installed_content_hash, trusted_package_hash, error_message, created_at, updated_at
     )
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+    VALUES (
+        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+        ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26
+    )
     ON CONFLICT(tenant_id, package_id) DO UPDATE SET
         adapter_id = excluded.adapter_id,
         name = excluded.name,
@@ -112,6 +123,16 @@ const UPSERT_CONVERSATION_ADAPTER_PACKAGE_SQL: &str = r#"
         adapter_manifest_path = excluded.adapter_manifest_path,
         runtime_protocol = excluded.runtime_protocol,
         runtime_ready = excluded.runtime_ready,
+        origin = excluded.origin,
+        source_url = excluded.source_url,
+        git_ref = excluded.git_ref,
+        git_commit = excluded.git_commit,
+        catalog_url = excluded.catalog_url,
+        update_policy = excluded.update_policy,
+        latest_version = excluded.latest_version,
+        last_checked_at = excluded.last_checked_at,
+        runtime_gate_status = excluded.runtime_gate_status,
+        runtime_validated_at = excluded.runtime_validated_at,
         installed_content_hash = excluded.installed_content_hash,
         trusted_package_hash = excluded.trusted_package_hash,
         error_message = excluded.error_message,
@@ -377,6 +398,16 @@ pub(crate) async fn upsert_conversation_adapter_package_sqlx(
         .bind(&package.adapter_manifest_path)
         .bind(&package.runtime_protocol)
         .bind(if package.runtime_ready { 1 } else { 0 })
+        .bind(encode_enum(package.origin)?)
+        .bind(&package.source_url)
+        .bind(&package.git_ref)
+        .bind(&package.git_commit)
+        .bind(&package.catalog_url)
+        .bind(encode_enum(package.update_policy)?)
+        .bind(&package.latest_version)
+        .bind(&package.last_checked_at)
+        .bind(encode_enum(package.runtime_gate_status)?)
+        .bind(&package.runtime_validated_at)
         .bind(&package.installed_content_hash)
         .bind(&package.trusted_package_hash)
         .bind(&package.error_message)
@@ -1334,11 +1365,30 @@ fn map_sqlx_conversation_adapter_package(row: &SqliteRow) -> AppResult<Conversat
             .try_get::<i64, _>(9)
             .map_err(|error| error.to_string())?
             == 1,
-        installed_content_hash: row.try_get(10).map_err(|error| error.to_string())?,
-        trusted_package_hash: row.try_get(11).map_err(|error| error.to_string())?,
-        error_message: row.try_get(12).map_err(|error| error.to_string())?,
-        created_at: row.try_get(13).map_err(|error| error.to_string())?,
-        updated_at: row.try_get(14).map_err(|error| error.to_string())?,
+        origin: decode_enum(
+            row.try_get::<String, _>(10)
+                .map_err(|error| error.to_string())?,
+        )?,
+        source_url: row.try_get(11).map_err(|error| error.to_string())?,
+        git_ref: row.try_get(12).map_err(|error| error.to_string())?,
+        git_commit: row.try_get(13).map_err(|error| error.to_string())?,
+        catalog_url: row.try_get(14).map_err(|error| error.to_string())?,
+        update_policy: decode_enum(
+            row.try_get::<String, _>(15)
+                .map_err(|error| error.to_string())?,
+        )?,
+        latest_version: row.try_get(16).map_err(|error| error.to_string())?,
+        last_checked_at: row.try_get(17).map_err(|error| error.to_string())?,
+        runtime_gate_status: decode_enum(
+            row.try_get::<String, _>(18)
+                .map_err(|error| error.to_string())?,
+        )?,
+        runtime_validated_at: row.try_get(19).map_err(|error| error.to_string())?,
+        installed_content_hash: row.try_get(20).map_err(|error| error.to_string())?,
+        trusted_package_hash: row.try_get(21).map_err(|error| error.to_string())?,
+        error_message: row.try_get(22).map_err(|error| error.to_string())?,
+        created_at: row.try_get(23).map_err(|error| error.to_string())?,
+        updated_at: row.try_get(24).map_err(|error| error.to_string())?,
     })
 }
 
@@ -2862,8 +2912,10 @@ fn stable_id(prefix: &str, parts: &[&str]) -> String {
 mod tests {
     use super::*;
     use crate::backend::models::{
-        ConversationAdapterPackageRecordKind, ConversationPartKind, ConversationPartRole,
-        NormalizedConversationPart, NormalizedConversationTurn,
+        ConversationAdapterPackageOrigin, ConversationAdapterPackageRecordKind,
+        ConversationAdapterRuntimeGateStatus, ConversationPackageUpdatePolicy,
+        ConversationPartKind, ConversationPartRole, NormalizedConversationPart,
+        NormalizedConversationTurn,
     };
     use crate::backend::store::Database;
     use uuid::Uuid;
@@ -3002,6 +3054,16 @@ mod tests {
                 .to_string(),
             runtime_protocol: "stdio-ndjson-v1".to_string(),
             runtime_ready: true,
+            origin: ConversationAdapterPackageOrigin::ManagedRelease,
+            source_url: Some("https://github.com/util6/assetiweave".to_string()),
+            git_ref: Some("refs/tags/conversation-adapter-packages-main".to_string()),
+            git_commit: Some("abc123".to_string()),
+            catalog_url: Some("https://example.com/index.json".to_string()),
+            update_policy: ConversationPackageUpdatePolicy::Manual,
+            latest_version: Some("1.1.0".to_string()),
+            last_checked_at: Some("2026-07-04T01:00:00Z".to_string()),
+            runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
+            runtime_validated_at: Some("2026-07-04T02:00:00Z".to_string()),
             installed_content_hash: Some("package-hash".to_string()),
             trusted_package_hash: Some("package-hash".to_string()),
             error_message: None,

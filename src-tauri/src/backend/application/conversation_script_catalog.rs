@@ -1,5 +1,8 @@
 use super::prelude::*;
-use crate::backend::models::ConversationAdapterPackageRecordKind;
+use crate::backend::models::{
+    ConversationAdapterPackageOrigin, ConversationAdapterPackageRecordKind,
+    ConversationAdapterRuntimeGateStatus, ConversationPackageUpdatePolicy,
+};
 
 const DEFAULT_CONVERSATION_SCRIPT_CATALOG_URL: &str =
     "https://raw.githubusercontent.com/util6/assetiweave/main/parser-catalog/catalog.json";
@@ -399,6 +402,16 @@ fn install_conversation_adapter_package_from_item(
             .as_str()
             .to_string(),
         runtime_ready: true,
+        origin: ConversationAdapterPackageOrigin::ManagedRelease,
+        source_url: Some(item.source.url.clone()),
+        git_ref: item.source.branch.clone(),
+        git_commit: None,
+        catalog_url: None,
+        update_policy: ConversationPackageUpdatePolicy::Manual,
+        latest_version: Some(item.version.clone()),
+        last_checked_at: Some(now.clone()),
+        runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
+        runtime_validated_at: Some(now.clone()),
         installed_content_hash: Some(installed.validation.content_hash.clone()),
         trusted_package_hash: Some(
             item.expected_package_hash
@@ -535,6 +548,16 @@ fn persist_failed_conversation_adapter_package(
             .to_string(),
         runtime_protocol: "stdio-ndjson-v1".to_string(),
         runtime_ready: false,
+        origin: ConversationAdapterPackageOrigin::ManagedRelease,
+        source_url: Some(item.source.url.clone()),
+        git_ref: item.source.branch.clone(),
+        git_commit: None,
+        catalog_url: None,
+        update_policy: ConversationPackageUpdatePolicy::Manual,
+        latest_version: Some(item.version.clone()),
+        last_checked_at: Some(now.clone()),
+        runtime_gate_status: ConversationAdapterRuntimeGateStatus::ManifestInvalid,
+        runtime_validated_at: Some(now.clone()),
         installed_content_hash: None,
         trusted_package_hash: item
             .expected_package_hash
@@ -1275,6 +1298,16 @@ mod tests {
             adapter_manifest_path: format!("/tmp/{id}/current/conversation-adapter.json"),
             runtime_protocol: "stdio-ndjson-v1".to_string(),
             runtime_ready: true,
+            origin: ConversationAdapterPackageOrigin::ManagedRelease,
+            source_url: None,
+            git_ref: None,
+            git_commit: None,
+            catalog_url: None,
+            update_policy: ConversationPackageUpdatePolicy::Manual,
+            latest_version: Some(version.to_string()),
+            last_checked_at: None,
+            runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
+            runtime_validated_at: None,
             installed_content_hash: Some("package-hash".to_string()),
             trusted_package_hash: Some("package-hash".to_string()),
             error_message: None,

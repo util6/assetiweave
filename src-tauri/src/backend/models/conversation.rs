@@ -43,6 +43,36 @@ pub enum ConversationAdapterPackageRecordKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+pub enum ConversationAdapterPackageOrigin {
+    BuiltIn,
+    ManagedRelease,
+    LocalDirectory,
+    GitRef,
+    LegacyExternal,
+    DevOverride,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationAdapterRuntimeGateStatus {
+    Ready,
+    RuntimeMissing,
+    HashMismatch,
+    ManifestInvalid,
+    CoreIncompatible,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationPackageUpdatePolicy {
+    Manual,
+    FollowStable,
+    FollowBeta,
+    PinExact,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum ConversationPartRole {
     User,
     Assistant,
@@ -109,6 +139,16 @@ pub struct ConversationAdapterPackage {
     pub adapter_manifest_path: String,
     pub runtime_protocol: String,
     pub runtime_ready: bool,
+    pub origin: ConversationAdapterPackageOrigin,
+    pub source_url: Option<String>,
+    pub git_ref: Option<String>,
+    pub git_commit: Option<String>,
+    pub catalog_url: Option<String>,
+    pub update_policy: ConversationPackageUpdatePolicy,
+    pub latest_version: Option<String>,
+    pub last_checked_at: Option<String>,
+    pub runtime_gate_status: ConversationAdapterRuntimeGateStatus,
+    pub runtime_validated_at: Option<String>,
     pub installed_content_hash: Option<String>,
     pub trusted_package_hash: Option<String>,
     pub error_message: Option<String>,
