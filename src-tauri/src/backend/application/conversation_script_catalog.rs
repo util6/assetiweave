@@ -81,6 +81,137 @@ impl AppService {
         })
     }
 
+    pub(crate) fn register_conversation_adapter_local(
+        &self,
+        params: ConversationAdapterLocalRegisterParams,
+    ) -> AppResult<Value> {
+        if !matches!(
+            params.origin,
+            ConversationAdapterPackageOrigin::LocalDirectory
+                | ConversationAdapterPackageOrigin::GitRef
+                | ConversationAdapterPackageOrigin::DevOverride
+        ) {
+            return Err(
+                "local conversation adapter registration requires local_directory, git_ref, or dev_override origin"
+                    .to_string(),
+            );
+        }
+        if !params.dry_run && !params.yes {
+            return Err(
+                "conversation adapter local registration requires confirmation".to_string(),
+            );
+        }
+        if params.origin == ConversationAdapterPackageOrigin::GitRef
+            && params
+                .git_ref
+                .as_deref()
+                .and_then(clean_non_empty_string)
+                .is_none()
+        {
+            return Err("git_ref conversation adapter registration requires git_ref".to_string());
+        }
+
+        let package_dir = crate::backend::path_utils::expand_path(&params.package_dir)?;
+        let validation =
+            crate::backend::conversations::validate_conversation_adapter_package_dir(&package_dir)?;
+        if let Some(existing) =
+            self.load_conversation_adapter_package(&validation.manifest.package_id)?
+        {
+            if existing.origin == ConversationAdapterPackageOrigin::ManagedRelease {
+                return Err(format!(
+                    "managed conversation adapter package is already installed: {}",
+                    existing.package_id
+                ));
+            }
+        }
+
+        let preflight = self.prepare_conversation_adapter_package_change(
+            ConversationAdapterPackageChangeParams {
+                action: ConversationAdapterPackageChangeAction::Register,
+                package_id: None,
+                adapter_id: Some(validation.adapter_validation.manifest.id.clone()),
+            },
+        )?;
+        reject_conversation_package_task_conflicts(&preflight)?;
+        let preview = crate::backend::conversations::register_external_adapter(
+            crate::backend::conversations::ExternalAdapterRegisterParams {
+                manifest_path: validation.adapter_manifest_path.clone(),
+                dry_run: params.dry_run,
+                yes: params.yes,
+            },
+        )?;
+        if params.dry_run {
+            return Ok(json!({
+                "dry_run": true,
+                "registered": false,
+                "origin": params.origin,
+                "package_dir": package_dir,
+                "validation": validation,
+                "preflight": preflight,
+                "registration": preview
+            }));
+        }
+
+        let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)?;
+        let now = Utc::now().to_rfc3339();
+        let package = ConversationAdapterPackage {
+            package_id: validation.manifest.package_id.clone(),
+            adapter_id: adapter.id.clone(),
+            name: validation.manifest.name.clone(),
+            version: validation.manifest.version.clone(),
+            record_kind: validation.manifest.record_kind,
+            install_dir: package_dir.to_string_lossy().to_string(),
+            manifest_path: validation.manifest_path.clone(),
+            adapter_manifest_path: validation.adapter_manifest_path.clone(),
+            runtime_protocol: validation.manifest.runtime.protocol.as_str().to_string(),
+            runtime_ready: true,
+            origin: params.origin,
+            source_url: params
+                .source_url
+                .as_deref()
+                .and_then(clean_non_empty_string),
+            git_ref: params.git_ref.as_deref().and_then(clean_non_empty_string),
+            git_commit: params
+                .git_commit
+                .as_deref()
+                .and_then(clean_non_empty_string),
+            catalog_url: None,
+            update_policy: ConversationPackageUpdatePolicy::PinExact,
+            latest_version: None,
+            last_checked_at: None,
+            runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
+            runtime_validated_at: Some(now.clone()),
+            installed_content_hash: Some(validation.content_hash.clone()),
+            trusted_package_hash: (params.origin != ConversationAdapterPackageOrigin::DevOverride)
+                .then(|| validation.content_hash.clone()),
+            error_message: None,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
+        let adapter_to_save = adapter.clone();
+        self.db.block_on(async move {
+            crate::backend::store::upsert_conversation_adapter_sqlx(
+                &pool,
+                &tenant_id,
+                &adapter_to_save,
+            )
+            .await
+        })?;
+        self.save_conversation_adapter_package(&package)?;
+
+        Ok(json!({
+            "dry_run": false,
+            "registered": true,
+            "origin": params.origin,
+            "package": package,
+            "adapter": adapter,
+            "validation": validation,
+            "preflight": preflight
+        }))
+    }
+
     pub(crate) fn prepare_conversation_adapter_package_change(
         &self,
         params: ConversationAdapterPackageChangeParams,
@@ -339,39 +470,48 @@ impl AppService {
             }));
         }
 
-        let adapter_result =
-            self.unregister_conversation_adapter(ConversationAdapterUnregisterParams {
-                adapter_id: package.adapter_id.clone(),
-                dry_run: false,
-                yes: true,
-            });
-        if let Err(error) = adapter_result {
-            if !error.contains("conversation adapter not found") {
-                return Err(error);
-            }
-        }
-
+        let staged_root = package_root.with_file_name(format!(
+            ".{}-uninstall-{}",
+            package.package_id,
+            short_uuid()
+        ));
+        fs::rename(&package_root, &staged_root).map_err(|error| {
+            format!(
+                "stage managed conversation adapter package uninstall failed ({}): {error}",
+                package_root.display()
+            )
+        })?;
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let package_id = package.package_id.clone();
-        let deleted_package = self.db.block_on(async move {
-            crate::backend::store::delete_conversation_adapter_package_sqlx(
+        let adapter_id = package.adapter_id.clone();
+        let delete_result = self.db.block_on(async move {
+            crate::backend::store::delete_conversation_adapter_registration_sqlx(
                 &pool,
                 &tenant_id,
-                &package_id,
+                &adapter_id,
+                Some(&package_id),
             )
             .await
-        })?;
-        fs::remove_dir_all(&package_root).map_err(|error| {
+        });
+        if let Err(error) = delete_result {
+            fs::rename(&staged_root, &package_root).map_err(|rollback_error| {
+                format!(
+                    "{error}; failed to restore staged conversation adapter package: {rollback_error}"
+                )
+            })?;
+            return Err(error);
+        }
+        fs::remove_dir_all(&staged_root).map_err(|error| {
             format!(
                 "remove managed conversation adapter package failed ({}): {error}",
-                package_root.display()
+                staged_root.display()
             )
         })?;
         Ok(json!({
             "dry_run": false,
             "uninstalled": true,
-            "package": deleted_package.unwrap_or(package)
+            "package": package
         }))
     }
 
@@ -1229,8 +1369,16 @@ fn validate_conversation_script_catalog_item(
     if item.id.trim().is_empty() {
         return Err("conversation adapter package catalog item id is required".to_string());
     }
-    let slug = slug_path_segment(&item.id);
-    if slug.is_empty() || slug != item.id {
+    let id_path = Path::new(&item.id);
+    if item.id == "."
+        || item.id == ".."
+        || id_path.components().count() != 1
+        || !item.id.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, '-' | '_' | '.')
+        })
+    {
         return Err(format!(
             "conversation adapter package catalog item id must be a safe path segment: {}",
             item.id
@@ -1428,7 +1576,7 @@ fn validate_installed_manifest_for_catalog_item(
 fn conversation_adapter_package_dir(item: &ConversationScriptCatalogItem) -> AppResult<PathBuf> {
     Ok(crate::backend::app_settings::conversation_adapter_dir()?
         .join("packages")
-        .join(slug_path_segment(item.package_id())))
+        .join(item.package_id()))
 }
 
 fn conversation_adapter_package_current_dir(
@@ -1849,17 +1997,11 @@ mod tests {
             .db
             .block_on(async move {
                 crate::backend::store::upsert_conversation_adapter_sqlx(
-                    &pool,
-                    &tenant_id,
-                    &adapter,
+                    &pool, &tenant_id, &adapter,
                 )
                 .await?;
-                crate::backend::store::upsert_conversation_source_sqlx(
-                    &pool,
-                    &tenant_id,
-                    &source,
-                )
-                .await?;
+                crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source)
+                    .await?;
                 sqlx::query(
                     r#"
                     INSERT INTO conversation_sync_runs (
@@ -1880,20 +2022,121 @@ mod tests {
             .expect("seed preflight records");
 
         let preflight = service
-            .prepare_conversation_adapter_package_change(
-                ConversationAdapterPackageChangeParams {
-                    action: ConversationAdapterPackageChangeAction::Unregister,
-                    package_id: None,
-                    adapter_id: Some("external-preflight".to_string()),
-                },
-            )
+            .prepare_conversation_adapter_package_change(ConversationAdapterPackageChangeParams {
+                action: ConversationAdapterPackageChangeAction::Unregister,
+                package_id: None,
+                adapter_id: Some("external-preflight".to_string()),
+            })
             .expect("prepare unregister");
 
-        assert_eq!(preflight.origin, ConversationAdapterPackageOrigin::LegacyExternal);
+        assert_eq!(
+            preflight.origin,
+            ConversationAdapterPackageOrigin::LegacyExternal
+        );
         assert_eq!(preflight.affected_sources.len(), 1);
         assert_eq!(preflight.task_conflicts, vec!["conversation_sync"]);
         assert!(preflight.preserves_conversation_records);
         assert!(preflight.confirmation_required);
+
+        drop(service);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_registration_and_unregistration_never_modify_external_package_files() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("assetiweave-local-package-{}", Uuid::new_v4()));
+        let package_dir = root.join("external-package");
+        fs::create_dir_all(&package_dir).expect("create local package");
+        fs::write(
+            package_dir.join("conversation-adapter-package.json"),
+            r#"{
+  "schema_version": 1,
+  "package_id": "com.util6.external-test",
+  "name": "External Test",
+  "version": "1.0.0",
+  "min_core_version": "0.1.0",
+  "record_kind": "session",
+  "adapter_manifest": "conversation-adapter.json",
+  "capabilities": ["probe", "read_session"],
+  "runtime": { "protocol": "stdio-ndjson-v1" },
+  "changelog": []
+}"#,
+        )
+        .expect("write package manifest");
+        fs::write(
+            package_dir.join("conversation-adapter.json"),
+            r#"{
+  "schema_version": 1,
+  "id": "external-test",
+  "name": "External Test",
+  "version": "1.0.0",
+  "protocol_version": 1,
+  "command": ["adapter.sh"],
+  "capabilities": ["probe", "read_session"],
+  "input_kinds": ["directory"]
+}"#,
+        )
+        .expect("write adapter manifest");
+        let executable = package_dir.join("adapter.sh");
+        fs::write(
+            &executable,
+            "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"ok\":true}}'\n",
+        )
+        .expect("write adapter executable");
+        let mut permissions = fs::metadata(&executable)
+            .expect("adapter metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).expect("make adapter executable");
+        let content_before =
+            crate::backend::conversations::validate_conversation_adapter_package_dir(&package_dir)
+                .expect("validate external package")
+                .content_hash;
+
+        let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+        service
+            .register_conversation_adapter_local(ConversationAdapterLocalRegisterParams {
+                package_dir: package_dir.to_string_lossy().to_string(),
+                origin: ConversationAdapterPackageOrigin::LocalDirectory,
+                source_url: None,
+                git_ref: None,
+                git_commit: None,
+                dry_run: false,
+                yes: true,
+            })
+            .expect("register local package");
+        let registered = service
+            .load_conversation_adapter_package("com.util6.external-test")
+            .expect("load package")
+            .expect("registered package");
+        assert_eq!(
+            registered.origin,
+            ConversationAdapterPackageOrigin::LocalDirectory
+        );
+
+        service
+            .unregister_conversation_adapter(ConversationAdapterUnregisterParams {
+                adapter_id: "external-test".to_string(),
+                dry_run: false,
+                yes: true,
+            })
+            .expect("unregister local package");
+
+        assert!(package_dir.is_dir());
+        assert_eq!(
+            crate::backend::conversations::validate_conversation_adapter_package_dir(&package_dir)
+                .expect("revalidate external package")
+                .content_hash,
+            content_before
+        );
+        assert!(service
+            .load_conversation_adapter_package("com.util6.external-test")
+            .expect("load unregistered package")
+            .is_none());
 
         drop(service);
         let _ = fs::remove_dir_all(root);

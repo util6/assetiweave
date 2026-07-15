@@ -110,10 +110,19 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let adapter_id = params.adapter_id.clone();
-        let adapter = self.db.block_on(async move {
-            crate::backend::store::delete_conversation_adapter_sqlx(&pool, &tenant_id, &adapter_id)
+        let package_id = preflight.package_id.clone();
+        let adapter = self
+            .db
+            .block_on(async move {
+                crate::backend::store::delete_conversation_adapter_registration_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &adapter_id,
+                    package_id.as_deref(),
+                )
                 .await
-        })?;
+            })?
+            .ok_or_else(|| format!("conversation adapter not found: {}", params.adapter_id))?;
         Ok(json!({
             "dry_run": false,
             "unregistered": true,

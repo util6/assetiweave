@@ -894,6 +894,26 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli conversation script install <item-id> --yes")
     ),
     command!(
+        "conversation.adapter_package.register_local",
+        "conversation.adapter_package.register_local",
+        "Register an external conversation adapter package without copying its files",
+        HighRiskWrite,
+        Friendly,
+        true,
+        crate::backend::application::ConversationAdapterLocalRegisterParams,
+        Service => |service, params| service.register_conversation_adapter_local(params),
+        &[
+            param!("package_dir", "Existing local package directory", ["packageDir"]),
+            param!("origin", "Local package origin"),
+            param!("source_url", "Optional source URL", ["sourceUrl"]),
+            param!("git_ref", "Optional Git ref", ["gitRef"]),
+            param!("git_commit", "Optional Git commit", ["gitCommit"]),
+            param!("dry_run", "Validate and preview registration", ["dryRun"]),
+            param!("yes", "Confirm trusting and registering the package"),
+        ],
+        None
+    ),
+    command!(
         "conversation.adapter_package.inspect",
         "conversation.adapter_package.inspect",
         "Inspect an active conversation adapter package or adapter runtime",
@@ -2162,6 +2182,26 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             "Optional catalog JSON URL or local path",
             ["catalogUrl"]
         )],
+        None
+    ),
+    command!(
+        "register_conversation_adapter_local",
+        "conversation.adapter_package.register_local",
+        "Register an external conversation adapter package without copying its files",
+        HighRiskWrite,
+        App,
+        false,
+        crate::backend::application::ConversationAdapterLocalRegisterParams,
+        Service => |service, params| service.register_conversation_adapter_local(params),
+        &[
+            param!("package_dir", "Existing local package directory", ["packageDir"]),
+            param!("origin", "Local package origin"),
+            param!("source_url", "Optional source URL", ["sourceUrl"]),
+            param!("git_ref", "Optional Git ref", ["gitRef"]),
+            param!("git_commit", "Optional Git commit", ["gitCommit"]),
+            param!("dry_run", "Validate and preview registration", ["dryRun"]),
+            param!("yes", "Confirm trusting and registering the package"),
+        ],
         None
     ),
     command!(

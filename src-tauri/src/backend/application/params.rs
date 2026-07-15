@@ -375,6 +375,23 @@ pub(crate) struct ConversationAdapterPackageChangeParams {
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct ConversationAdapterLocalRegisterParams {
+    #[serde(alias = "packageDir")]
+    pub(crate) package_dir: String,
+    pub(crate) origin: crate::backend::models::ConversationAdapterPackageOrigin,
+    #[serde(default, alias = "sourceUrl")]
+    pub(crate) source_url: Option<String>,
+    #[serde(default, alias = "gitRef")]
+    pub(crate) git_ref: Option<String>,
+    #[serde(default, alias = "gitCommit")]
+    pub(crate) git_commit: Option<String>,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+    #[serde(default)]
+    pub(crate) yes: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct ConversationSyncParams {
     #[serde(alias = "sourceId")]
     pub(crate) source_id: Option<String>,

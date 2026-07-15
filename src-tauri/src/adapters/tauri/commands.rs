@@ -16,14 +16,15 @@ use crate::backend::capabilities::{
 };
 use crate::{
     backend::application::{
-        AppService, ConversationAdapterPackageCatalogParams,
-        ConversationAdapterPackageChangeParams, ConversationAdapterPackageInspectParams,
-        ConversationAdapterPackageInstallParams, ConversationAdapterPackageUninstallParams,
-        ConversationAdapterUnregisterParams, ConversationPartTranslationUpdateParams,
-        ConversationQuestionGetParams, ConversationQuestionListParams,
-        ConversationQuestionMergeParams, ConversationQuestionSplitParams,
-        ConversationScriptCatalogParams, ConversationScriptInstallParams, ConversationSearchParams,
-        ConversationSearchResult, ConversationSessionExportParams, ConversationSessionGetParams,
+        AppService, ConversationAdapterLocalRegisterParams,
+        ConversationAdapterPackageCatalogParams, ConversationAdapterPackageChangeParams,
+        ConversationAdapterPackageInspectParams, ConversationAdapterPackageInstallParams,
+        ConversationAdapterPackageUninstallParams, ConversationAdapterUnregisterParams,
+        ConversationPartTranslationUpdateParams, ConversationQuestionGetParams,
+        ConversationQuestionListParams, ConversationQuestionMergeParams,
+        ConversationQuestionSplitParams, ConversationScriptCatalogParams,
+        ConversationScriptInstallParams, ConversationSearchParams, ConversationSearchResult,
+        ConversationSessionExportParams, ConversationSessionGetParams,
         ConversationSessionListParams, ConversationSourceDisableParams,
         ConversationSourceUpsertParams, ConversationSyncParams, ListAssetsParams,
         SkillAcquireParams, SkillRemoteCheckParams, SkillSearchParams, SkillSearchResult,
@@ -1368,6 +1369,15 @@ pub(crate) fn list_conversation_script_catalog(
 }
 
 #[tauri::command]
+pub(crate) fn register_conversation_adapter_local(
+    state: State<'_, AppState>,
+    params: ConversationAdapterLocalRegisterParams,
+) -> AppResult<serde_json::Value> {
+    AppService::open_with_db_path(state.db_path.clone())?
+        .register_conversation_adapter_local(params)
+}
+
+#[tauri::command]
 pub(crate) fn inspect_conversation_adapter_package(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageInspectParams,
@@ -1980,6 +1990,7 @@ pub(crate) fn command_handler(
         upsert_conversation_source,
         disable_conversation_source,
         list_conversation_script_catalog,
+        register_conversation_adapter_local,
         inspect_conversation_adapter_package,
         prepare_conversation_adapter_package_change,
         list_conversation_adapter_packages,

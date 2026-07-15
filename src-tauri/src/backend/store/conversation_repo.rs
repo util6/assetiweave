@@ -287,27 +287,43 @@ pub(crate) async fn upsert_conversation_adapter_sqlx(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) async fn delete_conversation_adapter_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     adapter_id: &str,
 ) -> AppResult<ConversationAdapter> {
-    let adapter = load_conversation_adapter_sqlx(pool, tenant_id, adapter_id)
+    delete_conversation_adapter_registration_sqlx(pool, tenant_id, adapter_id, None)
         .await?
-        .ok_or_else(|| format!("conversation adapter not found: {adapter_id}"))?;
-    if adapter.trust_state == ConversationAdapterTrustState::BuiltIn {
-        return Err("built-in conversation adapters cannot be unregistered".to_string());
-    }
-    if adapter.kind != ConversationAdapterKind::External {
-        return Err("only external conversation adapters can be unregistered".to_string());
+        .ok_or_else(|| format!("conversation adapter not found: {adapter_id}"))
+}
+
+pub(crate) async fn delete_conversation_adapter_registration_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    adapter_id: &str,
+    package_id: Option<&str>,
+) -> AppResult<Option<ConversationAdapter>> {
+    let adapter = load_conversation_adapter_sqlx(pool, tenant_id, adapter_id).await?;
+    if let Some(adapter) = adapter.as_ref() {
+        if adapter.trust_state == ConversationAdapterTrustState::BuiltIn {
+            return Err("built-in conversation adapters cannot be unregistered".to_string());
+        }
+        if adapter.kind != ConversationAdapterKind::External {
+            return Err("only external conversation adapters can be unregistered".to_string());
+        }
+    } else if package_id.is_none() {
+        return Err(format!("conversation adapter not found: {adapter_id}"));
     }
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
-    sqlx::query(DELETE_CONVERSATION_ADAPTER_SQL)
-        .bind(tenant_id)
-        .bind(adapter_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| error.to_string())?;
+    if adapter.is_some() {
+        sqlx::query(DELETE_CONVERSATION_ADAPTER_SQL)
+            .bind(tenant_id)
+            .bind(adapter_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
     sqlx::query(DISABLE_CONVERSATION_SOURCES_BY_ADAPTER_SQL)
         .bind(Utc::now().to_rfc3339())
         .bind(tenant_id)
@@ -315,6 +331,14 @@ pub(crate) async fn delete_conversation_adapter_sqlx(
         .execute(&mut *tx)
         .await
         .map_err(|error| error.to_string())?;
+    if let Some(package_id) = package_id {
+        sqlx::query(DELETE_CONVERSATION_ADAPTER_PACKAGE_SQL)
+            .bind(tenant_id)
+            .bind(package_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
     tx.commit().await.map_err(|error| error.to_string())?;
     Ok(adapter)
 }
@@ -419,6 +443,7 @@ pub(crate) async fn upsert_conversation_adapter_package_sqlx(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) async fn delete_conversation_adapter_package_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,

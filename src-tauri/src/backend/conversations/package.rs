@@ -163,11 +163,14 @@ fn validate_package_manifest_shape(manifest: &ConversationAdapterPackageManifest
 }
 
 fn validate_safe_id(field: &str, value: &str) -> AppResult<()> {
-    let valid = !value.trim().is_empty()
+    let value = value.trim();
+    let valid = !value.is_empty()
+        && value != "."
+        && value != ".."
         && value.chars().all(|character| {
             character.is_ascii_lowercase()
                 || character.is_ascii_digit()
-                || matches!(character, '-' | '_')
+                || matches!(character, '-' | '_' | '.')
         });
     if !valid {
         return Err(format!("{field} must be a safe path segment: {value}"));
@@ -361,5 +364,12 @@ mod tests {
         let third = hash_conversation_adapter_package_dir(&root).expect("hash mutated package");
         assert_ne!(second, third);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn publisher_scoped_package_ids_are_safe_path_segments() {
+        assert!(validate_safe_id("package id", "com.util6.codex-session").is_ok());
+        assert!(validate_safe_id("package id", "../external").is_err());
+        assert!(validate_safe_id("package id", "publisher/package").is_err());
     }
 }
