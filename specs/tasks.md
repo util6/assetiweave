@@ -327,3 +327,21 @@
 - [X] 18.18 提取 `groupSourceDisplayAssets`，统一来源展示资产的分组逻辑
 - [X] 18.19 Conversation 内容搜索支持卡片类型筛选和即时提交
 - [X] 18.20 翻译功能扩展为 provider/cli/model/prompt 配置模式
+
+## Phase 19：Conversation Adapter Package 市场
+
+- [X] 19.1 区分 built-in、managed release、local directory、Git ref、legacy external 和 dev override 来源及 runtime gate
+- [X] 19.2 新增 package/version/catalog release SQLite 模型和 publisher-scoped package ID 迁移
+- [X] 19.3 实现实时 runtime 校验、preflight、Source 影响与任务冲突提示
+- [X] 19.4 实现外部 package 注册/注销，保证不复制或删除外部目录和 Git 工作区
+- [X] 19.5 实现托管版本目录、artifact/package/hash/Core 校验和事务式 active runtime 激活
+- [X] 19.6 实现安全卸载与多目录 staging/rollback，保留 Conversation records 和 Source 配置
+- [X] 19.7 实现 Catalog v2、ETag/24 小时缓存、版本历史、changelog、breaking-change 和更新检测
+- [X] 19.8 支持选择任意兼容版本进行首次安装或更新，失败时保留旧 active runtime
+- [X] 19.9 安装、更新、卸载接入共享后台任务 registry，并保持非冲突 UI 可用
+- [X] 19.10 前端实现已接入、更新、发现视图、详情、来源限定操作和显式 preflight 确认
+- [X] 19.11 CLI `conversation adapter` 第一阶段收敛为 `list` / `inspect`，支持 table/json 诊断输出
+- [X] 19.12 增加确定性 artifact 发布脚本和 GitHub Actions 滚动 Release 流水线
+- [X] 19.13 补充 Rust、前端、Go CLI、Engine contract 和 package 发布校验测试
+- [ ] 19.14 实现已安装版本直接切换、一键回退和删除单个非 active 版本
+- [ ] 19.15 实现 stable/beta channel 自动跟随策略和离线多版本切换 UI

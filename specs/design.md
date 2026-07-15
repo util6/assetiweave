@@ -97,6 +97,10 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - 前端目录架构已收敛：保留 `services` 和 `pages` 作为项目约定，新增/明确 `layouts`、`router`、`mock`、`store`、`styles`、`types` 等顶层边界。
 - 当前验证基线：`pnpm typecheck`、`pnpm test`、`cargo test`、`pnpm build` 通过；Vite 单 chunk 超过 500 kB 的提示保留为后续性能优化项。
 - Conversation v1 已接入独立领域模型、SQLite 表、Engine/Go CLI 方法、Tauri commands、Session-first 前端页面、Markdown Session 导出和双向导航入口。
+- Conversation Adapter Package runtime 已形成独立生命周期：外部目录使用 register/unregister，市场 artifact 使用 install/update/uninstall；所有变更先执行 preflight，托管安装写入 `packages/<package_id>/versions/<semver>` 并在数据库事务中激活。
+- Conversation Adapter Catalog v2 使用 `parser-catalog/index.json` 与 `history/<package_id>.json`，缓存版本、Core 兼容范围、artifact 大小与 SHA-256、changelog、breaking-change 和 ETag；远端缓存超过 24 小时才自动刷新，默认只提示更新。
+- 对话插件页面提供已接入、更新、发现三个视图和详情/版本历史；安装、更新、卸载通过共享后台任务 registry 执行，页面只禁用冲突的生命周期操作。
+- Go CLI 的 `conversation adapter` 第一阶段只暴露 `list` 和 `inspect`，并通过 Engine 聚合与桌面端相同的 origin、版本、runtime gate、路径、hash、Source 和错误信息。
 - CLI 已形成分层：手写快捷命令、生成式 App 命令、Raw Engine API、稳定错误分类、命令策略、hook、插件平台、harvester/webharvester 和自更新。
 - Skill 互联网发现/导入已覆盖 GitHub 搜索、候选评分/解释、dry-run、确认导入、备份库导入、remote source 记录、drift 检测和前端入口。
 
@@ -156,6 +160,15 @@ Conversation 不属于文件资产 Catalog。它拥有独立的数据流：
 - `item` 必须输出标准化 Session/Turn/Part；AssetIWeave 不接受外部脚本直接输出最终 Question Group。
 - 启动外部脚本时使用 executable + args，不经过 Shell；注册时保存 manifest/executable hash。
 - try-run 与 register/unregister 属于高风险 CLI 操作，必须显式确认。
+
+Conversation Adapter Package 生命周期：
+
+- `conversation_adapters` 保持协议身份和 Source 绑定边界；`conversation_adapter_packages` 记录 active runtime、origin、catalog、更新策略和最新版本；`conversation_adapter_package_versions` 记录本地版本目录与 hash；`conversation_adapter_catalog_releases` 缓存远端发布历史。
+- 外部 package 注册只记录路径、manifest、runtime、hash 和 Git 元数据，不复制或删除外部文件；注销只解除运行注册并保留 Source 与对话记录。
+- 市场安装先下载到 staging，限制 ZIP 条目数量和展开体积，拒绝路径穿越与 symlink，校验 HTTPS、artifact SHA-256、package/content hash、SemVer 和 Core 兼容性后再写入托管版本目录。
+- 新版本激活在一个数据库事务内更新 package、version 和 adapter runtime；失败时旧 active runtime 保持可用。同一正式 `package_id + version` 不允许 hash 变化。
+- 卸载 preflight 列出受影响 Source 和托管目录；执行时先暂存目录，数据库删除失败则回滚目录，只允许清理应用拥有的 package library。
+- 当前不提供已安装版本直接切换、一键回退、删除单个非 active 版本、静默远端代码更新或真正的服务端 push。
 
 ```mermaid
 flowchart TB
