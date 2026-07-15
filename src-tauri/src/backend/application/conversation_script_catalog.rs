@@ -18,7 +18,13 @@ impl AppService {
     ) -> AppResult<Vec<ConversationAdapterPackageCatalogEntry>> {
         let catalog = load_conversation_script_catalog(params.catalog_url.as_deref())?;
         let adapters = self.list_conversation_adapters()?;
-        let packages = self.load_conversation_adapter_packages()?;
+        let mut packages = self.load_conversation_adapter_packages()?;
+        for package in &mut packages {
+            let adapter = adapters
+                .iter()
+                .find(|adapter| adapter.id == package.adapter_id);
+            self.refresh_conversation_adapter_package_runtime(package, adapter)?;
+        }
         Ok(resolve_conversation_adapter_package_catalog_entries(
             catalog.items,
             &adapters,
@@ -211,15 +217,49 @@ impl AppService {
         else {
             return Ok(());
         };
-        if !package.runtime_ready {
-            return Err(format_package_not_ready_error(&package));
+        self.refresh_conversation_adapter_package_runtime(&mut package, Some(adapter))?;
+        if package.runtime_ready {
+            Ok(())
+        } else {
+            Err(format_package_not_ready_error(&package))
         }
+    }
 
-        let validation = crate::backend::conversations::validate_conversation_adapter_package_dir(
-            Path::new(&package.install_dir),
-        );
-        match validation {
-            Ok(validation) => {
+    fn refresh_conversation_adapter_package_runtime(
+        &self,
+        package: &mut ConversationAdapterPackage,
+        adapter: Option<&ConversationAdapter>,
+    ) -> AppResult<()> {
+        let install_dir = Path::new(&package.install_dir);
+        let evaluated = crate::backend::conversations::validate_conversation_adapter_package_dir(
+            install_dir,
+        )
+        .and_then(|validation| {
+            if validation.manifest.package_id != package.package_id {
+                return Err(format!(
+                    "conversation adapter package manifest id {} does not match registered package {}",
+                    validation.manifest.package_id, package.package_id
+                ));
+            }
+            if validation.manifest.version != package.version {
+                return Err(format!(
+                    "conversation adapter package manifest version {} does not match active version {}",
+                    validation.manifest.version, package.version
+                ));
+            }
+            let adapter = adapter.ok_or_else(|| {
+                format!(
+                    "conversation adapter runtime is not registered: {}",
+                    package.adapter_id
+                )
+            })?;
+            if validation.adapter_validation.manifest.id != adapter.id {
+                return Err(format!(
+                    "conversation adapter package {} manifest adapter id {} does not match registered adapter {}",
+                    package.package_id, validation.adapter_validation.manifest.id, adapter.id
+                ));
+            }
+            if package.origin != ConversationAdapterPackageOrigin::DevOverride {
                 let trusted_hash = package
                     .trusted_package_hash
                     .as_deref()
@@ -231,35 +271,49 @@ impl AppService {
                         )
                     })?;
                 if validation.content_hash != trusted_hash {
-                    let error = format!(
+                    return Err(format!(
                         "conversation adapter package content hash mismatch: {}",
                         package.package_id
-                    );
-                    package.runtime_ready = false;
-                    package.installed_content_hash = Some(validation.content_hash);
-                    package.error_message = Some(error.clone());
-                    package.updated_at = Utc::now().to_rfc3339();
-                    self.save_conversation_adapter_package(&package)?;
-                    return Err(error);
-                }
-                if validation.adapter_validation.manifest.id != adapter.id {
-                    return Err(format!(
-                        "conversation adapter package {} manifest adapter id {} does not match registered adapter {}",
-                        package.package_id,
-                        validation.adapter_validation.manifest.id,
-                        adapter.id
                     ));
                 }
-                Ok(())
+            }
+            Ok(validation.content_hash)
+        });
+
+        let now = Utc::now().to_rfc3339();
+        match evaluated {
+            Ok(content_hash) => {
+                package.runtime_ready = true;
+                package.runtime_gate_status = ConversationAdapterRuntimeGateStatus::Ready;
+                package.installed_content_hash = Some(content_hash);
+                package.error_message = None;
             }
             Err(error) => {
                 package.runtime_ready = false;
-                package.error_message = Some(error.clone());
-                package.updated_at = Utc::now().to_rfc3339();
-                self.save_conversation_adapter_package(&package)?;
-                Err(error)
+                package.runtime_gate_status = classify_runtime_gate_error(install_dir, &error);
+                package.error_message = Some(error);
             }
         }
+        package.runtime_validated_at = Some(now.clone());
+        package.updated_at = now;
+        self.save_conversation_adapter_package(package)
+    }
+}
+
+fn classify_runtime_gate_error(
+    _install_dir: &Path,
+    error: &str,
+) -> ConversationAdapterRuntimeGateStatus {
+    if error.contains("hash mismatch") || error.contains("no trusted hash") {
+        ConversationAdapterRuntimeGateStatus::HashMismatch
+    } else if error.contains("requires AssetIWeave core") {
+        ConversationAdapterRuntimeGateStatus::CoreIncompatible
+    } else if error.contains("root is not a directory")
+        || error.contains("runtime is not registered")
+    {
+        ConversationAdapterRuntimeGateStatus::RuntimeMissing
+    } else {
+        ConversationAdapterRuntimeGateStatus::ManifestInvalid
     }
 }
 
@@ -1452,5 +1506,37 @@ mod tests {
         assert!(result.is_err());
         assert!(external_dir.exists());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_gate_errors_have_distinct_repair_states() {
+        assert_eq!(
+            classify_runtime_gate_error(
+                Path::new("/missing/package"),
+                "conversation adapter package root is not a directory"
+            ),
+            ConversationAdapterRuntimeGateStatus::RuntimeMissing
+        );
+        assert_eq!(
+            classify_runtime_gate_error(
+                Path::new("/existing/package"),
+                "conversation adapter package content hash mismatch"
+            ),
+            ConversationAdapterRuntimeGateStatus::HashMismatch
+        );
+        assert_eq!(
+            classify_runtime_gate_error(
+                Path::new("/existing/package"),
+                "conversation adapter package requires AssetIWeave core >= 9.0.0"
+            ),
+            ConversationAdapterRuntimeGateStatus::CoreIncompatible
+        );
+        assert_eq!(
+            classify_runtime_gate_error(
+                Path::new("/existing/package"),
+                "conversation adapter package was not valid JSON"
+            ),
+            ConversationAdapterRuntimeGateStatus::ManifestInvalid
+        );
     }
 }
