@@ -78,6 +78,12 @@ impl AppService {
         let package = self
             .load_conversation_adapter_package(package_id)?
             .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))?;
+        let managed_root = crate::backend::app_settings::conversation_adapter_dir()?;
+        let package_root = validate_managed_package_delete_target(
+            &managed_root,
+            &package.package_id,
+            Path::new(&package.install_dir),
+        )?;
 
         if params.dry_run {
             return Ok(json!({
@@ -110,9 +116,12 @@ impl AppService {
             )
             .await
         })?;
-        if let Some(package_root) = Path::new(&package.install_dir).parent() {
-            let _ = fs::remove_dir_all(package_root);
-        }
+        fs::remove_dir_all(&package_root).map_err(|error| {
+            format!(
+                "remove managed conversation adapter package failed ({}): {error}",
+                package_root.display()
+            )
+        })?;
         Ok(json!({
             "dry_run": false,
             "uninstalled": true,
@@ -249,6 +258,79 @@ impl AppService {
             }
         }
     }
+}
+
+fn validate_managed_package_delete_target(
+    managed_root: &Path,
+    package_id: &str,
+    install_dir: &Path,
+) -> AppResult<PathBuf> {
+    let package_id = package_id.trim();
+    let package_id_path = Path::new(package_id);
+    if package_id.is_empty()
+        || package_id == "."
+        || package_id == ".."
+        || package_id_path.components().count() != 1
+        || !matches!(
+            package_id_path.components().next(),
+            Some(std::path::Component::Normal(_))
+        )
+    {
+        return Err(format!(
+            "conversation adapter package id is not a safe path segment: {package_id}"
+        ));
+    }
+
+    let packages_root = managed_root.join("packages");
+    let package_root = packages_root.join(package_id);
+    if !package_root.is_dir() || !install_dir.exists() {
+        return Err(format!(
+            "conversation adapter package delete target does not exist in the managed library: {}",
+            install_dir.display()
+        ));
+    }
+    if !install_dir.starts_with(&package_root) || install_dir == package_root {
+        return Err(format!(
+            "conversation adapter package delete target is outside its managed package root: {}",
+            install_dir.display()
+        ));
+    }
+
+    let canonical_packages_root = packages_root.canonicalize().map_err(|error| {
+        format!(
+            "resolve managed conversation adapter packages root failed ({}): {error}",
+            packages_root.display()
+        )
+    })?;
+    let canonical_package_root = package_root.canonicalize().map_err(|error| {
+        format!(
+            "resolve managed conversation adapter package root failed ({}): {error}",
+            package_root.display()
+        )
+    })?;
+    if canonical_package_root.parent() != Some(canonical_packages_root.as_path()) {
+        return Err(format!(
+            "conversation adapter package root escapes the managed library: {}",
+            package_root.display()
+        ));
+    }
+
+    let canonical_install_dir = install_dir.canonicalize().map_err(|error| {
+        format!(
+            "resolve conversation adapter package install directory failed ({}): {error}",
+            install_dir.display()
+        )
+    })?;
+    if !canonical_install_dir.starts_with(&canonical_package_root)
+        || canonical_install_dir == canonical_package_root
+    {
+        return Err(format!(
+            "conversation adapter package install directory escapes the managed package root: {}",
+            install_dir.display()
+        ));
+    }
+
+    Ok(package_root)
 }
 
 fn install_conversation_adapter_package_from_item(
@@ -1290,6 +1372,52 @@ mod tests {
             "old"
         );
         assert!(!prepared_dir.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn managed_package_delete_target_rejects_external_install_dir() {
+        let root =
+            std::env::temp_dir().join(format!("assetiweave-package-delete-{}", Uuid::new_v4()));
+        let managed_root = root.join("conversation-adapters");
+        let external_dir = root.join("external").join("current");
+        fs::create_dir_all(managed_root.join("packages").join("publisher.package"))
+            .expect("create managed package root");
+        fs::create_dir_all(&external_dir).expect("create external package");
+
+        let result = validate_managed_package_delete_target(
+            &managed_root,
+            "publisher.package",
+            &external_dir,
+        );
+
+        assert!(result.is_err());
+        assert!(external_dir.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_package_delete_target_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let root =
+            std::env::temp_dir().join(format!("assetiweave-package-symlink-{}", Uuid::new_v4()));
+        let managed_root = root.join("conversation-adapters");
+        let package_root = managed_root.join("packages").join("publisher.package");
+        let external_dir = root.join("external");
+        fs::create_dir_all(&package_root).expect("create managed package root");
+        fs::create_dir_all(&external_dir).expect("create external package");
+        symlink(&external_dir, package_root.join("current")).expect("create current symlink");
+
+        let result = validate_managed_package_delete_target(
+            &managed_root,
+            "publisher.package",
+            &package_root.join("current"),
+        );
+
+        assert!(result.is_err());
+        assert!(external_dir.exists());
         let _ = fs::remove_dir_all(root);
     }
 }
