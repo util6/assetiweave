@@ -1,0 +1,2 @@
+ALTER TABLE conversation_adapter_catalog_releases
+ADD COLUMN source_json TEXT;

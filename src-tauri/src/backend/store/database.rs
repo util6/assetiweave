@@ -142,6 +142,7 @@ async fn open_migrated_pool(db_path: &Path) -> AppResult<SqlitePool> {
     if is_untracked_legacy_database(&pool).await? {
         upgrade_legacy_schema(&pool).await?;
     }
+    repair_known_modified_catalog_release_migration(&pool).await?;
     MIGRATOR
         .run(&pool)
         .await
@@ -286,6 +287,45 @@ async fn upgrade_legacy_schema(pool: &SqlitePool) -> AppResult<()> {
     Ok(())
 }
 
+async fn repair_known_modified_catalog_release_migration(pool: &SqlitePool) -> AppResult<()> {
+    if !table_exists(pool, "_sqlx_migrations").await? {
+        return Ok(());
+    }
+    let checksum: Option<String> = sqlx::query_scalar(
+        "SELECT upper(hex(checksum)) FROM _sqlx_migrations WHERE version = 202607150002",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    if checksum.as_deref() != Some(KNOWN_MODIFIED_CATALOG_RELEASE_DETAILS_CHECKSUM) {
+        return Ok(());
+    }
+    if !column_exists(pool, "conversation_adapter_catalog_releases", "source_json").await? {
+        return Ok(());
+    }
+
+    let mut transaction = pool.begin().await.map_err(|error| error.to_string())?;
+    sqlx::query(
+        "UPDATE _sqlx_migrations SET checksum = X'E75F75A803B17920C2E1498962D6DCB8A34167DE66AAB216FBC2F4CA056A383E0600CAEFE44633CDA48A0F9FE61DC581' WHERE version = 202607150002",
+    )
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (202607160001, 'conversation adapter catalog release source', 1, X'39DC30B774A3C414B1AC69B49F0036E713F2B75A973B8F75A5E796064373FE4170FC9E2B3305509DF928C85A26C5736E', 0)",
+    )
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| error.to_string())?;
+    transaction
+        .commit()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+const KNOWN_MODIFIED_CATALOG_RELEASE_DETAILS_CHECKSUM: &str =
+    "863286E8B8E292E94EB63E42AC751D8EAD340500965B16ADCB4EEF61BEB38187B9E8FF4F19379B7C817F18DDD3BF0A83";
+
 async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> AppResult<bool> {
     let statement = format!("PRAGMA table_info({table})");
     let rows = sqlx::query(AssertSqlSafe(statement))
@@ -399,7 +439,7 @@ mod tests {
             .expect("query migrations");
 
         assert_eq!(source_table_count, 1);
-        assert_eq!(migration_count, 10);
+        assert_eq!(migration_count, 11);
         cleanup_database(&db_path);
     }
 
@@ -458,7 +498,68 @@ mod tests {
                 "local_folder".to_string()
             )
         );
-        assert_eq!(migration_count, 10);
+        assert_eq!(migration_count, 11);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn migrations_accept_the_original_catalog_release_details_checksum() {
+        let db_path = temp_database_path("catalog-release-checksum");
+        migrate_database(&db_path).expect("create current database");
+
+        let conn = Connection::open(&db_path).expect("open migrated database");
+        conn.execute_batch(
+            r#"
+            ALTER TABLE conversation_adapter_catalog_releases DROP COLUMN source_json;
+            UPDATE _sqlx_migrations
+            SET checksum = X'E75F75A803B17920C2E1498962D6DCB8A34167DE66AAB216FBC2F4CA056A383E0600CAEFE44633CDA48A0F9FE61DC581'
+            WHERE version = 202607150002;
+            DELETE FROM _sqlx_migrations WHERE version = 202607160001;
+            "#,
+        )
+        .expect("simulate database created by the original migration");
+        drop(conn);
+
+        migrate_database(&db_path).expect("upgrade database without modifying applied migrations");
+
+        let conn = Connection::open(&db_path).expect("open upgraded database");
+        let source_json_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('conversation_adapter_catalog_releases') WHERE name = 'source_json'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query source_json column");
+        assert_eq!(source_json_count, 1);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn migrations_repair_the_known_modified_catalog_release_details_checksum() {
+        let db_path = temp_database_path("catalog-release-modified-checksum");
+        migrate_database(&db_path).expect("create current database");
+
+        let conn = Connection::open(&db_path).expect("open migrated database");
+        conn.execute_batch(
+            r#"
+            UPDATE _sqlx_migrations
+            SET checksum = X'863286E8B8E292E94EB63E42AC751D8EAD340500965B16ADCB4EEF61BEB38187B9E8FF4F19379B7C817F18DDD3BF0A83'
+            WHERE version = 202607150002;
+            DELETE FROM _sqlx_migrations WHERE version = 202607160001;
+            "#,
+        )
+        .expect("simulate database created by the modified migration");
+        drop(conn);
+
+        migrate_database(&db_path).expect("repair known migration checksum and continue");
+
+        let conn = Connection::open(&db_path).expect("open repaired database");
+        let migration_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM _sqlx_migrations", [], |row| {
+                row.get(0)
+            })
+            .expect("query migrations");
+        assert_eq!(migration_count, 11);
         cleanup_database(&db_path);
     }
 

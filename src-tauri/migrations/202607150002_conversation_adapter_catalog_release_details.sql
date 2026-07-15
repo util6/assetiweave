@@ -15,6 +15,3 @@ ADD COLUMN package_manifest_file TEXT NOT NULL DEFAULT 'conversation-adapter-pac
 
 ALTER TABLE conversation_adapter_catalog_releases
 ADD COLUMN adapter_manifest_file TEXT NOT NULL DEFAULT 'conversation-adapter.json';
-
-ALTER TABLE conversation_adapter_catalog_releases
-ADD COLUMN source_json TEXT;
