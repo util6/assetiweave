@@ -17,13 +17,16 @@ import {
   getConversationAdapterPackageTask,
   installConversationAdapterPackage,
   listConversationAdapterPackages,
+  prepareConversationAdapterPackageChange,
   updateConversationAdapterPackage,
+  type ConversationAdapterPackageChangePreflight,
   type ConversationAdapterPackageCatalogEntry,
   type ConversationAdapterPackageCatalogStatus,
   type ConversationScriptInstallTaskSnapshot,
 } from "../../services/conversations";
 import type { ConversationRecordKind } from "../../types";
 import type { NotificationMessage } from "../notifications/NotificationBanner";
+import { ConfirmDialog } from "../common/ConfirmDialog";
 import { Badge } from "../foundation/Badge";
 import { Button } from "../ui/button";
 
@@ -53,6 +56,12 @@ export function ConversationScriptResourcePanel({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [installTask, setInstallTask] = useState<ConversationScriptInstallTaskSnapshot | null>(null);
+  const [pendingChange, setPendingChange] = useState<{
+    action: PackageAction;
+    entry: ConversationAdapterPackageCatalogEntry;
+    preflight: ConversationAdapterPackageChangePreflight;
+  } | null>(null);
+  const [confirmingChange, setConfirmingChange] = useState(false);
   const handledInstallTaskIds = useRef(new Set<string>());
 
   const loadCatalog = useCallback(
@@ -189,10 +198,38 @@ export function ConversationScriptResourcePanel({
   async function handleInstall(entry: ConversationAdapterPackageCatalogEntry) {
     try {
       const action = packageActionForEntry(entry);
+      if (!action) {
+        return;
+      }
+      const preflight = await prepareConversationAdapterPackageChange({
+        action: action === "install" ? "install" : "update",
+        packageId: entry.item.id,
+      });
+      if (preflight.task_conflicts.length > 0) {
+        throw new Error(
+          t("conversation.scriptMarket.taskConflict", {
+            tasks: preflight.task_conflicts.join(", "),
+          }),
+        );
+      }
+      setPendingChange({ action, entry, preflight });
+    } catch (installError) {
+      onNotifyError(errorMessage(installError));
+    }
+  }
+
+  async function confirmInstall() {
+    if (!pendingChange) {
+      return;
+    }
+    setConfirmingChange(true);
+    try {
+      const { action, entry } = pendingChange;
       const task =
         action === "update" || action === "repair"
-          ? await updateConversationAdapterPackage({ packageId: entry.item.id })
-          : await installConversationAdapterPackage({ packageId: entry.item.id });
+          ? await updateConversationAdapterPackage({ packageId: entry.item.id, confirmed: true })
+          : await installConversationAdapterPackage({ packageId: entry.item.id, confirmed: true });
+      setPendingChange(null);
       setInstallTask(task);
       if (task.status === "running") {
         onNotify({
@@ -202,6 +239,8 @@ export function ConversationScriptResourcePanel({
       }
     } catch (installError) {
       onNotifyError(errorMessage(installError));
+    } finally {
+      setConfirmingChange(false);
     }
   }
 
@@ -280,6 +319,52 @@ export function ConversationScriptResourcePanel({
           ))}
         </div>
       )}
+      <ConfirmDialog
+        busy={confirmingChange}
+        confirmLabel={pendingChange ? t(actionLabelKey(pendingChange.action)) : undefined}
+        message={
+          pendingChange
+            ? t("conversation.scriptMarket.confirmMessage", {
+                action: t(actionLabelKey(pendingChange.action)),
+                name: pendingChange.entry.item.name,
+              })
+            : ""
+        }
+        onClose={() => setPendingChange(null)}
+        onConfirm={() => void confirmInstall()}
+        open={Boolean(pendingChange)}
+        title={t("conversation.scriptMarket.confirmTitle")}
+      >
+        {pendingChange ? (
+          <div className="grid gap-2 rounded-lg border border-theme-card-border bg-theme-control/45 p-3 text-body-xs text-on-surface-variant">
+            <p>{t("conversation.scriptMarket.recordsPreserved")}</p>
+            {pendingChange.preflight.affected_sources.length > 0 ? (
+              <div>
+                <p className="font-medium text-on-surface">
+                  {t("conversation.scriptMarket.affectedSources")}
+                </p>
+                <ul className="mt-1 list-disc space-y-1 pl-4">
+                  {pendingChange.preflight.affected_sources.map((source) => (
+                    <li key={source.id}>{source.name}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {pendingChange.preflight.managed_paths.length > 0 ? (
+              <div>
+                <p className="font-medium text-on-surface">
+                  {t("conversation.scriptMarket.managedPaths")}
+                </p>
+                <ul className="mt-1 space-y-1 font-mono">
+                  {pendingChange.preflight.managed_paths.map((path) => (
+                    <li className="break-all" key={path}>{path}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </ConfirmDialog>
     </section>
   );
 }

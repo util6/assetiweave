@@ -9,6 +9,7 @@ import {
   listConversationScriptCatalog,
   listConversationAdapterRuntimeStatuses,
   mergeConversationQuestions,
+  prepareConversationAdapterPackageChange,
   searchConversationRecords,
   summarizeConversationSyncTask,
   syncConversations,
@@ -174,7 +175,10 @@ describe("conversation services", () => {
       error: null,
     });
 
-    await expect(installConversationAdapterPackage({ packageId: "codex-session" })).resolves.toMatchObject({
+    await expect(installConversationAdapterPackage({
+      packageId: "codex-session",
+      confirmed: true,
+    })).resolves.toMatchObject({
       id: "install-1",
       package_id: "codex-session",
       status: "running",
@@ -186,6 +190,35 @@ describe("conversation services", () => {
         dry_run: false,
         package_id: "codex-session",
         yes: true,
+      },
+    });
+  });
+
+  it("preflights package changes without auto-confirming them", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValueOnce({
+      action: "install",
+      origin: "managed_release",
+      package_id: "codex-session",
+      adapter_id: null,
+      managed_paths: [],
+      affected_sources: [],
+      task_conflicts: [],
+      preserves_conversation_records: true,
+      risk: "high_risk_write",
+      confirmation_required: true,
+    });
+
+    await prepareConversationAdapterPackageChange({
+      action: "install",
+      packageId: "codex-session",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("prepare_conversation_adapter_package_change", {
+      params: {
+        action: "install",
+        adapter_id: null,
+        package_id: "codex-session",
       },
     });
   });

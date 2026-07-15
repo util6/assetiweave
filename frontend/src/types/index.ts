@@ -195,6 +195,24 @@ export type ConversationAdapterKind = "external";
 export type ConversationSourceKind = "live" | "file" | "directory" | "sqlite" | "custom";
 export type ConversationAdapterTrustState = "built_in" | "trusted" | "changed" | "untrusted";
 export type ConversationAdapterPackageRecordKind = "session" | "web";
+export type ConversationAdapterPackageOrigin =
+  | "built_in"
+  | "managed_release"
+  | "local_directory"
+  | "git_ref"
+  | "legacy_external"
+  | "dev_override";
+export type ConversationAdapterRuntimeGateStatus =
+  | "ready"
+  | "runtime_missing"
+  | "hash_mismatch"
+  | "manifest_invalid"
+  | "core_incompatible";
+export type ConversationPackageUpdatePolicy =
+  | "manual"
+  | "follow_stable"
+  | "follow_beta"
+  | "pin_exact";
 export type ConversationPartRole = "user" | "assistant" | "tool" | "system";
 export type ConversationPartKind = "text" | "code_block" | "command" | "tool" | "file_change" | "subagent" | "metadata";
 export type ConversationGroupingOrigin = "imported" | "auto_merged" | "manual";
@@ -228,6 +246,16 @@ export interface ConversationAdapterPackage {
   adapter_manifest_path: string;
   runtime_protocol: string;
   runtime_ready: boolean;
+  origin: ConversationAdapterPackageOrigin;
+  source_url?: string | null;
+  git_ref?: string | null;
+  git_commit?: string | null;
+  catalog_url?: string | null;
+  update_policy: ConversationPackageUpdatePolicy;
+  latest_version?: string | null;
+  last_checked_at?: string | null;
+  runtime_gate_status: ConversationAdapterRuntimeGateStatus;
+  runtime_validated_at?: string | null;
   installed_content_hash?: string | null;
   trusted_package_hash?: string | null;
   error_message?: string | null;

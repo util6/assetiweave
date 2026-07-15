@@ -174,6 +174,34 @@ export interface ConversationAdapterPackageCatalogEntry {
   error_message?: string | null;
 }
 
+export type ConversationAdapterPackageChangeAction =
+  | "register"
+  | "unregister"
+  | "install"
+  | "update"
+  | "uninstall"
+  | "revalidate";
+
+export interface ConversationAdapterPackageInspection {
+  origin: ConversationAdapterPackage["origin"];
+  package?: ConversationAdapterPackage | null;
+  adapter?: ConversationAdapter | null;
+  affected_sources: ConversationSource[];
+}
+
+export interface ConversationAdapterPackageChangePreflight {
+  action: ConversationAdapterPackageChangeAction;
+  origin: ConversationAdapterPackage["origin"];
+  package_id?: string | null;
+  adapter_id?: string | null;
+  managed_paths: string[];
+  affected_sources: ConversationSource[];
+  task_conflicts: string[];
+  preserves_conversation_records: boolean;
+  risk: "read_only" | "write" | "high_risk_write";
+  confirmation_required: boolean;
+}
+
 export interface ConversationScriptCatalogEntry {
   item: ConversationScriptCatalogItem;
   installed: boolean;
@@ -545,10 +573,40 @@ export async function listConversationAdapterPackages(
   }
 }
 
+export async function inspectConversationAdapterPackage(params: {
+  packageId?: string | null;
+  adapterId?: string | null;
+}): Promise<ConversationAdapterPackageInspection> {
+  return await invoke<ConversationAdapterPackageInspection>("inspect_conversation_adapter_package", {
+    params: {
+      package_id: params.packageId?.trim() || null,
+      adapter_id: params.adapterId?.trim() || null,
+    },
+  });
+}
+
+export async function prepareConversationAdapterPackageChange(params: {
+  action: ConversationAdapterPackageChangeAction;
+  packageId?: string | null;
+  adapterId?: string | null;
+}): Promise<ConversationAdapterPackageChangePreflight> {
+  return await invoke<ConversationAdapterPackageChangePreflight>(
+    "prepare_conversation_adapter_package_change",
+    {
+      params: {
+        action: params.action,
+        package_id: params.packageId?.trim() || null,
+        adapter_id: params.adapterId?.trim() || null,
+      },
+    },
+  );
+}
+
 export async function installConversationAdapterPackage(params: {
   packageId: string;
   catalogUrl?: string | null;
   dryRun?: boolean;
+  confirmed?: boolean;
 }): Promise<ConversationScriptInstallTaskSnapshot> {
   try {
     return await invoke<ConversationScriptInstallTaskSnapshot>("install_conversation_adapter_package", {
@@ -556,7 +614,7 @@ export async function installConversationAdapterPackage(params: {
         catalog_url: params.catalogUrl?.trim() || null,
         dry_run: params.dryRun ?? false,
         package_id: params.packageId,
-        yes: params.dryRun ? false : true,
+        yes: params.confirmed ?? false,
       },
     });
   } catch (error) {
@@ -572,6 +630,7 @@ export async function updateConversationAdapterPackage(params: {
   packageId: string;
   catalogUrl?: string | null;
   dryRun?: boolean;
+  confirmed?: boolean;
 }): Promise<ConversationScriptInstallTaskSnapshot> {
   try {
     return await invoke<ConversationScriptInstallTaskSnapshot>("update_conversation_adapter_package", {
@@ -579,7 +638,7 @@ export async function updateConversationAdapterPackage(params: {
         catalog_url: params.catalogUrl?.trim() || null,
         dry_run: params.dryRun ?? false,
         package_id: params.packageId,
-        yes: params.dryRun ? false : true,
+        yes: params.confirmed ?? false,
       },
     });
   } catch (error) {
@@ -594,12 +653,13 @@ export async function updateConversationAdapterPackage(params: {
 export async function uninstallConversationAdapterPackage(params: {
   packageId: string;
   dryRun?: boolean;
+  confirmed?: boolean;
 }): Promise<unknown> {
   return await invoke("uninstall_conversation_adapter_package", {
     params: {
       dry_run: params.dryRun ?? false,
       package_id: params.packageId,
-      yes: params.dryRun ? false : true,
+      yes: params.confirmed ?? false,
     },
   });
 }
