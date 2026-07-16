@@ -506,61 +506,24 @@ impl AppService {
             }));
         }
 
-        let mut staged_roots = Vec::new();
-        for managed_path in &preflight.managed_paths {
-            let package_root = PathBuf::from(managed_path);
-            let name = package_root
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or("package");
-            let staged_root =
-                package_root.with_file_name(format!(".{name}-uninstall-{}", short_uuid()));
-            if let Err(error) = fs::rename(&package_root, &staged_root) {
-                for (original, staged) in staged_roots.iter().rev() {
-                    let _ = fs::rename(staged, original);
-                }
-                return Err(format!(
-                    "stage managed conversation adapter package uninstall failed ({}): {error}",
-                    package_root.display()
-                ));
-            }
-            staged_roots.push((package_root, staged_root));
-        }
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let package_id = package.package_id.clone();
         let adapter_id = package.adapter_id.clone();
-        let delete_result = self.db.block_on(async move {
-            crate::backend::store::delete_conversation_adapter_registration_sqlx(
+        let uninstalled = self.db.block_on(async move {
+            crate::backend::store::deactivate_conversation_adapter_package_sqlx(
                 &pool,
                 &tenant_id,
+                &package_id,
                 &adapter_id,
-                Some(&package_id),
             )
             .await
-        });
-        if let Err(error) = delete_result {
-            for (original, staged) in staged_roots.iter().rev() {
-                fs::rename(staged, original).map_err(|rollback_error| {
-                    format!(
-                        "{error}; failed to restore staged conversation adapter package: {rollback_error}"
-                    )
-                })?;
-            }
-            return Err(error);
-        }
-        for (_, staged_root) in staged_roots {
-            fs::remove_dir_all(&staged_root).map_err(|error| {
-                format!(
-                    "remove managed conversation adapter package failed ({}): {error}",
-                    staged_root.display()
-                )
-            })?;
-        }
+        })?;
         Ok(json!({
             "dry_run": false,
             "uninstalled": true,
-            "package": package
+            "package": uninstalled,
+            "preserved_managed_paths": preflight.managed_paths
         }))
     }
 
@@ -681,18 +644,38 @@ impl AppService {
         if package.origin != ConversationAdapterPackageOrigin::ManagedRelease {
             return Err("only managed package versions can be deleted".to_string());
         }
-        if package.version == version {
+        let runtime_registered = self
+            .list_conversation_adapters()?
+            .iter()
+            .any(|adapter| adapter.id == package.adapter_id);
+        if package.version == version && runtime_registered {
             return Err(
-                "active conversation adapter package version cannot be deleted".to_string(),
+                "active conversation adapter package version must be uninstalled or switched before deletion"
+                    .to_string(),
             );
         }
         let versions = self.load_conversation_adapter_package_versions(package_id)?;
         let target = versions
             .iter()
             .find(|candidate| candidate.version == version)
+            .cloned()
             .ok_or_else(|| {
                 format!("installed package version not found: {package_id}@{version}")
             })?;
+        let remaining_versions = versions
+            .iter()
+            .filter(|candidate| candidate.version != version)
+            .cloned()
+            .collect::<Vec<_>>();
+        let replacement_package = if package.version == version && !runtime_registered {
+            remaining_versions
+                .first()
+                .map(|replacement| package_for_uninstalled_replacement(&package, replacement))
+        } else {
+            None
+        };
+        let delete_package =
+            package.version == version && !runtime_registered && remaining_versions.is_empty();
         let managed_root = crate::backend::app_settings::conversation_adapter_dir()?;
         let version_dir = validate_managed_package_version_delete_target(
             &managed_root,
@@ -701,9 +684,14 @@ impl AppService {
             Path::new(&target.install_dir),
         )?;
         if params.dry_run {
-            return Ok(
-                json!({"dry_run": true, "package_id": package_id, "version": version, "managed_path": version_dir}),
-            );
+            return Ok(json!({
+                "dry_run": true,
+                "package_id": package_id,
+                "version": version,
+                "managed_path": version_dir,
+                "delete_package_record": delete_package,
+                "replacement_version": replacement_package.as_ref().map(|package| package.version.clone())
+            }));
         }
         if !params.yes {
             return Err("conversation adapter package version deletion requires --yes".to_string());
@@ -714,12 +702,15 @@ impl AppService {
         let tenant_id = self.tenant_id().to_string();
         let package_id_owned = package_id.to_string();
         let version_owned = version.clone();
+        let replacement_package_owned = replacement_package.clone();
         let deleted = self.db.block_on(async move {
             crate::backend::store::delete_conversation_adapter_package_version_sqlx(
                 &pool,
                 &tenant_id,
                 &package_id_owned,
                 &version_owned,
+                replacement_package_owned.as_ref(),
+                delete_package,
             )
             .await
         });
@@ -734,7 +725,14 @@ impl AppService {
                 return Err(error);
             }
         }
-        Ok(json!({"dry_run": false, "deleted": true, "package_id": package_id, "version": version}))
+        Ok(json!({
+            "dry_run": false,
+            "deleted": true,
+            "package_id": package_id,
+            "version": version,
+            "package_removed": delete_package,
+            "replacement_version": replacement_package.map(|package| package.version)
+        }))
     }
 
     fn activate_installed_conversation_adapter_package_version(
@@ -2100,6 +2098,9 @@ fn conversation_adapter_package_status(
         return "not_installed".to_string();
     }
     if let Some(package) = package {
+        if package.origin == ConversationAdapterPackageOrigin::ManagedRelease && adapter.is_none() {
+            return "uninstalled".to_string();
+        }
         if !package.runtime_ready {
             return match package.runtime_gate_status {
                 ConversationAdapterRuntimeGateStatus::RuntimeMissing => "runtime_missing",
@@ -2355,6 +2356,41 @@ fn short_uuid() -> String {
     Uuid::new_v4().to_string()[..8].to_string()
 }
 
+fn replacement_manifest_path(install_dir: &str, previous_path: &str, fallback: &str) -> String {
+    let file_name = Path::new(previous_path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(fallback);
+    Path::new(install_dir)
+        .join(file_name)
+        .to_string_lossy()
+        .to_string()
+}
+
+fn package_for_uninstalled_replacement(
+    package: &ConversationAdapterPackage,
+    replacement: &crate::backend::models::ConversationAdapterPackageVersion,
+) -> ConversationAdapterPackage {
+    let mut replacement_package = package.clone();
+    replacement_package.version = replacement.version.clone();
+    replacement_package.install_dir = replacement.install_dir.clone();
+    replacement_package.manifest_path = replacement_manifest_path(
+        &replacement.install_dir,
+        &package.manifest_path,
+        "conversation-adapter-package.json",
+    );
+    replacement_package.adapter_manifest_path = replacement_manifest_path(
+        &replacement.install_dir,
+        &package.adapter_manifest_path,
+        "conversation-adapter.json",
+    );
+    replacement_package.installed_content_hash = Some(replacement.content_hash.clone());
+    replacement_package.trusted_package_hash = Some(replacement.content_hash.clone());
+    replacement_package.updated_at = Utc::now().to_rfc3339();
+    replacement_package
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2454,13 +2490,60 @@ mod tests {
     fn marks_installed_package_with_different_version_as_update_available() {
         let entries = resolve_conversation_adapter_package_catalog_entries(
             vec![catalog_item("codex-session", Some("codex"))],
-            &[],
+            &[adapter("codex", "0.9.0")],
             &[package("codex-session", "codex", "0.9.0")],
         );
 
         assert!(entries[0].installed);
         assert!(entries[0].update_available);
         assert_eq!(entries[0].status, "update_available");
+    }
+
+    #[test]
+    fn managed_package_without_registered_runtime_is_reported_as_uninstalled() {
+        let mut package = package("codex-session", "codex", "1.0.0");
+        package.runtime_ready = false;
+        package.runtime_gate_status = ConversationAdapterRuntimeGateStatus::RuntimeMissing;
+
+        let entries = resolve_conversation_adapter_package_catalog_entries(
+            vec![catalog_item("codex-session", Some("codex"))],
+            &[],
+            &[package],
+        );
+
+        assert!(entries[0].installed);
+        assert_eq!(entries[0].status, "uninstalled");
+        assert!(!entries[0].runtime_ready);
+    }
+
+    #[test]
+    fn uninstalled_replacement_uses_content_hash_and_rebases_manifest_paths() {
+        let package = package("codex-session", "codex", "2.0.0");
+        let replacement = crate::backend::models::ConversationAdapterPackageVersion {
+            package_id: package.package_id.clone(),
+            version: "1.0.0".to_string(),
+            install_dir: "/tmp/codex-session/versions/1.0.0".to_string(),
+            artifact_hash: Some("artifact-zip-hash".to_string()),
+            content_hash: "unpacked-content-hash".to_string(),
+            runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
+            installed_at: "2026-07-17T00:00:00Z".to_string(),
+        };
+
+        let replaced = package_for_uninstalled_replacement(&package, &replacement);
+
+        assert_eq!(replaced.version, "1.0.0");
+        assert_eq!(
+            replaced.trusted_package_hash.as_deref(),
+            Some("unpacked-content-hash")
+        );
+        assert_eq!(
+            replaced.manifest_path,
+            "/tmp/codex-session/versions/1.0.0/conversation-adapter-package.json"
+        );
+        assert_eq!(
+            replaced.adapter_manifest_path,
+            "/tmp/codex-session/versions/1.0.0/conversation-adapter.json"
+        );
     }
 
     #[test]

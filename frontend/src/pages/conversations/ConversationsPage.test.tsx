@@ -1112,7 +1112,7 @@ describe("MarkdownContent", () => {
 
     expect(screen.getByRole("tab", { name: "导入表单" })).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "脚本市场榜单" }));
-    expect(screen.getByText("需要解析器时可先从 GitHub catalog 安装，安装完成后会自动填入插件 manifest。")).toBeTruthy();
+    expect(screen.getByText("需要解析器时可从市场注册（下载并安装）；卸载只停止后续同步并保留插件文件与历史记录。")).toBeTruthy();
     fireEvent.click(await screen.findByRole("tab", { name: /更新 \(/ }));
     fireEvent.click(screen.getByRole("tab", { name: "导入表单" }));
     fireEvent.click(screen.getByRole("tab", { name: "脚本市场榜单" }));

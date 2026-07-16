@@ -9,6 +9,7 @@ import {
   Info,
   Loader2,
   PackageCheck,
+  PowerOff,
   RefreshCw,
   RotateCcw,
   ShieldCheck,
@@ -18,6 +19,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
+  checkConversationAdapterPackageUpdates,
   getConversationAdapterPackageTask,
   inspectConversationAdapterPackage,
   installConversationAdapterPackage,
@@ -72,6 +74,7 @@ export function ConversationScriptResourcePanel({
   const [activeView, setActiveView] = useState<"connected" | "updates" | "discover">("connected");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [installTask, setInstallTask] = useState<ConversationScriptInstallTaskSnapshot | null>(null);
   const [pendingChange, setPendingChange] = useState<{
@@ -249,6 +252,25 @@ export function ConversationScriptResourcePanel({
     await beginPackageChange(entry, action);
   }
 
+  async function handleCheckUpdates() {
+    setCheckingUpdates(true);
+    try {
+      const statuses = await checkConversationAdapterPackageUpdates({ force: true });
+      await loadCatalog("refresh");
+      setActiveView("updates");
+      onNotify({
+        message: t("conversation.scriptMarket.checkUpdatesCompleted", {
+          count: statuses.filter((status) => status.update_available).length,
+        }),
+        tone: "success",
+      });
+    } catch (checkError) {
+      onNotifyError(errorMessage(checkError));
+    } finally {
+      setCheckingUpdates(false);
+    }
+  }
+
   async function beginPackageChange(
     entry: ConversationAdapterPackageCatalogEntry,
     action: PackageChangeAction,
@@ -290,6 +312,10 @@ export function ConversationScriptResourcePanel({
         await unregisterConversationAdapter({ adapterId, confirmed: true });
         setPendingChange(null);
         setDetailEntry(null);
+        onNotify({
+          message: t("conversation.scriptMarket.uninstallCompleted"),
+          tone: "success",
+        });
         await Promise.resolve(onInstalled());
         await loadCatalog("refresh");
         return;
@@ -392,7 +418,7 @@ export function ConversationScriptResourcePanel({
         loadCatalog("refresh"),
       ]);
       setInstalledVersions(nextVersions);
-      if (action !== "delete") {
+      if (action !== "delete" || nextVersions.length === 0) {
         setDetailEntry(null);
       }
       onNotify({ message: t("conversation.scriptMarket.versionActionCompleted"), tone: "success" });
@@ -446,15 +472,28 @@ export function ConversationScriptResourcePanel({
             {t("conversation.scriptMarket.inlineDescription")}
           </p>
         </div>
-        <button
-          className="inline-flex h-9 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-55"
-          disabled={disabled || loading || refreshing}
-          onClick={() => void loadCatalog("refresh")}
-          type="button"
-        >
-          <RefreshCw className={clsx(refreshing && "animate-spin")} size={15} />
-          <span>{t("common.refresh")}</span>
-        </button>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <button
+            className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-55"
+            disabled={disabled || loading || refreshing || checkingUpdates}
+            onClick={() => void loadCatalog("refresh")}
+            type="button"
+          >
+            <RefreshCw className={clsx(refreshing && "animate-spin")} size={15} />
+            <span>{t("common.refresh")}</span>
+          </button>
+          <Button
+            disabled={disabled || loading || refreshing || checkingUpdates || installRunning}
+            onClick={() => void handleCheckUpdates()}
+            type="button"
+            variant="outline"
+          >
+            <ShieldCheck className={clsx(checkingUpdates && "animate-pulse")} size={15} />
+            {checkingUpdates
+              ? t("conversation.scriptMarket.checkingUpdates")
+              : t("conversation.scriptMarket.checkUpdates")}
+          </Button>
+        </div>
       </div>
 
       <div className="mt-3 flex items-center gap-1 border-b border-theme-card-border" role="tablist">
@@ -522,6 +561,12 @@ export function ConversationScriptResourcePanel({
               key={entry.item.id}
               onInstall={() => void handleInstall(entry)}
               onInspect={() => void openPackageDetail(entry)}
+              onLifecycle={() => {
+                const action = packageLifecycleAction(entry);
+                if (action) {
+                  void beginPackageChange(entry, action);
+                }
+              }}
               onUse={() => handleUse(entry)}
             />
           ))}
@@ -545,9 +590,9 @@ export function ConversationScriptResourcePanel({
                     }
                   }}
                   type="button"
-                  variant={packageLifecycleAction(detailEntry) === "uninstall" ? "destructive" : "outline"}
+                  variant="outline"
                 >
-                  <Trash2 size={15} />
+                  <PowerOff size={15} />
                   {t(actionLabelKey(packageLifecycleAction(detailEntry)!))}
                 </Button>
               ) : null}
@@ -633,7 +678,7 @@ export function ConversationScriptResourcePanel({
                     <h4 className="text-body-sm font-semibold text-on-surface">
                       {t("conversation.scriptMarket.installedVersions")}
                     </h4>
-                    {installedVersions.some((version) => version.version !== detailEntry.installed_package?.version) ? (
+                    {detailEntry.runtime_ready && installedVersions.some((version) => version.version !== detailEntry.installed_package?.version) ? (
                       <Button
                         disabled={Boolean(versionMutation)}
                         onClick={() => void mutateInstalledVersion("rollback")}
@@ -647,7 +692,8 @@ export function ConversationScriptResourcePanel({
                   </div>
                   <div className="mt-2 grid gap-2">
                     {installedVersions.map((version) => {
-                      const active = version.version === detailEntry.installed_package?.version;
+                      const active = detailEntry.runtime_ready
+                        && version.version === detailEntry.installed_package?.version;
                       return (
                         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-theme-card-border bg-theme-card/55 p-3" key={version.version}>
                           <div className="flex items-center gap-2">
@@ -659,7 +705,9 @@ export function ConversationScriptResourcePanel({
                             <div className="flex gap-2">
                               <Button disabled={Boolean(versionMutation)} onClick={() => void mutateInstalledVersion("switch", version.version)} type="button" variant="outline">
                                 {versionMutation === `switch:${version.version}` ? <Loader2 className="animate-spin" size={15} /> : null}
-                                {t("conversation.scriptMarket.switchVersion")}
+                                {t(detailEntry.status === "uninstalled"
+                                  ? "conversation.scriptMarket.registerVersion"
+                                  : "conversation.scriptMarket.switchVersion")}
                               </Button>
                               <Button disabled={Boolean(versionMutation)} onClick={() => void mutateInstalledVersion("delete", version.version)} type="button" variant="destructive">
                                 <Trash2 size={15} />
@@ -775,6 +823,7 @@ function ScriptResourceRow({
   entry,
   onInstall,
   onInspect,
+  onLifecycle,
   onUse,
 }: {
   changeDisabled: boolean;
@@ -782,11 +831,13 @@ function ScriptResourceRow({
   entry: ConversationAdapterPackageCatalogEntry;
   onInstall: () => void;
   onInspect: () => void;
+  onLifecycle: () => void;
   onUse: () => void;
 }) {
   const { t } = useI18n();
   const manifestPath = manifestPathForEntry(entry);
   const packageAction = packageActionForEntry(entry);
+  const lifecycleAction = packageLifecycleAction(entry);
   const canUseInstalled = Boolean(
     manifestPath &&
       entry.installed &&
@@ -852,6 +903,18 @@ function ScriptResourceRow({
             {t("conversation.scriptMarket.useInstalled")}
           </Button>
         ) : null}
+        {lifecycleAction ? (
+          <Button
+            className="inline-flex h-9 items-center gap-2 px-3 text-body-sm"
+            disabled={changeDisabled}
+            onClick={onLifecycle}
+            type="button"
+            variant="outline"
+          >
+            <PowerOff size={15} />
+            {t(actionLabelKey(lifecycleAction))}
+          </Button>
+        ) : null}
         {packageAction ? (
           <Button
             className="inline-flex h-9 items-center gap-2 px-3 text-body-sm"
@@ -882,6 +945,9 @@ function packageActionForEntry(entry: ConversationAdapterPackageCatalogEntry): P
   if (entry.installed && origin !== "managed_release") {
     return null;
   }
+  if (entry.status === "uninstalled") {
+    return "install";
+  }
   if (
     entry.status === "runtime_missing" ||
     entry.status === "verification_failed" ||
@@ -906,6 +972,9 @@ function packageLifecycleAction(
   if (!entry.installed || entry.status === "built_in") {
     return null;
   }
+  if (entry.status === "uninstalled") {
+    return null;
+  }
   return entry.installed_package?.origin === "managed_release" ? "uninstall" : "unregister";
 }
 
@@ -928,6 +997,8 @@ function statusLabelKey(status: ConversationAdapterPackageCatalogStatus) {
     case "installed":
     case "legacy_installed":
       return "conversation.scriptMarket.installed";
+    case "uninstalled":
+      return "conversation.scriptMarket.uninstalled";
     case "built_in":
       return "conversation.scriptMarket.builtIn";
     case "local_registered":
@@ -965,6 +1036,7 @@ function statusBadgeTone(status: ConversationAdapterPackageCatalogStatus) {
       return "create";
     case "update_available":
     case "runtime_missing":
+    case "uninstalled":
       return "conflict";
     case "verification_failed":
     case "hash_mismatch":
@@ -980,7 +1052,7 @@ function statusBadgeTone(status: ConversationAdapterPackageCatalogStatus) {
 function actionLabelKey(action: PackageChangeAction) {
   switch (action) {
     case "unregister":
-      return "conversation.scriptMarket.unregister";
+      return "conversation.scriptMarket.uninstall";
     case "uninstall":
       return "conversation.scriptMarket.uninstall";
     case "repair":
@@ -989,7 +1061,7 @@ function actionLabelKey(action: PackageChangeAction) {
       return "conversation.scriptMarket.update";
     case "install":
     default:
-      return "conversation.scriptMarket.install";
+      return "conversation.scriptMarket.registerPackage";
   }
 }
 

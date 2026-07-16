@@ -6,10 +6,11 @@ use crate::backend::dto::{
 use crate::backend::models::{
     conversation_turn_fingerprint, group_turn_ids_by_question, ConversationAdapter,
     ConversationAdapterCatalogRelease, ConversationAdapterKind, ConversationAdapterPackage,
-    ConversationAdapterPackageVersion, ConversationAdapterTrustState, ConversationGroupingOrigin,
-    ConversationPart, ConversationQuestion, ConversationSession, ConversationSource,
-    ConversationSourceKind, ConversationSyncRun, ConversationSyncStatus, ConversationTurn,
-    NormalizedConversationSession,
+    ConversationAdapterPackageOrigin, ConversationAdapterPackageVersion,
+    ConversationAdapterRuntimeGateStatus, ConversationAdapterTrustState,
+    ConversationGroupingOrigin, ConversationPart, ConversationQuestion, ConversationSession,
+    ConversationSource, ConversationSourceKind, ConversationSyncRun, ConversationSyncStatus,
+    ConversationTurn, NormalizedConversationSession,
 };
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use sha2::{Digest, Sha256};
@@ -528,6 +529,66 @@ pub(crate) async fn activate_conversation_adapter_package_sqlx(
     tx.commit().await.map_err(|error| error.to_string())
 }
 
+pub(crate) async fn deactivate_conversation_adapter_package_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    package_id: &str,
+    adapter_id: &str,
+) -> AppResult<ConversationAdapterPackage> {
+    let mut package = load_conversation_adapter_package_sqlx(pool, tenant_id, package_id)
+        .await?
+        .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))?;
+    if package.origin != ConversationAdapterPackageOrigin::ManagedRelease {
+        return Err("only managed conversation adapter packages can be uninstalled".to_string());
+    }
+    if package.adapter_id != adapter_id {
+        return Err(format!(
+            "conversation adapter package {package_id} does not own adapter {adapter_id}"
+        ));
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    sqlx::query(DELETE_CONVERSATION_ADAPTER_SQL)
+        .bind(tenant_id)
+        .bind(adapter_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    sqlx::query(DISABLE_CONVERSATION_SOURCES_BY_ADAPTER_SQL)
+        .bind(&now)
+        .bind(tenant_id)
+        .bind(adapter_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    sqlx::query(
+        r#"
+        UPDATE conversation_adapter_packages
+        SET runtime_ready = 0,
+            runtime_gate_status = 'runtime_missing',
+            runtime_validated_at = ?1,
+            error_message = 'conversation adapter package is uninstalled',
+            updated_at = ?1
+        WHERE tenant_id = ?2 AND package_id = ?3
+        "#,
+    )
+    .bind(&now)
+    .bind(tenant_id)
+    .bind(package_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+
+    package.runtime_ready = false;
+    package.runtime_gate_status = ConversationAdapterRuntimeGateStatus::RuntimeMissing;
+    package.runtime_validated_at = Some(now.clone());
+    package.error_message = Some("conversation adapter package is uninstalled".to_string());
+    package.updated_at = now;
+    Ok(package)
+}
+
 pub(crate) async fn upsert_conversation_adapter_catalog_release_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -669,17 +730,40 @@ pub(crate) async fn delete_conversation_adapter_package_version_sqlx(
     tenant_id: &str,
     package_id: &str,
     version: &str,
+    replacement_package: Option<&ConversationAdapterPackage>,
+    delete_package: bool,
 ) -> AppResult<bool> {
+    if replacement_package.is_some() && delete_package {
+        return Err(
+            "package version deletion cannot replace and delete the package record".to_string(),
+        );
+    }
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     let result = sqlx::query(
         "DELETE FROM conversation_adapter_package_versions WHERE tenant_id = ?1 AND package_id = ?2 AND version = ?3",
     )
     .bind(tenant_id)
     .bind(package_id)
     .bind(version)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|error| error.to_string())?;
-    Ok(result.rows_affected() == 1)
+    if result.rows_affected() != 1 {
+        tx.rollback().await.map_err(|error| error.to_string())?;
+        return Ok(false);
+    }
+    if let Some(package) = replacement_package {
+        upsert_conversation_adapter_package_with_executor(&mut *tx, tenant_id, package).await?;
+    } else if delete_package {
+        sqlx::query(DELETE_CONVERSATION_ADAPTER_PACKAGE_SQL)
+            .bind(tenant_id)
+            .bind(package_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(true)
 }
 
 fn map_sqlx_conversation_adapter_catalog_release(
@@ -3435,6 +3519,150 @@ mod tests {
         assert_eq!(by_adapter, Some(package.clone()));
         assert_eq!(deleted, Some(package));
         assert!(missing.is_none());
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn managed_package_uninstall_disables_runtime_but_preserves_package_versions_and_sources() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-package-uninstall-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let adapter = test_conversation_adapter(
+            "uninstall-adapter",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let source = test_conversation_source(&adapter.id);
+        let package = ConversationAdapterPackage {
+            package_id: "com.util6.uninstall-adapter".to_string(),
+            adapter_id: adapter.id.clone(),
+            name: "Uninstall Adapter".to_string(),
+            version: "1.0.0".to_string(),
+            record_kind: ConversationAdapterPackageRecordKind::Session,
+            install_dir: "/tmp/packages/com.util6.uninstall-adapter/versions/1.0.0".to_string(),
+            manifest_path: "/tmp/packages/com.util6.uninstall-adapter/versions/1.0.0/conversation-adapter-package.json".to_string(),
+            adapter_manifest_path: "/tmp/packages/com.util6.uninstall-adapter/versions/1.0.0/conversation-adapter.json".to_string(),
+            runtime_protocol: "stdio-ndjson-v1".to_string(),
+            runtime_ready: true,
+            origin: ConversationAdapterPackageOrigin::ManagedRelease,
+            source_url: None,
+            git_ref: None,
+            git_commit: None,
+            catalog_url: None,
+            update_policy: ConversationPackageUpdatePolicy::Manual,
+            latest_version: Some("1.0.0".to_string()),
+            last_checked_at: None,
+            runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
+            runtime_validated_at: None,
+            installed_content_hash: Some("hash-v1".to_string()),
+            trusted_package_hash: Some("hash-v1".to_string()),
+            error_message: None,
+            created_at: "2026-07-17T00:00:00Z".to_string(),
+            updated_at: "2026-07-17T00:00:00Z".to_string(),
+        };
+        let version = ConversationAdapterPackageVersion {
+            package_id: package.package_id.clone(),
+            version: package.version.clone(),
+            install_dir: package.install_dir.clone(),
+            artifact_hash: Some("artifact-v1".to_string()),
+            content_hash: "hash-v1".to_string(),
+            runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
+            installed_at: package.created_at.clone(),
+        };
+
+        let (uninstalled, remaining_versions, retained_source, missing_adapter) = database
+            .block_on(async {
+                activate_conversation_adapter_package_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &adapter,
+                    &package,
+                    &version,
+                )
+                .await?;
+                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+                let uninstalled = deactivate_conversation_adapter_package_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &package.package_id,
+                    &adapter.id,
+                )
+                .await?;
+                let remaining_versions = list_conversation_adapter_package_versions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &package.package_id,
+                )
+                .await?;
+                let retained_source =
+                    load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
+                        .await?
+                        .expect("source remains after uninstall");
+                let missing_adapter =
+                    load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter.id)
+                        .await?;
+                AppResult::Ok((
+                    uninstalled,
+                    remaining_versions,
+                    retained_source,
+                    missing_adapter,
+                ))
+            })
+            .expect("uninstall managed package runtime");
+
+        assert!(!uninstalled.runtime_ready);
+        assert_eq!(
+            uninstalled.runtime_gate_status,
+            ConversationAdapterRuntimeGateStatus::RuntimeMissing
+        );
+        assert_eq!(remaining_versions, vec![version]);
+        assert!(!retained_source.enabled);
+        assert!(missing_adapter.is_none());
+
+        let (deleted_version, missing_package, versions_after_delete, source_after_delete) =
+            database
+                .block_on(async {
+                    let deleted_version = delete_conversation_adapter_package_version_sqlx(
+                        database.pool(),
+                        TEST_TENANT_ID,
+                        &package.package_id,
+                        &package.version,
+                        None,
+                        true,
+                    )
+                    .await?;
+                    let missing_package = load_conversation_adapter_package_sqlx(
+                        database.pool(),
+                        TEST_TENANT_ID,
+                        &package.package_id,
+                    )
+                    .await?;
+                    let versions_after_delete = list_conversation_adapter_package_versions_sqlx(
+                        database.pool(),
+                        TEST_TENANT_ID,
+                        &package.package_id,
+                    )
+                    .await?;
+                    let source_after_delete =
+                        load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
+                            .await?
+                            .expect("source remains after deleting package files");
+                    AppResult::Ok((
+                        deleted_version,
+                        missing_package,
+                        versions_after_delete,
+                        source_after_delete,
+                    ))
+                })
+                .expect("delete the final uninstalled package version");
+        assert!(deleted_version);
+        assert!(missing_package.is_none());
+        assert!(versions_after_delete.is_empty());
+        assert!(!source_after_delete.enabled);
 
         drop(database);
         cleanup_database(&db_path);

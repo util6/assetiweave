@@ -159,6 +159,7 @@ export interface ConversationScriptCatalogItem {
 
 export type ConversationAdapterPackageCatalogStatus =
   | "not_installed"
+  | "uninstalled"
   | "legacy_installed"
   | "installed"
   | "update_available"

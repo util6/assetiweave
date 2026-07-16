@@ -1,17 +1,20 @@
 /* @vitest-environment jsdom */
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import type { ConversationAdapterPackageCatalogEntry } from "../../services/conversations";
 import { ConversationScriptResourcePanel } from "./ConversationScriptResourcePanel";
 
 const serviceMocks = vi.hoisted(() => ({
+  checkUpdates: vi.fn(),
+  deleteVersion: vi.fn(),
   getTask: vi.fn(),
   inspect: vi.fn(),
   install: vi.fn(),
   list: vi.fn(),
   listReleases: vi.fn(),
+  listVersions: vi.fn(),
   prepare: vi.fn(),
   unregister: vi.fn(),
   uninstall: vi.fn(),
@@ -28,11 +31,14 @@ vi.mock("../../services/conversations", async () => {
   );
   return {
     ...actual,
+    checkConversationAdapterPackageUpdates: serviceMocks.checkUpdates,
+    deleteConversationAdapterPackageVersion: serviceMocks.deleteVersion,
     getConversationAdapterPackageTask: serviceMocks.getTask,
     inspectConversationAdapterPackage: serviceMocks.inspect,
     installConversationAdapterPackage: serviceMocks.install,
     listConversationAdapterPackageReleases: serviceMocks.listReleases,
     listConversationAdapterPackages: serviceMocks.list,
+    listInstalledConversationAdapterPackageVersions: serviceMocks.listVersions,
     prepareConversationAdapterPackageChange: serviceMocks.prepare,
     unregisterConversationAdapter: serviceMocks.unregister,
     uninstallConversationAdapterPackage: serviceMocks.uninstall,
@@ -42,6 +48,8 @@ vi.mock("../../services/conversations", async () => {
 
 describe("ConversationScriptResourcePanel", () => {
   beforeEach(() => {
+    serviceMocks.checkUpdates.mockReset().mockResolvedValue([]);
+    serviceMocks.deleteVersion.mockReset().mockResolvedValue({ deleted: true });
     serviceMocks.getTask.mockReset().mockResolvedValue(null);
     serviceMocks.list.mockReset().mockResolvedValue(entries);
     serviceMocks.inspect.mockReset().mockResolvedValue({
@@ -60,6 +68,7 @@ describe("ConversationScriptResourcePanel", () => {
       }],
     });
     serviceMocks.listReleases.mockReset().mockResolvedValue([release]);
+    serviceMocks.listVersions.mockReset().mockResolvedValue([]);
     serviceMocks.prepare.mockReset().mockResolvedValue({
       action: "update",
       origin: "managed_release",
@@ -87,6 +96,37 @@ describe("ConversationScriptResourcePanel", () => {
       result: null,
       error: null,
     });
+    serviceMocks.install.mockReset().mockResolvedValue({
+      id: "install-1",
+      status: "running",
+      action: "install",
+      item_id: "io.github.util6.qwen-session",
+      package_id: "io.github.util6.qwen-session",
+      version: "0.1.0",
+      catalog_url: null,
+      dry_run: false,
+      phase: "installing",
+      started_at: "2026-07-15T00:00:00Z",
+      finished_at: null,
+      result: null,
+      error: null,
+    });
+    serviceMocks.uninstall.mockReset().mockResolvedValue({
+      id: "uninstall-1",
+      status: "running",
+      action: "uninstall",
+      item_id: "io.github.util6.codex-session",
+      package_id: "io.github.util6.codex-session",
+      version: "1.0.0",
+      catalog_url: null,
+      dry_run: false,
+      phase: "uninstalling",
+      started_at: "2026-07-15T00:00:00Z",
+      finished_at: null,
+      result: null,
+      error: null,
+    });
+    serviceMocks.unregister.mockReset().mockResolvedValue({ unregistered: true });
   });
 
   afterEach(() => {
@@ -151,6 +191,129 @@ describe("ConversationScriptResourcePanel", () => {
         confirmed: true,
       });
     });
+  });
+
+  it("checks for updates explicitly and opens the updates view", async () => {
+    serviceMocks.checkUpdates.mockResolvedValueOnce([{
+      package_id: "io.github.util6.codex-session",
+      current_version: "1.0.0",
+      latest_compatible_release: release,
+      update_available: true,
+    }]);
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Check for updates" }));
+
+    await waitFor(() => expect(serviceMocks.checkUpdates).toHaveBeenCalledWith({ force: true }));
+    expect(serviceMocks.list).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("tab", { name: /Updates \(1\)/ }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("registers a discovered package only after explicit confirmation", async () => {
+    renderPanel();
+    fireEvent.click(await screen.findByRole("tab", { name: /Discover \(1\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Register" }));
+
+    await waitFor(() => expect(serviceMocks.prepare).toHaveBeenCalledWith({
+      action: "install",
+      packageId: "io.github.util6.qwen-session",
+      adapterId: "qwen",
+    }));
+    expect(serviceMocks.install).not.toHaveBeenCalled();
+    const registerButtons = screen.getAllByRole("button", { name: "Register" });
+    fireEvent.click(registerButtons[registerButtons.length - 1]);
+
+    await waitFor(() => expect(serviceMocks.install).toHaveBeenCalledWith({
+      packageId: "io.github.util6.qwen-session",
+      version: undefined,
+      confirmed: true,
+    }));
+  });
+
+  it("uninstalls a managed runtime without using the delete action", async () => {
+    renderPanel();
+    fireEvent.click(await screen.findByRole("button", { name: "Uninstall" }));
+    const confirmDialog = await screen.findByRole("dialog", { name: "Confirm plugin change" });
+    fireEvent.click(within(confirmDialog).getByRole("button", { name: "Uninstall" }));
+
+    await waitFor(() => expect(serviceMocks.uninstall).toHaveBeenCalledWith({
+      packageId: "io.github.util6.codex-session",
+      confirmed: true,
+    }));
+    expect(serviceMocks.deleteVersion).not.toHaveBeenCalled();
+  });
+
+  it("presents external runtime unregistering as uninstall while retaining its files", async () => {
+    const localEntry: ConversationAdapterPackageCatalogEntry = {
+      ...entries[1],
+      update_available: false,
+      status: "local_registered",
+      installed_package: {
+        ...entries[1].installed_package!,
+        package_id: "com.util6.zcode-local",
+        adapter_id: "zcode",
+        origin: "local_directory",
+        install_dir: "/Users/example/zcode-adapter",
+      },
+      installed_adapter: {
+        ...entries[1].installed_adapter!,
+        id: "zcode",
+      },
+    };
+    serviceMocks.list.mockResolvedValueOnce([localEntry]);
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Uninstall" }));
+    const confirmDialog = await screen.findByRole("dialog", { name: "Confirm plugin change" });
+    fireEvent.click(within(confirmDialog).getByRole("button", { name: "Uninstall" }));
+
+    await waitFor(() => expect(serviceMocks.unregister).toHaveBeenCalledWith({
+      adapterId: "zcode",
+      confirmed: true,
+    }));
+    expect(serviceMocks.uninstall).not.toHaveBeenCalled();
+    expect(serviceMocks.deleteVersion).not.toHaveBeenCalled();
+  });
+
+  it("allows deleting the last installed version after its runtime is uninstalled", async () => {
+    const uninstalledEntry: ConversationAdapterPackageCatalogEntry = {
+      ...entries[1],
+      runtime_ready: false,
+      status: "uninstalled",
+      installed_adapter: null,
+      installed_package: {
+        ...entries[1].installed_package!,
+        runtime_ready: false,
+        runtime_gate_status: "runtime_missing",
+      },
+    };
+    serviceMocks.list.mockResolvedValueOnce([uninstalledEntry]);
+    serviceMocks.inspect.mockResolvedValueOnce({
+      origin: "managed_release",
+      package: uninstalledEntry.installed_package,
+      adapter: null,
+      affected_sources: [],
+    });
+    serviceMocks.listVersions.mockResolvedValueOnce([{
+      package_id: "io.github.util6.codex-session",
+      version: "1.0.0",
+      install_dir: "/tmp/packages/io.github.util6.codex-session/versions/1.0.0",
+      artifact_hash: "artifact-hash",
+      content_hash: "content-hash",
+      runtime_gate_status: "ready",
+      installed_at: "2026-07-15T00:00:00Z",
+    }]);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Details" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete version" }));
+
+    await waitFor(() => expect(serviceMocks.deleteVersion).toHaveBeenCalledWith({
+      packageId: "io.github.util6.codex-session",
+      version: "1.0.0",
+      confirmed: true,
+    }));
   });
 });
 

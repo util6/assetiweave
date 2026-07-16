@@ -99,7 +99,7 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - Conversation v1 已接入独立领域模型、SQLite 表、Engine/Go CLI 方法、Tauri commands、Session-first 前端页面、Markdown Session 导出和双向导航入口。
 - Conversation Adapter Package runtime 已形成独立生命周期：外部目录使用 register/unregister，市场 artifact 使用 install/update/uninstall；所有变更先执行 preflight，托管安装写入 `packages/<package_id>/versions/<semver>` 并在数据库事务中激活。
 - Conversation Adapter Catalog v2 使用 `parser-catalog/index.json` 与 `history/<package_id>.json`，缓存版本、Core 兼容范围、artifact 大小与 SHA-256、changelog、breaking-change 和 ETag；远端缓存超过 24 小时才自动刷新，默认只提示更新。
-- 对话插件页面提供已接入、更新、发现三个视图和详情/版本历史；安装、更新、卸载通过共享后台任务 registry 执行，页面只禁用冲突的生命周期操作。
+- 对话插件页面提供已接入、更新、发现三个视图和详情/版本历史；市场下载与安装在 UI 中表达为“注册”，并提供显式检查更新。注册、更新、卸载 runtime 通过共享后台任务 registry 执行，页面只禁用冲突的生命周期操作。
 - Go CLI 的 `conversation adapter` 第一阶段只暴露 `list` 和 `inspect`，并通过 Engine 聚合与桌面端相同的 origin、版本、runtime gate、路径、hash、Source 和错误信息。
 - CLI 已形成分层：手写快捷命令、生成式 App 命令、Raw Engine API、稳定错误分类、命令策略、hook、插件平台、harvester/webharvester 和自更新。
 - Skill 互联网发现/导入已覆盖 GitHub 搜索、候选评分/解释、dry-run、确认导入、备份库导入、remote source 记录、drift 检测和前端入口。
@@ -167,8 +167,8 @@ Conversation Adapter Package 生命周期：
 - 外部 package 注册只记录路径、manifest、runtime、hash 和 Git 元数据，不复制或删除外部文件；注销只解除运行注册并保留 Source 与对话记录。
 - 市场安装先下载到 staging，限制 ZIP 条目数量和展开体积，拒绝路径穿越与 symlink，校验 HTTPS、artifact SHA-256、package/content hash、SemVer 和 Core 兼容性后再写入托管版本目录。
 - 新版本激活在一个数据库事务内更新 package、version 和 adapter runtime；失败时旧 active runtime 保持可用。同一正式 `package_id + version` 不允许 hash 变化。
-- 卸载 preflight 列出受影响 Source 和托管目录；执行时先暂存目录，数据库删除失败则回滚目录，只允许清理应用拥有的 package library。
-- 托管 Conversation Adapter 可在本机已安装版本间离线切换、一键回退并删除单个非 active 版本；删除路径必须精确位于应用托管的 `packages/<package>/versions/<semver>`。更新策略支持 `manual`、`follow_stable`、`follow_beta`、`pin_exact`，但不静默安装远端代码，也不提供真正的服务端 push。
+- 卸载 preflight 列出受影响 Source 和托管目录；执行时仅删除 runtime 注册、禁用关联 Source，并把 package 标记为已卸载，托管版本目录和历史 Conversation 数据保持不变。
+- 托管 Conversation Adapter 可在本机已安装版本间离线切换、一键回退并删除单个非运行版本；删除路径必须精确位于应用托管的 `packages/<package>/versions/<semver>`。最后运行版本只有在先卸载 runtime 后才能删除，删除最后一个版本时同步清理 package 注册记录，但保留 Conversation records 与 Source 配置。更新策略支持 `manual`、`follow_stable`、`follow_beta`、`pin_exact`，但不静默注册远端代码，也不提供真正的服务端 push。
 
 ```mermaid
 flowchart TB

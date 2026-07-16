@@ -21,7 +21,8 @@ pub(crate) use asset_repo::{
 };
 pub(crate) use backup_repo::{checkpoint_database_wal_sqlx, vacuum_database_into_sqlx};
 pub(crate) use conversation_repo::{
-    activate_conversation_adapter_package_sqlx, delete_conversation_adapter_package_version_sqlx,
+    activate_conversation_adapter_package_sqlx, deactivate_conversation_adapter_package_sqlx,
+    delete_conversation_adapter_package_version_sqlx,
     delete_conversation_adapter_registration_sqlx, disable_conversation_source_sqlx,
     has_running_conversation_sync_for_adapter_sqlx, import_conversation_sessions_sqlx,
     list_conversation_adapter_catalog_releases_sqlx,

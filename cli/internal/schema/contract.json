@@ -2848,7 +2848,7 @@
       "confirmation_required": true,
       "contract_version": 3,
       "deprecated": false,
-      "description": "Uninstall a conversation adapter package and unregister its adapter",
+      "description": "Uninstall a conversation adapter runtime while retaining managed package files and conversation records",
       "exposure": "friendly",
       "method": "conversation.adapter_package.uninstall",
       "params_schema": {
@@ -7804,7 +7804,7 @@
       "confirmation_required": true,
       "contract_version": 3,
       "deprecated": false,
-      "description": "Uninstall a conversation adapter package and unregister its adapter",
+      "description": "Uninstall a conversation adapter runtime while retaining managed package files and conversation records",
       "exposure": "app",
       "method": "uninstall_conversation_adapter_package",
       "params_schema": {

@@ -1113,7 +1113,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
     command!(
         "conversation.adapter_package.uninstall",
         "conversation.adapter_package.uninstall",
-        "Uninstall a conversation adapter package and unregister its adapter",
+        "Uninstall a conversation adapter runtime while retaining managed package files and conversation records",
         HighRiskWrite,
         Friendly,
         true,
@@ -2512,7 +2512,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
     command!(
         "uninstall_conversation_adapter_package",
         "conversation.adapter_package.uninstall",
-        "Uninstall a conversation adapter package and unregister its adapter",
+        "Uninstall a conversation adapter runtime while retaining managed package files and conversation records",
         HighRiskWrite,
         App,
         false,

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  checkConversationAdapterPackageUpdates,
   getConversationAdapterPackageTask,
   getConversationSyncTask,
   installConversationAdapterPackage,
@@ -19,6 +20,7 @@ import {
   searchConversationRecords,
   summarizeConversationSyncTask,
   syncConversations,
+  uninstallConversationAdapterPackage,
 } from "./conversations";
 
 const invokeMock = vi.hoisted(() => vi.fn());
@@ -148,6 +150,24 @@ describe("conversation services", () => {
 
     expect(invokeMock).toHaveBeenCalledWith("set_conversation_adapter_package_update_policy", {
       params: { package_id: "io.example.adapter", update_policy: "follow_beta" },
+    });
+  });
+
+  it("checks updates explicitly and uninstalls only the registered runtime", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValueOnce([]).mockResolvedValueOnce({ status: "running" });
+
+    await checkConversationAdapterPackageUpdates({ force: true });
+    await uninstallConversationAdapterPackage({
+      packageId: "io.example.adapter",
+      confirmed: true,
+    });
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "check_conversation_adapter_package_updates", {
+      params: { catalog_url: null, force: true },
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "uninstall_conversation_adapter_package", {
+      params: { package_id: "io.example.adapter", dry_run: false, yes: true },
     });
   });
 
