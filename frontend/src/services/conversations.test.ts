@@ -5,12 +5,17 @@ import {
   installConversationAdapterPackage,
   installConversationScript,
   importConversationSource,
+  deleteConversationAdapterPackageVersion,
+  listInstalledConversationAdapterPackageVersions,
   listConversationAdapterPackages,
   listConversationAdapterPackageReleases,
   listConversationScriptCatalog,
   listConversationAdapterRuntimeStatuses,
   mergeConversationQuestions,
   prepareConversationAdapterPackageChange,
+  rollbackConversationAdapterPackageVersion,
+  setConversationAdapterPackageUpdatePolicy,
+  switchConversationAdapterPackageVersion,
   searchConversationRecords,
   summarizeConversationSyncTask,
   syncConversations,
@@ -106,6 +111,43 @@ describe("conversation services", () => {
 
     expect(invokeMock).toHaveBeenCalledWith("list_conversation_adapter_packages", {
       params: { catalog_url: "https://example.test/catalog.json" },
+    });
+  });
+
+  it("routes installed-version lifecycle operations through the shared package API", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValue([]);
+
+    await listInstalledConversationAdapterPackageVersions("io.example.adapter");
+    await switchConversationAdapterPackageVersion({ packageId: "io.example.adapter", version: "1.2.0", confirmed: true });
+    await rollbackConversationAdapterPackageVersion({ packageId: "io.example.adapter", confirmed: true });
+    await deleteConversationAdapterPackageVersion({ packageId: "io.example.adapter", version: "1.1.0", confirmed: true });
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "list_installed_conversation_adapter_package_versions", {
+      params: { package_id: "io.example.adapter" },
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "switch_conversation_adapter_package_version", {
+      params: { package_id: "io.example.adapter", version: "1.2.0", dry_run: false, yes: true },
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "rollback_conversation_adapter_package_version", {
+      params: { package_id: "io.example.adapter", version: null, dry_run: false, yes: true },
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(4, "delete_conversation_adapter_package_version", {
+      params: { package_id: "io.example.adapter", version: "1.1.0", dry_run: false, yes: true },
+    });
+  });
+
+  it("persists the selected package update policy", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValueOnce({ package_id: "io.example.adapter", update_policy: "follow_beta" });
+
+    await setConversationAdapterPackageUpdatePolicy({
+      packageId: "io.example.adapter",
+      updatePolicy: "follow_beta",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("set_conversation_adapter_package_update_policy", {
+      params: { package_id: "io.example.adapter", update_policy: "follow_beta" },
     });
   });
 

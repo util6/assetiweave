@@ -664,6 +664,24 @@ pub(crate) async fn list_conversation_adapter_package_versions_sqlx(
         .collect()
 }
 
+pub(crate) async fn delete_conversation_adapter_package_version_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    package_id: &str,
+    version: &str,
+) -> AppResult<bool> {
+    let result = sqlx::query(
+        "DELETE FROM conversation_adapter_package_versions WHERE tenant_id = ?1 AND package_id = ?2 AND version = ?3",
+    )
+    .bind(tenant_id)
+    .bind(package_id)
+    .bind(version)
+    .execute(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(result.rows_affected() == 1)
+}
+
 fn map_sqlx_conversation_adapter_catalog_release(
     row: &SqliteRow,
 ) -> AppResult<ConversationAdapterCatalogRelease> {

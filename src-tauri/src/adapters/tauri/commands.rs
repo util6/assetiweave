@@ -22,11 +22,13 @@ use crate::{
         ConversationAdapterPackageChangeParams, ConversationAdapterPackageInspectParams,
         ConversationAdapterPackageInstallParams, ConversationAdapterPackageReleaseListParams,
         ConversationAdapterPackageUninstallParams, ConversationAdapterPackageUpdateCheckParams,
-        ConversationAdapterUnregisterParams, ConversationPartTranslationUpdateParams,
-        ConversationQuestionGetParams, ConversationQuestionListParams,
-        ConversationQuestionMergeParams, ConversationQuestionSplitParams,
-        ConversationScriptCatalogParams, ConversationScriptInstallParams, ConversationSearchParams,
-        ConversationSearchResult, ConversationSessionExportParams, ConversationSessionGetParams,
+        ConversationAdapterPackageUpdatePolicyParams,
+        ConversationAdapterPackageVersionChangeParams, ConversationAdapterUnregisterParams,
+        ConversationPartTranslationUpdateParams, ConversationQuestionGetParams,
+        ConversationQuestionListParams, ConversationQuestionMergeParams,
+        ConversationQuestionSplitParams, ConversationScriptCatalogParams,
+        ConversationScriptInstallParams, ConversationSearchParams, ConversationSearchResult,
+        ConversationSessionExportParams, ConversationSessionGetParams,
         ConversationSessionListParams, ConversationSourceDisableParams,
         ConversationSourceUpsertParams, ConversationSyncParams, ListAssetsParams,
         SkillAcquireParams, SkillRemoteCheckParams, SkillSearchParams, SkillSearchResult,
@@ -1440,6 +1442,60 @@ pub(crate) async fn list_conversation_adapter_package_releases(
 }
 
 #[tauri::command]
+pub(crate) async fn list_installed_conversation_adapter_package_versions(
+    state: State<'_, AppState>,
+    params: ConversationAdapterPackageVersionChangeParams,
+) -> AppResult<Vec<crate::backend::models::ConversationAdapterPackageVersion>> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?
+            .list_installed_conversation_adapter_package_versions(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn switch_conversation_adapter_package_version(
+    state: State<'_, AppState>,
+    params: ConversationAdapterPackageVersionChangeParams,
+) -> AppResult<serde_json::Value> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?.switch_conversation_adapter_package_version(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn rollback_conversation_adapter_package_version(
+    state: State<'_, AppState>,
+    params: ConversationAdapterPackageVersionChangeParams,
+) -> AppResult<serde_json::Value> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?
+            .rollback_conversation_adapter_package_version(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn delete_conversation_adapter_package_version(
+    state: State<'_, AppState>,
+    params: ConversationAdapterPackageVersionChangeParams,
+) -> AppResult<serde_json::Value> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?.delete_conversation_adapter_package_version(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub(crate) async fn refresh_conversation_adapter_catalogs(
     state: State<'_, AppState>,
     params: ConversationAdapterCatalogRefreshParams,
@@ -1460,6 +1516,20 @@ pub(crate) async fn check_conversation_adapter_package_updates(
     let db_path = state.db_path.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::open_with_db_path(db_path)?.check_conversation_adapter_package_updates(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn set_conversation_adapter_package_update_policy(
+    state: State<'_, AppState>,
+    params: ConversationAdapterPackageUpdatePolicyParams,
+) -> AppResult<crate::backend::models::ConversationAdapterPackage> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?
+            .set_conversation_adapter_package_update_policy(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2084,8 +2154,13 @@ pub(crate) fn command_handler(
         prepare_conversation_adapter_package_change,
         list_conversation_adapter_packages,
         list_conversation_adapter_package_releases,
+        list_installed_conversation_adapter_package_versions,
+        switch_conversation_adapter_package_version,
+        rollback_conversation_adapter_package_version,
+        delete_conversation_adapter_package_version,
         refresh_conversation_adapter_catalogs,
         check_conversation_adapter_package_updates,
+        set_conversation_adapter_package_update_policy,
         install_conversation_adapter_package,
         update_conversation_adapter_package,
         uninstall_conversation_adapter_package,

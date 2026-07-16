@@ -218,10 +218,30 @@ impl AppService {
             ) {
                 continue;
             }
+            if package.update_policy
+                == crate::backend::models::ConversationPackageUpdatePolicy::PinExact
+            {
+                package.latest_version = None;
+                package.last_checked_at = Some(now.clone());
+                self.save_conversation_adapter_package(package)?;
+                statuses.push(ConversationAdapterPackageUpdateStatus {
+                    package_id: package.package_id.clone(),
+                    current_version: package.version.clone(),
+                    latest_compatible_release: None,
+                    update_available: false,
+                });
+                continue;
+            }
             let mut compatible = releases
                 .iter()
                 .filter(|release| release.package_id == package.package_id)
                 .filter(|release| release_is_core_compatible(release))
+                .filter(|release| {
+                    package.update_policy
+                        == crate::backend::models::ConversationPackageUpdatePolicy::FollowBeta
+                        || release.channel
+                            == crate::backend::models::ConversationAdapterReleaseChannel::Stable
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             sort_releases_newest_first(&mut compatible);
@@ -240,6 +260,29 @@ impl AppService {
             });
         }
         Ok(statuses)
+    }
+
+    pub(crate) fn set_conversation_adapter_package_update_policy(
+        &self,
+        params: ConversationAdapterPackageUpdatePolicyParams,
+    ) -> AppResult<crate::backend::models::ConversationAdapterPackage> {
+        let package_id = params.package_id.trim();
+        let mut package = self
+            .load_conversation_adapter_package(package_id)?
+            .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))?;
+        if package.origin
+            != crate::backend::models::ConversationAdapterPackageOrigin::ManagedRelease
+            && params.update_policy
+                != crate::backend::models::ConversationPackageUpdatePolicy::PinExact
+        {
+            return Err(
+                "local, Git, dev, built-in, and legacy packages must remain pinned".to_string(),
+            );
+        }
+        package.update_policy = params.update_policy;
+        package.updated_at = Utc::now().to_rfc3339();
+        self.save_conversation_adapter_package(&package)?;
+        Ok(package)
     }
 
     fn load_cached_conversation_adapter_catalog_releases(

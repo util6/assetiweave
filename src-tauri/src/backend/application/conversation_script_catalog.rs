@@ -332,7 +332,10 @@ impl AppService {
             ConversationAdapterPackageChangeAction::Register
             | ConversationAdapterPackageChangeAction::Install
             | ConversationAdapterPackageChangeAction::Update
-            | ConversationAdapterPackageChangeAction::Uninstall => {
+            | ConversationAdapterPackageChangeAction::Uninstall
+            | ConversationAdapterPackageChangeAction::SwitchVersion
+            | ConversationAdapterPackageChangeAction::Rollback
+            | ConversationAdapterPackageChangeAction::DeleteVersion => {
                 ConversationAdapterPackageChangeRisk::HighRiskWrite
             }
         };
@@ -618,6 +621,211 @@ impl AppService {
         })
     }
 
+    pub(crate) fn list_installed_conversation_adapter_package_versions(
+        &self,
+        params: ConversationAdapterPackageVersionChangeParams,
+    ) -> AppResult<Vec<crate::backend::models::ConversationAdapterPackageVersion>> {
+        self.load_conversation_adapter_package_versions(params.package_id.trim())
+    }
+
+    pub(crate) fn switch_conversation_adapter_package_version(
+        &self,
+        params: ConversationAdapterPackageVersionChangeParams,
+    ) -> AppResult<Value> {
+        let version = params
+            .version
+            .as_deref()
+            .and_then(clean_non_empty_string)
+            .ok_or_else(|| "conversation adapter package version is required".to_string())?;
+        self.activate_installed_conversation_adapter_package_version(
+            &params.package_id,
+            &version,
+            ConversationAdapterPackageChangeAction::SwitchVersion,
+            params.dry_run,
+            params.yes,
+        )
+    }
+
+    pub(crate) fn rollback_conversation_adapter_package_version(
+        &self,
+        params: ConversationAdapterPackageVersionChangeParams,
+    ) -> AppResult<Value> {
+        let package = self
+            .load_conversation_adapter_package(params.package_id.trim())?
+            .ok_or_else(|| "conversation adapter package not found".to_string())?;
+        let versions = self.load_conversation_adapter_package_versions(&package.package_id)?;
+        let target = select_rollback_version(&versions, &package.version)
+            .ok_or_else(|| "no inactive installed version is available for rollback".to_string())?;
+        self.activate_installed_conversation_adapter_package_version(
+            &package.package_id,
+            &target.version,
+            ConversationAdapterPackageChangeAction::Rollback,
+            params.dry_run,
+            params.yes,
+        )
+    }
+
+    pub(crate) fn delete_conversation_adapter_package_version(
+        &self,
+        params: ConversationAdapterPackageVersionChangeParams,
+    ) -> AppResult<Value> {
+        let package_id = params.package_id.trim();
+        let version = params
+            .version
+            .as_deref()
+            .and_then(clean_non_empty_string)
+            .ok_or_else(|| "conversation adapter package version is required".to_string())?;
+        let package = self
+            .load_conversation_adapter_package(package_id)?
+            .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))?;
+        if package.origin != ConversationAdapterPackageOrigin::ManagedRelease {
+            return Err("only managed package versions can be deleted".to_string());
+        }
+        if package.version == version {
+            return Err(
+                "active conversation adapter package version cannot be deleted".to_string(),
+            );
+        }
+        let versions = self.load_conversation_adapter_package_versions(package_id)?;
+        let target = versions
+            .iter()
+            .find(|candidate| candidate.version == version)
+            .ok_or_else(|| {
+                format!("installed package version not found: {package_id}@{version}")
+            })?;
+        let managed_root = crate::backend::app_settings::conversation_adapter_dir()?;
+        let version_dir = validate_managed_package_version_delete_target(
+            &managed_root,
+            package_id,
+            &version,
+            Path::new(&target.install_dir),
+        )?;
+        if params.dry_run {
+            return Ok(
+                json!({"dry_run": true, "package_id": package_id, "version": version, "managed_path": version_dir}),
+            );
+        }
+        if !params.yes {
+            return Err("conversation adapter package version deletion requires --yes".to_string());
+        }
+        let staged = version_dir.with_file_name(format!(".{}-delete-{}", version, short_uuid()));
+        fs::rename(&version_dir, &staged).map_err(|error| error.to_string())?;
+        let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
+        let package_id_owned = package_id.to_string();
+        let version_owned = version.clone();
+        let deleted = self.db.block_on(async move {
+            crate::backend::store::delete_conversation_adapter_package_version_sqlx(
+                &pool,
+                &tenant_id,
+                &package_id_owned,
+                &version_owned,
+            )
+            .await
+        });
+        match deleted {
+            Ok(true) => fs::remove_dir_all(&staged).map_err(|error| error.to_string())?,
+            Ok(false) => {
+                let _ = fs::rename(&staged, &version_dir);
+                return Err("installed package version record was not found".to_string());
+            }
+            Err(error) => {
+                let _ = fs::rename(&staged, &version_dir);
+                return Err(error);
+            }
+        }
+        Ok(json!({"dry_run": false, "deleted": true, "package_id": package_id, "version": version}))
+    }
+
+    fn activate_installed_conversation_adapter_package_version(
+        &self,
+        package_id: &str,
+        version: &str,
+        action: ConversationAdapterPackageChangeAction,
+        dry_run: bool,
+        yes: bool,
+    ) -> AppResult<Value> {
+        let preflight = self.prepare_conversation_adapter_package_change(
+            ConversationAdapterPackageChangeParams {
+                action,
+                package_id: Some(package_id.to_string()),
+                adapter_id: None,
+            },
+        )?;
+        reject_conversation_package_task_conflicts(&preflight)?;
+        if !dry_run && !yes {
+            return Err(
+                "conversation adapter package version activation requires --yes".to_string(),
+            );
+        }
+        let mut package = self
+            .load_conversation_adapter_package(package_id)?
+            .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))?;
+        if package.origin != ConversationAdapterPackageOrigin::ManagedRelease {
+            return Err("only managed package versions can be activated".to_string());
+        }
+        let versions = self.load_conversation_adapter_package_versions(package_id)?;
+        let target = versions
+            .iter()
+            .find(|candidate| candidate.version == version)
+            .ok_or_else(|| {
+                format!("installed package version not found: {package_id}@{version}")
+            })?;
+        let validation = crate::backend::conversations::validate_conversation_adapter_package_dir(
+            Path::new(&target.install_dir),
+        )?;
+        if validation.manifest.package_id != package_id
+            || validation.manifest.version != version
+            || validation.content_hash != target.content_hash
+        {
+            return Err(
+                "installed conversation adapter package version failed immutable validation"
+                    .to_string(),
+            );
+        }
+        if dry_run {
+            return Ok(
+                json!({"dry_run": true, "package_id": package_id, "version": version, "install_path": target.install_dir}),
+            );
+        }
+        let preview = crate::backend::conversations::register_external_adapter(
+            crate::backend::conversations::ExternalAdapterRegisterParams {
+                manifest_path: validation.adapter_manifest_path.clone(),
+                dry_run: false,
+                yes: true,
+            },
+        )?;
+        let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)?;
+        let now = Utc::now().to_rfc3339();
+        package.version = version.to_string();
+        package.install_dir = target.install_dir.clone();
+        package.manifest_path = validation.manifest_path.clone();
+        package.adapter_manifest_path = validation.adapter_manifest_path.clone();
+        package.runtime_ready = true;
+        package.runtime_gate_status = ConversationAdapterRuntimeGateStatus::Ready;
+        package.runtime_validated_at = Some(now.clone());
+        package.installed_content_hash = Some(validation.content_hash.clone());
+        package.trusted_package_hash = Some(target.content_hash.clone());
+        package.error_message = None;
+        package.updated_at = now;
+        let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
+        let version_record = target.clone();
+        self.db.block_on(async move {
+            crate::backend::store::activate_conversation_adapter_package_sqlx(
+                &pool,
+                &tenant_id,
+                &adapter,
+                &package,
+                &version_record,
+            )
+            .await
+        })?;
+        Ok(
+            json!({"dry_run": false, "activated": true, "package_id": package_id, "version": version}),
+        )
+    }
+
     pub(crate) fn load_conversation_adapter_package_by_adapter(
         &self,
         adapter_id: &str,
@@ -765,6 +973,20 @@ fn reject_conversation_package_task_conflicts(
     }
 }
 
+fn select_rollback_version<'a>(
+    versions: &'a [crate::backend::models::ConversationAdapterPackageVersion],
+    active_version: &str,
+) -> Option<&'a crate::backend::models::ConversationAdapterPackageVersion> {
+    versions
+        .iter()
+        .filter(|version| version.version != active_version)
+        .max_by(|left, right| {
+            left.installed_at
+                .cmp(&right.installed_at)
+                .then_with(|| left.version.cmp(&right.version))
+        })
+}
+
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub(crate) struct ConversationAdapterPackageInspection {
     pub(crate) origin: ConversationAdapterPackageOrigin,
@@ -881,6 +1103,28 @@ fn validate_managed_package_delete_target(
     }
 
     Ok(package_root)
+}
+
+fn validate_managed_package_version_delete_target(
+    managed_root: &Path,
+    package_id: &str,
+    version: &str,
+    install_dir: &Path,
+) -> AppResult<PathBuf> {
+    let version = validated_package_version(version)?;
+    let package_root =
+        validate_managed_package_delete_target(managed_root, package_id, install_dir)?;
+    let expected = package_root.join("versions").join(version);
+    let canonical_expected = expected
+        .canonicalize()
+        .map_err(|error| format!("resolve managed package version directory failed: {error}"))?;
+    let canonical_install = install_dir
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    if canonical_install != canonical_expected {
+        return Err("conversation adapter version delete target is not the requested managed version directory".to_string());
+    }
+    Ok(canonical_install)
 }
 
 pub(super) fn install_conversation_adapter_package_from_item(
@@ -2263,6 +2507,35 @@ mod tests {
         );
         assert!(validated_package_version("latest").is_err());
         assert!(validated_package_version("1/../../external").is_err());
+    }
+
+    #[test]
+    fn rollback_selects_the_most_recently_installed_inactive_version() {
+        let versions = vec![
+            package_version("1.2.0", "2026-07-16T02:00:00Z"),
+            package_version("1.1.0", "2026-07-16T01:00:00Z"),
+            package_version("1.0.0", "2026-07-16T00:00:00Z"),
+        ];
+
+        assert_eq!(
+            select_rollback_version(&versions, "1.2.0").map(|version| version.version.as_str()),
+            Some("1.1.0")
+        );
+    }
+
+    fn package_version(
+        version: &str,
+        installed_at: &str,
+    ) -> crate::backend::models::ConversationAdapterPackageVersion {
+        crate::backend::models::ConversationAdapterPackageVersion {
+            package_id: "io.github.util6.test".to_string(),
+            version: version.to_string(),
+            install_dir: format!("/tmp/versions/{version}"),
+            artifact_hash: None,
+            content_hash: format!("hash-{version}"),
+            runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
+            installed_at: installed_at.to_string(),
+        }
     }
 
     #[test]

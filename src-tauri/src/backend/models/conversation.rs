@@ -79,6 +79,9 @@ pub enum ConversationAdapterPackageChangeAction {
     Install,
     Update,
     Uninstall,
+    SwitchVersion,
+    Rollback,
+    DeleteVersion,
     Revalidate,
 }
 

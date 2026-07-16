@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ConversationAdapter,
   ConversationAdapterPackage,
+  ConversationAdapterRuntimeGateStatus,
+  ConversationPackageUpdatePolicy,
   ConversationSourceKind,
   ConversationMutationResult,
   ConversationQuestionDetail,
@@ -240,6 +242,16 @@ export interface ConversationAdapterPackageUpdateStatus {
   current_version: string;
   latest_compatible_release?: ConversationAdapterCatalogRelease | null;
   update_available: boolean;
+}
+
+export interface ConversationAdapterPackageVersion {
+  package_id: string;
+  version: string;
+  install_dir: string;
+  artifact_hash?: string | null;
+  content_hash: string;
+  runtime_gate_status: ConversationAdapterRuntimeGateStatus;
+  installed_at: string;
 }
 
 export interface ConversationScriptCatalogEntry {
@@ -666,6 +678,62 @@ export async function listConversationAdapterPackageReleases(params: {
   );
 }
 
+export async function listInstalledConversationAdapterPackageVersions(
+  packageId: string,
+): Promise<ConversationAdapterPackageVersion[]> {
+  return await invoke<ConversationAdapterPackageVersion[]>(
+    "list_installed_conversation_adapter_package_versions",
+    { params: { package_id: packageId } },
+  );
+}
+
+export async function switchConversationAdapterPackageVersion(params: {
+  packageId: string;
+  version: string;
+  dryRun?: boolean;
+  confirmed?: boolean;
+}): Promise<unknown> {
+  return await invoke("switch_conversation_adapter_package_version", {
+    params: {
+      package_id: params.packageId,
+      version: params.version,
+      dry_run: params.dryRun ?? false,
+      yes: params.confirmed ?? false,
+    },
+  });
+}
+
+export async function rollbackConversationAdapterPackageVersion(params: {
+  packageId: string;
+  dryRun?: boolean;
+  confirmed?: boolean;
+}): Promise<unknown> {
+  return await invoke("rollback_conversation_adapter_package_version", {
+    params: {
+      package_id: params.packageId,
+      version: null,
+      dry_run: params.dryRun ?? false,
+      yes: params.confirmed ?? false,
+    },
+  });
+}
+
+export async function deleteConversationAdapterPackageVersion(params: {
+  packageId: string;
+  version: string;
+  dryRun?: boolean;
+  confirmed?: boolean;
+}): Promise<unknown> {
+  return await invoke("delete_conversation_adapter_package_version", {
+    params: {
+      package_id: params.packageId,
+      version: params.version,
+      dry_run: params.dryRun ?? false,
+      yes: params.confirmed ?? false,
+    },
+  });
+}
+
 export async function refreshConversationAdapterCatalogs(params?: {
   catalogUrl?: string | null;
   force?: boolean;
@@ -691,6 +759,21 @@ export async function checkConversationAdapterPackageUpdates(params?: {
       params: {
         catalog_url: params?.catalogUrl?.trim() || null,
         force: params?.force ?? false,
+      },
+    },
+  );
+}
+
+export async function setConversationAdapterPackageUpdatePolicy(params: {
+  packageId: string;
+  updatePolicy: ConversationPackageUpdatePolicy;
+}): Promise<ConversationAdapterPackage> {
+  return await invoke<ConversationAdapterPackage>(
+    "set_conversation_adapter_package_update_policy",
+    {
+      params: {
+        package_id: params.packageId,
+        update_policy: params.updatePolicy,
       },
     },
   );

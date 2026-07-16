@@ -977,6 +977,54 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "conversation.adapter_package.installed_versions",
+        "conversation.adapter_package.installed_versions",
+        "List locally installed versions for a conversation adapter package",
+        Read,
+        Friendly,
+        false,
+        crate::backend::application::ConversationAdapterPackageVersionChangeParams,
+        Service => |service, params| service.list_installed_conversation_adapter_package_versions(params),
+        &[param!("package_id", "Installed package identifier", ["packageId"])],
+        None
+    ),
+    command!(
+        "conversation.adapter_package.switch_version",
+        "conversation.adapter_package.switch_version",
+        "Activate an installed conversation adapter package version",
+        HighRiskWrite,
+        Friendly,
+        true,
+        crate::backend::application::ConversationAdapterPackageVersionChangeParams,
+        Service => |service, params| service.switch_conversation_adapter_package_version(params),
+        &[param!("package_id", "Installed package identifier", ["packageId"]), param!("version", "Installed version"), param!("dry_run", "Preview activation", ["dryRun"]), param!("yes", "Confirm activation")],
+        None
+    ),
+    command!(
+        "conversation.adapter_package.rollback",
+        "conversation.adapter_package.rollback",
+        "Rollback to the most recently installed inactive package version",
+        HighRiskWrite,
+        Friendly,
+        true,
+        crate::backend::application::ConversationAdapterPackageVersionChangeParams,
+        Service => |service, params| service.rollback_conversation_adapter_package_version(params),
+        &[param!("package_id", "Installed package identifier", ["packageId"]), param!("dry_run", "Preview rollback", ["dryRun"]), param!("yes", "Confirm rollback")],
+        None
+    ),
+    command!(
+        "conversation.adapter_package.delete_version",
+        "conversation.adapter_package.delete_version",
+        "Delete one inactive managed package version",
+        HighRiskWrite,
+        Friendly,
+        true,
+        crate::backend::application::ConversationAdapterPackageVersionChangeParams,
+        Service => |service, params| service.delete_conversation_adapter_package_version(params),
+        &[param!("package_id", "Installed package identifier", ["packageId"]), param!("version", "Inactive installed version"), param!("dry_run", "Preview deletion", ["dryRun"]), param!("yes", "Confirm deletion")],
+        None
+    ),
+    command!(
         "conversation.adapter_package.refresh_catalogs",
         "conversation.adapter_package.refresh_catalogs",
         "Refresh conversation adapter Catalog v2 caches",
@@ -1004,6 +1052,18 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
             param!("force", "Force a remote Catalog v2 refresh"),
         ],
+        None
+    ),
+    command!(
+        "conversation.adapter_package.set_update_policy",
+        "conversation.adapter_package.set_update_policy",
+        "Set the update-follow policy for an installed conversation adapter package",
+        Write,
+        Friendly,
+        false,
+        crate::backend::application::ConversationAdapterPackageUpdatePolicyParams,
+        Service => |service, params| service.set_conversation_adapter_package_update_policy(params),
+        &[param!("package_id", "Installed package identifier", ["packageId"]), param!("update_policy", "manual, follow_stable, follow_beta, or pin_exact", ["updatePolicy"])],
         None
     ),
     command!(
@@ -2316,6 +2376,54 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "list_installed_conversation_adapter_package_versions",
+        "conversation.adapter_package.installed_versions",
+        "List locally installed versions for a conversation adapter package",
+        Read,
+        App,
+        false,
+        crate::backend::application::ConversationAdapterPackageVersionChangeParams,
+        Service => |service, params| service.list_installed_conversation_adapter_package_versions(params),
+        &[param!("package_id", "Installed package identifier", ["packageId"])],
+        None
+    ),
+    command!(
+        "switch_conversation_adapter_package_version",
+        "conversation.adapter_package.switch_version",
+        "Activate an installed conversation adapter package version",
+        HighRiskWrite,
+        App,
+        false,
+        crate::backend::application::ConversationAdapterPackageVersionChangeParams,
+        Service => |service, params| service.switch_conversation_adapter_package_version(params),
+        &[param!("package_id", "Installed package identifier", ["packageId"]), param!("version", "Installed version"), param!("dry_run", "Preview activation", ["dryRun"]), param!("yes", "Confirm activation")],
+        None
+    ),
+    command!(
+        "rollback_conversation_adapter_package_version",
+        "conversation.adapter_package.rollback",
+        "Rollback to the most recently installed inactive package version",
+        HighRiskWrite,
+        App,
+        false,
+        crate::backend::application::ConversationAdapterPackageVersionChangeParams,
+        Service => |service, params| service.rollback_conversation_adapter_package_version(params),
+        &[param!("package_id", "Installed package identifier", ["packageId"]), param!("dry_run", "Preview rollback", ["dryRun"]), param!("yes", "Confirm rollback")],
+        None
+    ),
+    command!(
+        "delete_conversation_adapter_package_version",
+        "conversation.adapter_package.delete_version",
+        "Delete one inactive managed package version",
+        HighRiskWrite,
+        App,
+        false,
+        crate::backend::application::ConversationAdapterPackageVersionChangeParams,
+        Service => |service, params| service.delete_conversation_adapter_package_version(params),
+        &[param!("package_id", "Installed package identifier", ["packageId"]), param!("version", "Inactive installed version"), param!("dry_run", "Preview deletion", ["dryRun"]), param!("yes", "Confirm deletion")],
+        None
+    ),
+    command!(
         "refresh_conversation_adapter_catalogs",
         "conversation.adapter_package.refresh_catalogs",
         "Refresh conversation adapter Catalog v2 caches",
@@ -2343,6 +2451,18 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
             param!("force", "Force a remote Catalog v2 refresh"),
         ],
+        None
+    ),
+    command!(
+        "set_conversation_adapter_package_update_policy",
+        "conversation.adapter_package.set_update_policy",
+        "Set the update-follow policy for an installed conversation adapter package",
+        Write,
+        App,
+        false,
+        crate::backend::application::ConversationAdapterPackageUpdatePolicyParams,
+        Service => |service, params| service.set_conversation_adapter_package_update_policy(params),
+        &[param!("package_id", "Installed package identifier", ["packageId"]), param!("update_policy", "manual, follow_stable, follow_beta, or pin_exact", ["updatePolicy"])],
         None
     ),
     command!(

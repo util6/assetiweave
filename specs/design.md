@@ -168,7 +168,7 @@ Conversation Adapter Package 生命周期：
 - 市场安装先下载到 staging，限制 ZIP 条目数量和展开体积，拒绝路径穿越与 symlink，校验 HTTPS、artifact SHA-256、package/content hash、SemVer 和 Core 兼容性后再写入托管版本目录。
 - 新版本激活在一个数据库事务内更新 package、version 和 adapter runtime；失败时旧 active runtime 保持可用。同一正式 `package_id + version` 不允许 hash 变化。
 - 卸载 preflight 列出受影响 Source 和托管目录；执行时先暂存目录，数据库删除失败则回滚目录，只允许清理应用拥有的 package library。
-- 当前不提供已安装版本直接切换、一键回退、删除单个非 active 版本、静默远端代码更新或真正的服务端 push。
+- 托管 Conversation Adapter 可在本机已安装版本间离线切换、一键回退并删除单个非 active 版本；删除路径必须精确位于应用托管的 `packages/<package>/versions/<semver>`。更新策略支持 `manual`、`follow_stable`、`follow_beta`、`pin_exact`，但不静默安装远端代码，也不提供真正的服务端 push。
 
 ```mermaid
 flowchart TB

@@ -10,6 +10,7 @@ import {
   Loader2,
   PackageCheck,
   RefreshCw,
+  RotateCcw,
   ShieldCheck,
   Trash2,
   Wrench,
@@ -20,9 +21,14 @@ import {
   getConversationAdapterPackageTask,
   inspectConversationAdapterPackage,
   installConversationAdapterPackage,
+  deleteConversationAdapterPackageVersion,
+  listInstalledConversationAdapterPackageVersions,
   listConversationAdapterPackageReleases,
   listConversationAdapterPackages,
   prepareConversationAdapterPackageChange,
+  rollbackConversationAdapterPackageVersion,
+  setConversationAdapterPackageUpdatePolicy,
+  switchConversationAdapterPackageVersion,
   unregisterConversationAdapter,
   uninstallConversationAdapterPackage,
   updateConversationAdapterPackage,
@@ -31,9 +37,10 @@ import {
   type ConversationAdapterPackageCatalogStatus,
   type ConversationAdapterCatalogRelease,
   type ConversationAdapterPackageInspection,
+  type ConversationAdapterPackageVersion,
   type ConversationScriptInstallTaskSnapshot,
 } from "../../services/conversations";
-import type { ConversationRecordKind } from "../../types";
+import type { ConversationPackageUpdatePolicy, ConversationRecordKind } from "../../types";
 import type { NotificationMessage } from "../notifications/NotificationBanner";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { Badge } from "../foundation/Badge";
@@ -76,9 +83,12 @@ export function ConversationScriptResourcePanel({
   const [detailEntry, setDetailEntry] = useState<ConversationAdapterPackageCatalogEntry | null>(null);
   const [detailInspection, setDetailInspection] = useState<ConversationAdapterPackageInspection | null>(null);
   const [detailReleases, setDetailReleases] = useState<ConversationAdapterCatalogRelease[]>([]);
+  const [installedVersions, setInstalledVersions] = useState<ConversationAdapterPackageVersion[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [selectedVersion, setSelectedVersion] = useState<string>("");
+  const [versionMutation, setVersionMutation] = useState<string | null>(null);
+  const [policySaving, setPolicySaving] = useState(false);
   const handledInstallTaskIds = useRef(new Set<string>());
 
   const loadCatalog = useCallback(
@@ -328,10 +338,12 @@ export function ConversationScriptResourcePanel({
     setDetailEntry(entry);
     setDetailInspection(null);
     setDetailReleases([]);
+    setInstalledVersions([]);
     setDetailError(null);
     setDetailLoading(true);
     try {
-      const [inspection, releases] = await Promise.all([
+      const packageId = entry.installed_package?.package_id ?? entry.item.id;
+      const [inspection, releases, versions] = await Promise.all([
         entry.installed
           ? inspectConversationAdapterPackage({
               packageId: entry.installed_package?.package_id ?? null,
@@ -342,14 +354,71 @@ export function ConversationScriptResourcePanel({
           packageId: entry.item.id,
           refresh: false,
         }).catch(() => []),
+        entry.installed_package?.origin === "managed_release"
+          ? listInstalledConversationAdapterPackageVersions(packageId).catch(() => [])
+          : Promise.resolve([]),
       ]);
       setDetailInspection(inspection);
       setDetailReleases(releases);
+      setInstalledVersions(versions);
       setSelectedVersion(releases[0]?.version ?? entry.item.version);
     } catch (detailLoadError) {
       setDetailError(errorMessage(detailLoadError));
     } finally {
       setDetailLoading(false);
+    }
+  }
+
+  async function mutateInstalledVersion(action: "switch" | "rollback" | "delete", version?: string) {
+    if (!detailEntry?.installed_package) {
+      return;
+    }
+    const packageId = detailEntry.installed_package.package_id;
+    const mutationKey = `${action}:${version ?? "previous"}`;
+    if (action === "delete" && !window.confirm(t("conversation.scriptMarket.deleteVersionConfirm", { version: version ?? "" }))) {
+      return;
+    }
+    setVersionMutation(mutationKey);
+    try {
+      if (action === "switch" && version) {
+        await switchConversationAdapterPackageVersion({ packageId, version, confirmed: true });
+      } else if (action === "rollback") {
+        await rollbackConversationAdapterPackageVersion({ packageId, confirmed: true });
+      } else if (action === "delete" && version) {
+        await deleteConversationAdapterPackageVersion({ packageId, version, confirmed: true });
+      }
+      const [nextVersions] = await Promise.all([
+        listInstalledConversationAdapterPackageVersions(packageId),
+        loadCatalog("refresh"),
+      ]);
+      setInstalledVersions(nextVersions);
+      if (action !== "delete") {
+        setDetailEntry(null);
+      }
+      onNotify({ message: t("conversation.scriptMarket.versionActionCompleted"), tone: "success" });
+    } catch (mutationError) {
+      onNotifyError(errorMessage(mutationError));
+    } finally {
+      setVersionMutation(null);
+    }
+  }
+
+  async function changeUpdatePolicy(updatePolicy: ConversationPackageUpdatePolicy) {
+    if (!detailEntry?.installed_package) {
+      return;
+    }
+    setPolicySaving(true);
+    try {
+      const updated = await setConversationAdapterPackageUpdatePolicy({
+        packageId: detailEntry.installed_package.package_id,
+        updatePolicy,
+      });
+      setDetailEntry((current) => current ? { ...current, installed_package: updated } : current);
+      onNotify({ message: t("conversation.scriptMarket.policySaved"), tone: "success" });
+    } catch (policyError) {
+      onNotifyError(errorMessage(policyError));
+    } finally {
+      setPolicySaving(false);
     }
   }
 
@@ -539,6 +608,69 @@ export function ConversationScriptResourcePanel({
                       </li>
                     ))}
                   </ul>
+                </section>
+              ) : null}
+
+              {detailEntry.installed_package?.origin === "managed_release" ? (
+                <section>
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-theme-card-border bg-theme-control/40 p-3">
+                    <label className="text-body-sm font-medium text-on-surface" htmlFor="conversation-package-update-policy">
+                      {t("conversation.scriptMarket.updatePolicy")}
+                    </label>
+                    <select
+                      className="h-9 rounded-md border border-theme-control-border bg-theme-control px-2 text-body-sm text-theme-control-fg"
+                      disabled={policySaving}
+                      id="conversation-package-update-policy"
+                      onChange={(event) => void changeUpdatePolicy(event.target.value as ConversationPackageUpdatePolicy)}
+                      value={detailEntry.installed_package.update_policy}
+                    >
+                      {(["manual", "follow_stable", "follow_beta", "pin_exact"] as const).map((policy) => (
+                        <option key={policy} value={policy}>{t(`conversation.scriptMarket.policy.${policy}`)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-body-sm font-semibold text-on-surface">
+                      {t("conversation.scriptMarket.installedVersions")}
+                    </h4>
+                    {installedVersions.some((version) => version.version !== detailEntry.installed_package?.version) ? (
+                      <Button
+                        disabled={Boolean(versionMutation)}
+                        onClick={() => void mutateInstalledVersion("rollback")}
+                        type="button"
+                        variant="outline"
+                      >
+                        <RotateCcw size={15} />
+                        {t("conversation.scriptMarket.rollback")}
+                      </Button>
+                    ) : null}
+                  </div>
+                  <div className="mt-2 grid gap-2">
+                    {installedVersions.map((version) => {
+                      const active = version.version === detailEntry.installed_package?.version;
+                      return (
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-theme-card-border bg-theme-card/55 p-3" key={version.version}>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-body-sm font-semibold text-on-surface">{version.version}</span>
+                            {active ? <Badge tone="primary">{t("conversation.scriptMarket.activeVersion")}</Badge> : null}
+                            <span className="text-body-xs text-on-surface-variant">{version.runtime_gate_status}</span>
+                          </div>
+                          {!active ? (
+                            <div className="flex gap-2">
+                              <Button disabled={Boolean(versionMutation)} onClick={() => void mutateInstalledVersion("switch", version.version)} type="button" variant="outline">
+                                {versionMutation === `switch:${version.version}` ? <Loader2 className="animate-spin" size={15} /> : null}
+                                {t("conversation.scriptMarket.switchVersion")}
+                              </Button>
+                              <Button disabled={Boolean(versionMutation)} onClick={() => void mutateInstalledVersion("delete", version.version)} type="button" variant="destructive">
+                                <Trash2 size={15} />
+                                {t("conversation.scriptMarket.deleteVersion")}
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </section>
               ) : null}
 

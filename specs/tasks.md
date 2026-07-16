@@ -343,5 +343,5 @@
 - [X] 19.11 CLI `conversation adapter` 第一阶段收敛为 `list` / `inspect`，支持 table/json 诊断输出
 - [X] 19.12 增加确定性 artifact 发布脚本和 GitHub Actions 滚动 Release 流水线
 - [X] 19.13 补充 Rust、前端、Go CLI、Engine contract 和 package 发布校验测试
-- [ ] 19.14 实现已安装版本直接切换、一键回退和删除单个非 active 版本
-- [ ] 19.15 实现 stable/beta channel 自动跟随策略和离线多版本切换 UI
+- [X] 19.14 实现已安装版本直接切换、一键回退和删除单个非 active 版本
+- [X] 19.15 实现 stable/beta channel 自动跟随策略和离线多版本切换 UI

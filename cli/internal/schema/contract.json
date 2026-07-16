@@ -2291,6 +2291,9 @@
               "install",
               "update",
               "uninstall",
+              "switch_version",
+              "rollback",
+              "delete_version",
               "revalidate"
             ],
             "type": "string"
@@ -2404,6 +2407,203 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.adapter_package.installed_versions",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List locally installed versions for a conversation adapter package",
+      "exposure": "friendly",
+      "method": "conversation.adapter_package.installed_versions",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "description": "dry run",
+            "type": "boolean"
+          },
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "description": "Installed package identifier",
+            "type": "string"
+          },
+          "version": {
+            "default": null,
+            "description": "version",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "yes": {
+            "default": false,
+            "description": "yes",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.adapter_package.switch_version",
+      "cli": null,
+      "confirmation_required": true,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Activate an installed conversation adapter package version",
+      "exposure": "friendly",
+      "method": "conversation.adapter_package.switch_version",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview activation",
+            "type": "boolean"
+          },
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "description": "Installed package identifier",
+            "type": "string"
+          },
+          "version": {
+            "default": null,
+            "description": "Installed version",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "yes": {
+            "default": false,
+            "description": "Confirm activation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": true
+    },
+    {
+      "canonical_method": "conversation.adapter_package.rollback",
+      "cli": null,
+      "confirmation_required": true,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Rollback to the most recently installed inactive package version",
+      "exposure": "friendly",
+      "method": "conversation.adapter_package.rollback",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview rollback",
+            "type": "boolean"
+          },
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "description": "Installed package identifier",
+            "type": "string"
+          },
+          "version": {
+            "default": null,
+            "description": "version",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "yes": {
+            "default": false,
+            "description": "Confirm rollback",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": true
+    },
+    {
+      "canonical_method": "conversation.adapter_package.delete_version",
+      "cli": null,
+      "confirmation_required": true,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Delete one inactive managed package version",
+      "exposure": "friendly",
+      "method": "conversation.adapter_package.delete_version",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview deletion",
+            "type": "boolean"
+          },
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "description": "Installed package identifier",
+            "type": "string"
+          },
+          "version": {
+            "default": null,
+            "description": "Inactive installed version",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "yes": {
+            "default": false,
+            "description": "Confirm deletion",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": true
+    },
+    {
       "canonical_method": "conversation.adapter_package.refresh_catalogs",
       "cli": null,
       "confirmation_required": false,
@@ -2472,6 +2672,49 @@
         "type": "object"
       },
       "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.adapter_package.set_update_policy",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Set the update-follow policy for an installed conversation adapter package",
+      "exposure": "friendly",
+      "method": "conversation.adapter_package.set_update_policy",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "description": "Installed package identifier",
+            "type": "string"
+          },
+          "update_policy": {
+            "aliases": [
+              "updatePolicy"
+            ],
+            "description": "manual, follow_stable, follow_beta, or pin_exact",
+            "enum": [
+              "manual",
+              "follow_stable",
+              "follow_beta",
+              "pin_exact"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "package_id",
+          "update_policy"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
       "since": "0.1.0",
       "supports_dry_run": false
     },
@@ -7004,6 +7247,9 @@
               "install",
               "update",
               "uninstall",
+              "switch_version",
+              "rollback",
+              "delete_version",
               "revalidate"
             ],
             "type": "string"
@@ -7117,6 +7363,203 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.adapter_package.installed_versions",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List locally installed versions for a conversation adapter package",
+      "exposure": "app",
+      "method": "list_installed_conversation_adapter_package_versions",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "description": "dry run",
+            "type": "boolean"
+          },
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "description": "Installed package identifier",
+            "type": "string"
+          },
+          "version": {
+            "default": null,
+            "description": "version",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "yes": {
+            "default": false,
+            "description": "yes",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.adapter_package.switch_version",
+      "cli": null,
+      "confirmation_required": true,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Activate an installed conversation adapter package version",
+      "exposure": "app",
+      "method": "switch_conversation_adapter_package_version",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview activation",
+            "type": "boolean"
+          },
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "description": "Installed package identifier",
+            "type": "string"
+          },
+          "version": {
+            "default": null,
+            "description": "Installed version",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "yes": {
+            "default": false,
+            "description": "Confirm activation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.adapter_package.rollback",
+      "cli": null,
+      "confirmation_required": true,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Rollback to the most recently installed inactive package version",
+      "exposure": "app",
+      "method": "rollback_conversation_adapter_package_version",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview rollback",
+            "type": "boolean"
+          },
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "description": "Installed package identifier",
+            "type": "string"
+          },
+          "version": {
+            "default": null,
+            "description": "version",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "yes": {
+            "default": false,
+            "description": "Confirm rollback",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.adapter_package.delete_version",
+      "cli": null,
+      "confirmation_required": true,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Delete one inactive managed package version",
+      "exposure": "app",
+      "method": "delete_conversation_adapter_package_version",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview deletion",
+            "type": "boolean"
+          },
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "description": "Installed package identifier",
+            "type": "string"
+          },
+          "version": {
+            "default": null,
+            "description": "Inactive installed version",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "yes": {
+            "default": false,
+            "description": "Confirm deletion",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.adapter_package.refresh_catalogs",
       "cli": null,
       "confirmation_required": false,
@@ -7185,6 +7628,49 @@
         "type": "object"
       },
       "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.adapter_package.set_update_policy",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Set the update-follow policy for an installed conversation adapter package",
+      "exposure": "app",
+      "method": "set_conversation_adapter_package_update_policy",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "package_id": {
+            "aliases": [
+              "packageId"
+            ],
+            "description": "Installed package identifier",
+            "type": "string"
+          },
+          "update_policy": {
+            "aliases": [
+              "updatePolicy"
+            ],
+            "description": "manual, follow_stable, follow_beta, or pin_exact",
+            "enum": [
+              "manual",
+              "follow_stable",
+              "follow_beta",
+              "pin_exact"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "package_id",
+          "update_policy"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
       "since": "0.1.0",
       "supports_dry_run": false
     },
@@ -8623,8 +9109,13 @@
     "conversation.adapter_package.prepare_change",
     "conversation.adapter_package.catalog",
     "conversation.adapter_package.releases",
+    "conversation.adapter_package.installed_versions",
+    "conversation.adapter_package.switch_version",
+    "conversation.adapter_package.rollback",
+    "conversation.adapter_package.delete_version",
     "conversation.adapter_package.refresh_catalogs",
     "conversation.adapter_package.check_updates",
+    "conversation.adapter_package.set_update_policy",
     "conversation.adapter_package.install",
     "conversation.adapter_package.update",
     "conversation.adapter_package.uninstall",
@@ -8716,8 +9207,13 @@
     "prepare_conversation_adapter_package_change",
     "list_conversation_adapter_packages",
     "list_conversation_adapter_package_releases",
+    "list_installed_conversation_adapter_package_versions",
+    "switch_conversation_adapter_package_version",
+    "rollback_conversation_adapter_package_version",
+    "delete_conversation_adapter_package_version",
     "refresh_conversation_adapter_catalogs",
     "check_conversation_adapter_package_updates",
+    "set_conversation_adapter_package_update_policy",
     "install_conversation_adapter_package",
     "update_conversation_adapter_package",
     "uninstall_conversation_adapter_package",
