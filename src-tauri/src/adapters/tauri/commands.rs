@@ -1380,21 +1380,29 @@ pub(crate) fn register_conversation_adapter_local(
 }
 
 #[tauri::command]
-pub(crate) fn inspect_conversation_adapter_package(
+pub(crate) async fn inspect_conversation_adapter_package(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageInspectParams,
 ) -> AppResult<crate::backend::application::ConversationAdapterPackageInspection> {
-    AppService::open_with_db_path(state.db_path.clone())?
-        .inspect_conversation_adapter_package(params)
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?.inspect_conversation_adapter_package(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn prepare_conversation_adapter_package_change(
+pub(crate) async fn prepare_conversation_adapter_package_change(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageChangeParams,
 ) -> AppResult<crate::backend::application::ConversationAdapterPackageChangePreflight> {
-    let mut preflight = AppService::open_with_db_path(state.db_path.clone())?
-        .prepare_conversation_adapter_package_change(params)?;
+    let db_path = state.db_path.clone();
+    let mut preflight = tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?.prepare_conversation_adapter_package_change(params)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     if state
         .background_tasks
         .conversation_script_install_snapshot()?
@@ -1406,38 +1414,55 @@ pub(crate) fn prepare_conversation_adapter_package_change(
 }
 
 #[tauri::command]
-pub(crate) fn list_conversation_adapter_packages(
+pub(crate) async fn list_conversation_adapter_packages(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageCatalogParams,
 ) -> AppResult<Vec<crate::backend::application::ConversationAdapterPackageCatalogEntry>> {
-    AppService::open_with_db_path(state.db_path.clone())?.list_conversation_adapter_packages(params)
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?.list_conversation_adapter_packages(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn list_conversation_adapter_package_releases(
+pub(crate) async fn list_conversation_adapter_package_releases(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageReleaseListParams,
 ) -> AppResult<Vec<crate::backend::models::ConversationAdapterCatalogRelease>> {
-    AppService::open_with_db_path(state.db_path.clone())?
-        .list_conversation_adapter_package_releases(params)
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?.list_conversation_adapter_package_releases(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn refresh_conversation_adapter_catalogs(
+pub(crate) async fn refresh_conversation_adapter_catalogs(
     state: State<'_, AppState>,
     params: ConversationAdapterCatalogRefreshParams,
 ) -> AppResult<Vec<crate::backend::models::ConversationAdapterCatalogRelease>> {
-    AppService::open_with_db_path(state.db_path.clone())?
-        .refresh_conversation_adapter_catalogs(params)
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?.refresh_conversation_adapter_catalogs(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn check_conversation_adapter_package_updates(
+pub(crate) async fn check_conversation_adapter_package_updates(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageUpdateCheckParams,
 ) -> AppResult<Vec<crate::backend::application::ConversationAdapterPackageUpdateStatus>> {
-    AppService::open_with_db_path(state.db_path.clone())?
-        .check_conversation_adapter_package_updates(params)
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?.check_conversation_adapter_package_updates(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

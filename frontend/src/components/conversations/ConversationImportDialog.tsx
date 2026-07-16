@@ -59,6 +59,7 @@ export function ConversationImportDialog({
   const [configJson, setConfigJson] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [activePage, setActivePage] = useState<ConversationImportPage>("form");
+  const [scriptMarketOpened, setScriptMarketOpened] = useState(false);
   const importDisabled = busy || !manifestPath.trim() || !sourceLocation.trim();
   const progressStep = importProgressStep(step);
   const sourcePickerLabel = sourceKind === "directory"
@@ -168,7 +169,12 @@ export function ConversationImportDialog({
             disabled={busy && page.value === "scripts"}
             id={`conversation-import-${page.value}-tab`}
             key={page.value}
-            onClick={() => setActivePage(page.value)}
+            onClick={() => {
+              setActivePage(page.value);
+              if (page.value === "scripts") {
+                setScriptMarketOpened(true);
+              }
+            }}
             role="tab"
             type="button"
           >
@@ -300,9 +306,11 @@ export function ConversationImportDialog({
             </div>
           </section>
         </form>
-      ) : (
+      ) : null}
+      {scriptMarketOpened ? (
         <div
           aria-labelledby="conversation-import-scripts-tab"
+          hidden={activePage !== "scripts"}
           id="conversation-import-scripts-panel"
           role="tabpanel"
         >
@@ -315,7 +323,7 @@ export function ConversationImportDialog({
             recordKind={recordKind}
           />
         </div>
-      )}
+      ) : null}
     </DialogFrame>
   );
 }

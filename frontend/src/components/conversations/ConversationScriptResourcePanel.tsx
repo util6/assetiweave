@@ -379,7 +379,7 @@ export function ConversationScriptResourcePanel({
         </div>
         <button
           className="inline-flex h-9 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-55"
-          disabled={disabled || refreshing}
+          disabled={disabled || loading || refreshing}
           onClick={() => void loadCatalog("refresh")}
           type="button"
         >
@@ -424,6 +424,14 @@ export function ConversationScriptResourcePanel({
         </div>
       ) : loading ? (
         <div className="mt-3 grid gap-2" aria-busy="true">
+          <div
+            aria-live="polite"
+            className="flex items-center gap-2 rounded-lg border border-status-update/30 bg-status-update/10 px-3 py-2 text-body-sm text-status-update"
+            role="status"
+          >
+            <Loader2 className="shrink-0 animate-spin" size={15} />
+            <span>{t("conversation.scriptMarket.loading")}</span>
+          </div>
           {Array.from({ length: 2 }).map((_, index) => (
             <div className="rounded-lg border border-theme-card-border bg-theme-control/40 p-3" key={index}>
               <div className="h-4 w-48 max-w-full animate-pulse rounded bg-theme-control" />

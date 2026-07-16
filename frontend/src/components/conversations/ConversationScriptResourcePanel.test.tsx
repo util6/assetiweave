@@ -109,6 +109,19 @@ describe("ConversationScriptResourcePanel", () => {
     expect(screen.getByText("Qwen Web Harvester")).toBeTruthy();
   });
 
+  it("shows an accessible loading indicator while the catalog is validated", async () => {
+    let resolveCatalog: (value: ConversationAdapterPackageCatalogEntry[]) => void = () => undefined;
+    serviceMocks.list.mockReturnValueOnce(new Promise((resolve) => {
+      resolveCatalog = resolve;
+    }));
+
+    renderPanel();
+
+    expect(screen.getByRole("status").textContent).toContain("Validating script directories");
+    resolveCatalog(entries);
+    expect(await screen.findByText("Built-in Codex")).toBeTruthy();
+  });
+
   it("shows runtime details, version history, and changelog", async () => {
     renderPanel();
     const details = await screen.findAllByRole("button", { name: "Details" });
