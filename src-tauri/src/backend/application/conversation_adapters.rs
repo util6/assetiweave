@@ -264,64 +264,112 @@ impl AppService {
             if !sync_source_matches_record_kind(adapter.as_ref(), &source.adapter_id, record_kind) {
                 continue;
             }
-            let sessions_result = adapter
+            let web_record_source = is_web_record_adapter(adapter.as_ref(), &source.adapter_id);
+            let source_record_kind = if web_record_source {
+                crate::backend::dto::ConversationRecordKind::Web
+            } else {
+                crate::backend::dto::ConversationRecordKind::Session
+            };
+            let pool = self.db.pool().clone();
+            let tenant_id = self.tenant_id().to_string();
+            let source_id = source.id.clone();
+            let known_versions = self.db.block_on(async move {
+                crate::backend::store::load_conversation_session_versions_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &source_id,
+                    source_record_kind,
+                )
+                .await
+            })?;
+            let read_result = adapter
                 .as_ref()
                 .map(|adapter| self.ensure_conversation_adapter_package_runtime_ready(adapter))
                 .unwrap_or(Ok(()))
                 .and_then(|_| {
-                    if !params.dry_run && is_web_record_adapter(adapter.as_ref(), &source.adapter_id) {
-                    crate::backend::conversations::run_conversation_harvester_for_adapter_source(
-                        adapter.as_ref(),
-                        &source,
-                    )
-                    .and_then(|_| {
-                        crate::backend::conversations::read_source_sessions_with_adapter(
+                    if !params.dry_run && web_record_source {
+                        crate::backend::conversations::run_conversation_harvester_for_adapter_source(
                             adapter.as_ref(),
                             &source,
                         )
-                    })
-                } else {
-                    crate::backend::conversations::read_source_sessions_with_adapter(
-                        adapter.as_ref(),
-                        &source,
-                    )
+                        .and_then(|_| {
+                            crate::backend::conversations::read_source_sessions_incrementally_with_adapter(
+                                adapter.as_ref(),
+                                &source,
+                                &known_versions,
+                            )
+                        })
+                    } else {
+                        crate::backend::conversations::read_source_sessions_incrementally_with_adapter(
+                            adapter.as_ref(),
+                            &source,
+                            &known_versions,
+                        )
                     }
                 });
-            let sync_result = match sessions_result {
-                Ok(sessions) if is_web_record_adapter(adapter.as_ref(), &source.adapter_id) => {
+            let sync_result = match read_result {
+                Ok(read) if web_record_source => {
                     let pool = self.db.pool().clone();
                     let tenant_id = self.tenant_id().to_string();
                     let import_source = source.clone();
                     self.db.block_on(async move {
-                        crate::backend::store::import_web_record_sessions_sqlx(
+                        let result = crate::backend::store::import_web_record_sessions_sqlx(
                             &pool,
                             &tenant_id,
                             &import_source,
-                            &sessions,
+                            &read.sessions,
                             params.dry_run,
                         )
-                        .await
+                        .await?;
+                        let retained_session_count = persist_successful_conversation_observation(
+                            &pool,
+                            &tenant_id,
+                            &import_source.id,
+                            source_record_kind,
+                            &read,
+                            params.dry_run,
+                        )
+                        .await?;
+                        Ok(conversation_sync_result_value(
+                            result,
+                            &read,
+                            retained_session_count,
+                        ))
                     })
                 }
-                Ok(sessions) => {
+                Ok(read) => {
                     let pool = self.db.pool().clone();
                     let tenant_id = self.tenant_id().to_string();
                     let import_source = source.clone();
                     self.db.block_on(async move {
-                        crate::backend::store::import_conversation_sessions_sqlx(
+                        let result = crate::backend::store::import_conversation_sessions_sqlx(
                             &pool,
                             &tenant_id,
                             &import_source,
-                            &sessions,
+                            &read.sessions,
                             params.dry_run,
                         )
-                        .await
+                        .await?;
+                        let retained_session_count = persist_successful_conversation_observation(
+                            &pool,
+                            &tenant_id,
+                            &import_source.id,
+                            source_record_kind,
+                            &read,
+                            params.dry_run,
+                        )
+                        .await?;
+                        Ok(conversation_sync_result_value(
+                            result,
+                            &read,
+                            retained_session_count,
+                        ))
                     })
                 }
                 Err(error) => Err(error),
             };
             match sync_result {
-                Ok(result) => results.push(json!(result)),
+                Ok(result) => results.push(result),
                 Err(error) if params.source_id.is_some() => return Err(error),
                 Err(error) => errors.push(json!({
                     "source_id": source.id,
@@ -343,6 +391,66 @@ impl AppService {
             "errors": errors
         }))
     }
+}
+
+async fn persist_successful_conversation_observation(
+    pool: &sqlx::SqlitePool,
+    tenant_id: &str,
+    source_id: &str,
+    record_kind: crate::backend::dto::ConversationRecordKind,
+    read: &crate::backend::conversations::ConversationSourceReadResult,
+    dry_run: bool,
+) -> AppResult<usize> {
+    if dry_run || !read.incremental {
+        return Ok(0);
+    }
+    let hydrated_external_ids = read
+        .sessions
+        .iter()
+        .map(|session| session.external_id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    crate::backend::store::persist_conversation_session_observations_sqlx(
+        pool,
+        tenant_id,
+        source_id,
+        record_kind,
+        &read.session_descriptors,
+        &hydrated_external_ids,
+    )
+    .await
+}
+
+fn conversation_sync_result_value(
+    result: crate::backend::store::ConversationImportResult,
+    read: &crate::backend::conversations::ConversationSourceReadResult,
+    retained_session_count: usize,
+) -> Value {
+    let mut value = json!(result);
+    let Some(object) = value.as_object_mut() else {
+        return value;
+    };
+    let store_skipped = object
+        .get("skipped_session_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    object.insert(
+        "session_count".to_string(),
+        json!(read.discovered_session_count),
+    );
+    object.insert(
+        "active_session_count".to_string(),
+        json!(read.active_session_count),
+    );
+    object.insert(
+        "skipped_session_count".to_string(),
+        json!(read.skipped_session_count + store_skipped),
+    );
+    object.insert("incremental".to_string(), json!(read.incremental));
+    object.insert(
+        "retained_session_count".to_string(),
+        json!(retained_session_count),
+    );
+    value
 }
 
 fn normalize_sync_record_kind(

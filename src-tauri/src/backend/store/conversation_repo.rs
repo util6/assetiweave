@@ -4855,3 +4855,319 @@ mod tests {
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
     }
 }
+
+pub(crate) async fn resolve_conversation_session_id_prefix_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    prefix_or_id: &str,
+) -> AppResult<String> {
+    if prefix_or_id.len() >= 36 {
+        return Ok(prefix_or_id.to_string());
+    }
+    let clean_prefix = prefix_or_id
+        .strip_prefix("conversation-session-")
+        .unwrap_or(prefix_or_id);
+    let like_pattern_verbatim = format!("{}%", prefix_or_id);
+    let like_pattern_domain = format!("conversation-session-{}%", clean_prefix);
+
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM conversation_sessions WHERE tenant_id = ?1 AND (id LIKE ?2 OR id LIKE ?3) LIMIT 11",
+    )
+    .bind(tenant_id)
+    .bind(&like_pattern_verbatim)
+    .bind(&like_pattern_domain)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if rows.is_empty() {
+        return Err(format!("no session matches prefix {:?}", prefix_or_id));
+    }
+    if rows.len() > 1 {
+        let max_display = std::cmp::min(rows.len(), 5);
+        let examples = rows[..max_display].join(", ");
+        let indicator = if rows.len() > 5 { "..." } else { "" };
+        return Err(format!(
+            "ambiguous prefix {:?}: {} sessions match (e.g. {}{})",
+            prefix_or_id,
+            if rows.len() > 10 {
+                "10+".to_string()
+            } else {
+                rows.len().to_string()
+            },
+            examples,
+            indicator
+        ));
+    }
+    Ok(rows[0].clone())
+}
+
+pub(crate) async fn resolve_conversation_question_id_prefix_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    prefix_or_id: &str,
+) -> AppResult<String> {
+    if prefix_or_id.len() >= 36 {
+        return Ok(prefix_or_id.to_string());
+    }
+    let clean_prefix = prefix_or_id
+        .strip_prefix("conversation-question-")
+        .unwrap_or(prefix_or_id);
+    let like_pattern_verbatim = format!("{}%", prefix_or_id);
+    let like_pattern_domain = format!("conversation-question-{}%", clean_prefix);
+
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM conversation_questions WHERE tenant_id = ?1 AND (id LIKE ?2 OR id LIKE ?3) LIMIT 11",
+    )
+    .bind(tenant_id)
+    .bind(&like_pattern_verbatim)
+    .bind(&like_pattern_domain)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if rows.is_empty() {
+        return Err(format!("no question matches prefix {:?}", prefix_or_id));
+    }
+    if rows.len() > 1 {
+        let max_display = std::cmp::min(rows.len(), 5);
+        let examples = rows[..max_display].join(", ");
+        let indicator = if rows.len() > 5 { "..." } else { "" };
+        return Err(format!(
+            "ambiguous prefix {:?}: {} questions match (e.g. {}{})",
+            prefix_or_id,
+            if rows.len() > 10 {
+                "10+".to_string()
+            } else {
+                rows.len().to_string()
+            },
+            examples,
+            indicator
+        ));
+    }
+    Ok(rows[0].clone())
+}
+
+pub(crate) async fn resolve_conversation_turn_id_prefix_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    prefix_or_id: &str,
+) -> AppResult<String> {
+    if prefix_or_id.len() >= 36 {
+        return Ok(prefix_or_id.to_string());
+    }
+    let clean_prefix = prefix_or_id
+        .strip_prefix("conversation-turn-")
+        .unwrap_or(prefix_or_id);
+    let like_pattern_verbatim = format!("{}%", prefix_or_id);
+    let like_pattern_domain = format!("conversation-turn-{}%", clean_prefix);
+
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM conversation_turns WHERE tenant_id = ?1 AND (id LIKE ?2 OR id LIKE ?3) LIMIT 11",
+    )
+    .bind(tenant_id)
+    .bind(&like_pattern_verbatim)
+    .bind(&like_pattern_domain)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if rows.is_empty() {
+        return Err(format!("no turn matches prefix {:?}", prefix_or_id));
+    }
+    if rows.len() > 1 {
+        let max_display = std::cmp::min(rows.len(), 5);
+        let examples = rows[..max_display].join(", ");
+        let indicator = if rows.len() > 5 { "..." } else { "" };
+        return Err(format!(
+            "ambiguous prefix {:?}: {} turns match (e.g. {}{})",
+            prefix_or_id,
+            if rows.len() > 10 {
+                "10+".to_string()
+            } else {
+                rows.len().to_string()
+            },
+            examples,
+            indicator
+        ));
+    }
+    Ok(rows[0].clone())
+}
+
+pub(crate) async fn resolve_conversation_part_id_prefix_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    prefix_or_id: &str,
+) -> AppResult<String> {
+    if prefix_or_id.len() >= 36 {
+        return Ok(prefix_or_id.to_string());
+    }
+    let clean_prefix = prefix_or_id
+        .strip_prefix("conversation-part-")
+        .unwrap_or(prefix_or_id);
+    let like_pattern_verbatim = format!("{}%", prefix_or_id);
+    let like_pattern_domain = format!("conversation-part-{}%", clean_prefix);
+
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM conversation_parts WHERE tenant_id = ?1 AND (id LIKE ?2 OR id LIKE ?3) LIMIT 11",
+    )
+    .bind(tenant_id)
+    .bind(&like_pattern_verbatim)
+    .bind(&like_pattern_domain)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if rows.is_empty() {
+        return Err(format!("no part matches prefix {:?}", prefix_or_id));
+    }
+    if rows.len() > 1 {
+        let max_display = std::cmp::min(rows.len(), 5);
+        let examples = rows[..max_display].join(", ");
+        let indicator = if rows.len() > 5 { "..." } else { "" };
+        return Err(format!(
+            "ambiguous prefix {:?}: {} parts match (e.g. {}{})",
+            prefix_or_id,
+            if rows.len() > 10 {
+                "10+".to_string()
+            } else {
+                rows.len().to_string()
+            },
+            examples,
+            indicator
+        ));
+    }
+    Ok(rows[0].clone())
+}
+
+pub(crate) async fn load_conversation_session_versions_sqlx(
+    pool: &sqlx::SqlitePool,
+    tenant_id: &str,
+    source_id: &str,
+    record_kind: crate::backend::dto::ConversationRecordKind,
+) -> AppResult<std::collections::BTreeMap<String, String>> {
+    let kind_str = match record_kind {
+        crate::backend::dto::ConversationRecordKind::Session => "session",
+        crate::backend::dto::ConversationRecordKind::Web => "web",
+    };
+
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        r#"
+        SELECT external_id, hydrated_version
+        FROM conversation_session_observations
+        WHERE tenant_id = ?1 AND source_id = ?2 AND record_kind = ?3
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(kind_str)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut map = std::collections::BTreeMap::new();
+    for (ext_id, version) in rows {
+        if let Some(v) = version {
+            map.insert(ext_id, v);
+        }
+    }
+    Ok(map)
+}
+
+pub(crate) async fn persist_conversation_session_observations_sqlx(
+    pool: &sqlx::SqlitePool,
+    tenant_id: &str,
+    source_id: &str,
+    record_kind: crate::backend::dto::ConversationRecordKind,
+    session_descriptors: &[crate::backend::conversations::ConversationSessionDescriptor],
+    hydrated_external_ids: &std::collections::BTreeSet<String>,
+) -> AppResult<usize> {
+    let kind_str = match record_kind {
+        crate::backend::dto::ConversationRecordKind::Session => "session",
+        crate::backend::dto::ConversationRecordKind::Web => "web",
+    };
+
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+
+    for desc in session_descriptors {
+        let presence = "present";
+        let hydrated_version = if hydrated_external_ids.contains(&desc.external_id) {
+            Some(&desc.version_token)
+        } else {
+            None
+        };
+
+        if let Some(hv) = hydrated_version {
+            sqlx::query(
+                r#"
+                INSERT INTO conversation_session_observations (
+                    tenant_id, source_id, record_kind, external_id, observed_version,
+                    hydrated_version, last_seen_at, source_presence, dirty
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)
+                ON CONFLICT(tenant_id, source_id, record_kind, external_id) DO UPDATE SET
+                    observed_version = excluded.observed_version,
+                    hydrated_version = excluded.hydrated_version,
+                    last_seen_at = excluded.last_seen_at,
+                    source_presence = excluded.source_presence,
+                    dirty = 0
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(source_id)
+            .bind(kind_str)
+            .bind(&desc.external_id)
+            .bind(&desc.version_token)
+            .bind(hv)
+            .bind(&now)
+            .bind(presence)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        } else {
+            sqlx::query(
+                r#"
+                INSERT INTO conversation_session_observations (
+                    tenant_id, source_id, record_kind, external_id, observed_version,
+                    last_seen_at, source_presence, dirty
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)
+                ON CONFLICT(tenant_id, source_id, record_kind, external_id) DO UPDATE SET
+                    observed_version = excluded.observed_version,
+                    last_seen_at = excluded.last_seen_at,
+                    source_presence = excluded.source_presence
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(source_id)
+            .bind(kind_str)
+            .bind(&desc.external_id)
+            .bind(&desc.version_token)
+            .bind(&now)
+            .bind(presence)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
+    // Mark missing as absent
+    if !session_descriptors.is_empty() {
+        sqlx::query(
+            r#"
+            UPDATE conversation_session_observations
+            SET source_presence = 'absent'
+            WHERE tenant_id = ?1 AND source_id = ?2 AND record_kind = ?3 AND last_seen_at < ?4
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(source_id)
+        .bind(kind_str)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(session_descriptors.len())
+}

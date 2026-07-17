@@ -34,6 +34,13 @@ const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
         ),
         script: include_str!("../../../bundled/conversation-adapters/opencode/adapter.mjs"),
     },
+    OfficialAdapterAsset {
+        manifest: "antigravity/conversation-adapter.json",
+        manifest_text: include_str!(
+            "../../../bundled/conversation-adapters/antigravity/conversation-adapter.json"
+        ),
+        script: include_str!("../../../bundled/conversation-adapters/antigravity/adapter.mjs"),
+    },
 ];
 
 pub(crate) fn ensure_official_conversation_adapters() -> AppResult<Vec<ConversationAdapter>> {

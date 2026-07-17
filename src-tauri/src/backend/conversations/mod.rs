@@ -20,11 +20,15 @@ pub(crate) use package::{
     validate_conversation_adapter_package_dir, ConversationAdapterPackageRuntimeProtocol,
     ConversationAdapterPackageValidationResult,
 };
-pub(crate) use readers::read_source_sessions_with_adapter;
+#[allow(unused_imports)]
+pub(crate) use readers::{
+    read_source_sessions_incrementally_with_adapter, read_source_sessions_with_adapter,
+    ConversationSourceReadResult,
+};
 #[allow(unused_imports)]
 pub(crate) use types::{
     ConversationAdapterManifest, ConversationAdapterRuntimeKind, ConversationAdapterRuntimeStatus,
-    ExternalAdapterRegisterParams, ExternalAdapterRunResult, ExternalAdapterScaffoldParams,
-    ExternalAdapterScaffoldResult, ExternalAdapterTryRunParams, ExternalAdapterValidateParams,
-    ExternalAdapterValidationResult,
+    ConversationSessionDescriptor, ExternalAdapterRegisterParams, ExternalAdapterRunResult,
+    ExternalAdapterScaffoldParams, ExternalAdapterScaffoldResult, ExternalAdapterTryRunParams,
+    ExternalAdapterValidateParams, ExternalAdapterValidationResult,
 };

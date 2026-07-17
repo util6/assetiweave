@@ -9,7 +9,7 @@ use crate::backend::models::{
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use sqlx::{Row as SqlxRow, Sqlite, SqlitePool, Transaction};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use super::{
     codec::encode_enum,
@@ -42,21 +42,10 @@ pub(crate) async fn import_web_record_sessions_sqlx(
     }
 
     let now = Utc::now().to_rfc3339();
-    let incoming_session_ids = sessions
-        .iter()
-        .map(|session| stable_id("web-record-session", &[&source.id, &session.external_id]))
-        .collect::<BTreeSet<_>>();
     {
         let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
         clear_legacy_conversation_records_for_source_sqlx_tx(&mut tx, tenant_id, &source.id)
             .await?;
-        prune_missing_web_record_sessions_sqlx_tx(
-            &mut tx,
-            tenant_id,
-            &source.id,
-            &incoming_session_ids,
-        )
-        .await?;
         tx.commit().await.map_err(|error| error.to_string())?;
     }
 
@@ -223,6 +212,87 @@ pub(crate) async fn list_web_record_sessions_sqlx(
             })
         })
         .collect()
+}
+
+/// Resolve a possibly-short web-record session ID prefix to the full UUID.
+/// Same semantics as `resolve_conversation_session_id_prefix_sqlx` but queries
+/// the `web_record_sessions` table.
+pub(crate) async fn resolve_web_record_session_id_prefix_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    input: &str,
+) -> AppResult<String> {
+    if input.len() >= 36 {
+        return Ok(input.to_string());
+    }
+    let clean_prefix = input.strip_prefix("web-record-session-").unwrap_or(input);
+    let like_pattern_verbatim = format!("{}%", input);
+    let like_pattern_domain = format!("web-record-session-{}%", clean_prefix);
+
+    let rows: Vec<String> = sqlx::query_scalar(
+        r#"
+        SELECT id FROM web_record_sessions
+        WHERE tenant_id = ?1 AND (id LIKE ?2 OR id LIKE ?3)
+        LIMIT 11
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(&like_pattern_verbatim)
+    .bind(&like_pattern_domain)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    match rows.len() {
+        0 => Err(format!("no web record session matches prefix \"{input}\"")),
+        1 => Ok(rows.into_iter().next().unwrap()),
+        n => {
+            let preview: Vec<&str> = rows.iter().take(5).map(|s| s.as_str()).collect();
+            Err(format!(
+                "ambiguous web record session prefix \"{input}\": {n} sessions match (e.g. {}). Use more characters to narrow down.",
+                preview.join(", ")
+            ))
+        }
+    }
+}
+
+pub(crate) async fn resolve_web_record_part_id_prefix_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    input: &str,
+) -> AppResult<String> {
+    if input.len() >= 36 {
+        return Ok(input.to_string());
+    }
+    let clean_prefix = input.strip_prefix("web-record-part-").unwrap_or(input);
+    let like_pattern_verbatim = format!("{}%", input);
+    let like_pattern_domain = format!("web-record-part-{}%", clean_prefix);
+
+    let rows: Vec<String> = sqlx::query_scalar(
+        r#"
+        SELECT id FROM web_record_parts
+        WHERE tenant_id = ?1 AND (id LIKE ?2 OR id LIKE ?3)
+        LIMIT 11
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(&like_pattern_verbatim)
+    .bind(&like_pattern_domain)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    match rows.len() {
+        0 => Err(format!("no web record part matches prefix \"{input}\"")),
+        1 => Ok(rows.into_iter().next().unwrap()),
+        n => {
+            let preview: Vec<&str> = rows.iter().take(5).map(|s| s.as_str()).collect();
+            Err(format!(
+                "ambiguous web record part prefix \"{input}\": {n} parts match (e.g. {}). Use more characters to narrow down.",
+                preview.join(", ")
+            ))
+        }
+    }
 }
 
 pub(crate) async fn load_web_record_session_detail_sqlx(
@@ -417,28 +487,6 @@ struct QuestionAggregate {
     answer_text: String,
     code_text: String,
     command_text: String,
-}
-
-async fn prune_missing_web_record_sessions_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    source_id: &str,
-    incoming_session_ids: &BTreeSet<String>,
-) -> AppResult<()> {
-    let existing_ids = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM web_record_sessions WHERE tenant_id = ?1 AND source_id = ?2",
-    )
-    .bind(tenant_id)
-    .bind(source_id)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(|error| error.to_string())?;
-    for session_id in existing_ids {
-        if !incoming_session_ids.contains(&session_id) {
-            delete_web_record_session_sqlx_tx(tx, tenant_id, &session_id).await?;
-        }
-    }
-    Ok(())
 }
 
 async fn delete_web_record_session_sqlx_tx(
@@ -1251,6 +1299,76 @@ mod tests {
             .expect("import unchanged fingerprinted web session through SQLx");
 
         assert_eq!(imported_at, "preserved");
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn conversation_incremental_web_import_retains_sessions_omitted_by_source() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-web-record-import-retain-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let source = fixture_source();
+        let current_session = fixture_session();
+        let mut archived_session = fixture_session();
+        archived_session.external_id = "archived-web-session".to_string();
+        archived_session.title = Some("Archived web fixture".to_string());
+
+        let (listed, retained_detail) = database
+            .block_on(async {
+                super::super::conversation_repo::upsert_conversation_source_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                )
+                .await?;
+                import_web_record_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[current_session.clone(), archived_session],
+                    false,
+                )
+                .await?;
+                import_web_record_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[current_session],
+                    false,
+                )
+                .await?;
+                let listed = list_web_record_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    None,
+                    Some(&source.id),
+                    None,
+                    20,
+                    0,
+                )
+                .await?;
+                let retained_id =
+                    stable_id("web-record-session", &[&source.id, "archived-web-session"]);
+                let retained_detail = load_web_record_session_detail_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &retained_id,
+                )
+                .await?;
+                AppResult::Ok((listed, retained_detail))
+            })
+            .expect("retain omitted web record sessions through SQLx");
+
+        assert_eq!(listed.len(), 2);
+        assert!(listed
+            .iter()
+            .any(|item| item.session.external_id == "archived-web-session"));
+        assert_eq!(retained_detail.session.external_id, "archived-web-session");
+        assert_eq!(retained_detail.questions.len(), 1);
 
         drop(database);
         cleanup_database(&db_path);

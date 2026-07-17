@@ -150,7 +150,12 @@ Conversation 不属于文件资产 Catalog。它拥有独立的数据流：
 - 导入内容按 source/session/turn 外部 ID 和 fingerprint 幂等更新。
 - Question Group 是分组覆盖层；人工 merge/split 不会被后续同步覆盖。
 - 简单中英文确认/继续回复只在严格 allowlist 命中时自动并入上一 Question。
-- 原始来源消失时保留已导入记录，后续只标记 missing。
+- Conversation SQLite 是本地历史归档，不是第三方来源的可删除镜像；原始来源消失时保留已导入记录并继续允许浏览、搜索和导出。
+- 来源观测状态与内容保留状态分离；只有用户显式删除本地记录时才清除 Conversation 内容。
+- 默认同步先完整分页发现轻量 Session 元数据，再按稳定 external ID 和来源版本只读取新建或变化的 active Session。
+- active 表示新建、版本变化、读取失败待重试或读取期间继续变化，不使用固定时间窗口判断，因此旧 Session 重新打开后仍能补充新内容。
+- Adapter 必须标明元数据快照是否完整；不完整快照不得把未返回记录标记为缺失或删除，也不得推进成功版本。
+- 旧 Adapter 的全量返回继续兼容，但 Store 采用保留式 upsert，不根据省略项删除历史。
 
 外部适配器协议：
 
@@ -158,6 +163,7 @@ Conversation 不属于文件资产 Catalog。它拥有独立的数据流：
 - 运行时通过 stdin 发送 JSON request，通过 stdout 接收 NDJSON。
 - stdout 行类型包括 `item`、`warning`、`complete`、`error`。
 - `item` 必须输出标准化 Session/Turn/Part；AssetIWeave 不接受外部脚本直接输出最终 Question Group。
+- `list_sessions` 用于分页发现 `external_id`、`updated_at`、`source_locator` 和 `version_token`；Core 比较版本后只通过 `read_session(session_id)` 获取 active Session 完整内容。
 - 启动外部脚本时使用 executable + args，不经过 Shell；注册时保存 manifest/executable hash。
 - try-run 与 register/unregister 属于高风险 CLI 操作，必须显式确认。
 

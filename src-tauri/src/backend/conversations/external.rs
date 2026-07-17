@@ -4,30 +4,63 @@ pub(super) fn read_external_adapter_sessions(
     adapter: &ConversationAdapter,
     source: &ConversationSource,
 ) -> AppResult<Vec<NormalizedConversationSession>> {
-    if adapter.kind != ConversationAdapterKind::External {
-        return Err(format!(
-            "conversation adapter {} is not a built-in or external adapter",
+    run_external_adapter_read_session(adapter, source, None).map(|result| result.sessions)
+}
+
+pub(super) fn read_external_adapter_session(
+    adapter: &ConversationAdapter,
+    source: &ConversationSource,
+    session_id: &str,
+) -> AppResult<Vec<NormalizedConversationSession>> {
+    run_external_adapter_read_session(adapter, source, Some(session_id))
+        .map(|result| result.sessions)
+}
+
+pub(super) fn discover_external_adapter_sessions(
+    adapter: &ConversationAdapter,
+    source: &ConversationSource,
+) -> AppResult<Option<ExternalAdapterRunResult>> {
+    if !adapter
+        .capabilities
+        .iter()
+        .any(|capability| capability == "list_sessions")
+    {
+        return Ok(None);
+    }
+    validate_external_adapter_for_method(adapter, source, "list_sessions")?;
+    let manifest_path = adapter.manifest_path.as_deref().ok_or_else(|| {
+        format!(
+            "external conversation adapter has no manifest: {}",
             adapter.id
-        ));
+        )
+    })?;
+    let validation = validate_external_adapter_manifest(manifest_path)?;
+    validate_external_adapter_manifest_for_method(adapter, &validation, "list_sessions")?;
+    let request = json!({
+        "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+        "request_id": format!("list-{}-{}", source.id, Utc::now().timestamp_millis()),
+        "method": "list_sessions",
+        "source": { "location": source.location, "config": source_config_value(source)? },
+        "params": { "cursor": null }
+    });
+    let result = run_external_adapter(
+        &validation,
+        "list_sessions",
+        request,
+        Duration::from_millis(DEFAULT_LIST_TIMEOUT_MS),
+    )?;
+    if !result.snapshot_complete {
+        return Ok(None);
     }
-    if !adapter.enabled {
-        return Err(format!("conversation adapter is disabled: {}", adapter.id));
-    }
-    if !matches!(
-        adapter.trust_state,
-        ConversationAdapterTrustState::Trusted | ConversationAdapterTrustState::BuiltIn
-    ) {
-        return Err(format!(
-            "external conversation adapter is not trusted: {}",
-            adapter.id
-        ));
-    }
-    if !adapter.input_kinds.iter().any(|kind| *kind == source.kind) {
-        return Err(format!(
-            "external conversation adapter {} does not support source kind {:?}",
-            adapter.id, source.kind
-        ));
-    }
+    Ok(Some(result))
+}
+
+fn run_external_adapter_read_session(
+    adapter: &ConversationAdapter,
+    source: &ConversationSource,
+    session_id: Option<&str>,
+) -> AppResult<ExternalAdapterRunResult> {
+    validate_external_adapter_for_method(adapter, source, "read_session")?;
     let manifest_path = adapter.manifest_path.as_deref().ok_or_else(|| {
         format!(
             "external conversation adapter has no manifest: {}",
@@ -36,26 +69,19 @@ pub(super) fn read_external_adapter_sessions(
     })?;
     let validation = validate_external_adapter_manifest(manifest_path)?;
     validate_external_adapter_manifest_for_method(adapter, &validation, "read_session")?;
-    let config = match source.config_json.as_deref() {
-        Some(text) if !text.trim().is_empty() => {
-            Some(serde_json::from_str::<Value>(text).map_err(|error| error.to_string())?)
-        }
-        _ => None,
-    };
     let request = json!({
         "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
         "request_id": format!("sync-{}-{}", source.id, Utc::now().timestamp_millis()),
         "method": "read_session",
-        "source": { "location": source.location, "config": config },
-        "params": { "session_id": null }
+        "source": { "location": source.location, "config": source_config_value(source)? },
+        "params": { "session_id": session_id }
     });
-    Ok(run_external_adapter(
+    run_external_adapter(
         &validation,
         "read_session",
         request,
         Duration::from_millis(DEFAULT_READ_TIMEOUT_MS),
-    )?
-    .sessions)
+    )
 }
 
 pub(crate) fn export_external_adapter_markdown(
@@ -867,6 +893,8 @@ pub(super) fn parse_external_adapter_output(
 ) -> AppResult<ExternalAdapterRunResult> {
     let stdout = String::from_utf8(stdout).map_err(|error| error.to_string())?;
     let stderr = String::from_utf8_lossy(&stderr).to_string();
+    let mut session_descriptors = Vec::new();
+    let mut snapshot_complete = false;
     let mut sessions = Vec::new();
     let mut markdown_export = None;
     let mut warnings = Vec::new();
@@ -893,6 +921,9 @@ pub(super) fn parse_external_adapter_output(
                     .item
                     .ok_or_else(|| format!("adapter item line {} missing item", index + 1))?;
                 match adapter_item_kind(&item) {
+                    "session_descriptor" => {
+                        session_descriptors.push(parse_adapter_session_descriptor_item(item)?);
+                    }
                     "session" => {
                         if let Some(session) = parse_adapter_session_item(item)? {
                             sessions.push(session);
@@ -915,7 +946,15 @@ pub(super) fn parse_external_adapter_output(
                     .message
                     .unwrap_or_else(|| "adapter warning".to_string()),
             ),
-            "complete" => saw_complete = true,
+            "complete" => {
+                saw_complete = true;
+                snapshot_complete = parsed
+                    .item
+                    .as_ref()
+                    .and_then(|item| item.get("snapshot_complete"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+            }
             "error" => {
                 return Err(format!(
                     "adapter returned error on line {}: {}",
@@ -942,11 +981,26 @@ pub(super) fn parse_external_adapter_output(
         method: method.to_string(),
         item_count,
         warning_count: warnings.len(),
+        session_descriptors,
+        snapshot_complete,
         sessions,
         markdown_export,
         warnings,
         stderr,
     })
+}
+
+fn parse_adapter_session_descriptor_item(item: Value) -> AppResult<ConversationSessionDescriptor> {
+    let descriptor_value = item.get("descriptor").cloned().unwrap_or(item);
+    let descriptor: ConversationSessionDescriptor =
+        serde_json::from_value(descriptor_value).map_err(|error| error.to_string())?;
+    if descriptor.external_id.trim().is_empty() {
+        return Err("session descriptor external_id is required".to_string());
+    }
+    if descriptor.version_token.trim().is_empty() {
+        return Err("session descriptor version_token is required".to_string());
+    }
+    Ok(descriptor)
 }
 
 pub(super) fn validate_external_adapter_line_size(

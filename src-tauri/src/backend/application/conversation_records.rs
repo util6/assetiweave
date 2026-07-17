@@ -33,10 +33,16 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
-            crate::backend::store::load_conversation_session_detail_sqlx(
+            let session_id = crate::backend::store::resolve_conversation_session_id_prefix_sqlx(
                 &pool,
                 &tenant_id,
                 &params.session_id,
+            )
+            .await?;
+            crate::backend::store::load_conversation_session_detail_sqlx(
+                &pool,
+                &tenant_id,
+                &session_id,
             )
             .await
         })
@@ -74,10 +80,16 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
-            crate::backend::store::load_web_record_session_detail_sqlx(
+            let session_id = crate::backend::store::resolve_web_record_session_id_prefix_sqlx(
                 &pool,
                 &tenant_id,
                 &params.session_id,
+            )
+            .await?;
+            crate::backend::store::load_web_record_session_detail_sqlx(
+                &pool,
+                &tenant_id,
+                &session_id,
             )
             .await
         })
@@ -156,8 +168,14 @@ impl AppService {
     ) -> AppResult<Value> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        let session_id = params.session_id.clone();
+        let input_session_id = params.session_id.clone();
         let (detail, adapter, source) = self.db.block_on(async move {
+            let session_id = crate::backend::store::resolve_conversation_session_id_prefix_sqlx(
+                &pool,
+                &tenant_id,
+                &input_session_id,
+            )
+            .await?;
             let detail = crate::backend::store::load_conversation_session_detail_sqlx(
                 &pool,
                 &tenant_id,
@@ -185,8 +203,14 @@ impl AppService {
     ) -> AppResult<Value> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        let session_id = params.session_id.clone();
+        let input_session_id = params.session_id.clone();
         let (detail, adapter, source) = self.db.block_on(async move {
+            let session_id = crate::backend::store::resolve_web_record_session_id_prefix_sqlx(
+                &pool,
+                &tenant_id,
+                &input_session_id,
+            )
+            .await?;
             let detail = crate::backend::store::load_web_record_session_detail_sqlx(
                 &pool,
                 &tenant_id,
@@ -207,11 +231,17 @@ impl AppService {
     ) -> AppResult<Vec<crate::backend::dto::ConversationQuestionDetail>> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        let session_id = params.session_id;
+        let input_session_id = params.session_id;
         let query = params.query;
         let limit = params.limit.unwrap_or(100).clamp(1, 500);
         let offset = params.offset.unwrap_or(0);
         self.db.block_on(async move {
+            let session_id = crate::backend::store::resolve_conversation_session_id_prefix_sqlx(
+                &pool,
+                &tenant_id,
+                &input_session_id,
+            )
+            .await?;
             crate::backend::store::list_conversation_question_details_sqlx(
                 &pool,
                 &tenant_id,
@@ -231,10 +261,16 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
-            crate::backend::store::load_conversation_question_detail_sqlx(
+            let question_id = crate::backend::store::resolve_conversation_question_id_prefix_sqlx(
                 &pool,
                 &tenant_id,
                 &params.question_id,
+            )
+            .await?;
+            crate::backend::store::load_conversation_question_detail_sqlx(
+                &pool,
+                &tenant_id,
+                &question_id,
             )
             .await
         })
@@ -247,10 +283,19 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
+            let mut resolved_question_ids = Vec::with_capacity(params.question_ids.len());
+            for q_id in params.question_ids {
+                resolved_question_ids.push(
+                    crate::backend::store::resolve_conversation_question_id_prefix_sqlx(
+                        &pool, &tenant_id, &q_id,
+                    )
+                    .await?,
+                );
+            }
             crate::backend::store::merge_conversation_questions_sqlx(
                 &pool,
                 &tenant_id,
-                &params.question_ids,
+                &resolved_question_ids,
                 params.dry_run,
             )
             .await
@@ -264,11 +309,23 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
-            crate::backend::store::split_conversation_question_sqlx(
+            let question_id = crate::backend::store::resolve_conversation_question_id_prefix_sqlx(
                 &pool,
                 &tenant_id,
                 &params.question_id,
+            )
+            .await?;
+            let before_turn_id = crate::backend::store::resolve_conversation_turn_id_prefix_sqlx(
+                &pool,
+                &tenant_id,
                 &params.before_turn_id,
+            )
+            .await?;
+            crate::backend::store::split_conversation_question_sqlx(
+                &pool,
+                &tenant_id,
+                &question_id,
+                &before_turn_id,
                 params.dry_run,
             )
             .await
@@ -290,11 +347,16 @@ impl AppService {
         let (_, record_kind) = normalize_conversation_record_kind(params.record_kind.as_deref())?;
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        let part_id = part_id.to_string();
         let translated_text = params.translated_text;
         self.db.block_on(async move {
             match record_kind {
                 crate::backend::dto::ConversationRecordKind::Session => {
+                    let part_id = crate::backend::store::resolve_conversation_part_id_prefix_sqlx(
+                        &pool,
+                        &tenant_id,
+                        &params.part_id,
+                    )
+                    .await?;
                     crate::backend::store::update_conversation_part_translation_sqlx(
                         &pool,
                         &tenant_id,
@@ -304,6 +366,12 @@ impl AppService {
                     .await
                 }
                 crate::backend::dto::ConversationRecordKind::Web => {
+                    let part_id = crate::backend::store::resolve_web_record_part_id_prefix_sqlx(
+                        &pool,
+                        &tenant_id,
+                        &params.part_id,
+                    )
+                    .await?;
                     crate::backend::store::update_web_record_part_translation_sqlx(
                         &pool,
                         &tenant_id,

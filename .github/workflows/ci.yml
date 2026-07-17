@@ -35,6 +35,9 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Test build artifact budget tooling
+        run: pnpm artifacts:test
+
       - name: Build web app
         run: pnpm build
 

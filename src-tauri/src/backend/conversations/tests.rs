@@ -1,8 +1,10 @@
 use super::prelude::*;
 use super::{
-    read_source_sessions_with_adapter, register_external_adapter, scaffold_external_adapter,
-    try_run_external_adapter, validate_external_adapter,
+    read_source_sessions_incrementally_with_adapter, read_source_sessions_with_adapter,
+    register_external_adapter, scaffold_external_adapter, try_run_external_adapter,
+    validate_external_adapter,
 };
+use std::collections::BTreeMap;
 
 struct TempFixture {
     path: PathBuf,
@@ -120,6 +122,24 @@ fn adapter_output_accepts_large_atomic_session_item() {
 
     assert_eq!(result.sessions.len(), 1);
     assert_eq!(result.sessions[0].external_id, "large-session");
+}
+
+#[test]
+fn conversation_incremental_adapter_output_parses_complete_session_discovery() {
+    let output = br#"{"type":"item","item":{"kind":"session_descriptor","external_id":"old-session","updated_at":"2026-07-16T01:02:03Z","source_locator":"/tmp/old.jsonl","version_token":"version-2"}}
+{"type":"complete","item":{"snapshot_complete":true,"session_count":1}}"#;
+
+    let result = parse_external_adapter_output("list_sessions", output.to_vec(), Vec::new())
+        .expect("parse session discovery output");
+
+    assert!(result.snapshot_complete);
+    assert_eq!(result.session_descriptors.len(), 1);
+    assert_eq!(result.session_descriptors[0].external_id, "old-session");
+    assert_eq!(result.session_descriptors[0].version_token, "version-2");
+    assert_eq!(
+        result.session_descriptors[0].source_locator.as_deref(),
+        Some("/tmp/old.jsonl")
+    );
 }
 
 #[test]
@@ -1203,6 +1223,207 @@ printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn conversation_incremental_incomplete_discovery_falls_back_without_advancing_versions() {
+    let fixture = TempFixture::new("assetiweave-incomplete-discovery-fixture");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+request=$(cat)
+case "$request" in
+  *list_sessions*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"session-1","updated_at":null,"source_locator":null,"version_token":"version-2"}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1,"snapshot_complete":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"session-1","title":"Retained","project_path":null,"started_at":null,"updated_at":null,"source_locator":null,"source_fingerprint":"version-2","turns":[]}}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+    ;;
+esac
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+    let adapter = ConversationAdapter {
+        id: "fixture-external".to_string(),
+        name: "Fixture External".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest.to_string_lossy().to_string()),
+        executable_path: Some(
+            fixture
+                .path()
+                .join("adapter.sh")
+                .to_string_lossy()
+                .to_string(),
+        ),
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+        capabilities: vec!["list_sessions".to_string(), "read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+    let source = source_fixture(
+        "fixture-external",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let result = read_source_sessions_incrementally_with_adapter(
+        Some(&adapter),
+        &source,
+        &BTreeMap::from([("session-1".to_string(), "version-1".to_string())]),
+    )
+    .expect("fallback to safe retained full read");
+
+    assert!(!result.incremental);
+    assert_eq!(result.sessions.len(), 1);
+    assert!(result.session_descriptors.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn conversation_incremental_web_adapter_skips_unchanged_and_reactivates_old_session() {
+    if !command_available("node") {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-chatgpt-web-incremental-fixture");
+    let write_sessions = |updated_at: &str| {
+        fs::write(
+            fixture.path().join("sessions.json"),
+            serde_json::to_string_pretty(&json!({
+                "sessions": [{
+                    "external_id": "old-web-session",
+                    "title": "Old web session",
+                    "project_path": null,
+                    "started_at": updated_at,
+                    "updated_at": updated_at,
+                    "source_locator": "fixture://old-web-session",
+                    "source_fingerprint": "fixture-source",
+                    "turns": [{
+                        "external_id": "turn-1",
+                        "turn_index": 0,
+                        "user_text": "continue this",
+                        "title": null,
+                        "started_at": updated_at,
+                        "ended_at": updated_at,
+                        "parts": [{
+                            "role": "assistant",
+                            "kind": "text",
+                            "text": "answer",
+                            "metadata_json": "{\"content_card\":{\"type\":\"answer\"}}"
+                        }]
+                    }]
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    };
+    write_sessions("2026-07-01T00:00:00Z");
+    let adapter = official_adapter_fixture(
+        "chatgpt-web",
+        "ChatGPT Web",
+        "../parser-catalog/adapters/chatgpt-web/conversation-adapter.json",
+        vec![ConversationSourceKind::Directory],
+    );
+    let source = source_fixture(
+        "chatgpt-web",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let first =
+        read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &BTreeMap::new())
+            .expect("initial web sync");
+    assert_eq!(first.active_session_count, 1);
+    let known = BTreeMap::from([(
+        first.sessions[0].external_id.clone(),
+        first.sessions[0]
+            .source_fingerprint
+            .clone()
+            .expect("web session version"),
+    )]);
+
+    let unchanged =
+        read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &known)
+            .expect("unchanged web sync");
+    assert_eq!(unchanged.active_session_count, 0);
+    assert!(unchanged.sessions.is_empty());
+
+    write_sessions("2026-07-16T00:00:00Z");
+    let reactivated =
+        read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &known)
+            .expect("reactivated web sync");
+    assert_eq!(reactivated.active_session_count, 1);
+    assert_eq!(reactivated.sessions[0].external_id, "old-web-session");
+}
+
+#[cfg(unix)]
+#[test]
+fn official_web_adapters_expose_incremental_session_discovery() {
+    if !command_available("node") {
+        return;
+    }
+    for adapter_id in ["chatgpt-web", "gemini-web", "qwen-web"] {
+        let fixture = TempFixture::new(&format!("assetiweave-{adapter_id}-discovery-fixture"));
+        fs::write(
+            fixture.path().join("sessions.json"),
+            serde_json::to_string_pretty(&json!({
+                "sessions": [{
+                    "external_id": "web-session",
+                    "title": "Web session",
+                    "project_path": null,
+                    "started_at": "2026-07-16T00:00:00Z",
+                    "updated_at": "2026-07-16T00:00:00Z",
+                    "source_locator": "fixture://web-session",
+                    "source_fingerprint": "fixture-source",
+                    "turns": [{
+                        "external_id": "turn-1",
+                        "turn_index": 0,
+                        "user_text": "question",
+                        "parts": [{
+                            "role": "assistant",
+                            "kind": "text",
+                            "text": "answer",
+                            "metadata_json": "{\"content_card\":{\"type\":\"answer\"}}"
+                        }]
+                    }]
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let adapter = official_adapter_fixture(
+            adapter_id,
+            adapter_id,
+            &format!("../parser-catalog/adapters/{adapter_id}/conversation-adapter.json"),
+            vec![ConversationSourceKind::Directory],
+        );
+        let source = source_fixture(
+            adapter_id,
+            ConversationSourceKind::Directory,
+            &fixture.path().to_string_lossy(),
+        );
+
+        let result = read_source_sessions_incrementally_with_adapter(
+            Some(&adapter),
+            &source,
+            &BTreeMap::new(),
+        )
+        .unwrap_or_else(|error| panic!("{adapter_id} incremental discovery failed: {error}"));
+
+        assert!(result.incremental, "{adapter_id}");
+        assert_eq!(result.discovered_session_count, 1, "{adapter_id}");
+        assert_eq!(result.active_session_count, 1, "{adapter_id}");
+    }
+}
+
 #[test]
 fn official_adapter_manifests_use_runtime_without_legacy_command() {
     for manifest_relative_path in [
@@ -1813,6 +2034,116 @@ fn official_opencode_adapter_splits_command_and_result_cards() {
         sessions[0].turns[0].parts[3].text.as_deref(),
         Some("tests passed")
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn conversation_incremental_opencode_detects_reactivated_old_session() {
+    if !command_available("node") || !command_available("sqlite3") {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-opencode-incremental-fixture");
+    let db_path = fixture.path().join("opencode.db");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, project TEXT, time_updated INTEGER)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, role TEXT, data TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE part (message_id TEXT, session_id TEXT, kind TEXT, text TEXT, data TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session (id, title, project, time_updated) VALUES ('old-session', 'Old session', '/tmp/project', 1)",
+            [],
+        )
+        .unwrap();
+        insert_opencode_text_message(&conn, "m1", "old-session", "user", "First question");
+        insert_opencode_text_message(&conn, "m2", "old-session", "assistant", "First answer");
+    }
+    let adapter = official_adapter_fixture(
+        "opencode",
+        "OpenCode",
+        "bundled/conversation-adapters/opencode/conversation-adapter.json",
+        vec![ConversationSourceKind::Live, ConversationSourceKind::Sqlite],
+    );
+    let source = source_fixture(
+        "opencode",
+        ConversationSourceKind::Sqlite,
+        &db_path.to_string_lossy(),
+    );
+
+    let first =
+        read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &BTreeMap::new())
+            .expect("initial incremental import");
+    assert!(first.incremental);
+    assert_eq!(first.active_session_count, 1);
+    assert_eq!(first.sessions[0].turns.len(), 1);
+    let known_versions = BTreeMap::from([(
+        "old-session".to_string(),
+        first.sessions[0]
+            .source_fingerprint
+            .clone()
+            .expect("session version"),
+    )]);
+
+    let unchanged =
+        read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &known_versions)
+            .expect("skip unchanged session");
+    assert_eq!(unchanged.active_session_count, 0);
+    assert_eq!(unchanged.skipped_session_count, 1);
+    assert!(unchanged.sessions.is_empty());
+
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "UPDATE session SET time_updated = 2 WHERE id = 'old-session'",
+            [],
+        )
+        .unwrap();
+        insert_opencode_text_message(&conn, "m3", "old-session", "user", "Continued question");
+        insert_opencode_text_message(&conn, "m4", "old-session", "assistant", "Continued answer");
+    }
+
+    let reactivated =
+        read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &known_versions)
+            .expect("read reactivated old session");
+    assert_eq!(reactivated.discovered_session_count, 1);
+    assert_eq!(reactivated.active_session_count, 1);
+    assert_eq!(reactivated.sessions.len(), 1);
+    assert_eq!(reactivated.sessions[0].external_id, "old-session");
+    assert_eq!(reactivated.sessions[0].turns.len(), 2);
+    assert_eq!(
+        reactivated.sessions[0].turns[1].user_text,
+        "Continued question"
+    );
+}
+
+fn insert_opencode_text_message(
+    conn: &rusqlite::Connection,
+    message_id: &str,
+    session_id: &str,
+    role: &str,
+    text: &str,
+) {
+    conn.execute(
+        "INSERT INTO message (id, session_id, role, data) VALUES (?1, ?2, ?3, NULL)",
+        rusqlite::params![message_id, session_id, role],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO part (message_id, session_id, kind, text, data) VALUES (?1, ?2, 'text', ?3, NULL)",
+        rusqlite::params![message_id, session_id, text],
+    )
+    .unwrap();
 }
 
 #[cfg(unix)]

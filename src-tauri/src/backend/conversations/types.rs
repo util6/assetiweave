@@ -127,10 +127,20 @@ pub(crate) struct ExternalAdapterRunResult {
     pub(crate) method: String,
     pub(crate) item_count: usize,
     pub(crate) warning_count: usize,
+    pub(crate) session_descriptors: Vec<ConversationSessionDescriptor>,
+    pub(crate) snapshot_complete: bool,
     pub(crate) sessions: Vec<NormalizedConversationSession>,
     pub(crate) markdown_export: Option<ExternalMarkdownExport>,
     pub(crate) warnings: Vec<String>,
     pub(crate) stderr: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct ConversationSessionDescriptor {
+    pub(crate) external_id: String,
+    pub(crate) updated_at: Option<String>,
+    pub(crate) source_locator: Option<String>,
+    pub(crate) version_token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

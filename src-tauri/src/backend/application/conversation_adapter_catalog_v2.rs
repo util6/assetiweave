@@ -689,7 +689,7 @@ mod tests {
             })
             .expect("refresh local Catalog v2");
 
-        assert_eq!(releases.len(), 7);
+        assert_eq!(releases.len(), 14);
         assert!(releases
             .iter()
             .all(|release| release.catalog_url == index_path.to_string_lossy()));

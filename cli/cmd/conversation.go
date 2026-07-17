@@ -1043,7 +1043,7 @@ func newCmdConversationSessionList(f *cmdutil.Factory) *cobra.Command {
 func newCmdConversationSessionGet(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <session-id>",
-		Short: "Get one session with question groups",
+		Short: "Get one session with question groups (accepts short ID prefix)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return callAndPrint(cmd, f, schema.MethodConversationSessionGet, map[string]any{"session_id": args[0]})
@@ -1056,7 +1056,7 @@ func newCmdConversationSessionExport(f *cmdutil.Factory) *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "export <session-id>",
-		Short: "Export one session as Markdown",
+		Short: "Export one session as Markdown (accepts short ID prefix)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return callAndPrint(cmd, f, schema.MethodConversationSessionExport, map[string]any{
@@ -1114,7 +1114,7 @@ func newCmdConversationWebRecordList(f *cmdutil.Factory) *cobra.Command {
 func newCmdConversationWebRecordGet(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <record-id>",
-		Short: "Get one web conversation with question groups",
+		Short: "Get one web conversation with question groups (accepts short ID prefix)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return callAndPrint(cmd, f, schema.MethodConversationWebRecordGet, map[string]any{"session_id": args[0]})
@@ -1127,7 +1127,7 @@ func newCmdConversationWebRecordExport(f *cmdutil.Factory) *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "export <record-id>",
-		Short: "Export one web conversation as Markdown",
+		Short: "Export one web conversation as Markdown (accepts short ID prefix)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return callAndPrint(cmd, f, schema.MethodConversationWebRecordExport, map[string]any{
@@ -1263,7 +1263,7 @@ func newCmdConversationQuestionList(f *cmdutil.Factory) *cobra.Command {
 	var limit, offset int
 	cmd := &cobra.Command{
 		Use:   "list <session-id>",
-		Short: "List question groups in a session",
+		Short: "List question groups in a session (accepts short ID prefix)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			params := paginationParams(limit, offset)
@@ -1284,7 +1284,7 @@ func newCmdConversationQuestionList(f *cmdutil.Factory) *cobra.Command {
 func newCmdConversationQuestionGet(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <question-id>",
-		Short: "Get one question group",
+		Short: "Get one question group detail (accepts short ID prefix)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return callAndPrint(cmd, f, schema.MethodConversationQuestionGet, map[string]any{"question_id": args[0]})
@@ -1296,7 +1296,7 @@ func newCmdConversationQuestionMerge(f *cmdutil.Factory) *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "merge <question-id>...",
-		Short: "Merge adjacent question groups",
+		Short: "Merge adjacent questions into one (accepts short ID prefixes)",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids := make([]string, len(args))
@@ -1316,7 +1316,7 @@ func newCmdConversationQuestionSplit(f *cmdutil.Factory) *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "split <question-id>",
-		Short: "Split a question group before a turn",
+		Short: "Split a question into two at a specific turn (accepts short ID prefixes for both)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return callAndPrint(cmd, f, schema.MethodConversationQuestionSplit, map[string]any{
@@ -1348,7 +1348,7 @@ func newCmdConversationPartTranslationUpdate(f *cmdutil.Factory) *cobra.Command 
 	var recordKind, text string
 	cmd := &cobra.Command{
 		Use:   "update <part-id>",
-		Short: "Overwrite the stored translation for a content part",
+		Short: "Update manual translation for a conversation part (accepts short ID prefix)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return callAndPrint(cmd, f, schema.MethodConversationPartTranslationUpdate, map[string]any{

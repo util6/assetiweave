@@ -38,13 +38,3 @@ url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 walkdir = "2"
 zip = { version = "4", default-features = false, features = ["deflate"] }
-
-[profile.dev]
-debug = 1            # line-tables only — enough for backtraces, much smaller than full
-
-[profile.dev.package."*"]
-debug = 0            # no debug info for dependencies
-
-[profile.release]
-strip = true         # strip debug symbols from release binary
-lto = "thin"         # link-time optimization — smaller binary

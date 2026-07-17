@@ -31,11 +31,14 @@ pub(crate) use conversation_repo::{
     list_conversation_sessions_sqlx, list_conversation_sources_sqlx,
     load_conversation_adapter_package_by_adapter_sqlx, load_conversation_adapter_package_sqlx,
     load_conversation_adapter_sqlx, load_conversation_question_detail_sqlx,
-    load_conversation_session_detail_sqlx, load_conversation_source_sqlx,
-    merge_conversation_questions_sqlx, search_conversation_cards_sqlx,
+    load_conversation_session_detail_sqlx, load_conversation_session_versions_sqlx,
+    load_conversation_source_sqlx, merge_conversation_questions_sqlx,
+    persist_conversation_session_observations_sqlx, resolve_conversation_part_id_prefix_sqlx,
+    resolve_conversation_question_id_prefix_sqlx, resolve_conversation_session_id_prefix_sqlx,
+    resolve_conversation_turn_id_prefix_sqlx, search_conversation_cards_sqlx,
     split_conversation_question_sqlx, update_conversation_part_translation_sqlx,
     upsert_conversation_adapter_catalog_release_sqlx, upsert_conversation_adapter_package_sqlx,
-    upsert_conversation_adapter_sqlx, upsert_conversation_source_sqlx,
+    upsert_conversation_adapter_sqlx, upsert_conversation_source_sqlx, ConversationImportResult,
 };
 pub(crate) use database::{
     count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx,
@@ -80,5 +83,6 @@ pub(crate) use tenant_repo::{
 };
 pub(crate) use web_record_repo::{
     import_web_record_sessions_sqlx, list_web_record_sessions_sqlx,
-    load_web_record_session_detail_sqlx, update_web_record_part_translation_sqlx,
+    load_web_record_session_detail_sqlx, resolve_web_record_part_id_prefix_sqlx,
+    resolve_web_record_session_id_prefix_sqlx, update_web_record_part_translation_sqlx,
 };

@@ -346,3 +346,15 @@
 - [X] 19.14 实现已安装版本直接切换、一键回退和删除单个非 active 版本
 - [X] 19.15 实现 stable/beta channel 自动跟随策略和离线多版本切换 UI
 - [X] 19.16 市场页增加显式检查更新，并统一注册（下载安装）、卸载 runtime、删除版本的前端语义与入口
+
+## Phase 20：Conversation 安全增量同步
+
+- [X] 20.1 将 Session/Web Record 同步改为保留式 upsert，来源缺失不删除或隐藏本地历史
+- [X] 20.2 增加来源观测状态与成功内容版本，分离来源生命周期和本地保留生命周期
+- [X] 20.3 扩展 Adapter `list_sessions` 分页元数据与 `snapshot_complete` 契约
+- [X] 20.4 Core 比较版本识别 active Session，并通过 `read_session(session_id)` 按需读取
+- [X] 20.5 官方本地 Adapter 使用会话级版本标记，覆盖旧 Session 重新活跃
+- [X] 20.6 Web Adapter 使用列表版本缓存详情，Qwen 补齐 active Session 检测
+- [X] 20.7 同步任务返回发现、active、读取、跳过和保留统计，前端展示安全增量结果
+- [X] 20.8 补充不完整快照、来源缺失、旧 Session 追加、读取竞态和兼容 Adapter 回归测试
+- [X] 20.9 重新生成 Engine/CLI contract，并完成 Rust、前端、Adapter 与 Go CLI 验证
