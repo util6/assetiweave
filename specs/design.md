@@ -53,6 +53,8 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - `backend/planner/`：部署计划生成，基于 `asset_mounts`、Profile 能力、目标状态和安全规则输出可解释动作。
 - `backend/executor/`：部署执行，负责 `symlink_to_source`、`copy_to_target`、目标路径安全、非托管文件保护和 deployment state 写入。
 - `backend/targeting.rs`：目标路径解析、App/Profile 挂载目录、实际挂载状态和断链/冲突判断。
+- `backend/host_paths.rs`、`app_paths.rs`：可移植存储路径、宿主路径解析、展示路径和各 App 默认目录。
+- `backend/host_filesystem.rs`：Windows/macOS/Linux 文件系统差异，包括路径比较、目录边界、软链接创建/删除和目录遍历错误。
 - `backend/conversations/`：对话记录适配器、官方/外部来源读取、NDJSON try-run、harvester 接入和标准化 Session/Turn/Part 处理。
 - `backend/app_settings.rs`、`data_backup.rs`、`logs.rs`、`operation_log.rs`、`card_translation.rs`：设置、备份、日志、操作记录和卡片翻译等独立基础能力。
 - `backend/defaults.rs`、`path_utils.rs`：内置模板、路径展开、Git 路径和 hash 等共享工具。
@@ -88,7 +90,8 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - App 快捷入口支持真实应用图标 token 和自定义 SVG path 资源；快捷图标配置已持久化到 SQLite。
 - NavigationModel 支持中英文本地化 label 覆盖；设置页可以按当前语言编辑菜单文案。
 - Tauri 后端契约已扩展：资产可按 kind 查询/扫描，支持取消真实挂载并返回最新挂载状态，目录选择使用 Tauri dialog plugin。
-- 路径展示 home 缩写，点击路径在文件管理器中显示。
+- 配置路径持久化使用 `~`、`@config`、`@local-data`、`@data`、`@cache` 等可移植锚点；绝对路径只在 I/O 边界解析。
+- 普通 UI 使用后端 DTO 的 `display_*` 路径；绝对运行时路径仅用于 Reveal、执行和当前宿主观测。
 - 部署计划生成和执行基础链路，计划输入已收敛到启用的挂载关系。
 - 部署执行默认将目标 App 目录直接 symlink 到源资产真实路径。
 - 启动和关闭路径会刷新已记录资产/挂载观测；关闭前执行数据库备份，并在后台任务运行时提示用户确认退出。

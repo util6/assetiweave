@@ -136,10 +136,12 @@ Go CLI
 | `backend/planner/` | 根据 `asset_mounts`、profile 和目标状态生成可解释部署计划 |
 | `backend/targeting.rs` | 目标路径计算和真实挂载状态判断 |
 | `backend/executor/` | 执行计划、文件系统安全边界和部署状态写入 |
+| `backend/host_paths.rs` / `app_paths.rs` | 可移植路径锚点、宿主解析、展示路径和 App 默认目录 |
+| `backend/host_filesystem.rs` | 平台路径比较、目录边界、软链接和遍历行为适配 |
 | `backend/store/` | SQLx database 初始化、migration、SQL 常量、codec 和各领域 repository |
 | `backend/conversations/` | Conversation adapter、官方/外部来源读取、harvester 和标准化 |
 | `backend/defaults.rs` | 内置 Source、Profile、导航等默认值 |
-| `backend/path_utils.rs` | 路径展开、Git 路径和 hash 等共享工具 |
+| `backend/path_utils.rs` | 通过 host path 层提供路径展开/展示，并承载 Git 路径和 hash 等共享工具 |
 | `backend/app_settings.rs`、`data_backup.rs`、`logs.rs`、`operation_log.rs` | 设置、备份、日志和操作记录 |
 
 ### 4.3 当前过渡热点
