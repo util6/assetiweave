@@ -1,5 +1,7 @@
 use crate::backend::dto::AppResult;
 use crate::backend::models::TargetProfile;
+use crate::backend::path_utils::normalize_path_for_storage;
+use crate::backend::{app_paths::AppPathCatalog, models::AppKind};
 use sqlx::SqlitePool;
 
 use super::{
@@ -16,7 +18,10 @@ pub(crate) async fn load_profiles_sqlx(
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())?;
-    payloads.into_iter().map(decode_json).collect()
+    payloads
+        .into_iter()
+        .map(|payload| decode_json(payload).and_then(normalize_profile_paths))
+        .collect()
 }
 
 pub(crate) async fn load_profile_sqlx(
@@ -30,7 +35,7 @@ pub(crate) async fn load_profile_sqlx(
         .fetch_optional(pool)
         .await
         .map_err(|error| error.to_string())?
-        .map(decode_json)
+        .map(|payload| decode_json(payload).and_then(normalize_profile_paths))
         .transpose()
 }
 
@@ -39,14 +44,31 @@ pub(crate) async fn upsert_profile_sqlx(
     tenant_id: &str,
     profile: &TargetProfile,
 ) -> AppResult<()> {
+    let profile = normalize_profile_paths(profile.clone())?;
     sqlx::query(sql::UPSERT_PROFILE)
         .bind(tenant_id)
         .bind(&profile.id)
-        .bind(encode_json(profile)?)
+        .bind(encode_json(&profile)?)
         .execute(pool)
         .await
         .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+fn normalize_profile_paths(mut profile: TargetProfile) -> AppResult<TargetProfile> {
+    profile.target_paths = profile
+        .target_paths
+        .iter()
+        .map(|path| normalize_path_for_storage(path))
+        .collect::<AppResult<Vec<_>>>()?;
+    if profile.id == "cursor"
+        && profile.app_kind == AppKind::Cursor
+        && profile.target_paths == ["~/Library/Application Support/Cursor/skills"]
+    {
+        profile.target_paths =
+            vec![AppPathCatalog::default_skill_target(AppKind::Cursor).to_string()];
+    }
+    Ok(profile)
 }
 
 pub(crate) async fn delete_profile_sqlx(
@@ -175,6 +197,64 @@ mod tests {
             tenant_loaded.expect("load tenant profile").name,
             "Tenant profile"
         );
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_profile_repo_normalizes_home_target_paths_for_storage_and_loading() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-profile-home-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let mut profile = test_profile("profile-home");
+        profile.target_paths = vec![dirs::home_dir()
+            .expect("home directory")
+            .join(".codex")
+            .join("skills")
+            .to_string_lossy()
+            .to_string()];
+
+        let loaded = database
+            .block_on(async {
+                upsert_profile_sqlx(database.pool(), "default", &profile).await?;
+                load_profile_sqlx(database.pool(), "default", &profile.id).await
+            })
+            .expect("round trip profile")
+            .expect("stored profile");
+
+        assert_eq!(loaded.target_paths, vec!["~/.codex/skills"]);
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_profile_repo_migrates_legacy_cursor_default_path_to_config_anchor() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-profile-cursor-path-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let mut profile = test_profile("cursor");
+        profile.app_kind = AppKind::Cursor;
+        profile.target_paths = vec!["~/Library/Application Support/Cursor/skills".to_string()];
+
+        let loaded = database
+            .block_on(async {
+                sqlx::query(sql::UPSERT_PROFILE)
+                    .bind("default")
+                    .bind(&profile.id)
+                    .bind(encode_json(&profile)?)
+                    .execute(database.pool())
+                    .await
+                    .map_err(|error| error.to_string())?;
+                load_profile_sqlx(database.pool(), "default", &profile.id).await
+            })
+            .expect("load legacy cursor profile")
+            .expect("stored profile");
+
+        assert_eq!(loaded.target_paths, vec!["@config/Cursor/skills"]);
         drop(database);
         cleanup_database(&db_path);
     }

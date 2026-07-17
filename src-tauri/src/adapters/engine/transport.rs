@@ -828,7 +828,7 @@ mod tests {
         env::remove_var("ASSETIWEAVE_DB_PATH");
         env::remove_var("HOME");
         assert_eq!(value["dry_run"], json!(true));
-        assert_eq!(value["source"]["root_path"], json!(home.to_string_lossy()));
+        assert_eq!(value["source"]["root_path"], json!("~"));
         fs::remove_dir_all(home).ok();
     }
 

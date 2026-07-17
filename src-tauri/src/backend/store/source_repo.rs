@@ -2,7 +2,8 @@ use crate::backend::models::{AssetKind, Source, SourceOrigin, SourceScannerKind}
 use crate::backend::{
     dto::AppResult,
     path_utils::{
-        detect_app_target, expand_path, find_git_root, is_app_library_path, normalize_relative_path,
+        detect_app_target, expand_path, find_git_root, is_app_library_path,
+        normalize_path_for_storage, normalize_relative_path,
     },
 };
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
@@ -56,6 +57,7 @@ pub(crate) async fn load_source_sqlx(
 }
 
 fn map_sqlx_source_row(row: &SqliteRow) -> AppResult<Source> {
+    let root_path: String = row.try_get(3).map_err(|error| error.to_string())?;
     Ok(Source {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         name: row.try_get(1).map_err(|error| error.to_string())?,
@@ -63,7 +65,7 @@ fn map_sqlx_source_row(row: &SqliteRow) -> AppResult<Source> {
             row.try_get::<String, _>(2)
                 .map_err(|error| error.to_string())?,
         )?,
-        root_path: row.try_get(3).map_err(|error| error.to_string())?,
+        root_path: normalize_path_for_storage(&root_path)?,
         scanner_kind: decode_enum(
             row.try_get::<String, _>(4)
                 .map_err(|error| error.to_string())?,
@@ -128,6 +130,9 @@ pub(crate) async fn upsert_source_sqlx(
 
 pub(crate) fn normalize_source(source: &Source) -> Source {
     let mut source = source.clone();
+    if let Ok(root_path) = normalize_path_for_storage(&source.root_path) {
+        source.root_path = root_path;
+    }
 
     if matches!(source.scanner_kind, SourceScannerKind::Mixed) && is_skill_like_source(&source) {
         source.scanner_kind = SourceScannerKind::Skill;
@@ -294,6 +299,32 @@ mod tests {
             tenant_loaded.expect("load tenant source").name,
             "Tenant source"
         );
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_source_repo_normalizes_home_paths_for_storage_and_loading() {
+        let db_path =
+            std::env::temp_dir().join(format!("assetiweave-source-home-{}.sqlite", Uuid::new_v4()));
+        let database = Database::open(&db_path).expect("open database");
+        let mut source = test_source("home-source", SourceScannerKind::Skill);
+        source.root_path = dirs::home_dir()
+            .expect("home directory")
+            .join(".codex")
+            .join("skills")
+            .to_string_lossy()
+            .to_string();
+
+        let loaded = database
+            .block_on(async {
+                upsert_source_sqlx(database.pool(), "default", &source).await?;
+                load_source_sqlx(database.pool(), "default", &source.id).await
+            })
+            .expect("round trip source")
+            .expect("stored source");
+
+        assert_eq!(loaded.root_path, "~/.codex/skills");
         drop(database);
         cleanup_database(&db_path);
     }

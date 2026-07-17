@@ -1,3 +1,4 @@
+pub(crate) mod app_paths;
 pub(crate) mod app_settings;
 pub(crate) mod application;
 pub(crate) mod capabilities;
@@ -7,6 +8,7 @@ pub(crate) mod data_backup;
 pub(crate) mod defaults;
 pub(crate) mod dto;
 pub(crate) mod executor;
+pub(crate) mod host_paths;
 pub(crate) mod logs;
 pub(crate) mod models;
 pub(crate) mod operation_log;

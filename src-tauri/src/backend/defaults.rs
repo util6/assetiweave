@@ -23,7 +23,9 @@ pub(crate) fn default_sources_for_tenant(tenant_id: &str) -> Vec<Source> {
     let mut sources = Vec::new();
     let default_skill_root =
         crate::backend::path_utils::default_skill_backup_root_for_tenant(tenant_id)
-            .map(|path| path.to_string_lossy().to_string())
+            .and_then(|path| {
+                crate::backend::path_utils::normalize_path_for_storage(&path.to_string_lossy())
+            })
             .unwrap_or_else(|_| format!("~/.assetiweave/tenants/{tenant_id}/library/skills"));
     let candidates = [
         (
@@ -97,46 +99,23 @@ pub(crate) fn default_sources_for_tenant(tenant_id: &str) -> Vec<Source> {
 
 pub(crate) fn default_profiles() -> Vec<TargetProfile> {
     [
-        ("codex", "Codex", AppKind::Codex, "~/.codex/skills"),
-        ("claude", "Claude", AppKind::Claude, "~/.claude/skills"),
-        (
-            "cursor",
-            "Cursor",
-            AppKind::Cursor,
-            "~/Library/Application Support/Cursor/skills",
-        ),
-        (
-            "opencode",
-            "OpenCode",
-            AppKind::OpenCode,
-            "~/.config/opencode/skills",
-        ),
-        ("gemini", "Gemini", AppKind::Gemini, "~/.gemini/skills"),
-        (
-            "antigravity",
-            "Antigravity",
-            AppKind::Antigravity,
-            "~/.antigravity/skills",
-        ),
-        (
-            "openclaw",
-            "OpenClaw",
-            AppKind::OpenClaw,
-            "~/.openclaw/skills",
-        ),
-        (
-            "custom",
-            "Custom",
-            AppKind::Custom,
-            "~/assetiweave-target/skills",
-        ),
+        ("codex", "Codex", AppKind::Codex),
+        ("claude", "Claude", AppKind::Claude),
+        ("cursor", "Cursor", AppKind::Cursor),
+        ("opencode", "OpenCode", AppKind::OpenCode),
+        ("gemini", "Gemini", AppKind::Gemini),
+        ("antigravity", "Antigravity", AppKind::Antigravity),
+        ("openclaw", "OpenClaw", AppKind::OpenClaw),
+        ("custom", "Custom", AppKind::Custom),
     ]
     .into_iter()
-    .map(|(id, name, app_kind, target)| TargetProfile {
+    .map(|(id, name, app_kind)| TargetProfile {
         id: id.to_string(),
         name: name.to_string(),
         app_kind,
-        target_paths: vec![target.to_string()],
+        target_paths: vec![
+            crate::backend::app_paths::AppPathCatalog::default_skill_target(app_kind).to_string(),
+        ],
         supported_kinds: vec![
             AssetKind::Skill,
             AssetKind::Prompt,
@@ -297,6 +276,16 @@ mod tests {
     }
 
     #[test]
+    fn cursor_default_profile_uses_cross_platform_config_anchor() {
+        let profile = default_profiles()
+            .into_iter()
+            .find(|profile| profile.id == "cursor")
+            .expect("cursor profile");
+
+        assert_eq!(profile.target_paths, vec!["@config/Cursor/skills"]);
+    }
+
+    #[test]
     fn skill_sources_scope_only_assetiweave_library_path_by_tenant() {
         let tenant_a_sources = default_sources_for_tenant("tenant-a");
         let tenant_b_sources = default_sources_for_tenant("tenant-b");
@@ -309,6 +298,14 @@ mod tests {
             .iter()
             .find(|source| source.id == "assetiweave-library-skills")
             .expect("tenant b skill library source");
+        assert_eq!(
+            tenant_a_library.root_path,
+            "~/.assetiweave/tenants/tenant-a/library/skills"
+        );
+        assert_eq!(
+            tenant_b_library.root_path,
+            "~/.assetiweave/tenants/tenant-b/library/skills"
+        );
         assert!(tenant_a_library
             .root_path
             .ends_with(".assetiweave/tenants/tenant-a/library/skills"));

@@ -1,4 +1,5 @@
 use crate::backend::dto::{AppResult, GitRepositoryInfo};
+use crate::backend::host_paths::HostPathResolver;
 use crate::backend::models::AppKind;
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path, path::PathBuf, process::Command};
@@ -44,51 +45,21 @@ pub(crate) fn default_database_backup_root() -> AppResult<PathBuf> {
 }
 
 pub(crate) fn expand_path(path: &str) -> AppResult<PathBuf> {
-    if path == "~" {
-        return dirs::home_dir().ok_or("无法确定用户主目录".to_string());
-    }
+    let resolver = HostPathResolver::current()?;
+    let stored = resolver.normalize_input(path)?;
+    Ok(resolver.resolve(&stored)?.into_path_buf())
+}
 
-    if let Some(rest) = path.strip_prefix("~/") {
-        let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
-        return Ok(home.join(rest));
-    }
+pub(crate) fn normalize_path_for_storage(path: &str) -> AppResult<String> {
+    HostPathResolver::current()
+        .and_then(|resolver| resolver.normalize_input(path))
+        .map(|path| path.as_str().to_string())
+}
 
-    #[cfg(windows)]
-    {
-        if let Some(rest) = path.strip_prefix("~\\") {
-            let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
-            return Ok(home.join(rest));
-        }
-
-        let upper = path.to_ascii_uppercase();
-        if upper == "%USERPROFILE%" {
-            return dirs::home_dir().ok_or("无法确定用户主目录".to_string());
-        }
-        for prefix in ["%USERPROFILE%\\", "%USERPROFILE%/"] {
-            if upper.starts_with(prefix) {
-                let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
-                return Ok(home.join(&path[prefix.len()..]));
-            }
-        }
-    }
-
-    let candidate = PathBuf::from(path);
-    if candidate.is_absolute() {
-        Ok(candidate)
-    } else {
-        let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
-        let direct = cwd.join(&candidate);
-        if direct.exists() {
-            return Ok(direct);
-        }
-        if let Some(parent) = cwd.parent() {
-            let parent_candidate = parent.join(&candidate);
-            if parent_candidate.exists() {
-                return Ok(parent_candidate);
-            }
-        }
-        Ok(direct)
-    }
+pub(crate) fn display_path(path: &str) -> AppResult<String> {
+    let resolver = HostPathResolver::current()?;
+    let stored = resolver.normalize_input(path)?;
+    Ok(resolver.display(&stored)?.as_str().to_string())
 }
 
 pub(crate) fn find_git_root(path: &Path) -> Option<PathBuf> {
