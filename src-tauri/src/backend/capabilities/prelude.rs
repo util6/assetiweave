@@ -32,4 +32,3 @@ pub(super) use std::{
     path::{Path, PathBuf},
 };
 pub(super) use uuid::Uuid;
-pub(super) use walkdir::WalkDir;

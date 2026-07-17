@@ -12,7 +12,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use walkdir::WalkDir;
 
 type LogField = (&'static str, String);
 
@@ -220,7 +219,11 @@ async fn execute_deployment_action(
     }
 
     match action.strategy {
-        DeploymentStrategy::SymlinkToSource => create_symlink(&source_path, &target_path)?,
+        DeploymentStrategy::SymlinkToSource => {
+            crate::backend::host_filesystem::HostFilesystem::current()
+                .create_symlink(&source_path, &target_path)
+                .map_err(DeploymentError::Failure)?
+        }
         DeploymentStrategy::CopyToTarget => copy_asset(&source_path, &target_path)?,
         other => {
             return Err(DeploymentError::Failure(format!(
@@ -258,7 +261,9 @@ fn ensure_target_within_profile(
 ) -> Result<(), DeploymentError> {
     let allowed_root =
         crate::backend::targeting::target_dir(profile).map_err(DeploymentError::Failure)?;
-    if !target_path.starts_with(&allowed_root) {
+    if !crate::backend::host_filesystem::HostFilesystem::current()
+        .is_within(target_path, &allowed_root)
+    {
         return Err(DeploymentError::Failure(format!(
             "拒绝写入 Profile 目标目录外部: {}",
             target_path.display()
@@ -268,34 +273,9 @@ fn ensure_target_within_profile(
 }
 
 fn remove_existing_target(path: &Path) -> Result<(), DeploymentError> {
-    let metadata =
-        fs::symlink_metadata(path).map_err(|error| DeploymentError::Failure(error.to_string()))?;
-    if metadata.file_type().is_symlink() || metadata.is_file() {
-        fs::remove_file(path).map_err(|error| DeploymentError::Failure(error.to_string()))
-    } else if metadata.is_dir() {
-        fs::remove_dir_all(path).map_err(|error| DeploymentError::Failure(error.to_string()))
-    } else {
-        Err(DeploymentError::Failure(format!(
-            "不支持移除该目标类型: {}",
-            path.display()
-        )))
-    }
-}
-
-#[cfg(unix)]
-fn create_symlink(source: &Path, target: &Path) -> Result<(), DeploymentError> {
-    std::os::unix::fs::symlink(source, target)
-        .map_err(|error| DeploymentError::Failure(error.to_string()))
-}
-
-#[cfg(windows)]
-fn create_symlink(source: &Path, target: &Path) -> Result<(), DeploymentError> {
-    if source.is_dir() {
-        std::os::windows::fs::symlink_dir(source, target)
-    } else {
-        std::os::windows::fs::symlink_file(source, target)
-    }
-    .map_err(|error| DeploymentError::Failure(error.to_string()))
+    crate::backend::host_filesystem::HostFilesystem::current()
+        .remove_path(path)
+        .map_err(DeploymentError::Failure)
 }
 
 fn copy_asset(source: &Path, target: &Path) -> Result<(), DeploymentError> {
@@ -309,23 +289,7 @@ fn copy_asset(source: &Path, target: &Path) -> Result<(), DeploymentError> {
 }
 
 fn copy_dir(source: &Path, target: &Path) -> Result<(), DeploymentError> {
-    for entry in WalkDir::new(source).into_iter().filter_map(Result::ok) {
-        let relative = entry
-            .path()
-            .strip_prefix(source)
-            .map_err(|error| DeploymentError::Failure(error.to_string()))?;
-        let destination = target.join(relative);
-        if entry.file_type().is_dir() {
-            fs::create_dir_all(&destination)
-                .map_err(|error| DeploymentError::Failure(error.to_string()))?;
-        } else if entry.file_type().is_file() {
-            if let Some(parent) = destination.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|error| DeploymentError::Failure(error.to_string()))?;
-            }
-            fs::copy(entry.path(), destination)
-                .map_err(|error| DeploymentError::Failure(error.to_string()))?;
-        }
-    }
-    Ok(())
+    crate::backend::host_filesystem::HostFilesystem::current()
+        .copy_dir(source, target)
+        .map_err(DeploymentError::Failure)
 }

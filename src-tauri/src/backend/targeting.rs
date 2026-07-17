@@ -119,11 +119,7 @@ fn resolve_link_target(link_path: &Path, linked_path: &Path) -> PathBuf {
 }
 
 fn same_path(left: &Path, right: &Path) -> bool {
-    normalize_path(left) == normalize_path(right)
-}
-
-fn normalize_path(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    crate::backend::host_filesystem::HostFilesystem::current().same_path(left, right)
 }
 
 pub(crate) fn canonical_source_path(asset: &Asset) -> AppResult<PathBuf> {

@@ -8,6 +8,7 @@ pub(crate) mod data_backup;
 pub(crate) mod defaults;
 pub(crate) mod dto;
 pub(crate) mod executor;
+pub(crate) mod host_filesystem;
 pub(crate) mod host_paths;
 pub(crate) mod logs;
 pub(crate) mod models;

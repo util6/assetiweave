@@ -123,6 +123,8 @@ impl AppService {
             let target_dir = if source_is_library {
                 PathBuf::from(&asset.absolute_path)
             } else {
+                let asset_name = crate::backend::host_filesystem::HostFilesystem::current()
+                    .validate_path_segment(&asset.name)?;
                 let origin_bucket = source
                     .origin_app_kind
                     .map(|kind| format!("{kind:?}").to_ascii_lowercase())
@@ -130,7 +132,7 @@ impl AppService {
                 backup_root
                     .join("backed-up")
                     .join(origin_bucket)
-                    .join(&asset.name)
+                    .join(asset_name)
             };
             targets.push(SkillBackupCopyTarget {
                 asset: (*asset).clone(),
@@ -224,6 +226,8 @@ impl AppService {
                     .map(str::to_string)
             })
             .ok_or_else(|| "skill import name could not be inferred".to_string())?;
+        let name = crate::backend::host_filesystem::HostFilesystem::current()
+            .validate_path_segment(&name)?;
         let target_dir = capabilities::skill_backup_root_sqlx(&self.db, self.tenant_id())?
             .join("downloaded")
             .join(&name);
@@ -331,12 +335,7 @@ impl AppService {
         }
         let asset_path = PathBuf::from(&asset.absolute_path);
         if asset_path.exists() {
-            let metadata = fs::symlink_metadata(&asset_path).map_err(|error| error.to_string())?;
-            if metadata.is_dir() {
-                fs::remove_dir_all(&asset_path).map_err(|error| error.to_string())?;
-            } else {
-                fs::remove_file(&asset_path).map_err(|error| error.to_string())?;
-            }
+            crate::backend::host_filesystem::HostFilesystem::current().remove_path(&asset_path)?;
         }
         capabilities::refresh_recorded_assets(&self.db, self.tenant_id())?;
         Ok(json!({ "deleted": true, "asset_id": asset.id }))
@@ -578,11 +577,7 @@ impl AppService {
 }
 
 fn path_contains(parent: &Path, child: &Path) -> bool {
-    let normalized_parent = parent
-        .canonicalize()
-        .unwrap_or_else(|_| parent.to_path_buf());
-    let normalized_child = child.canonicalize().unwrap_or_else(|_| child.to_path_buf());
-    normalized_child.starts_with(&normalized_parent)
+    crate::backend::host_filesystem::HostFilesystem::current().is_within(child, parent)
 }
 
 fn dedupe_non_empty_strings(values: Vec<String>) -> Vec<String> {

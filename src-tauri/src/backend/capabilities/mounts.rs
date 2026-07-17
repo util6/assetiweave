@@ -427,7 +427,8 @@ fn create_mount_symlink(
         )
     })?;
     fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    create_symlink(&source_path, target_path)
+    crate::backend::host_filesystem::HostFilesystem::current()
+        .create_symlink(&source_path, target_path)
 }
 
 fn prepare_target_for_mount_symlink(asset: &Asset, target_path: &Path) -> AppResult<()> {
@@ -522,9 +523,13 @@ fn repair_mounted_symlink_to_real_source(
     }
 
     let previous_link = fs::read_link(&target_path).map_err(|error| error.to_string())?;
-    fs::remove_file(&target_path).map_err(|error| error.to_string())?;
-    if let Err(error) = create_symlink(&expected_source_path, &target_path) {
-        create_symlink(&previous_link, &target_path).ok();
+    let filesystem = crate::backend::host_filesystem::HostFilesystem::current();
+    let previous_kind = filesystem.symlink_kind(&target_path)?;
+    filesystem.remove_symlink(&target_path)?;
+    if let Err(error) = filesystem.create_symlink(&expected_source_path, &target_path) {
+        filesystem
+            .create_symlink_with_kind(&previous_link, &target_path, previous_kind)
+            .ok();
         return Err(error);
     }
 
@@ -533,8 +538,10 @@ fn repair_mounted_symlink_to_real_source(
         repaired.state,
         crate::backend::targeting::PhysicalMountState::Mounted
     ) {
-        fs::remove_file(&target_path).ok();
-        create_symlink(&previous_link, &target_path).ok();
+        filesystem.remove_symlink(&target_path).ok();
+        filesystem
+            .create_symlink_with_kind(&previous_link, &target_path, previous_kind)
+            .ok();
         return Err(format!(
             "ghost symlink repair verification failed: {}",
             repaired.target_path
@@ -588,7 +595,9 @@ fn persist_verified_unmount(
 
 fn ensure_target_within_profile(profile: &TargetProfile, target_path: &Path) -> AppResult<()> {
     let target_dir = crate::backend::targeting::target_dir(profile)?;
-    if !target_path.starts_with(&target_dir) {
+    if !crate::backend::host_filesystem::HostFilesystem::current()
+        .is_within(target_path, &target_dir)
+    {
         return Err(format!(
             "refusing to write outside profile target directory: {}",
             target_path.display()
@@ -597,36 +606,17 @@ fn ensure_target_within_profile(profile: &TargetProfile, target_path: &Path) -> 
     Ok(())
 }
 
-#[cfg(unix)]
-fn create_symlink(source: &Path, target: &Path) -> AppResult<()> {
-    std::os::unix::fs::symlink(source, target).map_err(|error| error.to_string())
-}
-
-#[cfg(windows)]
-fn create_symlink(source: &Path, target: &Path) -> AppResult<()> {
-    if source.is_dir() {
-        std::os::windows::fs::symlink_dir(source, target)
-    } else {
-        std::os::windows::fs::symlink_file(source, target)
-    }
-    .map_err(|error| error.to_string())
-}
-
 fn remove_created_mount_symlink(target_path: &Path) -> AppResult<()> {
     let metadata = fs::symlink_metadata(target_path).map_err(|error| error.to_string())?;
     if !metadata.file_type().is_symlink() {
         return Ok(());
     }
-    fs::remove_file(target_path).map_err(|error| error.to_string())
+    crate::backend::host_filesystem::HostFilesystem::current().remove_symlink(target_path)
 }
 
 fn remove_mounted_symlink(target_path: &str) -> AppResult<()> {
     let path = Path::new(target_path);
-    let metadata = fs::symlink_metadata(path).map_err(|error| error.to_string())?;
-    if !metadata.file_type().is_symlink() {
-        return Err(format!("target is not a symlink: {}", path.display()));
-    }
-    fs::remove_file(path).map_err(|error| error.to_string())
+    crate::backend::host_filesystem::HostFilesystem::current().remove_symlink(path)
 }
 
 pub(super) fn asset_mount_status(
