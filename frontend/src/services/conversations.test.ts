@@ -507,11 +507,47 @@ describe("conversation services", () => {
       }),
     ).toEqual({
       sourceCount: 2,
+      incrementalStatsAvailable: false,
+      discoveredSessionCount: 0,
       changedSessionCount: 5,
       skippedSessionCount: 7,
+      retainedSessionCount: 0,
       turnCount: 18,
       warningCount: 1,
       errorCount: 1,
+    });
+  });
+
+  it("summarizes incremental discovery, active, skipped, and retained sessions", () => {
+    const summary = summarizeConversationSyncTask({
+      id: "sync-incremental",
+      status: "completed",
+      source_id: null,
+      adapter_id: null,
+      dry_run: false,
+      started_at: "2026-07-16T00:00:00Z",
+      finished_at: "2026-07-16T00:00:01Z",
+      result: {
+        results: [{
+          incremental: true,
+          session_count: 20,
+          active_session_count: 2,
+          skipped_session_count: 18,
+          retained_session_count: 3,
+          turn_count: 4,
+          warning_count: 0,
+        }],
+        errors: [],
+      },
+      error: null,
+    });
+
+    expect(summary).toMatchObject({
+      incrementalStatsAvailable: true,
+      discoveredSessionCount: 20,
+      changedSessionCount: 2,
+      skippedSessionCount: 18,
+      retainedSessionCount: 3,
     });
   });
 });

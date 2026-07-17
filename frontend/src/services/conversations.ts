@@ -296,16 +296,22 @@ export interface ConversationSyncTaskSnapshot {
 
 export interface ConversationSyncSummaryCounts {
   sourceCount: number;
+  incrementalStatsAvailable: boolean;
+  discoveredSessionCount: number;
   changedSessionCount: number;
   skippedSessionCount: number;
+  retainedSessionCount: number;
   turnCount: number;
   warningCount: number;
   errorCount: number;
 }
 
 interface ConversationSyncResultItem {
+  incremental?: unknown;
   session_count?: unknown;
+  active_session_count?: unknown;
   skipped_session_count?: unknown;
+  retained_session_count?: unknown;
   turn_count?: unknown;
   warning_count?: unknown;
 }
@@ -326,11 +332,21 @@ export function summarizeConversationSyncTask(
     (summary, rawResult) => {
       const result = isRecord(rawResult) ? (rawResult as ConversationSyncResultItem) : {};
       const sessionCount = numberValue(result.session_count);
+      const activeSessionCount = numberValue(result.active_session_count);
       const skippedSessionCount = numberValue(result.skipped_session_count);
+      const hasActiveSessionCount = result.active_session_count !== undefined;
       return {
         sourceCount: summary.sourceCount + 1,
-        changedSessionCount: summary.changedSessionCount + Math.max(0, sessionCount - skippedSessionCount),
+        incrementalStatsAvailable:
+          summary.incrementalStatsAvailable || result.incremental === true,
+        discoveredSessionCount:
+          summary.discoveredSessionCount + (result.incremental === true ? sessionCount : 0),
+        changedSessionCount:
+          summary.changedSessionCount +
+          (hasActiveSessionCount ? activeSessionCount : Math.max(0, sessionCount - skippedSessionCount)),
         skippedSessionCount: summary.skippedSessionCount + skippedSessionCount,
+        retainedSessionCount:
+          summary.retainedSessionCount + numberValue(result.retained_session_count),
         turnCount: summary.turnCount + numberValue(result.turn_count),
         warningCount: summary.warningCount + numberValue(result.warning_count),
         errorCount: summary.errorCount,
@@ -338,8 +354,11 @@ export function summarizeConversationSyncTask(
     },
     {
       sourceCount: 0,
+      incrementalStatsAvailable: false,
+      discoveredSessionCount: 0,
       changedSessionCount: 0,
       skippedSessionCount: 0,
+      retainedSessionCount: 0,
       turnCount: 0,
       warningCount: 0,
       errorCount: errors.length,
@@ -960,7 +979,9 @@ export async function syncConversations(
             dry_run: Boolean(params.dry_run),
             record_kind: recordKind,
             session_count: fallbackSessions.length,
+            active_session_count: fallbackSessions.length,
             skipped_session_count: 0,
+            retained_session_count: 0,
             turn_count: fallbackSessions.reduce((total, session) => total + session.turn_count, 0),
             warning_count: 0,
             warnings: [],

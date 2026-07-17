@@ -2637,14 +2637,24 @@ function formatConversationSyncSummary(
 
   return t(
     recordKind === "web"
-      ? summary.errorCount > 0
-        ? "conversation.sync.web.summaryWithErrors"
-        : "conversation.sync.web.summary"
-      : summary.errorCount > 0
-        ? "conversation.sync.summaryWithErrors"
-        : "conversation.sync.summary",
+      ? summary.incrementalStatsAvailable
+        ? summary.errorCount > 0
+          ? "conversation.sync.web.incrementalSummaryWithErrors"
+          : "conversation.sync.web.incrementalSummary"
+        : summary.errorCount > 0
+          ? "conversation.sync.web.summaryWithErrors"
+          : "conversation.sync.web.summary"
+      : summary.incrementalStatsAvailable
+        ? summary.errorCount > 0
+          ? "conversation.sync.incrementalSummaryWithErrors"
+          : "conversation.sync.incrementalSummary"
+        : summary.errorCount > 0
+          ? "conversation.sync.summaryWithErrors"
+          : "conversation.sync.summary",
     {
       errors: summary.errorCount,
+      discovered: summary.discoveredSessionCount,
+      retained: summary.retainedSessionCount,
       sessions: summary.changedSessionCount,
       skipped: summary.skippedSessionCount,
       sources: summary.sourceCount,
