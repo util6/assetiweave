@@ -2,19 +2,38 @@
   "schema_version": 1,
   "package_id": "io.github.util6.opencode-session",
   "name": "OpenCode Session Parser",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "min_core_version": "0.5.0",
   "record_kind": "session",
   "adapter_manifest": "conversation-adapter.json",
-  "capabilities": ["read_session", "export_markdown"],
+  "capabilities": [
+    "read_session",
+    "export_markdown"
+  ],
   "runtime": {
     "protocol": "stdio-ndjson-v1"
   },
   "changelog": [
     {
+      "version": "1.1.0",
+      "date": "2026-07-16",
+      "notes": [
+        "Discover session descriptors and read only sessions whose source version changed."
+      ]
+    },
+    {
+      "version": "1.0.1",
+      "date": "2026-07-15",
+      "notes": [
+        "Migrate package ID to reverse domain namespace format."
+      ]
+    },
+    {
       "version": "1.0.0",
       "date": "2026-06-28",
-      "notes": ["Initial package manifest for OpenCode session parsing."]
+      "notes": [
+        "Initial package manifest for OpenCode session parsing."
+      ]
     }
   ]
 }

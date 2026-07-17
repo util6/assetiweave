@@ -37,8 +37,19 @@ function sha256(text) {
   return createHash("sha256").update(text).digest("hex");
 }
 
-function sourceFingerprint(text) {
-  return sha256(`${CONTENT_CARD_SCHEMA_VERSION}\0${text}`);
+function fileVersionToken(filePath, updatedAt = null) {
+  const stat = statSync(filePath);
+  return sha256(`${CONTENT_CARD_SCHEMA_VERSION}\0${updatedAt ?? ""}\0${stat.size}\0${stat.mtimeMs}`);
+}
+
+function readStableFile(filePath, updatedAt = null) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const before = fileVersionToken(filePath, updatedAt);
+    const text = readFileSync(filePath, "utf8");
+    const after = fileVersionToken(filePath, updatedAt);
+    if (before === after) return { text, versionToken: after };
+  }
+  throw new Error(`session changed while being read: ${filePath}`);
 }
 
 function sqliteJson(dbPath, sql) {
@@ -567,7 +578,7 @@ function normalizeTurns(text) {
   return { turns, projectPath };
 }
 
-function readSession() {
+function sessionRows() {
   let location = expandPath(input.source?.location);
   if (!location) return [];
   let dbPath = location;
@@ -585,11 +596,28 @@ function readSession() {
   if (!idCol || !rolloutCol) return [];
   const titleCol = pick(columns, ["title", "name"]);
   const updatedCol = pick(columns, ["updated_at", "last_updated_at", "mtime", "created_at"]);
-  const sql = `SELECT ${quoteIdent(idCol)} AS id, ${quoteIdent(rolloutCol)} AS rollout_path, ${titleCol ? quoteIdent(titleCol) : "NULL"} AS title, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at FROM threads ORDER BY rowid DESC LIMIT 500`;
-  return sqliteJson(dbPath, sql).flatMap((row) => {
+  const sql = `SELECT ${quoteIdent(idCol)} AS id, ${quoteIdent(rolloutCol)} AS rollout_path, ${titleCol ? quoteIdent(titleCol) : "NULL"} AS title, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at FROM threads ORDER BY rowid DESC`;
+  return sqliteJson(dbPath, sql).map((row) => ({ ...row, rollout_path: expandPath(row.rollout_path) }));
+}
+
+function listSessions() {
+  return sessionRows().flatMap((row) => {
+    if (!row.rollout_path || !existsSync(row.rollout_path)) return [];
+    return [{
+      external_id: String(row.id),
+      updated_at: row.updated_at == null ? null : String(row.updated_at),
+      source_locator: row.rollout_path,
+      version_token: fileVersionToken(row.rollout_path, row.updated_at),
+    }];
+  });
+}
+
+function readSession() {
+  const requestedSessionId = input.params?.session_id ?? null;
+  return sessionRows().filter((row) => !requestedSessionId || String(row.id) === String(requestedSessionId)).flatMap((row) => {
     const rolloutPath = expandPath(row.rollout_path);
     if (!rolloutPath || !existsSync(rolloutPath)) return [];
-    const text = readFileSync(rolloutPath, "utf8");
+    const { text, versionToken } = readStableFile(rolloutPath, row.updated_at);
     const parsed = normalizeTurns(text);
     const turns = displayTurns(parsed.turns);
     if (!turns.length) return [];
@@ -600,7 +628,7 @@ function readSession() {
       started_at: turns[0]?.started_at ?? null,
       updated_at: row.updated_at == null ? null : String(row.updated_at),
       source_locator: rolloutPath,
-      source_fingerprint: sourceFingerprint(text),
+      source_fingerprint: versionToken,
       turns,
     })];
   });
@@ -713,8 +741,12 @@ function cardString(value) {
 }
 
 try {
-  if (input.method === "probe" || input.method === "list_sessions") {
+  if (input.method === "probe") {
     emit("complete", { item: { session_count: 0 } });
+  } else if (input.method === "list_sessions") {
+    const descriptors = listSessions();
+    for (const descriptor of descriptors) emit("item", { item: { kind: "session_descriptor", ...descriptor } });
+    emit("complete", { item: { session_count: descriptors.length, snapshot_complete: true } });
   } else if (input.method === "read_session") {
     const sessions = readSession();
     for (const session of sessions) emit("item", { item: { kind: "session", session } });

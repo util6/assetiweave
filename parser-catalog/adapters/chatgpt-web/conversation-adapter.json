@@ -2,13 +2,14 @@
   "schema_version": 1,
   "id": "chatgpt-web",
   "name": "ChatGPT Web",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "protocol_version": 1,
   "command": [
     "adapter.js"
   ],
   "capabilities": [
     "probe",
+    "list_sessions",
     "read_session",
     "web_records"
   ],

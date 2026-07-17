@@ -27,8 +27,19 @@ function sha256(text) {
   return createHash("sha256").update(text).digest("hex");
 }
 
-function sourceFingerprint(text) {
-  return sha256(`${CONTENT_CARD_SCHEMA_VERSION}\0${text}`);
+function fileVersionToken(filePath) {
+  const stat = statSync(filePath);
+  return sha256(`${CONTENT_CARD_SCHEMA_VERSION}\0${stat.size}\0${stat.mtimeMs}`);
+}
+
+function readStableFile(filePath) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const before = fileVersionToken(filePath);
+    const text = readFileSync(filePath, "utf8");
+    const after = fileVersionToken(filePath);
+    if (before === after) return { text, versionToken: after };
+  }
+  throw new Error(`session changed while being read: ${filePath}`);
 }
 
 function compact(value) {
@@ -104,12 +115,12 @@ function splitMarkdownParts(role, text) {
   return parts;
 }
 
-function collectJsonlFiles(root, limit = 1000) {
+function collectJsonlFiles(root) {
   if (!existsSync(root)) return [];
   if (statSync(root).isFile()) return root.endsWith(".jsonl") ? [root] : [];
   const files = [];
   const stack = [root];
-  while (stack.length && files.length < limit) {
+  while (stack.length) {
     const dir = stack.pop();
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const fullPath = path.join(dir, entry.name);
@@ -117,7 +128,6 @@ function collectJsonlFiles(root, limit = 1000) {
         stack.push(fullPath);
       } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
         files.push(fullPath);
-        if (files.length >= limit) break;
       }
     }
   }
@@ -571,8 +581,11 @@ function titleFromFile(filePath) {
 function readSession() {
   const location = expandPath(input.source?.location);
   if (!location || !existsSync(location)) return [];
-  return collectJsonlFiles(location).flatMap((filePath) => {
-    const text = readFileSync(filePath, "utf8");
+  const requestedSessionId = input.params?.session_id ?? null;
+  return collectJsonlFiles(location).filter((filePath) =>
+    !requestedSessionId || path.basename(filePath, ".jsonl") === String(requestedSessionId)
+  ).flatMap((filePath) => {
+    const { text, versionToken } = readStableFile(filePath);
     const parsed = parseJsonl(text);
     const turns = displayTurns(parsed.turns);
     if (!turns.length) return [];
@@ -583,9 +596,23 @@ function readSession() {
       started_at: turns[0]?.started_at ?? null,
       updated_at: turns.at(-1)?.ended_at ?? null,
       source_locator: filePath,
-      source_fingerprint: sourceFingerprint(text),
+      source_fingerprint: versionToken,
       turns,
     }];
+  });
+}
+
+function listSessions() {
+  const location = expandPath(input.source?.location);
+  if (!location || !existsSync(location)) return [];
+  return collectJsonlFiles(location).map((filePath) => {
+    const stat = statSync(filePath);
+    return {
+      external_id: path.basename(filePath, ".jsonl") || "claude-session",
+      updated_at: stat.mtime.toISOString(),
+      source_locator: filePath,
+      version_token: fileVersionToken(filePath),
+    };
   });
 }
 
@@ -705,8 +732,12 @@ function cardString(value) {
 }
 
 try {
-  if (input.method === "probe" || input.method === "list_sessions") {
+  if (input.method === "probe") {
     emit("complete", { item: { session_count: 0 } });
+  } else if (input.method === "list_sessions") {
+    const descriptors = listSessions();
+    for (const descriptor of descriptors) emit("item", { item: { kind: "session_descriptor", ...descriptor } });
+    emit("complete", { item: { session_count: descriptors.length, snapshot_complete: true } });
   } else if (input.method === "read_session") {
     const sessions = readSession();
     for (const session of sessions) emit("item", { item: { kind: "session", session } });

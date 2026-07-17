@@ -25,11 +25,17 @@ function expandPath(value) {
   return value;
 }
 
-function sourceFingerprint(filePath) {
+function sessionVersionToken(row) {
   return createHash("sha256")
     .update(CONTENT_CARD_SCHEMA_VERSION)
     .update("\0")
-    .update(readFileSync(filePath))
+    .update(String(row.id))
+    .update("\0")
+    .update(String(row.updated_at ?? ""))
+    .update("\0")
+    .update(String(row.message_version ?? 0))
+    .update("\0")
+    .update(String(row.part_version ?? 0))
     .digest("hex");
 }
 
@@ -454,7 +460,7 @@ function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
   return turnsBySession;
 }
 
-function readSession() {
+function readSessions(includeTurns) {
   const dbPath = expandPath(input.source?.location);
   if (!dbPath || !existsSync(dbPath)) return [];
   const sessionColumns = sqliteJson(dbPath, "PRAGMA table_info(session)").map((row) => row.name);
@@ -465,20 +471,32 @@ function readSession() {
   const titleCol = pick(sessionColumns, ["title", "name"]);
   const projectCol = pick(sessionColumns, ["project", "project_path", "cwd", "directory", "path"]);
   const updatedCol = pick(sessionColumns, ["updated_at", "time_updated", "timeUpdated", "created_at"]);
+  const messageSessionCol = pick(messageColumns, ["session_id", "sessionID", "session"]);
+  const messageIdCol = pick(messageColumns, ["id", "message_id"]);
+  const partSessionCol = pick(partColumns, ["session_id", "sessionID", "session"]);
+  const partMessageCol = pick(partColumns, ["message_id", "messageID", "message"]);
+  if (!messageSessionCol) return [];
   const requestedSessionId = input.params?.session_id ?? null;
-  const sessionWhere = requestedSessionId ? `WHERE ${quoteIdent(idCol)} = ${sqlString(requestedSessionId)}` : "";
-  const sessionSql = `SELECT ${quoteIdent(idCol)} AS id, ${titleCol ? quoteIdent(titleCol) : "NULL"} AS title, ${projectCol ? quoteIdent(projectCol) : "NULL"} AS project_path, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at FROM session ${sessionWhere} ORDER BY rowid DESC LIMIT 500`;
-  const fingerprint = sourceFingerprint(dbPath);
+  const sessionWhere = requestedSessionId ? `WHERE s.${quoteIdent(idCol)} = ${sqlString(requestedSessionId)}` : "";
+  const messageVersionExpr = `(SELECT COALESCE(MAX(m.rowid), 0) FROM message m WHERE m.${quoteIdent(messageSessionCol)} = s.${quoteIdent(idCol)})`;
+  const partVersionExpr = partSessionCol
+    ? `(SELECT COALESCE(MAX(p.rowid), 0) FROM part p WHERE p.${quoteIdent(partSessionCol)} = s.${quoteIdent(idCol)})`
+    : messageIdCol && partMessageCol
+      ? `(SELECT COALESCE(MAX(p.rowid), 0) FROM part p JOIN message m ON p.${quoteIdent(partMessageCol)} = m.${quoteIdent(messageIdCol)} WHERE m.${quoteIdent(messageSessionCol)} = s.${quoteIdent(idCol)})`
+      : "0";
+  const sessionSql = `SELECT s.${quoteIdent(idCol)} AS id, ${titleCol ? `s.${quoteIdent(titleCol)}` : "NULL"} AS title, ${projectCol ? `s.${quoteIdent(projectCol)}` : "NULL"} AS project_path, ${updatedCol ? `s.${quoteIdent(updatedCol)}` : "NULL"} AS updated_at, ${messageVersionExpr} AS message_version, ${partVersionExpr} AS part_version FROM session s ${sessionWhere} ORDER BY s.rowid DESC`;
   const rows = sqliteJson(dbPath, sessionSql);
-  const turnsBySession = readTurnsBySession(
-    dbPath,
-    messageColumns,
-    partColumns,
-    rows.map((row) => String(row.id)),
-  );
+  const turnsBySession = includeTurns
+    ? readTurnsBySession(
+      dbPath,
+      messageColumns,
+      partColumns,
+      rows.map((row) => String(row.id)),
+    )
+    : new Map();
   return rows.flatMap((row) => {
     const turns = displayTurns(turnsBySession.get(String(row.id)) ?? []);
-    if (!turns.length) return [];
+    if (includeTurns && !turns.length) return [];
     return [{
       external_id: String(row.id),
       title: row.title == null ? null : String(row.title),
@@ -486,10 +504,23 @@ function readSession() {
       started_at: turns[0]?.started_at ?? null,
       updated_at: row.updated_at == null ? null : String(row.updated_at),
       source_locator: dbPath,
-      source_fingerprint: fingerprint,
+      source_fingerprint: sessionVersionToken(row),
       turns,
     }];
   });
+}
+
+function readSession() {
+  return readSessions(true);
+}
+
+function listSessions() {
+  return readSessions(false).map((session) => ({
+    external_id: session.external_id,
+    updated_at: session.updated_at,
+    source_locator: session.source_locator,
+    version_token: session.source_fingerprint,
+  }));
 }
 
 function exportMarkdown() {
@@ -599,8 +630,12 @@ function cardString(value) {
 }
 
 try {
-  if (input.method === "probe" || input.method === "list_sessions") {
+  if (input.method === "probe") {
     emit("complete", { item: { session_count: 0 } });
+  } else if (input.method === "list_sessions") {
+    const descriptors = listSessions();
+    for (const descriptor of descriptors) emit("item", { item: { kind: "session_descriptor", ...descriptor } });
+    emit("complete", { item: { session_count: descriptors.length, snapshot_complete: true } });
   } else if (input.method === "read_session") {
     const sessions = readSession();
     for (const session of sessions) emit("item", { item: { kind: "session", session } });

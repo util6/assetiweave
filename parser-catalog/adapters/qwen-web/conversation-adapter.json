@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "qwen-web",
   "name": "Qwen Web",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "protocol_version": 1,
   "runtime": {
     "type": "node",
@@ -11,6 +11,7 @@
   },
   "capabilities": [
     "probe",
+    "list_sessions",
     "read_session",
     "web_records"
   ],

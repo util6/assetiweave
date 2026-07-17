@@ -88,13 +88,13 @@ def validate_schema(conn: sqlite3.Connection) -> None:
             )
 
 
-def hash_file(path: Path) -> str:
+def session_version_token(row: sqlite3.Row) -> str:
     digest = hashlib.sha256()
     digest.update(CONTENT_CARD_SCHEMA_VERSION.encode("utf-8"))
     digest.update(b"\0")
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
+    for key in ("id", "time_updated", "message_marker", "part_marker"):
+        digest.update(str(row[key] or "").encode("utf-8"))
+        digest.update(b"\0")
     return digest.hexdigest()
 
 
@@ -517,7 +517,11 @@ def session_rows(
         else "NULL"
     )
     query = f"""
-        SELECT id, title, {project_expression} AS project_path, time_updated
+        SELECT id, title, {project_expression} AS project_path, time_updated,
+               COALESCE((SELECT MAX(CAST(time_created AS TEXT) || ':' || id)
+                         FROM message WHERE session_id = session.id), '') AS message_marker,
+               COALESCE((SELECT MAX(CAST(time_created AS TEXT) || ':' || id)
+                         FROM part WHERE session_id = session.id), '') AS part_marker
         FROM session
     """
     params: list[Any] = []
@@ -536,7 +540,6 @@ def normalized_sessions(
     max_sessions: int,
     include_turns: bool,
 ) -> list[dict[str, Any]]:
-    fingerprint = hash_file(db_path)
     sessions: list[dict[str, Any]] = []
     for row in session_rows(conn, session_id, max_sessions):
         turns = load_turns(conn, str(row["id"])) if include_turns else []
@@ -552,7 +555,7 @@ def normalized_sessions(
                 "started_at": turns[0]["started_at"] if turns else None,
                 "updated_at": timestamp(row["time_updated"]),
                 "source_locator": str(db_path),
-                "source_fingerprint": fingerprint,
+                "source_fingerprint": session_version_token(row),
                 "turns": turns,
             }
         )
@@ -597,16 +600,35 @@ def run(request: dict[str, Any]) -> None:
             max_sessions,
             include_turns=method == "read_session",
         )
+        if method == "read_session" and session_id:
+            before = session_rows(conn, session_id, 1)
+            before_token = session_version_token(before[0]) if before else None
+            returned_token = sessions[0]["source_fingerprint"] if sessions else None
+            if before_token != returned_token:
+                raise ValueError(f"ZCode session changed while it was being read: {session_id}")
     turn_count = 0
     for session in sessions:
         turn_count += len(session["turns"])
-        emit({"type": "item", "item": {"kind": "session", "session": session}})
+        if method == "list_sessions":
+            emit({
+                "type": "item",
+                "item": {
+                    "kind": "session_descriptor",
+                    "external_id": session["external_id"],
+                    "updated_at": session["updated_at"],
+                    "source_locator": session["source_locator"],
+                    "version_token": session["source_fingerprint"],
+                },
+            })
+        else:
+            emit({"type": "item", "item": {"kind": "session", "session": session}})
     emit(
         {
             "type": "complete",
             "item": {
                 "session_count": len(sessions),
                 "turn_count": turn_count,
+                "snapshot_complete": True if method == "list_sessions" else None,
             },
         }
     )

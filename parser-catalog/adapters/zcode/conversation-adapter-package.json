@@ -2,19 +2,37 @@
   "schema_version": 1,
   "package_id": "io.github.util6.zcode-session",
   "name": "ZCode Session Parser",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "min_core_version": "0.5.0",
   "record_kind": "session",
   "adapter_manifest": "conversation-adapter.json",
-  "capabilities": ["read_session"],
+  "capabilities": [
+    "read_session"
+  ],
   "runtime": {
     "protocol": "stdio-ndjson-v1"
   },
   "changelog": [
     {
+      "version": "0.2.0",
+      "date": "2026-07-16",
+      "notes": [
+        "Add per-session version descriptors for safe incremental synchronization."
+      ]
+    },
+    {
+      "version": "0.1.1",
+      "date": "2026-07-15",
+      "notes": [
+        "Migrate package ID to reverse domain namespace format."
+      ]
+    },
+    {
       "version": "0.1.0",
       "date": "2026-06-28",
-      "notes": ["Initial package manifest for ZCode session parsing."]
+      "notes": [
+        "Initial package manifest for ZCode session parsing."
+      ]
     }
   ]
 }

@@ -7,6 +7,22 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "1.1.0",
+      "channel": "stable",
+      "released_at": "2026-07-16T00:00:00Z",
+      "core_compatibility": ">=0.5.0, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.opencode-session-1.1.0-universal.zip",
+      "artifact_size": 7393,
+      "artifact_sha256": "e30e870178a534eee3067adf21c3ed9c1a3d9860ee3c269240ce70fac57c29a7",
+      "changelog_markdown": "## 1.1.0\n\n- Add safe incremental session discovery and version-aware reads.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/opencode"
+      }
+    },
+    {
       "version": "1.0.0",
       "channel": "stable",
       "released_at": "2026-07-06T00:00:00Z",

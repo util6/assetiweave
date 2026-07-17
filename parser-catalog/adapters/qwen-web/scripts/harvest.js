@@ -11,6 +11,18 @@ const detailDir = path.join(rawDir, "details");
 const normalizedDir = path.join(root, "output", "normalized");
 const normalizedFile = path.join(normalizedDir, "sessions.json");
 
+const existingSessions = new Map();
+try {
+  if (fs.existsSync(normalizedFile)) {
+    const data = JSON.parse(fs.readFileSync(normalizedFile, "utf8"));
+    if (Array.isArray(data.sessions)) {
+      for (const session of data.sessions) {
+        existingSessions.set(session.external_id, session);
+      }
+    }
+  }
+} catch {}
+
 function mkdirp(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
@@ -116,6 +128,12 @@ async function requestJSON(url, headers) {
   for (let index = 0; index < listItems.length; index++) {
     const item = listItems[index];
     const sessionID = text(item.session_id);
+    const updatedAt = text(item.update_time) || null;
+    const existing = existingSessions.get(sessionID);
+    if (existing && existing.updated_at === updatedAt) {
+      sessions.push(existing);
+      continue;
+    }
     const rounds = [];
     const seenRounds = new Set();
     for (let page = 1; page <= 100; page++) {
@@ -153,7 +171,7 @@ async function requestJSON(url, headers) {
       title: text(item.title) || null,
       project_path: null,
       started_at: text(item.create_time) || null,
-      updated_at: text(item.update_time) || null,
+      updated_at: updatedAt,
       source_locator: "https://www.qianwen.com/",
       source_fingerprint: sessionID,
       turns

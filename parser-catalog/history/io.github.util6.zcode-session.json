@@ -7,6 +7,22 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "0.2.0",
+      "channel": "stable",
+      "released_at": "2026-07-16T00:00:00Z",
+      "core_compatibility": ">=0.5.0, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.zcode-session-0.2.0-universal.zip",
+      "artifact_size": 5972,
+      "artifact_sha256": "b0cd4eb1b484cf6458ec62609da28a910ca4035cffd956ee9089bf0002108345",
+      "changelog_markdown": "## 0.2.0\n\n- Add safe incremental session discovery and version-aware reads.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/zcode"
+      }
+    },
+    {
       "version": "0.1.0",
       "channel": "stable",
       "released_at": "2026-07-06T00:00:00Z",

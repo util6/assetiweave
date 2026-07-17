@@ -36,9 +36,31 @@ const sessions = Array.isArray(payload.sessions)
   ? payload.sessions.map(normalizeSessionCards).filter(Boolean)
   : [];
 for (const session of sessions) {
+  session.source_fingerprint = sessionVersionToken(session);
+}
+if (request.method === "list_sessions") {
+  for (const session of sessions) {
+    emit({ type: "item", item: { kind: "session_descriptor", external_id: session.external_id, updated_at: session.updated_at || null, source_locator: session.source_locator || null, version_token: session.source_fingerprint } });
+  }
+  emit({ type: "complete", item: { session_count: sessions.length, snapshot_complete: true } });
+  process.exit(0);
+}
+if (request.method !== "read_session") {
+  emit({ type: "error", message: "unsupported adapter method: " + request.method });
+  process.exit(0);
+}
+const requestedSessionID = request.params && request.params.session_id;
+const selectedSessions = requestedSessionID
+  ? sessions.filter((session) => String(session.external_id) === String(requestedSessionID))
+  : sessions;
+for (const session of selectedSessions) {
   emit({ type: "item", item: { kind: "session", session } });
 }
-emit({ type: "complete", item: { session_count: sessions.length } });
+emit({ type: "complete", item: { session_count: selectedSessions.length } });
+
+function sessionVersionToken(session) {
+  return [CONTENT_CARD_SCHEMA, session.external_id || "", session.updated_at || "", session.source_fingerprint || ""].join(":");
+}
 
 function normalizeSessionCards(session) {
   if (!session || typeof session !== "object") return session;
