@@ -120,7 +120,7 @@ export function SkillBackupLibraryDialog({
               onChange={(event) => setRootPath(event.target.value)}
               onPick={() => void handlePickDirectory()}
               pickLabel={t("backup.dialog.pickDirectory")}
-              placeholder={settings?.default_root_path ? abbreviateHomePath(settings.default_root_path) : "~/.assetiweave/library/skills"}
+              placeholder={settings?.display_default_root_path ?? (settings?.default_root_path ? abbreviateHomePath(settings.default_root_path) : "~/.assetiweave/library/skills")}
               ref={inputRef}
               value={rootPath}
             />
@@ -128,8 +128,8 @@ export function SkillBackupLibraryDialog({
 
           {settings && (
             <div className="grid gap-2 rounded-lg border border-theme-control-border bg-theme-control/65 p-3">
-              <ReadonlyRow label={t("backup.field.currentPath")} value={abbreviateHomePath(settings.expanded_root_path)} />
-              <ReadonlyRow label={t("backup.field.defaultPath")} value={abbreviateHomePath(settings.default_root_path)} />
+              <ReadonlyRow label={t("backup.field.currentPath")} value={settings.display_root_path ?? abbreviateHomePath(settings.expanded_root_path)} />
+              <ReadonlyRow label={t("backup.field.defaultPath")} value={settings.display_default_root_path ?? abbreviateHomePath(settings.default_root_path)} />
               <ReadonlyRow label={t("backup.field.mode")} value={settings.is_default_root ? t("backup.mode.default") : t("backup.mode.custom")} />
             </div>
           )}

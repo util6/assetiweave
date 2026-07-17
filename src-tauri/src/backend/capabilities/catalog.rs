@@ -86,10 +86,13 @@ fn build_skill_backup_settings(
         .find(|source| source.id == SKILL_BACKUP_SOURCE_ID)
         .unwrap_or_else(|| assetiweave_library_source_for_tenant(tenant_id));
     let expanded_root = expand_path(&source.root_path)?;
+    let default_root_path = normalize_path_for_storage(&default_root.to_string_lossy())?;
     Ok(SkillBackupSettings {
+        display_root_path: display_path(&source.root_path)?,
+        display_default_root_path: display_path(&default_root_path)?,
         root_path: source.root_path,
         expanded_root_path: expanded_root.to_string_lossy().to_string(),
-        default_root_path: normalize_path_for_storage(&default_root.to_string_lossy())?,
+        default_root_path,
         is_default_root: same_path_or_text(&expanded_root, &default_root),
         exists: expanded_root.exists(),
     })
@@ -166,25 +169,19 @@ fn build_catalog_asset_entries(assets: Vec<Asset>, sources: &[Source]) -> Vec<Ca
                 continue;
             }
         }
-        without_identity.push(CatalogAsset {
-            backup_status: standalone_backup_status(&asset, source),
-            repository: None,
-            asset,
-        });
+        let backup_status = standalone_backup_status(&asset, source);
+        without_identity.push(catalog_asset(asset, backup_status));
     }
 
     let mut catalog_assets = without_identity;
     for mut group in content_groups.into_values() {
         if group.len() == 1 {
             let asset = group.remove(0);
-            catalog_assets.push(CatalogAsset {
-                backup_status: standalone_backup_status(
-                    &asset,
-                    source_by_id.get(asset.source_id.as_str()).copied(),
-                ),
-                repository: None,
-                asset,
-            });
+            let backup_status = standalone_backup_status(
+                &asset,
+                source_by_id.get(asset.source_id.as_str()).copied(),
+            );
+            catalog_assets.push(catalog_asset(asset, backup_status));
             continue;
         }
 
@@ -214,6 +211,7 @@ fn build_catalog_asset_entries(assets: Vec<Asset>, sources: &[Source]) -> Vec<Ca
         let backup_status = if let Some(backup_path) = backup_path {
             Some(SkillBackupAssetStatus {
                 state: SkillBackupState::BackedUp,
+                display_backup_path: display_path(&backup_path).ok(),
                 backup_path: Some(backup_path),
                 hidden_asset_ids,
             })
@@ -228,11 +226,7 @@ fn build_catalog_asset_entries(assets: Vec<Asset>, sources: &[Source]) -> Vec<Ca
             })
         };
 
-        catalog_assets.push(CatalogAsset {
-            asset: canonical,
-            backup_status,
-            repository: None,
-        });
+        catalog_assets.push(catalog_asset(canonical, backup_status));
     }
 
     catalog_assets.sort_by(|left, right| {
@@ -264,12 +258,24 @@ fn attach_git_repository_info(catalog_assets: &mut [CatalogAsset]) {
     }
 }
 
+fn catalog_asset(asset: Asset, backup_status: Option<SkillBackupAssetStatus>) -> CatalogAsset {
+    let display_path =
+        display_path(&asset.absolute_path).unwrap_or_else(|_| asset.absolute_path.clone());
+    CatalogAsset {
+        asset,
+        display_path,
+        repository: None,
+        backup_status,
+    }
+}
+
 fn standalone_backup_status(
     asset: &Asset,
     source: Option<&Source>,
 ) -> Option<SkillBackupAssetStatus> {
     backup_entry_state(asset, source).map(|state| SkillBackupAssetStatus {
         state,
+        display_backup_path: display_path(&asset.absolute_path).ok(),
         backup_path: Some(asset.absolute_path.clone()),
         hidden_asset_ids: Vec::new(),
     })
@@ -291,9 +297,7 @@ fn unavailable_backup_library_asset(asset: &Asset, source: Option<&Source>) -> b
 }
 
 fn path_is_inside_or_same(root: &Path, path: &Path) -> bool {
-    let normalized_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let normalized_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    normalized_path == normalized_root || normalized_path.starts_with(&normalized_root)
+    crate::backend::host_filesystem::HostFilesystem::current().is_within(path, root)
 }
 
 fn backup_entry_state(asset: &Asset, source: Option<&Source>) -> Option<SkillBackupState> {
@@ -327,5 +331,40 @@ fn canonical_asset_score(asset: &Asset, source: Option<&Source>) -> u8 {
             None => 25,
         },
         SourceOrigin::GitRepo | SourceOrigin::LocalFolder | SourceOrigin::Custom => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_assets_expose_portable_display_paths_without_replacing_runtime_paths() {
+        let absolute_path = dirs::home_dir()
+            .expect("home directory")
+            .join(".codex")
+            .join("skills")
+            .join("review")
+            .to_string_lossy()
+            .to_string();
+        let asset = Asset {
+            id: "review".to_string(),
+            source_id: "codex".to_string(),
+            name: "review".to_string(),
+            kind: AssetKind::Skill,
+            format: crate::backend::models::AssetFormat::Directory,
+            relative_path: "review".to_string(),
+            absolute_path: absolute_path.clone(),
+            entry_file: Some("SKILL.md".to_string()),
+            description: None,
+            content_hash: None,
+            discovered_at: "2026-07-17T00:00:00Z".to_string(),
+            updated_at: "2026-07-17T00:00:00Z".to_string(),
+        };
+
+        let catalog_asset = catalog_asset(asset, None);
+
+        assert_eq!(catalog_asset.asset.absolute_path, absolute_path);
+        assert_eq!(catalog_asset.display_path, "~/.codex/skills/review");
     }
 }

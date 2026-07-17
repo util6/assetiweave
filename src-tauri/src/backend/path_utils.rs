@@ -85,8 +85,11 @@ pub(crate) fn git_repository_for_path(path: &Path) -> Option<GitRepositoryInfo> 
     let web_url = remote_url
         .as_deref()
         .and_then(|remote| git_browser_url(remote, &root, path));
+    let root_path = root.to_string_lossy().to_string();
+    let display_root_path = display_path(&root_path).unwrap_or_else(|_| root_path.clone());
     Some(GitRepositoryInfo {
-        root_path: root.to_string_lossy().to_string(),
+        root_path,
+        display_root_path,
         remote_url,
         web_url,
     })

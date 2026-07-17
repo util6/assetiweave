@@ -119,6 +119,7 @@ pub(crate) struct AppOverview {
 pub(crate) struct CatalogAsset {
     #[serde(flatten)]
     pub(crate) asset: Asset,
+    pub(crate) display_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) repository: Option<GitRepositoryInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -128,6 +129,7 @@ pub(crate) struct CatalogAsset {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct GitRepositoryInfo {
     pub(crate) root_path: String,
+    pub(crate) display_root_path: String,
     pub(crate) remote_url: Option<String>,
     pub(crate) web_url: Option<String>,
 }
@@ -136,6 +138,7 @@ pub(crate) struct GitRepositoryInfo {
 pub(crate) struct SkillBackupAssetStatus {
     pub(crate) state: SkillBackupState,
     pub(crate) backup_path: Option<String>,
+    pub(crate) display_backup_path: Option<String>,
     pub(crate) hidden_asset_ids: Vec<String>,
 }
 
@@ -151,6 +154,8 @@ pub(crate) struct SkillBackupSettings {
     pub(crate) root_path: String,
     pub(crate) expanded_root_path: String,
     pub(crate) default_root_path: String,
+    pub(crate) display_root_path: String,
+    pub(crate) display_default_root_path: String,
     pub(crate) is_default_root: bool,
     pub(crate) exists: bool,
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { abbreviateHomePath } from "./path";
+import type { Asset } from "../types";
+import { abbreviateHomePath, displayAssetPath } from "./path";
 
 describe("path display utilities", () => {
   it("keeps already abbreviated home paths", () => {
@@ -24,5 +25,13 @@ describe("path display utilities", () => {
 
   it("leaves non-user paths unchanged", () => {
     expect(abbreviateHomePath("/Volumes/Assets/skills")).toBe("/Volumes/Assets/skills");
+  });
+
+  it("prefers the backend display path over the runtime absolute path", () => {
+    expect(displayAssetPath({
+      absolute_path: "D:\\shared\\skills\\review",
+      display_path: "~/portable-label/review",
+      relative_path: "review",
+    } as Asset)).toBe("~/portable-label/review");
   });
 });

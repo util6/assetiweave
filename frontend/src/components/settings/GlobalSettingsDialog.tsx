@@ -1009,7 +1009,7 @@ export function GlobalSettingsDialog({
                 </SettingRow>
                 <SkillBackupDirectorySetting
                   onOpen={() => setBackupDialogOpen(true)}
-                  rootPath={backupSettings?.expanded_root_path}
+                  rootPath={backupSettings?.display_root_path ?? backupSettings?.expanded_root_path}
                 />
                 {backupError && (
                   <div className="rounded-lg border border-status-remove/30 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove">

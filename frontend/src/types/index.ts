@@ -29,6 +29,7 @@ export interface Asset {
   format: AssetFormat;
   relative_path: string;
   absolute_path: string;
+  display_path?: string;
   entry_file?: string | null;
   description?: string | null;
   content_hash?: string | null;
@@ -40,6 +41,7 @@ export interface Asset {
 
 export interface GitRepositoryInfo {
   root_path: string;
+  display_root_path?: string;
   remote_url?: string | null;
   web_url?: string | null;
 }
@@ -49,6 +51,7 @@ export type SkillBackupState = "backed_up" | "downloaded";
 export interface SkillBackupAssetStatus {
   state: SkillBackupState;
   backup_path?: string | null;
+  display_backup_path?: string | null;
   hidden_asset_ids: string[];
 }
 
@@ -56,6 +59,8 @@ export interface SkillBackupSettings {
   root_path: string;
   expanded_root_path: string;
   default_root_path: string;
+  display_root_path?: string;
+  display_default_root_path?: string;
   is_default_root: boolean;
   exists: boolean;
 }

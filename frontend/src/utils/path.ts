@@ -1,7 +1,7 @@
 import type { Asset } from "../types";
 
 export function displayAssetPath(asset: Asset) {
-  return abbreviateHomePath(asset.absolute_path || asset.relative_path);
+  return asset.display_path || abbreviateHomePath(asset.absolute_path || asset.relative_path);
 }
 
 export function abbreviateHomePath(path: string) {
