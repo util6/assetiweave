@@ -238,7 +238,17 @@ fn create_symlink_with_kind(source: &Path, target: &Path, kind: SymlinkKind) -> 
         SymlinkKind::Directory => std::os::windows::fs::symlink_dir(source, target),
         SymlinkKind::File => std::os::windows::fs::symlink_file(source, target),
     }
-    .map_err(|error| error.to_string())
+    .map_err(|error| format_symlink_error(HostPlatform::Windows, error))
+}
+
+#[cfg(any(windows, test))]
+fn format_symlink_error(platform: HostPlatform, error: std::io::Error) -> String {
+    if platform == HostPlatform::Windows && error.raw_os_error() == Some(1314) {
+        return format!(
+            "Windows symlink creation requires Developer Mode or elevated permissions: {error}"
+        );
+    }
+    error.to_string()
 }
 
 #[cfg(unix)]
@@ -390,6 +400,17 @@ mod tests {
     }
 
     #[test]
+    fn windows_symlink_privilege_errors_explain_the_required_host_setting() {
+        let message = format_symlink_error(
+            HostPlatform::Windows,
+            std::io::Error::from_raw_os_error(1314),
+        );
+
+        assert!(message.contains("Developer Mode"));
+        assert!(message.contains("elevated permissions"));
+    }
+
+    #[test]
     fn copy_dir_surfaces_walk_errors_instead_of_silently_succeeding() {
         let filesystem = HostFilesystem::new(HostPlatform::current());
         let root = std::env::temp_dir().join(format!(
@@ -423,5 +444,36 @@ mod tests {
                 "expected invalid path segment: {invalid}"
             );
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_removes_broken_directory_symlinks_without_touching_the_parent() {
+        use std::os::windows::fs::FileTypeExt;
+
+        let filesystem = HostFilesystem::new(HostPlatform::Windows);
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-windows-directory-symlink-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let source = root.join("source");
+        let target = root.join("target");
+        fs::create_dir_all(&source).expect("create source directory");
+        filesystem
+            .create_symlink(&source, &target)
+            .expect("create directory symlink");
+        assert!(fs::symlink_metadata(&target)
+            .expect("target metadata")
+            .file_type()
+            .is_symlink_dir());
+
+        fs::remove_dir_all(&source).expect("remove source directory");
+        filesystem
+            .remove_symlink(&target)
+            .expect("remove broken directory symlink");
+
+        assert!(fs::symlink_metadata(&target).is_err());
+        assert!(root.is_dir());
+        fs::remove_dir_all(root).expect("remove test root");
     }
 }
