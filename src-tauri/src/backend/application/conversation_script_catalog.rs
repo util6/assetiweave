@@ -1459,12 +1459,13 @@ fn extract_catalog_artifact_bytes(
     if extract_root.join(&package_manifest).is_file() {
         return Ok(extract_root);
     }
-    let candidates = fs::read_dir(&extract_root)
-        .map_err(|error| error.to_string())?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir() && path.join(&package_manifest).is_file())
-        .collect::<Vec<_>>();
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(&extract_root).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        if path.is_dir() && path.join(&package_manifest).is_file() {
+            candidates.push(path);
+        }
+    }
     if candidates.len() == 1 {
         Ok(candidates[0].clone())
     } else {

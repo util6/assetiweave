@@ -213,7 +213,7 @@ fn encode_url_component(value: &str) -> String {
 
 pub(crate) fn detect_app_target(path: &Path) -> Option<AppKind> {
     let home = dirs::home_dir()?;
-    let normalized = normalize_absolute_path(path);
+    let filesystem = crate::backend::host_filesystem::HostFilesystem::current();
     let candidates = [
         (home.join(".codex").join("skills"), AppKind::Codex),
         (home.join(".claude").join("skills"), AppKind::Claude),
@@ -231,19 +231,15 @@ pub(crate) fn detect_app_target(path: &Path) -> Option<AppKind> {
 
     candidates
         .into_iter()
-        .find(|(candidate, _)| normalized.starts_with(&normalize_absolute_path(candidate)))
+        .find(|(candidate, _)| filesystem.is_within(path, candidate))
         .map(|(_, app_kind)| app_kind)
 }
 
 pub(crate) fn is_app_library_path(path: &Path) -> bool {
-    let normalized = normalize_absolute_path(path);
+    let filesystem = crate::backend::host_filesystem::HostFilesystem::current();
     if let Some(home) = dirs::home_dir() {
-        let tenants_root = normalize_absolute_path(&home.join(".assetiweave").join("tenants"));
-        if let Ok(relative) = normalized.strip_prefix(tenants_root) {
-            let parts = relative
-                .components()
-                .map(|component| component.as_os_str().to_string_lossy().to_string())
-                .collect::<Vec<_>>();
+        let tenants_root = home.join(".assetiweave").join("tenants");
+        if let Some(parts) = filesystem.relative_components(path, &tenants_root) {
             if parts.len() >= 3 && parts[1] == "library" && parts[2] == "skills" {
                 return true;
             }
@@ -251,7 +247,7 @@ pub(crate) fn is_app_library_path(path: &Path) -> bool {
     }
 
     legacy_skill_backup_root()
-        .map(|library_root| normalized.starts_with(&normalize_absolute_path(&library_root)))
+        .map(|library_root| filesystem.is_within(path, &library_root))
         .unwrap_or(false)
 }
 
@@ -260,10 +256,6 @@ pub(crate) fn normalize_relative_path(path: &Path) -> String {
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/")
-}
-
-fn normalize_absolute_path(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn safe_tenant_path_segment(tenant_id: &str) -> String {
@@ -306,13 +298,11 @@ pub(crate) fn hash_path(path: &Path) -> AppResult<String> {
 
 fn hash_dir(path: &Path) -> AppResult<String> {
     let mut files = Vec::new();
-    for entry in WalkDir::new(path)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_file())
-    {
-        files.push(entry.path().to_path_buf());
+    for entry in WalkDir::new(path).follow_links(false) {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if entry.file_type().is_file() {
+            files.push(entry.path().to_path_buf());
+        }
     }
     files.sort();
 

@@ -37,11 +37,16 @@ impl HostFilesystem {
     }
 
     pub(crate) fn is_within(&self, path: &Path, root: &Path) -> bool {
+        self.relative_components(path, root).is_some()
+    }
+
+    pub(crate) fn relative_components(&self, path: &Path, root: &Path) -> Option<Vec<String>> {
         let path = self.normalized_path(path);
         let root = self.normalized_path(root);
-        path.prefix == root.prefix
+        (path.prefix == root.prefix
             && path.absolute == root.absolute
-            && path.components.starts_with(&root.components)
+            && path.components.starts_with(&root.components))
+        .then(|| path.components[root.components.len()..].to_vec())
     }
 
     pub(crate) fn validate_path_segment(&self, segment: &str) -> AppResult<String> {
@@ -374,6 +379,13 @@ mod tests {
         assert!(filesystem.is_within(Path::new(r"c:\users\alice\.codex\skills\review"), root));
         assert!(!filesystem.is_within(Path::new(r"C:\Users\Alice\.codex\skills-old\review"), root));
         assert!(!filesystem.is_within(Path::new(r"C:\Users\Alice\.codex\skills\..\secrets"), root));
+        assert_eq!(
+            filesystem.relative_components(
+                Path::new(r"c:\users\alice\.codex\skills\Review\Rules"),
+                root,
+            ),
+            Some(vec!["review".to_string(), "rules".to_string()])
+        );
     }
 
     #[test]

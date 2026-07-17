@@ -18,11 +18,8 @@ pub(super) fn scan_mixed_assets(source: &Source) -> AppResult<Vec<Asset>> {
     let mut seen_skill_dirs = HashSet::new();
     let now = Utc::now().to_rfc3339();
 
-    for entry in WalkDir::new(&root)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
+    for entry in WalkDir::new(&root).follow_links(false) {
+        let entry = entry.map_err(|error| error.to_string())?;
         let path = entry.path();
         let relative = match path.strip_prefix(&root) {
             Ok(relative) if !relative.as_os_str().is_empty() => relative,

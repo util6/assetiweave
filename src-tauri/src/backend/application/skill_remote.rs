@@ -821,11 +821,11 @@ fn resolve_cloned_skill_dir(staging_dir: &Path, skill_path: Option<&str>) -> App
     }
 
     let mut candidates = Vec::new();
-    for entry in walkdir::WalkDir::new(staging_dir)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_file())
-    {
+    for entry in walkdir::WalkDir::new(staging_dir) {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
         if entry.file_name().to_str() == Some("SKILL.md") {
             if let Some(parent) = entry.path().parent() {
                 candidates.push(parent.to_path_buf());
