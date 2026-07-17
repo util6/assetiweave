@@ -51,6 +51,31 @@ fn build_plan_targets_profile_directory_directly() {
     );
 }
 
+#[test]
+fn build_plan_exposes_portable_display_paths_separately_from_runtime_paths() {
+    let asset = test_asset("asset-display");
+    let mut profile = test_profile("codex-display", true);
+    profile.target_paths = vec![dirs::home_dir()
+        .expect("home directory")
+        .join(".codex")
+        .join("skills")
+        .to_string_lossy()
+        .to_string()];
+
+    let plan = build_plan(
+        &[asset],
+        &[profile],
+        &[test_mount("asset-display", "codex-display")],
+        None,
+    );
+
+    assert!(plan.actions[0].target_path.starts_with('/'));
+    assert_eq!(
+        plan.actions[0].display_target_path.as_deref(),
+        Some("~/.codex/skills/asset-display")
+    );
+}
+
 fn test_asset(id: &str) -> Asset {
     let absolute_path = std::env::temp_dir().join(format!(
         "assetiweave-plan-source-{id}-{}",

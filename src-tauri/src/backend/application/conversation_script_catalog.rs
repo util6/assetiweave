@@ -287,13 +287,14 @@ impl AppService {
                         .map(|version| version.install_dir),
                 );
                 for install_dir in install_dirs {
-                    if !Path::new(&install_dir).exists() {
+                    let install_dir = crate::backend::path_utils::expand_path(&install_dir)?;
+                    if !install_dir.exists() {
                         continue;
                     }
                     let package_root = validate_managed_package_delete_target(
                         &managed_root,
                         &package.package_id,
-                        Path::new(&install_dir),
+                        &install_dir,
                     )?;
                     managed_paths.insert(package_root.to_string_lossy().to_string());
                 }
@@ -677,11 +678,12 @@ impl AppService {
         let delete_package =
             package.version == version && !runtime_registered && remaining_versions.is_empty();
         let managed_root = crate::backend::app_settings::conversation_adapter_dir()?;
+        let target_install_dir = crate::backend::path_utils::expand_path(&target.install_dir)?;
         let version_dir = validate_managed_package_version_delete_target(
             &managed_root,
             package_id,
             &version,
-            Path::new(&target.install_dir),
+            &target_install_dir,
         )?;
         if params.dry_run {
             return Ok(json!({
@@ -769,8 +771,9 @@ impl AppService {
             .ok_or_else(|| {
                 format!("installed package version not found: {package_id}@{version}")
             })?;
+        let target_install_dir = crate::backend::path_utils::expand_path(&target.install_dir)?;
         let validation = crate::backend::conversations::validate_conversation_adapter_package_dir(
-            Path::new(&target.install_dir),
+            &target_install_dir,
         )?;
         if validation.manifest.package_id != package_id
             || validation.manifest.version != version
@@ -877,9 +880,9 @@ impl AppService {
         package: &mut ConversationAdapterPackage,
         adapter: Option<&ConversationAdapter>,
     ) -> AppResult<()> {
-        let install_dir = Path::new(&package.install_dir);
+        let install_dir = crate::backend::path_utils::expand_path(&package.install_dir)?;
         let evaluated = crate::backend::conversations::validate_conversation_adapter_package_dir(
-            install_dir,
+            &install_dir,
         )
         .and_then(|validation| {
             if validation.manifest.package_id != package.package_id {
@@ -937,7 +940,7 @@ impl AppService {
             }
             Err(error) => {
                 package.runtime_ready = false;
-                package.runtime_gate_status = classify_runtime_gate_error(install_dir, &error);
+                package.runtime_gate_status = classify_runtime_gate_error(&install_dir, &error);
                 package.error_message = Some(error);
             }
         }
@@ -1681,6 +1684,8 @@ pub(crate) struct ConversationAdapterPackageCatalogEntry {
     pub(crate) installed_package: Option<ConversationAdapterPackage>,
     pub(crate) installed_adapter: Option<ConversationAdapter>,
     pub(crate) install_path: Option<String>,
+    pub(crate) display_install_path: Option<String>,
+    pub(crate) display_manifest_path: Option<String>,
     pub(crate) error_message: Option<String>,
 }
 
@@ -1887,6 +1892,17 @@ fn resolve_conversation_adapter_package_catalog_entries(
                 runtime_ready,
                 installed_adapter.as_ref(),
             );
+            let display_install_path = install_path
+                .as_deref()
+                .map(crate::backend::path_utils::display_path_or_original);
+            let display_manifest_path = conversation_catalog_manifest_path(
+                installed_package.as_ref(),
+                installed_adapter.as_ref(),
+                install_path.as_deref(),
+                item.manifest_file.as_deref(),
+            )
+            .as_deref()
+            .map(crate::backend::path_utils::display_path_or_original);
             ConversationAdapterPackageCatalogEntry {
                 item,
                 installed,
@@ -1896,6 +1912,8 @@ fn resolve_conversation_adapter_package_catalog_entries(
                 installed_package,
                 installed_adapter,
                 install_path,
+                display_install_path,
+                display_manifest_path,
                 error_message,
             }
         })
@@ -1994,6 +2012,12 @@ fn resolve_conversation_adapter_package_catalog_entries(
             update_available,
             runtime_ready: package.runtime_ready,
             install_path: Some(package.install_dir.clone()),
+            display_install_path: Some(crate::backend::path_utils::display_path_or_original(
+                &package.install_dir,
+            )),
+            display_manifest_path: Some(crate::backend::path_utils::display_path_or_original(
+                &package.adapter_manifest_path,
+            )),
             error_message: package.error_message.clone(),
             installed_package: Some(package.clone()),
             installed_adapter: adapter,
@@ -2019,6 +2043,13 @@ fn resolve_conversation_adapter_package_catalog_entries(
             .as_deref()
             .and_then(|path| Path::new(path).parent())
             .map(|path| path.to_string_lossy().to_string());
+        let display_install_path = install_path
+            .as_deref()
+            .map(crate::backend::path_utils::display_path_or_original);
+        let display_manifest_path = adapter
+            .manifest_path
+            .as_deref()
+            .map(crate::backend::path_utils::display_path_or_original);
         entries.push(ConversationAdapterPackageCatalogEntry {
             item: ConversationScriptCatalogItem {
                 id: adapter.id.clone(),
@@ -2070,11 +2101,36 @@ fn resolve_conversation_adapter_package_catalog_entries(
             installed_package: None,
             installed_adapter: Some(adapter.clone()),
             install_path,
+            display_install_path,
+            display_manifest_path,
             error_message: None,
         });
     }
     entries.sort_by(|left, right| left.item.name.cmp(&right.item.name));
     entries
+}
+
+fn conversation_catalog_manifest_path(
+    package: Option<&ConversationAdapterPackage>,
+    adapter: Option<&ConversationAdapter>,
+    install_path: Option<&str>,
+    manifest_file: Option<&str>,
+) -> Option<String> {
+    package
+        .map(|package| package.adapter_manifest_path.clone())
+        .or_else(|| adapter.and_then(|adapter| adapter.manifest_path.clone()))
+        .or_else(|| {
+            install_path.map(|install_path| {
+                format!(
+                    "{}/{}",
+                    install_path.trim_end_matches(['/', '\\']),
+                    manifest_file
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or("conversation-adapter.json")
+                )
+            })
+        })
 }
 
 fn package_origin_label(origin: ConversationAdapterPackageOrigin) -> &'static str {

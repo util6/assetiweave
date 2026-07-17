@@ -180,6 +180,10 @@ pub struct DeploymentAction {
     pub profile_id: String,
     pub source_path: Option<String>,
     pub target_path: String,
+    #[serde(default)]
+    pub display_source_path: Option<String>,
+    #[serde(default)]
+    pub display_target_path: Option<String>,
     pub strategy: DeploymentStrategy,
     pub reason: String,
     pub risk: RiskLevel,

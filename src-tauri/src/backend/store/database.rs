@@ -155,6 +155,7 @@ async fn seed_defaults_sqlx(pool: &SqlitePool) -> AppResult<()> {
     let tenant_id = super::tenant_repo::DEFAULT_TENANT_ID;
 
     seed_tenant_defaults_sqlx(pool, tenant_id).await?;
+    normalize_all_tenant_paths_sqlx(pool).await?;
 
     Ok(())
 }
@@ -173,11 +174,13 @@ pub(crate) async fn seed_tenant_defaults_sqlx(pool: &SqlitePool, tenant_id: &str
             super::profile_repo::upsert_profile_sqlx(pool, tenant_id, &profile).await?;
         }
     }
+    normalize_existing_profiles_sqlx(pool, tenant_id).await?;
     normalize_default_profiles_sqlx(pool, tenant_id).await?;
 
     super::conversation_repo::seed_builtin_conversation_adapters_sqlx(pool, tenant_id).await?;
     super::conversation_repo::migrate_legacy_conversation_adapter_hashes_sqlx(pool, tenant_id)
         .await?;
+    super::conversation_repo::normalize_conversation_paths_sqlx(pool, tenant_id).await?;
 
     let default_navigation_model = crate::backend::defaults::default_navigation_model();
     if count_rows(pool, tenant_id, "navigation_state").await? == 0 {
@@ -223,6 +226,29 @@ async fn ensure_library_source_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppRe
 async fn normalize_existing_sources_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
     for source in super::source_repo::load_sources_sqlx(pool, tenant_id).await? {
         super::source_repo::upsert_source_sqlx(pool, tenant_id, &source).await?;
+    }
+    Ok(())
+}
+
+async fn normalize_existing_profiles_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+    for profile in super::profile_repo::load_profiles_sqlx(pool, tenant_id).await? {
+        super::profile_repo::upsert_profile_sqlx(pool, tenant_id, &profile).await?;
+    }
+    Ok(())
+}
+
+async fn normalize_all_tenant_paths_sqlx(pool: &SqlitePool) -> AppResult<()> {
+    let tenant_ids = sqlx::query_scalar::<_, String>("SELECT id FROM tenants")
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    for tenant_id in tenant_ids {
+        if tenant_id == super::tenant_repo::DEFAULT_TENANT_ID {
+            continue;
+        }
+        normalize_existing_sources_sqlx(pool, &tenant_id).await?;
+        normalize_existing_profiles_sqlx(pool, &tenant_id).await?;
+        super::conversation_repo::normalize_conversation_paths_sqlx(pool, &tenant_id).await?;
     }
     Ok(())
 }

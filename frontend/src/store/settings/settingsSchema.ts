@@ -472,7 +472,12 @@ function isAbsoluteRuntimePath(value: string) {
   return (
     value.startsWith("/") ||
     value.startsWith("\\") ||
-    /^[A-Za-z]:[\\/]/.test(value)
+    /^[A-Za-z]:[\\/]/.test(value) ||
+    value === "~" ||
+    value.startsWith("~/") ||
+    value.startsWith("~\\") ||
+    /^@(config|local-data|data|cache)(?:[\\/]|$)/.test(value) ||
+    /^%(USERPROFILE|APPDATA|LOCALAPPDATA)%(?:[\\/]|$)/i.test(value)
   );
 }
 

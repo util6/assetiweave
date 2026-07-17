@@ -36,11 +36,12 @@ pub(super) fn discover_external_adapter_sessions(
     })?;
     let validation = validate_external_adapter_manifest(manifest_path)?;
     validate_external_adapter_manifest_for_method(adapter, &validation, "list_sessions")?;
+    let source_location = resolve_source_location_for_adapter(source)?;
     let request = json!({
         "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
         "request_id": format!("list-{}-{}", source.id, Utc::now().timestamp_millis()),
         "method": "list_sessions",
-        "source": { "location": source.location, "config": source_config_value(source)? },
+        "source": { "location": source_location, "config": source_config_value(source)? },
         "params": { "cursor": null }
     });
     let result = run_external_adapter(
@@ -69,11 +70,12 @@ fn run_external_adapter_read_session(
     })?;
     let validation = validate_external_adapter_manifest(manifest_path)?;
     validate_external_adapter_manifest_for_method(adapter, &validation, "read_session")?;
+    let source_location = resolve_source_location_for_adapter(source)?;
     let request = json!({
         "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
         "request_id": format!("sync-{}-{}", source.id, Utc::now().timestamp_millis()),
         "method": "read_session",
-        "source": { "location": source.location, "config": source_config_value(source)? },
+        "source": { "location": source_location, "config": source_config_value(source)? },
         "params": { "session_id": session_id }
     });
     run_external_adapter(
@@ -102,11 +104,12 @@ pub(crate) fn export_external_adapter_markdown(
     })?;
     let validation = validate_external_adapter_manifest(manifest_path)?;
     validate_external_adapter_manifest_for_method(adapter, &validation, "export_markdown")?;
+    let source_location = resolve_source_location_for_adapter(source)?;
     let request = json!({
         "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
         "request_id": format!("export-{}-{}", detail.session.id, Utc::now().timestamp_millis()),
         "method": "export_markdown",
-        "source": { "location": source.location, "config": source_config_value(source)? },
+        "source": { "location": source_location, "config": source_config_value(source)? },
         "params": {
             "session_detail": detail,
             "question_ids": question_ids,
@@ -128,6 +131,16 @@ pub(crate) fn export_external_adapter_markdown(
             adapter.id
         )
     })
+}
+
+pub(super) fn resolve_source_location_for_adapter(
+    source: &ConversationSource,
+) -> AppResult<String> {
+    if source.location.contains("://") {
+        return Ok(source.location.clone());
+    }
+    crate::backend::path_utils::expand_path(&source.location)
+        .map(|path| path.to_string_lossy().to_string())
 }
 
 fn validate_external_adapter_for_method(

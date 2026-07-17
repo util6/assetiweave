@@ -184,6 +184,9 @@ pub(super) fn adapter_runtime_requirements(
         let Some(manifest_path) = adapter.manifest_path.as_deref() else {
             continue;
         };
+        let Ok(manifest_path) = crate::backend::path_utils::expand_path(manifest_path) else {
+            continue;
+        };
         let Ok(manifest_text) = fs::read_to_string(manifest_path) else {
             continue;
         };
@@ -605,8 +608,10 @@ pub(super) fn runtime_program_from_settings(
         ConversationAdapterRuntimeKind::Executable => return None,
     };
     let program = overrides.get(key)?.as_str()?.trim();
-    (!program.is_empty() && program.len() <= 4096 && is_absolute_runtime_program(program))
-        .then(|| PathBuf::from(program))
+    if program.is_empty() || program.len() > 4096 || !is_absolute_runtime_program(program) {
+        return None;
+    }
+    crate::backend::path_utils::expand_path(program).ok()
 }
 
 fn default_runtime_program(kind: &ConversationAdapterRuntimeKind) -> PathBuf {
@@ -622,7 +627,25 @@ fn default_runtime_program(kind: &ConversationAdapterRuntimeKind) -> PathBuf {
 }
 
 fn is_absolute_runtime_program(program: &str) -> bool {
-    Path::new(program).is_absolute() || looks_like_windows_rooted_runtime_program(program)
+    Path::new(program).is_absolute()
+        || looks_like_windows_rooted_runtime_program(program)
+        || is_portable_runtime_program(program)
+}
+
+fn is_portable_runtime_program(program: &str) -> bool {
+    let program = program.replace('\\', "/").to_ascii_lowercase();
+    [
+        "~",
+        "@config",
+        "@local-data",
+        "@data",
+        "@cache",
+        "%userprofile%",
+        "%appdata%",
+        "%localappdata%",
+    ]
+    .iter()
+    .any(|anchor| program == *anchor || program.starts_with(&format!("{anchor}/")))
 }
 
 fn looks_like_windows_rooted_runtime_program(program: &str) -> bool {

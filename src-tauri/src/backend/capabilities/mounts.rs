@@ -100,14 +100,7 @@ fn inspect_asset_mount_statuses(
     {
         for profile in profiles {
             let inspection = crate::backend::targeting::inspect_mount(profile, asset)?;
-            statuses.push(AssetMountStatus {
-                asset_id: asset.id.clone(),
-                profile_id: profile.id.clone(),
-                target_dir: inspection.target_dir,
-                target_path: inspection.target_path,
-                state: PhysicalMountStateDto::from(inspection.state),
-                linked_source: inspection.linked_source,
-            });
+            statuses.push(asset_mount_status(&asset.id, &profile.id, inspection));
         }
     }
 
@@ -619,16 +612,25 @@ fn remove_mounted_symlink(target_path: &str) -> AppResult<()> {
     crate::backend::host_filesystem::HostFilesystem::current().remove_symlink(path)
 }
 
-pub(super) fn asset_mount_status(
+pub(crate) fn asset_mount_status(
     asset_id: &str,
     profile_id: &str,
     inspection: crate::backend::targeting::MountInspection,
 ) -> AssetMountStatus {
+    let display_target_dir = display_path_or_original(&inspection.target_dir);
+    let display_target_path = display_path_or_original(&inspection.target_path);
+    let display_linked_source = inspection
+        .linked_source
+        .as_deref()
+        .map(display_path_or_original);
     AssetMountStatus {
         asset_id: asset_id.to_string(),
         profile_id: profile_id.to_string(),
         target_dir: inspection.target_dir,
         target_path: inspection.target_path,
+        display_target_dir,
+        display_target_path,
+        display_linked_source,
         state: PhysicalMountStateDto::from(inspection.state),
         linked_source: inspection.linked_source,
     }

@@ -77,6 +77,12 @@ pub(crate) fn build_plan(
             asset_id: Some(asset.id.clone()),
             profile_id: profile.id.clone(),
             source_path: Some(asset.absolute_path.clone()),
+            display_source_path: Some(crate::backend::path_utils::display_path_or_original(
+                &asset.absolute_path,
+            )),
+            display_target_path: Some(crate::backend::path_utils::display_path_or_original(
+                &target_path,
+            )),
             target_path,
             strategy: mount.strategy,
             reason,

@@ -2,6 +2,7 @@ use crate::backend::dto::AppResult;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) enum HostPlatform {
     Macos,
     Windows,
@@ -121,6 +122,19 @@ impl HostPathResolver {
     pub(crate) fn normalize_input(&self, raw: &str) -> AppResult<StoredPath> {
         let spec = self.parse(raw)?;
         if spec.anchor == PathAnchor::Absolute {
+            for (anchor, directory) in [
+                ("@cache", &self.directories.cache),
+                ("@config", &self.directories.config),
+                ("@local-data", &self.directories.local_data),
+                ("@data", &self.directories.data),
+            ] {
+                if self.same_directory(directory, &self.directories.home) {
+                    continue;
+                }
+                if let Some(relative) = self.strip_directory_prefix(&spec.value, directory) {
+                    return Ok(StoredPath(format_anchored(anchor, &relative)));
+                }
+            }
             if let Some(relative) = self.strip_directory_prefix(&spec.value, &self.directories.home)
             {
                 return Ok(StoredPath(format_anchored("~", &relative)));
@@ -256,6 +270,11 @@ impl HostPathResolver {
         }
     }
 
+    fn same_directory(&self, left: &Path, right: &Path) -> bool {
+        self.comparison_text(&self.portable_text(&left.to_string_lossy()))
+            == self.comparison_text(&self.portable_text(&right.to_string_lossy()))
+    }
+
     fn host_text(&self, value: &str) -> String {
         if self.platform == HostPlatform::Windows {
             value.replace('/', "\\")
@@ -373,6 +392,31 @@ mod tests {
                 .expect("display config path")
                 .as_str(),
             "~/AppData/Roaming/Cursor/skills"
+        );
+    }
+
+    #[test]
+    fn absolute_platform_config_paths_normalize_to_config_anchor_before_home() {
+        let macos = macos_resolver();
+        let windows = windows_resolver();
+
+        assert_eq!(
+            macos
+                .normalize_input(
+                    "/Users/alice/Library/Application Support/assetiweave/conversation-adapters"
+                )
+                .expect("normalize macOS config path")
+                .as_str(),
+            "@config/assetiweave/conversation-adapters"
+        );
+        assert_eq!(
+            windows
+                .normalize_input(
+                    r"C:\Users\Alice\AppData\Roaming\assetiweave\conversation-adapters"
+                )
+                .expect("normalize Windows config path")
+                .as_str(),
+            "@config/assetiweave/conversation-adapters"
         );
     }
 

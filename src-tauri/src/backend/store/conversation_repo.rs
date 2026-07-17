@@ -271,6 +271,50 @@ pub(crate) async fn upsert_conversation_adapter_sqlx(
     upsert_conversation_adapter_with_executor(pool, tenant_id, adapter).await
 }
 
+pub(crate) async fn normalize_conversation_paths_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> AppResult<()> {
+    for adapter in list_conversation_adapters_sqlx(pool, tenant_id).await? {
+        upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter).await?;
+    }
+    for package in list_conversation_adapter_packages_sqlx(pool, tenant_id).await? {
+        upsert_conversation_adapter_package_sqlx(pool, tenant_id, &package).await?;
+    }
+
+    let version_rows = sqlx::query(
+        r#"
+        SELECT package_id, version, install_dir
+        FROM conversation_adapter_package_versions
+        WHERE tenant_id = ?1
+        "#,
+    )
+    .bind(tenant_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    for row in version_rows {
+        let package_id: String = row.try_get(0).map_err(|error| error.to_string())?;
+        let version: String = row.try_get(1).map_err(|error| error.to_string())?;
+        let install_dir: String = row.try_get(2).map_err(|error| error.to_string())?;
+        sqlx::query(
+            r#"
+            UPDATE conversation_adapter_package_versions
+            SET install_dir = ?1
+            WHERE tenant_id = ?2 AND package_id = ?3 AND version = ?4
+            "#,
+        )
+        .bind(normalize_conversation_path(&install_dir)?)
+        .bind(tenant_id)
+        .bind(package_id)
+        .bind(version)
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 async fn upsert_conversation_adapter_with_executor<'e, E>(
     executor: E,
     tenant_id: &str,
@@ -279,6 +323,8 @@ async fn upsert_conversation_adapter_with_executor<'e, E>(
 where
     E: Executor<'e, Database = Sqlite>,
 {
+    let manifest_path = normalize_optional_conversation_path(adapter.manifest_path.as_deref())?;
+    let executable_path = normalize_optional_conversation_path(adapter.executable_path.as_deref())?;
     sqlx::query(UPSERT_CONVERSATION_ADAPTER_SQL)
         .bind(tenant_id)
         .bind(&adapter.id)
@@ -286,8 +332,8 @@ where
         .bind(encode_enum(adapter.kind)?)
         .bind(&adapter.version)
         .bind(if adapter.enabled { 1 } else { 0 })
-        .bind(&adapter.manifest_path)
-        .bind(&adapter.executable_path)
+        .bind(&manifest_path)
+        .bind(&executable_path)
         .bind(&adapter.content_hash)
         .bind(&adapter.trusted_hash)
         .bind(encode_enum(adapter.trust_state)?)
@@ -436,6 +482,9 @@ async fn upsert_conversation_adapter_package_with_executor<'e, E>(
 where
     E: Executor<'e, Database = Sqlite>,
 {
+    let install_dir = normalize_conversation_path(&package.install_dir)?;
+    let manifest_path = normalize_conversation_path(&package.manifest_path)?;
+    let adapter_manifest_path = normalize_conversation_path(&package.adapter_manifest_path)?;
     sqlx::query(UPSERT_CONVERSATION_ADAPTER_PACKAGE_SQL)
         .bind(tenant_id)
         .bind(&package.package_id)
@@ -443,9 +492,9 @@ where
         .bind(&package.name)
         .bind(&package.version)
         .bind(encode_enum(package.record_kind)?)
-        .bind(&package.install_dir)
-        .bind(&package.manifest_path)
-        .bind(&package.adapter_manifest_path)
+        .bind(&install_dir)
+        .bind(&manifest_path)
+        .bind(&adapter_manifest_path)
         .bind(&package.runtime_protocol)
         .bind(if package.runtime_ready { 1 } else { 0 })
         .bind(encode_enum(package.origin)?)
@@ -518,7 +567,7 @@ pub(crate) async fn activate_conversation_adapter_package_sqlx(
     .bind(tenant_id)
     .bind(&version.package_id)
     .bind(&version.version)
-    .bind(&version.install_dir)
+    .bind(normalize_conversation_path(&version.install_dir)?)
     .bind(&version.artifact_hash)
     .bind(&version.content_hash)
     .bind(encode_enum(version.runtime_gate_status)?)
@@ -712,7 +761,10 @@ pub(crate) async fn list_conversation_adapter_package_versions_sqlx(
             Ok(ConversationAdapterPackageVersion {
                 package_id: row.try_get(0).map_err(|error| error.to_string())?,
                 version: row.try_get(1).map_err(|error| error.to_string())?,
-                install_dir: row.try_get(2).map_err(|error| error.to_string())?,
+                install_dir: normalize_conversation_path(
+                    &row.try_get::<String, _>(2)
+                        .map_err(|error| error.to_string())?,
+                )?,
                 artifact_hash: row.try_get(3).map_err(|error| error.to_string())?,
                 content_hash: row.try_get(4).map_err(|error| error.to_string())?,
                 runtime_gate_status: decode_enum(
@@ -1735,8 +1787,16 @@ fn map_sqlx_conversation_adapter(row: &SqliteRow) -> AppResult<ConversationAdapt
             .try_get::<i64, _>(4)
             .map_err(|error| error.to_string())?
             == 1,
-        manifest_path: row.try_get(5).map_err(|error| error.to_string())?,
-        executable_path: row.try_get(6).map_err(|error| error.to_string())?,
+        manifest_path: normalize_optional_conversation_path(
+            row.try_get::<Option<String>, _>(5)
+                .map_err(|error| error.to_string())?
+                .as_deref(),
+        )?,
+        executable_path: normalize_optional_conversation_path(
+            row.try_get::<Option<String>, _>(6)
+                .map_err(|error| error.to_string())?
+                .as_deref(),
+        )?,
         content_hash: row.try_get(7).map_err(|error| error.to_string())?,
         trusted_hash: row.try_get(8).map_err(|error| error.to_string())?,
         trust_state: decode_enum(
@@ -1758,6 +1818,9 @@ fn map_sqlx_conversation_adapter(row: &SqliteRow) -> AppResult<ConversationAdapt
 }
 
 fn map_sqlx_conversation_adapter_package(row: &SqliteRow) -> AppResult<ConversationAdapterPackage> {
+    let install_dir: String = row.try_get(5).map_err(|error| error.to_string())?;
+    let manifest_path: String = row.try_get(6).map_err(|error| error.to_string())?;
+    let adapter_manifest_path: String = row.try_get(7).map_err(|error| error.to_string())?;
     Ok(ConversationAdapterPackage {
         package_id: row.try_get(0).map_err(|error| error.to_string())?,
         adapter_id: row.try_get(1).map_err(|error| error.to_string())?,
@@ -1767,9 +1830,9 @@ fn map_sqlx_conversation_adapter_package(row: &SqliteRow) -> AppResult<Conversat
             row.try_get::<String, _>(4)
                 .map_err(|error| error.to_string())?,
         )?,
-        install_dir: row.try_get(5).map_err(|error| error.to_string())?,
-        manifest_path: row.try_get(6).map_err(|error| error.to_string())?,
-        adapter_manifest_path: row.try_get(7).map_err(|error| error.to_string())?,
+        install_dir: normalize_conversation_path(&install_dir)?,
+        manifest_path: normalize_conversation_path(&manifest_path)?,
+        adapter_manifest_path: normalize_conversation_path(&adapter_manifest_path)?,
         runtime_protocol: row.try_get(8).map_err(|error| error.to_string())?,
         runtime_ready: row
             .try_get::<i64, _>(9)
@@ -1830,6 +1893,14 @@ fn normalize_conversation_source_location(location: &str) -> AppResult<String> {
         return Ok(location.to_string());
     }
     crate::backend::path_utils::normalize_path_for_storage(location)
+}
+
+fn normalize_conversation_path(path: &str) -> AppResult<String> {
+    crate::backend::path_utils::normalize_path_for_storage(path)
+}
+
+fn normalize_optional_conversation_path(path: Option<&str>) -> AppResult<Option<String>> {
+    path.map(normalize_conversation_path).transpose()
 }
 
 pub(super) fn map_sqlx_conversation_session(row: &SqliteRow) -> AppResult<ConversationSession> {
@@ -3459,16 +3530,27 @@ mod tests {
             Uuid::new_v4()
         ));
         let database = Database::open(&db_path).expect("open database");
+        let install_dir = dirs::config_dir()
+            .expect("config directory")
+            .join("assetiweave")
+            .join("conversation-adapters")
+            .join("packages")
+            .join("codex-session")
+            .join("current");
         let package = ConversationAdapterPackage {
             package_id: "codex-session".to_string(),
             adapter_id: "codex".to_string(),
             name: "Codex Session Parser".to_string(),
             version: "1.0.0".to_string(),
             record_kind: ConversationAdapterPackageRecordKind::Session,
-            install_dir: "/tmp/packages/codex-session/current".to_string(),
-            manifest_path: "/tmp/packages/codex-session/current/conversation-adapter-package.json"
+            install_dir: install_dir.to_string_lossy().to_string(),
+            manifest_path: install_dir
+                .join("conversation-adapter-package.json")
+                .to_string_lossy()
                 .to_string(),
-            adapter_manifest_path: "/tmp/packages/codex-session/current/conversation-adapter.json"
+            adapter_manifest_path: install_dir
+                .join("conversation-adapter.json")
+                .to_string_lossy()
                 .to_string(),
             runtime_protocol: "stdio-ndjson-v1".to_string(),
             runtime_ready: true,
@@ -3524,12 +3606,71 @@ mod tests {
             })
             .expect("round trip package");
 
-        assert_eq!(listed, vec![package.clone()]);
-        assert_eq!(by_package, Some(package.clone()));
-        assert_eq!(by_adapter, Some(package.clone()));
-        assert_eq!(deleted, Some(package));
+        let mut stored_package = package;
+        stored_package.install_dir =
+            "@config/assetiweave/conversation-adapters/packages/codex-session/current".to_string();
+        stored_package.manifest_path = format!(
+            "{}/conversation-adapter-package.json",
+            stored_package.install_dir
+        );
+        stored_package.adapter_manifest_path =
+            format!("{}/conversation-adapter.json", stored_package.install_dir);
+        assert_eq!(listed, vec![stored_package.clone()]);
+        assert_eq!(by_package, Some(stored_package.clone()));
+        assert_eq!(by_adapter, Some(stored_package.clone()));
+        assert_eq!(deleted, Some(stored_package));
         assert!(missing.is_none());
 
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn conversation_adapter_runtime_paths_normalize_to_config_anchor() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-adapter-config-path-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let mut adapter = test_conversation_adapter(
+            "portable-adapter",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let adapter_dir = dirs::config_dir()
+            .expect("config directory")
+            .join("assetiweave")
+            .join("conversation-adapters")
+            .join("portable-adapter");
+        adapter.manifest_path = Some(
+            adapter_dir
+                .join("conversation-adapter.json")
+                .to_string_lossy()
+                .to_string(),
+        );
+        adapter.executable_path = Some(
+            adapter_dir
+                .join("adapter.mjs")
+                .to_string_lossy()
+                .to_string(),
+        );
+
+        let loaded = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+                load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter.id).await
+            })
+            .expect("round trip adapter")
+            .expect("stored adapter");
+
+        assert_eq!(
+            loaded.manifest_path.as_deref(),
+            Some("@config/assetiweave/conversation-adapters/portable-adapter/conversation-adapter.json")
+        );
+        assert_eq!(
+            loaded.executable_path.as_deref(),
+            Some("@config/assetiweave/conversation-adapters/portable-adapter/adapter.mjs")
+        );
         drop(database);
         cleanup_database(&db_path);
     }

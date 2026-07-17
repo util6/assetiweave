@@ -360,14 +360,7 @@ impl AppService {
                 "asset": asset,
                 "profile_id": profile_id,
                 "enabled": enabled,
-                "status": AssetMountStatus {
-                    asset_id: asset.id,
-                    profile_id: profile.id,
-                    target_dir: inspection.target_dir,
-                    target_path: inspection.target_path,
-                    state: PhysicalMountStateDto::from(inspection.state),
-                    linked_source: inspection.linked_source,
-                }
+                "status": capabilities::asset_mount_status(&asset.id, &profile.id, inspection)
             }));
         }
 

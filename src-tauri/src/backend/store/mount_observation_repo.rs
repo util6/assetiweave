@@ -270,6 +270,9 @@ mod tests {
             profile_id: observation.profile_id.clone(),
             target_dir: observation.target_dir.clone(),
             target_path: observation.target_path.clone(),
+            display_target_dir: observation.target_dir.clone(),
+            display_target_path: observation.target_path.clone(),
+            display_linked_source: observation.linked_source.clone(),
             state: observation.state,
             linked_source: observation.linked_source.clone(),
         };

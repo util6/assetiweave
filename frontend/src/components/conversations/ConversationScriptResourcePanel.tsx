@@ -629,8 +629,8 @@ export function ConversationScriptResourcePanel({
                 <DetailField label={t("conversation.scriptMarket.latestVersion")} value={detailReleases[0]?.version ?? detailEntry.item.version} />
                 <DetailField label={t("conversation.scriptMarket.runtimeGate")} value={detailEntry.installed_package?.runtime_gate_status ?? detailEntry.status} />
                 <DetailField label={t("conversation.scriptMarket.recordKind")} value={detailEntry.item.record_kind} />
-                <DetailField label={t("conversation.scriptMarket.path")} value={detailEntry.installed_package?.install_dir ?? detailEntry.install_path ?? "-"} wide />
-                <DetailField label={t("conversation.scriptMarket.manifest")} value={manifestPathForEntry(detailEntry) ?? "-"} wide />
+                <DetailField label={t("conversation.scriptMarket.path")} value={detailEntry.display_install_path ?? detailEntry.installed_package?.install_dir ?? detailEntry.install_path ?? "-"} wide />
+                <DetailField label={t("conversation.scriptMarket.manifest")} value={manifestDisplayPathForEntry(detailEntry) ?? "-"} wide />
                 <DetailField label={t("conversation.scriptMarket.contentHash")} value={detailEntry.installed_package?.installed_content_hash ?? detailEntry.installed_adapter?.content_hash ?? "-"} wide />
                 <DetailField label={t("conversation.scriptMarket.trustedHash")} value={detailEntry.installed_package?.trusted_package_hash ?? detailEntry.installed_adapter?.trusted_hash ?? "-"} wide />
               </div>
@@ -836,6 +836,7 @@ function ScriptResourceRow({
 }) {
   const { t } = useI18n();
   const manifestPath = manifestPathForEntry(entry);
+  const manifestDisplayPath = manifestDisplayPathForEntry(entry);
   const packageAction = packageActionForEntry(entry);
   const lifecycleAction = packageLifecycleAction(entry);
   const canUseInstalled = Boolean(
@@ -860,7 +861,7 @@ function ScriptResourceRow({
         <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-body-xs text-on-surface-variant">
           <span>{entry.item.provider ?? entry.item.id}</span>
           <span>{entry.item.version}</span>
-          {manifestPath ? <span className="max-w-sm truncate">{manifestPath}</span> : null}
+          {manifestDisplayPath ? <span className="max-w-sm truncate">{manifestDisplayPath}</span> : null}
           {entry.item.repository_url ? (
             <a
               className="inline-flex items-center gap-1 text-primary hover:underline"
@@ -1130,6 +1131,10 @@ function manifestPathForEntry(entry: ConversationAdapterPackageCatalogEntry) {
   }
   const manifestFile = entry.item.manifest_file?.trim() || "conversation-adapter.json";
   return `${entry.install_path.replace(/\/$/, "")}/${manifestFile}`;
+}
+
+function manifestDisplayPathForEntry(entry: ConversationAdapterPackageCatalogEntry) {
+  return entry.display_manifest_path ?? manifestPathForEntry(entry);
 }
 
 function manifestPathFromInstallResult(result: unknown) {

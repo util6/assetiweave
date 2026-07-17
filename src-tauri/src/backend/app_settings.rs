@@ -16,6 +16,9 @@ pub(crate) struct AppSettingsFile {
     pub(crate) config_dir: String,
     pub(crate) config_path: String,
     pub(crate) conversation_adapter_dir: String,
+    pub(crate) display_config_dir: String,
+    pub(crate) display_config_path: String,
+    pub(crate) display_conversation_adapter_dir: String,
     pub(crate) settings: Value,
 }
 
@@ -29,7 +32,7 @@ struct AppSettingsDocument {
 pub(crate) fn get_app_settings() -> AppResult<AppSettingsFile> {
     let paths = app_settings_paths()?;
     ensure_settings_dirs(&paths)?;
-    let settings = read_settings_document(&paths.config_path)?.settings;
+    let settings = read_normalized_settings_document(&paths.config_path)?.settings;
     Ok(paths.into_file(settings))
 }
 
@@ -38,7 +41,7 @@ pub(crate) fn save_app_settings(settings: Value) -> AppResult<AppSettingsFile> {
     ensure_settings_dirs(&paths)?;
     let document = AppSettingsDocument {
         schema_version: SETTINGS_SCHEMA_VERSION,
-        settings,
+        settings: normalize_settings_paths(settings)?,
     };
     write_settings_document(&paths.config_path, &document)?;
     Ok(paths.into_file(document.settings))
@@ -49,7 +52,7 @@ pub(crate) fn read_app_settings_value() -> AppResult<Value> {
     if !paths.config_path.exists() {
         return Ok(json!({}));
     }
-    Ok(read_settings_document(&paths.config_path)?.settings)
+    Ok(read_normalized_settings_document(&paths.config_path)?.settings)
 }
 
 pub(crate) fn conversation_adapter_dir() -> AppResult<PathBuf> {
@@ -64,10 +67,18 @@ struct AppSettingsPaths {
 
 impl AppSettingsPaths {
     fn into_file(self, settings: Value) -> AppSettingsFile {
+        let config_dir = self.config_dir.to_string_lossy().to_string();
+        let config_path = self.config_path.to_string_lossy().to_string();
+        let conversation_adapter_dir = self.conversation_adapter_dir.to_string_lossy().to_string();
         AppSettingsFile {
-            config_dir: self.config_dir.to_string_lossy().to_string(),
-            config_path: self.config_path.to_string_lossy().to_string(),
-            conversation_adapter_dir: self.conversation_adapter_dir.to_string_lossy().to_string(),
+            display_config_dir: crate::backend::path_utils::display_path_or_original(&config_dir),
+            display_config_path: crate::backend::path_utils::display_path_or_original(&config_path),
+            display_conversation_adapter_dir: crate::backend::path_utils::display_path_or_original(
+                &conversation_adapter_dir,
+            ),
+            config_dir,
+            config_path,
+            conversation_adapter_dir,
             settings,
         }
     }
@@ -109,6 +120,55 @@ fn read_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
     let parsed: Value = serde_json::from_str(&content)
         .map_err(|error| format!("解析设置文件失败: {} ({error})", path.to_string_lossy()))?;
     Ok(normalize_document(parsed))
+}
+
+fn read_normalized_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
+    let mut document = read_settings_document(path)?;
+    let normalized = normalize_settings_paths(document.settings.clone())?;
+    if normalized != document.settings {
+        document.settings = normalized;
+        write_settings_document(path, &document)?;
+    }
+    Ok(document)
+}
+
+fn normalize_settings_paths(mut settings: Value) -> AppResult<Value> {
+    for path in [
+        &["dataBackup", "customDirectory"][..],
+        &["conversationRuntimeOverrides", "bash"][..],
+        &["conversationRuntimeOverrides", "node"][..],
+        &["conversationRuntimeOverrides", "python"][..],
+    ] {
+        normalize_json_path_setting(&mut settings, path)?;
+    }
+    Ok(settings)
+}
+
+fn normalize_json_path_setting(value: &mut Value, path: &[&str]) -> AppResult<()> {
+    let Some((key, parents)) = path.split_last() else {
+        return Ok(());
+    };
+    let mut current = value;
+    for parent in parents {
+        let Some(next) = current.get_mut(*parent) else {
+            return Ok(());
+        };
+        current = next;
+    }
+    let Some(raw) = current
+        .get(*key)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    else {
+        return Ok(());
+    };
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(());
+    }
+    let normalized = crate::backend::path_utils::normalize_path_for_storage(raw)?;
+    current[*key] = Value::String(normalized);
+    Ok(())
 }
 
 fn write_settings_document(path: &Path, document: &AppSettingsDocument) -> AppResult<()> {
@@ -161,5 +221,51 @@ mod tests {
 
         assert_eq!(document.schema_version, 1);
         assert_eq!(document.settings["density"], "compact");
+    }
+
+    #[test]
+    fn settings_file_keeps_runtime_paths_separate_from_portable_display_paths() {
+        let home = dirs::home_dir().expect("home directory");
+        let paths = AppSettingsPaths {
+            config_dir: home.join(".assetiweave"),
+            config_path: home.join(".assetiweave").join("config.json"),
+            conversation_adapter_dir: home.join(".assetiweave").join("conversation-adapters"),
+        };
+
+        let file = paths.into_file(json!({}));
+
+        assert!(Path::new(&file.config_path).is_absolute());
+        assert_eq!(file.display_config_dir, "~/.assetiweave");
+        assert_eq!(file.display_config_path, "~/.assetiweave/config.json");
+        assert_eq!(
+            file.display_conversation_adapter_dir,
+            "~/.assetiweave/conversation-adapters"
+        );
+    }
+
+    #[test]
+    fn settings_path_values_are_normalized_before_persistence() {
+        let home = dirs::home_dir().expect("home directory");
+        let settings = normalize_settings_paths(json!({
+            "dataBackup": {
+                "customDirectory": home.join("Backups").to_string_lossy()
+            },
+            "conversationRuntimeOverrides": {
+                "node": home.join(".local/bin/node").to_string_lossy(),
+                "python": "",
+                "bash": "/opt/homebrew/bin/bash"
+            }
+        }))
+        .expect("normalize settings paths");
+
+        assert_eq!(settings["dataBackup"]["customDirectory"], "~/Backups");
+        assert_eq!(
+            settings["conversationRuntimeOverrides"]["node"],
+            "~/.local/bin/node"
+        );
+        assert_eq!(
+            settings["conversationRuntimeOverrides"]["bash"],
+            "/opt/homebrew/bin/bash"
+        );
     }
 }

@@ -24,7 +24,7 @@ export function DeploymentPlanPanel({ plan }: { plan: DeploymentPlan | null }) {
             <span className="font-mono text-body-sm text-on-surface-variant">{action.profile_id}</span>
             <div className="min-w-0">
               <p className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface">
-                {abbreviateHomePath(action.target_path)}
+                {action.display_target_path ?? abbreviateHomePath(action.target_path)}
               </p>
               <p className="mt-1 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">{translatePlanReason(action.reason, t)}</p>
             </div>

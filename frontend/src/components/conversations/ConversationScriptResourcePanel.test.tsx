@@ -149,6 +149,15 @@ describe("ConversationScriptResourcePanel", () => {
     expect(screen.getByText("Qwen Web Harvester")).toBeTruthy();
   });
 
+  it("renders backend-provided portable manifest paths", async () => {
+    renderPanel();
+
+    expect(
+      await screen.findByText("~/conversation-adapters/codex/conversation-adapter.json"),
+    ).toBeTruthy();
+    expect(screen.queryByText("/tmp/package/conversation-adapter.json")).toBeNull();
+  });
+
   it("shows an accessible loading indicator while the catalog is validated", async () => {
     let resolveCatalog: (value: ConversationAdapterPackageCatalogEntry[]) => void = () => undefined;
     serviceMocks.list.mockReturnValueOnce(new Promise((resolve) => {
@@ -375,6 +384,8 @@ const entries: ConversationAdapterPackageCatalogEntry[] = [
     update_available: true,
     runtime_ready: true,
     status: "update_available",
+    display_install_path: "~/conversation-adapters/codex",
+    display_manifest_path: "~/conversation-adapters/codex/conversation-adapter.json",
     installed_package: {
       package_id: "io.github.util6.codex-session",
       adapter_id: "codex",

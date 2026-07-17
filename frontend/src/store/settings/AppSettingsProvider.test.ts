@@ -43,14 +43,14 @@ describe("AppSettingsProvider", () => {
     const settings = normalizeStoredSettings({
       conversationRuntimeOverrides: {
         bash: "  /opt/homebrew/bin/bash  ",
-        node: "/opt/homebrew/bin/node",
+        node: "~/.local/bin/node",
         python: "C:\\Python312\\python.exe",
       },
     });
 
     expect(settings.conversationRuntimeOverrides).toEqual({
       bash: "/opt/homebrew/bin/bash",
-      node: "/opt/homebrew/bin/node",
+      node: "~/.local/bin/node",
       python: "C:\\Python312\\python.exe",
     });
   });

@@ -241,6 +241,9 @@ pub(crate) struct AssetMountStatus {
     pub(crate) profile_id: String,
     pub(crate) target_dir: String,
     pub(crate) target_path: String,
+    pub(crate) display_target_dir: String,
+    pub(crate) display_target_path: String,
+    pub(crate) display_linked_source: Option<String>,
     pub(crate) state: PhysicalMountStateDto,
     pub(crate) linked_source: Option<String>,
 }

@@ -182,6 +182,8 @@ export interface ConversationAdapterPackageCatalogEntry {
   installed_package?: ConversationAdapterPackage | null;
   installed_adapter?: ConversationAdapter | null;
   install_path?: string | null;
+  display_install_path?: string | null;
+  display_manifest_path?: string | null;
   error_message?: string | null;
 }
 

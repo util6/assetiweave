@@ -7,8 +7,8 @@ pub(super) use crate::backend::{
         AppOverview, AppResult, AppShortcut, ApplyAssetGroupMountResult,
         ApplySkillGroupExclusiveMountResult, AssetGroupInput, AssetMountStatus,
         AssetMountUpdateResult, CatalogAsset, ExecutionResult, NavigationModel,
-        PhysicalMountStateDto, SkillBackupSettings, SkillGroupExclusiveMountInput,
-        SkillGroupExclusiveMountPreview, SkillRemoteSource, SourceInput, TargetProfileInput,
+        SkillBackupSettings, SkillGroupExclusiveMountInput, SkillGroupExclusiveMountPreview,
+        SkillRemoteSource, SourceInput, TargetProfileInput,
     },
     models::{
         Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
@@ -27,6 +27,9 @@ pub(super) use std::{
     process::Command,
 };
 pub(super) use uuid::Uuid;
+
+#[cfg(test)]
+pub(super) use crate::backend::dto::PhysicalMountStateDto;
 
 #[cfg(test)]
 pub(super) use super::skill_remote::{

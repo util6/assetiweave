@@ -62,6 +62,10 @@ pub(crate) fn display_path(path: &str) -> AppResult<String> {
     Ok(resolver.display(&stored)?.as_str().to_string())
 }
 
+pub(crate) fn display_path_or_original(path: &str) -> String {
+    display_path(path).unwrap_or_else(|_| path.to_string())
+}
+
 pub(crate) fn find_git_root(path: &Path) -> Option<PathBuf> {
     let mut current = if path.is_dir() {
         path.to_path_buf()

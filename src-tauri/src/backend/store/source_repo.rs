@@ -58,6 +58,7 @@ pub(crate) async fn load_source_sqlx(
 
 fn map_sqlx_source_row(row: &SqliteRow) -> AppResult<Source> {
     let root_path: String = row.try_get(3).map_err(|error| error.to_string())?;
+    let repo_root: Option<String> = row.try_get(6).map_err(|error| error.to_string())?;
     Ok(Source {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         name: row.try_get(1).map_err(|error| error.to_string())?,
@@ -74,7 +75,10 @@ fn map_sqlx_source_row(row: &SqliteRow) -> AppResult<Source> {
             row.try_get::<String, _>(5)
                 .map_err(|error| error.to_string())?,
         )?,
-        repo_root: row.try_get(6).map_err(|error| error.to_string())?,
+        repo_root: repo_root
+            .as_deref()
+            .map(normalize_path_for_storage)
+            .transpose()?,
         scan_root: row.try_get(7).map_err(|error| error.to_string())?,
         origin_app_kind: decode_optional_enum(row.try_get(8).map_err(|error| error.to_string())?)?,
         include_globs: decode_json(
@@ -133,6 +137,10 @@ pub(crate) fn normalize_source(source: &Source) -> Source {
     if let Ok(root_path) = normalize_path_for_storage(&source.root_path) {
         source.root_path = root_path;
     }
+    source.repo_root = source
+        .repo_root
+        .as_deref()
+        .map(|path| normalize_path_for_storage(path).unwrap_or_else(|_| path.to_string()));
 
     if matches!(source.scanner_kind, SourceScannerKind::Mixed) && is_skill_like_source(&source) {
         source.scanner_kind = SourceScannerKind::Skill;
@@ -171,7 +179,7 @@ pub(crate) fn normalize_source(source: &Source) -> Source {
 
     if let Some(git_root) = find_git_root(&root_path) {
         source.source_origin = SourceOrigin::GitRepo;
-        source.repo_root = Some(git_root.to_string_lossy().to_string());
+        source.repo_root = normalize_path_for_storage(&git_root.to_string_lossy()).ok();
         source.scan_root = root_path
             .strip_prefix(&git_root)
             .ok()
@@ -311,10 +319,16 @@ mod tests {
         let mut source = test_source("home-source", SourceScannerKind::Skill);
         source.root_path = dirs::home_dir()
             .expect("home directory")
-            .join(".codex")
-            .join("skills")
+            .join("portable-source-test")
             .to_string_lossy()
             .to_string();
+        source.repo_root = Some(
+            dirs::home_dir()
+                .expect("home directory")
+                .join("code-space")
+                .to_string_lossy()
+                .to_string(),
+        );
 
         let loaded = database
             .block_on(async {
@@ -324,7 +338,8 @@ mod tests {
             .expect("round trip source")
             .expect("stored source");
 
-        assert_eq!(loaded.root_path, "~/.codex/skills");
+        assert_eq!(loaded.root_path, "~/portable-source-test");
+        assert_eq!(loaded.repo_root.as_deref(), Some("~/code-space"));
         drop(database);
         cleanup_database(&db_path);
     }

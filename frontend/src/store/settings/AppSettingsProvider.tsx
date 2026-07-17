@@ -83,9 +83,9 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
         setSettings(normalizeStoredSettings(file.settings));
         setStorageInfo({
           ...defaultStorageInfo,
-          configDir: file.config_dir,
-          configPath: file.config_path,
-          conversationAdapterDir: file.conversation_adapter_dir,
+          configDir: file.display_config_dir ?? file.config_dir,
+          configPath: file.display_config_path ?? file.config_path,
+          conversationAdapterDir: file.display_conversation_adapter_dir ?? file.conversation_adapter_dir,
         });
         setSettingsError(null);
         setSettingsLoaded(true);
@@ -106,11 +106,16 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
     if (!settingsLoaded || settingsError) return;
     void saveAppSettings(settings)
       .then((file) => {
+        const normalizedSettings = normalizeStoredSettings(file.settings);
+        setSettings((current) => {
+          if (!settingsEqual(current, settings)) return current;
+          return settingsEqual(current, normalizedSettings) ? current : normalizedSettings;
+        });
         setStorageInfo({
           ...defaultStorageInfo,
-          configDir: file.config_dir,
-          configPath: file.config_path,
-          conversationAdapterDir: file.conversation_adapter_dir,
+          configDir: file.display_config_dir ?? file.config_dir,
+          configPath: file.display_config_path ?? file.config_path,
+          conversationAdapterDir: file.display_conversation_adapter_dir ?? file.conversation_adapter_dir,
         });
       })
       .catch((error) => setSettingsError(errorMessage(error)));
@@ -204,4 +209,8 @@ function writeStoredSettings(settings: AppSettings) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function settingsEqual(left: AppSettings, right: AppSettings) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }

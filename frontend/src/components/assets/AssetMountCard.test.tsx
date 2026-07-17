@@ -29,6 +29,22 @@ describe("AssetMountCard", () => {
     expect(html).toContain("#c15f24");
     expect(html).not.toContain("status-create");
   });
+
+  it("renders the backend display target instead of the runtime target directory", () => {
+    const html = renderToStaticMarkup(
+      <I18nProvider>
+        <AssetMountCard
+          asset={skillAsset}
+          mountStatus={{ ...mountedStatus, display_target_dir: "~/.codex/skills" }}
+          onToggle={vi.fn()}
+          profile={profile}
+        />
+      </I18nProvider>,
+    );
+
+    expect(html).toContain("~/.codex/skills");
+    expect(html).not.toContain("/tmp/codex/skills");
+  });
 });
 
 const skillAsset: Asset = {

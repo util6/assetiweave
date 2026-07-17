@@ -30,7 +30,7 @@ export function AssetMountCard({
   const disabled = Boolean(mountBlockedReason);
   const displayState = getMountDisplayState(mountStatus);
   const mounted = displayState === "mounted";
-  const targetDir = mountStatus?.target_dir ?? profile.target_paths[0] ?? "";
+  const targetDir = mountStatus?.display_target_dir ?? mountStatus?.target_dir ?? profile.target_paths[0] ?? "";
 
   return (
     <button

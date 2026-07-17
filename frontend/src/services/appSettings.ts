@@ -5,6 +5,9 @@ export interface AppSettingsFile {
   config_dir: string;
   config_path: string;
   conversation_adapter_dir: string;
+  display_config_dir?: string;
+  display_config_path?: string;
+  display_conversation_adapter_dir?: string;
   settings: unknown;
 }
 

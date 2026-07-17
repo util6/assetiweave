@@ -487,6 +487,9 @@ export interface AssetMountStatus {
   profile_id: string;
   target_dir: string;
   target_path: string;
+  display_target_dir?: string;
+  display_target_path?: string;
+  display_linked_source?: string | null;
   state: PhysicalMountState;
   linked_source?: string | null;
 }
@@ -619,6 +622,8 @@ export interface DeploymentAction {
   profile_id: string;
   source_path?: string | null;
   target_path: string;
+  display_source_path?: string | null;
+  display_target_path?: string;
   strategy: DeploymentStrategy;
   reason: string;
   risk: RiskLevel;

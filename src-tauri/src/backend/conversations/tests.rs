@@ -1,3 +1,4 @@
+use super::external::resolve_source_location_for_adapter;
 use super::prelude::*;
 use super::{
     read_source_sessions_incrementally_with_adapter, read_source_sessions_with_adapter,
@@ -616,6 +617,43 @@ fn adapter_runtime_overrides_read_configured_programs() {
     assert_eq!(
         runtime_program_from_settings(&ConversationAdapterRuntimeKind::Executable, &settings),
         None
+    );
+}
+
+#[test]
+fn adapter_runtime_overrides_resolve_portable_home_paths_for_io() {
+    let settings = json!({
+        "conversationRuntimeOverrides": {
+            "node": "~/.local/bin/node"
+        }
+    });
+
+    assert_eq!(
+        runtime_program_from_settings(&ConversationAdapterRuntimeKind::Node, &settings),
+        dirs::home_dir().map(|home| home.join(".local/bin/node"))
+    );
+}
+
+#[test]
+fn external_adapter_source_locations_resolve_portable_paths_for_io() {
+    let source = source_fixture("portable", ConversationSourceKind::Directory, "~/.codex");
+
+    assert_eq!(
+        resolve_source_location_for_adapter(&source).expect("resolve source location"),
+        dirs::home_dir()
+            .expect("home directory")
+            .join(".codex")
+            .to_string_lossy()
+    );
+
+    let url_source = source_fixture(
+        "remote",
+        ConversationSourceKind::Custom,
+        "https://example.test/sessions",
+    );
+    assert_eq!(
+        resolve_source_location_for_adapter(&url_source).expect("preserve URL location"),
+        "https://example.test/sessions"
     );
 }
 
