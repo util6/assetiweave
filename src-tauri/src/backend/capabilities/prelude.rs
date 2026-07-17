@@ -22,7 +22,7 @@ pub(super) use crate::backend::{
     },
     path_utils::{
         default_skill_backup_root_for_tenant, expand_path, find_git_root, git_browser_url,
-        git_repository_for_path,
+        git_repository_for_path, normalize_path_for_storage,
     },
 };
 pub(super) use chrono::Utc;

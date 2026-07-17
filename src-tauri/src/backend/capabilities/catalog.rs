@@ -4,7 +4,7 @@ pub(crate) const SKILL_BACKUP_SOURCE_ID: &str = "assetiweave-library-skills";
 
 pub(crate) fn assetiweave_library_source_for_tenant(tenant_id: &str) -> Source {
     let root_path = default_skill_backup_root_for_tenant(tenant_id)
-        .map(|path| path.to_string_lossy().to_string())
+        .and_then(|path| normalize_path_for_storage(&path.to_string_lossy()))
         .unwrap_or_else(|_| format!("~/.assetiweave/tenants/{tenant_id}/library/skills"));
     assetiweave_library_source_with_root(root_path)
 }
@@ -71,7 +71,7 @@ fn skill_backup_root_path(tenant_id: &str, sources: Vec<Source>) -> String {
         .map(|source| source.root_path)
         .unwrap_or_else(|| {
             default_skill_backup_root_for_tenant(tenant_id)
-                .map(|path| path.to_string_lossy().to_string())
+                .and_then(|path| normalize_path_for_storage(&path.to_string_lossy()))
                 .unwrap_or_else(|_| format!("~/.assetiweave/tenants/{tenant_id}/library/skills"))
         })
 }
@@ -89,7 +89,7 @@ fn build_skill_backup_settings(
     Ok(SkillBackupSettings {
         root_path: source.root_path,
         expanded_root_path: expanded_root.to_string_lossy().to_string(),
-        default_root_path: default_root.to_string_lossy().to_string(),
+        default_root_path: normalize_path_for_storage(&default_root.to_string_lossy())?,
         is_default_root: same_path_or_text(&expanded_root, &default_root),
         exists: expanded_root.exists(),
     })

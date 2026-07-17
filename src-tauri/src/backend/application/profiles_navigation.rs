@@ -28,6 +28,7 @@ impl AppService {
     }
 
     pub(crate) fn update_profile(&self, profile: TargetProfile) -> AppResult<TargetProfile> {
+        let profile = capabilities::normalize_target_profile_paths(profile)?;
         capabilities::validate_target_profile(&profile)?;
         let existing_profile = self
             .list_profiles()?

@@ -439,7 +439,7 @@ mod tests {
             .expect("query migrations");
 
         assert_eq!(source_table_count, 1);
-        assert_eq!(migration_count, 12);
+        assert_eq!(migration_count, 13);
         cleanup_database(&db_path);
     }
 
@@ -469,6 +469,14 @@ mod tests {
                 'legacy-source', 'Legacy', 'local', '/tmp/legacy', '[]', '[]',
                 NULL, 1, 10
             );
+            CREATE TABLE profiles (
+                id TEXT PRIMARY KEY,
+                payload TEXT NOT NULL
+            );
+            INSERT INTO profiles (id, payload) VALUES (
+                'cursor',
+                '{"id":"cursor","name":"Cursor","app_kind":"cursor","target_paths":["~/Library/Application Support/Cursor/skills"],"supported_kinds":["skill"],"deployment_strategy":"symlink_to_source","enabled":true,"include":{"kinds":["skill"],"tags":[],"groups":[],"sources":[],"path_patterns":[]},"exclude":{"kinds":[],"tags":[],"groups":[],"sources":[],"path_patterns":[]},"safety":{"allow_remove":false,"allow_overwrite":false}}'
+            );
             "#,
         )
         .expect("create legacy schema");
@@ -489,6 +497,13 @@ mod tests {
                 row.get(0)
             })
             .expect("query migrations");
+        let cursor_target_path: String = conn
+            .query_row(
+                "SELECT json_extract(payload, '$.target_paths[0]') FROM profiles WHERE id = 'cursor'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query migrated cursor target path");
 
         assert_eq!(
             source,
@@ -498,7 +513,8 @@ mod tests {
                 "local_folder".to_string()
             )
         );
-        assert_eq!(migration_count, 12);
+        assert_eq!(cursor_target_path, "@config/Cursor/skills");
+        assert_eq!(migration_count, 13);
         cleanup_database(&db_path);
     }
 
@@ -559,7 +575,7 @@ mod tests {
                 row.get(0)
             })
             .expect("query migrations");
-        assert_eq!(migration_count, 12);
+        assert_eq!(migration_count, 13);
         cleanup_database(&db_path);
     }
 

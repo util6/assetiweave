@@ -21,7 +21,8 @@ pub(crate) fn target_profile_from_input(input: TargetProfileInput) -> AppResult<
         .into_iter()
         .map(|path| path.trim().to_string())
         .filter(|path| !path.is_empty())
-        .collect::<Vec<_>>();
+        .map(|path| crate::backend::path_utils::normalize_path_for_storage(&path))
+        .collect::<AppResult<Vec<_>>>()?;
     if target_paths.is_empty() {
         return Err("profile target path is required".to_string());
     }
@@ -46,6 +47,17 @@ pub(crate) fn target_profile_from_input(input: TargetProfileInput) -> AppResult<
         }),
     };
     validate_target_profile(&profile)?;
+    Ok(profile)
+}
+
+pub(crate) fn normalize_target_profile_paths(
+    mut profile: TargetProfile,
+) -> AppResult<TargetProfile> {
+    profile.target_paths = profile
+        .target_paths
+        .iter()
+        .map(|path| crate::backend::path_utils::normalize_path_for_storage(path))
+        .collect::<AppResult<Vec<_>>>()?;
     Ok(profile)
 }
 
@@ -146,4 +158,35 @@ fn slug_profile_id(name: &str) -> String {
         }
     }
     id.trim_matches('-').to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn target_profile_input_normalizes_absolute_home_paths_before_returning() {
+        let home_target = dirs::home_dir()
+            .expect("home directory")
+            .join(".codex")
+            .join("skills")
+            .to_string_lossy()
+            .to_string();
+
+        let profile = target_profile_from_input(TargetProfileInput {
+            id: Some("custom-home".to_string()),
+            name: "Custom Home".to_string(),
+            app_kind: Some(AppKind::Custom),
+            target_paths: Some(vec![home_target]),
+            supported_kinds: None,
+            deployment_strategy: None,
+            enabled: None,
+            include: None,
+            exclude: None,
+            safety: None,
+        })
+        .expect("build target profile");
+
+        assert_eq!(profile.target_paths, vec!["~/.codex/skills"]);
+    }
 }

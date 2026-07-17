@@ -875,6 +875,8 @@ pub(crate) async fn upsert_conversation_source_sqlx(
     tenant_id: &str,
     source: &ConversationSource,
 ) -> AppResult<()> {
+    let mut source = source.clone();
+    source.location = normalize_conversation_source_location(&source.location)?;
     sqlx::query(UPSERT_CONVERSATION_SOURCE_SQL)
         .bind(tenant_id)
         .bind(&source.id)
@@ -1801,6 +1803,7 @@ fn map_sqlx_conversation_adapter_package(row: &SqliteRow) -> AppResult<Conversat
 }
 
 fn map_sqlx_conversation_source(row: &SqliteRow) -> AppResult<ConversationSource> {
+    let location: String = row.try_get(4).map_err(|error| error.to_string())?;
     Ok(ConversationSource {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         adapter_id: row.try_get(1).map_err(|error| error.to_string())?,
@@ -1809,7 +1812,7 @@ fn map_sqlx_conversation_source(row: &SqliteRow) -> AppResult<ConversationSource
             row.try_get::<String, _>(3)
                 .map_err(|error| error.to_string())?,
         )?,
-        location: row.try_get(4).map_err(|error| error.to_string())?,
+        location: normalize_conversation_source_location(&location)?,
         config_json: row.try_get(5).map_err(|error| error.to_string())?,
         enabled: row
             .try_get::<i64, _>(6)
@@ -1820,6 +1823,13 @@ fn map_sqlx_conversation_source(row: &SqliteRow) -> AppResult<ConversationSource
         created_at: row.try_get(9).map_err(|error| error.to_string())?,
         updated_at: row.try_get(10).map_err(|error| error.to_string())?,
     })
+}
+
+fn normalize_conversation_source_location(location: &str) -> AppResult<String> {
+    if location.contains("://") {
+        return Ok(location.to_string());
+    }
+    crate::backend::path_utils::normalize_path_for_storage(location)
 }
 
 pub(super) fn map_sqlx_conversation_session(row: &SqliteRow) -> AppResult<ConversationSession> {
@@ -4847,6 +4857,33 @@ mod tests {
             created_at: "2026-06-19T00:00:00Z".to_string(),
             updated_at: "2026-06-19T00:00:00Z".to_string(),
         }
+    }
+
+    #[test]
+    fn conversation_source_locations_normalize_absolute_home_paths() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-source-home-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let mut source = test_conversation_source("codex");
+        source.location = dirs::home_dir()
+            .expect("home directory")
+            .join(".codex")
+            .to_string_lossy()
+            .to_string();
+
+        let loaded = database
+            .block_on(async {
+                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+                load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id).await
+            })
+            .expect("round trip conversation source")
+            .expect("stored source");
+
+        assert_eq!(loaded.location, "~/.codex");
+        drop(database);
+        cleanup_database(&db_path);
     }
 
     fn cleanup_database(db_path: &std::path::Path) {

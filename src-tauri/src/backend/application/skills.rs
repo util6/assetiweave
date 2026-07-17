@@ -19,10 +19,11 @@ impl AppService {
         &self,
         params: UpdateSkillBackupSettingsParams,
     ) -> AppResult<SkillBackupSettings> {
-        let root_path = params.root_path.trim().to_string();
-        if root_path.is_empty() {
+        let raw_root_path = params.root_path.trim();
+        if raw_root_path.is_empty() {
             return Err("skill backup root path is required".to_string());
         }
+        let root_path = crate::backend::path_utils::normalize_path_for_storage(raw_root_path)?;
 
         let current = capabilities::skill_backup_settings_sqlx(&self.db, self.tenant_id())?;
         let current_root = PathBuf::from(&current.expanded_root_path);

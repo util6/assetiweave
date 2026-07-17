@@ -1,7 +1,6 @@
 use crate::backend::dto::AppResult;
 use crate::backend::models::TargetProfile;
 use crate::backend::path_utils::normalize_path_for_storage;
-use crate::backend::{app_paths::AppPathCatalog, models::AppKind};
 use sqlx::SqlitePool;
 
 use super::{
@@ -61,13 +60,6 @@ fn normalize_profile_paths(mut profile: TargetProfile) -> AppResult<TargetProfil
         .iter()
         .map(|path| normalize_path_for_storage(path))
         .collect::<AppResult<Vec<_>>>()?;
-    if profile.id == "cursor"
-        && profile.app_kind == AppKind::Cursor
-        && profile.target_paths == ["~/Library/Application Support/Cursor/skills"]
-    {
-        profile.target_paths =
-            vec![AppPathCatalog::default_skill_target(AppKind::Cursor).to_string()];
-    }
     Ok(profile)
 }
 
@@ -225,36 +217,6 @@ mod tests {
             .expect("stored profile");
 
         assert_eq!(loaded.target_paths, vec!["~/.codex/skills"]);
-        drop(database);
-        cleanup_database(&db_path);
-    }
-
-    #[test]
-    fn sqlx_profile_repo_migrates_legacy_cursor_default_path_to_config_anchor() {
-        let db_path = std::env::temp_dir().join(format!(
-            "assetiweave-profile-cursor-path-{}.sqlite",
-            Uuid::new_v4()
-        ));
-        let database = Database::open(&db_path).expect("open database");
-        let mut profile = test_profile("cursor");
-        profile.app_kind = AppKind::Cursor;
-        profile.target_paths = vec!["~/Library/Application Support/Cursor/skills".to_string()];
-
-        let loaded = database
-            .block_on(async {
-                sqlx::query(sql::UPSERT_PROFILE)
-                    .bind("default")
-                    .bind(&profile.id)
-                    .bind(encode_json(&profile)?)
-                    .execute(database.pool())
-                    .await
-                    .map_err(|error| error.to_string())?;
-                load_profile_sqlx(database.pool(), "default", &profile.id).await
-            })
-            .expect("load legacy cursor profile")
-            .expect("stored profile");
-
-        assert_eq!(loaded.target_paths, vec!["@config/Cursor/skills"]);
         drop(database);
         cleanup_database(&db_path);
     }

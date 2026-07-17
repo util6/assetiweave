@@ -104,7 +104,10 @@ fn creating_tenant_seeds_isolated_skill_backup_library_root() {
         "unexpected tenant skill root: {}",
         settings.expanded_root_path
     );
-    assert_eq!(settings.expanded_root_path, settings.default_root_path);
+    assert_eq!(
+        settings.default_root_path,
+        "~/.assetiweave/tenants/client-a/library/skills"
+    );
     assert!(settings.is_default_root);
 
     assert!(tenant_service
