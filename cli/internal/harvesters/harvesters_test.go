@@ -407,6 +407,39 @@ func TestResolveRuntimeInvocationIgnoresRelativeRuntimeOverride(t *testing.T) {
 	}
 }
 
+func TestResolvePortableRuntimeProgramUsesHostPathRoots(t *testing.T) {
+	roots := portableRuntimePathRoots{
+		Home:      filepath.Join(string(filepath.Separator), "Users", "alice"),
+		Config:    filepath.Join(string(filepath.Separator), "Users", "alice", "AppData", "Roaming"),
+		LocalData: filepath.Join(string(filepath.Separator), "Users", "alice", "AppData", "Local"),
+		Data:      filepath.Join(string(filepath.Separator), "Users", "alice", "AppData", "Roaming"),
+		Cache:     filepath.Join(string(filepath.Separator), "Users", "alice", "AppData", "Local", "Cache"),
+	}
+
+	tests := map[string]string{
+		"~/bin/node":                          filepath.Join(roots.Home, "bin", "node"),
+		"@config/AssetIWeave/node":            filepath.Join(roots.Config, "AssetIWeave", "node"),
+		"@local-data/AssetIWeave/python.exe":  filepath.Join(roots.LocalData, "AssetIWeave", "python.exe"),
+		"@data/AssetIWeave/bash":              filepath.Join(roots.Data, "AssetIWeave", "bash"),
+		"@cache/AssetIWeave/runtime":          filepath.Join(roots.Cache, "AssetIWeave", "runtime"),
+		"%USERPROFILE%/bin/node.exe":          filepath.Join(roots.Home, "bin", "node.exe"),
+		"%APPDATA%/AssetIWeave/node.exe":      filepath.Join(roots.Config, "AssetIWeave", "node.exe"),
+		"%LOCALAPPDATA%/AssetIWeave/node.exe": filepath.Join(roots.LocalData, "AssetIWeave", "node.exe"),
+	}
+
+	for stored, want := range tests {
+		t.Run(stored, func(t *testing.T) {
+			got, ok := resolvePortableRuntimeProgramWithRoots(stored, roots)
+			if !ok {
+				t.Fatalf("resolvePortableRuntimeProgramWithRoots(%q) was not resolved", stored)
+			}
+			if got != want {
+				t.Fatalf("resolvePortableRuntimeProgramWithRoots(%q) = %q, want %q", stored, got, want)
+			}
+		})
+	}
+}
+
 func TestLoadRuntimeOverridesReadsAppSettingsFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv(homeEnv, home)

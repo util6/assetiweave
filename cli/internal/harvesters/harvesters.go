@@ -157,6 +157,14 @@ type RuntimeOverrides struct {
 	Bash   string
 }
 
+type portableRuntimePathRoots struct {
+	Home      string
+	Config    string
+	LocalData string
+	Data      string
+	Cache     string
+}
+
 func DefaultRoot() (string, error) {
 	if root := strings.TrimSpace(os.Getenv(rootEnv)); root != "" {
 		return filepath.Clean(root), nil
@@ -993,31 +1001,27 @@ func runtimeOverridesFromSettingsDocument(document map[string]any) RuntimeOverri
 
 func runtimeOverrideValue(overrides map[string]any, key string) string {
 	value, _ := overrides[key].(string)
-	value = strings.TrimSpace(value)
-	if validRuntimeOverride(value) {
-		return value
-	}
-	return ""
+	return resolvedRuntimeOverride(value)
 }
 
 func configuredRuntimeProgram(runtimeType string, overrides RuntimeOverrides) string {
 	switch strings.ToLower(strings.TrimSpace(runtimeType)) {
 	case "node":
-		if validRuntimeOverride(overrides.Node) {
-			return overrides.Node
+		if program := resolvedRuntimeOverride(overrides.Node); program != "" {
+			return program
 		}
 		return "node"
 	case "python":
-		if validRuntimeOverride(overrides.Python) {
-			return overrides.Python
+		if program := resolvedRuntimeOverride(overrides.Python); program != "" {
+			return program
 		}
 		if runtime.GOOS == "windows" {
 			return "py"
 		}
 		return "python3"
 	case "bash":
-		if validRuntimeOverride(overrides.Bash) {
-			return overrides.Bash
+		if program := resolvedRuntimeOverride(overrides.Bash); program != "" {
+			return program
 		}
 		return "bash"
 	default:
@@ -1033,7 +1037,26 @@ func runtimeArgs(runtimeType string) []string {
 }
 
 func validRuntimeOverride(program string) bool {
-	return program != "" && len(program) <= 4096 && isAbsoluteRuntimeProgram(program)
+	return resolvedRuntimeOverride(program) != ""
+}
+
+func resolvedRuntimeOverride(program string) string {
+	program = strings.TrimSpace(program)
+	if program == "" || len(program) > 4096 {
+		return ""
+	}
+	if isAbsoluteRuntimeProgram(program) {
+		return filepath.Clean(program)
+	}
+	roots, err := portableRuntimePathRootsForHost()
+	if err != nil {
+		return ""
+	}
+	resolved, ok := resolvePortableRuntimeProgramWithRoots(program, roots)
+	if !ok {
+		return ""
+	}
+	return resolved
 }
 
 func isAbsoluteRuntimeProgram(program string) bool {
@@ -1048,6 +1071,94 @@ func looksLikeWindowsRootedRuntimeProgram(program string) bool {
 		((program[2] == '\\') || (program[2] == '/')) &&
 		program[1] == ':' &&
 		((program[0] >= 'A' && program[0] <= 'Z') || (program[0] >= 'a' && program[0] <= 'z'))
+}
+
+func portableRuntimePathRootsForHost() (portableRuntimePathRoots, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return portableRuntimePathRoots{}, err
+	}
+	config, err := os.UserConfigDir()
+	if err != nil {
+		return portableRuntimePathRoots{}, err
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return portableRuntimePathRoots{}, err
+	}
+
+	data := config
+	localData := config
+	switch runtime.GOOS {
+	case "windows":
+		if value := strings.TrimSpace(os.Getenv("APPDATA")); value != "" {
+			config = value
+			data = value
+		}
+		if value := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); value != "" {
+			localData = value
+		} else {
+			localData = filepath.Join(home, "AppData", "Local")
+		}
+	case "darwin":
+		data = config
+		localData = config
+	default:
+		if value := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); value != "" {
+			data = value
+		} else {
+			data = filepath.Join(home, ".local", "share")
+		}
+		localData = data
+	}
+
+	return portableRuntimePathRoots{
+		Home:      filepath.Clean(home),
+		Config:    filepath.Clean(config),
+		LocalData: filepath.Clean(localData),
+		Data:      filepath.Clean(data),
+		Cache:     filepath.Clean(cache),
+	}, nil
+}
+
+func resolvePortableRuntimeProgramWithRoots(program string, roots portableRuntimePathRoots) (string, bool) {
+	anchors := []struct {
+		name string
+		root string
+	}{
+		{name: "~", root: roots.Home},
+		{name: "@config", root: roots.Config},
+		{name: "@local-data", root: roots.LocalData},
+		{name: "@data", root: roots.Data},
+		{name: "@cache", root: roots.Cache},
+		{name: "%USERPROFILE%", root: roots.Home},
+		{name: "%APPDATA%", root: roots.Config},
+		{name: "%LOCALAPPDATA%", root: roots.LocalData},
+	}
+	normalized := strings.ReplaceAll(strings.TrimSpace(program), "\\", "/")
+	for _, anchor := range anchors {
+		suffix, matches := portableRuntimePathSuffix(normalized, anchor.name)
+		if !matches || strings.TrimSpace(anchor.root) == "" {
+			continue
+		}
+		target := filepath.Join(anchor.root, filepath.FromSlash(suffix))
+		relative, err := filepath.Rel(anchor.root, target)
+		if err != nil || unsafeRelPath(relative) {
+			return "", false
+		}
+		return filepath.Clean(target), true
+	}
+	return "", false
+}
+
+func portableRuntimePathSuffix(program, anchor string) (string, bool) {
+	if strings.EqualFold(program, anchor) {
+		return "", true
+	}
+	if len(program) > len(anchor) && program[len(anchor)] == '/' && strings.EqualFold(program[:len(anchor)], anchor) {
+		return strings.TrimPrefix(program[len(anchor):], "/"), true
+	}
+	return "", false
 }
 
 func resolveCommand(directory, command string) (string, error) {
