@@ -38,6 +38,17 @@ function requireNotIncludes(label, text, needle) {
   }
 }
 
+function workflowJob(text, jobName) {
+  const marker = `\n  ${jobName}:\n`;
+  const start = text.indexOf(marker);
+  if (start < 0) {
+    fail(`CI workflow must define the ${jobName} job`);
+  }
+  const bodyStart = start + marker.length;
+  const nextJob = text.slice(bodyStart).search(/\n  [a-zA-Z0-9_-]+:\n/u);
+  return nextJob < 0 ? text.slice(start) : text.slice(start, bodyStart + nextJob);
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? root,
@@ -69,6 +80,11 @@ const ciWorkflow = read(".github/workflows/ci.yml");
 requireIncludes("CI workflow", ciWorkflow, "go vet -C cli ./...");
 requireIncludes("CI workflow", ciWorkflow, "go test -C cli -race ./...");
 requireIncludes("CI workflow", ciWorkflow, "pnpm cli:test:e2e");
+const windowsCiJob = workflowJob(ciWorkflow, "windows");
+requireIncludes("Windows CI job", windowsCiJob, "pnpm typecheck");
+requireIncludes("Windows CI job", windowsCiJob, "pnpm test");
+requireIncludes("Windows CI job", windowsCiJob, "pnpm build");
+requireIncludes("Windows CI job", windowsCiJob, "pnpm bundle:cli");
 
 const releaseWorkflow = read(".github/workflows/release.yml");
 requireIncludes("release workflow", releaseWorkflow, "node scripts/release-audit.js --static-only");
