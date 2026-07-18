@@ -7,6 +7,22 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "0.2.1",
+      "channel": "stable",
+      "released_at": "2026-07-18T00:00:00Z",
+      "core_compatibility": ">=0.5.0, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.zcode-session-0.2.1-universal.zip",
+      "artifact_size": 6033,
+      "artifact_sha256": "530ccc632b9fd4839cbd2c290ba8bf6f0eb8fe7fe3bd9f71e6dd8d622bfb1775",
+      "changelog_markdown": "## 0.2.1\n\n- Allow capability probes before a ZCode source database is configured.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/zcode"
+      }
+    },
+    {
       "version": "0.2.0",
       "channel": "stable",
       "released_at": "2026-07-16T00:00:00Z",

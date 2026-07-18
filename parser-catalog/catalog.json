@@ -81,7 +81,7 @@
         "sqlite",
         "python"
       ],
-      "expected_package_hash": "312f2ea15ee4fbc8eca28e05342b3f31aee84edb6fb49360cf2c2b50dadab5db",
+      "expected_package_hash": "159f08f7c374bd92ac640efbbd92f2c098c3ce6c144f78d337e527beeae8ab52",
       "expected_content_hash": "5a50814a30a7894ee5243873bce8cb175ffdce9fab8d6a75324b5d446837c044",
       "source": {
         "type": "github",

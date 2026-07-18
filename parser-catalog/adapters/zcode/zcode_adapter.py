@@ -577,6 +577,9 @@ def run(request: dict[str, Any]) -> None:
     method = str(request.get("method") or "")
     if method not in {"probe", "list_sessions", "read_session"}:
         raise ValueError(f"unsupported method: {method}")
+    if method == "probe":
+        emit({"type": "complete", "item": {"session_count": 0, "turn_count": 0}})
+        return
     source = request.get("source")
     if not isinstance(source, dict) or not isinstance(source.get("location"), str):
         raise ValueError("source.location is required")
@@ -589,10 +592,6 @@ def run(request: dict[str, Any]) -> None:
     max_sessions = configured_limit(source.get("config"))
     with connect_read_only(db_path) as conn:
         validate_schema(conn)
-        if method == "probe":
-            count = int(conn.execute("SELECT COUNT(*) FROM session").fetchone()[0])
-            emit({"type": "complete", "item": {"session_count": count, "turn_count": 0}})
-            return
         sessions = normalized_sessions(
             conn,
             db_path,

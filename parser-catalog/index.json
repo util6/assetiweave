@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "updated_at": "2026-07-16T00:00:00Z",
+  "updated_at": "2026-07-18T00:00:00Z",
   "packages": [
     { "package_id": "io.github.util6.codex-session", "stable_version": "1.1.0", "beta_version": null, "history_url": "history/io.github.util6.codex-session.json" },
     { "package_id": "io.github.util6.opencode-session", "stable_version": "1.1.0", "beta_version": null, "history_url": "history/io.github.util6.opencode-session.json" },
     { "package_id": "io.github.util6.claude-code-session", "stable_version": "1.1.0", "beta_version": null, "history_url": "history/io.github.util6.claude-code-session.json" },
-    { "package_id": "io.github.util6.zcode-session", "stable_version": "0.2.0", "beta_version": null, "history_url": "history/io.github.util6.zcode-session.json" },
+    { "package_id": "io.github.util6.zcode-session", "stable_version": "0.2.1", "beta_version": null, "history_url": "history/io.github.util6.zcode-session.json" },
     { "package_id": "io.github.util6.chatgpt-web", "stable_version": "0.2.0", "beta_version": null, "history_url": "history/io.github.util6.chatgpt-web.json" },
     { "package_id": "io.github.util6.qwen-web", "stable_version": "0.2.0", "beta_version": null, "history_url": "history/io.github.util6.qwen-web.json" },
     { "package_id": "io.github.util6.gemini-web", "stable_version": "0.2.0", "beta_version": null, "history_url": "history/io.github.util6.gemini-web.json" }

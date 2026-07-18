@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package_id": "io.github.util6.zcode-session",
   "name": "ZCode Session Parser",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "min_core_version": "0.5.0",
   "record_kind": "session",
   "adapter_manifest": "conversation-adapter.json",
@@ -13,6 +13,13 @@
     "protocol": "stdio-ndjson-v1"
   },
   "changelog": [
+    {
+      "version": "0.2.1",
+      "date": "2026-07-18",
+      "notes": [
+        "Allow capability probes to validate the adapter protocol before a source database is configured."
+      ]
+    },
     {
       "version": "0.2.0",
       "date": "2026-07-16",
