@@ -854,6 +854,9 @@ function ScriptResourceRow({
           {entry.update_available && entry.status !== "update_available" ? (
             <Badge tone="conflict">{t("conversation.scriptMarket.updateAvailable")}</Badge>
           ) : null}
+          {entry.ahead_of_release && entry.status !== "ahead_of_release" ? (
+            <Badge tone="create">{t("conversation.scriptMarket.aheadOfRelease")}</Badge>
+          ) : null}
         </div>
         {entry.item.description ? (
           <p className="mt-1 line-clamp-2 text-body-sm text-on-surface-variant">{entry.item.description}</p>
@@ -1020,6 +1023,8 @@ function statusLabelKey(status: ConversationAdapterPackageCatalogStatus) {
       return "conversation.scriptMarket.manifestInvalid";
     case "core_incompatible":
       return "conversation.scriptMarket.coreIncompatible";
+    case "ahead_of_release":
+      return "conversation.scriptMarket.aheadOfRelease";
     case "not_installed":
     default:
       return "conversation.scriptMarket.notInstalled";
@@ -1034,6 +1039,7 @@ function statusBadgeTone(status: ConversationAdapterPackageCatalogStatus) {
     case "local_registered":
     case "git_registered":
     case "dev_override":
+    case "ahead_of_release":
       return "create";
     case "update_available":
     case "runtime_missing":

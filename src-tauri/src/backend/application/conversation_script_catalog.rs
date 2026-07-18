@@ -1702,6 +1702,7 @@ pub(crate) struct ConversationAdapterPackageCatalogEntry {
     pub(crate) item: ConversationScriptCatalogItem,
     pub(crate) installed: bool,
     pub(crate) update_available: bool,
+    pub(crate) ahead_of_release: bool,
     pub(crate) runtime_ready: bool,
     pub(crate) status: String,
     pub(crate) installed_package: Option<ConversationAdapterPackage>,
@@ -1888,15 +1889,27 @@ fn resolve_conversation_adapter_package_catalog_entries(
                         .map(|path| path.to_string_lossy().to_string())
                 });
             let installed = installed_package.is_some() || installed_adapter.is_some();
-            let update_available = installed_package
+            let installed_version = installed_package
                 .as_ref()
-                .map(|package| package.version != item.version)
-                .or_else(|| {
-                    installed_adapter
-                        .as_ref()
-                        .map(|adapter| adapter.version != item.version)
-                })
-                .unwrap_or(false);
+                .map(|p| &p.version)
+                .or_else(|| installed_adapter.as_ref().map(|a| &a.version));
+
+            let (update_available, ahead_of_release) =
+                if let Some(installed_ver) = installed_version {
+                    if let (Ok(installed_semver), Ok(item_semver)) = (
+                        semver::Version::parse(installed_ver),
+                        semver::Version::parse(&item.version),
+                    ) {
+                        (
+                            item_semver > installed_semver,
+                            installed_semver > item_semver,
+                        )
+                    } else {
+                        (installed_ver != &item.version, false)
+                    }
+                } else {
+                    (false, false)
+                };
             let runtime_ready = installed_package
                 .as_ref()
                 .map(|package| package.runtime_ready)
@@ -1912,6 +1925,7 @@ fn resolve_conversation_adapter_package_catalog_entries(
                 installed,
                 installed_package.as_ref(),
                 update_available,
+                ahead_of_release,
                 runtime_ready,
                 installed_adapter.as_ref(),
             );
@@ -1930,6 +1944,7 @@ fn resolve_conversation_adapter_package_catalog_entries(
                 item,
                 installed,
                 update_available,
+                ahead_of_release,
                 runtime_ready,
                 status,
                 installed_package,
@@ -1975,10 +1990,11 @@ fn resolve_conversation_adapter_package_catalog_entries(
             .latest_version
             .clone()
             .unwrap_or_else(|| package.version.clone());
-        let update_available = semver::Version::parse(&latest_version)
+        let (update_available, ahead_of_release) = semver::Version::parse(&latest_version)
             .ok()
             .zip(semver::Version::parse(&package.version).ok())
-            .is_some_and(|(latest, current)| latest > current);
+            .map(|(latest, current)| (latest > current, current > latest))
+            .unwrap_or((false, false));
         let item = ConversationScriptCatalogItem {
             id: package.package_id.clone(),
             name: package.name.clone(),
@@ -2028,11 +2044,13 @@ fn resolve_conversation_adapter_package_catalog_entries(
                 true,
                 Some(package),
                 update_available,
+                ahead_of_release,
                 package.runtime_ready,
                 adapter.as_ref(),
             ),
             installed: true,
             update_available,
+            ahead_of_release,
             runtime_ready: package.runtime_ready,
             install_path: Some(package.install_dir.clone()),
             display_install_path: Some(crate::backend::path_utils::display_path_or_original(
@@ -2113,10 +2131,12 @@ fn resolve_conversation_adapter_package_catalog_entries(
             },
             installed: true,
             update_available: false,
+            ahead_of_release: false,
             runtime_ready: adapter.enabled,
             status: conversation_adapter_package_status(
                 true,
                 None,
+                false,
                 false,
                 adapter.enabled,
                 Some(adapter),
@@ -2171,6 +2191,7 @@ fn conversation_adapter_package_status(
     installed: bool,
     package: Option<&ConversationAdapterPackage>,
     update_available: bool,
+    ahead_of_release: bool,
     runtime_ready: bool,
     adapter: Option<&ConversationAdapter>,
 ) -> String {
@@ -2210,6 +2231,9 @@ fn conversation_adapter_package_status(
     }
     if update_available {
         return "update_available".to_string();
+    }
+    if ahead_of_release {
+        return "ahead_of_release".to_string();
     }
     if runtime_ready {
         "installed".to_string()
@@ -2576,7 +2600,22 @@ mod tests {
 
         assert!(entries[0].installed);
         assert!(entries[0].update_available);
+        assert!(!entries[0].ahead_of_release);
         assert_eq!(entries[0].status, "update_available");
+    }
+
+    #[test]
+    fn marks_installed_package_newer_than_catalog_as_ahead_of_release() {
+        let entries = resolve_conversation_adapter_package_catalog_entries(
+            vec![catalog_item("codex-session", Some("codex"))],
+            &[adapter("codex", "1.1.0")],
+            &[package("codex-session", "codex", "1.1.0")],
+        );
+
+        assert!(entries[0].installed);
+        assert!(!entries[0].update_available);
+        assert!(entries[0].ahead_of_release);
+        assert_eq!(entries[0].status, "ahead_of_release");
     }
 
     #[test]

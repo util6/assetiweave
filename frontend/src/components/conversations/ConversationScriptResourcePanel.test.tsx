@@ -158,6 +158,29 @@ describe("ConversationScriptResourcePanel", () => {
     expect(screen.queryByText("/tmp/package/conversation-adapter.json")).toBeNull();
   });
 
+  it("shows installed adapters that are ahead of the catalog without offering an update", async () => {
+    const aheadEntry: ConversationAdapterPackageCatalogEntry = {
+      ...entries[1],
+      update_available: false,
+      ahead_of_release: true,
+      status: "ahead_of_release",
+      installed_package: {
+        ...entries[1].installed_package!,
+        version: "1.1.0",
+      },
+      installed_adapter: {
+        ...entries[1].installed_adapter!,
+        version: "1.1.0",
+      },
+    };
+    serviceMocks.list.mockResolvedValueOnce([aheadEntry]);
+
+    renderPanel();
+
+    expect(await screen.findByText("Ahead")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
+  });
+
   it("shows an accessible loading indicator while the catalog is validated", async () => {
     let resolveCatalog: (value: ConversationAdapterPackageCatalogEntry[]) => void = () => undefined;
     serviceMocks.list.mockReturnValueOnce(new Promise((resolve) => {
@@ -354,6 +377,7 @@ const entries: ConversationAdapterPackageCatalogEntry[] = [
     },
     installed: true,
     update_available: false,
+    ahead_of_release: false,
     runtime_ready: true,
     status: "built_in",
     installed_adapter: {
@@ -382,6 +406,7 @@ const entries: ConversationAdapterPackageCatalogEntry[] = [
     },
     installed: true,
     update_available: true,
+    ahead_of_release: false,
     runtime_ready: true,
     status: "update_available",
     display_install_path: "~/conversation-adapters/codex",
@@ -433,6 +458,7 @@ const entries: ConversationAdapterPackageCatalogEntry[] = [
     },
     installed: false,
     update_available: false,
+    ahead_of_release: false,
     runtime_ready: false,
     status: "not_installed",
   },

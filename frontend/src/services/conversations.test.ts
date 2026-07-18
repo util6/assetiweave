@@ -116,6 +116,23 @@ describe("conversation services", () => {
     });
   });
 
+  it("includes explicit version direction in preview package entries", async () => {
+    vi.stubGlobal("window", {});
+    invokeMock.mockRejectedValueOnce(new Error("preview backend missing"));
+
+    const entries = await listConversationAdapterPackages();
+    const zcodeEntry = entries.find((entry) => entry.item.adapter_id === "zcode");
+
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries.every((entry) => typeof entry.ahead_of_release === "boolean")).toBe(true);
+    expect(entries.every((entry) => !(entry.update_available && entry.ahead_of_release))).toBe(true);
+    expect(zcodeEntry).toMatchObject({
+      ahead_of_release: true,
+      status: "ahead_of_release",
+      update_available: false,
+    });
+  });
+
   it("routes installed-version lifecycle operations through the shared package API", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
     invokeMock.mockResolvedValue([]);

@@ -171,12 +171,14 @@ export type ConversationAdapterPackageCatalogStatus =
   | "built_in"
   | "local_registered"
   | "git_registered"
-  | "dev_override";
+  | "dev_override"
+  | "ahead_of_release";
 
 export interface ConversationAdapterPackageCatalogEntry {
   item: ConversationScriptCatalogItem;
   installed: boolean;
   update_available: boolean;
+  ahead_of_release: boolean;
   runtime_ready: boolean;
   status: ConversationAdapterPackageCatalogStatus;
   installed_package?: ConversationAdapterPackage | null;
@@ -1526,7 +1528,7 @@ const fallbackAdapters: ConversationAdapter[] = [
     id: "zcode",
     name: "ZCode",
     kind: "external",
-    version: "0.1.0",
+    version: "0.2.1",
     enabled: true,
     manifest_path: "~/.assetiweave/conversation-adapters/market/zcode-session/conversation-adapter.json",
     executable_path: "~/.assetiweave/conversation-adapters/market/zcode-session/zcode_adapter.py",
@@ -1692,10 +1694,11 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
   return items.map((item) => {
     const adapterId = item.adapter_id ?? item.id;
     const installedAdapter = fallbackAdapters.find((adapter) => adapter.id === adapterId) ?? null;
+    const versionState = conversationAdapterVersionState(installedAdapter?.version, item.version);
     return {
       item,
       installed: Boolean(installedAdapter),
-      update_available: Boolean(installedAdapter && installedAdapter.version !== item.version),
+      update_available: versionState.update_available,
       installed_adapter: installedAdapter,
       install_path: installedAdapter?.manifest_path?.replace(/\/conversation-adapter\.json$/, "") ?? null,
     };
@@ -1703,17 +1706,126 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
 }
 
 function fallbackConversationAdapterPackageCatalogEntries(): ConversationAdapterPackageCatalogEntry[] {
-  return fallbackConversationScriptCatalogEntries().map((entry) => ({
-    item: entry.item,
-    installed: entry.installed,
-    update_available: entry.update_available,
-    runtime_ready: Boolean(entry.installed_adapter?.enabled),
-    status: entry.installed ? "legacy_installed" : "not_installed",
-    installed_package: null,
-    installed_adapter: entry.installed_adapter ?? null,
-    install_path: entry.install_path ?? null,
-    error_message: null,
-  }));
+  return fallbackConversationScriptCatalogEntries().map((entry) => {
+    const versionState = conversationAdapterVersionState(
+      entry.installed_adapter?.version,
+      entry.item.version,
+    );
+    return {
+      ...versionState,
+      item: entry.item,
+      installed: entry.installed,
+      runtime_ready: Boolean(entry.installed_adapter?.enabled),
+      status: entry.installed
+        ? versionState.ahead_of_release
+          ? "ahead_of_release"
+          : versionState.update_available
+            ? "update_available"
+            : "legacy_installed"
+        : "not_installed",
+      installed_package: null,
+      installed_adapter: entry.installed_adapter ?? null,
+      install_path: entry.install_path ?? null,
+      error_message: null,
+    };
+  });
+}
+
+function conversationAdapterVersionState(installedVersion: string | undefined, catalogVersion: string) {
+  if (!installedVersion) {
+    return { update_available: false, ahead_of_release: false };
+  }
+  const order = compareSemanticVersions(installedVersion, catalogVersion);
+  if (order === null) {
+    return {
+      update_available: installedVersion !== catalogVersion,
+      ahead_of_release: false,
+    };
+  }
+  return {
+    update_available: order < 0,
+    ahead_of_release: order > 0,
+  };
+}
+
+interface ParsedSemanticVersion {
+  core: [string, string, string];
+  prerelease: string[] | null;
+}
+
+function compareSemanticVersions(left: string, right: string): number | null {
+  const leftVersion = parseSemanticVersion(left);
+  const rightVersion = parseSemanticVersion(right);
+  if (!leftVersion || !rightVersion) {
+    return null;
+  }
+  for (let index = 0; index < 3; index += 1) {
+    const comparison = compareNumericIdentifiers(leftVersion.core[index], rightVersion.core[index]);
+    if (comparison !== 0) {
+      return comparison;
+    }
+  }
+  if (!leftVersion.prerelease && !rightVersion.prerelease) {
+    return 0;
+  }
+  if (!leftVersion.prerelease) {
+    return 1;
+  }
+  if (!rightVersion.prerelease) {
+    return -1;
+  }
+  const length = Math.max(leftVersion.prerelease.length, rightVersion.prerelease.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftIdentifier = leftVersion.prerelease[index];
+    const rightIdentifier = rightVersion.prerelease[index];
+    if (leftIdentifier === undefined) {
+      return -1;
+    }
+    if (rightIdentifier === undefined) {
+      return 1;
+    }
+    const leftNumeric = /^\d+$/.test(leftIdentifier);
+    const rightNumeric = /^\d+$/.test(rightIdentifier);
+    if (leftNumeric && rightNumeric) {
+      const comparison = compareNumericIdentifiers(leftIdentifier, rightIdentifier);
+      if (comparison !== 0) {
+        return comparison;
+      }
+    } else if (leftNumeric !== rightNumeric) {
+      return leftNumeric ? -1 : 1;
+    } else if (leftIdentifier !== rightIdentifier) {
+      return leftIdentifier < rightIdentifier ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+function parseSemanticVersion(value: string): ParsedSemanticVersion | null {
+  const match = value.trim().match(
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
+  );
+  if (!match) {
+    return null;
+  }
+  const prerelease = match[4]?.split(".") ?? null;
+  if (
+    prerelease?.some(
+      (identifier) => /^\d+$/.test(identifier) && identifier.length > 1 && identifier.startsWith("0"),
+    )
+  ) {
+    return null;
+  }
+  return { core: [match[1], match[2], match[3]], prerelease };
+}
+
+function compareNumericIdentifiers(left: string, right: string) {
+  if (left.length !== right.length) {
+    return left.length < right.length ? -1 : 1;
+  }
+  if (left === right) {
+    return 0;
+  }
+  return left < right ? -1 : 1;
 }
 
 function fallbackPackageTask(
