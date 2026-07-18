@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -276,6 +277,19 @@ func TestExtractPackageZipRejectsCaseInsensitivePathCollisions(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "colliding paths") {
 		t.Fatalf("extractPackageZip() error = %v, want case-insensitive collision error", err)
+	}
+}
+
+func TestPortableArchiveValidationRejectsTooManyEntries(t *testing.T) {
+	names := make([]string, maxPackageFiles+1)
+	for index := range names {
+		names[index] = fmt.Sprintf("package/file-%04d.txt", index)
+	}
+
+	err := validatePortableArchivePathNames(names)
+
+	if err == nil || !strings.Contains(err.Error(), "too many entries") {
+		t.Fatalf("validatePortableArchivePathNames() error = %v, want entry limit error", err)
 	}
 }
 

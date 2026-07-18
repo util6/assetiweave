@@ -741,6 +741,9 @@ func validatePackageTarGzPaths(data []byte) error {
 }
 
 func validatePortableArchivePathNames(names []string) error {
+	if len(names) > maxPackageFiles {
+		return validationError("harvester package archive has too many entries: %d", len(names))
+	}
 	seen := map[string]string{}
 	for _, name := range names {
 		_, key, err := portableArchivePath(name)
