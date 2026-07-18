@@ -56,57 +56,60 @@ fn run_conversation_harvester_in_dir(source_dir: &Path) -> AppResult<bool> {
         ensure_adapter_runtime_available(&runtime, &invocation)?;
     }
 
-    let mut child = Command::new(&invocation.program)
+    let mut command = Command::new(&invocation.program);
+    command
         .args(&invocation.args)
-        .current_dir(&source_dir)
-        .env("ASSETIWEAVE_HARVESTER_DIR", &source_dir)
-        .env("ASSETIWEAVE_HARVESTER_ID", &manifest.id)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("run harvester {}: {error}", manifest.id))?;
-
-    let start = Instant::now();
-    loop {
-        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
-            let mut stdout = String::new();
-            let mut stderr = String::new();
-            if let Some(mut pipe) = child.stdout.take() {
-                let mut bytes = Vec::new();
-                pipe.read_to_end(&mut bytes)
-                    .map_err(|error| error.to_string())?;
-                stdout = capped_utf8(&bytes, OUTPUT_CAPTURE_LIMIT);
-            }
-            if let Some(mut pipe) = child.stderr.take() {
-                let mut bytes = Vec::new();
-                pipe.read_to_end(&mut bytes)
-                    .map_err(|error| error.to_string())?;
-                stderr = capped_utf8(&bytes, OUTPUT_CAPTURE_LIMIT);
-            }
-            if !status.success() {
-                let mut message =
-                    format!("harvester {} failed with status {}", manifest.id, status);
-                if !stdout.trim().is_empty() {
-                    message.push_str("\nstdout:\n");
-                    message.push_str(stdout.trim());
-                }
-                if !stderr.trim().is_empty() {
-                    message.push_str("\nstderr:\n");
-                    message.push_str(stderr.trim());
-                }
-                return Err(message);
-            }
-            return Ok(true);
+        .current_dir(source_dir)
+        .env("ASSETIWEAVE_HARVESTER_DIR", source_dir)
+        .env("ASSETIWEAVE_HARVESTER_ID", &manifest.id);
+    let output = match crate::backend::host_process::run_command_with_timeout(
+        &mut command,
+        Duration::from_millis(HARVESTER_TIMEOUT_MS),
+        OUTPUT_CAPTURE_LIMIT,
+        OUTPUT_CAPTURE_LIMIT,
+    ) {
+        Ok(output) => output,
+        Err(crate::backend::host_process::HostProcessError::Spawn(error)) => {
+            return Err(format!("run harvester {}: {error}", manifest.id));
         }
-        if start.elapsed() > Duration::from_millis(HARVESTER_TIMEOUT_MS) {
-            let _ = child.kill();
-            return Err(format!(
+        Err(crate::backend::host_process::HostProcessError::Output(error)) => {
+            return Err(format!("capture harvester {} output: {error}", manifest.id));
+        }
+        Err(crate::backend::host_process::HostProcessError::Timeout {
+            stdout,
+            stderr,
+            stdout_truncated,
+            stderr_truncated,
+        }) => {
+            let mut message = format!(
                 "harvester {} timed out after {} ms",
                 manifest.id, HARVESTER_TIMEOUT_MS
-            ));
+            );
+            append_captured_output(&mut message, "stdout", &stdout, stdout_truncated);
+            append_captured_output(&mut message, "stderr", &stderr, stderr_truncated);
+            return Err(message);
         }
-        thread::sleep(Duration::from_millis(100));
+    };
+    if !output.status.success() {
+        let mut message = format!(
+            "harvester {} failed with status {}",
+            manifest.id, output.status
+        );
+        append_captured_output(
+            &mut message,
+            "stdout",
+            &output.stdout,
+            output.stdout_truncated,
+        );
+        append_captured_output(
+            &mut message,
+            "stderr",
+            &output.stderr,
+            output.stderr_truncated,
+        );
+        return Err(message);
     }
+    Ok(true)
 }
 
 pub(super) fn append_harvester_runtime_requirements(
@@ -269,12 +272,17 @@ fn is_javascript_harvester_entrypoint(path: &Path) -> bool {
         })
 }
 
-fn capped_utf8(bytes: &[u8], limit: usize) -> String {
+fn append_captured_output(message: &mut String, label: &str, bytes: &[u8], truncated: bool) {
     let text = String::from_utf8_lossy(bytes);
-    if text.len() <= limit {
-        text.to_string()
-    } else {
-        format!("{}... [truncated]", &text[..limit])
+    if text.trim().is_empty() && !truncated {
+        return;
+    }
+    message.push('\n');
+    message.push_str(label);
+    message.push_str(":\n");
+    message.push_str(text.trim());
+    if truncated {
+        message.push_str("\n... [truncated]");
     }
 }
 
