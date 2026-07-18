@@ -19,6 +19,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
   delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
 });
 
@@ -43,6 +44,33 @@ describe("promptClipboard", () => {
       },
     });
     expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the Web Clipboard when native image copy is unavailable", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const write = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        write,
+        writeText: vi.fn(async () => undefined),
+      },
+    });
+    vi.stubGlobal("ClipboardItem", class ClipboardItem {
+      constructor(public readonly items: Record<string, Blob>) {}
+    });
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("native clipboard unavailable"));
+
+    await copyPromptImagesToClipboard([{
+      dataUrl: "data:image/png;base64,ZGlhZ3JhbQ==",
+      mimeType: "image/png",
+      name: "diagram.png",
+    }]);
+
+    expect(write).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to image placeholders when image clipboard writes are unavailable outside Tauri", async () => {

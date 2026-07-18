@@ -17,17 +17,21 @@ export async function copyPromptImagesToClipboard(attachments: PromptClipboardAt
   }
 
   if (isTauriRuntime()) {
-    await invoke<void>("copy_prompt_card_to_clipboard", {
-      params: {
-        attachments: attachments.map((attachment) => ({
-          dataUrl: attachment.dataUrl,
-          mimeType: attachment.mimeType,
-          name: attachment.name,
-        })),
-        text: "",
-      },
-    });
-    return;
+    try {
+      await invoke<void>("copy_prompt_card_to_clipboard", {
+        params: {
+          attachments: attachments.map((attachment) => ({
+            dataUrl: attachment.dataUrl,
+            mimeType: attachment.mimeType,
+            name: attachment.name,
+          })),
+          text: "",
+        },
+      });
+      return;
+    } catch {
+      // Windows and Linux currently rely on the WebView clipboard implementation.
+    }
   }
 
   await copyPromptImagesWithWebClipboard(attachments);
