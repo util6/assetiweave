@@ -294,7 +294,7 @@ describe("PromptOverviewPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "编辑信息" }));
     expect(screen.queryByPlaceholderText("标题，可留空")).toBeNull();
-    fireEvent.change(screen.getByPlaceholderText("项目目录路径，例如 /Users/me/project"), {
+    fireEvent.change(screen.getByPlaceholderText("项目目录路径，例如 ~/project"), {
       target: { value: "/tmp/new" },
     });
     const tagInput = screen.getByPlaceholderText("输入标签（还能添加 9 个）");

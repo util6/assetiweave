@@ -90,11 +90,23 @@ jobs:
         run: cargo test --workspace
 
   windows:
-    name: Windows Rust / Go
+    name: Windows Rust / Go / Frontend
     runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -127,6 +139,18 @@ jobs:
 
       - name: Build CLI
         run: go build -C cli ./...
+
+      - name: Check frontend types
+        run: pnpm typecheck
+
+      - name: Test frontend
+        run: pnpm test
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Bundle Windows CLI and Engine
+        run: pnpm bundle:cli
 
   cli-e2e:
     name: CLI / Engine E2E
