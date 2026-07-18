@@ -600,6 +600,13 @@ func extractPackageZip(data []byte, destination string) error {
 	if err != nil {
 		return validationError("read harvester package zip: %v", err).WithCause(err)
 	}
+	entryNames := make([]string, 0, len(reader.File))
+	for _, entry := range reader.File {
+		entryNames = append(entryNames, entry.Name)
+	}
+	if err := validatePortableArchivePathNames(entryNames); err != nil {
+		return err
+	}
 	fileCount := 0
 	for _, entry := range reader.File {
 		info := entry.FileInfo()
@@ -647,6 +654,9 @@ func extractPackageZip(data []byte, destination string) error {
 }
 
 func extractPackageTarGz(data []byte, destination string) error {
+	if err := validatePackageTarGzPaths(data); err != nil {
+		return err
+	}
 	gzipReader, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return validationError("read harvester package gzip: %v", err).WithCause(err)
@@ -695,10 +705,9 @@ func extractPackageTarGz(data []byte, destination string) error {
 }
 
 func safeArchivePath(destination, name string) (string, error) {
-	name = strings.ReplaceAll(name, "\\", "/")
-	clean := pathpkg.Clean(name)
-	if clean == "." || pathpkg.IsAbs(clean) || strings.HasPrefix(clean, "../") || clean == ".." {
-		return "", validationError("unsafe harvester package archive path: %s", name)
+	clean, _, err := portableArchivePath(name)
+	if err != nil {
+		return "", err
 	}
 	target := filepath.Join(destination, filepath.FromSlash(clean))
 	rel, err := filepath.Rel(destination, target)
@@ -709,6 +718,87 @@ func safeArchivePath(destination, name string) (string, error) {
 		return "", validationError("unsafe harvester package archive path: %s", name)
 	}
 	return target, nil
+}
+
+func validatePackageTarGzPaths(data []byte) error {
+	gzipReader, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return validationError("read harvester package gzip: %v", err).WithCause(err)
+	}
+	defer gzipReader.Close()
+	tarReader := tar.NewReader(gzipReader)
+	entryNames := []string{}
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			return validatePortableArchivePathNames(entryNames)
+		}
+		if err != nil {
+			return validationError("read harvester package tar: %v", err).WithCause(err)
+		}
+		entryNames = append(entryNames, header.Name)
+	}
+}
+
+func validatePortableArchivePathNames(names []string) error {
+	seen := map[string]string{}
+	for _, name := range names {
+		_, key, err := portableArchivePath(name)
+		if err != nil {
+			return err
+		}
+		if previous, exists := seen[key]; exists {
+			return validationError("harvester package archive contains colliding paths: %s and %s", previous, name)
+		}
+		seen[key] = name
+	}
+	return nil
+}
+
+func portableArchivePath(name string) (string, string, error) {
+	normalized := strings.ReplaceAll(name, "\\", "/")
+	normalized = strings.TrimSuffix(normalized, "/")
+	if normalized == "" || pathpkg.IsAbs(normalized) || strings.HasPrefix(normalized, "//") {
+		return "", "", validationError("unsafe harvester package archive path: %s", name)
+	}
+	parts := strings.Split(normalized, "/")
+	for _, part := range parts {
+		if err := validatePortableArchivePathSegment(part); err != nil {
+			return "", "", err
+		}
+	}
+	clean := strings.Join(parts, "/")
+	return clean, strings.ToLower(clean), nil
+}
+
+func validatePortableArchivePathSegment(segment string) error {
+	if segment == "" || segment == "." || segment == ".." {
+		return validationError("unsafe harvester package archive path segment: %s", segment)
+	}
+	if strings.HasSuffix(segment, " ") || strings.HasSuffix(segment, ".") {
+		return validationError("harvester package archive path segment must not end with a space or period: %s", segment)
+	}
+	for _, character := range segment {
+		if character < 0x20 || strings.ContainsRune(`<>:"/\|?*`, character) {
+			return validationError("harvester package archive path segment contains a Windows-reserved character: %s", segment)
+		}
+	}
+	reservedStem := strings.ToUpper(strings.SplitN(segment, ".", 2)[0])
+	if reservedWindowsPathStem(reservedStem) {
+		return validationError("harvester package archive path segment is reserved on Windows: %s", segment)
+	}
+	return nil
+}
+
+func reservedWindowsPathStem(stem string) bool {
+	switch stem {
+	case "CON", "PRN", "AUX", "NUL", "CLOCK$":
+		return true
+	}
+	if len(stem) == 4 && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT")) {
+		return stem[3] >= '1' && stem[3] <= '9'
+	}
+	return false
 }
 
 func findPackageRoot(root string) (string, error) {

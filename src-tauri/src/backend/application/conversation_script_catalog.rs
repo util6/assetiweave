@@ -1420,14 +1420,30 @@ fn extract_catalog_artifact_bytes(
     if archive.len() > 10_000 {
         return Err("conversation adapter package artifact contains too many entries".to_string());
     }
+    let portable_filesystem = crate::backend::host_filesystem::HostFilesystem::new(
+        crate::backend::host_paths::HostPlatform::Windows,
+    );
     let mut extracted_size = 0_u64;
+    let mut validated_paths = Vec::with_capacity(archive.len());
+    let mut seen_paths = HashMap::<String, String>::new();
     for index in 0..archive.len() {
-        let mut entry = archive.by_index(index).map_err(|error| {
+        let entry = archive.by_index(index).map_err(|error| {
             format!("read conversation adapter package artifact entry failed: {error}")
         })?;
-        let enclosed = entry.enclosed_name().ok_or_else(|| {
-            "conversation adapter package artifact contains an unsafe path".to_string()
-        })?;
+        let validated = portable_filesystem
+            .validate_portable_relative_path(entry.name())
+            .map_err(|error| {
+                format!("conversation adapter package artifact contains an unsafe path: {error}")
+            })?;
+        if let Some(previous) = seen_paths.insert(
+            validated.comparison_key().to_string(),
+            entry.name().to_string(),
+        ) {
+            return Err(format!(
+                "conversation adapter package artifact contains colliding paths: {previous} and {}",
+                entry.name()
+            ));
+        }
         if entry
             .unix_mode()
             .is_some_and(|mode| mode & 0o170000 == 0o120000)
@@ -1440,7 +1456,14 @@ fn extract_catalog_artifact_bytes(
         if extracted_size > 1024 * 1024 * 1024 {
             return Err("conversation adapter package artifact expands beyond 1 GiB".to_string());
         }
-        let destination = extract_root.join(enclosed);
+        validated_paths.push(validated);
+    }
+
+    for (index, validated) in validated_paths.iter().enumerate() {
+        let mut entry = archive.by_index(index).map_err(|error| {
+            format!("read conversation adapter package artifact entry failed: {error}")
+        })?;
+        let destination = extract_root.join(validated.as_path());
         if entry.is_dir() {
             fs::create_dir_all(&destination).map_err(|error| error.to_string())?;
             continue;
@@ -2698,6 +2721,58 @@ mod tests {
 
         assert!(result.is_err());
         assert!(!root.join("escape.txt").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn artifact_zip_rejects_windows_reserved_file_names() {
+        use std::io::Write;
+
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-artifact-reserved-name-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create artifact test root");
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file("package/CON.txt", zip::write::SimpleFileOptions::default())
+            .expect("start reserved zip entry");
+        writer.write_all(b"reserved").expect("write zip entry");
+        let bytes = writer.finish().expect("finish zip").into_inner();
+        let mut item = catalog_item("io.github.util6.reserved-test", Some("reserved-test"));
+        item.source.kind = ConversationScriptCatalogSourceKind::ArtifactZip;
+
+        let error = extract_catalog_artifact_bytes(&item, bytes, &root.join("staging"))
+            .expect_err("reserved Windows name must be rejected");
+
+        assert!(error.contains("reserved on Windows"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn artifact_zip_rejects_case_insensitive_path_collisions() {
+        use std::io::Write;
+
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-artifact-case-collision-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create artifact test root");
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for entry_name in ["Package/Adapter.js", "package/adapter.js"] {
+            writer
+                .start_file(entry_name, zip::write::SimpleFileOptions::default())
+                .expect("start colliding zip entry");
+            writer.write_all(b"entry").expect("write zip entry");
+        }
+        let bytes = writer.finish().expect("finish zip").into_inner();
+        let mut item = catalog_item("io.github.util6.collision-test", Some("collision-test"));
+        item.source.kind = ConversationScriptCatalogSourceKind::ArtifactZip;
+
+        let error = extract_catalog_artifact_bytes(&item, bytes, &root.join("staging"))
+            .expect_err("case-insensitive collision must be rejected");
+
+        assert!(error.contains("colliding paths"));
         let _ = fs::remove_dir_all(root);
     }
 

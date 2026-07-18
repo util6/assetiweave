@@ -23,6 +23,22 @@ pub(crate) struct HostFilesystem {
     platform: HostPlatform,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PortableRelativePath {
+    path: PathBuf,
+    comparison_key: String,
+}
+
+impl PortableRelativePath {
+    pub(crate) fn as_path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn comparison_key(&self) -> &str {
+        &self.comparison_key
+    }
+}
+
 impl HostFilesystem {
     pub(crate) fn current() -> Self {
         Self::new(HostPlatform::current())
@@ -50,6 +66,11 @@ impl HostFilesystem {
     }
 
     pub(crate) fn validate_path_segment(&self, segment: &str) -> AppResult<String> {
+        if segment.ends_with([' ', '.']) {
+            return Err(format!(
+                "path segment must not end with a space or period: {segment}"
+            ));
+        }
         let segment = segment.trim();
         if segment.is_empty() || matches!(segment, "." | "..") {
             return Err("path segment must not be empty, '.' or '..'".to_string());
@@ -62,12 +83,6 @@ impl HostFilesystem {
                 "path segment contains a platform-reserved character: {segment}"
             ));
         }
-        if segment.ends_with([' ', '.']) {
-            return Err(format!(
-                "path segment must not end with a space or period: {segment}"
-            ));
-        }
-
         let reserved_stem = segment
             .split('.')
             .next()
@@ -86,6 +101,39 @@ impl HostFilesystem {
             return Err(format!("path segment is reserved on Windows: {segment}"));
         }
         Ok(segment.to_string())
+    }
+
+    pub(crate) fn validate_portable_relative_path(
+        &self,
+        raw: &str,
+    ) -> AppResult<PortableRelativePath> {
+        let normalized = raw.replace('\\', "/");
+        let normalized = normalized.trim_end_matches('/');
+        let bytes = normalized.as_bytes();
+        if normalized.is_empty()
+            || normalized.starts_with('/')
+            || normalized.starts_with("//")
+            || (bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic())
+        {
+            return Err(format!("path must be portable and relative: {raw}"));
+        }
+
+        let mut path = PathBuf::new();
+        let mut comparison_components = Vec::new();
+        for component in normalized.split('/') {
+            let component = self.validate_path_segment(component)?;
+            path.push(&component);
+            comparison_components.push(if self.platform == HostPlatform::Windows {
+                component.to_lowercase()
+            } else {
+                component
+            });
+        }
+
+        Ok(PortableRelativePath {
+            path,
+            comparison_key: comparison_components.join("/"),
+        })
     }
 
     pub(crate) fn create_symlink(&self, source: &Path, target: &Path) -> AppResult<()> {
@@ -456,6 +504,36 @@ mod tests {
                 "expected invalid path segment: {invalid}"
             );
         }
+    }
+
+    #[test]
+    fn portable_relative_paths_reject_windows_reserved_segments() {
+        let filesystem = HostFilesystem::new(HostPlatform::Windows);
+
+        assert!(filesystem
+            .validate_portable_relative_path("package/CON.txt")
+            .is_err());
+        assert!(filesystem
+            .validate_portable_relative_path("package/file.txt.")
+            .is_err());
+        assert!(filesystem
+            .validate_portable_relative_path("package/file:stream")
+            .is_err());
+    }
+
+    #[test]
+    fn portable_relative_paths_have_case_insensitive_collision_keys() {
+        let filesystem = HostFilesystem::new(HostPlatform::Windows);
+
+        let upper = filesystem
+            .validate_portable_relative_path("Package/Adapter.js")
+            .expect("validate upper path");
+        let lower = filesystem
+            .validate_portable_relative_path("package/adapter.js")
+            .expect("validate lower path");
+
+        assert_eq!(upper.comparison_key(), lower.comparison_key());
+        assert_eq!(upper.as_path(), Path::new("Package").join("Adapter.js"));
     }
 
     #[cfg(windows)]

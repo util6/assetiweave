@@ -256,6 +256,29 @@ func TestInstallPackageRejectsZipPathTraversal(t *testing.T) {
 	}
 }
 
+func TestExtractPackageZipRejectsWindowsReservedFileNames(t *testing.T) {
+	archive := makeZipEntries(t, []zipTestEntry{{Name: "package/CON.txt", Content: "reserved"}})
+
+	err := extractPackageZip(archive, t.TempDir())
+
+	if err == nil || !strings.Contains(err.Error(), "reserved on Windows") {
+		t.Fatalf("extractPackageZip() error = %v, want Windows reserved name error", err)
+	}
+}
+
+func TestExtractPackageZipRejectsCaseInsensitivePathCollisions(t *testing.T) {
+	archive := makeZipEntries(t, []zipTestEntry{
+		{Name: "Package/Adapter.js", Content: "first"},
+		{Name: "package/adapter.js", Content: "second"},
+	})
+
+	err := extractPackageZip(archive, t.TempDir())
+
+	if err == nil || !strings.Contains(err.Error(), "colliding paths") {
+		t.Fatalf("extractPackageZip() error = %v, want case-insensitive collision error", err)
+	}
+}
+
 func TestRunExecutesRelativeEntrypoint(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "demo-web")
@@ -488,6 +511,30 @@ func TestValidateManifestRejectsRuntimeMixedWithEntrypoint(t *testing.T) {
 	if !strings.Contains(err.Error(), "must not declare both runtime and entrypoint") {
 		t.Fatalf("error = %v", err)
 	}
+}
+
+type zipTestEntry struct {
+	Name    string
+	Content string
+}
+
+func makeZipEntries(t *testing.T, entries []zipTestEntry) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	for _, entry := range entries {
+		file, err := writer.Create(entry.Name)
+		if err != nil {
+			t.Fatalf("create zip entry %s: %v", entry.Name, err)
+		}
+		if _, err := file.Write([]byte(entry.Content)); err != nil {
+			t.Fatalf("write zip entry %s: %v", entry.Name, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close zip: %v", err)
+	}
+	return buffer.Bytes()
 }
 
 func writePackage(t *testing.T, parent, id, origin, version string) string {
