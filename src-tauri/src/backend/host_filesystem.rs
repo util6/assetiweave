@@ -498,7 +498,14 @@ mod tests {
                 .expect("valid segment"),
             "code-review"
         );
-        for invalid in ["../escape", r"C:\temp", "skill/name", "CON", "skill."] {
+        for invalid in [
+            "../escape",
+            r"C:\temp",
+            "skill/name",
+            "CON",
+            "skill.",
+            "skill ",
+        ] {
             assert!(
                 filesystem.validate_path_segment(invalid).is_err(),
                 "expected invalid path segment: {invalid}"
