@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.2
+
+- Complete the conversation adapter package lifecycle with catalog views, update checks, release history, version switching and rollback, explicit register/uninstall/delete semantics, and safe local package discovery.
+- Add safe incremental conversation synchronization, source observations, retained-session accounting, updated official adapters, and the built-in Antigravity adapter.
+- Run conversation-session and web-record synchronization independently while preserving same-kind task deduplication, progress events, and polling fallback.
+- Replace the manual conversation import form with directory-based plugin discovery, while disabled adapters and sources remain installed but are skipped by scanners.
+- Introduce portable host-path anchors and centralized filesystem/process boundaries across macOS, Windows, and Linux, with stricter archive and traversal validation.
+- Strengthen Windows CI, release artifact auditing, CLI/Engine contracts, harvester execution, and image clipboard fallbacks.
+
 ## v0.5.1
 
 - Add debounced search controls and tighter toolbar layouts across catalog, source, group, mount, manual, conversation, and prompt workflows.

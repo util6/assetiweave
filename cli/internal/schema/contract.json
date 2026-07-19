@@ -9091,7 +9091,7 @@
     }
   ],
   "contract_version": 3,
-  "engine_version": "0.5.1",
+  "engine_version": "0.5.2",
   "methods": [
     "overview.get",
     "tenant.list",

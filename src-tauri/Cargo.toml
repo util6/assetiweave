@@ -1,6 +1,6 @@
 [package]
 name = "assetiweave"
-version = "0.5.1"
+version = "0.5.2"
 description = "Local-first AI file asset management desktop app"
 authors = ["AssetIWeave"]
 license = "MIT"
