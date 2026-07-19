@@ -8010,6 +8010,25 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "list_conversation_sync_tasks",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List desktop conversation sync background tasks by record kind",
+      "exposure": "app",
+      "method": "list_conversation_sync_tasks",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.session.list",
       "cli": null,
       "confirmation_required": false,
@@ -9236,6 +9255,7 @@
     "get_conversation_adapter_package_task",
     "sync_conversations",
     "get_conversation_sync_task",
+    "list_conversation_sync_tasks",
     "list_conversation_sessions",
     "get_conversation_session",
     "export_conversation_session",

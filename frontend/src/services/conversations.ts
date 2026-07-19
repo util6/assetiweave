@@ -1008,6 +1008,17 @@ export async function getConversationSyncTask(): Promise<ConversationSyncTaskSna
   }
 }
 
+export async function listConversationSyncTasks(): Promise<ConversationSyncTaskSnapshot[]> {
+  try {
+    return await invoke<ConversationSyncTaskSnapshot[]>("list_conversation_sync_tasks");
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+    return [];
+  }
+}
+
 export async function listConversationSessions(params: ConversationSessionListParams): Promise<ConversationSessionListItem[]> {
   try {
     return await invoke<ConversationSessionListItem[]>("list_conversation_sessions", { params });

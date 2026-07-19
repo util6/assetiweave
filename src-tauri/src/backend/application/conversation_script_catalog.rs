@@ -247,14 +247,10 @@ impl AppService {
             });
 
         if origin == ConversationAdapterPackageOrigin::BuiltIn
-            && matches!(
-                params.action,
-                ConversationAdapterPackageChangeAction::Unregister
-                    | ConversationAdapterPackageChangeAction::Uninstall
-            )
+            && params.action == ConversationAdapterPackageChangeAction::Uninstall
         {
             return Err(
-                "built-in conversation adapters cannot be unregistered or uninstalled".to_string(),
+                "built-in conversation adapters use disable, not package uninstall".to_string(),
             );
         }
         if params.action == ConversationAdapterPackageChangeAction::Unregister
@@ -364,7 +360,20 @@ impl AppService {
         &self,
         params: ConversationAdapterPackageCatalogParams,
     ) -> AppResult<Vec<ConversationAdapterPackageCatalogEntry>> {
-        let catalog = load_conversation_script_catalog(params.catalog_url.as_deref())?;
+        let mut catalog = load_conversation_script_catalog(params.catalog_url.as_deref())?;
+        for item in discover_local_conversation_adapter_packages(
+            &crate::backend::app_settings::conversation_adapter_dir()?,
+        )? {
+            if let Some(existing) = catalog
+                .items
+                .iter_mut()
+                .find(|existing| existing.package_id() == item.package_id())
+            {
+                *existing = item;
+            } else {
+                catalog.items.push(item);
+            }
+        }
         let adapters = self.list_conversation_adapters()?;
         let mut packages = self.load_conversation_adapter_packages()?;
         for package in &mut packages {
@@ -948,6 +957,72 @@ impl AppService {
         package.updated_at = now;
         self.save_conversation_adapter_package(package)
     }
+}
+
+fn discover_local_conversation_adapter_packages(
+    adapter_root: &Path,
+) -> AppResult<Vec<ConversationScriptCatalogItem>> {
+    if !adapter_root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut package_dirs = fs::read_dir(adapter_root)
+        .map_err(|error| error.to_string())?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let file_name = entry.file_name();
+            let file_name = file_name.to_string_lossy();
+            if matches!(file_name.as_ref(), "packages" | "staging") {
+                return None;
+            }
+            entry.file_type().ok()?.is_dir().then(|| entry.path())
+        })
+        .collect::<Vec<_>>();
+    package_dirs.sort();
+
+    Ok(package_dirs
+        .into_iter()
+        .filter_map(|package_dir| {
+            let validation =
+                crate::backend::conversations::validate_conversation_adapter_package_dir(
+                    &package_dir,
+                )
+                .ok()?;
+            let record_kind = match validation.manifest.record_kind {
+                ConversationAdapterPackageRecordKind::Session => {
+                    ConversationScriptRecordKind::Session
+                }
+                ConversationAdapterPackageRecordKind::Web => ConversationScriptRecordKind::Web,
+            };
+            let manifest_file = Path::new(&validation.adapter_manifest_path)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(str::to_string);
+            Some(ConversationScriptCatalogItem {
+                id: validation.manifest.package_id,
+                name: validation.manifest.name,
+                version: validation.manifest.version,
+                record_kind,
+                provider: Some("local_directory".to_string()),
+                adapter_id: Some(validation.adapter_validation.manifest.id),
+                description: None,
+                homepage_url: None,
+                repository_url: None,
+                tags: Vec::new(),
+                manifest_file,
+                package_manifest_file: Some("conversation-adapter-package.json".to_string()),
+                expected_content_hash: None,
+                expected_package_hash: Some(validation.content_hash),
+                expected_artifact_hash: None,
+                artifact_size: None,
+                source: ConversationScriptCatalogSource {
+                    kind: ConversationScriptCatalogSourceKind::LocalDirectory,
+                    url: package_dir.to_string_lossy().to_string(),
+                    branch: None,
+                    path: None,
+                },
+            })
+        })
+        .collect())
 }
 
 fn infer_unmanaged_adapter_origin(
@@ -1887,6 +1962,10 @@ fn resolve_conversation_adapter_package_catalog_entries(
                             Path::new(path).parent().map(|parent| parent.to_path_buf())
                         })
                         .map(|path| path.to_string_lossy().to_string())
+                })
+                .or_else(|| {
+                    (item.source.kind == ConversationScriptCatalogSourceKind::LocalDirectory)
+                        .then(|| item.source.url.clone())
                 });
             let installed = installed_package.is_some() || installed_adapter.is_some();
             let installed_version = installed_package
@@ -2225,7 +2304,12 @@ fn conversation_adapter_package_status(
     } else if adapter.is_some_and(|adapter| {
         adapter.trust_state == crate::backend::models::ConversationAdapterTrustState::BuiltIn
     }) {
-        return "built_in".to_string();
+        return if runtime_ready {
+            "built_in"
+        } else {
+            "uninstalled"
+        }
+        .to_string();
     } else if adapter.is_some() {
         return "legacy_installed".to_string();
     }
@@ -2964,6 +3048,54 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn builtin_unregister_preflight_allows_disable_and_retains_registration() {
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-builtin-disable-preflight-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create test root");
+        let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+        let mut builtin = adapter("builtin-preflight", "1.0.0");
+        builtin.trust_state = crate::backend::models::ConversationAdapterTrustState::BuiltIn;
+        let pool = service.db.pool().clone();
+        let tenant_id = service.tenant_id().to_string();
+        service
+            .db
+            .block_on(async move {
+                crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &builtin)
+                    .await
+            })
+            .expect("seed built-in adapter");
+
+        let preflight = service
+            .prepare_conversation_adapter_package_change(ConversationAdapterPackageChangeParams {
+                action: ConversationAdapterPackageChangeAction::Unregister,
+                package_id: None,
+                adapter_id: Some("builtin-preflight".to_string()),
+            })
+            .expect("built-in disable preflight");
+        assert_eq!(preflight.origin, ConversationAdapterPackageOrigin::BuiltIn);
+
+        service
+            .unregister_conversation_adapter(ConversationAdapterUnregisterParams {
+                adapter_id: "builtin-preflight".to_string(),
+                dry_run: false,
+                yes: true,
+            })
+            .expect("disable built-in adapter");
+        let retained = service
+            .list_conversation_adapters()
+            .expect("list adapters")
+            .into_iter()
+            .find(|adapter| adapter.id == "builtin-preflight")
+            .expect("built-in registration retained");
+        assert!(!retained.enabled);
+
+        drop(service);
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[cfg(unix)]
     #[test]
     fn local_registration_and_unregistration_never_modify_external_package_files() {
@@ -3014,6 +3146,16 @@ mod tests {
             .permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&executable, permissions).expect("make adapter executable");
+        let discovered =
+            discover_local_conversation_adapter_packages(&root).expect("discover local package");
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(discovered[0].id, "com.util6.external-test");
+        assert_eq!(discovered[0].adapter_id.as_deref(), Some("external-test"));
+        assert_eq!(
+            discovered[0].source.kind,
+            ConversationScriptCatalogSourceKind::LocalDirectory
+        );
+        assert_eq!(discovered[0].source.url, package_dir.to_string_lossy());
         let content_before =
             crate::backend::conversations::validate_conversation_adapter_package_dir(&package_dir)
                 .expect("validate external package")

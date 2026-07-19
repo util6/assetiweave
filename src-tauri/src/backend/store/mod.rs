@@ -23,7 +23,8 @@ pub(crate) use backup_repo::{checkpoint_database_wal_sqlx, vacuum_database_into_
 pub(crate) use conversation_repo::{
     activate_conversation_adapter_package_sqlx, deactivate_conversation_adapter_package_sqlx,
     delete_conversation_adapter_package_version_sqlx,
-    delete_conversation_adapter_registration_sqlx, disable_conversation_source_sqlx,
+    delete_conversation_adapter_registration_sqlx, disable_builtin_conversation_adapter_sqlx,
+    disable_conversation_source_sqlx, enable_conversation_sources_by_adapter_sqlx,
     has_running_conversation_sync_for_adapter_sqlx, import_conversation_sessions_sqlx,
     list_conversation_adapter_catalog_releases_sqlx,
     list_conversation_adapter_package_versions_sqlx, list_conversation_adapter_packages_sqlx,

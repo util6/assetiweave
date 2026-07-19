@@ -2600,6 +2600,18 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "list_conversation_sync_tasks",
+        "list_conversation_sync_tasks",
+        "List desktop conversation sync background tasks by record kind",
+        Read,
+        App,
+        false,
+        NoParams,
+        System => |_params| Value::Array(Vec::new()),
+        &[],
+        None
+    ),
+    command!(
         "list_conversation_sessions",
         "conversation.session.list",
         "List imported conversation sessions",

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationSyncProvider, useConversationSync } from "./ConversationSyncProvider";
 
 const listenMock = vi.hoisted(() => vi.fn());
-const getConversationSyncTaskMock = vi.hoisted(() => vi.fn());
+const listConversationSyncTasksMock = vi.hoisted(() => vi.fn());
 const syncConversationsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -13,14 +13,14 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 vi.mock("../../services/conversations", () => ({
-  getConversationSyncTask: getConversationSyncTaskMock,
+  listConversationSyncTasks: listConversationSyncTasksMock,
   syncConversations: syncConversationsMock,
 }));
 
 describe("ConversationSyncProvider", () => {
   beforeEach(() => {
     listenMock.mockReset().mockResolvedValue(vi.fn());
-    getConversationSyncTaskMock.mockReset().mockResolvedValue(null);
+    listConversationSyncTasksMock.mockReset().mockResolvedValue([]);
     syncConversationsMock.mockReset();
   });
 
@@ -91,14 +91,15 @@ describe("ConversationSyncProvider", () => {
       error: null,
     } as const;
     syncConversationsMock.mockResolvedValue(runningTask);
-    getConversationSyncTaskMock
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
+    listConversationSyncTasksMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{
         ...runningTask,
+        record_kind: "session",
         status: "completed",
         finished_at: "2026-06-15T00:00:05Z",
         result: { results: [] },
-      });
+      }]);
 
     render(
       <ConversationSyncProvider>
@@ -115,6 +116,35 @@ describe("ConversationSyncProvider", () => {
     });
     expect(screen.getByTestId("sync-status").textContent).toBe("completed");
   });
+
+  it("tracks session and web sync tasks independently", async () => {
+    syncConversationsMock.mockImplementation(async (params: { record_kind?: string }) => ({
+      id: `sync-${params.record_kind}`,
+      status: "running",
+      source_id: null,
+      adapter_id: null,
+      record_kind: params.record_kind,
+      dry_run: false,
+      started_at: "2026-06-15T00:00:00Z",
+      finished_at: null,
+      result: null,
+      error: null,
+    }));
+
+    render(
+      <ConversationSyncProvider>
+        <IndependentSyncHarness />
+      </ConversationSyncProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start session sync" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start web sync" }));
+    await act(async () => {});
+
+    expect(screen.getByTestId("session-sync-status").textContent).toBe("running");
+    expect(screen.getByTestId("web-sync-status").textContent).toBe("running");
+    expect(syncConversationsMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 function ProviderHarness() {
@@ -127,6 +157,23 @@ function ProviderHarness() {
       </button>
       <button type="button">Other feature</button>
       <output data-testid="sync-status">{task?.status ?? "idle"}</output>
+    </>
+  );
+}
+
+function IndependentSyncHarness() {
+  const { startSync, taskFor } = useConversationSync();
+
+  return (
+    <>
+      <button onClick={() => void startSync({ record_kind: "session" })} type="button">
+        Start session sync
+      </button>
+      <button onClick={() => void startSync({ record_kind: "web" })} type="button">
+        Start web sync
+      </button>
+      <output data-testid="session-sync-status">{taskFor("session")?.status ?? "idle"}</output>
+      <output data-testid="web-sync-status">{taskFor("web")?.status ?? "idle"}</output>
     </>
   );
 }

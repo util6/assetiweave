@@ -8,7 +8,10 @@ use crate::backend::{
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::Value;
-use std::{collections::HashSet, sync::Mutex};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Mutex,
+};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -25,11 +28,42 @@ pub(crate) struct ConversationSyncTaskSnapshot {
     pub(crate) status: BackgroundTaskStatus,
     pub(crate) source_id: Option<String>,
     pub(crate) adapter_id: Option<String>,
+    pub(crate) record_kind: Option<String>,
     pub(crate) dry_run: bool,
     pub(crate) started_at: String,
     pub(crate) finished_at: Option<String>,
     pub(crate) result: Option<Value>,
     pub(crate) error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ConversationSyncScope {
+    All,
+    Session,
+    Web,
+}
+
+impl ConversationSyncScope {
+    fn from_record_kind(record_kind: Option<&str>) -> AppResult<Self> {
+        let Some(record_kind) = record_kind.map(str::trim).filter(|value| !value.is_empty()) else {
+            return Ok(Self::All);
+        };
+        match record_kind {
+            "session" | "sessions" | "conversation" | "conversations" => Ok(Self::Session),
+            "web" | "web-record" | "web_record" | "web-records" | "web_records" => Ok(Self::Web),
+            _ => Err(format!(
+                "unsupported conversation record kind: {record_kind}"
+            )),
+        }
+    }
+
+    fn record_kind(self) -> Option<&'static str> {
+        match self {
+            Self::All => None,
+            Self::Session => Some("session"),
+            Self::Web => Some("web"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -73,7 +107,7 @@ pub(crate) struct SkillBackupTaskSnapshot {
 
 #[derive(Default)]
 pub(crate) struct BackgroundTaskRegistry {
-    conversation_sync: Mutex<Option<ConversationSyncTaskSnapshot>>,
+    conversation_sync: Mutex<HashMap<ConversationSyncScope, ConversationSyncTaskSnapshot>>,
     conversation_script_install: Mutex<Option<ConversationScriptInstallTaskSnapshot>>,
     skill_backup: Mutex<Option<SkillBackupTaskSnapshot>>,
 }
@@ -83,14 +117,25 @@ impl BackgroundTaskRegistry {
         &self,
         params: &ConversationSyncParams,
     ) -> AppResult<(ConversationSyncTaskSnapshot, bool)> {
+        let scope = ConversationSyncScope::from_record_kind(params.record_kind.as_deref())?;
         let mut current = self
             .conversation_sync
             .lock()
             .map_err(|error| error.to_string())?;
-        if let Some(snapshot) = current
-            .as_ref()
-            .filter(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
-        {
+        let running = match scope {
+            ConversationSyncScope::All => current
+                .values()
+                .find(|snapshot| snapshot.status == BackgroundTaskStatus::Running),
+            _ => current
+                .get(&ConversationSyncScope::All)
+                .filter(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
+                .or_else(|| {
+                    current
+                        .get(&scope)
+                        .filter(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
+                }),
+        };
+        if let Some(snapshot) = running {
             return Ok((snapshot.clone(), false));
         }
 
@@ -99,13 +144,14 @@ impl BackgroundTaskRegistry {
             status: BackgroundTaskStatus::Running,
             source_id: params.source_id.clone(),
             adapter_id: params.adapter_id.clone(),
+            record_kind: scope.record_kind().map(str::to_string),
             dry_run: params.dry_run,
             started_at: Utc::now().to_rfc3339(),
             finished_at: None,
             result: None,
             error: None,
         };
-        *current = Some(snapshot.clone());
+        current.insert(scope, snapshot.clone());
         Ok((snapshot, true))
     }
 
@@ -119,13 +165,9 @@ impl BackgroundTaskRegistry {
             .lock()
             .map_err(|error| error.to_string())?;
         let snapshot = current
-            .as_mut()
+            .values_mut()
+            .find(|snapshot| snapshot.id == task_id)
             .ok_or_else(|| "conversation sync task not found".to_string())?;
-        if snapshot.id != task_id {
-            return Err(format!(
-                "conversation sync task is no longer current: {task_id}"
-            ));
-        }
 
         snapshot.finished_at = Some(Utc::now().to_rfc3339());
         match result {
@@ -148,7 +190,25 @@ impl BackgroundTaskRegistry {
     ) -> AppResult<Option<ConversationSyncTaskSnapshot>> {
         self.conversation_sync
             .lock()
-            .map(|snapshot| snapshot.clone())
+            .map(|snapshots| {
+                snapshots
+                    .values()
+                    .max_by(|left, right| left.started_at.cmp(&right.started_at))
+                    .cloned()
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn conversation_sync_snapshots(
+        &self,
+    ) -> AppResult<Vec<ConversationSyncTaskSnapshot>> {
+        self.conversation_sync
+            .lock()
+            .map(|snapshots| {
+                let mut snapshots = snapshots.values().cloned().collect::<Vec<_>>();
+                snapshots.sort_by(|left, right| left.started_at.cmp(&right.started_at));
+                snapshots
+            })
             .map_err(|error| error.to_string())
     }
 
@@ -439,10 +499,10 @@ impl BackgroundTaskRegistry {
         let conversation_sync_running = self
             .conversation_sync
             .lock()
-            .map(|snapshot| {
-                snapshot
-                    .as_ref()
-                    .is_some_and(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
+            .map(|snapshots| {
+                snapshots
+                    .values()
+                    .any(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
             })
             .unwrap_or(true);
         let skill_backup_running = self
@@ -483,11 +543,11 @@ fn dedupe_non_empty(values: Vec<String>) -> Vec<String> {
 mod tests {
     use super::*;
 
-    fn params() -> ConversationSyncParams {
+    fn params(record_kind: Option<&str>) -> ConversationSyncParams {
         ConversationSyncParams {
             source_id: None,
             adapter_id: None,
-            record_kind: None,
+            record_kind: record_kind.map(str::to_string),
             dry_run: false,
         }
     }
@@ -496,8 +556,12 @@ mod tests {
     fn duplicate_start_reuses_the_running_sync_task() {
         let registry = BackgroundTaskRegistry::default();
 
-        let (first, should_start_first) = registry.begin_conversation_sync(&params()).unwrap();
-        let (second, should_start_second) = registry.begin_conversation_sync(&params()).unwrap();
+        let (first, should_start_first) = registry
+            .begin_conversation_sync(&params(Some("session")))
+            .unwrap();
+        let (second, should_start_second) = registry
+            .begin_conversation_sync(&params(Some("session")))
+            .unwrap();
 
         assert!(should_start_first);
         assert!(!should_start_second);
@@ -506,9 +570,32 @@ mod tests {
     }
 
     #[test]
+    fn session_and_web_sync_tasks_run_independently() {
+        let registry = BackgroundTaskRegistry::default();
+
+        let (session, should_start_session) = registry
+            .begin_conversation_sync(&params(Some("session")))
+            .unwrap();
+        let (web, should_start_web) = registry
+            .begin_conversation_sync(&params(Some("web")))
+            .unwrap();
+
+        assert!(should_start_session);
+        assert!(should_start_web);
+        assert_ne!(session.id, web.id);
+
+        registry
+            .finish_conversation_sync(&session.id, Ok(serde_json::json!({ "results": [] })))
+            .unwrap();
+        assert!(registry.has_running_tasks());
+    }
+
+    #[test]
     fn finishing_sync_records_success_or_failure() {
         let registry = BackgroundTaskRegistry::default();
-        let (running, _) = registry.begin_conversation_sync(&params()).unwrap();
+        let (running, _) = registry
+            .begin_conversation_sync(&params(Some("session")))
+            .unwrap();
 
         let completed = registry
             .finish_conversation_sync(&running.id, Ok(serde_json::json!({ "results": [] })))
@@ -518,7 +605,9 @@ mod tests {
         assert!(completed.result.is_some());
         assert!(!registry.has_running_tasks());
 
-        let (running, _) = registry.begin_conversation_sync(&params()).unwrap();
+        let (running, _) = registry
+            .begin_conversation_sync(&params(Some("session")))
+            .unwrap();
         let failed = registry
             .finish_conversation_sync(&running.id, Err("sync failed".to_string()))
             .unwrap();

@@ -22,7 +22,10 @@ const conversationSyncTaskMock = vi.hoisted(() => ({ current: null as null | Rec
 vi.mock("../../app/backgroundTasks/ConversationSyncProvider", () => ({
   useConversationSync: () => ({
     startSync: startSyncMock,
-    task: conversationSyncTaskMock.current,
+    taskFor: (recordKind: "session" | "web") =>
+      conversationSyncTaskMock.current?.record_kind === recordKind
+        ? conversationSyncTaskMock.current
+        : null,
   }),
 }));
 
@@ -141,6 +144,38 @@ describe("ConversationsPage sync scope", () => {
       }),
     );
   });
+
+  it.each([
+    ["session", "web"],
+    ["web", "session"],
+  ] as const)(
+    "keeps %s sync available while %s records are syncing",
+    async (pageRecordKind, runningRecordKind) => {
+      conversationSyncTaskMock.current = {
+        adapter_id: null,
+        dry_run: false,
+        error: null,
+        finished_at: null,
+        id: `sync-${runningRecordKind}`,
+        record_kind: runningRecordKind,
+        result: null,
+        source_id: null,
+        started_at: "2026-06-15T00:00:00Z",
+        status: "running",
+      };
+
+      renderConversationsPage(pageRecordKind);
+
+      const syncButton = screen.getByRole("button", { name: "Sync" }) as HTMLButtonElement;
+      expect(syncButton.disabled).toBe(false);
+      fireEvent.click(syncButton);
+      await waitFor(() => expect(startSyncMock).toHaveBeenCalledWith({
+        dry_run: false,
+        record_kind: pageRecordKind,
+        source_id: null,
+      }));
+    },
+  );
 
   it("uses the notification outlet instead of an inline status report after exporting from detail view", async () => {
     const onNotify = vi.fn((_: Parameters<ConversationNotify>[0]) => undefined);

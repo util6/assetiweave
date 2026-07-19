@@ -63,7 +63,7 @@ const SourcesPage = lazy(() =>
 
 export function AppRouter() {
   const { locale, t } = useI18n();
-  const { task: conversationSyncTask } = useConversationSync();
+  const { tasks: conversationSyncTasks } = useConversationSync();
   const { task: skillBackupTask } = useSkillBackup();
   const catalog = useCatalogController();
   const handledSkillBackupTaskId = useRef<string | null>(null);
@@ -299,7 +299,9 @@ export function AppRouter() {
       ) : null}
       <AppUpdateDialog />
       <div className="pointer-events-none fixed bottom-5 right-5 z-30 grid gap-3">
-        <ConversationBackgroundTaskIndicator task={conversationSyncTask} t={t} />
+        {conversationSyncTasks.map((task) => (
+          <ConversationBackgroundTaskIndicator key={task.id} task={task} t={t} />
+        ))}
         <SkillBackupBackgroundTaskIndicator task={skillBackupTask} t={t} />
       </div>
     </>

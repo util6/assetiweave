@@ -58,7 +58,9 @@ export function ConversationBackgroundTaskIndicator({
       </span>
       <span className="min-w-0">
         <span className="block text-body-sm font-semibold">
-          {t("conversation.sync.background.title")}
+          {t(task.record_kind === "web"
+            ? "conversation.sync.background.webTitle"
+            : "conversation.sync.background.title")}
         </span>
         <span className="mt-0.5 block text-code-sm text-on-surface-variant">
           {t("conversation.sync.background.description")}

@@ -68,6 +68,10 @@ const DELETE_CONVERSATION_ADAPTER_SQL: &str =
 
 const DISABLE_CONVERSATION_SOURCES_BY_ADAPTER_SQL: &str =
     "UPDATE conversation_sources SET enabled = 0, updated_at = ?1 WHERE tenant_id = ?2 AND adapter_id = ?3";
+const DISABLE_CONVERSATION_ADAPTER_SQL: &str =
+    "UPDATE conversation_adapters SET enabled = 0, updated_at = ?1 WHERE tenant_id = ?2 AND id = ?3";
+const ENABLE_CONVERSATION_SOURCES_BY_ADAPTER_SQL: &str =
+    "UPDATE conversation_sources SET enabled = 1, updated_at = ?1 WHERE tenant_id = ?2 AND adapter_id = ?3";
 
 const LIST_CONVERSATION_ADAPTER_PACKAGES_SQL: &str = r#"
     SELECT package_id, adapter_id, name, version, record_kind, install_dir,
@@ -196,10 +200,14 @@ pub(crate) async fn seed_builtin_conversation_adapters_sqlx(
     tenant_id: &str,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    for adapter in crate::backend::conversations::ensure_official_conversation_adapters()? {
+    for mut adapter in crate::backend::conversations::ensure_official_conversation_adapters()? {
         match load_conversation_adapter_sqlx(pool, tenant_id, &adapter.id).await? {
             Some(existing) if existing.trust_state != ConversationAdapterTrustState::BuiltIn => {}
-            _ => upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter).await?,
+            Some(existing) => {
+                adapter.enabled = existing.enabled;
+                upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter).await?;
+            }
+            None => upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter).await?,
         }
     }
     for source in builtin_sources(&now) {
@@ -368,7 +376,9 @@ pub(crate) async fn delete_conversation_adapter_registration_sqlx(
     let adapter = load_conversation_adapter_sqlx(pool, tenant_id, adapter_id).await?;
     if let Some(adapter) = adapter.as_ref() {
         if adapter.trust_state == ConversationAdapterTrustState::BuiltIn {
-            return Err("built-in conversation adapters cannot be unregistered".to_string());
+            return disable_builtin_conversation_adapter_sqlx(pool, tenant_id, adapter_id)
+                .await
+                .map(Some);
         }
         if adapter.kind != ConversationAdapterKind::External {
             return Err("only external conversation adapters can be unregistered".to_string());
@@ -402,6 +412,56 @@ pub(crate) async fn delete_conversation_adapter_registration_sqlx(
     }
     tx.commit().await.map_err(|error| error.to_string())?;
     Ok(adapter)
+}
+
+pub(crate) async fn disable_builtin_conversation_adapter_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    adapter_id: &str,
+) -> AppResult<ConversationAdapter> {
+    let mut adapter = load_conversation_adapter_sqlx(pool, tenant_id, adapter_id)
+        .await?
+        .ok_or_else(|| format!("conversation adapter not found: {adapter_id}"))?;
+    if adapter.trust_state != ConversationAdapterTrustState::BuiltIn {
+        return Err("only built-in conversation adapters use the disable workflow".to_string());
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    sqlx::query(DISABLE_CONVERSATION_ADAPTER_SQL)
+        .bind(&now)
+        .bind(tenant_id)
+        .bind(adapter_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    sqlx::query(DISABLE_CONVERSATION_SOURCES_BY_ADAPTER_SQL)
+        .bind(&now)
+        .bind(tenant_id)
+        .bind(adapter_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+
+    adapter.enabled = false;
+    adapter.updated_at = now;
+    Ok(adapter)
+}
+
+pub(crate) async fn enable_conversation_sources_by_adapter_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    adapter_id: &str,
+) -> AppResult<()> {
+    sqlx::query(ENABLE_CONVERSATION_SOURCES_BY_ADAPTER_SQL)
+        .bind(Utc::now().to_rfc3339())
+        .bind(tenant_id)
+        .bind(adapter_id)
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 pub(crate) async fn load_conversation_adapter_sqlx(
@@ -3436,7 +3496,7 @@ mod tests {
             sources,
             loaded_source,
             disabled_source,
-            builtin_delete_error,
+            disabled_builtin,
             deleted_adapter,
             source_after_adapter_delete,
             missing_adapter,
@@ -3469,13 +3529,12 @@ mod tests {
                     disable_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
                         .await?;
                 upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                let builtin_delete_error = delete_conversation_adapter_sqlx(
+                let disabled_builtin = delete_conversation_adapter_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
                     &builtin_adapter.id,
                 )
-                .await
-                .expect_err("built-in adapter delete should fail");
+                .await?;
                 let deleted_adapter = delete_conversation_adapter_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -3499,7 +3558,7 @@ mod tests {
                     sources,
                     loaded_source,
                     disabled_source,
-                    builtin_delete_error,
+                    disabled_builtin,
                     deleted_adapter,
                     source_after_adapter_delete,
                     missing_adapter,
@@ -3513,7 +3572,8 @@ mod tests {
         assert_eq!(loaded_source.as_ref(), Some(&source));
         assert_eq!(disabled_source.id, source.id);
         assert!(!disabled_source.enabled);
-        assert!(builtin_delete_error.contains("built-in conversation adapters"));
+        assert_eq!(disabled_builtin.id, builtin_adapter.id);
+        assert!(!disabled_builtin.enabled);
         assert_eq!(deleted_adapter, external_adapter);
         assert_eq!(source_after_adapter_delete.id, source.id);
         assert!(!source_after_adapter_delete.enabled);
@@ -3957,6 +4017,53 @@ mod tests {
         assert_eq!(loaded.trust_state, ConversationAdapterTrustState::Trusted);
         assert_eq!(loaded.manifest_path, market_adapter.manifest_path);
         assert_eq!(loaded.executable_path, market_adapter.executable_path);
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn disabling_builtin_adapter_disables_runtime_and_sources() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-adapter-disable-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+
+        let builtin_adapter = test_conversation_adapter(
+            "disable-builtin",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::BuiltIn,
+        );
+        let source = test_conversation_source(&builtin_adapter.id);
+        let (adapter, source) = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &builtin_adapter)
+                    .await?;
+                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+                disable_builtin_conversation_adapter_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &builtin_adapter.id,
+                )
+                .await?;
+                let adapter = load_conversation_adapter_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &builtin_adapter.id,
+                )
+                .await?
+                .expect("built-in adapter retained");
+                let source =
+                    load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
+                        .await?
+                        .expect("source retained");
+                AppResult::Ok((adapter, source))
+            })
+            .expect("disable built-in adapter");
+
+        assert!(!adapter.enabled);
+        assert!(!source.enabled);
 
         drop(database);
         cleanup_database(&db_path);

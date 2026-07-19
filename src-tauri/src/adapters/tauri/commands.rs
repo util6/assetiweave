@@ -1808,6 +1808,13 @@ pub(crate) fn get_conversation_sync_task(
 }
 
 #[tauri::command]
+pub(crate) fn list_conversation_sync_tasks(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<ConversationSyncTaskSnapshot>> {
+    state.background_tasks.conversation_sync_snapshots()
+}
+
+#[tauri::command]
 pub(crate) async fn list_conversation_sessions(
     state: State<'_, AppState>,
     params: ConversationSessionListParams,
@@ -2169,6 +2176,7 @@ pub(crate) fn command_handler(
         get_conversation_script_install_task,
         sync_conversations,
         get_conversation_sync_task,
+        list_conversation_sync_tasks,
         list_conversation_sessions,
         get_conversation_session,
         export_conversation_session,

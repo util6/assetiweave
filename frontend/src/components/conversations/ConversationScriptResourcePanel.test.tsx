@@ -16,6 +16,7 @@ const serviceMocks = vi.hoisted(() => ({
   listReleases: vi.fn(),
   listVersions: vi.fn(),
   prepare: vi.fn(),
+  register: vi.fn(),
   unregister: vi.fn(),
   uninstall: vi.fn(),
   update: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock("../../services/conversations", async () => {
     listConversationAdapterPackages: serviceMocks.list,
     listInstalledConversationAdapterPackageVersions: serviceMocks.listVersions,
     prepareConversationAdapterPackageChange: serviceMocks.prepare,
+    registerConversationAdapter: serviceMocks.register,
     unregisterConversationAdapter: serviceMocks.unregister,
     uninstallConversationAdapterPackage: serviceMocks.uninstall,
     updateConversationAdapterPackage: serviceMocks.update,
@@ -81,6 +83,7 @@ describe("ConversationScriptResourcePanel", () => {
       risk: "high_risk_write",
       confirmation_required: true,
     });
+    serviceMocks.register.mockReset().mockResolvedValue({});
     serviceMocks.update.mockReset().mockResolvedValue({
       id: "update-1",
       status: "running",
@@ -262,8 +265,50 @@ describe("ConversationScriptResourcePanel", () => {
     }));
   });
 
-  it("uninstalls a managed runtime without using the delete action", async () => {
+  it("registers a valid package discovered in the local adapter directory", async () => {
+    const localEntry: ConversationAdapterPackageCatalogEntry = {
+      item: {
+        id: "local.session-parser",
+        name: "Local Session Parser",
+        version: "1.0.0",
+        record_kind: "session",
+        provider: "local_directory",
+        adapter_id: "local-session",
+        tags: [],
+        manifest_file: "conversation-adapter.json",
+        source: {
+          type: "local_directory",
+          url: "/tmp/conversation-adapters/local-session",
+        },
+      },
+      installed: false,
+      update_available: false,
+      ahead_of_release: false,
+      runtime_ready: false,
+      status: "not_installed",
+      install_path: "/tmp/conversation-adapters/local-session",
+      display_install_path: "~/.assetiweave/conversation-adapters/local-session",
+      display_manifest_path: "~/.assetiweave/conversation-adapters/local-session/conversation-adapter.json",
+    };
+    serviceMocks.list.mockResolvedValueOnce([localEntry]);
+
     renderPanel();
+    fireEvent.click(await screen.findByRole("tab", { name: /Discover \(1\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Register" }));
+
+    await waitFor(() => expect(serviceMocks.register).toHaveBeenCalledWith(
+      "/tmp/conversation-adapters/local-session/conversation-adapter.json",
+      false,
+      true,
+    ));
+    expect(serviceMocks.prepare).not.toHaveBeenCalled();
+    expect(serviceMocks.install).not.toHaveBeenCalled();
+  });
+
+  it("uninstalls a managed runtime without using the delete action", async () => {
+    serviceMocks.list.mockResolvedValueOnce([entries[1]]);
+    renderPanel();
+    expect(await screen.findByRole("button", { name: "Manage / delete" })).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: "Uninstall" }));
     const confirmDialog = await screen.findByRole("dialog", { name: "Confirm plugin change" });
     fireEvent.click(within(confirmDialog).getByRole("button", { name: "Uninstall" }));
@@ -273,6 +318,15 @@ describe("ConversationScriptResourcePanel", () => {
       confirmed: true,
     }));
     expect(serviceMocks.deleteVersion).not.toHaveBeenCalled();
+  });
+
+  it("opens managed version deletion from the market row", async () => {
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Manage / delete" }));
+
+    expect(await screen.findByRole("heading", { name: "Installed offline versions" })).toBeTruthy();
+    expect(screen.getByText("Uninstall the running version before deleting it.")).toBeTruthy();
   });
 
   it("presents external runtime unregistering as uninstall while retaining its files", async () => {
@@ -295,6 +349,7 @@ describe("ConversationScriptResourcePanel", () => {
     serviceMocks.list.mockResolvedValueOnce([localEntry]);
     renderPanel();
 
+    expect(screen.queryByRole("button", { name: "Manage / delete" })).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "Uninstall" }));
     const confirmDialog = await screen.findByRole("dialog", { name: "Confirm plugin change" });
     fireEvent.click(within(confirmDialog).getByRole("button", { name: "Uninstall" }));
@@ -305,6 +360,62 @@ describe("ConversationScriptResourcePanel", () => {
     }));
     expect(serviceMocks.uninstall).not.toHaveBeenCalled();
     expect(serviceMocks.deleteVersion).not.toHaveBeenCalled();
+  });
+
+  it("offers uninstall for a built-in runtime and disables it through unregister", async () => {
+    serviceMocks.list.mockResolvedValueOnce([entries[0]]);
+    renderPanel();
+
+    expect(screen.queryByRole("button", { name: "Manage / delete" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Uninstall" }));
+    const confirmDialog = await screen.findByRole("dialog", { name: "Confirm plugin change" });
+    fireEvent.click(within(confirmDialog).getByRole("button", { name: "Uninstall" }));
+
+    await waitFor(() => expect(serviceMocks.unregister).toHaveBeenCalledWith({
+      adapterId: "builtin-codex",
+      confirmed: true,
+    }));
+  });
+
+  it("shows a disabled built-in runtime as uninstalled without delete actions", async () => {
+    serviceMocks.list.mockResolvedValueOnce([{
+      ...entries[0],
+      runtime_ready: false,
+      status: "uninstalled",
+      installed_adapter: {
+        ...entries[0].installed_adapter!,
+        enabled: false,
+        manifest_path: "/tmp/builtin/conversation-adapter.json",
+      },
+    }]);
+    renderPanel();
+
+    expect(await screen.findByText("Uninstalled (files and records retained)")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Uninstall" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Manage / delete" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete version" })).toBeNull();
+  });
+
+  it("keeps a register entry for an uninstalled built-in runtime", async () => {
+    serviceMocks.list.mockResolvedValueOnce([{
+      ...entries[0],
+      runtime_ready: false,
+      status: "uninstalled",
+      installed_adapter: {
+        ...entries[0].installed_adapter!,
+        enabled: false,
+        manifest_path: "/tmp/builtin/conversation-adapter.json",
+      },
+    }]);
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Register" }));
+
+    await waitFor(() => expect(serviceMocks.register).toHaveBeenCalledWith(
+      "/tmp/builtin/conversation-adapter.json",
+      false,
+      true,
+    ));
   });
 
   it("allows deleting the last installed version after its runtime is uninstalled", async () => {

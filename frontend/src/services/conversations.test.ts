@@ -3,6 +3,7 @@ import {
   checkConversationAdapterPackageUpdates,
   getConversationAdapterPackageTask,
   getConversationSyncTask,
+  listConversationSyncTasks,
   installConversationAdapterPackage,
   installConversationScript,
   importConversationSource,
@@ -501,6 +502,17 @@ describe("conversation services", () => {
       status: "completed",
     });
     expect(invokeMock).toHaveBeenCalledWith("get_conversation_sync_task");
+  });
+
+  it("lists desktop sync tasks for independent record kinds", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValueOnce([
+      { id: "sync-session", record_kind: "session", status: "running" },
+      { id: "sync-web", record_kind: "web", status: "running" },
+    ]);
+
+    await expect(listConversationSyncTasks()).resolves.toHaveLength(2);
+    expect(invokeMock).toHaveBeenCalledWith("list_conversation_sync_tasks");
   });
 
   it("summarizes completed sync task results for user-facing completion messages", () => {

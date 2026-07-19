@@ -39,8 +39,22 @@ impl AppService {
     ) -> AppResult<Value> {
         let dry_run = params.dry_run;
         let preview = crate::backend::conversations::register_external_adapter(params)?;
-        let adapter =
+        let mut adapter =
             crate::backend::conversations::adapter_from_registration_preview(preview.clone())?;
+        let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
+        let adapter_id = adapter.id.clone();
+        let existing = self.db.block_on(async move {
+            crate::backend::store::load_conversation_adapter_sqlx(&pool, &tenant_id, &adapter_id)
+                .await
+        })?;
+        let reactivating_builtin = existing.as_ref().is_some_and(|existing| {
+            existing.trust_state == crate::backend::models::ConversationAdapterTrustState::BuiltIn
+        });
+        if reactivating_builtin {
+            adapter.trust_state = crate::backend::models::ConversationAdapterTrustState::BuiltIn;
+            adapter.enabled = true;
+        }
         let preflight = self.prepare_conversation_adapter_package_change(
             ConversationAdapterPackageChangeParams {
                 action: crate::backend::models::ConversationAdapterPackageChangeAction::Register,
@@ -58,8 +72,19 @@ impl AppService {
             let pool = self.db.pool().clone();
             let tenant_id = self.tenant_id().to_string();
             self.db.block_on(async move {
-                crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &adapter)
-                    .await
+                crate::backend::store::upsert_conversation_adapter_sqlx(
+                    &pool, &tenant_id, &adapter,
+                )
+                .await?;
+                if reactivating_builtin {
+                    crate::backend::store::enable_conversation_sources_by_adapter_sqlx(
+                        &pool,
+                        &tenant_id,
+                        &adapter.id,
+                    )
+                    .await?;
+                }
+                AppResult::Ok(())
             })?;
         }
         Ok(preview)
@@ -105,6 +130,25 @@ impl AppService {
                 "unregistered": false,
                 "adapter": adapter,
                 "preflight": preflight
+            }));
+        }
+        if adapter.trust_state == crate::backend::models::ConversationAdapterTrustState::BuiltIn {
+            let pool = self.db.pool().clone();
+            let tenant_id = self.tenant_id().to_string();
+            let adapter_id = params.adapter_id.clone();
+            let adapter = self.db.block_on(async move {
+                crate::backend::store::disable_builtin_conversation_adapter_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &adapter_id,
+                )
+                .await
+            })?;
+            return Ok(json!({
+                "dry_run": false,
+                "unregistered": false,
+                "disabled": true,
+                "adapter": adapter
             }));
         }
         let pool = self.db.pool().clone();
@@ -239,9 +283,7 @@ impl AppService {
                     .as_deref()
                     .is_none_or(|id| id == source.adapter_id)
             })
-            .filter(|source| {
-                source.enabled || params.source_id.as_deref() == Some(source.id.as_str())
-            })
+            .filter(|source| source.enabled)
             .collect::<Vec<_>>();
         if sources.is_empty() {
             return Err("no matching conversation sources".to_string());

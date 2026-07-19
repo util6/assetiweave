@@ -1092,50 +1092,22 @@ describe("MarkdownContent", () => {
     expect(html).toContain("关闭同步进度");
   });
 
-  it("collects adapter manifest and source details before importing", async () => {
-    const onImport = vi.fn(async () => undefined);
-    const onPickManifest = vi.fn(async () => "/tmp/adapter/conversation-adapter.json");
-    const onPickSourceLocation = vi.fn(async () => "/tmp/web-records");
+  it("opens directly on the script market without an import form", async () => {
     localStorage.setItem("assetiweave.locale", "zh");
 
     render(
       <I18nProvider>
         <ConversationImportDialog
           onClose={vi.fn()}
-          onImport={onImport}
-          onPickManifest={onPickManifest}
-          onPickSourceLocation={onPickSourceLocation}
           recordKind="web"
         />
       </I18nProvider>,
     );
 
-    expect(screen.getByRole("tab", { name: "导入表单" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: "脚本市场榜单" }));
     expect(screen.getByText("需要解析器时可从市场注册（下载并安装）；卸载只停止后续同步并保留插件文件与历史记录。")).toBeTruthy();
-    fireEvent.click(await screen.findByRole("tab", { name: /更新 \(/ }));
-    fireEvent.click(screen.getByRole("tab", { name: "导入表单" }));
-    fireEvent.click(screen.getByRole("tab", { name: "脚本市场榜单" }));
-    expect(screen.getByRole("tab", { name: /更新 \(/ }).getAttribute("aria-selected")).toBe("true");
-    fireEvent.click(screen.getByRole("tab", { name: "导入表单" }));
-    fireEvent.click(screen.getByRole("button", { name: "选择插件 manifest" }));
-    await waitFor(() => expect(onPickManifest).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByRole("button", { name: "选择来源目录" }));
-    await waitFor(() => expect(onPickSourceLocation).toHaveBeenCalledWith("directory"));
-    fireEvent.change(screen.getByLabelText("来源名称"), {
-      target: { value: "医保网页记录" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "开始导入" }));
-
-    await waitFor(() => {
-      expect(onImport).toHaveBeenCalledWith({
-        config_json: null,
-        manifest_path: "/tmp/adapter/conversation-adapter.json",
-        source_kind: "directory",
-        source_location: "/tmp/web-records",
-        source_name: "医保网页记录",
-      });
-    });
+    expect(screen.queryByRole("tab", { name: "导入表单" })).toBeNull();
+    expect(screen.queryByLabelText("插件 manifest")).toBeNull();
+    expect(screen.getByRole("tab", { name: /已接入/ })).toBeTruthy();
   });
 
   it("renders a global background sync indicator without blocking other controls", () => {
@@ -1146,6 +1118,7 @@ describe("MarkdownContent", () => {
           status: "running",
           source_id: null,
           adapter_id: null,
+          record_kind: "web",
           dry_run: false,
           started_at: "2026-06-15T00:00:00Z",
           finished_at: null,
@@ -1157,7 +1130,7 @@ describe("MarkdownContent", () => {
     );
 
     expect(html).toContain('role="status"');
-    expect(html).toContain("后台同步对话记录");
+    expect(html).toContain("后台同步网页记录");
     expect(html).toContain("可继续使用其他功能");
     expect(html).not.toContain("disabled");
   });

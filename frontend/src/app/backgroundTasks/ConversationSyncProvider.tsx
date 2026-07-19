@@ -9,7 +9,7 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
-  getConversationSyncTask,
+  listConversationSyncTasks,
   syncConversations,
   type ConversationSyncTaskSnapshot,
 } from "../../services/conversations";
@@ -26,25 +26,31 @@ interface ConversationSyncContextValue {
     dry_run?: boolean;
   }) => Promise<ConversationSyncTaskSnapshot>;
   task: ConversationSyncTaskSnapshot | null;
+  taskFor: (recordKind: ConversationRecordKind) => ConversationSyncTaskSnapshot | null;
+  tasks: ConversationSyncTaskSnapshot[];
 }
+
+type ConversationSyncTaskMap = Record<ConversationRecordKind, ConversationSyncTaskSnapshot | null>;
+
+const EMPTY_TASKS: ConversationSyncTaskMap = { session: null, web: null };
 
 const ConversationSyncContext = createContext<ConversationSyncContextValue | null>(null);
 
 export function ConversationSyncProvider({ children }: { children: ReactNode }) {
-  const [task, setTask] = useState<ConversationSyncTaskSnapshot | null>(null);
+  const [taskMap, setTaskMap] = useState<ConversationSyncTaskMap>(EMPTY_TASKS);
 
-  const refreshTask = useCallback(async () => {
-    const snapshot = await getConversationSyncTask();
-    setTask((current) => mergeConversationTaskSnapshot(snapshot, current));
-    return snapshot;
+  const refreshTasks = useCallback(async () => {
+    const snapshots = await listConversationSyncTasks();
+    setTaskMap((current) => mergeConversationTaskSnapshots(snapshots, current));
+    return snapshots;
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    void getConversationSyncTask()
-      .then((snapshot) => {
+    void listConversationSyncTasks()
+      .then((snapshots) => {
         if (!cancelled) {
-          setTask((current) => current ?? mergeConversationTaskSnapshot(snapshot, current));
+          setTaskMap((current) => mergeConversationTaskSnapshots(snapshots, current));
         }
       })
       .catch(() => {});
@@ -60,7 +66,7 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
       CONVERSATION_SYNC_TASK_UPDATED_EVENT,
       (event) => {
         if (!cancelled) {
-          setTask((current) => mergeConversationTaskSnapshot(event.payload, current));
+          setTaskMap((current) => mergeConversationTaskIntoMap(event.payload, current));
         }
       },
     )
@@ -79,7 +85,11 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
   }, []);
 
   useEffect(() => {
-    if (task?.status !== "running") {
+    const runningTaskKey = Object.values(taskMap)
+      .filter((task) => task?.status === "running")
+      .map((task) => task?.id)
+      .join(":");
+    if (!runningTaskKey) {
       return;
     }
 
@@ -89,7 +99,7 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
         return;
       }
       polling = true;
-      void refreshTask()
+      void refreshTasks()
         .catch(() => {})
         .finally(() => {
           polling = false;
@@ -99,7 +109,7 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [refreshTask, task?.id, task?.status]);
+  }, [refreshTasks, taskMap.session?.id, taskMap.session?.status, taskMap.web?.id, taskMap.web?.status]);
 
   const startSync = useCallback(
     async (params: {
@@ -114,18 +124,29 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
         null,
         params.record_kind ?? "session",
       ) ?? snapshot;
-      setTask(nextSnapshot);
+      setTaskMap((current) => mergeConversationTaskIntoMap(nextSnapshot, current, params.record_kind ?? "session"));
       return nextSnapshot;
     },
     [],
   );
 
+  const taskFor = useCallback(
+    (recordKind: ConversationRecordKind) => taskMap[recordKind],
+    [taskMap],
+  );
+  const tasks = useMemo(
+    () => Object.values(taskMap).filter((task): task is ConversationSyncTaskSnapshot => Boolean(task)),
+    [taskMap],
+  );
+  const task = tasks[tasks.length - 1] ?? null;
   const value = useMemo<ConversationSyncContextValue>(
     () => ({
       startSync,
       task,
+      taskFor,
+      tasks,
     }),
-    [startSync, task],
+    [startSync, task, taskFor, tasks],
   );
 
   return (
@@ -133,6 +154,30 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
       {children}
     </ConversationSyncContext.Provider>
   );
+}
+
+function mergeConversationTaskSnapshots(
+  snapshots: ConversationSyncTaskSnapshot[],
+  current: ConversationSyncTaskMap,
+): ConversationSyncTaskMap {
+  return snapshots.reduce(
+    (next, snapshot) => mergeConversationTaskIntoMap(snapshot, next),
+    current,
+  );
+}
+
+function mergeConversationTaskIntoMap(
+  snapshot: ConversationSyncTaskSnapshot,
+  current: ConversationSyncTaskMap,
+  fallbackRecordKind: ConversationRecordKind | null = null,
+): ConversationSyncTaskMap {
+  const currentSnapshot = Object.values(current).find((task) => task?.id === snapshot.id) ?? null;
+  const merged = mergeConversationTaskSnapshot(snapshot, currentSnapshot, fallbackRecordKind);
+  const recordKind = normalizeConversationRecordKind(merged?.record_kind);
+  if (!merged || !recordKind) {
+    return current;
+  }
+  return { ...current, [recordKind]: merged };
 }
 
 export function useConversationSync() {
