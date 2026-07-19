@@ -2,7 +2,6 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 const root = path.resolve(import.meta.dirname, "..");
 const catalogRoot = path.join(root, "parser-catalog");
@@ -11,6 +10,13 @@ const legacyCatalogPath = path.join(catalogRoot, "catalog.json");
 const outputRoot = path.join(root, "target", "conversation-adapter-packages");
 const command = process.argv[2] ?? "check";
 const update = process.argv.includes("--update");
+const crc32Table = Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = (value & 1) === 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  }
+  return value >>> 0;
+});
 
 if (!['check', 'build'].includes(command)) {
   throw new Error("usage: node scripts/conversation-adapter-packages.mjs <check|build> [--update]");
@@ -116,13 +122,72 @@ function buildZip(directory, artifactPath) {
   fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
   fs.rmSync(artifactPath, { force: true });
   const files = listFiles(directory).map((file) => path.relative(directory, file).split(path.sep).join("/"));
-  const result = spawnSync("zip", ["-X", "-q", artifactPath, ...files], {
-    cwd: directory,
-    encoding: "utf8",
-  });
-  if (result.status !== 0) {
-    throw new Error(`zip failed: ${result.stderr || result.stdout}`);
+  assert(files.length <= 0xffff, "ZIP contains too many files");
+
+  const localParts = [];
+  const centralParts = [];
+  let localOffset = 0;
+  for (const relative of files) {
+    const name = Buffer.from(relative, "utf8");
+    const contents = fs.readFileSync(path.join(directory, relative));
+    assert(name.length <= 0xffff, `ZIP path is too long: ${relative}`);
+    assert(contents.length <= 0xffffffff, `ZIP file is too large: ${relative}`);
+    const checksum = crc32(contents);
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0x0800, 6);
+    localHeader.writeUInt16LE(0, 8);
+    localHeader.writeUInt16LE(0, 10);
+    localHeader.writeUInt16LE(0x0021, 12);
+    localHeader.writeUInt32LE(checksum, 14);
+    localHeader.writeUInt32LE(contents.length, 18);
+    localHeader.writeUInt32LE(contents.length, 22);
+    localHeader.writeUInt16LE(name.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+    localParts.push(localHeader, name, contents);
+
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0x0800, 8);
+    centralHeader.writeUInt16LE(0, 10);
+    centralHeader.writeUInt16LE(0, 12);
+    centralHeader.writeUInt16LE(0x0021, 14);
+    centralHeader.writeUInt32LE(checksum, 16);
+    centralHeader.writeUInt32LE(contents.length, 20);
+    centralHeader.writeUInt32LE(contents.length, 24);
+    centralHeader.writeUInt16LE(name.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
+    centralHeader.writeUInt32LE(0, 38);
+    centralHeader.writeUInt32LE(localOffset, 42);
+    centralParts.push(centralHeader, name);
+    localOffset += localHeader.length + name.length + contents.length;
   }
+
+  const centralDirectory = Buffer.concat(centralParts);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(files.length, 8);
+  end.writeUInt16LE(files.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(localOffset, 16);
+  end.writeUInt16LE(0, 20);
+  fs.writeFileSync(artifactPath, Buffer.concat([...localParts, centralDirectory, end]));
+}
+
+function crc32(bytes) {
+  let value = 0xffffffff;
+  for (const byte of bytes) {
+    value = crc32Table[(value ^ byte) & 0xff] ^ (value >>> 8);
+  }
+  return (value ^ 0xffffffff) >>> 0;
 }
 
 function hashDirectory(directory) {
