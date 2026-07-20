@@ -26,7 +26,7 @@ pub(crate) use conversation_repo::{
     delete_conversation_adapter_registration_sqlx, disable_builtin_conversation_adapter_sqlx,
     disable_conversation_source_sqlx, enable_conversation_sources_by_adapter_sqlx,
     has_running_conversation_sync_for_adapter_sqlx, import_conversation_sessions_sqlx,
-    list_conversation_adapter_catalog_releases_sqlx,
+    import_incremental_conversation_sessions_sqlx, list_conversation_adapter_catalog_releases_sqlx,
     list_conversation_adapter_package_versions_sqlx, list_conversation_adapter_packages_sqlx,
     list_conversation_adapters_sqlx, list_conversation_question_details_sqlx,
     list_conversation_sessions_sqlx, list_conversation_sources_sqlx,

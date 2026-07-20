@@ -384,14 +384,31 @@ impl AppService {
                     let tenant_id = self.tenant_id().to_string();
                     let import_source = source.clone();
                     self.db.block_on(async move {
-                        let result = crate::backend::store::import_conversation_sessions_sqlx(
-                            &pool,
-                            &tenant_id,
-                            &import_source,
-                            &read.sessions,
-                            params.dry_run,
-                        )
-                        .await?;
+                        let result = if read.incremental {
+                            let discovered_external_ids = read
+                                .session_descriptors
+                                .iter()
+                                .map(|descriptor| descriptor.external_id.clone())
+                                .collect::<std::collections::BTreeSet<_>>();
+                            crate::backend::store::import_incremental_conversation_sessions_sqlx(
+                                &pool,
+                                &tenant_id,
+                                &import_source,
+                                &read.sessions,
+                                &discovered_external_ids,
+                                params.dry_run,
+                            )
+                            .await?
+                        } else {
+                            crate::backend::store::import_conversation_sessions_sqlx(
+                                &pool,
+                                &tenant_id,
+                                &import_source,
+                                &read.sessions,
+                                params.dry_run,
+                            )
+                            .await?
+                        };
                         let retained_session_count = persist_successful_conversation_observation(
                             &pool,
                             &tenant_id,

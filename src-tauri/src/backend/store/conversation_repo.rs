@@ -1029,6 +1029,39 @@ pub(crate) async fn import_conversation_sessions_sqlx(
     sessions: &[NormalizedConversationSession],
     dry_run: bool,
 ) -> AppResult<ConversationImportResult> {
+    import_conversation_sessions_with_presence_sqlx(
+        pool, tenant_id, source, sessions, None, dry_run,
+    )
+    .await
+}
+
+pub(crate) async fn import_incremental_conversation_sessions_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    source: &ConversationSource,
+    sessions: &[NormalizedConversationSession],
+    discovered_external_ids: &BTreeSet<String>,
+    dry_run: bool,
+) -> AppResult<ConversationImportResult> {
+    import_conversation_sessions_with_presence_sqlx(
+        pool,
+        tenant_id,
+        source,
+        sessions,
+        Some(discovered_external_ids),
+        dry_run,
+    )
+    .await
+}
+
+async fn import_conversation_sessions_with_presence_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    source: &ConversationSource,
+    sessions: &[NormalizedConversationSession],
+    discovered_external_ids: Option<&BTreeSet<String>>,
+    dry_run: bool,
+) -> AppResult<ConversationImportResult> {
     let turn_count = sessions.iter().map(|session| session.turns.len()).sum();
     if dry_run {
         return Ok(ConversationImportResult {
@@ -1047,10 +1080,21 @@ pub(crate) async fn import_conversation_sessions_sqlx(
     let mut warning_count = 0usize;
     let mut skipped_session_count = 0usize;
     let warnings = Vec::new();
-    let incoming_session_ids = sessions
-        .iter()
-        .map(|session| stable_id("conversation-session", &[&source.id, &session.external_id]))
-        .collect::<BTreeSet<_>>();
+    let incoming_session_ids = discovered_external_ids
+        .map(|external_ids| {
+            external_ids
+                .iter()
+                .map(|external_id| stable_id("conversation-session", &[&source.id, external_id]))
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_else(|| {
+            sessions
+                .iter()
+                .map(|session| {
+                    stable_id("conversation-session", &[&source.id, &session.external_id])
+                })
+                .collect::<BTreeSet<_>>()
+        });
 
     for batch in sessions.chunks(CONVERSATION_IMPORT_BATCH_SIZE) {
         let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
@@ -2316,16 +2360,34 @@ async fn mark_missing_conversation_sessions_sqlx_tx(
     incoming_session_ids: &BTreeSet<String>,
     now: &str,
 ) -> AppResult<()> {
-    let existing_ids = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM conversation_sessions WHERE tenant_id = ?1 AND source_id = ?2",
+    let existing_sessions = sqlx::query_as::<_, (String, i64)>(
+        "SELECT id, missing FROM conversation_sessions WHERE tenant_id = ?1 AND source_id = ?2",
     )
     .bind(tenant_id)
     .bind(source_id)
     .fetch_all(&mut **tx)
     .await
     .map_err(|error| error.to_string())?;
-    for session_id in existing_ids {
+    for (session_id, missing) in existing_sessions {
         if incoming_session_ids.contains(&session_id) {
+            if missing == 0 {
+                continue;
+            }
+            sqlx::query(
+                r#"
+                UPDATE conversation_sessions
+                SET missing = 0
+                WHERE tenant_id = ?1 AND id = ?2
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(&session_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|error| error.to_string())?;
+            continue;
+        }
+        if missing != 0 {
             continue;
         }
         sqlx::query(
@@ -4440,6 +4502,80 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].session.external_id, "session-1");
         assert_eq!(missing_count, 1);
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_incremental_import_preserves_and_recovers_discovered_sessions() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-import-incremental-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let adapter = test_conversation_adapter(
+            "import-incremental-external",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let source = test_conversation_source(&adapter.id);
+        let current_session = fixture_session("v1");
+        let mut retained_session = fixture_session("v1");
+        retained_session.external_id = "retained-session".to_string();
+        retained_session.title = Some("Retained fixture".to_string());
+        let discovered_external_ids = BTreeSet::from([
+            current_session.external_id.clone(),
+            retained_session.external_id.clone(),
+        ]);
+
+        let listed = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[current_session, retained_session],
+                    false,
+                )
+                .await?;
+
+                // Reproduce the damaged state created by the old incremental path.
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[],
+                    false,
+                )
+                .await?;
+
+                import_incremental_conversation_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[],
+                    &discovered_external_ids,
+                    false,
+                )
+                .await?;
+                list_conversation_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    None,
+                    Some(&source.id),
+                    None,
+                    20,
+                    0,
+                )
+                .await
+            })
+            .expect("preserve discovered sessions during incremental import");
+
+        assert_eq!(listed.len(), 2);
+        assert!(listed.iter().all(|item| !item.session.missing));
 
         drop(database);
         cleanup_database(&db_path);
