@@ -70,8 +70,10 @@ pub(crate) use profile_repo::{
 };
 pub(crate) use search_index_repo::{
     bump_conversation_search_source_revision_sqlx_tx,
-    complete_conversation_search_index_rebuild_sqlx, load_conversation_search_index_documents_sqlx,
+    complete_conversation_search_index_rebuild_sqlx, fail_conversation_search_index_rebuild_sqlx,
+    load_conversation_search_index_documents_sqlx,
     load_or_create_conversation_search_index_state_sqlx,
+    mark_conversation_search_index_unusable_sqlx,
     try_acquire_conversation_search_writer_lease_sqlx, ConversationSearchIndexState,
 };
 pub(crate) use shortcut_repo::{

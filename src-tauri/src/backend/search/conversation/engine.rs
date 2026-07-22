@@ -3,6 +3,7 @@ use super::schema::{
     JIEBA_TOKENIZER,
 };
 use crate::backend::dto::AppResult;
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;
 use tantivy::{
@@ -90,6 +91,7 @@ impl ConversationSearchDocument {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct ConversationCardQuery {
     pub(super) query: String,
     pub(super) record_kind: String,
@@ -114,6 +116,7 @@ pub(crate) struct ConversationSearchMatch {
 pub(crate) struct ConversationSearchMatches {
     pub(crate) total_count: usize,
     pub(crate) hits: Vec<ConversationSearchMatch>,
+    pub(crate) content_type_counts: BTreeMap<String, usize>,
 }
 
 #[cfg(test)]
@@ -230,8 +233,21 @@ fn search_cards(
     if query.is_empty() {
         return Err("conversation search query is required".to_string());
     }
+    if query.chars().count() > 512 {
+        return Err("conversation search query must not exceed 512 characters".to_string());
+    }
     let reader = index.reader().map_err(|error| error.to_string())?;
     let searcher = reader.searcher();
+    let mut content_type_counts = BTreeMap::new();
+    for card_type in ["question", "answer", "tool", "command", "code", "result"] {
+        let mut facet_request = request.clone();
+        facet_request.card_types = vec![card_type.to_string()];
+        let facet_query = build_card_query(index, fields, query, &facet_request)?;
+        let count = searcher
+            .search(&facet_query, &Count)
+            .map_err(|error| error.to_string())?;
+        content_type_counts.insert(card_type.to_string(), count);
+    }
     let query = build_card_query(index, fields, query, request)?;
     let total_count = searcher
         .search(&query, &Count)
@@ -259,7 +275,11 @@ fn search_cards(
             part_id: stored_text(&document, fields.part_id)?,
         });
     }
-    Ok(ConversationSearchMatches { total_count, hits })
+    Ok(ConversationSearchMatches {
+        total_count,
+        hits,
+        content_type_counts,
+    })
 }
 
 fn build_card_query(
@@ -320,15 +340,15 @@ fn build_card_query(
     if lexical_branches.is_empty() {
         return Err("conversation search query has no searchable terms".to_string());
     }
-    clauses.push((Occur::Must, Box::new(BooleanQuery::new(lexical_branches))));
     let normalized = query.trim().to_lowercase();
     if (2..=15).contains(&normalized.chars().count()) {
-        clauses.push(text_should_clause(
+        lexical_branches.push(text_should_clause(
             fields.question_title_ngram,
             &normalized,
             0.6,
         ));
     }
+    clauses.push((Occur::Must, Box::new(BooleanQuery::new(lexical_branches))));
     Ok(BooleanQuery::new(clauses))
 }
 
@@ -345,7 +365,7 @@ fn tokens_for(index: &Index, tokenizer_name: &str, query: &str) -> AppResult<Vec
             tokens.insert(text);
         }
     }
-    Ok(tokens.into_iter().collect())
+    Ok(tokens.into_iter().take(32).collect())
 }
 
 fn exact_clause(field: tantivy::schema::Field, value: &str) -> (Occur, Box<dyn Query>) {
@@ -485,6 +505,22 @@ mod tests {
         assert_eq!(chinese.total_count, 1);
         assert_eq!(chinese.hits[0].document_id, "card-1");
         assert_eq!(chinese.hits[0].session_id, "session-1");
+        assert_eq!(chinese.content_type_counts.get("question"), Some(&1));
+        assert_eq!(chinese.content_type_counts.get("answer"), Some(&0));
+
+        let partial_title = index
+            .search_cards(&ConversationCardQuery {
+                query: "antiv".to_string(),
+                record_kind: "session".to_string(),
+                card_types: vec!["question".to_string()],
+                limit: 20,
+                offset: 0,
+                adapter_id: None,
+                source_id: None,
+                project_path: None,
+            })
+            .expect("search partial metadata ngram");
+        assert_eq!(partial_title.total_count, 1);
 
         let filtered = index
             .search_cards(&ConversationCardQuery {

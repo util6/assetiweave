@@ -19,7 +19,7 @@ vi.mock("../../services/conversations", () => ({
 describe("SearchIndexProvider", () => {
   beforeEach(() => {
     listenMock.mockReset().mockResolvedValue(vi.fn());
-    statusMock.mockReset().mockResolvedValue({ health: "missing" });
+    statusMock.mockReset().mockResolvedValue({ health: "ready", source_revision: 0 });
     taskMock.mockReset().mockResolvedValue(null);
     rebuildMock.mockReset();
   });
@@ -45,8 +45,8 @@ describe("SearchIndexProvider", () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ ...running, status: "completed", finished_at: "2026-07-22T00:00:01Z" });
     statusMock
-      .mockResolvedValueOnce({ health: "missing" })
-      .mockResolvedValueOnce({ health: "ready" });
+      .mockResolvedValueOnce({ health: "ready", source_revision: 0 })
+      .mockResolvedValueOnce({ health: "ready", source_revision: 0 });
 
     render(
       <SearchIndexProvider>
@@ -63,6 +63,27 @@ describe("SearchIndexProvider", () => {
     });
     expect(screen.getByTestId("task-status").textContent).toBe("completed");
     expect(screen.getByTestId("index-health").textContent).toBe("ready");
+  });
+
+  it("automatically starts one rebuild for a missing revision", async () => {
+    statusMock.mockResolvedValue({ health: "missing", source_revision: 3 });
+    rebuildMock.mockResolvedValue({
+      id: "auto-index-1",
+      status: "running",
+      started_at: "2026-07-22T00:00:00Z",
+      finished_at: null,
+      result: null,
+      error: null,
+    });
+
+    render(
+      <SearchIndexProvider>
+        <Harness />
+      </SearchIndexProvider>,
+    );
+    await act(async () => {});
+    await act(async () => {});
+    expect(rebuildMock).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -2396,6 +2396,28 @@ fn conversation_search_index_rebuild_publishes_a_ready_generation() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[test]
+fn conversation_search_index_rebuild_failure_releases_writer_lease() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-search-index-failure-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create temp search index failure directory");
+    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    fs::write(root.join("conversation-search-index"), "not a directory")
+        .expect("block search index directory");
+
+    assert!(service.rebuild_conversation_search_index().is_err());
+    let status = service
+        .get_conversation_search_index_status()
+        .expect("load failed conversation search index status");
+    assert_eq!(status.health, "failed");
+    assert!(!status.is_rebuilding);
+    assert!(status.lease_owner.is_none());
+    assert!(status.last_error.is_some());
+    let _ = fs::remove_dir_all(root);
+}
+
 #[cfg(unix)]
 #[test]
 fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
@@ -2433,6 +2455,17 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
         crate::backend::dto::ConversationSearchCardType::Answer
     );
     assert!(result.hits[0].snippet.contains("Rust fallback"));
+    assert_eq!(
+        result
+            .content_type_counts
+            .as_ref()
+            .and_then(|counts| counts.get("answer")),
+        Some(&1)
+    );
+    assert!(result.hits[0]
+        .highlight_segments
+        .as_ref()
+        .is_some_and(|segments| segments.iter().any(|segment| segment.matched)));
 
     service
         .update_conversation_part_translation(ConversationPartTranslationUpdateParams {

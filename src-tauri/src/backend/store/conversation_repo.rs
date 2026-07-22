@@ -1747,7 +1747,7 @@ pub(crate) async fn search_conversation_cards_sqlx(
     let allowed_types = content_types.iter().copied().collect::<BTreeSet<_>>();
     let tables = record_kind.tables();
     let mut sessions =
-        load_search_sessions_sqlx(pool, tenant_id, tables, adapter_id, source_id).await?;
+        load_search_sessions_sqlx(pool, tenant_id, tables, adapter_id, source_id, None).await?;
     if timeline {
         sessions.sort_by(|left, right| {
             conversation_session_search_time(&left.session)
@@ -1756,11 +1756,11 @@ pub(crate) async fn search_conversation_cards_sqlx(
         });
     }
     let mut questions_by_session =
-        load_search_questions_sqlx(pool, tenant_id, tables, adapter_id, source_id).await?;
+        load_search_questions_sqlx(pool, tenant_id, tables, adapter_id, source_id, None).await?;
     let mut turns_by_question =
-        load_search_turns_sqlx(pool, tenant_id, tables, adapter_id, source_id).await?;
+        load_search_turns_sqlx(pool, tenant_id, tables, adapter_id, source_id, None).await?;
     let mut parts_by_turn =
-        load_search_parts_sqlx(pool, tenant_id, tables, adapter_id, source_id).await?;
+        load_search_parts_sqlx(pool, tenant_id, tables, adapter_id, source_id, None).await?;
     let mut hits = Vec::new();
 
     for session_item in sessions {
@@ -1846,29 +1846,64 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
     matches: crate::backend::search::conversation::ConversationSearchMatches,
 ) -> AppResult<ConversationSearchPage> {
     let tables = record_kind.tables();
-    let sessions = load_search_sessions_sqlx(pool, tenant_id, tables, adapter_id, source_id)
-        .await?
-        .into_iter()
-        .map(|item| (item.session.id.clone(), item))
-        .collect::<BTreeMap<_, _>>();
-    let questions = load_search_questions_sqlx(pool, tenant_id, tables, adapter_id, source_id)
-        .await?
-        .into_values()
-        .flatten()
-        .map(|item| (item.id.clone(), item))
-        .collect::<BTreeMap<_, _>>();
-    let turns = load_search_turns_sqlx(pool, tenant_id, tables, adapter_id, source_id)
-        .await?
-        .into_values()
-        .flatten()
-        .map(|item| (item.id.clone(), item))
-        .collect::<BTreeMap<_, _>>();
-    let parts = load_search_parts_sqlx(pool, tenant_id, tables, adapter_id, source_id)
-        .await?
-        .into_values()
-        .flatten()
-        .map(|item| (item.id.clone(), item))
-        .collect::<BTreeMap<_, _>>();
+    let session_ids = matches
+        .hits
+        .iter()
+        .map(|matched| matched.session_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let session_ids_json =
+        serde_json::to_string(&session_ids).map_err(|error| error.to_string())?;
+    let sessions = load_search_sessions_sqlx(
+        pool,
+        tenant_id,
+        tables,
+        adapter_id,
+        source_id,
+        Some(&session_ids_json),
+    )
+    .await?
+    .into_iter()
+    .map(|item| (item.session.id.clone(), item))
+    .collect::<BTreeMap<_, _>>();
+    let questions = load_search_questions_sqlx(
+        pool,
+        tenant_id,
+        tables,
+        adapter_id,
+        source_id,
+        Some(&session_ids_json),
+    )
+    .await?
+    .into_values()
+    .flatten()
+    .map(|item| (item.id.clone(), item))
+    .collect::<BTreeMap<_, _>>();
+    let turns = load_search_turns_sqlx(
+        pool,
+        tenant_id,
+        tables,
+        adapter_id,
+        source_id,
+        Some(&session_ids_json),
+    )
+    .await?
+    .into_values()
+    .flatten()
+    .map(|item| (item.id.clone(), item))
+    .collect::<BTreeMap<_, _>>();
+    let parts = load_search_parts_sqlx(
+        pool,
+        tenant_id,
+        tables,
+        adapter_id,
+        source_id,
+        Some(&session_ids_json),
+    )
+    .await?
+    .into_values()
+    .flatten()
+    .map(|item| (item.id.clone(), item))
+    .collect::<BTreeMap<_, _>>();
     let needle = normalize_query(Some(query))
         .ok_or_else(|| "conversation search query is required".to_string())?;
     let mut hits = Vec::with_capacity(matches.hits.len());
@@ -1922,6 +1957,7 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
             card_type,
             snippet: search_snippet(&text, &needle),
             score: matched.score,
+            highlight_segments: search_highlight_segments(&text, &needle),
         });
     }
     Ok(ConversationSearchPage {
@@ -3175,6 +3211,7 @@ async fn load_search_sessions_sqlx(
     tables: ConversationRecordTables,
     adapter_id: Option<&str>,
     source_id: Option<&str>,
+    session_ids_json: Option<&str>,
 ) -> AppResult<Vec<ConversationSessionListItem>> {
     let query = format!(
         r#"
@@ -3195,6 +3232,7 @@ async fn load_search_sessions_sqlx(
         WHERE s.tenant_id = ?1
           AND (?2 IS NULL OR s.adapter_id = ?2)
           AND (?3 IS NULL OR s.source_id = ?3)
+          AND (?4 IS NULL OR s.id IN (SELECT value FROM json_each(?4)))
         ORDER BY COALESCE(s.updated_at, s.imported_at) DESC, s.title ASC
         "#,
         sessions = tables.sessions,
@@ -3206,6 +3244,7 @@ async fn load_search_sessions_sqlx(
         .bind(tenant_id)
         .bind(adapter_id)
         .bind(source_id)
+        .bind(session_ids_json)
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -3236,6 +3275,7 @@ async fn load_search_questions_sqlx(
     tables: ConversationRecordTables,
     adapter_id: Option<&str>,
     source_id: Option<&str>,
+    session_ids_json: Option<&str>,
 ) -> AppResult<BTreeMap<String, Vec<ConversationQuestion>>> {
     let query = format!(
         r#"
@@ -3247,6 +3287,7 @@ async fn load_search_questions_sqlx(
         WHERE q.tenant_id = ?1
           AND (?2 IS NULL OR s.adapter_id = ?2)
           AND (?3 IS NULL OR s.source_id = ?3)
+          AND (?4 IS NULL OR s.id IN (SELECT value FROM json_each(?4)))
         ORDER BY q.session_id ASC, q.question_index ASC
         "#,
         questions = tables.questions,
@@ -3256,6 +3297,7 @@ async fn load_search_questions_sqlx(
         .bind(tenant_id)
         .bind(adapter_id)
         .bind(source_id)
+        .bind(session_ids_json)
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -3276,6 +3318,7 @@ async fn load_search_turns_sqlx(
     tables: ConversationRecordTables,
     adapter_id: Option<&str>,
     source_id: Option<&str>,
+    session_ids_json: Option<&str>,
 ) -> AppResult<BTreeMap<String, Vec<ConversationTurn>>> {
     let query = format!(
         r#"
@@ -3288,6 +3331,7 @@ async fn load_search_turns_sqlx(
         WHERE t.tenant_id = ?1
           AND (?2 IS NULL OR s.adapter_id = ?2)
           AND (?3 IS NULL OR s.source_id = ?3)
+          AND (?4 IS NULL OR s.id IN (SELECT value FROM json_each(?4)))
         ORDER BY qt.question_id ASC, qt.turn_order ASC, t.turn_index ASC
         "#,
         turns = tables.turns,
@@ -3298,6 +3342,7 @@ async fn load_search_turns_sqlx(
         .bind(tenant_id)
         .bind(adapter_id)
         .bind(source_id)
+        .bind(session_ids_json)
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -3320,6 +3365,7 @@ async fn load_search_parts_sqlx(
     tables: ConversationRecordTables,
     adapter_id: Option<&str>,
     source_id: Option<&str>,
+    session_ids_json: Option<&str>,
 ) -> AppResult<BTreeMap<String, Vec<ConversationPart>>> {
     let query = format!(
         r#"
@@ -3331,6 +3377,7 @@ async fn load_search_parts_sqlx(
         WHERE p.tenant_id = ?1
           AND (?2 IS NULL OR s.adapter_id = ?2)
           AND (?3 IS NULL OR s.source_id = ?3)
+          AND (?4 IS NULL OR s.id IN (SELECT value FROM json_each(?4)))
         ORDER BY p.turn_id ASC, p.part_index ASC
         "#,
         parts = tables.parts,
@@ -3341,6 +3388,7 @@ async fn load_search_parts_sqlx(
         .bind(tenant_id)
         .bind(adapter_id)
         .bind(source_id)
+        .bind(session_ids_json)
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -3532,7 +3580,41 @@ fn push_search_hit_if_matching(
         card_type,
         snippet: search_snippet(text, needle),
         score: match_count(text, needle) * 100,
+        highlight_segments: None,
     });
+}
+
+fn search_highlight_segments(
+    text: &str,
+    needle: &str,
+) -> Option<Vec<crate::backend::dto::ConversationSearchHighlightSegment>> {
+    let start = text.find(needle).or_else(|| {
+        (text.is_ascii() && needle.is_ascii())
+            .then(|| text.to_ascii_lowercase().find(needle))
+            .flatten()
+    })?;
+    let end = start + needle.len();
+    if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+        return None;
+    }
+    let mut segments = Vec::new();
+    if start > 0 {
+        segments.push(crate::backend::dto::ConversationSearchHighlightSegment {
+            text: text[..start].to_string(),
+            matched: false,
+        });
+    }
+    segments.push(crate::backend::dto::ConversationSearchHighlightSegment {
+        text: text[start..end].to_string(),
+        matched: true,
+    });
+    if end < text.len() {
+        segments.push(crate::backend::dto::ConversationSearchHighlightSegment {
+            text: text[end..].to_string(),
+            matched: false,
+        });
+    }
+    Some(segments)
 }
 
 fn search_entries_for_part(part: &ConversationPart) -> Vec<ConversationSearchEntry> {

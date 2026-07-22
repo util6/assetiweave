@@ -68,6 +68,11 @@ impl ConversationSearchIndexState {
     pub(crate) fn supported_modes(&self) -> Vec<SearchRetrievalMode> {
         vec![SearchRetrievalMode::Lexical]
     }
+
+    pub(crate) fn is_compatible(&self) -> bool {
+        self.schema_version == CONVERSATION_SEARCH_SCHEMA_VERSION
+            && self.tokenizer_version == CONVERSATION_SEARCH_TOKENIZER_VERSION
+    }
 }
 
 pub(crate) async fn load_or_create_conversation_search_index_state_sqlx(
@@ -322,6 +327,51 @@ pub(crate) async fn complete_conversation_search_index_rebuild_sqlx(
     .await
     .map_err(|error| error.to_string())?;
     Ok(result.rows_affected() == 1)
+}
+
+pub(crate) async fn fail_conversation_search_index_rebuild_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    owner: &str,
+    error: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"
+        UPDATE conversation_search_index_state
+        SET health = 'failed', last_error = ?1, lease_owner = NULL,
+            lease_expires_at = NULL, updated_at = ?2
+        WHERE tenant_id = ?3 AND lease_owner = ?4
+        "#,
+    )
+    .bind(error)
+    .bind(Utc::now().to_rfc3339())
+    .bind(tenant_id)
+    .bind(owner)
+    .execute(pool)
+    .await
+    .map_err(|failure| failure.to_string())?;
+    Ok(())
+}
+
+pub(crate) async fn mark_conversation_search_index_unusable_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    error: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"
+        UPDATE conversation_search_index_state
+        SET health = 'failed', last_error = ?1, updated_at = ?2
+        WHERE tenant_id = ?3
+        "#,
+    )
+    .bind(error)
+    .bind(Utc::now().to_rfc3339())
+    .bind(tenant_id)
+    .execute(pool)
+    .await
+    .map_err(|failure| failure.to_string())?;
+    Ok(())
 }
 
 struct SearchDocumentTables {

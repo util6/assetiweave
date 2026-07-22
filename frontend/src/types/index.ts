@@ -387,6 +387,7 @@ export interface ConversationSearchHit {
   card_type: ConversationSearchCardType;
   snippet: string;
   score: number;
+  highlight_segments?: Array<{ text: string; matched: boolean }>;
 }
 
 export interface ConversationSearchResult {
@@ -396,6 +397,7 @@ export interface ConversationSearchResult {
   total_count: number;
   hits: ConversationSearchHit[];
   backend?: "tantivy" | "legacy_scan";
+  content_type_counts?: Partial<Record<ConversationSearchCardType, number>>;
 }
 
 export interface ConversationMutationResult {

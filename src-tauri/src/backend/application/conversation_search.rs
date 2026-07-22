@@ -34,8 +34,13 @@ fn status_from_state(
 ) -> ConversationSearchIndexStatus {
     let supported_modes = state.supported_modes();
     let is_rebuilding = state.lease_owner.is_some();
+    let compatible = state.is_compatible();
     ConversationSearchIndexStatus {
-        health: state.health.as_str().to_string(),
+        health: if compatible {
+            state.health.as_str().to_string()
+        } else {
+            "failed".to_string()
+        },
         schema_version: state.schema_version,
         tokenizer_version: state.tokenizer_version,
         source_revision: state.source_revision,
@@ -44,7 +49,11 @@ fn status_from_state(
         document_count: state.document_count,
         size_bytes: state.size_bytes,
         last_built_at: state.last_built_at,
-        last_error: state.last_error,
+        last_error: state.last_error.or_else(|| {
+            (!compatible).then(|| {
+                "conversation search index schema or tokenizer version is incompatible".to_string()
+            })
+        }),
         lease_owner: state.lease_owner,
         lease_expires_at: state.lease_expires_at,
         is_rebuilding,

@@ -123,6 +123,14 @@ pub(crate) struct ConversationSearchHit {
     pub(crate) card_type: ConversationSearchCardType,
     pub(crate) snippet: String,
     pub(crate) score: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) highlight_segments: Option<Vec<ConversationSearchHighlightSegment>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ConversationSearchHighlightSegment {
+    pub(crate) text: String,
+    pub(crate) matched: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

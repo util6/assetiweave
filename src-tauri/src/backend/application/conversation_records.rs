@@ -116,6 +116,9 @@ impl AppService {
         if query.is_empty() {
             return Err("conversation search query is required".to_string());
         }
+        if query.chars().count() > 512 {
+            return Err("conversation search query must not exceed 512 characters".to_string());
+        }
         if let Some(mode) = params
             .search_options
             .as_ref()
@@ -176,7 +179,8 @@ impl AppService {
         } else {
             None
         };
-        let (page, backend) = if let Some(matches) = indexed_page {
+        let (page, backend, content_type_counts) = if let Some(matches) = indexed_page {
+            let facet_counts = matches.content_type_counts.clone();
             let hydrate_pool = pool.clone();
             let hydrate_tenant = tenant_id.clone();
             let hydrate_adapter = adapter_id.clone();
@@ -194,7 +198,7 @@ impl AppService {
                 )
                 .await
             }) {
-                Ok(page) => (page, "tantivy"),
+                Ok(page) => (page, "tantivy", Some(facet_counts)),
                 Err(_) => {
                     let page = self.db.block_on(async move {
                         crate::backend::store::search_conversation_cards_sqlx(
@@ -214,7 +218,7 @@ impl AppService {
                         )
                         .await
                     })?;
-                    (page, "legacy_scan")
+                    (page, "legacy_scan", None)
                 }
             }
         } else {
@@ -236,7 +240,7 @@ impl AppService {
                 )
                 .await
             })?;
-            (page, "legacy_scan")
+            (page, "legacy_scan", None)
         };
         Ok(ConversationSearchResult {
             query: query.to_string(),
@@ -257,6 +261,7 @@ impl AppService {
             total_count: page.total_count,
             hits: page.hits,
             backend: backend.to_string(),
+            content_type_counts,
         })
     }
 

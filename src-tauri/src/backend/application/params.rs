@@ -542,6 +542,8 @@ pub(crate) struct ConversationSearchResult {
     pub(crate) total_count: usize,
     pub(crate) hits: Vec<crate::backend::dto::ConversationSearchHit>,
     pub(crate) backend: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) content_type_counts: Option<BTreeMap<String, usize>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
