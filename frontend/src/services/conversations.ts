@@ -298,6 +298,33 @@ export interface ConversationSyncTaskSnapshot {
   error: string | null;
 }
 
+export interface ConversationSearchIndexStatus {
+  health: "missing" | "ready" | "stale" | "failed" | "disabled";
+  schema_version: number;
+  tokenizer_version: string;
+  source_revision: number;
+  indexed_revision: number | null;
+  active_generation: string | null;
+  document_count: number;
+  size_bytes: number;
+  last_built_at: string | null;
+  last_error: string | null;
+  lease_owner: string | null;
+  lease_expires_at: string | null;
+  is_rebuilding: boolean;
+  updated_at: string;
+  supported_modes: Array<"lexical" | "semantic" | "hybrid">;
+}
+
+export interface ConversationSearchIndexTaskSnapshot {
+  id: string;
+  status: ConversationSyncTaskStatus;
+  started_at: string;
+  finished_at: string | null;
+  result: unknown | null;
+  error: string | null;
+}
+
 export interface ConversationSyncSummaryCounts {
   sourceCount: number;
   incrementalStatsAvailable: boolean;
@@ -1006,6 +1033,54 @@ export async function getConversationSyncTask(): Promise<ConversationSyncTaskSna
     }
     return null;
   }
+}
+
+export async function getConversationSearchIndexStatus(): Promise<ConversationSearchIndexStatus> {
+  try {
+    return await invoke<ConversationSearchIndexStatus>("get_conversation_search_index_status");
+  } catch (error) {
+    if (isTauriRuntime()) throw error;
+    return previewConversationSearchIndexStatus("missing");
+  }
+}
+
+export async function startConversationSearchIndexRebuild(): Promise<ConversationSearchIndexTaskSnapshot> {
+  try {
+    return await invoke<ConversationSearchIndexTaskSnapshot>("start_conversation_search_index_rebuild");
+  } catch (error) {
+    if (isTauriRuntime()) throw error;
+    const now = new Date().toISOString();
+    return { id: "preview-search-index", status: "completed", started_at: now, finished_at: now, result: null, error: null };
+  }
+}
+
+export async function getConversationSearchIndexTask(): Promise<ConversationSearchIndexTaskSnapshot | null> {
+  try {
+    return await invoke<ConversationSearchIndexTaskSnapshot | null>("get_conversation_search_index_task");
+  } catch (error) {
+    if (isTauriRuntime()) throw error;
+    return null;
+  }
+}
+
+function previewConversationSearchIndexStatus(health: ConversationSearchIndexStatus["health"]): ConversationSearchIndexStatus {
+  return {
+    health,
+    schema_version: 1,
+    tokenizer_version: "tantivy-jieba-0.20.0",
+    source_revision: 0,
+    indexed_revision: null,
+    active_generation: null,
+    document_count: 0,
+    size_bytes: 0,
+    last_built_at: null,
+    last_error: null,
+    lease_owner: null,
+    lease_expires_at: null,
+    is_rebuilding: false,
+    updated_at: new Date().toISOString(),
+    supported_modes: ["lexical"],
+  };
 }
 
 export async function listConversationSyncTasks(): Promise<ConversationSyncTaskSnapshot[]> {

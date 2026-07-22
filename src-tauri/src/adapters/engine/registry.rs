@@ -2760,6 +2760,30 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "start_conversation_search_index_rebuild",
+        "start_conversation_search_index_rebuild",
+        "Start the desktop conversation search index rebuild task",
+        Write,
+        App,
+        false,
+        NoParams,
+        System => |_params| Value::Null,
+        &[],
+        None
+    ),
+    command!(
+        "get_conversation_search_index_task",
+        "get_conversation_search_index_task",
+        "Get the current desktop conversation search index rebuild task",
+        Read,
+        App,
+        false,
+        NoParams,
+        System => |_params| Value::Null,
+        &[],
+        None
+    ),
+    command!(
         "export_web_record_session",
         "conversation.web-record.export",
         "Export one web conversation record as Markdown",

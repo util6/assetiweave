@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { AppUpdateDialog } from "../app/updates/AppUpdateDialog";
 import { useConversationSync } from "../app/backgroundTasks/ConversationSyncProvider";
+import { useSearchIndex } from "../app/backgroundTasks/SearchIndexProvider";
 import { useSkillBackup } from "../app/backgroundTasks/SkillBackupProvider";
 import { SkillBackupBackgroundTaskIndicator } from "../components/backup/SkillBackupProgress";
 import { ConversationBackgroundTaskIndicator } from "../components/conversations/ConversationToolbarControls";
@@ -64,6 +65,7 @@ const SourcesPage = lazy(() =>
 export function AppRouter() {
   const { locale, t } = useI18n();
   const { tasks: conversationSyncTasks } = useConversationSync();
+  const { task: searchIndexTask } = useSearchIndex();
   const { task: skillBackupTask } = useSkillBackup();
   const catalog = useCatalogController();
   const handledSkillBackupTaskId = useRef<string | null>(null);
@@ -299,6 +301,11 @@ export function AppRouter() {
       ) : null}
       <AppUpdateDialog />
       <div className="pointer-events-none fixed bottom-5 right-5 z-30 grid gap-3">
+        {searchIndexTask?.status === "running" ? (
+          <div className="rounded-lg border border-outline-variant bg-surface-container px-4 py-3 text-body-sm text-on-surface shadow-lg">
+            {t("conversation.searchIndex.building")}
+          </div>
+        ) : null}
         {conversationSyncTasks.map((task) => (
           <ConversationBackgroundTaskIndicator key={task.id} task={task} t={t} />
         ))}

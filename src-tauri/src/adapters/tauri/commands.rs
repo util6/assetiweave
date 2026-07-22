@@ -3,8 +3,8 @@ use crate::adapters::prompt_clipboard::{
     copy_prompt_card_to_clipboard as copy_prompt_card_to_clipboard_impl, PromptClipboardParams,
 };
 use crate::adapters::tauri::background_tasks::{
-    BackgroundTaskStatus, ConversationScriptInstallTaskSnapshot, ConversationSyncTaskSnapshot,
-    SkillBackupTaskSnapshot,
+    BackgroundTaskStatus, ConversationScriptInstallTaskSnapshot,
+    ConversationSearchIndexTaskSnapshot, ConversationSyncTaskSnapshot, SkillBackupTaskSnapshot,
 };
 #[cfg(test)]
 use crate::backend::capabilities::{
@@ -1901,6 +1901,57 @@ pub(crate) async fn get_conversation_search_index_status(
 }
 
 #[tauri::command]
+pub(crate) fn start_conversation_search_index_rebuild(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<ConversationSearchIndexTaskSnapshot> {
+    let (snapshot, should_start) = state
+        .background_tasks
+        .begin_conversation_search_index_rebuild()?;
+    if !should_start {
+        return Ok(snapshot);
+    }
+
+    let db_path = state.db_path.clone();
+    let background_tasks = state.background_tasks.clone();
+    let task_id = snapshot.id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            AppService::open_with_db_path(db_path)
+                .and_then(|service| service.rebuild_conversation_search_index())
+                .and_then(|report| serde_json::to_value(report).map_err(|error| error.to_string()))
+        }))
+        .unwrap_or_else(|_| Err("conversation search index rebuild panicked".to_string()));
+        match background_tasks.finish_conversation_search_index_rebuild(&task_id, result) {
+            Ok(snapshot) => {
+                if let Err(error) = app.emit("conversation-search-index-task-updated", &snapshot) {
+                    log_error(
+                        "conversation.search.index.rebuild",
+                        "推送对话搜索索引任务状态失败",
+                        &error.to_string(),
+                        &[("task_id", task_id)],
+                    );
+                }
+            }
+            Err(error) => log_error(
+                "conversation.search.index.rebuild",
+                "更新对话搜索索引任务状态失败",
+                &error,
+                &[("task_id", task_id)],
+            ),
+        }
+    });
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub(crate) fn get_conversation_search_index_task(
+    state: State<'_, AppState>,
+) -> AppResult<Option<ConversationSearchIndexTaskSnapshot>> {
+    state.background_tasks.conversation_search_index_snapshot()
+}
+
+#[tauri::command]
 pub(crate) fn export_web_record_session(
     state: State<'_, AppState>,
     params: ConversationSessionExportParams,
@@ -2196,6 +2247,8 @@ pub(crate) fn command_handler(
         get_web_record_session,
         search_conversation_records,
         get_conversation_search_index_status,
+        start_conversation_search_index_rebuild,
+        get_conversation_search_index_task,
         export_web_record_session,
         list_conversation_questions,
         get_conversation_question,

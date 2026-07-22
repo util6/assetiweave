@@ -8542,6 +8542,44 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "start_conversation_search_index_rebuild",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Start the desktop conversation search index rebuild task",
+      "exposure": "app",
+      "method": "start_conversation_search_index_rebuild",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "get_conversation_search_index_task",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Get the current desktop conversation search index rebuild task",
+      "exposure": "app",
+      "method": "get_conversation_search_index_task",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.web-record.export",
       "cli": null,
       "confirmation_required": false,
@@ -9375,6 +9413,8 @@
     "get_web_record_session",
     "search_conversation_records",
     "get_conversation_search_index_status",
+    "start_conversation_search_index_rebuild",
+    "get_conversation_search_index_task",
     "export_web_record_session",
     "list_conversation_questions",
     "get_conversation_question",

@@ -395,6 +395,7 @@ export interface ConversationSearchResult {
   scope?: ConversationSearchScope;
   total_count: number;
   hits: ConversationSearchHit[];
+  backend?: "tantivy" | "legacy_scan";
 }
 
 export interface ConversationMutationResult {

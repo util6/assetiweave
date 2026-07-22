@@ -29,6 +29,15 @@ vi.mock("../../app/backgroundTasks/ConversationSyncProvider", () => ({
   }),
 }));
 
+vi.mock("../../app/backgroundTasks/SearchIndexProvider", () => ({
+  useSearchIndex: () => ({
+    rebuild: vi.fn(),
+    refresh: vi.fn(),
+    status: { health: "ready" },
+    task: null,
+  }),
+}));
+
 vi.mock("../../store/settings/AppSettingsProvider", async () => {
   const actual = await vi.importActual<typeof import("../../store/settings/AppSettingsProvider")>(
     "../../store/settings/AppSettingsProvider",

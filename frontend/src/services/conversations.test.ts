@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   checkConversationAdapterPackageUpdates,
   getConversationAdapterPackageTask,
+  getConversationSearchIndexStatus,
+  getConversationSearchIndexTask,
   getConversationSyncTask,
   listConversationSyncTasks,
   installConversationAdapterPackage,
@@ -21,6 +23,7 @@ import {
   searchConversationRecords,
   summarizeConversationSyncTask,
   syncConversations,
+  startConversationSearchIndexRebuild,
   uninstallConversationAdapterPackage,
 } from "./conversations";
 
@@ -502,6 +505,23 @@ describe("conversation services", () => {
       status: "completed",
     });
     expect(invokeMock).toHaveBeenCalledWith("get_conversation_sync_task");
+  });
+
+  it("uses dedicated desktop commands for conversation search index lifecycle", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock
+      .mockResolvedValueOnce({ health: "ready", supported_modes: ["lexical"] })
+      .mockResolvedValueOnce({ id: "index-1", status: "running" })
+      .mockResolvedValueOnce({ id: "index-1", status: "completed" });
+
+    await expect(getConversationSearchIndexStatus()).resolves.toMatchObject({ health: "ready" });
+    await expect(startConversationSearchIndexRebuild()).resolves.toMatchObject({ status: "running" });
+    await expect(getConversationSearchIndexTask()).resolves.toMatchObject({ status: "completed" });
+    expect(invokeMock.mock.calls.map(([method]) => method)).toEqual([
+      "get_conversation_search_index_status",
+      "start_conversation_search_index_rebuild",
+      "get_conversation_search_index_task",
+    ]);
   });
 
   it("lists desktop sync tasks for independent record kinds", async () => {

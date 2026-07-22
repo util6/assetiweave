@@ -36,6 +36,16 @@ pub(crate) struct ConversationSyncTaskSnapshot {
     pub(crate) error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct ConversationSearchIndexTaskSnapshot {
+    pub(crate) id: String,
+    pub(crate) status: BackgroundTaskStatus,
+    pub(crate) started_at: String,
+    pub(crate) finished_at: Option<String>,
+    pub(crate) result: Option<Value>,
+    pub(crate) error: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum ConversationSyncScope {
     All,
@@ -110,9 +120,73 @@ pub(crate) struct BackgroundTaskRegistry {
     conversation_sync: Mutex<HashMap<ConversationSyncScope, ConversationSyncTaskSnapshot>>,
     conversation_script_install: Mutex<Option<ConversationScriptInstallTaskSnapshot>>,
     skill_backup: Mutex<Option<SkillBackupTaskSnapshot>>,
+    conversation_search_index: Mutex<Option<ConversationSearchIndexTaskSnapshot>>,
 }
 
 impl BackgroundTaskRegistry {
+    pub(crate) fn begin_conversation_search_index_rebuild(
+        &self,
+    ) -> AppResult<(ConversationSearchIndexTaskSnapshot, bool)> {
+        let mut current = self
+            .conversation_search_index
+            .lock()
+            .map_err(|error| error.to_string())?;
+        if let Some(snapshot) = current
+            .as_ref()
+            .filter(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
+        {
+            return Ok((snapshot.clone(), false));
+        }
+        let snapshot = ConversationSearchIndexTaskSnapshot {
+            id: Uuid::new_v4().to_string(),
+            status: BackgroundTaskStatus::Running,
+            started_at: Utc::now().to_rfc3339(),
+            finished_at: None,
+            result: None,
+            error: None,
+        };
+        *current = Some(snapshot.clone());
+        Ok((snapshot, true))
+    }
+
+    pub(crate) fn finish_conversation_search_index_rebuild(
+        &self,
+        task_id: &str,
+        result: AppResult<Value>,
+    ) -> AppResult<ConversationSearchIndexTaskSnapshot> {
+        let mut current = self
+            .conversation_search_index
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let snapshot = current
+            .as_mut()
+            .filter(|snapshot| snapshot.id == task_id)
+            .ok_or_else(|| "conversation search index task not found".to_string())?;
+        snapshot.finished_at = Some(Utc::now().to_rfc3339());
+        match result {
+            Ok(value) => {
+                snapshot.status = BackgroundTaskStatus::Completed;
+                snapshot.result = Some(value);
+                snapshot.error = None;
+            }
+            Err(error) => {
+                snapshot.status = BackgroundTaskStatus::Failed;
+                snapshot.result = None;
+                snapshot.error = Some(error);
+            }
+        }
+        Ok(snapshot.clone())
+    }
+
+    pub(crate) fn conversation_search_index_snapshot(
+        &self,
+    ) -> AppResult<Option<ConversationSearchIndexTaskSnapshot>> {
+        self.conversation_search_index
+            .lock()
+            .map(|snapshot| snapshot.clone())
+            .map_err(|error| error.to_string())
+    }
+
     pub(crate) fn begin_conversation_sync(
         &self,
         params: &ConversationSyncParams,
@@ -523,7 +597,19 @@ impl BackgroundTaskRegistry {
                     .is_some_and(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
             })
             .unwrap_or(true);
-        conversation_sync_running || conversation_script_install_running || skill_backup_running
+        let conversation_search_index_running = self
+            .conversation_search_index
+            .lock()
+            .map(|snapshot| {
+                snapshot
+                    .as_ref()
+                    .is_some_and(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
+            })
+            .unwrap_or(true);
+        conversation_sync_running
+            || conversation_script_install_running
+            || skill_backup_running
+            || conversation_search_index_running
     }
 }
 
@@ -567,6 +653,29 @@ mod tests {
         assert!(!should_start_second);
         assert_eq!(first.id, second.id);
         assert!(registry.has_running_tasks());
+    }
+
+    #[test]
+    fn duplicate_search_index_rebuild_reuses_running_task() {
+        let registry = BackgroundTaskRegistry::default();
+        let (first, should_start_first) =
+            registry.begin_conversation_search_index_rebuild().unwrap();
+        let (second, should_start_second) =
+            registry.begin_conversation_search_index_rebuild().unwrap();
+
+        assert!(should_start_first);
+        assert!(!should_start_second);
+        assert_eq!(first.id, second.id);
+        assert!(registry.has_running_tasks());
+
+        let finished = registry
+            .finish_conversation_search_index_rebuild(
+                &first.id,
+                Ok(serde_json::json!({ "document_count": 1 })),
+            )
+            .unwrap();
+        assert_eq!(finished.status, BackgroundTaskStatus::Completed);
+        assert!(!registry.has_running_tasks());
     }
 
     #[test]

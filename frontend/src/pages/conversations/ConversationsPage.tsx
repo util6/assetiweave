@@ -76,6 +76,7 @@ import {
 } from "../../services/conversations";
 import { selectTargetDirectory } from "../../services/catalog";
 import { useConversationSync } from "../../app/backgroundTasks/ConversationSyncProvider";
+import { useSearchIndex } from "../../app/backgroundTasks/SearchIndexProvider";
 import type {
   AppKind,
   AppShortcut,
@@ -168,6 +169,7 @@ export function ConversationsPage({
 }) {
   const { t } = useI18n();
   const { startSync, taskFor } = useConversationSync();
+  const { rebuild: rebuildSearchIndex, status: searchIndexStatus, task: searchIndexTask } = useSearchIndex();
   const { settings: appSettings } = useAppSettings();
   const currentRecordKind: ConversationRecordKind = recordKind;
   const syncTask = taskFor(currentRecordKind);
@@ -200,6 +202,7 @@ export function ConversationsPage({
   const handledSyncTaskIdRef = useRef<string | null>(null);
   const sessionSearchRequestIdRef = useRef(0);
   const syncRunning = syncTask?.status === "running";
+  const searchIndexRunning = searchIndexTask?.status === "running";
   const [sessionSearchLoading, setSessionSearchLoading] = useState(false);
   const [contentQuery, setContentQuery] = useState("");
   const [contentSearchCardTypes, setContentSearchCardTypes] =
@@ -577,6 +580,14 @@ export function ConversationsPage({
     }
   }
 
+  async function handleSearchIndexRebuild() {
+    try {
+      await rebuildSearchIndex();
+    } catch (error) {
+      onNotifyError(errorMessage(error));
+    }
+  }
+
   async function handleMerge(previous: ConversationQuestionDetail, current: ConversationQuestionDetail) {
     try {
       await mergeConversationQuestions([previous.question.id, current.question.id], false);
@@ -707,6 +718,12 @@ export function ConversationsPage({
               { label: t("conversation.toolbar.apps"), value: appGroups.length },
               { label: t("conversation.toolbar.sessions"), value: sessions.length },
               { label: t("conversation.toolbar.questions"), value: sessionQuestionCount },
+              {
+                label: t("conversation.searchIndex.metric"),
+                value: searchIndexRunning
+                  ? t("conversation.searchIndex.building")
+                  : (searchIndexStatus?.health ?? t("common.loading")),
+              },
             ]}
           />
         ) : (
@@ -732,6 +749,13 @@ export function ConversationsPage({
                 icon={<Settings size={16} />}
                 label={t("toolbar.settings")}
                 onClick={() => onOpenSettings("conversations.sessions")}
+              />
+              <ToolbarActionButton
+                disabled={searchIndexRunning}
+                icon={<Layers3 size={17} />}
+                label={searchIndexRunning ? t("conversation.searchIndex.building") : t("conversation.searchIndex.rebuild")}
+                onClick={() => void handleSearchIndexRebuild()}
+                text={searchIndexRunning ? t("conversation.searchIndex.building") : t("conversation.searchIndex.rebuild")}
               />
               <ToolbarActionButton
                 disabled={syncRunning}
