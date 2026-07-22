@@ -32,7 +32,7 @@ AssetIWeave 是一个本地优先的 AI 文件资产挂载管理桌面应用。�
 - 当前阶段不编辑源资产正文，只管理元数据、挂载关系和部署策略。
 - 当前阶段不直接修改第三方工具数据库。
 - 当前阶段不依赖现有 Python 同步脚本或 launchd 任务。
-- 当前阶段不做后台实时同步、云同步或内置 AI API；自动化入口通过本地 CLI/Engine 提供。
+- 当前阶段不做后台实时同步、云同步或内置云端 AI API；Memory 仅在用户显式配置并启用本地 AI CLI/runtime 后执行受预算、脱敏和审计约束的外部调用。
 - 当前阶段不托管在线市场；允许通过 provider 搜索互联网候选 Skill，并把用户确认的远程 `SKILL.md` 目录下载导入为本地受管资产。
 - 当前阶段不把 mock、CLI 或前端状态作为第二套业务事实来源。
 
@@ -243,6 +243,22 @@ AssetIWeave 是一个本地优先的 AI 文件资产挂载管理桌面应用。�
 - Adapter 列表不完整、分页失败或来源不可访问时，不得把未返回 Session 推导为删除，也不得推进其成功同步版本。
 - v1 不做后台 watcher、JSON 导出、内置 AI API 或完整原始 Session 复制。
 
+### 2.12 独立 Memory 与渐进式回忆
+
+作为用户，我希望把近期进展、明确决定、可复用方法和待继续事项沉淀为可追溯的 Memory，并在提问时从相关 Conversation 证据逐步展开，而不是把全部历史一次性交给模型。
+
+验收标准：
+
+- Memory 是独立顶层领域和 HeaderTab，不是 Conversation 子页面，也不复用 Catalog `AssetKind::Memory` 的文件资产生命周期。
+- Conversation Card 是事实证据源；Dream Note、Phase 1 extraction、Phase 2 answer 和正式 Memory 都保存可校验的 evidence 引用。
+- 轻量 Dream 只消费持久化 cursor 之后已稳定的 Session 增量，并受 Time、Session、Lock 三重 gate 控制；失败或取消不得推进 cursor。
+- 精准回忆先搜索再按 Card -> Question -> Session 渐进展开；完整整理按显式 scope 分页枚举，并准确披露 total、processed、skipped、failed 和 truncation。
+- 深度路径采用可重试的 Phase 1 extraction 与按 tenant + scope 加锁的 Phase 2 consolidation；模型输出必须通过 enum、引用和无证据 claim 校验。
+- AI 不可用时仍可预览范围并取得本地 evidence bundle；Auto-Dream 默认关闭，任何可能联网的外部 AI 调用都需用户显式启用和预览。
+- 正式 Memory 只能由用户手工创建或明确接受/编辑 candidate 产生，并写入 revision、evidence、freshness 和可选 supersedes 关系。
+- Dream、Recall、Memory Library 和 evidence freshness 由 AppService 统一实现，Desktop、Engine、Go CLI 和内置 Skill 不复制业务规则。
+- 长任务具备持久化 run、进度、去重、取消、事件与 polling fallback、退出警告和中断恢复；模型或文件 I/O 不持有全局 app lock。
+
 ## 3. 当前产品开发阶段
 
 当前已经完成早期闭环，进入 `0.5.0` 后的具体功能扩展和可靠性补齐阶段。已完成基础能力：
@@ -279,6 +295,8 @@ AssetIWeave 是一个本地优先的 AI 文件资产挂载管理桌面应用。�
 30. 产品内置 `assetiweave-conversation-recall` Skill 使用 Card 搜索命中中的 Session、Question、Turn、Part 和 Block 标识渐进读取历史证据，默认不加载完整 Session，也不直接读取第三方 Session 数据库。
 31. CLI 支持 `harvester doctor` 与 `harvester repair`：诊断 Manifest、官方静态文件漂移、执行权限、Runtime 路径/版本、Adapter、网页配置、认证配置和标准化输出；修复官方模板时保留 `requests/` 与 `output/`，并要求 dry-run 或显式确认。
 
+Memory 独立模块与双层记忆当前作为下一条完整产品纵切实施，验收以本文件 2.12、`specs/feature-plans/Memory 页面与渐进式回忆实施计划.md` 和 ADR-004 为准；未由代码和验证证明的能力不得提前列入“已完成”。
+
 当前里程碑：
 
 - 2026-05-30：前端工程分层与视图工作流里程碑。当前代码状态确认前端目录职责边界已收敛，保留 `services` 与 `pages`，并明确 `layouts/router/mock/store/styles/types` 等顶层目录职责；资产总览目录为“列表/卡片”切换，技能源管理为“列表/分栏”切换；Toolbar 组件统一但视图选项按页面传入；源级 Skill 批量挂载写入同一份 `asset_mounts` 关系；App 快捷入口支持真实应用图标和自定义 SVG 图标资源。已通过 `pnpm typecheck`、`pnpm test`、`cargo test`、`pnpm build`。构建仍有 Vite 单 chunk 超过 500 kB 的体积提示，暂不影响功能通过。
@@ -303,6 +321,7 @@ AssetIWeave 是一个本地优先的 AI 文件资产挂载管理桌面应用。�
 - 导出资产功能。
 - Skill 发现链路继续补更多 provider/外部 Agent 接入、远程来源更新 UX 和更完整的导入安全提示。
 - 背景任务、批量流程、备份/恢复、Conversation 同步和 CLI contract 继续加强可观测性与回归测试。
+- 实施独立 Memory 模块：先完成正式 Library 和 evidence 闭环，再接入轻量 Dream、双阶段 Recall、CLI/Skill 与安全恢复门槛。
 - Conversation Adapter 支持已安装版本直接切换、一键回退、删除非运行托管版本，以及在卸载 runtime 后删除最后运行版本；`manual`、`follow_stable`、`follow_beta`、`pin_exact` 跟随策略只改变更新候选和提示，不静默注册远端代码。
 
 当前阶段暂不要求：

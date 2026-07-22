@@ -56,6 +56,7 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - `backend/host_paths.rs`、`app_paths.rs`：可移植存储路径、宿主路径解析、展示路径和各 App 默认目录。
 - `backend/host_filesystem.rs`：Windows/macOS/Linux 文件系统差异，包括路径比较、目录边界、软链接创建/删除和目录遍历错误。
 - `backend/conversations/`：对话记录适配器、官方/外部来源读取、NDJSON try-run、harvester 接入和标准化 Session/Turn/Part 处理。
+- `backend/application/memory*.rs`、`backend/models/memory.rs`、`backend/store/memory_repo.rs`：Memory 领域的正式条目、证据快照、Dream、提取、合并、freshness 和运行状态；所有接口适配层必须通过 AppService 进入这些工作流。
 - `backend/app_settings.rs`、`data_backup.rs`、`logs.rs`、`operation_log.rs`、`card_translation.rs`：设置、备份、日志、操作记录和卡片翻译等独立基础能力。
 - `backend/defaults.rs`、`path_utils.rs`：内置模板、路径展开、Git 路径和 hash 等共享工具。
 
@@ -109,7 +110,7 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - 产品内置 Conversation Recall Skill 以 `conversation search` 为入口，先读取命中摘要，再按记录类型读取 Question、Session 或 Web Record；回答保留 Session/Question/Block 证据标识，形成后续 Memory 的只读检索基础。
 - 网页 Conversation Harvester 提供本地 `doctor -> repair -> auth-check/auth-detect -> run -> conversation sync -> web-record verify` 恢复链路。Doctor 不发起网络请求；Repair 只恢复官方模板静态文件和执行权限，保留认证状态与历史输出，Runtime 或网站协议问题必须按诊断提示单独处理。
 
-下一阶段重点不是继续搭框架，而是继续补齐产品边界和可靠性：Profile 规则细化、执行确认与结果展示、导出复制、后台任务可观测性、批量流程测试、性能拆包和更完整的跨端契约验证。
+下一阶段重点不是继续搭框架，而是继续补齐产品边界和可靠性：实施独立 Memory 与双层记忆纵切，同时推进 Profile 规则细化、执行确认与结果展示、导出复制、后台任务可观测性、批量流程测试、性能拆包和更完整的跨端契约验证。
 
 ### 3.4 前端目录边界
 
@@ -180,6 +181,34 @@ Conversation Adapter Package 生命周期：
 - 新版本激活在一个数据库事务内更新 package、version 和 adapter runtime；失败时旧 active runtime 保持可用。同一正式 `package_id + version` 不允许 hash 变化。
 - 卸载 preflight 列出受影响 Source 和托管目录；执行时仅删除 runtime 注册、禁用关联 Source，并把 package 标记为已卸载，托管版本目录和历史 Conversation 数据保持不变。
 - 托管 Conversation Adapter 可在本机已安装版本间离线切换、一键回退并删除单个非运行版本；删除路径必须精确位于应用托管的 `packages/<package>/versions/<semver>`。最后运行版本只有在先卸载 runtime 后才能删除，删除最后一个版本时同步清理 package 注册记录，但保留 Conversation records 与 Source 配置。更新策略支持 `manual`、`follow_stable`、`follow_beta`、`pin_exact`，但不静默注册远端代码，也不提供真正的服务端 push。
+
+### 3.6 Memory 领域架构
+
+Memory 是 Conversation 之上的独立派生领域，不属于文件资产 Catalog，也不改变 Conversation 的事实源职责：
+
+```text
+Conversation Cards in SQLite
+  -> delta selector -> gated lightweight Dream -> Dream Note
+  -> search / scoped enumeration -> evidence hydration
+       -> persisted Phase 1 extractions
+       -> scope-locked Phase 2 consolidation
+       -> cited answer + reviewable Memory candidates
+  -> explicit user acceptance -> formal Memory + revision
+```
+
+领域边界：
+
+- `memory_dream_notes` 是近期工作路由线索，不是确认事实；事实问题必须回查原始 session/web Card。
+- `memory_extractions` 保存有界批次的中间产物，使 Phase 2 失败、取消或崩溃后不必重放全部外部模型调用。
+- `memory_items` 只保存用户手工创建或明确接受的正式内容；`memory_item_revisions` 记录编辑、状态和 supersedes 历史。
+- `memory_evidence_snapshots` 保存稳定定位、受限 excerpt 和原始内容 hash；来源不可用时仍可解释派生内容，但必须标记 freshness 状态。
+- Dream 按持久化 cursor 选择已稳定的 Conversation 增量。成功写入 note 与 evidence 后才推进 cursor，失败、取消和输出校验失败均可安全重试。
+- Recall 精准模式复用 Conversation Card 搜索并按 Card -> Question -> Session 渐进展开；完整整理按用户显式 scope 从 SQLite 分页枚举，不把搜索排名冒充全量覆盖。
+- 所有 AI 内容在离开 Context Builder 前确定性脱敏，模型输出在写库前再次扫描并校验 evidence ID、enum、预算和结构。
+- Auto-Dream 默认关闭。Overview、preview、evidence-only Recall 和 Library CRUD 必须在没有外部 AI runtime 时正常工作。
+- Tauri 长任务立即返回 snapshot，后台使用独立 AppService/数据库连接；Engine/CLI 单请求模式前台完成并返回持久化报告，不暴露进程退出后失效的内存 task ID。
+
+该架构决策见 `docs/decisions/ADR-004-dual-layer-memory.md`。Memory v1 不包含向量数据库、独立 daemon、自动写入第三方 App、无审核 supersedes 或 Memory Git 仓库。
 
 ```mermaid
 flowchart TB
