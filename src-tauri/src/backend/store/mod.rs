@@ -9,6 +9,7 @@ mod menu_repo;
 mod mount_observation_repo;
 mod mount_repo;
 mod profile_repo;
+mod search_index_repo;
 mod shortcut_repo;
 mod skill_remote_repo;
 mod source_repo;

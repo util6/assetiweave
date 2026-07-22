@@ -62,6 +62,15 @@ pub(crate) enum ConversationRecordKind {
     Web,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
+pub(crate) enum SearchRetrievalMode {
+    Lexical,
+    Semantic,
+    Hybrid,
+}
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, JsonSchema,
 )]
