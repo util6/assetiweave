@@ -5,8 +5,8 @@ use tantivy::{
 };
 use tantivy_jieba::JiebaTokenizer;
 
-const JIEBA_TOKENIZER: &str = "conversation_jieba";
-const NGRAM_TOKENIZER: &str = "conversation_ngram";
+pub(super) const JIEBA_TOKENIZER: &str = "conversation_jieba";
+pub(super) const NGRAM_TOKENIZER: &str = "conversation_ngram";
 
 #[derive(Clone)]
 pub(super) struct ConversationSearchSchema {
