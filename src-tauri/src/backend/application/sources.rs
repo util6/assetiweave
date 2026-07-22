@@ -33,6 +33,9 @@ impl AppService {
     }
 
     pub(crate) fn update_source(&self, source: Source) -> AppResult<Source> {
+        if is_protected_source(&source) {
+            return Err("AssetIWeave-managed Skill sources cannot be edited".to_string());
+        }
         let source = crate::backend::store::normalize_source(&source);
         if !self
             .list_sources()?
@@ -126,7 +129,11 @@ impl AppService {
 
 fn is_protected_source(source: &Source) -> bool {
     source.id == "assetiweave-library-skills"
-        || matches!(source.source_origin, SourceOrigin::AssetiweaveLibrary)
+        || source.id == crate::backend::builtin_skills::SYSTEM_SKILL_SOURCE_ID
+        || matches!(
+            source.source_origin,
+            SourceOrigin::AssetiweaveLibrary | SourceOrigin::AssetiweaveSystem
+        )
 }
 
 fn source_from_input(source: SourceInput) -> Source {

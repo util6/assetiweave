@@ -155,6 +155,10 @@ pub(crate) fn normalize_source(source: &Source) -> Source {
         return source;
     }
 
+    if source.id == crate::backend::builtin_skills::SYSTEM_SKILL_SOURCE_ID {
+        return crate::backend::builtin_skills::system_skill_source().unwrap_or(source);
+    }
+
     let Ok(root_path) = expand_path(&source.root_path) else {
         return source;
     };

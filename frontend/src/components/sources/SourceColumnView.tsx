@@ -7,6 +7,7 @@ import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from
 import { getAssetMountSummaryState } from "../../utils/mountState";
 import { isDirectMountBlockedSource } from "../../utils/mountPolicy";
 import { abbreviateHomePath, displayAssetPath } from "../../utils/path";
+import { isManagedSkillSource } from "../../utils/sourcePolicy";
 import { kindBadgeClass } from "../../utils/styles";
 import { MountStatePill } from "../assets/MountStatePill";
 import { QuickMountButtons } from "../assets/QuickMountButtons";
@@ -248,7 +249,7 @@ function ColumnAssetIconButton({
 }
 
 function isProtectedSource(source: Source) {
-  return source.id === "assetiweave-library-skills" || source.source_origin === "assetiweave_library";
+  return isManagedSkillSource(source);
 }
 
 function ColumnHeader({

@@ -59,6 +59,7 @@ pub enum SourceOrigin {
     AppTarget,
     AppLocal,
     AssetiweaveLibrary,
+    AssetiweaveSystem,
     Custom,
 }
 

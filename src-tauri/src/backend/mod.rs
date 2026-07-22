@@ -1,6 +1,7 @@
 pub(crate) mod app_paths;
 pub(crate) mod app_settings;
 pub(crate) mod application;
+pub(crate) mod builtin_skills;
 pub(crate) mod capabilities;
 pub(crate) mod card_translation;
 pub(crate) mod conversations;

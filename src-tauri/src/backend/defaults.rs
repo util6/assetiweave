@@ -20,7 +20,9 @@ pub(crate) fn is_default_app_profile_id(profile_id: &str) -> bool {
 }
 
 pub(crate) fn default_sources_for_tenant(tenant_id: &str) -> Vec<Source> {
-    let mut sources = Vec::new();
+    let mut sources = crate::backend::builtin_skills::system_skill_source()
+        .into_iter()
+        .collect::<Vec<_>>();
     let default_skill_root =
         crate::backend::path_utils::default_skill_backup_root_for_tenant(tenant_id)
             .and_then(|path| {
@@ -334,5 +336,20 @@ mod tests {
             .find(|source| source.id == "agents-skills")
             .expect("tenant b agents source");
         assert_eq!(tenant_a_agents.root_path, tenant_b_agents.root_path);
+    }
+
+    #[test]
+    fn system_skill_source_is_shared_across_tenants() {
+        let tenant_a = default_sources_for_tenant("tenant-a")
+            .into_iter()
+            .find(|source| source.id == "assetiweave-system-skills")
+            .expect("tenant a system Skill source");
+        let tenant_b = default_sources_for_tenant("tenant-b")
+            .into_iter()
+            .find(|source| source.id == "assetiweave-system-skills")
+            .expect("tenant b system Skill source");
+
+        assert_eq!(tenant_a.root_path, "~/.assetiweave/skills/.system");
+        assert_eq!(tenant_a, tenant_b);
     }
 }

@@ -17,6 +17,8 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    backend::builtin_skills::install_builtin_skills()
+        .expect("failed to install AssetIWeave system Skills");
     let db_path = app_db_path().expect("failed to resolve AssetIWeave database path");
     {
         let service = AppService::open_with_db_path(db_path.clone())
@@ -183,6 +185,10 @@ fn sync_before_close(db_path: &std::path::Path) {
 }
 
 pub fn run_engine_stdio() {
+    if let Err(error) = backend::builtin_skills::install_builtin_skills() {
+        eprintln!("failed to install AssetIWeave system Skills: {error}");
+        std::process::exit(1);
+    }
     if let Err(error) = adapters::engine::run_stdio() {
         eprintln!("{error}");
         std::process::exit(1);

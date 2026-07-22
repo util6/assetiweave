@@ -5,6 +5,7 @@ import { sourceKindLabel, sourceOriginLabel, translateScanStatus } from "../../i
 import { useI18n } from "../../i18n/I18nProvider";
 import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
 import { abbreviateHomePath } from "../../utils/path";
+import { isManagedSkillSource } from "../../utils/sourcePolicy";
 import { SourceBulkMountControls } from "./SourceBulkMountControls";
 
 export function SourceRow({
@@ -169,7 +170,7 @@ export function SourceRow({
 }
 
 function isProtectedSource(source: Source) {
-  return source.id === "assetiweave-library-skills" || source.source_origin === "assetiweave_library";
+  return isManagedSkillSource(source);
 }
 
 function SourceIconButton({

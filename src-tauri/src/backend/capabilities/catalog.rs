@@ -324,13 +324,14 @@ fn canonical_asset_score(asset: &Asset, source: Option<&Source>) -> u8 {
         return 50;
     };
     match source.source_origin {
-        SourceOrigin::AppTarget | SourceOrigin::AppLocal => 40,
+        SourceOrigin::AssetiweaveSystem => 0,
+        SourceOrigin::AppTarget | SourceOrigin::AppLocal => 50,
         SourceOrigin::AssetiweaveLibrary => match backup_entry_state(asset, Some(source)) {
-            Some(SkillBackupState::Downloaded) => 20,
-            Some(SkillBackupState::BackedUp) => 30,
-            None => 25,
+            Some(SkillBackupState::Downloaded) => 30,
+            Some(SkillBackupState::BackedUp) => 40,
+            None => 35,
         },
-        SourceOrigin::GitRepo | SourceOrigin::LocalFolder | SourceOrigin::Custom => 0,
+        SourceOrigin::GitRepo | SourceOrigin::LocalFolder | SourceOrigin::Custom => 10,
     }
 }
 
@@ -366,5 +367,59 @@ mod tests {
 
         assert_eq!(catalog_asset.asset.absolute_path, absolute_path);
         assert_eq!(catalog_asset.display_path, "~/.codex/skills/review");
+    }
+
+    #[test]
+    fn system_skill_is_canonical_when_the_same_content_is_seen_elsewhere() {
+        let system_source =
+            test_source("assetiweave-system-skills", SourceOrigin::AssetiweaveSystem);
+        let external_source = test_source("external-skills", SourceOrigin::LocalFolder);
+        let assets = vec![
+            test_skill_asset("external-skill", &external_source.id),
+            test_skill_asset("system-skill", &system_source.id),
+        ];
+
+        let catalog = build_catalog_assets(assets, &[external_source, system_source]);
+
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].asset.source_id, "assetiweave-system-skills");
+    }
+
+    fn test_source(id: &str, source_origin: SourceOrigin) -> Source {
+        Source {
+            id: id.to_string(),
+            name: id.to_string(),
+            kind: SourceKind::Local,
+            root_path: format!("/tmp/{id}"),
+            scanner_kind: SourceScannerKind::Skill,
+            source_origin,
+            repo_root: None,
+            scan_root: String::new(),
+            origin_app_kind: None,
+            include_globs: vec!["**/SKILL.md".to_string()],
+            exclude_globs: Vec::new(),
+            default_kind: Some(AssetKind::Skill),
+            enabled: true,
+            priority: 0,
+            last_scanned_at: None,
+            last_scan_status: None,
+        }
+    }
+
+    fn test_skill_asset(id: &str, source_id: &str) -> Asset {
+        Asset {
+            id: id.to_string(),
+            source_id: source_id.to_string(),
+            name: "same-skill".to_string(),
+            kind: AssetKind::Skill,
+            format: crate::backend::models::AssetFormat::Directory,
+            relative_path: "same-skill".to_string(),
+            absolute_path: format!("/tmp/{source_id}/same-skill"),
+            entry_file: Some("SKILL.md".to_string()),
+            description: None,
+            content_hash: Some("same-content".to_string()),
+            discovered_at: "2026-07-22T00:00:00Z".to_string(),
+            updated_at: "2026-07-22T00:00:00Z".to_string(),
+        }
     }
 }

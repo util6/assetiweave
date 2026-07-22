@@ -126,6 +126,72 @@ fn creating_tenant_seeds_isolated_skill_backup_library_root() {
 }
 
 #[test]
+fn system_skill_source_cannot_be_edited_or_removed() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-system-source-protection-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create test root");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let mut source =
+        crate::backend::builtin_skills::system_skill_source().expect("build system Skill source");
+    source.name = "Changed name".to_string();
+
+    let update_error = service
+        .update_source(source)
+        .expect_err("system source update should fail");
+    let remove_error = service
+        .delete_source(crate::backend::builtin_skills::SYSTEM_SKILL_SOURCE_ID.to_string())
+        .expect_err("system source removal should fail");
+
+    assert!(update_error.contains("cannot be edited"));
+    assert!(remove_error.contains("cannot be deleted"));
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn system_skill_cannot_be_copied_into_the_user_backup_library() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-system-skill-backup-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create test root");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let source =
+        crate::backend::builtin_skills::system_skill_source().expect("build system Skill source");
+    let now = Utc::now().to_rfc3339();
+    let asset = Asset {
+        id: "system-skill-a".to_string(),
+        source_id: source.id.clone(),
+        name: "system-skill-a".to_string(),
+        kind: AssetKind::Skill,
+        format: AssetFormat::Directory,
+        relative_path: "system-skill-a".to_string(),
+        absolute_path: root.join("system-skill-a").to_string_lossy().to_string(),
+        entry_file: Some("SKILL.md".to_string()),
+        description: None,
+        content_hash: Some("system-skill-a-hash".to_string()),
+        discovered_at: now.clone(),
+        updated_at: now,
+    };
+    upsert_test_source(&service, &source);
+    replace_test_source_assets(&service, &source.id, &[asset.clone()]);
+
+    let error = service
+        .backup_skill(asset.id)
+        .expect_err("system Skill backup should fail");
+
+    assert!(error.contains("cannot be backed up"));
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn doctor_reports_conversation_adapter_runtime_statuses() {
     let root = std::env::temp_dir().join(format!("assetiweave-doctor-runtime-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create temp dir");

@@ -167,6 +167,7 @@ pub(crate) async fn seed_tenant_defaults_sqlx(pool: &SqlitePool, tenant_id: &str
         }
     }
     ensure_library_source_sqlx(pool, tenant_id).await?;
+    ensure_system_skill_source_sqlx(pool, tenant_id).await?;
     normalize_existing_sources_sqlx(pool, tenant_id).await?;
 
     if count_rows(pool, tenant_id, "profiles").await? == 0 {
@@ -221,6 +222,11 @@ async fn ensure_library_source_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppRe
         super::source_repo::upsert_source_sqlx(pool, tenant_id, &source).await?;
     }
     Ok(())
+}
+
+async fn ensure_system_skill_source_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+    let source = crate::backend::builtin_skills::system_skill_source()?;
+    super::source_repo::upsert_source_sqlx(pool, tenant_id, &source).await
 }
 
 async fn normalize_existing_sources_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {

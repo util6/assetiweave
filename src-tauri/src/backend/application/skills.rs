@@ -119,6 +119,11 @@ impl AppService {
             let source = sources_by_id
                 .get(asset.source_id.as_str())
                 .ok_or_else(|| format!("source not found: {}", asset.source_id))?;
+            if source.source_origin == SourceOrigin::AssetiweaveSystem {
+                return Err(
+                    "system Skills are restored by AssetIWeave and cannot be backed up".to_string(),
+                );
+            }
             let source_is_library = source.source_origin == SourceOrigin::AssetiweaveLibrary;
             let target_dir = if source_is_library {
                 PathBuf::from(&asset.absolute_path)

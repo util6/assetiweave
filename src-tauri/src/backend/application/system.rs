@@ -11,6 +11,11 @@ impl AppService {
         let context = db.block_on(async move {
             crate::backend::store::load_local_request_context_sqlx(&pool).await
         })?;
+        let pool = db.pool().clone();
+        let tenant_id = context.tenant.id.clone();
+        db.block_on(async move {
+            crate::backend::store::seed_tenant_defaults_sqlx(&pool, &tenant_id).await
+        })?;
         Ok(Self {
             db,
             db_path,

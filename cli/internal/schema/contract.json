@@ -312,6 +312,7 @@
               "app_target",
               "app_local",
               "assetiweave_library",
+              "assetiweave_system",
               "custom"
             ],
             "type": [
@@ -4405,6 +4406,7 @@
                   "app_target",
                   "app_local",
                   "assetiweave_library",
+                  "assetiweave_system",
                   "custom",
                   null
                 ],
@@ -4563,6 +4565,7 @@
                   "app_target",
                   "app_local",
                   "assetiweave_library",
+                  "assetiweave_system",
                   "custom"
                 ],
                 "type": "string"

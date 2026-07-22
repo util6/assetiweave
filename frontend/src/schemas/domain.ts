@@ -54,6 +54,7 @@ export const sourceOriginValues = [
   "app_target",
   "app_local",
   "assetiweave_library",
+  "assetiweave_system",
   "custom",
 ] as const satisfies readonly SourceOrigin[];
 

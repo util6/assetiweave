@@ -25,6 +25,7 @@ import {
 } from "../../services/catalog";
 import type { AppShortcut, Asset, AssetGroupDetail, AssetMountStatus, Source, SourceKind, TargetProfile } from "../../types";
 import { getBackupableSkillAssets } from "../../utils/skillBackup";
+import { isManagedSkillSource } from "../../utils/sourcePolicy";
 
 type SourceViewMode = Extract<AssetToolbarViewMode, "list" | "columns">;
 type SourceStatusFilter = "enabled" | "disabled" | "issue";
@@ -482,7 +483,7 @@ function errorMessage(error: unknown) {
 }
 
 function isProtectedSource(source: Source) {
-  return source.id === "assetiweave-library-skills" || source.source_origin === "assetiweave_library";
+  return isManagedSkillSource(source);
 }
 
 function filterAndSortSources({

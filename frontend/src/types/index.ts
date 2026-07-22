@@ -148,7 +148,7 @@ export interface TenantCreateParams {
 
 export type SourceKind = "local" | "git_checkout" | "import" | "custom";
 export type SourceScannerKind = "skill" | "mcp" | "prompt" | "rule" | "mixed" | "custom";
-export type SourceOrigin = "git_repo" | "local_folder" | "app_target" | "app_local" | "assetiweave_library" | "custom";
+export type SourceOrigin = "git_repo" | "local_folder" | "app_target" | "app_local" | "assetiweave_library" | "assetiweave_system" | "custom";
 
 export interface Source {
   id: string;
