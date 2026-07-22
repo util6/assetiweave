@@ -276,6 +276,8 @@ AssetIWeave 是一个本地优先的 AI 文件资产挂载管理桌面应用。�
 27. Conversation Adapter Package 市场第一阶段已完成：区分 built-in、托管安装、本地目录、Git ref、legacy external 和 dev override；市场 UI 将下载并安装称为“注册”，并支持显式检查更新、更新、卸载 runtime、Catalog v2、版本历史、changelog 和指定兼容版本安装。
 28. 插件市场托管操作使用后台任务；卸载只停止 adapter runtime 并禁用关联 Source 的后续同步，保留托管 package 文件、Conversation records 与 Source 配置。只有显式“删除版本”才真实删除应用托管的版本目录；外部目录和 Git 工作区永不由 AssetIWeave 删除。
 29. Conversation Adapter CLI 第一阶段仅在 `conversation adapter` 子树暴露 `list` 与 `inspect` 查询诊断命令，所有变更能力仍位于共享 Rust Engine/AppService，前端通过 `frontend/src/services/` 调用。
+30. 产品内置 `assetiweave-conversation-recall` Skill 使用 Card 搜索命中中的 Session、Question、Turn、Part 和 Block 标识渐进读取历史证据，默认不加载完整 Session，也不直接读取第三方 Session 数据库。
+31. CLI 支持 `harvester doctor` 与 `harvester repair`：诊断 Manifest、官方静态文件漂移、执行权限、Runtime 路径/版本、Adapter、网页配置、认证配置和标准化输出；修复官方模板时保留 `requests/` 与 `output/`，并要求 dry-run 或显式确认。
 
 当前里程碑：
 

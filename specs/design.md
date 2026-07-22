@@ -106,6 +106,8 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - Go CLI 的 `conversation adapter` 第一阶段只暴露 `list` 和 `inspect`，并通过 Engine 聚合与桌面端相同的 origin、版本、runtime gate、路径、hash、Source 和错误信息。
 - CLI 已形成分层：手写快捷命令、生成式 App 命令、Raw Engine API、稳定错误分类、命令策略、hook、插件平台、harvester/webharvester 和自更新。
 - Skill 互联网发现/导入已覆盖 GitHub 搜索、候选评分/解释、dry-run、确认导入、备份库导入、remote source 记录、drift 检测和前端入口。
+- 产品内置 Conversation Recall Skill 以 `conversation search` 为入口，先读取命中摘要，再按记录类型读取 Question、Session 或 Web Record；回答保留 Session/Question/Block 证据标识，形成后续 Memory 的只读检索基础。
+- 网页 Conversation Harvester 提供本地 `doctor -> repair -> auth-check/auth-detect -> run -> conversation sync -> web-record verify` 恢复链路。Doctor 不发起网络请求；Repair 只恢复官方模板静态文件和执行权限，保留认证状态与历史输出，Runtime 或网站协议问题必须按诊断提示单独处理。
 
 下一阶段重点不是继续搭框架，而是继续补齐产品边界和可靠性：Profile 规则细化、执行确认与结果展示、导出复制、后台任务可观测性、批量流程测试、性能拆包和更完整的跨端契约验证。
 

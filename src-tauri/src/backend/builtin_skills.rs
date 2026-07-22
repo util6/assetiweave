@@ -22,6 +22,16 @@ const ORGANIZER_ZCODE_MANIFEST: &[u8] = include_bytes!(
 const ORGANIZER_ZCODE_ADAPTER: &[u8] = include_bytes!(
     "../../builtin-assets/skills/assetiweave-conversation-organizer/scripts/zcode-conversation-adapter/zcode_adapter.py"
 );
+const RECALL_SKILL: &[u8] =
+    include_bytes!("../../builtin-assets/skills/assetiweave-conversation-recall/SKILL.md");
+const RECALL_MANIFEST: &[u8] = include_bytes!(
+    "../../builtin-assets/skills/assetiweave-conversation-recall/assetiweave.skill.json"
+);
+const WEB_REPAIR_SKILL: &[u8] =
+    include_bytes!("../../builtin-assets/skills/assetiweave-web-conversation-repair/SKILL.md");
+const WEB_REPAIR_MANIFEST: &[u8] = include_bytes!(
+    "../../builtin-assets/skills/assetiweave-web-conversation-repair/assetiweave.skill.json"
+);
 
 struct EmbeddedFile {
     relative_path: &'static str,
@@ -49,6 +59,58 @@ const EMBEDDED_FILES: &[EmbeddedFile] = &[
         relative_path: "assetiweave-conversation-organizer/scripts/zcode-conversation-adapter/zcode_adapter.py",
         contents: ORGANIZER_ZCODE_ADAPTER,
         executable: true,
+    },
+    EmbeddedFile {
+        relative_path: "assetiweave-conversation-recall/SKILL.md",
+        contents: RECALL_SKILL,
+        executable: false,
+    },
+    EmbeddedFile {
+        relative_path: "assetiweave-conversation-recall/assetiweave.skill.json",
+        contents: RECALL_MANIFEST,
+        executable: false,
+    },
+    EmbeddedFile {
+        relative_path: "assetiweave-web-conversation-repair/SKILL.md",
+        contents: WEB_REPAIR_SKILL,
+        executable: false,
+    },
+    EmbeddedFile {
+        relative_path: "assetiweave-web-conversation-repair/assetiweave.skill.json",
+        contents: WEB_REPAIR_MANIFEST,
+        executable: false,
+    },
+];
+
+struct EmbeddedSkill {
+    directory: &'static str,
+    name: &'static str,
+    id: &'static str,
+    skill: &'static [u8],
+    manifest: &'static [u8],
+}
+
+const EMBEDDED_SKILLS: &[EmbeddedSkill] = &[
+    EmbeddedSkill {
+        directory: ORGANIZER_SKILL_DIR,
+        name: "assetiweave-conversation-organizer",
+        id: "assetiweave.conversation-organizer",
+        skill: ORGANIZER_SKILL,
+        manifest: ORGANIZER_MANIFEST,
+    },
+    EmbeddedSkill {
+        directory: "assetiweave-conversation-recall",
+        name: "assetiweave-conversation-recall",
+        id: "assetiweave.conversation-recall",
+        skill: RECALL_SKILL,
+        manifest: RECALL_MANIFEST,
+    },
+    EmbeddedSkill {
+        directory: "assetiweave-web-conversation-repair",
+        name: "assetiweave-web-conversation-repair",
+        id: "assetiweave.web-conversation-repair",
+        skill: WEB_REPAIR_SKILL,
+        manifest: WEB_REPAIR_MANIFEST,
     },
 ];
 
@@ -156,29 +218,32 @@ fn install_builtin_skills_at(root: &Path) -> AppResult<BuiltinSkillInstallResult
 }
 
 fn validate_embedded_skills() -> AppResult<()> {
-    let skill = std::str::from_utf8(ORGANIZER_SKILL)
-        .map_err(|error| format!("decode {ORGANIZER_SKILL_DIR}/SKILL.md: {error}"))?;
-    if !skill.starts_with("---\n")
-        || !skill.contains("name: assetiweave-conversation-organizer")
-        || !skill.contains("description:")
-    {
-        return Err(format!(
-            "embedded Skill {ORGANIZER_SKILL_DIR} has invalid frontmatter"
-        ));
-    }
-    let manifest: serde_json::Value = serde_json::from_slice(ORGANIZER_MANIFEST)
-        .map_err(|error| format!("decode {ORGANIZER_SKILL_DIR} manifest: {error}"))?;
-    if manifest.get("id").and_then(serde_json::Value::as_str)
-        != Some("assetiweave.conversation-organizer")
-        || manifest.get("entry").and_then(serde_json::Value::as_str) != Some("SKILL.md")
-        || manifest
-            .get("engine_contract")
-            .and_then(serde_json::Value::as_str)
-            != Some(">=3")
-    {
-        return Err(format!(
-            "embedded Skill {ORGANIZER_SKILL_DIR} has an invalid manifest contract"
-        ));
+    for embedded in EMBEDDED_SKILLS {
+        let skill = std::str::from_utf8(embedded.skill)
+            .map_err(|error| format!("decode {}/SKILL.md: {error}", embedded.directory))?;
+        if !skill.starts_with("---\n")
+            || !skill.contains(&format!("name: {}", embedded.name))
+            || !skill.contains("description:")
+        {
+            return Err(format!(
+                "embedded Skill {} has invalid frontmatter",
+                embedded.directory
+            ));
+        }
+        let manifest: serde_json::Value = serde_json::from_slice(embedded.manifest)
+            .map_err(|error| format!("decode {} manifest: {error}", embedded.directory))?;
+        if manifest.get("id").and_then(serde_json::Value::as_str) != Some(embedded.id)
+            || manifest.get("entry").and_then(serde_json::Value::as_str) != Some("SKILL.md")
+            || manifest
+                .get("engine_contract")
+                .and_then(serde_json::Value::as_str)
+                != Some(">=3")
+        {
+            return Err(format!(
+                "embedded Skill {} has an invalid manifest contract",
+                embedded.directory
+            ));
+        }
     }
     Ok(())
 }
@@ -334,6 +399,13 @@ mod tests {
             .join("assetiweave-conversation-organizer")
             .join("assetiweave.skill.json")
             .is_file());
+        for skill in [
+            "assetiweave-conversation-recall",
+            "assetiweave-web-conversation-repair",
+        ] {
+            assert!(root.join(skill).join("SKILL.md").is_file());
+            assert!(root.join(skill).join("assetiweave.skill.json").is_file());
+        }
         let adapter_dir = root
             .join("assetiweave-conversation-organizer")
             .join("scripts")

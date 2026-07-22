@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -151,6 +152,222 @@ func TestInstallOfficialTemplateCanPreserveStateOnUpdate(t *testing.T) {
 	if _, err := os.Stat(outputPath); err != nil {
 		t.Fatalf("output state missing after update: %v", err)
 	}
+}
+
+func TestPreservingOfficialRepairRejectsInstalledSymlinkEscape(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink fixture is Unix-specific")
+	}
+	root := t.TempDir()
+	installed, err := InstallOfficialTemplate(InstallOptions{Root: root, ID: "qwen-web"})
+	if err != nil {
+		t.Fatalf("InstallOfficialTemplate() error = %v", err)
+	}
+	outside := t.TempDir()
+	scripts := filepath.Join(installed.Directory, "scripts")
+	if err := os.RemoveAll(scripts); err != nil {
+		t.Fatalf("remove scripts: %v", err)
+	}
+	if err := os.Symlink(outside, scripts); err != nil {
+		t.Fatalf("symlink scripts: %v", err)
+	}
+
+	_, err = InstallOfficialTemplate(InstallOptions{
+		Root: root, ID: "qwen-web", Force: true, PreserveState: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("preserving repair error = %v, want symlink rejection", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, "harvest.js")); !os.IsNotExist(statErr) {
+		t.Fatalf("preserving repair wrote through symlink: %v", statErr)
+	}
+}
+
+func TestDoctorAndRepairRestoreOfficialHarvesterWithoutDeletingState(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("runtime fixture is shell-based")
+	}
+	root := t.TempDir()
+	installed, err := InstallOfficialTemplate(InstallOptions{Root: root, ID: "qwen-web"})
+	if err != nil {
+		t.Fatalf("InstallOfficialTemplate() error = %v", err)
+	}
+	runtimePath := writeFakeRuntime(t, "v22.3.0")
+	authPath := filepath.Join(installed.Directory, "requests", "auth-probe.json")
+	outputPath := filepath.Join(installed.Directory, "output", "normalized", "sessions.json")
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
+		t.Fatalf("mkdir output: %v", err)
+	}
+	if err := os.WriteFile(authPath, []byte(`{"headers":{"Cookie":"keep-private"}}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write auth state: %v", err)
+	}
+	if err := os.WriteFile(outputPath, []byte(`{"sessions":[]}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write output state: %v", err)
+	}
+	tamperedScript := filepath.Join(installed.Directory, "scripts", "harvest.js")
+	if err := os.WriteFile(tamperedScript, []byte("tampered\n"), 0o600); err != nil {
+		t.Fatalf("tamper script: %v", err)
+	}
+
+	diagnosis, err := Doctor(DoctorOptions{
+		Root:             root,
+		ID:               "qwen-web",
+		RuntimeOverrides: RuntimeOverrides{Node: runtimePath},
+	})
+	if err != nil {
+		t.Fatalf("Doctor() error = %v", err)
+	}
+	if diagnosis.Healthy || !diagnosis.Repairable || !hasDiagnosticCode(diagnosis.Checks, "package_files") {
+		t.Fatalf("diagnosis = %#v", diagnosis)
+	}
+
+	preview, err := Repair(RepairOptions{
+		Root:             root,
+		ID:               "qwen-web",
+		DryRun:           true,
+		RuntimeOverrides: RuntimeOverrides{Node: runtimePath},
+	})
+	if err != nil {
+		t.Fatalf("Repair(dry-run) error = %v", err)
+	}
+	if !preview.DryRun || preview.Repaired {
+		t.Fatalf("preview = %#v", preview)
+	}
+	if content, _ := os.ReadFile(tamperedScript); string(content) != "tampered\n" {
+		t.Fatalf("dry-run changed script: %q", content)
+	}
+
+	repaired, err := Repair(RepairOptions{
+		Root:             root,
+		ID:               "qwen-web",
+		RuntimeOverrides: RuntimeOverrides{Node: runtimePath},
+	})
+	if err != nil {
+		t.Fatalf("Repair() error = %v", err)
+	}
+	if !repaired.Repaired || repaired.After == nil || !repaired.After.Healthy {
+		t.Fatalf("repaired = %#v", repaired)
+	}
+	if content, _ := os.ReadFile(authPath); !strings.Contains(string(content), "keep-private") {
+		t.Fatalf("repair overwrote auth state: %s", content)
+	}
+	if _, err := os.Stat(outputPath); err != nil {
+		t.Fatalf("repair deleted normalized output: %v", err)
+	}
+}
+
+func TestDoctorReportsRuntimeVersionMismatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("runtime fixture is shell-based")
+	}
+	root := t.TempDir()
+	if _, err := InstallOfficialTemplate(InstallOptions{Root: root, ID: "gemini-web"}); err != nil {
+		t.Fatalf("InstallOfficialTemplate() error = %v", err)
+	}
+
+	diagnosis, err := Doctor(DoctorOptions{
+		Root:             root,
+		ID:               "gemini-web",
+		RuntimeOverrides: RuntimeOverrides{Node: writeFakeRuntime(t, "v18.20.0")},
+	})
+	if err != nil {
+		t.Fatalf("Doctor() error = %v", err)
+	}
+	if diagnosis.Healthy || diagnosis.Repairable || !hasDiagnosticCode(diagnosis.Checks, "runtime_version") {
+		t.Fatalf("diagnosis = %#v", diagnosis)
+	}
+
+	repair, err := Repair(RepairOptions{
+		Root: root, ID: "gemini-web", RuntimeOverrides: RuntimeOverrides{Node: writeFakeRuntime(t, "v18.20.0")},
+	})
+	if err != nil {
+		t.Fatalf("Repair() error = %v", err)
+	}
+	if repair.Repaired || repair.After == nil || repair.After.Healthy {
+		t.Fatalf("runtime-only repair must remain an explicit environment action: %#v", repair)
+	}
+}
+
+func TestDoctorReportsOfficialScriptPermissionDrift(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executable permission checks are Unix-specific")
+	}
+	root := t.TempDir()
+	installed, err := InstallOfficialTemplate(InstallOptions{Root: root, ID: "qwen-web"})
+	if err != nil {
+		t.Fatalf("InstallOfficialTemplate() error = %v", err)
+	}
+	script := filepath.Join(installed.Directory, "scripts", "harvest.js")
+	if err := os.Chmod(script, 0o600); err != nil {
+		t.Fatalf("remove executable permission: %v", err)
+	}
+
+	diagnosis, err := Doctor(DoctorOptions{
+		Root: root, ID: "qwen-web", RuntimeOverrides: RuntimeOverrides{Node: writeFakeRuntime(t, "v22.3.0")},
+	})
+	if err != nil {
+		t.Fatalf("Doctor() error = %v", err)
+	}
+	if diagnosis.Healthy || !hasDiagnosticCode(diagnosis.Checks, "package_files") {
+		t.Fatalf("diagnosis = %#v", diagnosis)
+	}
+	repaired, err := Repair(RepairOptions{
+		Root: root, ID: "qwen-web", RuntimeOverrides: RuntimeOverrides{Node: writeFakeRuntime(t, "v22.3.0")},
+	})
+	if err != nil {
+		t.Fatalf("Repair() error = %v", err)
+	}
+	if repaired.After == nil || !repaired.After.Healthy {
+		t.Fatalf("repair did not restore executable permission: %#v", repaired)
+	}
+}
+
+func TestDoctorAndRepairRestoreMissingAuthProbeWithoutReplacingExistingAuth(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("runtime fixture is shell-based")
+	}
+	root := t.TempDir()
+	installed, err := InstallOfficialTemplate(InstallOptions{Root: root, ID: "qwen-web"})
+	if err != nil {
+		t.Fatalf("InstallOfficialTemplate() error = %v", err)
+	}
+	authPath := filepath.Join(installed.Directory, "requests", "auth-probe.json")
+	if err := os.Remove(authPath); err != nil {
+		t.Fatalf("remove auth probe: %v", err)
+	}
+	overrides := RuntimeOverrides{Node: writeFakeRuntime(t, "v22.3.0")}
+
+	diagnosis, err := Doctor(DoctorOptions{Root: root, ID: "qwen-web", RuntimeOverrides: overrides})
+	if err != nil {
+		t.Fatalf("Doctor() error = %v", err)
+	}
+	if !diagnosis.Repairable || !hasDiagnosticCode(diagnosis.Checks, "package_files") {
+		t.Fatalf("diagnosis = %#v", diagnosis)
+	}
+	if _, err := Repair(RepairOptions{Root: root, ID: "qwen-web", RuntimeOverrides: overrides}); err != nil {
+		t.Fatalf("Repair() error = %v", err)
+	}
+	if _, err := os.Stat(authPath); err != nil {
+		t.Fatalf("repair did not restore default auth probe: %v", err)
+	}
+}
+
+func hasDiagnosticCode(checks []DiagnosticCheck, code string) bool {
+	for _, check := range checks {
+		if check.Code == code && check.Status == DiagnosticFail {
+			return true
+		}
+	}
+	return false
+}
+
+func writeFakeRuntime(t *testing.T, version string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "node")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '%s\\n' '"+version+"'\n"), 0o700); err != nil {
+		t.Fatalf("write fake runtime: %v", err)
+	}
+	return path
 }
 
 func TestInstallPackageFromDirectoryWritesCommunityHarvester(t *testing.T) {
@@ -336,6 +553,41 @@ func TestRunExecutesRelativeEntrypoint(t *testing.T) {
 	}
 	if result.NormalizedFile != filepath.Join(dir, "output", "normalized", "sessions.json") {
 		t.Fatalf("NormalizedFile = %s", result.NormalizedFile)
+	}
+}
+
+func TestRunExposesCurrentCLIPathToHarvester(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("entrypoint fixture is shell-based")
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, "repairable-web")
+	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	manifest := Manifest{
+		SchemaVersion: 1,
+		ID:            "repairable-web",
+		Name:          "Repairable Web",
+		Version:       "0.1.0",
+		Origin:        "community",
+		Entrypoint:    []string{"scripts/harvest.sh"},
+	}
+	data, _ := json.Marshal(manifest)
+	if err := os.WriteFile(filepath.Join(dir, "harvester.json"), data, 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "scripts", "harvest.sh"), []byte("#!/bin/sh\nprintf '{\"cli_path\":\"%s\"}\\n' \"$ASSETIWEAVE_CLI_PATH\"\n"), 0o700); err != nil {
+		t.Fatalf("write entrypoint: %v", err)
+	}
+
+	result, err := Run(RunOptions{Root: root, ID: "repairable-web", CLIPath: "/Applications/AssetIWeave/assetiweave-cli"})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	parsed, ok := result.Result.(map[string]any)
+	if !ok || parsed["cli_path"] != "/Applications/AssetIWeave/assetiweave-cli" {
+		t.Fatalf("Result = %#v", result.Result)
 	}
 }
 

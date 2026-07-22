@@ -133,6 +133,7 @@ type RunOptions struct {
 	Timeout          time.Duration
 	Args             []string
 	RuntimeOverrides RuntimeOverrides
+	CLIPath          string
 }
 
 type RunResult struct {
@@ -144,6 +145,55 @@ type RunResult struct {
 	Stderr         string   `json:"stderr,omitempty"`
 	Result         any      `json:"result,omitempty"`
 	NormalizedFile string   `json:"normalized_file,omitempty"`
+}
+
+type DiagnosticStatus string
+
+const (
+	DiagnosticPass DiagnosticStatus = "pass"
+	DiagnosticWarn DiagnosticStatus = "warn"
+	DiagnosticFail DiagnosticStatus = "fail"
+)
+
+type DiagnosticCheck struct {
+	Code       string           `json:"code"`
+	Status     DiagnosticStatus `json:"status"`
+	Message    string           `json:"message"`
+	Hint       string           `json:"hint,omitempty"`
+	Repairable bool             `json:"repairable"`
+}
+
+type DoctorOptions struct {
+	Root             string
+	ID               string
+	RuntimeOverrides RuntimeOverrides
+}
+
+type DoctorResult struct {
+	ID         string            `json:"id"`
+	Directory  string            `json:"directory"`
+	Origin     string            `json:"origin,omitempty"`
+	Version    string            `json:"version,omitempty"`
+	Healthy    bool              `json:"healthy"`
+	Repairable bool              `json:"repairable"`
+	Checks     []DiagnosticCheck `json:"checks"`
+}
+
+type RepairOptions struct {
+	Root             string
+	ID               string
+	DryRun           bool
+	RuntimeOverrides RuntimeOverrides
+}
+
+type RepairResult struct {
+	ID        string        `json:"id"`
+	DryRun    bool          `json:"dry_run"`
+	Repaired  bool          `json:"repaired"`
+	Preserved []string      `json:"preserved"`
+	Plan      []string      `json:"plan"`
+	Before    DoctorResult  `json:"before"`
+	After     *DoctorResult `json:"after,omitempty"`
 }
 
 type entrypointInvocation struct {
@@ -341,6 +391,368 @@ func InstallPackage(options InstallPackageOptions) (InstallResult, error) {
 	return result, nil
 }
 
+func Doctor(options DoctorOptions) (DoctorResult, error) {
+	if err := validateID(options.ID); err != nil {
+		return DoctorResult{}, err
+	}
+	root, err := resolveRoot(options.Root)
+	if err != nil {
+		return DoctorResult{}, err
+	}
+	directory := filepath.Join(root, options.ID)
+	result := DoctorResult{ID: options.ID, Directory: directory, Healthy: true, Checks: []DiagnosticCheck{}}
+	manifest, manifestErr := LoadManifest(directory)
+	if manifestErr != nil {
+		result.Checks = append(result.Checks, DiagnosticCheck{
+			Code:       "manifest",
+			Status:     DiagnosticFail,
+			Message:    manifestErr.Error(),
+			Hint:       "repair an official harvester or reinstall the original community package",
+			Repairable: officialTemplateExists(options.ID),
+		})
+		return finalizeDoctor(result), nil
+	}
+	result.Origin = manifest.Origin
+	result.Version = manifest.Version
+	result.Checks = append(result.Checks, DiagnosticCheck{
+		Code: "manifest", Status: DiagnosticPass, Message: "harvester manifest is valid",
+	})
+
+	if strings.EqualFold(manifest.Origin, "official") && officialTemplateExists(options.ID) {
+		drift, driftErr := officialTemplateDrift(options.ID, directory)
+		if driftErr != nil {
+			return DoctorResult{}, driftErr
+		}
+		if len(drift) > 0 {
+			result.Checks = append(result.Checks, DiagnosticCheck{
+				Code:       "package_files",
+				Status:     DiagnosticFail,
+				Message:    "official harvester files are missing or changed: " + strings.Join(drift, ", "),
+				Hint:       "run harvester repair to restore packaged files while preserving requests/ and output/",
+				Repairable: true,
+			})
+		} else {
+			result.Checks = append(result.Checks, DiagnosticCheck{
+				Code: "package_files", Status: DiagnosticPass, Message: "official harvester files match the packaged template",
+			})
+		}
+	}
+
+	invocation, invocationErr := resolveHarvesterInvocation(directory, manifest, options.RuntimeOverrides)
+	if invocationErr != nil {
+		result.Checks = append(result.Checks, DiagnosticCheck{
+			Code:       "entrypoint",
+			Status:     DiagnosticFail,
+			Message:    invocationErr.Error(),
+			Hint:       "restore the harvester package before running it",
+			Repairable: strings.EqualFold(manifest.Origin, "official"),
+		})
+	} else {
+		result.Checks = append(result.Checks, DiagnosticCheck{
+			Code: "entrypoint", Status: DiagnosticPass, Message: "entrypoint is present",
+		})
+		result.Checks = append(result.Checks, diagnoseRuntime(invocation.Program, manifest.Runtime))
+	}
+
+	if manifest.Adapter.Manifest != "" {
+		adapterPath := resolveRelative(directory, manifest.Adapter.Manifest)
+		if info, statErr := os.Stat(adapterPath); statErr != nil || info.IsDir() {
+			result.Checks = append(result.Checks, DiagnosticCheck{
+				Code:       "adapter_manifest",
+				Status:     DiagnosticFail,
+				Message:    "conversation adapter manifest is missing: " + adapterPath,
+				Hint:       "restore the harvester package",
+				Repairable: strings.EqualFold(manifest.Origin, "official"),
+			})
+		} else {
+			result.Checks = append(result.Checks, DiagnosticCheck{
+				Code: "adapter_manifest", Status: DiagnosticPass, Message: "conversation adapter manifest is present",
+			})
+		}
+	}
+
+	webConfigPath := filepath.Join(directory, "web-harvester.json")
+	if pathExists(webConfigPath) {
+		if _, configErr := webharvesterConfigCheck(directory); configErr != nil {
+			result.Checks = append(result.Checks, DiagnosticCheck{
+				Code: "web_config", Status: DiagnosticFail, Message: configErr.Error(),
+				Hint:       "restore the official template or fix the community web harvester configuration",
+				Repairable: strings.EqualFold(manifest.Origin, "official"),
+			})
+		} else {
+			result.Checks = append(result.Checks, DiagnosticCheck{
+				Code: "web_config", Status: DiagnosticPass, Message: "web harvester configuration is valid",
+			})
+		}
+	}
+
+	authPath := filepath.Join(directory, "requests", "auth-probe.json")
+	if authProbeConfigured(authPath) {
+		result.Checks = append(result.Checks, DiagnosticCheck{
+			Code: "auth", Status: DiagnosticPass, Message: "browser authentication request is configured",
+		})
+	} else {
+		result.Checks = append(result.Checks, DiagnosticCheck{
+			Code:    "auth",
+			Status:  DiagnosticWarn,
+			Message: "browser authentication is not configured",
+			Hint:    "run conversation web auth-detect, then auth-check before harvesting",
+		})
+	}
+
+	normalizedFile := resolveNormalizedFile(directory, manifest)
+	if pathExists(normalizedFile) {
+		result.Checks = append(result.Checks, DiagnosticCheck{
+			Code: "output", Status: DiagnosticPass, Message: "normalized conversation output is present",
+		})
+	} else {
+		result.Checks = append(result.Checks, DiagnosticCheck{
+			Code: "output", Status: DiagnosticWarn, Message: "no normalized conversation output exists yet",
+			Hint: "run the harvester after runtime and authentication checks pass",
+		})
+	}
+	return finalizeDoctor(result), nil
+}
+
+func Repair(options RepairOptions) (RepairResult, error) {
+	before, err := Doctor(DoctorOptions{Root: options.Root, ID: options.ID, RuntimeOverrides: options.RuntimeOverrides})
+	if err != nil {
+		return RepairResult{}, err
+	}
+	if !officialTemplateExists(options.ID) {
+		return RepairResult{}, validationError("harvester %q is not an official packaged template", options.ID).
+			WithHint("reinstall it with `harvester update <id> --from <package>` so the source is explicit")
+	}
+	result := RepairResult{
+		ID:        options.ID,
+		DryRun:    options.DryRun,
+		Preserved: []string{"requests/", "output/"},
+		Plan: []string{
+			"restore official manifest, adapter, web configuration, and scripts",
+			"restore packaged executable permissions",
+			"preserve requests/ authentication state and output/ conversation data",
+			"rerun local diagnostics",
+		},
+		Before: before,
+	}
+	if !before.Repairable {
+		result.Plan = []string{"no package repair is applicable; follow the failed diagnostic check hint"}
+		result.After = &before
+		return result, nil
+	}
+	if options.DryRun {
+		return result, nil
+	}
+	if _, err := InstallOfficialTemplate(InstallOptions{
+		Root: options.Root, ID: options.ID, Force: true, PreserveState: true,
+	}); err != nil {
+		return RepairResult{}, err
+	}
+	after, err := Doctor(DoctorOptions{Root: options.Root, ID: options.ID, RuntimeOverrides: options.RuntimeOverrides})
+	if err != nil {
+		return RepairResult{}, err
+	}
+	result.Repaired = true
+	result.After = &after
+	return result, nil
+}
+
+func finalizeDoctor(result DoctorResult) DoctorResult {
+	result.Healthy = true
+	result.Repairable = false
+	for _, check := range result.Checks {
+		if check.Status == DiagnosticFail {
+			result.Healthy = false
+		}
+		if check.Status == DiagnosticFail && check.Repairable {
+			result.Repairable = true
+		}
+	}
+	return result
+}
+
+func officialTemplateExists(id string) bool {
+	_, err := readOfficialManifest(id)
+	return err == nil
+}
+
+func officialTemplateDrift(id, directory string) ([]string, error) {
+	sourceRoot := filepath.ToSlash(filepath.Join("templates", id))
+	drift := []string{}
+	err := fs.WalkDir(officialTemplates, sourceRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, relErr := filepath.Rel(sourceRoot, path)
+		if relErr != nil || rel == "." || entry.IsDir() {
+			return relErr
+		}
+		rel = filepath.ToSlash(rel)
+		if preserveInstalledState(rel) {
+			if !pathExists(filepath.Join(directory, filepath.FromSlash(rel))) {
+				drift = append(drift, rel)
+			}
+			return nil
+		}
+		expected, readErr := fs.ReadFile(officialTemplates, path)
+		if readErr != nil {
+			return readErr
+		}
+		installedPath := filepath.Join(directory, filepath.FromSlash(rel))
+		actual, readErr := os.ReadFile(installedPath)
+		if readErr != nil || !bytes.Equal(actual, expected) || !installedModeMatches(installedPath, entry.Name()) {
+			drift = append(drift, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, internalError("inspect official harvester template %s: %v", id, err)
+	}
+	return drift, nil
+}
+
+func installedModeMatches(path, name string) bool {
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	expectedExecutable := modeForInstalledFile(name, 0)&0o111 != 0
+	actualExecutable := info.Mode().Perm()&0o111 != 0
+	return expectedExecutable == actualExecutable
+}
+
+func diagnoseRuntime(program string, runtimeSpec *RuntimeSpec) DiagnosticCheck {
+	resolved := program
+	if !isAbsoluteRuntimeProgram(program) {
+		path, err := exec.LookPath(program)
+		if err != nil {
+			return DiagnosticCheck{
+				Code: "runtime_available", Status: DiagnosticFail,
+				Message: "runtime program is unavailable: " + program,
+				Hint:    "install the required runtime or configure conversationRuntimeOverrides in AssetIWeave settings",
+			}
+		}
+		resolved = path
+	} else if info, err := os.Stat(program); err != nil || info.IsDir() {
+		return DiagnosticCheck{
+			Code: "runtime_available", Status: DiagnosticFail,
+			Message: "configured runtime program is unavailable: " + program,
+			Hint:    "update conversationRuntimeOverrides to an existing executable",
+		}
+	}
+	versionOutput, err := runtimeVersion(resolved)
+	if err != nil {
+		return DiagnosticCheck{
+			Code: "runtime_available", Status: DiagnosticFail,
+			Message: "runtime cannot be executed: " + resolved,
+			Hint:    "check executable permissions and the configured runtime path",
+		}
+	}
+	requirement := ""
+	if runtimeSpec != nil {
+		requirement = runtimeSpec.Version
+	}
+	if requirement != "" && !versionSatisfies(versionOutput, requirement) {
+		return DiagnosticCheck{
+			Code: "runtime_version", Status: DiagnosticFail,
+			Message: "runtime " + resolved + " reports " + strings.TrimSpace(versionOutput) + ", required " + requirement,
+			Hint:    "select a runtime that satisfies the manifest version requirement",
+		}
+	}
+	return DiagnosticCheck{
+		Code: "runtime", Status: DiagnosticPass,
+		Message: "runtime is available: " + resolved + " (" + strings.TrimSpace(versionOutput) + ")",
+	}
+}
+
+func runtimeVersion(program string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, program, "--version").CombinedOutput()
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	return cappedString(string(output), 1024), err
+}
+
+func versionSatisfies(actual, requirement string) bool {
+	required := parseVersion(strings.TrimPrefix(strings.TrimSpace(requirement), ">="))
+	current := parseVersion(actual)
+	if len(required) == 0 || len(current) == 0 {
+		return false
+	}
+	for len(required) < 3 {
+		required = append(required, 0)
+	}
+	for len(current) < 3 {
+		current = append(current, 0)
+	}
+	for index := 0; index < 3; index++ {
+		if current[index] != required[index] {
+			return current[index] > required[index]
+		}
+	}
+	return true
+}
+
+func parseVersion(value string) []int {
+	match := regexp.MustCompile(`(?i)v?(\d+)(?:\.(\d+))?(?:\.(\d+))?`).FindStringSubmatch(value)
+	if len(match) == 0 {
+		return nil
+	}
+	parts := []int{}
+	for _, item := range match[1:] {
+		if item == "" {
+			parts = append(parts, 0)
+			continue
+		}
+		parsed, err := strconv.Atoi(item)
+		if err != nil {
+			return nil
+		}
+		parts = append(parts, parsed)
+	}
+	return parts
+}
+
+func authProbeConfigured(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var request struct {
+		Headers map[string]string `json:"headers"`
+	}
+	if json.Unmarshal(data, &request) != nil {
+		return false
+	}
+	for name, value := range request.Headers {
+		if (strings.EqualFold(name, "cookie") || strings.EqualFold(name, "authorization")) && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func webharvesterConfigCheck(directory string) (bool, error) {
+	path := filepath.Join(directory, "web-harvester.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, validationError("web harvester configuration not found: %s", path).WithCause(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		return false, validationError("invalid web harvester configuration %s: %v", path, err).WithCause(err)
+	}
+	if config["site_id"] == nil || config["auth_probe"] == nil {
+		return false, validationError("web harvester configuration is missing site_id or auth_probe: %s", path)
+	}
+	return true, nil
+}
+
 type installFSOptions struct {
 	Root          string
 	ID            string
@@ -368,6 +780,11 @@ func installFromFS(options installFSOptions) (InstallResult, error) {
 	if exists && !options.Force {
 		return InstallResult{}, validationError("harvester %q already exists at %s", options.ID, target).
 			WithHint("rerun with --force to replace it with the packaged template")
+	}
+	if exists && options.Force && options.PreserveState {
+		if err := validatePreservedInstallTree(target); err != nil {
+			return InstallResult{}, err
+		}
 	}
 	if options.Force && !options.PreserveState {
 		if err := os.RemoveAll(target); err != nil {
@@ -404,6 +821,9 @@ func installFromFS(options installFSOptions) (InstallResult, error) {
 		if err := os.WriteFile(targetPath, data, mode); err != nil {
 			return err
 		}
+		if err := os.Chmod(targetPath, mode); err != nil {
+			return err
+		}
 		fileCount++
 		return nil
 	}); err != nil {
@@ -421,6 +841,11 @@ func installFromOSDir(options installDirOptions) (InstallResult, error) {
 	if exists && !options.Force {
 		return InstallResult{}, validationError("harvester %q already exists at %s", options.Manifest.ID, target).
 			WithHint("rerun with --force to replace it with the package")
+	}
+	if exists && options.Force && options.PreserveState {
+		if err := validatePreservedInstallTree(target); err != nil {
+			return InstallResult{}, err
+		}
 	}
 	if options.Force && !options.PreserveState {
 		if err := os.RemoveAll(target); err != nil {
@@ -467,7 +892,11 @@ func installFromOSDir(options installDirOptions) (InstallResult, error) {
 		if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
 			return err
 		}
-		if err := os.WriteFile(targetPath, data, modeForInstalledFile(entry.Name(), info.Mode().Perm())); err != nil {
+		mode := modeForInstalledFile(entry.Name(), info.Mode().Perm())
+		if err := os.WriteFile(targetPath, data, mode); err != nil {
+			return err
+		}
+		if err := os.Chmod(targetPath, mode); err != nil {
 			return err
 		}
 		return nil
@@ -475,6 +904,25 @@ func installFromOSDir(options installDirOptions) (InstallResult, error) {
 		return InstallResult{}, internalError("install harvester package %s: %v", options.Manifest.ID, err)
 	}
 	return installResultFor(options.Manifest, target, exists, fileCount), nil
+}
+
+func validatePreservedInstallTree(target string) error {
+	info, err := os.Lstat(target)
+	if err != nil {
+		return validationError("inspect existing harvester before preserving update: %s", target).WithCause(err)
+	}
+	if info.Mode()&fs.ModeSymlink != 0 || !info.IsDir() {
+		return validationError("preserving harvester update requires a real directory without symlinks: %s", target)
+	}
+	return filepath.WalkDir(target, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return validationError("preserving harvester update refuses installed symlink: %s", path)
+		}
+		return nil
+	})
 }
 
 func installResultFor(manifest Manifest, target string, updated bool, fileCount int) InstallResult {
@@ -880,6 +1328,9 @@ func Run(options RunOptions) (RunResult, error) {
 		"ASSETIWEAVE_HARVESTER_DIR="+directory,
 		"ASSETIWEAVE_HARVESTER_ID="+manifest.ID,
 	)
+	if cliPath := strings.TrimSpace(options.CLIPath); cliPath != "" {
+		command.Env = append(command.Env, "ASSETIWEAVE_CLI_PATH="+cliPath)
+	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	command.Stdout = &stdout

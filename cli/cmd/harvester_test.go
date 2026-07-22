@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/util6/assetiweave/internal/cmdutil"
+	"github.com/util6/assetiweave/internal/harvesters"
 	"github.com/util6/assetiweave/internal/output"
 )
 
@@ -113,6 +114,54 @@ func TestHarvesterRunRequiresYes(t *testing.T) {
 
 	if err := root.Execute(); err == nil {
 		t.Fatal("Execute() error = nil, want confirmation error")
+	}
+}
+
+func TestHarvesterDoctorCommandReturnsStructuredChecks(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	targetRoot := t.TempDir()
+	if _, err := harvesters.InstallOfficialTemplate(harvesters.InstallOptions{Root: targetRoot, ID: "qwen-web"}); err != nil {
+		t.Fatalf("install fixture: %v", err)
+	}
+	root := Build(context.Background(), &cmdutil.Factory{
+		IOStreams: &cmdutil.IOStreams{In: &bytes.Buffer{}, Out: stdout, ErrOut: &bytes.Buffer{}},
+		Client:    &recordingClient{},
+	})
+	root.SetArgs([]string{"harvester", "doctor", "qwen-web", "--root", targetRoot})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	var envelope output.Envelope
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	data, ok := envelope.Data.(map[string]any)
+	if !ok || data["id"] != "qwen-web" {
+		t.Fatalf("data = %#v", envelope.Data)
+	}
+	if checks, ok := data["checks"].([]any); !ok || len(checks) == 0 {
+		t.Fatalf("checks = %#v", data["checks"])
+	}
+}
+
+func TestHarvesterRepairRequiresConfirmationButAllowsDryRun(t *testing.T) {
+	targetRoot := t.TempDir()
+	if _, err := harvesters.InstallOfficialTemplate(harvesters.InstallOptions{Root: targetRoot, ID: "qwen-web"}); err != nil {
+		t.Fatalf("install fixture: %v", err)
+	}
+	root := Build(context.Background(), &cmdutil.Factory{
+		IOStreams: &cmdutil.IOStreams{In: &bytes.Buffer{}, Out: &bytes.Buffer{}, ErrOut: &bytes.Buffer{}},
+		Client:    &recordingClient{},
+	})
+	root.SetArgs([]string{"harvester", "repair", "qwen-web", "--root", targetRoot})
+	if err := root.Execute(); err == nil {
+		t.Fatal("Execute() error = nil, want confirmation error")
+	}
+
+	root.SetArgs([]string{"harvester", "repair", "qwen-web", "--root", targetRoot, "--dry-run"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("dry-run Execute() error = %v", err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,7 +17,65 @@ func newCmdHarvester(f *cmdutil.Factory) *cobra.Command {
 	cmd.AddCommand(newCmdHarvesterInstall(f))
 	cmd.AddCommand(newCmdHarvesterUpdate(f))
 	cmd.AddCommand(newCmdHarvesterList(f))
+	cmd.AddCommand(newCmdHarvesterDoctor(f))
+	cmd.AddCommand(newCmdHarvesterRepair(f))
 	cmd.AddCommand(newCmdHarvesterRun(f))
+	return cmd
+}
+
+func newCmdHarvesterDoctor(f *cmdutil.Factory) *cobra.Command {
+	var root string
+	cmd := &cobra.Command{
+		Use:   "doctor <harvester-id>",
+		Short: "Diagnose an installed conversation harvester without changing it",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			overrides, err := harvesters.LoadRuntimeOverrides()
+			if err != nil {
+				return err
+			}
+			result, err := harvesters.Doctor(harvesters.DoctorOptions{Root: root, ID: args[0], RuntimeOverrides: overrides})
+			if err != nil {
+				return err
+			}
+			output.WriteSuccess(f.IOStreams.Out, result)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&root, "root", "", "harvester root; defaults to ~/.assetiweave/harvesters")
+	return cmd
+}
+
+func newCmdHarvesterRepair(f *cmdutil.Factory) *cobra.Command {
+	var root string
+	var dryRun, yes bool
+	cmd := &cobra.Command{
+		Use:   "repair <harvester-id>",
+		Short: "Restore an official harvester while preserving authentication and output",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !dryRun {
+				if err := requireYes(yes, "harvester repair"); err != nil {
+					return err
+				}
+			}
+			overrides, err := harvesters.LoadRuntimeOverrides()
+			if err != nil {
+				return err
+			}
+			result, err := harvesters.Repair(harvesters.RepairOptions{
+				Root: root, ID: args[0], DryRun: dryRun, RuntimeOverrides: overrides,
+			})
+			if err != nil {
+				return err
+			}
+			output.WriteSuccess(f.IOStreams.Out, result)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&root, "root", "", "harvester root; defaults to ~/.assetiweave/harvesters")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview repair without changing files")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm restoring official package files")
 	return cmd
 }
 
@@ -184,12 +243,14 @@ func newCmdHarvesterRun(f *cmdutil.Factory) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			cliPath, _ := os.Executable()
 			result, err := harvesters.Run(harvesters.RunOptions{
 				Root:             root,
 				ID:               args[0],
 				Timeout:          time.Duration(timeoutSeconds) * time.Second,
 				Args:             args[1:],
 				RuntimeOverrides: runtimeOverrides,
+				CLIPath:          cliPath,
 			})
 			if err != nil {
 				return err

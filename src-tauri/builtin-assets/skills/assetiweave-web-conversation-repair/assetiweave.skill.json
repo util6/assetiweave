@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "assetiweave.web-conversation-repair",
+  "content_version": "1.0.0",
+  "engine_contract": ">=3",
+  "entry": "SKILL.md",
+  "capabilities": [
+    "conversation.sync",
+    "conversation.web-record.list",
+    "conversation.web-record.get"
+  ],
+  "cli_capabilities": [
+    "harvester.doctor",
+    "harvester.repair",
+    "harvester.run",
+    "conversation.web.auth-check",
+    "conversation.web.auth-detect"
+  ]
+}

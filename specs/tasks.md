@@ -358,3 +358,12 @@
 - [X] 20.7 同步任务返回发现、active、读取、跳过和保留统计，前端展示安全增量结果
 - [X] 20.8 补充不完整快照、来源缺失、旧 Session 追加、读取竞态和兼容 Adapter 回归测试
 - [X] 20.9 重新生成 Engine/CLI contract，并完成 Rust、前端、Adapter 与 Go CLI 验证
+
+## Phase 21：Conversation Recall 与网页采集修复
+
+- [X] 21.1 将 `assetiweave-conversation-recall` 作为产品内置系统 Skill，定义 Card -> Question -> Session/Web Record 渐进检索流程
+- [X] 21.2 将 `assetiweave-web-conversation-repair` 作为产品内置系统 Skill，定义诊断、预览、确认、修复、认证、采集、导入和验证状态机
+- [X] 21.3 CLI 增加 `harvester doctor`，结构化检查官方文件漂移、执行权限、Runtime 路径/版本、Adapter、网页配置、认证配置和输出
+- [X] 21.4 CLI 增加 `harvester repair --dry-run|--yes`，恢复官方静态文件并保留 `requests/` 与 `output/`
+- [X] 21.5 网页 Harvester 运行时向脚本传递当前 CLI 绝对路径，Qwen/Gemini 认证失效时可安全调用 `auth-detect` 后重试
+- [X] 21.6 增加内置 Skill 安装、Harvester 诊断/修复、Runtime 版本、权限漂移、认证重试和 CLI 元数据测试

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "assetiweave.conversation-recall",
+  "content_version": "1.0.0",
+  "engine_contract": ">=3",
+  "entry": "SKILL.md",
+  "capabilities": [
+    "conversation.sync",
+    "conversation.search",
+    "conversation.session.get",
+    "conversation.web-record.get",
+    "conversation.question.get"
+  ]
+}

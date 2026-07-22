@@ -4,6 +4,27 @@ const test = require("node:test");
 const {
   normalizeRound
 } = require("../templates/qwen-web/scripts/qwen-normalize.cjs");
+const {
+  tryRefreshAuth
+} = require("../templates/qwen-web/scripts/auth-refresh.cjs");
+
+test("refreshes browser auth through the current CLI executable without a shell", () => {
+  const calls = [];
+  const refreshed = tryRefreshAuth("/tmp/qwen web", "qianwen.com", {
+    cliPath: "/opt/AssetIWeave/bin/assetiweave-cli",
+    execFileSync(program, args, options) {
+      calls.push({ program, args, options });
+    }
+  });
+
+  assert.equal(refreshed, true);
+  assert.equal(calls[0].program, "/opt/AssetIWeave/bin/assetiweave-cli");
+  assert.deepEqual(calls[0].args, [
+    "conversation", "web", "auth-detect", "/tmp/qwen web",
+    "--domain", "qianwen.com", "--credential", "cookie"
+  ]);
+  assert.equal(calls[0].options.shell, false);
+});
 
 test("normalizes current Qwen assistant text messages", () => {
   const turn = normalizeRound({

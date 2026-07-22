@@ -18,7 +18,7 @@
  */
 "use strict";
 
-const { execSync, spawn } = require("child_process");
+const { execFileSync, execSync, spawn } = require("child_process");
 const path = require("path");
 const os = require("os");
 
@@ -453,10 +453,12 @@ function tryRefreshAuth(harvesterDir, domain, extraFlags = {}) {
     if (extraFlags.probeURL) {
       args.push("--probe-url", extraFlags.probeURL);
     }
-    execSync("assetiweave-cli " + args.map(shellQuote).join(" "), {
+    const cliPath = process.env.ASSETIWEAVE_CLI_PATH || "assetiweave-cli";
+    execFileSync(cliPath, args, {
       encoding: "utf8",
       timeout: 30000,
       stdio: "pipe",
+      shell: false,
     });
     return true;
   } catch (error) {
@@ -465,11 +467,6 @@ function tryRefreshAuth(harvesterDir, domain, extraFlags = {}) {
     );
     return false;
   }
-}
-
-function shellQuote(s) {
-  if (/^[a-zA-Z0-9._/:-]+$/.test(s)) return s;
-  return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
 // ---------------------------------------------------------------------------

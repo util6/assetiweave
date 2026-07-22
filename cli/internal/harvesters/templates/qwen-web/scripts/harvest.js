@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { normalizeRound } = require("./qwen-normalize.cjs");
+const { tryRefreshAuth } = require("./auth-refresh.cjs");
 
 const root = process.env.ASSETIWEAVE_HARVESTER_DIR || process.cwd();
 const nowID = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
@@ -65,7 +66,7 @@ async function requestJSON(url, headers) {
   return { status_code: response.status, body, json: parsed };
 }
 
-(async () => {
+async function collect() {
   mkdirp(detailDir);
   mkdirp(normalizedDir);
 
@@ -170,6 +171,18 @@ async function requestJSON(url, headers) {
     session_count: sessions.length,
     turn_count: turnCount
   }));
+}
+
+(async () => {
+  try {
+    await collect();
+  } catch (firstError) {
+    process.stderr.write(`[qwen-web] collection failed: ${firstError.message}; attempting auth-detect refresh...\n`);
+    if (!tryRefreshAuth(root, "qianwen.com")) {
+      throw firstError;
+    }
+    await collect();
+  }
 })().catch((error) => {
   console.error(error && error.message ? error.message : String(error));
   process.exit(1);

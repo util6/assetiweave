@@ -45,6 +45,8 @@ func annotateCommandTree(root *cobra.Command) {
 	annotateLocalCommand(root, []string{"harvester", "install"}, "conversation", platform.RiskHighRiskWrite)
 	annotateLocalCommand(root, []string{"harvester", "update"}, "conversation", platform.RiskHighRiskWrite)
 	annotateLocalCommand(root, []string{"harvester", "list"}, "conversation", platform.RiskRead)
+	annotateLocalCommand(root, []string{"harvester", "doctor"}, "conversation", platform.RiskRead)
+	annotateLocalCommand(root, []string{"harvester", "repair"}, "conversation", platform.RiskHighRiskWrite)
 	annotateLocalCommand(root, []string{"harvester", "run"}, "conversation", platform.RiskHighRiskWrite)
 	annotateLocalCommand(root, []string{"update"}, "system", platform.RiskHighRiskWrite)
 }

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "qwen-web",
   "name": "Qwen Web",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "origin": "official",
   "description": "Official AssetIWeave harvester template for Qwen web conversations.",
   "runtime": {
