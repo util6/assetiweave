@@ -464,6 +464,13 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query sources table");
+        let memory_table_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('memory_runs', 'memory_items', 'memory_evidence_snapshots')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query memory tables");
         let migration_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM _sqlx_migrations", [], |row| {
                 row.get(0)
@@ -471,7 +478,8 @@ mod tests {
             .expect("query migrations");
 
         assert_eq!(source_table_count, 1);
-        assert_eq!(migration_count, 14);
+        assert_eq!(memory_table_count, 3);
+        assert_eq!(migration_count, 15);
         cleanup_database(&db_path);
     }
 
@@ -546,7 +554,7 @@ mod tests {
             )
         );
         assert_eq!(cursor_target_path, "@config/Cursor/skills");
-        assert_eq!(migration_count, 14);
+        assert_eq!(migration_count, 15);
         cleanup_database(&db_path);
     }
 
@@ -607,7 +615,7 @@ mod tests {
                 row.get(0)
             })
             .expect("query migrations");
-        assert_eq!(migration_count, 14);
+        assert_eq!(migration_count, 15);
         cleanup_database(&db_path);
     }
 
