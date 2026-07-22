@@ -471,7 +471,7 @@ mod tests {
             .expect("query migrations");
 
         assert_eq!(source_table_count, 1);
-        assert_eq!(migration_count, 13);
+        assert_eq!(migration_count, 14);
         cleanup_database(&db_path);
     }
 
@@ -546,7 +546,7 @@ mod tests {
             )
         );
         assert_eq!(cursor_target_path, "@config/Cursor/skills");
-        assert_eq!(migration_count, 13);
+        assert_eq!(migration_count, 14);
         cleanup_database(&db_path);
     }
 
@@ -607,7 +607,7 @@ mod tests {
                 row.get(0)
             })
             .expect("query migrations");
-        assert_eq!(migration_count, 13);
+        assert_eq!(migration_count, 14);
         cleanup_database(&db_path);
     }
 
