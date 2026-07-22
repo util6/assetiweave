@@ -1,6 +1,3 @@
-// Removed once AppService exposes index status and rebuild operations.
-#![allow(dead_code)]
-
 use crate::backend::dto::{AppResult, SearchRetrievalMode};
 use chrono::Utc;
 use sqlx::{Row, SqlitePool};
@@ -18,9 +15,23 @@ pub(crate) enum ConversationSearchIndexHealth {
     Disabled,
 }
 
+impl ConversationSearchIndexHealth {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::Ready => "ready",
+            Self::Stale => "stale",
+            Self::Failed => "failed",
+            Self::Disabled => "disabled",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ConversationSearchIndexState {
+    #[allow(dead_code)]
     pub(crate) tenant_id: String,
+    #[allow(dead_code)]
     pub(crate) index_instance_id: String,
     pub(crate) schema_version: i64,
     pub(crate) tokenizer_version: String,
@@ -82,6 +93,7 @@ pub(crate) async fn load_or_create_conversation_search_index_state_sqlx(
     map_search_index_state(&row)
 }
 
+#[allow(dead_code)]
 pub(crate) async fn bump_conversation_search_source_revision_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -105,6 +117,7 @@ pub(crate) async fn bump_conversation_search_source_revision_sqlx(
     Ok(revision)
 }
 
+#[allow(dead_code)]
 pub(crate) async fn try_acquire_conversation_search_writer_lease_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,

@@ -64,11 +64,28 @@ pub(crate) enum ConversationRecordKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-#[allow(dead_code)]
 pub(crate) enum SearchRetrievalMode {
     Lexical,
     Semantic,
     Hybrid,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct ConversationSearchIndexStatus {
+    pub(crate) health: String,
+    pub(crate) schema_version: i64,
+    pub(crate) tokenizer_version: String,
+    pub(crate) source_revision: i64,
+    pub(crate) indexed_revision: Option<i64>,
+    pub(crate) active_generation: Option<String>,
+    pub(crate) document_count: i64,
+    pub(crate) size_bytes: i64,
+    pub(crate) last_built_at: Option<String>,
+    pub(crate) last_error: Option<String>,
+    pub(crate) lease_owner: Option<String>,
+    pub(crate) lease_expires_at: Option<String>,
+    pub(crate) updated_at: String,
+    pub(crate) supported_modes: Vec<SearchRetrievalMode>,
 }
 
 #[derive(

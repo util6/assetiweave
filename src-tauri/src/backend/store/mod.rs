@@ -67,6 +67,9 @@ pub(crate) use mount_repo::{
 pub(crate) use profile_repo::{
     delete_profile_sqlx, load_profile_sqlx, load_profiles_sqlx, upsert_profile_sqlx,
 };
+pub(crate) use search_index_repo::{
+    load_or_create_conversation_search_index_state_sqlx, ConversationSearchIndexState,
+};
 pub(crate) use shortcut_repo::{
     load_app_shortcut_settings_sqlx, load_app_shortcuts_sqlx, save_app_shortcuts_sqlx,
 };

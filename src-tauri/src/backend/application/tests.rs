@@ -2345,3 +2345,25 @@ fn concrete_skill_candidate_scores_above_repo_fallback() {
             > skill_candidate_score(&repo_candidate, &terms)
     );
 }
+#[test]
+fn conversation_search_index_status_reports_missing_lexical_index() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-search-index-status-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create temp search index status directory");
+    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+
+    let status = service
+        .get_conversation_search_index_status()
+        .expect("load conversation search index status");
+
+    assert_eq!(status.health, "missing");
+    assert_eq!(status.source_revision, 0);
+    assert_eq!(status.indexed_revision, None);
+    assert_eq!(
+        status.supported_modes,
+        vec![crate::backend::dto::SearchRetrievalMode::Lexical]
+    );
+    let _ = std::fs::remove_dir_all(root);
+}

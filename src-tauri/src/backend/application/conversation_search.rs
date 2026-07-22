@@ -1,0 +1,41 @@
+use super::prelude::*;
+use crate::backend::dto::ConversationSearchIndexStatus;
+
+impl AppService {
+    pub(crate) fn get_conversation_search_index_status(
+        &self,
+    ) -> AppResult<ConversationSearchIndexStatus> {
+        let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
+        let state = self.db.block_on(async move {
+            crate::backend::store::load_or_create_conversation_search_index_state_sqlx(
+                &pool, &tenant_id,
+            )
+            .await
+        })?;
+
+        Ok(status_from_state(state))
+    }
+}
+
+fn status_from_state(
+    state: crate::backend::store::ConversationSearchIndexState,
+) -> ConversationSearchIndexStatus {
+    let supported_modes = state.supported_modes();
+    ConversationSearchIndexStatus {
+        health: state.health.as_str().to_string(),
+        schema_version: state.schema_version,
+        tokenizer_version: state.tokenizer_version,
+        source_revision: state.source_revision,
+        indexed_revision: state.indexed_revision,
+        active_generation: state.active_generation,
+        document_count: state.document_count,
+        size_bytes: state.size_bytes,
+        last_built_at: state.last_built_at,
+        last_error: state.last_error,
+        lease_owner: state.lease_owner,
+        lease_expires_at: state.lease_expires_at,
+        updated_at: state.updated_at,
+        supported_modes,
+    }
+}

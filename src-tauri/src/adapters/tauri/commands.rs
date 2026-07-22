@@ -51,9 +51,9 @@ use crate::{
     backend::dto::{
         AppOverview, AppResult, AppShortcut, ApplyAssetGroupMountResult,
         ApplySkillGroupExclusiveMountResult, AssetGroupInput, AssetMountStatus,
-        AssetMountUpdateResult, CatalogAsset, ExecutionResult, NavigationModel,
-        SkillBackupSettings, SkillGroupExclusiveMountInput, SkillGroupExclusiveMountPreview,
-        SkillRemoteSource, SourceInput, TargetProfileInput,
+        AssetMountUpdateResult, CatalogAsset, ConversationSearchIndexStatus, ExecutionResult,
+        NavigationModel, SkillBackupSettings, SkillGroupExclusiveMountInput,
+        SkillGroupExclusiveMountPreview, SkillRemoteSource, SourceInput, TargetProfileInput,
     },
     backend::models::{
         Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
@@ -1889,6 +1889,18 @@ pub(crate) async fn search_conversation_records(
 }
 
 #[tauri::command]
+pub(crate) async fn get_conversation_search_index_status(
+    state: State<'_, AppState>,
+) -> AppResult<ConversationSearchIndexStatus> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?.get_conversation_search_index_status()
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub(crate) fn export_web_record_session(
     state: State<'_, AppState>,
     params: ConversationSessionExportParams,
@@ -2183,6 +2195,7 @@ pub(crate) fn command_handler(
         list_web_record_sessions,
         get_web_record_session,
         search_conversation_records,
+        get_conversation_search_index_status,
         export_web_record_session,
         list_conversation_questions,
         get_conversation_question,

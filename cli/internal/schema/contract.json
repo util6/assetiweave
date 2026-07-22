@@ -3133,6 +3133,25 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.search.index.status",
+      "cli": "assetiweave-cli conversation search index status",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Get the local conversation search index status",
+      "exposure": "friendly",
+      "method": "conversation.search.index.status",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.session.get",
       "cli": "assetiweave-cli conversation session get <session-id>",
       "confirmation_required": false,
@@ -8435,6 +8454,25 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "conversation.search.index.status",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Get the local conversation search index status",
+      "exposure": "app",
+      "method": "get_conversation_search_index_status",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "conversation.web-record.export",
       "cli": null,
       "confirmation_required": false,
@@ -9158,6 +9196,7 @@
     "conversation.sync",
     "conversation.session.list",
     "conversation.search",
+    "conversation.search.index.status",
     "conversation.session.get",
     "conversation.session.export",
     "conversation.web-record.list",
@@ -9265,6 +9304,7 @@
     "list_web_record_sessions",
     "get_web_record_session",
     "search_conversation_records",
+    "get_conversation_search_index_status",
     "export_web_record_session",
     "list_conversation_questions",
     "get_conversation_question",

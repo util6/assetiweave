@@ -1186,6 +1186,18 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli conversation search --query <query>")
     ),
     command!(
+        "conversation.search.index.status",
+        "conversation.search.index.status",
+        "Get the local conversation search index status",
+        Read,
+        Friendly,
+        false,
+        NoParams,
+        Service => |service, _params| service.get_conversation_search_index_status(),
+        &[],
+        Some("assetiweave-cli conversation search index status")
+    ),
+    command!(
         "conversation.session.get",
         "conversation.session.get",
         "Get one conversation session with question groups",
@@ -2719,6 +2731,18 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("limit", "Maximum number of hits"),
             param!("offset", "Pagination offset"),
         ],
+        None
+    ),
+    command!(
+        "get_conversation_search_index_status",
+        "conversation.search.index.status",
+        "Get the local conversation search index status",
+        Read,
+        App,
+        false,
+        NoParams,
+        Service => |service, _params| service.get_conversation_search_index_status(),
+        &[],
         None
     ),
     command!(
