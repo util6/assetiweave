@@ -18,5 +18,6 @@ pub(crate) mod operation_log;
 pub(crate) mod path_utils;
 pub(crate) mod planner;
 pub(crate) mod scanner;
+pub(crate) mod search;
 pub(crate) mod store;
 pub(crate) mod targeting;
