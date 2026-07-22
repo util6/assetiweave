@@ -54,6 +54,34 @@ func TestConversationSearchBuildsMemorySearchParams(t *testing.T) {
 	}
 }
 
+func TestConversationSearchIndexCommandsUseEngineLifecycleMethods(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		method string
+	}{
+		{name: "status", method: "conversation.search.index.status"},
+		{name: "rebuild", method: "conversation.search.index.rebuild"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &recordingClient{}
+			err := executeSkillGroupTestCommand(
+				t,
+				client,
+				"conversation",
+				"search",
+				"index",
+				test.name,
+			)
+			if err != nil {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			if client.method != test.method {
+				t.Fatalf("method = %q, want %q", client.method, test.method)
+			}
+		})
+	}
+}
+
 func TestConversationSearchCanUseCurrentProject(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {

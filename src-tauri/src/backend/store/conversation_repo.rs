@@ -1128,6 +1128,7 @@ async fn import_conversation_sessions_with_presence_sqlx(
             rebuild_session_question_aggregates_sqlx_tx(&mut tx, tenant_id, &session.id, &now)
                 .await?;
         }
+        super::bump_conversation_search_source_revision_sqlx_tx(&mut *tx, tenant_id).await?;
         tx.commit().await.map_err(|error| error.to_string())?;
     }
 
@@ -1170,6 +1171,7 @@ async fn import_conversation_sessions_with_presence_sqlx(
         },
     )
     .await?;
+    super::bump_conversation_search_source_revision_sqlx_tx(&mut *tx, tenant_id).await?;
     tx.commit().await.map_err(|error| error.to_string())?;
 
     Ok(ConversationImportResult {
@@ -1485,6 +1487,7 @@ pub(crate) async fn merge_conversation_questions_sqlx(
     .map_err(|error| error.to_string())?;
     renumber_questions_for_session_sqlx_tx(&mut tx, tenant_id, &session_id).await?;
     rebuild_session_question_aggregates_sqlx_tx(&mut tx, tenant_id, &session_id, &now).await?;
+    super::bump_conversation_search_source_revision_sqlx_tx(&mut *tx, tenant_id).await?;
     tx.commit().await.map_err(|error| error.to_string())?;
 
     Ok(ConversationMutationResult {
@@ -1583,6 +1586,7 @@ pub(crate) async fn split_conversation_question_sqlx(
     renumber_questions_for_session_sqlx_tx(&mut tx, tenant_id, &question.session_id).await?;
     rebuild_session_question_aggregates_sqlx_tx(&mut tx, tenant_id, &question.session_id, &now)
         .await?;
+    super::bump_conversation_search_source_revision_sqlx_tx(&mut *tx, tenant_id).await?;
     tx.commit().await.map_err(|error| error.to_string())?;
 
     Ok(ConversationMutationResult {
@@ -1602,6 +1606,7 @@ pub(crate) async fn update_conversation_part_translation_sqlx(
     part_id: &str,
     translated_text: &str,
 ) -> AppResult<()> {
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     let result = sqlx::query(
         r#"
         UPDATE conversation_parts
@@ -1612,7 +1617,7 @@ pub(crate) async fn update_conversation_part_translation_sqlx(
     .bind(translated_text)
     .bind(tenant_id)
     .bind(part_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|error| error.to_string())?;
 
@@ -1620,6 +1625,8 @@ pub(crate) async fn update_conversation_part_translation_sqlx(
         return Err(format!("conversation part not found: {part_id}"));
     }
 
+    super::bump_conversation_search_source_revision_sqlx_tx(&mut *tx, tenant_id).await?;
+    tx.commit().await.map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -1826,6 +1833,100 @@ pub(crate) async fn search_conversation_cards_sqlx(
     Ok(ConversationSearchPage {
         total_count,
         hits: hits.into_iter().skip(offset).take(limit).collect(),
+    })
+}
+
+pub(crate) async fn hydrate_conversation_search_matches_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    record_kind: ConversationRecordKind,
+    adapter_id: Option<&str>,
+    source_id: Option<&str>,
+    query: &str,
+    matches: crate::backend::search::conversation::ConversationSearchMatches,
+) -> AppResult<ConversationSearchPage> {
+    let tables = record_kind.tables();
+    let sessions = load_search_sessions_sqlx(pool, tenant_id, tables, adapter_id, source_id)
+        .await?
+        .into_iter()
+        .map(|item| (item.session.id.clone(), item))
+        .collect::<BTreeMap<_, _>>();
+    let questions = load_search_questions_sqlx(pool, tenant_id, tables, adapter_id, source_id)
+        .await?
+        .into_values()
+        .flatten()
+        .map(|item| (item.id.clone(), item))
+        .collect::<BTreeMap<_, _>>();
+    let turns = load_search_turns_sqlx(pool, tenant_id, tables, adapter_id, source_id)
+        .await?
+        .into_values()
+        .flatten()
+        .map(|item| (item.id.clone(), item))
+        .collect::<BTreeMap<_, _>>();
+    let parts = load_search_parts_sqlx(pool, tenant_id, tables, adapter_id, source_id)
+        .await?
+        .into_values()
+        .flatten()
+        .map(|item| (item.id.clone(), item))
+        .collect::<BTreeMap<_, _>>();
+    let needle = normalize_query(Some(query))
+        .ok_or_else(|| "conversation search query is required".to_string())?;
+    let mut hits = Vec::with_capacity(matches.hits.len());
+
+    for matched in matches.hits {
+        let session = sessions
+            .get(&matched.session_id)
+            .ok_or_else(|| "conversation search index hydration missed a session".to_string())?;
+        let question = questions
+            .get(&matched.question_id)
+            .ok_or_else(|| "conversation search index hydration missed a question".to_string())?;
+        let question_title = question
+            .title
+            .clone()
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or_else(|| first_line(&question.question_text));
+        let (part_id, text) = if matched.card_type == "question" {
+            let turn = turns
+                .get(&matched.turn_id)
+                .ok_or_else(|| "conversation search index hydration missed a turn".to_string())?;
+            (None, turn.user_text.clone())
+        } else {
+            let part = parts
+                .get(&matched.part_id)
+                .ok_or_else(|| "conversation search index hydration missed a part".to_string())?;
+            let card = declared_content_card_for_part(part).ok_or_else(|| {
+                "conversation search index hydration missed a declared card".to_string()
+            })?;
+            if card.card_type.block_suffix() != matched.card_type
+                || format!("{}-{}", part.id, card.suffix) != matched.document_id
+            {
+                return Err(
+                    "conversation search index hydration found stale card metadata".to_string(),
+                );
+            }
+            (Some(part.id.clone()), card.text)
+        };
+        let card_type = content_card_type_value(&matched.card_type)
+            .or_else(|| {
+                (matched.card_type == "question").then_some(ConversationSearchCardType::Question)
+            })
+            .ok_or_else(|| "conversation search index returned an invalid card type".to_string())?;
+        hits.push(ConversationSearchHit {
+            session: session.clone(),
+            question_id: question.id.clone(),
+            question_index: question.question_index,
+            question_title,
+            turn_id: Some(matched.turn_id),
+            part_id,
+            block_id: matched.document_id,
+            card_type,
+            snippet: search_snippet(&text, &needle),
+            score: matched.score,
+        });
+    }
+    Ok(ConversationSearchPage {
+        total_count: matches.total_count,
+        hits,
     })
 }
 

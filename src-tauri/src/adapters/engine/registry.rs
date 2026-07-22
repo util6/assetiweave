@@ -1182,6 +1182,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("timeline", "Return hits in chronological session order"),
             param!("limit", "Maximum number of hits"),
             param!("offset", "Pagination offset"),
+            param!("search_options", "Optional retrieval settings", ["searchOptions"]),
         ],
         Some("assetiweave-cli conversation search --query <query>")
     ),
@@ -1196,6 +1197,18 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Service => |service, _params| service.get_conversation_search_index_status(),
         &[],
         Some("assetiweave-cli conversation search index status")
+    ),
+    command!(
+        "conversation.search.index.rebuild",
+        "conversation.search.index.rebuild",
+        "Rebuild the derived local conversation search index",
+        Write,
+        Friendly,
+        false,
+        NoParams,
+        Service => |service, _params| service.rebuild_conversation_search_index(),
+        &[],
+        Some("assetiweave-cli conversation search index rebuild")
     ),
     command!(
         "conversation.session.get",
@@ -2730,6 +2743,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("timeline", "Return hits in chronological session order"),
             param!("limit", "Maximum number of hits"),
             param!("offset", "Pagination offset"),
+            param!("search_options", "Optional retrieval settings", ["searchOptions"]),
         ],
         None
     ),

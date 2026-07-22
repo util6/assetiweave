@@ -122,6 +122,26 @@ func newCmdConversationSearch(f *cmdutil.Factory) *cobra.Command {
 	cmd.Flags().IntVar(&offset, "offset", 0, "pagination offset")
 	cmd.Flags().StringVar(&format, "format", "json", "output format: json, compact-json, markdown, or prompt")
 	_ = cmd.MarkFlagRequired("query")
+	cmd.AddCommand(newCmdConversationSearchIndex(f))
+	return cmd
+}
+
+func newCmdConversationSearchIndex(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "index", Short: "Inspect or rebuild the local search index"}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "status",
+		Short: "Show local conversation search index status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodConversationSearchIndexStatus, map[string]any{})
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "rebuild",
+		Short: "Rebuild the derived local conversation search index",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodConversationSearchIndexRebuild, map[string]any{})
+		},
+	})
 	return cmd
 }
 

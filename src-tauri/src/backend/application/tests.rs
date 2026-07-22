@@ -2367,3 +2367,103 @@ fn conversation_search_index_status_reports_missing_lexical_index() {
     );
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn conversation_search_index_rebuild_publishes_a_ready_generation() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-search-index-rebuild-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create temp search index rebuild directory");
+    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+
+    let report = service
+        .rebuild_conversation_search_index()
+        .expect("rebuild conversation search index");
+    let status = service
+        .get_conversation_search_index_status()
+        .expect("load rebuilt conversation search index status");
+
+    assert_eq!(report.document_count, 0);
+    assert_eq!(report.indexed_revision, 0);
+    assert!(!report.generation.is_empty());
+    assert_eq!(status.health, "ready");
+    assert_eq!(
+        status.active_generation.as_deref(),
+        Some(report.generation.as_str())
+    );
+    assert_eq!(status.indexed_revision, Some(status.source_revision));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
+    let root =
+        std::env::temp_dir().join(format!("assetiweave-search-index-query-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create temp search index query directory");
+    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    upsert_conversation_export_fixture(&service, &root, vec![], None, false);
+    let report = service
+        .rebuild_conversation_search_index()
+        .expect("rebuild conversation search index");
+    assert_eq!(report.document_count, 2);
+
+    let result = service
+        .search_conversation_records(ConversationSearchParams {
+            record_kind: Some("session".to_string()),
+            adapter_id: None,
+            source_id: None,
+            project_path: None,
+            query: "Rust fallback".to_string(),
+            content_types: vec![crate::backend::dto::ConversationSearchCardType::Answer],
+            since: None,
+            until: None,
+            timeline: false,
+            limit: Some(20),
+            offset: Some(0),
+            search_options: None,
+        })
+        .expect("search rebuilt conversation index");
+
+    assert_eq!(result.backend, "tantivy");
+    assert_eq!(result.total_count, 1);
+    assert_eq!(
+        result.hits[0].card_type,
+        crate::backend::dto::ConversationSearchCardType::Answer
+    );
+    assert!(result.hits[0].snippet.contains("Rust fallback"));
+
+    service
+        .update_conversation_part_translation(ConversationPartTranslationUpdateParams {
+            record_kind: Some("session".to_string()),
+            part_id: result.hits[0].part_id.clone().expect("answer part id"),
+            translated_text: "Rust 回退不应出现".to_string(),
+        })
+        .expect("update indexed conversation part");
+    let fallback = service
+        .search_conversation_records(ConversationSearchParams {
+            record_kind: Some("session".to_string()),
+            adapter_id: None,
+            source_id: None,
+            project_path: None,
+            query: "Rust fallback".to_string(),
+            content_types: vec![crate::backend::dto::ConversationSearchCardType::Answer],
+            since: None,
+            until: None,
+            timeline: false,
+            limit: Some(20),
+            offset: Some(0),
+            search_options: None,
+        })
+        .expect("fall back after indexed content changes");
+    assert_eq!(fallback.backend, "legacy_scan");
+    assert_eq!(
+        service
+            .get_conversation_search_index_status()
+            .expect("load stale status")
+            .health,
+        "stale"
+    );
+    let _ = fs::remove_dir_all(root);
+}

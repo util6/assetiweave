@@ -509,6 +509,14 @@ pub(crate) struct ConversationSearchParams {
     pub(crate) timeline: bool,
     pub(crate) limit: Option<usize>,
     pub(crate) offset: Option<usize>,
+    #[serde(default, alias = "searchOptions")]
+    pub(crate) search_options: Option<ConversationSearchOptions>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationSearchOptions {
+    #[serde(default, alias = "retrievalMode")]
+    pub(crate) retrieval_mode: Option<crate::backend::dto::SearchRetrievalMode>,
 }
 
 #[derive(Debug, Serialize)]
@@ -533,6 +541,7 @@ pub(crate) struct ConversationSearchResult {
     pub(crate) scope: ConversationSearchScope,
     pub(crate) total_count: usize,
     pub(crate) hits: Vec<crate::backend::dto::ConversationSearchHit>,
+    pub(crate) backend: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

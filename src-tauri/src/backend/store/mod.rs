@@ -26,8 +26,9 @@ pub(crate) use conversation_repo::{
     delete_conversation_adapter_package_version_sqlx,
     delete_conversation_adapter_registration_sqlx, disable_builtin_conversation_adapter_sqlx,
     disable_conversation_source_sqlx, enable_conversation_sources_by_adapter_sqlx,
-    has_running_conversation_sync_for_adapter_sqlx, import_conversation_sessions_sqlx,
-    import_incremental_conversation_sessions_sqlx, list_conversation_adapter_catalog_releases_sqlx,
+    has_running_conversation_sync_for_adapter_sqlx, hydrate_conversation_search_matches_sqlx,
+    import_conversation_sessions_sqlx, import_incremental_conversation_sessions_sqlx,
+    list_conversation_adapter_catalog_releases_sqlx,
     list_conversation_adapter_package_versions_sqlx, list_conversation_adapter_packages_sqlx,
     list_conversation_adapters_sqlx, list_conversation_question_details_sqlx,
     list_conversation_sessions_sqlx, list_conversation_sources_sqlx,
@@ -68,7 +69,10 @@ pub(crate) use profile_repo::{
     delete_profile_sqlx, load_profile_sqlx, load_profiles_sqlx, upsert_profile_sqlx,
 };
 pub(crate) use search_index_repo::{
-    load_or_create_conversation_search_index_state_sqlx, ConversationSearchIndexState,
+    bump_conversation_search_source_revision_sqlx_tx,
+    complete_conversation_search_index_rebuild_sqlx, load_conversation_search_index_documents_sqlx,
+    load_or_create_conversation_search_index_state_sqlx,
+    try_acquire_conversation_search_writer_lease_sqlx, ConversationSearchIndexState,
 };
 pub(crate) use shortcut_repo::{
     load_app_shortcut_settings_sqlx, load_app_shortcuts_sqlx, save_app_shortcuts_sqlx,

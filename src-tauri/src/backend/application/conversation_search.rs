@@ -1,7 +1,18 @@
 use super::prelude::*;
+use crate::backend::dto::ConversationSearchIndexRebuildReport;
 use crate::backend::dto::ConversationSearchIndexStatus;
 
 impl AppService {
+    pub(crate) fn rebuild_conversation_search_index(
+        &self,
+    ) -> AppResult<ConversationSearchIndexRebuildReport> {
+        crate::backend::search::conversation::rebuild_conversation_search_index(
+            &self.db,
+            &self.db_path,
+            self.tenant_id(),
+        )
+    }
+
     pub(crate) fn get_conversation_search_index_status(
         &self,
     ) -> AppResult<ConversationSearchIndexStatus> {
@@ -22,6 +33,7 @@ fn status_from_state(
     state: crate::backend::store::ConversationSearchIndexState,
 ) -> ConversationSearchIndexStatus {
     let supported_modes = state.supported_modes();
+    let is_rebuilding = state.lease_owner.is_some();
     ConversationSearchIndexStatus {
         health: state.health.as_str().to_string(),
         schema_version: state.schema_version,
@@ -35,6 +47,7 @@ fn status_from_state(
         last_error: state.last_error,
         lease_owner: state.lease_owner,
         lease_expires_at: state.lease_expires_at,
+        is_rebuilding,
         updated_at: state.updated_at,
         supported_modes,
     }

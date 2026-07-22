@@ -1,6 +1,6 @@
 use crate::backend::dto::{AppResult, SearchRetrievalMode};
 use chrono::Utc;
-use sqlx::{Row, SqlitePool};
+use sqlx::{AssertSqlSafe, Row, SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
 const CONVERSATION_SEARCH_SCHEMA_VERSION: i64 = 1;
@@ -46,6 +46,22 @@ pub(crate) struct ConversationSearchIndexState {
     pub(crate) lease_owner: Option<String>,
     pub(crate) lease_expires_at: Option<String>,
     pub(crate) updated_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ConversationSearchIndexDocumentRow {
+    pub(crate) record_kind: String,
+    pub(crate) session_id: String,
+    pub(crate) question_id: String,
+    pub(crate) turn_id: String,
+    pub(crate) part_id: String,
+    pub(crate) block_id: String,
+    pub(crate) card_type: String,
+    pub(crate) question_title: String,
+    pub(crate) content: String,
+    pub(crate) adapter_id: String,
+    pub(crate) source_id: String,
+    pub(crate) project_path: String,
 }
 
 impl ConversationSearchIndexState {
@@ -117,7 +133,27 @@ pub(crate) async fn bump_conversation_search_source_revision_sqlx(
     Ok(revision)
 }
 
-#[allow(dead_code)]
+pub(crate) async fn bump_conversation_search_source_revision_sqlx_tx(
+    connection: &mut SqliteConnection,
+    tenant_id: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"
+        UPDATE conversation_search_index_state
+        SET source_revision = source_revision + 1,
+            health = CASE WHEN health = 'ready' THEN 'stale' ELSE health END,
+            updated_at = ?1
+        WHERE tenant_id = ?2
+        "#,
+    )
+    .bind(Utc::now().to_rfc3339())
+    .bind(tenant_id)
+    .execute(connection)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 pub(crate) async fn try_acquire_conversation_search_writer_lease_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -147,6 +183,237 @@ pub(crate) async fn try_acquire_conversation_search_writer_lease_sqlx(
     .await
     .map_err(|error| error.to_string())?;
     Ok(result.rows_affected() == 1)
+}
+
+pub(crate) async fn load_conversation_search_index_documents_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> AppResult<Vec<ConversationSearchIndexDocumentRow>> {
+    let mut documents = Vec::new();
+    for tables in [SearchDocumentTables::session(), SearchDocumentTables::web()] {
+        let question_sql = format!(
+            r#"
+            SELECT s.id, q.id, t.id, q.title, q.question_text, t.user_text,
+                   s.adapter_id, s.source_id, {project_path}
+            FROM {sessions} s
+            JOIN {questions} q ON q.tenant_id = s.tenant_id AND q.session_id = s.id
+            JOIN {question_turns} qt ON qt.tenant_id = q.tenant_id AND qt.question_id = q.id
+            JOIN {turns} t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
+            WHERE s.tenant_id = ?1 AND s.missing = 0 AND t.missing = 0
+            ORDER BY s.id, q.question_index, qt.turn_order
+            "#,
+            sessions = tables.sessions,
+            questions = tables.questions,
+            question_turns = tables.question_turns,
+            turns = tables.turns,
+            project_path = tables.project_path,
+        );
+        for row in sqlx::query(AssertSqlSafe(question_sql))
+            .bind(tenant_id)
+            .fetch_all(pool)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            let question_text: String = row.try_get(4).map_err(|error| error.to_string())?;
+            let turn_id: String = row.try_get(2).map_err(|error| error.to_string())?;
+            documents.push(ConversationSearchIndexDocumentRow {
+                record_kind: tables.record_kind.to_string(),
+                session_id: row.try_get(0).map_err(|error| error.to_string())?,
+                question_id: row.try_get(1).map_err(|error| error.to_string())?,
+                turn_id: turn_id.clone(),
+                part_id: String::new(),
+                block_id: format!("{turn_id}-question"),
+                card_type: "question".to_string(),
+                question_title: search_question_title(
+                    row.try_get(3).map_err(|error| error.to_string())?,
+                    &question_text,
+                ),
+                content: row.try_get(5).map_err(|error| error.to_string())?,
+                adapter_id: row.try_get(6).map_err(|error| error.to_string())?,
+                source_id: row.try_get(7).map_err(|error| error.to_string())?,
+                project_path: row.try_get(8).map_err(|error| error.to_string())?,
+            });
+        }
+
+        let part_sql = format!(
+            r#"
+            SELECT s.id, q.id, t.id, p.id, q.title, q.question_text,
+                   p.text, p.command, p.translated_text, p.metadata_json,
+                   s.adapter_id, s.source_id, {project_path}
+            FROM {sessions} s
+            JOIN {questions} q ON q.tenant_id = s.tenant_id AND q.session_id = s.id
+            JOIN {question_turns} qt ON qt.tenant_id = q.tenant_id AND qt.question_id = q.id
+            JOIN {turns} t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
+            JOIN {parts} p ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
+            WHERE s.tenant_id = ?1 AND s.missing = 0 AND t.missing = 0
+            ORDER BY s.id, q.question_index, qt.turn_order, p.part_index
+            "#,
+            sessions = tables.sessions,
+            questions = tables.questions,
+            question_turns = tables.question_turns,
+            turns = tables.turns,
+            parts = tables.parts,
+            project_path = tables.project_path,
+        );
+        for row in sqlx::query(AssertSqlSafe(part_sql))
+            .bind(tenant_id)
+            .fetch_all(pool)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            let metadata: Option<String> = row.try_get(9).map_err(|error| error.to_string())?;
+            let Some(card) = declared_search_card(
+                metadata.as_deref(),
+                row.try_get(6).map_err(|error| error.to_string())?,
+                row.try_get(7).map_err(|error| error.to_string())?,
+            ) else {
+                continue;
+            };
+            let part_id: String = row.try_get(3).map_err(|error| error.to_string())?;
+            let question_text: String = row.try_get(5).map_err(|error| error.to_string())?;
+            documents.push(ConversationSearchIndexDocumentRow {
+                record_kind: tables.record_kind.to_string(),
+                session_id: row.try_get(0).map_err(|error| error.to_string())?,
+                question_id: row.try_get(1).map_err(|error| error.to_string())?,
+                turn_id: row.try_get(2).map_err(|error| error.to_string())?,
+                part_id: part_id.clone(),
+                block_id: format!("{part_id}-{}", card.suffix),
+                card_type: card.card_type,
+                question_title: search_question_title(
+                    row.try_get(4).map_err(|error| error.to_string())?,
+                    &question_text,
+                ),
+                content: card.text,
+                adapter_id: row.try_get(10).map_err(|error| error.to_string())?,
+                source_id: row.try_get(11).map_err(|error| error.to_string())?,
+                project_path: row.try_get(12).map_err(|error| error.to_string())?,
+            });
+        }
+    }
+    Ok(documents)
+}
+
+pub(crate) async fn complete_conversation_search_index_rebuild_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    expected_revision: i64,
+    generation: &str,
+    document_count: i64,
+    size_bytes: i64,
+) -> AppResult<bool> {
+    let now = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        r#"
+        UPDATE conversation_search_index_state
+        SET indexed_revision = ?1, active_generation = ?2, health = 'ready',
+            document_count = ?3, size_bytes = ?4, last_built_at = ?5,
+            last_error = NULL, lease_owner = NULL, lease_expires_at = NULL,
+            updated_at = ?5
+        WHERE tenant_id = ?6 AND source_revision = ?1
+        "#,
+    )
+    .bind(expected_revision)
+    .bind(generation)
+    .bind(document_count)
+    .bind(size_bytes)
+    .bind(&now)
+    .bind(tenant_id)
+    .execute(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(result.rows_affected() == 1)
+}
+
+struct SearchDocumentTables {
+    record_kind: &'static str,
+    sessions: &'static str,
+    questions: &'static str,
+    question_turns: &'static str,
+    turns: &'static str,
+    parts: &'static str,
+    project_path: &'static str,
+}
+
+impl SearchDocumentTables {
+    fn session() -> Self {
+        Self {
+            record_kind: "session",
+            sessions: "conversation_sessions",
+            questions: "conversation_questions",
+            question_turns: "conversation_question_turns",
+            turns: "conversation_turns",
+            parts: "conversation_parts",
+            project_path: "COALESCE(s.project_path, '')",
+        }
+    }
+
+    fn web() -> Self {
+        Self {
+            record_kind: "web",
+            sessions: "web_record_sessions",
+            questions: "web_record_questions",
+            question_turns: "web_record_question_turns",
+            turns: "web_record_turns",
+            parts: "web_record_parts",
+            project_path: "''",
+        }
+    }
+}
+
+struct DeclaredSearchCard {
+    card_type: String,
+    suffix: String,
+    text: String,
+}
+
+fn declared_search_card(
+    metadata_json: Option<&str>,
+    text: Option<String>,
+    command: Option<String>,
+) -> Option<DeclaredSearchCard> {
+    let metadata = serde_json::from_str::<serde_json::Value>(metadata_json?.trim()).ok()?;
+    let card = metadata
+        .get("content_card")
+        .or_else(|| metadata.get("contentCard"))?
+        .as_object()?;
+    let card_type = card.get("type")?.as_str()?;
+    if !matches!(card_type, "answer" | "tool" | "command" | "code" | "result") {
+        return None;
+    }
+    let suffix = card
+        .get("suffix")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(card_type)
+        .to_string();
+    let declared_text = card
+        .get("text")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string);
+    let fallback = if card_type == "command" {
+        command.or(text)
+    } else {
+        text.or(command)
+    };
+    Some(DeclaredSearchCard {
+        card_type: card_type.to_string(),
+        suffix,
+        text: declared_text.or(fallback)?.trim().to_string(),
+    })
+}
+
+fn search_question_title(title: Option<String>, question_text: &str) -> String {
+    title
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| {
+            question_text
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("Untitled question")
+                .trim()
+                .to_string()
+        })
 }
 
 fn map_search_index_state(

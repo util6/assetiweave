@@ -4,6 +4,7 @@ use super::schema::{
 };
 use crate::backend::dto::AppResult;
 use std::collections::BTreeSet;
+use std::path::Path;
 use tantivy::{
     collector::{Count, TopDocs},
     doc,
@@ -22,9 +23,15 @@ pub(super) struct ConversationSearchDocument {
     card_type: String,
     question_title: String,
     content: String,
+    adapter_id: String,
+    source_id: String,
+    project_path: String,
+    turn_id: String,
+    part_id: String,
 }
 
 impl ConversationSearchDocument {
+    #[cfg(test)]
     pub(super) fn card(
         record_kind: &str,
         session_id: &str,
@@ -33,6 +40,37 @@ impl ConversationSearchDocument {
         card_type: &str,
         question_title: &str,
         content: &str,
+    ) -> Self {
+        Self::scoped_card(
+            record_kind,
+            session_id,
+            question_id,
+            document_id,
+            card_type,
+            question_title,
+            content,
+            "",
+            "",
+            "",
+            "",
+            "",
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn scoped_card(
+        record_kind: &str,
+        session_id: &str,
+        question_id: &str,
+        document_id: &str,
+        card_type: &str,
+        question_title: &str,
+        content: &str,
+        adapter_id: &str,
+        source_id: &str,
+        project_path: &str,
+        turn_id: &str,
+        part_id: &str,
     ) -> Self {
         Self {
             document_type: "card".to_string(),
@@ -43,6 +81,11 @@ impl ConversationSearchDocument {
             card_type: card_type.to_string(),
             question_title: question_title.to_string(),
             content: content.to_string(),
+            adapter_id: adapter_id.to_string(),
+            source_id: source_id.to_string(),
+            project_path: project_path.to_string(),
+            turn_id: turn_id.to_string(),
+            part_id: part_id.to_string(),
         }
     }
 }
@@ -53,26 +96,33 @@ pub(super) struct ConversationCardQuery {
     pub(super) card_types: Vec<String>,
     pub(super) limit: usize,
     pub(super) offset: usize,
+    pub(super) adapter_id: Option<String>,
+    pub(super) source_id: Option<String>,
+    pub(super) project_path: Option<String>,
 }
 
-pub(super) struct ConversationSearchMatch {
-    pub(super) document_id: String,
-    pub(super) session_id: String,
-    pub(super) question_id: String,
-    pub(super) card_type: String,
-    pub(super) score: usize,
+pub(crate) struct ConversationSearchMatch {
+    pub(crate) document_id: String,
+    pub(crate) session_id: String,
+    pub(crate) question_id: String,
+    pub(crate) card_type: String,
+    pub(crate) score: usize,
+    pub(crate) turn_id: String,
+    pub(crate) part_id: String,
 }
 
-pub(super) struct ConversationSearchMatches {
-    pub(super) total_count: usize,
-    pub(super) hits: Vec<ConversationSearchMatch>,
+pub(crate) struct ConversationSearchMatches {
+    pub(crate) total_count: usize,
+    pub(crate) hits: Vec<ConversationSearchMatch>,
 }
 
+#[cfg(test)]
 pub(super) struct InMemoryConversationIndex {
     index: Index,
     fields: ConversationSearchSchema,
 }
 
+#[cfg(test)]
 impl InMemoryConversationIndex {
     pub(super) fn new() -> AppResult<Self> {
         let fields = build_conversation_schema();
@@ -85,149 +135,217 @@ impl InMemoryConversationIndex {
         &self,
         documents: &[ConversationSearchDocument],
     ) -> AppResult<()> {
-        let mut writer = self
-            .index
-            .writer(50_000_000)
-            .map_err(|error| error.to_string())?;
-        writer
-            .delete_all_documents()
-            .map_err(|error| error.to_string())?;
-        for item in documents {
-            writer
-                .add_document(doc!(
-                    self.fields.document_type => item.document_type.as_str(),
-                    self.fields.document_id => item.document_id.as_str(),
-                    self.fields.record_kind => item.record_kind.as_str(),
-                    self.fields.session_id => item.session_id.as_str(),
-                    self.fields.question_id => item.question_id.as_str(),
-                    self.fields.block_id => item.document_id.as_str(),
-                    self.fields.card_type => item.card_type.as_str(),
-                    self.fields.question_title_zh => item.question_title.as_str(),
-                    self.fields.question_title_en => item.question_title.as_str(),
-                    self.fields.question_title_ngram => item.question_title.as_str(),
-                    self.fields.content_zh => item.content.as_str(),
-                    self.fields.content_en => item.content.as_str(),
-                ))
-                .map_err(|error| error.to_string())?;
-        }
-        writer.commit().map_err(|error| error.to_string())?;
-        Ok(())
+        replace_documents(&self.index, &self.fields, documents)
     }
 
     pub(super) fn search_cards(
         &self,
         request: &ConversationCardQuery,
     ) -> AppResult<ConversationSearchMatches> {
-        let query = request.query.trim();
-        if query.is_empty() {
-            return Err("conversation search query is required".to_string());
-        }
-        let reader = self.index.reader().map_err(|error| error.to_string())?;
-        let searcher = reader.searcher();
-        let query = self.build_card_query(query, request)?;
-        let total_count = searcher
-            .search(&query, &Count)
-            .map_err(|error| error.to_string())?;
-        let top_docs = searcher
-            .search(
-                &query,
-                &TopDocs::with_limit(request.limit)
-                    .and_offset(request.offset)
-                    .order_by_score(),
-            )
-            .map_err(|error| error.to_string())?;
-        let mut hits = Vec::with_capacity(top_docs.len());
-        for (score, address) in top_docs {
-            let document = searcher
-                .doc::<TantivyDocument>(address)
-                .map_err(|error| error.to_string())?;
-            hits.push(ConversationSearchMatch {
-                document_id: stored_text(&document, self.fields.document_id)?,
-                session_id: stored_text(&document, self.fields.session_id)?,
-                question_id: stored_text(&document, self.fields.question_id)?,
-                card_type: stored_text(&document, self.fields.card_type)?,
-                score: score_to_integer(score),
-            });
-        }
-        Ok(ConversationSearchMatches { total_count, hits })
+        search_cards(&self.index, &self.fields, request)
+    }
+}
+
+pub(super) struct DiskConversationIndex {
+    index: Index,
+    fields: ConversationSearchSchema,
+}
+
+impl DiskConversationIndex {
+    pub(super) fn create(path: &Path) -> AppResult<Self> {
+        std::fs::create_dir_all(path).map_err(|error| error.to_string())?;
+        let fields = build_conversation_schema();
+        let index =
+            Index::create_in_dir(path, fields.schema.clone()).map_err(|error| error.to_string())?;
+        register_conversation_tokenizers(&index);
+        Ok(Self { index, fields })
     }
 
-    fn build_card_query(
+    pub(super) fn replace_documents(
         &self,
-        query: &str,
+        documents: &[ConversationSearchDocument],
+    ) -> AppResult<()> {
+        replace_documents(&self.index, &self.fields, documents)
+    }
+
+    pub(super) fn open(path: &Path) -> AppResult<Self> {
+        let fields = build_conversation_schema();
+        let index = Index::open_in_dir(path).map_err(|error| error.to_string())?;
+        register_conversation_tokenizers(&index);
+        Ok(Self { index, fields })
+    }
+
+    pub(super) fn search_cards(
+        &self,
         request: &ConversationCardQuery,
-    ) -> AppResult<BooleanQuery> {
-        let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![
-            exact_clause(self.fields.document_type, "card"),
-            exact_clause(self.fields.record_kind, &request.record_kind),
-        ];
-        if !request.card_types.is_empty() {
-            clauses.push((
-                Occur::Must,
-                Box::new(BooleanQuery::new(
-                    request
-                        .card_types
-                        .iter()
-                        .map(|card_type| exact_should_clause(self.fields.card_type, card_type))
-                        .collect(),
-                )),
-            ));
-        }
+    ) -> AppResult<ConversationSearchMatches> {
+        search_cards(&self.index, &self.fields, request)
+    }
+}
 
-        let jieba_tokens = self.tokens_for(JIEBA_TOKENIZER, query)?;
-        let default_tokens = self.tokens_for("default", query)?;
-        let mut lexical_branches = Vec::new();
-        if !jieba_tokens.is_empty() {
-            lexical_branches.push((
-                Occur::Should,
-                Box::new(text_branch(
-                    &jieba_tokens,
-                    self.fields.content_zh,
-                    self.fields.question_title_zh,
-                )) as Box<dyn Query>,
-            ));
-        }
-        if !default_tokens.is_empty() {
-            lexical_branches.push((
-                Occur::Should,
-                Box::new(text_branch(
-                    &default_tokens,
-                    self.fields.content_en,
-                    self.fields.question_title_en,
-                )) as Box<dyn Query>,
-            ));
-        }
-        if lexical_branches.is_empty() {
-            return Err("conversation search query has no searchable terms".to_string());
-        }
-        clauses.push((Occur::Must, Box::new(BooleanQuery::new(lexical_branches))));
-        let normalized = query.trim().to_lowercase();
-        if (2..=15).contains(&normalized.chars().count()) {
-            clauses.push(text_should_clause(
-                self.fields.question_title_ngram,
-                &normalized,
-                0.6,
-            ));
-        }
-        Ok(BooleanQuery::new(clauses))
+fn replace_documents(
+    index: &Index,
+    fields: &ConversationSearchSchema,
+    documents: &[ConversationSearchDocument],
+) -> AppResult<()> {
+    let mut writer = index
+        .writer(50_000_000)
+        .map_err(|error| error.to_string())?;
+    writer
+        .delete_all_documents()
+        .map_err(|error| error.to_string())?;
+    for item in documents {
+        writer
+            .add_document(doc!(
+                    fields.document_type => item.document_type.as_str(),
+                    fields.document_id => item.document_id.as_str(),
+                    fields.record_kind => item.record_kind.as_str(),
+                    fields.session_id => item.session_id.as_str(),
+                    fields.question_id => item.question_id.as_str(),
+                    fields.turn_id => item.turn_id.as_str(),
+                    fields.part_id => item.part_id.as_str(),
+                    fields.block_id => item.document_id.as_str(),
+                    fields.card_type => item.card_type.as_str(),
+                    fields.adapter_id => item.adapter_id.as_str(),
+                    fields.source_id => item.source_id.as_str(),
+                    fields.project_path => item.project_path.as_str(),
+                    fields.question_title_zh => item.question_title.as_str(),
+                    fields.question_title_en => item.question_title.as_str(),
+                    fields.question_title_ngram => item.question_title.as_str(),
+                    fields.content_zh => item.content.as_str(),
+                    fields.content_en => item.content.as_str(),
+            ))
+            .map_err(|error| error.to_string())?;
+    }
+    writer.commit().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn search_cards(
+    index: &Index,
+    fields: &ConversationSearchSchema,
+    request: &ConversationCardQuery,
+) -> AppResult<ConversationSearchMatches> {
+    let query = request.query.trim();
+    if query.is_empty() {
+        return Err("conversation search query is required".to_string());
+    }
+    let reader = index.reader().map_err(|error| error.to_string())?;
+    let searcher = reader.searcher();
+    let query = build_card_query(index, fields, query, request)?;
+    let total_count = searcher
+        .search(&query, &Count)
+        .map_err(|error| error.to_string())?;
+    let top_docs = searcher
+        .search(
+            &query,
+            &TopDocs::with_limit(request.limit)
+                .and_offset(request.offset)
+                .order_by_score(),
+        )
+        .map_err(|error| error.to_string())?;
+    let mut hits = Vec::with_capacity(top_docs.len());
+    for (score, address) in top_docs {
+        let document = searcher
+            .doc::<TantivyDocument>(address)
+            .map_err(|error| error.to_string())?;
+        hits.push(ConversationSearchMatch {
+            document_id: stored_text(&document, fields.document_id)?,
+            session_id: stored_text(&document, fields.session_id)?,
+            question_id: stored_text(&document, fields.question_id)?,
+            card_type: stored_text(&document, fields.card_type)?,
+            score: score_to_integer(score),
+            turn_id: stored_text(&document, fields.turn_id)?,
+            part_id: stored_text(&document, fields.part_id)?,
+        });
+    }
+    Ok(ConversationSearchMatches { total_count, hits })
+}
+
+fn build_card_query(
+    index: &Index,
+    fields: &ConversationSearchSchema,
+    query: &str,
+    request: &ConversationCardQuery,
+) -> AppResult<BooleanQuery> {
+    let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![
+        exact_clause(fields.document_type, "card"),
+        exact_clause(fields.record_kind, &request.record_kind),
+    ];
+    if !request.card_types.is_empty() {
+        clauses.push((
+            Occur::Must,
+            Box::new(BooleanQuery::new(
+                request
+                    .card_types
+                    .iter()
+                    .map(|card_type| exact_should_clause(fields.card_type, card_type))
+                    .collect(),
+            )),
+        ));
+    }
+    if let Some(adapter_id) = request.adapter_id.as_deref() {
+        clauses.push(exact_clause(fields.adapter_id, adapter_id));
+    }
+    if let Some(source_id) = request.source_id.as_deref() {
+        clauses.push(exact_clause(fields.source_id, source_id));
+    }
+    if let Some(project_path) = request.project_path.as_deref() {
+        clauses.push(exact_clause(fields.project_path, project_path));
     }
 
-    fn tokens_for(&self, tokenizer_name: &str, query: &str) -> AppResult<Vec<String>> {
-        let mut tokens = BTreeSet::new();
-        let mut analyzer = self
-            .index
-            .tokenizers()
-            .get(tokenizer_name)
-            .ok_or_else(|| format!("missing conversation tokenizer: {tokenizer_name}"))?;
-        let mut stream = analyzer.token_stream(query);
-        while stream.advance() {
-            let text = stream.token().text.trim().to_lowercase();
-            if !text.is_empty() {
-                tokens.insert(text);
-            }
-        }
-        Ok(tokens.into_iter().collect())
+    let jieba_tokens = tokens_for(index, JIEBA_TOKENIZER, query)?;
+    let default_tokens = tokens_for(index, "default", query)?;
+    let mut lexical_branches = Vec::new();
+    if !jieba_tokens.is_empty() {
+        lexical_branches.push((
+            Occur::Should,
+            Box::new(text_branch(
+                &jieba_tokens,
+                fields.content_zh,
+                fields.question_title_zh,
+            )) as Box<dyn Query>,
+        ));
     }
+    if !default_tokens.is_empty() {
+        lexical_branches.push((
+            Occur::Should,
+            Box::new(text_branch(
+                &default_tokens,
+                fields.content_en,
+                fields.question_title_en,
+            )) as Box<dyn Query>,
+        ));
+    }
+    if lexical_branches.is_empty() {
+        return Err("conversation search query has no searchable terms".to_string());
+    }
+    clauses.push((Occur::Must, Box::new(BooleanQuery::new(lexical_branches))));
+    let normalized = query.trim().to_lowercase();
+    if (2..=15).contains(&normalized.chars().count()) {
+        clauses.push(text_should_clause(
+            fields.question_title_ngram,
+            &normalized,
+            0.6,
+        ));
+    }
+    Ok(BooleanQuery::new(clauses))
+}
+
+fn tokens_for(index: &Index, tokenizer_name: &str, query: &str) -> AppResult<Vec<String>> {
+    let mut tokens = BTreeSet::new();
+    let mut analyzer = index
+        .tokenizers()
+        .get(tokenizer_name)
+        .ok_or_else(|| format!("missing conversation tokenizer: {tokenizer_name}"))?;
+    let mut stream = analyzer.token_stream(query);
+    while stream.advance() {
+        let text = stream.token().text.trim().to_lowercase();
+        if !text.is_empty() {
+            tokens.insert(text);
+        }
+    }
+    Ok(tokens.into_iter().collect())
 }
 
 fn exact_clause(field: tantivy::schema::Field, value: &str) -> (Occur, Box<dyn Query>) {
@@ -347,8 +465,7 @@ mod tests {
                 .expect("count Chinese term"),
             1
         );
-        assert!(index
-            .tokens_for(JIEBA_TOKENIZER, "全文搜索")
+        assert!(tokens_for(&index.index, JIEBA_TOKENIZER, "全文搜索")
             .expect("tokenize Chinese query")
             .iter()
             .any(|token| token == "全文"));
@@ -360,6 +477,9 @@ mod tests {
                 card_types: vec!["question".to_string()],
                 limit: 20,
                 offset: 0,
+                adapter_id: None,
+                source_id: None,
+                project_path: None,
             })
             .expect("search Chinese card");
         assert_eq!(chinese.total_count, 1);
@@ -373,6 +493,9 @@ mod tests {
                 card_types: vec!["question".to_string()],
                 limit: 20,
                 offset: 0,
+                adapter_id: None,
+                source_id: None,
+                project_path: None,
             })
             .expect("filter web cards");
         assert_eq!(filtered.total_count, 0);

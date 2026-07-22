@@ -23,14 +23,18 @@ pub(super) struct ConversationSearchSchema {
     pub(super) adapter_id: Field,
     pub(super) source_id: Field,
     pub(super) project_path: Field,
+    #[allow(dead_code)]
     pub(super) session_title_zh: Field,
+    #[allow(dead_code)]
     pub(super) session_title_en: Field,
+    #[allow(dead_code)]
     pub(super) session_title_ngram: Field,
     pub(super) question_title_zh: Field,
     pub(super) question_title_en: Field,
     pub(super) question_title_ngram: Field,
     pub(super) content_zh: Field,
     pub(super) content_en: Field,
+    #[allow(dead_code)]
     pub(super) code_command: Field,
 }
 

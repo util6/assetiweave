@@ -3093,6 +3093,31 @@
               "null"
             ]
           },
+          "search_options": {
+            "aliases": [
+              "searchOptions"
+            ],
+            "description": "Optional retrieval settings",
+            "properties": {
+              "retrieval_mode": {
+                "default": null,
+                "enum": [
+                  "lexical",
+                  "semantic",
+                  "hybrid",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "since": {
             "description": "Only include sessions on or after this RFC3339 timestamp or YYYY-MM-DD date",
             "type": [
@@ -3148,6 +3173,25 @@
         "type": "object"
       },
       "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.search.index.rebuild",
+      "cli": "assetiweave-cli conversation search index rebuild",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Rebuild the derived local conversation search index",
+      "exposure": "friendly",
+      "method": "conversation.search.index.rebuild",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "write",
       "since": "0.1.0",
       "supports_dry_run": false
     },
@@ -8414,6 +8458,31 @@
               "null"
             ]
           },
+          "search_options": {
+            "aliases": [
+              "searchOptions"
+            ],
+            "description": "Optional retrieval settings",
+            "properties": {
+              "retrieval_mode": {
+                "default": null,
+                "enum": [
+                  "lexical",
+                  "semantic",
+                  "hybrid",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "since": {
             "description": "Only include sessions on or after this RFC3339 timestamp or YYYY-MM-DD date",
             "type": [
@@ -9197,6 +9266,7 @@
     "conversation.session.list",
     "conversation.search",
     "conversation.search.index.status",
+    "conversation.search.index.rebuild",
     "conversation.session.get",
     "conversation.session.export",
     "conversation.web-record.list",

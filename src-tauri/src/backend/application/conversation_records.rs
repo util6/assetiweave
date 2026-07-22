@@ -1,5 +1,18 @@
 use super::prelude::*;
 
+fn conversation_search_card_type_label(
+    card_type: &crate::backend::dto::ConversationSearchCardType,
+) -> &'static str {
+    match card_type {
+        crate::backend::dto::ConversationSearchCardType::Question => "question",
+        crate::backend::dto::ConversationSearchCardType::Answer => "answer",
+        crate::backend::dto::ConversationSearchCardType::Tool => "tool",
+        crate::backend::dto::ConversationSearchCardType::Command => "command",
+        crate::backend::dto::ConversationSearchCardType::Code => "code",
+        crate::backend::dto::ConversationSearchCardType::Result => "result",
+    }
+}
+
 impl AppService {
     pub(crate) fn list_conversation_sessions(
         &self,
@@ -103,6 +116,22 @@ impl AppService {
         if query.is_empty() {
             return Err("conversation search query is required".to_string());
         }
+        if let Some(mode) = params
+            .search_options
+            .as_ref()
+            .and_then(|options| options.retrieval_mode)
+        {
+            if mode != crate::backend::dto::SearchRetrievalMode::Lexical {
+                return Err(format!(
+                    "conversation search retrieval mode {} is not supported; supported modes: lexical",
+                    match mode {
+                        crate::backend::dto::SearchRetrievalMode::Lexical => "lexical",
+                        crate::backend::dto::SearchRetrievalMode::Semantic => "semantic",
+                        crate::backend::dto::SearchRetrievalMode::Hybrid => "hybrid",
+                    }
+                ));
+            }
+        }
         let (record_kind_label, record_kind) =
             normalize_conversation_record_kind(params.record_kind.as_deref())?;
         let limit = params.limit.unwrap_or(50).clamp(1, 500);
@@ -123,24 +152,92 @@ impl AppService {
         let until = params.until.clone();
         let timeline = params.timeline;
         let search_project_path = project_path.clone();
-        let page = self.db.block_on(async move {
-            crate::backend::store::search_conversation_cards_sqlx(
-                &pool,
+        let indexed_page = if since.is_none() && until.is_none() && !timeline {
+            let card_types = content_types
+                .iter()
+                .map(conversation_search_card_type_label)
+                .map(str::to_string)
+                .collect();
+            crate::backend::search::conversation::search_ready_conversation_index(
+                &self.db,
+                &self.db_path,
                 &tenant_id,
-                record_kind,
-                adapter_id.as_deref(),
-                source_id.as_deref(),
-                search_project_path.as_deref(),
-                &search_query,
-                &content_types,
-                since.as_deref(),
-                until.as_deref(),
-                timeline,
+                search_query.clone(),
+                record_kind_label.clone(),
+                card_types,
+                adapter_id.clone(),
+                source_id.clone(),
+                search_project_path.clone(),
                 limit,
                 offset,
             )
-            .await
-        })?;
+            .ok()
+            .flatten()
+        } else {
+            None
+        };
+        let (page, backend) = if let Some(matches) = indexed_page {
+            let hydrate_pool = pool.clone();
+            let hydrate_tenant = tenant_id.clone();
+            let hydrate_adapter = adapter_id.clone();
+            let hydrate_source = source_id.clone();
+            let hydrate_query = search_query.clone();
+            match self.db.block_on(async move {
+                crate::backend::store::hydrate_conversation_search_matches_sqlx(
+                    &hydrate_pool,
+                    &hydrate_tenant,
+                    record_kind,
+                    hydrate_adapter.as_deref(),
+                    hydrate_source.as_deref(),
+                    &hydrate_query,
+                    matches,
+                )
+                .await
+            }) {
+                Ok(page) => (page, "tantivy"),
+                Err(_) => {
+                    let page = self.db.block_on(async move {
+                        crate::backend::store::search_conversation_cards_sqlx(
+                            &pool,
+                            &tenant_id,
+                            record_kind,
+                            adapter_id.as_deref(),
+                            source_id.as_deref(),
+                            search_project_path.as_deref(),
+                            &search_query,
+                            &content_types,
+                            since.as_deref(),
+                            until.as_deref(),
+                            timeline,
+                            limit,
+                            offset,
+                        )
+                        .await
+                    })?;
+                    (page, "legacy_scan")
+                }
+            }
+        } else {
+            let page = self.db.block_on(async move {
+                crate::backend::store::search_conversation_cards_sqlx(
+                    &pool,
+                    &tenant_id,
+                    record_kind,
+                    adapter_id.as_deref(),
+                    source_id.as_deref(),
+                    search_project_path.as_deref(),
+                    &search_query,
+                    &content_types,
+                    since.as_deref(),
+                    until.as_deref(),
+                    timeline,
+                    limit,
+                    offset,
+                )
+                .await
+            })?;
+            (page, "legacy_scan")
+        };
         Ok(ConversationSearchResult {
             query: query.to_string(),
             record_kind: record_kind_label.clone(),
@@ -159,6 +256,7 @@ impl AppService {
             },
             total_count: page.total_count,
             hits: page.hits,
+            backend: backend.to_string(),
         })
     }
 

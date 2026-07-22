@@ -84,8 +84,18 @@ pub(crate) struct ConversationSearchIndexStatus {
     pub(crate) last_error: Option<String>,
     pub(crate) lease_owner: Option<String>,
     pub(crate) lease_expires_at: Option<String>,
+    pub(crate) is_rebuilding: bool,
     pub(crate) updated_at: String,
     pub(crate) supported_modes: Vec<SearchRetrievalMode>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct ConversationSearchIndexRebuildReport {
+    pub(crate) generation: String,
+    pub(crate) indexed_revision: i64,
+    pub(crate) document_count: i64,
+    pub(crate) size_bytes: i64,
+    pub(crate) duration_ms: u64,
 }
 
 #[derive(

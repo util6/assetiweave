@@ -1,5 +1,6 @@
-// Removed once the first AppService search path consumes the foundation module.
-#![allow(dead_code)]
-
 mod engine;
+mod lifecycle;
 mod schema;
+
+pub(crate) use engine::ConversationSearchMatches;
+pub(crate) use lifecycle::{rebuild_conversation_search_index, search_ready_conversation_index};

@@ -56,6 +56,8 @@ const (
 	MethodConversationSync                    = "conversation.sync"
 	MethodConversationSessionList             = "conversation.session.list"
 	MethodConversationSearch                  = "conversation.search"
+	MethodConversationSearchIndexStatus       = "conversation.search.index.status"
+	MethodConversationSearchIndexRebuild      = "conversation.search.index.rebuild"
 	MethodConversationSessionGet              = "conversation.session.get"
 	MethodConversationSessionExport           = "conversation.session.export"
 	MethodConversationWebRecordList           = "conversation.web-record.list"
