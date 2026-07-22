@@ -67,6 +67,22 @@ describe("app route resolution", () => {
     ).toBe("prompts-overview");
   });
 
+  it.each(["overview", "dreams", "recall", "library"])(
+    "routes the memory %s entry to the independent memory module",
+    (activeSubNavId) => {
+      expect(
+        resolveAppRoute(
+          {
+            ...fallbackNavigationModel,
+            activeHeaderTabId: "memory",
+            activeSubNavId,
+          },
+          activeSubNavId,
+        ),
+      ).toBe("memory");
+    },
+  );
+
   it("does not route retired conversation source and adapter tabs to the conversations page", () => {
     expect(
       resolveAppRoute(

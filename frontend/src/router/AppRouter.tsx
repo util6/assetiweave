@@ -285,7 +285,7 @@ export function AppRouter() {
                 refreshingMountStatus={catalog.refreshingMountStatus}
               />
             </Suspense>
-          ) : routeId === "under-construction" ? (
+          ) : routeId === "memory" || routeId === "under-construction" ? (
             <UnderConstructionPage featureLabel={underConstructionFeatureLabel} onManualOpen={openCurrentManual} routeKey={activeRouteKey} />
           ) : (
             <Suspense fallback={<RouteLoadingState />}>

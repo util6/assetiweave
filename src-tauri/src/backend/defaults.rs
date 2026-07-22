@@ -164,6 +164,7 @@ pub(crate) fn default_navigation_model() -> NavigationModel {
             header_tab("rules", "Rules", Some("rule")),
             header_tab("profiles", "Profiles", Some("profile")),
             header_tab("conversations", "Conversations", None),
+            header_tab("memory", "Memory", None),
         ],
         sub_nav_items: BTreeMap::from([
             (
@@ -212,6 +213,15 @@ pub(crate) fn default_navigation_model() -> NavigationModel {
                 vec![
                     sub_nav("sessions", "Session 浏览", "conversations.sessions"),
                     sub_nav("web-records", "网页记录浏览", "conversations.web-records"),
+                ],
+            ),
+            (
+                "memory".to_string(),
+                vec![
+                    sub_nav("overview", "今日 / 继续工作", "memory.overview"),
+                    sub_nav("dreams", "自动 Dream", "memory.dreams"),
+                    sub_nav("recall", "深度回忆", "memory.recall"),
+                    sub_nav("library", "Memory 库", "memory.library"),
                 ],
             ),
         ]),
@@ -265,7 +275,31 @@ fn sub_nav(id: &str, label: &str, route_key: &str) -> SubNavItem {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_profiles, default_sources_for_tenant};
+    use super::{default_navigation_model, default_profiles, default_sources_for_tenant};
+
+    #[test]
+    fn memory_is_an_independent_default_navigation_module() {
+        let navigation = default_navigation_model();
+        let memory = navigation
+            .header_tabs
+            .iter()
+            .find(|tab| tab.id == "memory")
+            .expect("memory header tab");
+
+        assert_eq!(memory.asset_kind, None);
+        assert_eq!(
+            navigation.sub_nav_items["memory"]
+                .iter()
+                .map(|item| item.route_key.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "memory.overview",
+                "memory.dreams",
+                "memory.recall",
+                "memory.library",
+            ]
+        );
+    }
 
     #[test]
     fn opencode_default_profile_uses_config_skills_path() {

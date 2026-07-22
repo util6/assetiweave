@@ -43,6 +43,7 @@ const headerLabelKeys: Partial<Record<string, TranslationKey>> = {
   rules: "nav.header.rules",
   profiles: "nav.header.profiles",
   conversations: "nav.header.conversations",
+  memory: "nav.header.memory",
 };
 
 const headerDefaultLabels: Partial<Record<string, string[]>> = {
@@ -52,6 +53,7 @@ const headerDefaultLabels: Partial<Record<string, string[]>> = {
   rules: ["Rules", "规则"],
   profiles: ["Profiles", "目标配置"],
   conversations: ["Conversations", "对话记录"],
+  memory: ["Memory", "记忆"],
 };
 
 const subNavLabelKeys: Partial<Record<string, TranslationKey>> = {
@@ -73,6 +75,10 @@ const subNavLabelKeys: Partial<Record<string, TranslationKey>> = {
   "profiles.plans": "nav.sub.profiles.plans",
   "conversations.sessions": "nav.sub.conversations.sessions",
   "conversations.web-records": "nav.sub.conversations.webRecords",
+  "memory.overview": "nav.sub.memory.overview",
+  "memory.dreams": "nav.sub.memory.dreams",
+  "memory.recall": "nav.sub.memory.recall",
+  "memory.library": "nav.sub.memory.library",
 };
 
 const subNavDefaultLabels: Partial<Record<string, string[]>> = {
@@ -94,6 +100,10 @@ const subNavDefaultLabels: Partial<Record<string, string[]>> = {
   "profiles.plans": ["Deployment Plans", "部署计划"],
   "conversations.sessions": ["Sessions", "Session 浏览"],
   "conversations.web-records": ["Web Records", "网页记录浏览"],
+  "memory.overview": ["Today / Continue", "今日 / 继续工作"],
+  "memory.dreams": ["Dreams", "自动 Dream"],
+  "memory.recall": ["Recall", "深度回忆"],
+  "memory.library": ["Library", "Memory 库"],
 };
 
 export function railLabel(item: RailMenuItem, t: Translator, locale: Locale) {

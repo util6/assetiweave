@@ -314,4 +314,48 @@ mod tests {
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
     }
+
+    #[test]
+    fn existing_navigation_gains_memory_without_overwriting_custom_labels() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-navigation-memory-upgrade-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let defaults = crate::backend::defaults::default_navigation_model();
+        let mut legacy = defaults.clone();
+        legacy.header_tabs.retain(|tab| tab.id != "memory");
+        legacy.sub_nav_items.remove("memory");
+        legacy.header_tabs[0].label = "My Skills".to_string();
+        legacy.header_tabs[0].labels = Some(LocalizedNavigationLabels {
+            zh: Some("我的技能".to_string()),
+            en: Some("My Skills".to_string()),
+        });
+
+        let loaded = database
+            .block_on(async {
+                save_navigation_model_sqlx(database.pool(), "default", &legacy).await?;
+                ensure_navigation_model_items_sqlx(database.pool(), "default", &defaults).await?;
+                load_navigation_model_sqlx(database.pool(), "default").await
+            })
+            .expect("upgrade navigation model");
+
+        let skills = loaded
+            .header_tabs
+            .iter()
+            .find(|tab| tab.id == "skills")
+            .expect("skills header tab");
+        assert_eq!(skills.label, "My Skills");
+        assert_eq!(
+            skills.labels.as_ref().and_then(|labels| labels.zh.as_deref()),
+            Some("我的技能")
+        );
+        assert!(loaded.header_tabs.iter().any(|tab| tab.id == "memory"));
+        assert_eq!(loaded.sub_nav_items["memory"].len(), 4);
+
+        drop(database);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
 }

@@ -15,6 +15,7 @@ export const navigationModel: NavigationModel = {
     { id: "rules", label: "Rules", assetKind: "rule", enabled: true },
     { id: "profiles", label: "Profiles", assetKind: "profile", enabled: true },
     { id: "conversations", label: "Conversations", enabled: true },
+    { id: "memory", label: "Memory", enabled: true },
   ],
   subNavItems: {
     skills: [
@@ -46,6 +47,12 @@ export const navigationModel: NavigationModel = {
     conversations: [
       { id: "sessions", label: "Sessions", routeKey: "conversations.sessions", enabled: true },
       { id: "web-records", label: "Web Records", routeKey: "conversations.web-records", enabled: true },
+    ],
+    memory: [
+      { id: "overview", label: "Today / Continue", routeKey: "memory.overview", enabled: true },
+      { id: "dreams", label: "Dreams", routeKey: "memory.dreams", enabled: true },
+      { id: "recall", label: "Recall", routeKey: "memory.recall", enabled: true },
+      { id: "library", label: "Library", routeKey: "memory.library", enabled: true },
     ],
   },
 };

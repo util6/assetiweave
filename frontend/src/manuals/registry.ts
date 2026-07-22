@@ -1228,6 +1228,138 @@ export const manualDocuments = [
       ],
     },
   ),
+  manual(
+    "memory.overview",
+    {
+      title: "Memory 总览使用手册",
+      subtitle: "查看近期进展、待继续事项和候选",
+      overview: "Memory 总览是本地确定性聚合入口；打开页面不会自动调用 AI，也不会把 Dream 内容自动晋升为正式 Memory。",
+      sections: [
+        {
+          heading: "当前可用",
+          items: [
+            "当前先提供独立导航和架构说明，数据聚合会在 Memory Library 与 Dream 工作流落地后接入。",
+            "后续总览会集中显示 follow-up、最近 Dream、已确认决定、待审核候选和 freshness 提示。",
+            "任何外部 AI 调用都必须由明确设置或手动操作触发。",
+          ],
+        },
+      ],
+    },
+    {
+      title: "Memory Overview Manual",
+      subtitle: "Review recent progress, follow-ups, and candidates",
+      overview: "Memory Overview is a deterministic local aggregation surface; opening it never calls AI or promotes Dream content into formal Memory.",
+      sections: [
+        {
+          heading: "Available now",
+          items: [
+            "The independent route and architecture guidance are available while Library and Dream workflows are implemented.",
+            "The finished overview will combine follow-ups, recent Dreams, confirmed decisions, review candidates, and freshness notices.",
+            "External AI execution always requires an explicit setting or manual action.",
+          ],
+        },
+      ],
+    },
+  ),
+  manual(
+    "memory.dreams",
+    {
+      title: "Dreams 使用手册",
+      subtitle: "检查门禁并整理稳定的对话增量",
+      overview: "Dreams 用于预览和运行轻量增量整理；Dream Note 是带证据的近期线索，不是自动确认的正式 Memory。",
+      sections: [
+        {
+          heading: "当前可用",
+          items: [
+            "Dream 工作流仍在建设中，当前入口不会启动 AI 进程。",
+            "完成后可查看 Time、Session、Lock gate，预览将读取的范围并手动运行。",
+            "提升 Dream 时会生成可审核 candidate，原始 Note 继续保留用于审计。",
+          ],
+        },
+      ],
+    },
+    {
+      title: "Dreams Manual",
+      subtitle: "Inspect gates and organize stable conversation deltas",
+      overview: "Dreams previews and runs lightweight incremental organization; a Dream Note is cited recent-work guidance, not automatically confirmed formal Memory.",
+      sections: [
+        {
+          heading: "Available now",
+          items: [
+            "The Dream workflow is under construction and this entry does not start an AI process yet.",
+            "The completed page will explain Time, Session, and Lock gates, preview the evidence range, and allow manual runs.",
+            "Promotion creates reviewable candidates while preserving the original Note as an audit record.",
+          ],
+        },
+      ],
+    },
+  ),
+  manual(
+    "memory.recall",
+    {
+      title: "深度回忆使用手册",
+      subtitle: "从本地证据渐进展开并进行双阶段整理",
+      overview: "深度回忆区分精准回忆和完整整理；本地 evidence preview 不调用 AI，综合结果必须保留 Card 引用与覆盖说明。",
+      sections: [
+        {
+          heading: "当前可用",
+          items: [
+            "Recall 工作流仍在建设中，当前入口不会执行模型调用或写入 candidate。",
+            "精准模式将按 Card、Question、Session 渐进扩展，完整模式按显式 scope 分页覆盖。",
+            "需要 AI 综合时会经过持久化 Phase 1 和 scope 加锁的 Phase 2，而不是一次性总结全库。",
+          ],
+        },
+      ],
+    },
+    {
+      title: "Deep Recall Manual",
+      subtitle: "Expand local evidence progressively and consolidate in two phases",
+      overview: "Deep Recall separates precise recall from full organization; local evidence previews do not call AI, and synthesized results retain Card citations and coverage disclosure.",
+      sections: [
+        {
+          heading: "Available now",
+          items: [
+            "The Recall workflow is under construction and this entry does not call a model or write candidates yet.",
+            "Precise mode expands Card, Question, then Session; full mode paginates an explicitly selected scope.",
+            "AI synthesis uses persisted Phase 1 batches and scope-locked Phase 2 consolidation instead of one full-database summary.",
+          ],
+        },
+      ],
+    },
+  ),
+  manual(
+    "memory.library",
+    {
+      title: "Memory 库使用手册",
+      subtitle: "管理正式 Memory、候选和历史版本",
+      overview: "Memory Library 只把手工创建或用户明确接受的 candidate 视为正式内容，并保留 evidence、revision、freshness 和 supersedes 历史。",
+      sections: [
+        {
+          heading: "当前可用",
+          items: [
+            "Library 数据闭环仍在建设中，当前入口不会创建或修改记录。",
+            "完成后可按 scope、kind、status、origin、时间和 stale 状态筛选，并编辑或拒绝 candidate。",
+            "归档、完成 follow-up、编辑和 supersedes 确认都会产生 revision。",
+          ],
+        },
+      ],
+    },
+    {
+      title: "Memory Library Manual",
+      subtitle: "Manage formal Memory, candidates, and revision history",
+      overview: "Memory Library treats only manually created or explicitly accepted candidates as formal content and preserves evidence, revision, freshness, and supersedes history.",
+      sections: [
+        {
+          heading: "Available now",
+          items: [
+            "The Library data loop is under construction and this entry does not create or mutate records yet.",
+            "The completed page will filter by scope, kind, status, origin, time, and stale state and support editing or rejecting candidates.",
+            "Archiving, completing a follow-up, editing, and confirming supersedes all create revisions.",
+          ],
+        },
+      ],
+    },
+  ),
 ];
 
 const manualByRouteKey = new Map(manualDocuments.map((document) => [document.routeKey, document]));
