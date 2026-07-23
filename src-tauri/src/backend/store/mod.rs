@@ -60,7 +60,7 @@ pub(crate) use group_repo::{
 };
 pub(crate) use memory_repo::{
     create_memory_item_sqlx, list_memory_items_sqlx, load_memory_item_detail_sqlx,
-    upsert_memory_evidence_snapshot_sqlx,
+    update_memory_item_sqlx, upsert_memory_evidence_snapshot_sqlx,
 };
 pub(crate) use menu_repo::{load_navigation_model_sqlx, save_navigation_model_sqlx};
 #[cfg(test)]

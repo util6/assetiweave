@@ -308,6 +308,171 @@ pub(crate) async fn list_memory_items_sqlx(
     rows.iter().map(map_memory_item).collect()
 }
 
+pub(crate) async fn update_memory_item_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    item: &MemoryItem,
+    evidence_ids: Option<&[String]>,
+    change_kind: MemoryRevisionChangeKind,
+) -> AppResult<MemoryItemDetail> {
+    validate_item_values(
+        &item.title,
+        &item.content_markdown,
+        item.source_revision,
+        item.verified_revision,
+        item.confidence,
+    )?;
+    let scope_json = encode_json(&item.scope)?;
+    let scope_fingerprint = item.scope.fingerprint()?;
+    let kind = encode_enum(item.kind)?;
+    let status = encode_enum(item.status)?;
+    let origin = encode_enum(item.origin)?;
+    let stale_reason = encode_optional_enum(item.stale_reason)?;
+    let now = Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+
+    let result = sqlx::query(
+        r#"
+        UPDATE memory_items
+        SET kind = ?3,
+            status = ?4,
+            title = ?5,
+            content_markdown = ?6,
+            scope_json = ?7,
+            scope_fingerprint = ?8,
+            origin = ?9,
+            origin_run_id = ?10,
+            origin_dream_note_id = ?11,
+            origin_extraction_id = ?12,
+            confidence = ?13,
+            supersedes_item_id = ?14,
+            source_revision = ?15,
+            verified_revision = ?16,
+            stale_reason = ?17,
+            updated_at = ?18
+        WHERE tenant_id = ?1 AND id = ?2
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(&item.id)
+    .bind(&kind)
+    .bind(&status)
+    .bind(item.title.trim())
+    .bind(item.content_markdown.trim())
+    .bind(&scope_json)
+    .bind(&scope_fingerprint)
+    .bind(&origin)
+    .bind(&item.origin_run_id)
+    .bind(&item.origin_dream_note_id)
+    .bind(&item.origin_extraction_id)
+    .bind(item.confidence)
+    .bind(&item.supersedes_item_id)
+    .bind(item.source_revision)
+    .bind(item.verified_revision)
+    .bind(&stale_reason)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    if result.rows_affected() != 1 {
+        return Err(format!("memory item {} was not found", item.id));
+    }
+
+    let revision_number = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COALESCE(MAX(revision_number), 0) + 1
+        FROM memory_item_revisions
+        WHERE tenant_id = ?1 AND item_id = ?2
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(&item.id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query(
+        r#"
+        INSERT INTO memory_item_revisions (
+            tenant_id, id, item_id, revision_number, change_kind, kind,
+            status, title, content_markdown, scope_json, scope_fingerprint,
+            origin, confidence, supersedes_item_id, source_revision,
+            verified_revision, stale_reason, changed_at
+        ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+            ?14, ?15, ?16, ?17, ?18
+        )
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(Uuid::new_v4().to_string())
+    .bind(&item.id)
+    .bind(revision_number)
+    .bind(encode_enum(change_kind)?)
+    .bind(&kind)
+    .bind(&status)
+    .bind(item.title.trim())
+    .bind(item.content_markdown.trim())
+    .bind(&scope_json)
+    .bind(&scope_fingerprint)
+    .bind(&origin)
+    .bind(item.confidence)
+    .bind(&item.supersedes_item_id)
+    .bind(item.source_revision)
+    .bind(item.verified_revision)
+    .bind(&stale_reason)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+
+    if let Some(evidence_ids) = evidence_ids {
+        sqlx::query("DELETE FROM memory_item_evidence WHERE tenant_id = ?1 AND item_id = ?2")
+            .bind(tenant_id)
+            .bind(&item.id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?;
+
+        let mut seen = HashSet::new();
+        for (sort_order, evidence_id) in evidence_ids
+            .iter()
+            .filter(|id| seen.insert((*id).clone()))
+            .enumerate()
+        {
+            let result = sqlx::query(
+                r#"
+                INSERT INTO memory_item_evidence (
+                    tenant_id, item_id, evidence_id, sort_order
+                )
+                SELECT ?1, ?2, ?3, ?4
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM memory_evidence_snapshots
+                    WHERE tenant_id = ?1 AND id = ?3
+                )
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(&item.id)
+            .bind(evidence_id)
+            .bind(sort_order as i64)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?;
+            if result.rows_affected() != 1 {
+                return Err(format!(
+                    "memory evidence {evidence_id} was not found for tenant {tenant_id}"
+                ));
+            }
+        }
+    }
+
+    tx.commit().await.map_err(|error| error.to_string())?;
+    load_memory_item_detail_sqlx(pool, tenant_id, &item.id)
+        .await?
+        .ok_or_else(|| format!("updated memory item {} was not found", item.id))
+}
+
 fn push_enum_filter<T: serde::Serialize + Copy>(
     query: &mut QueryBuilder<Sqlite>,
     column: &str,
@@ -414,22 +579,32 @@ fn validate_evidence(draft: &NewMemoryEvidenceSnapshot) -> AppResult<()> {
 }
 
 fn validate_new_item(draft: &NewMemoryItem) -> AppResult<()> {
-    if draft.title.trim().is_empty() {
+    validate_item_values(
+        &draft.title,
+        &draft.content_markdown,
+        draft.source_revision,
+        draft.verified_revision,
+        draft.confidence,
+    )
+}
+
+fn validate_item_values(
+    title: &str,
+    content_markdown: &str,
+    source_revision: i64,
+    verified_revision: i64,
+    confidence: Option<f64>,
+) -> AppResult<()> {
+    if title.trim().is_empty() {
         return Err("memory item title is required".to_string());
     }
-    if draft.content_markdown.trim().is_empty() {
+    if content_markdown.trim().is_empty() {
         return Err("memory item content is required".to_string());
     }
-    if draft.source_revision < 0
-        || draft.verified_revision < 0
-        || draft.verified_revision > draft.source_revision
-    {
+    if source_revision < 0 || verified_revision < 0 || verified_revision > source_revision {
         return Err("memory item revisions are invalid".to_string());
     }
-    if draft
-        .confidence
-        .is_some_and(|confidence| !(0.0..=1.0).contains(&confidence))
-    {
+    if confidence.is_some_and(|confidence| !(0.0..=1.0).contains(&confidence)) {
         return Err("memory item confidence must be between 0 and 1".to_string());
     }
     Ok(())
@@ -577,6 +752,103 @@ mod tests {
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Stale decision");
+        cleanup(database, &db_path);
+    }
+
+    #[test]
+    fn memory_repo_accepts_candidate_with_evidence_and_revision_atomically() {
+        let (database, db_path) = test_database("candidate-accept");
+        let detail = database
+            .block_on(async {
+                let evidence = upsert_memory_evidence_snapshot_sqlx(
+                    database.pool(),
+                    "default",
+                    &test_evidence(),
+                )
+                .await?;
+                let mut candidate = test_item();
+                candidate.status = MemoryItemStatus::Candidate;
+                let created = create_memory_item_sqlx(
+                    database.pool(),
+                    "default",
+                    &candidate,
+                    std::slice::from_ref(&evidence.id),
+                )
+                .await?;
+                let mut accepted = created.item;
+                accepted.status = MemoryItemStatus::Active;
+                update_memory_item_sqlx(
+                    database.pool(),
+                    "default",
+                    &accepted,
+                    Some(&[evidence.id]),
+                    MemoryRevisionChangeKind::Accept,
+                )
+                .await
+            })
+            .expect("accept candidate");
+
+        assert_eq!(detail.item.status, MemoryItemStatus::Active);
+        assert_eq!(detail.evidence.len(), 1);
+        assert_eq!(detail.revisions.len(), 2);
+        assert_eq!(
+            detail.revisions[0].change_kind,
+            MemoryRevisionChangeKind::Accept
+        );
+        cleanup(database, &db_path);
+    }
+
+    #[test]
+    fn memory_repo_rolls_back_update_when_replacement_evidence_crosses_tenant() {
+        let (database, db_path) = test_database("update-tenant-boundary");
+        let detail = database
+            .block_on(async {
+                sqlx::query(
+                    "INSERT INTO tenants (id, slug, name, kind, status, created_at, updated_at) VALUES ('tenant-b', 'tenant-b', 'Tenant B', 'local_workspace', 'active', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                )
+                .execute(database.pool())
+                .await
+                .map_err(|error| error.to_string())?;
+                let default_evidence = upsert_memory_evidence_snapshot_sqlx(
+                    database.pool(),
+                    "default",
+                    &test_evidence(),
+                )
+                .await?;
+                let tenant_b_evidence = upsert_memory_evidence_snapshot_sqlx(
+                    database.pool(),
+                    "tenant-b",
+                    &test_evidence(),
+                )
+                .await?;
+                let created = create_memory_item_sqlx(
+                    database.pool(),
+                    "default",
+                    &test_item(),
+                    &[default_evidence.id],
+                )
+                .await?;
+                let item_id = created.item.id.clone();
+                let mut changed = created.item;
+                changed.title = "Must roll back".to_string();
+                update_memory_item_sqlx(
+                    database.pool(),
+                    "default",
+                    &changed,
+                    Some(&[tenant_b_evidence.id]),
+                    MemoryRevisionChangeKind::Update,
+                )
+                .await
+                .expect_err("cross-tenant replacement evidence must fail");
+                load_memory_item_detail_sqlx(database.pool(), "default", &item_id)
+                    .await?
+                    .ok_or_else(|| "memory item disappeared".to_string())
+            })
+            .expect("verify update rollback");
+
+        assert_eq!(detail.item.title, test_item().title);
+        assert_eq!(detail.evidence.len(), 1);
+        assert_eq!(detail.revisions.len(), 1);
         cleanup(database, &db_path);
     }
 
