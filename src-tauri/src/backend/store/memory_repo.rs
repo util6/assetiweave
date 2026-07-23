@@ -286,16 +286,7 @@ pub(crate) async fn list_memory_items_sqlx(
         "SELECT {MEMORY_ITEM_COLUMNS} FROM memory_items WHERE tenant_id = "
     ));
     query.push_bind(tenant_id);
-    push_enum_filter(&mut query, "kind", &filter.kinds)?;
-    push_enum_filter(&mut query, "status", &filter.statuses)?;
-    push_enum_filter(&mut query, "origin", &filter.origins)?;
-    if let Some(scope_fingerprint) = filter.scope_fingerprint.as_deref() {
-        query.push(" AND scope_fingerprint = ");
-        query.push_bind(scope_fingerprint);
-    }
-    if filter.stale_only {
-        query.push(" AND stale_reason IS NOT NULL");
-    }
+    push_memory_item_filter(&mut query, filter)?;
     query.push(" ORDER BY updated_at DESC, id ASC LIMIT ");
     query.push_bind(filter.limit.clamp(1, 200) as i64);
     query.push(" OFFSET ");
@@ -306,6 +297,24 @@ pub(crate) async fn list_memory_items_sqlx(
         .await
         .map_err(|error| error.to_string())?;
     rows.iter().map(map_memory_item).collect()
+}
+
+pub(crate) async fn count_memory_items_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    filter: &MemoryItemFilter,
+) -> AppResult<usize> {
+    let mut query =
+        QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM memory_items WHERE tenant_id = ");
+    query.push_bind(tenant_id);
+    push_memory_item_filter(&mut query, filter)?;
+    let row = query
+        .build()
+        .fetch_one(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    let count: i64 = row.try_get(0).map_err(|error| error.to_string())?;
+    usize::try_from(count).map_err(|error| error.to_string())
 }
 
 pub(crate) async fn update_memory_item_sqlx(
@@ -487,6 +496,23 @@ fn push_enum_filter<T: serde::Serialize + Copy>(
         separated.push_bind(encode_enum(*value)?);
     }
     separated.push_unseparated(")");
+    Ok(())
+}
+
+fn push_memory_item_filter(
+    query: &mut QueryBuilder<Sqlite>,
+    filter: &MemoryItemFilter,
+) -> AppResult<()> {
+    push_enum_filter(query, "kind", &filter.kinds)?;
+    push_enum_filter(query, "status", &filter.statuses)?;
+    push_enum_filter(query, "origin", &filter.origins)?;
+    if let Some(scope_fingerprint) = filter.scope_fingerprint.as_deref() {
+        query.push(" AND scope_fingerprint = ");
+        query.push_bind(scope_fingerprint);
+    }
+    if filter.stale_only {
+        query.push(" AND stale_reason IS NOT NULL");
+    }
     Ok(())
 }
 

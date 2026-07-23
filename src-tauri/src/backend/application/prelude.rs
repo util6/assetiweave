@@ -6,14 +6,16 @@ pub(super) use crate::backend::{
     dto::{
         AppOverview, AppResult, AppShortcut, ApplyAssetGroupMountResult,
         ApplySkillGroupExclusiveMountResult, AssetGroupInput, AssetMountStatus,
-        AssetMountUpdateResult, CatalogAsset, ExecutionResult, NavigationModel,
+        AssetMountUpdateResult, CatalogAsset, ExecutionResult, MemoryItemPage, NavigationModel,
         SkillBackupSettings, SkillGroupExclusiveMountInput, SkillGroupExclusiveMountPreview,
         SkillRemoteSource, SourceInput, TargetProfileInput,
     },
     models::{
         Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
         ConversationAdapterPackage, ConversationSource, DeploymentPlan, DeploymentStrategy,
-        RequestContext, Source, SourceOrigin, SourceScannerKind, TargetProfile, Tenant,
+        MemoryItem, MemoryItemDetail, MemoryItemFilter, MemoryItemKind, MemoryItemOrigin,
+        MemoryItemStatus, MemoryRevisionChangeKind, MemoryScope, NewMemoryItem, RequestContext,
+        Source, SourceOrigin, SourceScannerKind, TargetProfile, Tenant,
     },
 };
 pub(super) use chrono::Utc;

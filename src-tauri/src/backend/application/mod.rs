@@ -5,6 +5,7 @@ mod conversation_adapters;
 mod conversation_records;
 mod conversation_script_catalog;
 mod conversation_search;
+mod memory;
 mod params;
 mod prelude;
 mod profiles_navigation;

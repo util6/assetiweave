@@ -49,6 +49,69 @@ pub(crate) struct IdParams {
     pub(crate) id: String,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub(crate) struct MemoryItemListParams {
+    #[serde(default)]
+    pub(crate) kinds: Vec<MemoryItemKind>,
+    #[serde(default)]
+    pub(crate) statuses: Vec<MemoryItemStatus>,
+    #[serde(default)]
+    pub(crate) origins: Vec<MemoryItemOrigin>,
+    #[serde(default)]
+    pub(crate) scope: Option<MemoryScope>,
+    #[serde(default, alias = "staleOnly")]
+    pub(crate) stale_only: bool,
+    pub(crate) limit: Option<usize>,
+    pub(crate) offset: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct MemoryItemGetParams {
+    #[serde(alias = "itemId")]
+    pub(crate) item_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct MemoryItemCreateParams {
+    pub(crate) kind: MemoryItemKind,
+    pub(crate) title: String,
+    #[serde(alias = "contentMarkdown")]
+    pub(crate) content_markdown: String,
+    #[serde(default)]
+    pub(crate) scope: MemoryScope,
+    pub(crate) confidence: Option<f64>,
+    #[serde(default, alias = "evidenceIds")]
+    pub(crate) evidence_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct MemoryItemUpdateParams {
+    #[serde(alias = "itemId")]
+    pub(crate) item_id: String,
+    pub(crate) kind: Option<MemoryItemKind>,
+    pub(crate) title: Option<String>,
+    #[serde(alias = "contentMarkdown")]
+    pub(crate) content_markdown: Option<String>,
+    pub(crate) scope: Option<MemoryScope>,
+    pub(crate) confidence: Option<f64>,
+    #[serde(alias = "evidenceIds")]
+    pub(crate) evidence_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct MemoryCandidateAcceptParams {
+    #[serde(alias = "itemId")]
+    pub(crate) item_id: String,
+    pub(crate) kind: Option<MemoryItemKind>,
+    pub(crate) title: Option<String>,
+    #[serde(alias = "contentMarkdown")]
+    pub(crate) content_markdown: Option<String>,
+    pub(crate) scope: Option<MemoryScope>,
+    pub(crate) confidence: Option<f64>,
+    #[serde(alias = "evidenceIds")]
+    pub(crate) evidence_ids: Option<Vec<String>>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct TenantCreateParams {
     pub(crate) name: String,

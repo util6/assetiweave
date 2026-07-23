@@ -1,13 +1,21 @@
 use crate::backend::models::{
     AppKind, Asset, AssetGroupRules, AssetKind, AssetMount, ConversationPart, ConversationQuestion,
-    ConversationSession, ConversationTurn, DeploymentStrategy, ProfileSafety, RuleSet, SourceKind,
-    SourceOrigin, SourceScannerKind,
+    ConversationSession, ConversationTurn, DeploymentStrategy, MemoryItem, ProfileSafety, RuleSet,
+    SourceKind, SourceOrigin, SourceScannerKind,
 };
 use crate::backend::targeting::PhysicalMountState;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub(crate) type AppResult<T> = Result<T, String>;
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct MemoryItemPage {
+    pub(crate) total_count: usize,
+    pub(crate) items: Vec<MemoryItem>,
+    pub(crate) limit: usize,
+    pub(crate) offset: usize,
+}
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct ConversationExportContentFilter {
