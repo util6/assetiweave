@@ -347,7 +347,10 @@ mod tests {
             .expect("skills header tab");
         assert_eq!(skills.label, "My Skills");
         assert_eq!(
-            skills.labels.as_ref().and_then(|labels| labels.zh.as_deref()),
+            skills
+                .labels
+                .as_ref()
+                .and_then(|labels| labels.zh.as_deref()),
             Some("我的技能")
         );
         assert!(loaded.header_tabs.iter().any(|tab| tab.id == "memory"));
