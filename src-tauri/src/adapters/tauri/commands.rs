@@ -31,8 +31,10 @@ use crate::{
         ConversationSessionExportParams, ConversationSessionGetParams,
         ConversationSessionListParams, ConversationSourceDisableParams,
         ConversationSourceUpsertParams, ConversationSyncParams, ListAssetsParams,
-        SkillAcquireParams, SkillRemoteCheckParams, SkillSearchParams, SkillSearchResult,
-        SourceRemoveParams, SourceScanParams, TenantCreateParams, UpdateSkillBackupSettingsParams,
+        MemoryCandidateAcceptParams, MemoryItemCreateParams, MemoryItemGetParams,
+        MemoryItemListParams, MemoryItemUpdateParams, SkillAcquireParams, SkillRemoteCheckParams,
+        SkillSearchParams, SkillSearchResult, SourceRemoveParams, SourceScanParams,
+        TenantCreateParams, UpdateSkillBackupSettingsParams,
     },
     backend::card_translation::{
         check_opencode_translation_availability as check_opencode_translation_availability_impl,
@@ -52,12 +54,13 @@ use crate::{
         AppOverview, AppResult, AppShortcut, ApplyAssetGroupMountResult,
         ApplySkillGroupExclusiveMountResult, AssetGroupInput, AssetMountStatus,
         AssetMountUpdateResult, CatalogAsset, ConversationSearchIndexStatus, ExecutionResult,
-        NavigationModel, SkillBackupSettings, SkillGroupExclusiveMountInput,
+        MemoryItemPage, NavigationModel, SkillBackupSettings, SkillGroupExclusiveMountInput,
         SkillGroupExclusiveMountPreview, SkillRemoteSource, SourceInput, TargetProfileInput,
     },
     backend::models::{
         Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
-        ConversationSource, DeploymentPlan, DeploymentStrategy, Source, TargetProfile, Tenant,
+        ConversationSource, DeploymentPlan, DeploymentStrategy, MemoryItemDetail, Source,
+        TargetProfile, Tenant,
     },
     backend::operation_log::{
         asset_log_fields, log_error, log_info, log_warn, profile_log_fields,
@@ -149,6 +152,123 @@ pub(crate) fn list_assets(
 ) -> AppResult<Vec<CatalogAsset>> {
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
     AppService::open_with_db_path(state.db_path.clone())?.list_assets(ListAssetsParams { kind })
+}
+
+#[tauri::command]
+pub(crate) fn list_memory_items(
+    state: State<'_, AppState>,
+    params: MemoryItemListParams,
+) -> AppResult<MemoryItemPage> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.list_memory_items(params)
+}
+
+#[tauri::command]
+pub(crate) fn get_memory_item(
+    state: State<'_, AppState>,
+    params: MemoryItemGetParams,
+) -> AppResult<MemoryItemDetail> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.get_memory_item(params)
+}
+
+#[tauri::command]
+pub(crate) fn create_memory_item(
+    state: State<'_, AppState>,
+    params: MemoryItemCreateParams,
+) -> AppResult<MemoryItemDetail> {
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.create_memory_item(params)
+    })();
+    match &result {
+        Ok(detail) => log_info(
+            "memory.item.create",
+            "创建 Memory 成功",
+            &[("item_id", detail.item.id.clone())],
+        ),
+        Err(error) => log_error("memory.item.create", "创建 Memory 失败", error, &[]),
+    }
+    result
+}
+
+#[tauri::command]
+pub(crate) fn update_memory_item(
+    state: State<'_, AppState>,
+    params: MemoryItemUpdateParams,
+) -> AppResult<MemoryItemDetail> {
+    let item_id = params.item_id.clone();
+    let fields = [("item_id", item_id.clone())];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.update_memory_item(params)
+    })();
+    match &result {
+        Ok(_) => log_info("memory.item.update", "更新 Memory 成功", &fields),
+        Err(error) => log_error("memory.item.update", "更新 Memory 失败", error, &fields),
+    }
+    result
+}
+
+#[tauri::command]
+pub(crate) fn archive_memory_item(
+    state: State<'_, AppState>,
+    params: MemoryItemGetParams,
+) -> AppResult<MemoryItemDetail> {
+    let fields = [("item_id", params.item_id.clone())];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.archive_memory_item(params)
+    })();
+    match &result {
+        Ok(_) => log_info("memory.item.archive", "归档 Memory 成功", &fields),
+        Err(error) => log_error("memory.item.archive", "归档 Memory 失败", error, &fields),
+    }
+    result
+}
+
+#[tauri::command]
+pub(crate) fn accept_memory_candidate(
+    state: State<'_, AppState>,
+    params: MemoryCandidateAcceptParams,
+) -> AppResult<MemoryItemDetail> {
+    let fields = [("item_id", params.item_id.clone())];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.accept_memory_candidate(params)
+    })();
+    match &result {
+        Ok(_) => log_info("memory.candidate.accept", "接受 Memory 候选成功", &fields),
+        Err(error) => log_error(
+            "memory.candidate.accept",
+            "接受 Memory 候选失败",
+            error,
+            &fields,
+        ),
+    }
+    result
+}
+
+#[tauri::command]
+pub(crate) fn reject_memory_candidate(
+    state: State<'_, AppState>,
+    params: MemoryItemGetParams,
+) -> AppResult<MemoryItemDetail> {
+    let fields = [("item_id", params.item_id.clone())];
+    let result = (|| {
+        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+        AppService::open_with_db_path(state.db_path.clone())?.reject_memory_candidate(params)
+    })();
+    match &result {
+        Ok(_) => log_info("memory.candidate.reject", "拒绝 Memory 候选成功", &fields),
+        Err(error) => log_error(
+            "memory.candidate.reject",
+            "拒绝 Memory 候选失败",
+            error,
+            &fields,
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -2161,6 +2281,13 @@ pub(crate) fn command_handler(
         get_app_settings,
         save_app_settings,
         list_assets,
+        list_memory_items,
+        get_memory_item,
+        create_memory_item,
+        update_memory_item,
+        archive_memory_item,
+        accept_memory_candidate,
+        reject_memory_candidate,
         get_skill_backup_settings,
         update_skill_backup_settings,
         backup_skill,
