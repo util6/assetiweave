@@ -401,6 +401,128 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli profile list")
     ),
     command!(
+        "memory.item.list",
+        "memory.item.list",
+        "List formal Memory items and review candidates with pagination",
+        Read,
+        Friendly,
+        false,
+        crate::backend::application::MemoryItemListParams,
+        Service => |service, params| service.list_memory_items(params),
+        &[
+            param!("kinds", "Optional Memory kind filters"),
+            param!("statuses", "Optional Memory status filters"),
+            param!("origins", "Optional Memory origin filters"),
+            param!("scope", "Optional exact Memory scope"),
+            param!("stale_only", "Only return stale Memory items", ["staleOnly"]),
+            param!("limit", "Maximum number of items"),
+            param!("offset", "Pagination offset"),
+        ],
+        Some("assetiweave-cli memory item list"),
+        since: "0.5.2", deprecated: false
+    ),
+    command!(
+        "memory.item.get",
+        "memory.item.get",
+        "Get one Memory item with evidence and revision history",
+        Read,
+        Friendly,
+        false,
+        crate::backend::application::MemoryItemGetParams,
+        Service => |service, params| service.get_memory_item(params),
+        &[param!("item_id", "Memory item identifier", ["itemId"])],
+        Some("assetiweave-cli memory item get <item-id>"),
+        since: "0.5.2", deprecated: false
+    ),
+    command!(
+        "memory.item.create",
+        "memory.item.create",
+        "Create a user-confirmed formal Memory item",
+        Write,
+        Friendly,
+        false,
+        crate::backend::application::MemoryItemCreateParams,
+        Service => |service, params| service.create_memory_item(params),
+        &[
+            param!("kind", "Formal Memory kind"),
+            param!("title", "Memory title"),
+            param!("content_markdown", "Memory Markdown content", ["contentMarkdown"]),
+            param!("scope", "Memory scope"),
+            param!("confidence", "Optional confidence between 0 and 1"),
+            param!("evidence_ids", "Evidence snapshot identifiers", ["evidenceIds"]),
+        ],
+        Some("assetiweave-cli memory item create"),
+        since: "0.5.2", deprecated: false
+    ),
+    command!(
+        "memory.item.update",
+        "memory.item.update",
+        "Edit a Memory item while preserving revision history",
+        Write,
+        Friendly,
+        false,
+        crate::backend::application::MemoryItemUpdateParams,
+        Service => |service, params| service.update_memory_item(params),
+        &[
+            param!("item_id", "Memory item identifier", ["itemId"]),
+            param!("kind", "Updated Memory kind"),
+            param!("title", "Updated title"),
+            param!("content_markdown", "Updated Markdown content", ["contentMarkdown"]),
+            param!("scope", "Updated Memory scope"),
+            param!("confidence", "Updated confidence between 0 and 1"),
+            param!("evidence_ids", "Replacement evidence identifiers", ["evidenceIds"]),
+        ],
+        Some("assetiweave-cli memory item update <item-id>"),
+        since: "0.5.2", deprecated: false
+    ),
+    command!(
+        "memory.item.archive",
+        "memory.item.archive",
+        "Archive a Memory item and append a status revision",
+        Write,
+        Friendly,
+        false,
+        crate::backend::application::MemoryItemGetParams,
+        Service => |service, params| service.archive_memory_item(params),
+        &[param!("item_id", "Memory item identifier", ["itemId"])],
+        Some("assetiweave-cli memory item archive <item-id>"),
+        since: "0.5.2", deprecated: false
+    ),
+    command!(
+        "memory.candidate.accept",
+        "memory.candidate.accept",
+        "Accept and optionally edit a reviewable Memory candidate",
+        Write,
+        Friendly,
+        false,
+        crate::backend::application::MemoryCandidateAcceptParams,
+        Service => |service, params| service.accept_memory_candidate(params),
+        &[
+            param!("item_id", "Candidate Memory item identifier", ["itemId"]),
+            param!("kind", "Accepted Memory kind"),
+            param!("title", "Accepted title"),
+            param!("content_markdown", "Accepted Markdown content", ["contentMarkdown"]),
+            param!("scope", "Accepted Memory scope"),
+            param!("confidence", "Accepted confidence between 0 and 1"),
+            param!("evidence_ids", "Evidence identifiers committed with acceptance", ["evidenceIds"]),
+        ],
+        Some("assetiweave-cli memory candidate accept <item-id>"),
+        since: "0.5.2", deprecated: false
+    ),
+    command!(
+        "memory.candidate.reject",
+        "memory.candidate.reject",
+        "Reject a reviewable Memory candidate",
+        Write,
+        Friendly,
+        false,
+        crate::backend::application::MemoryItemGetParams,
+        Service => |service, params| service.reject_memory_candidate(params),
+        &[param!("item_id", "Candidate Memory item identifier", ["itemId"])],
+        Some("assetiweave-cli memory candidate reject <item-id>"),
+        since: "0.5.2", deprecated: false
+    ),
+    command!(
         "asset.list",
         "asset.list",
         "List catalog assets",
@@ -3501,6 +3623,38 @@ mod tests {
                 "config_merge"
             ])
         );
+    }
+
+    #[test]
+    fn memory_item_contract_exposes_reviewable_library_workflows() {
+        for method in [
+            "memory.item.list",
+            "memory.item.get",
+            "memory.item.create",
+            "memory.item.update",
+            "memory.item.archive",
+            "memory.candidate.accept",
+            "memory.candidate.reject",
+        ] {
+            assert!(find(method).is_some(), "missing Engine method {method}");
+        }
+
+        assert_eq!(
+            find("memory.item.list").expect("list spec").risk,
+            CommandRisk::Read
+        );
+        assert_eq!(
+            find("memory.candidate.accept")
+                .expect("candidate accept spec")
+                .risk,
+            CommandRisk::Write
+        );
+        let normalized = validate_params(
+            find("memory.item.get").expect("get spec"),
+            &json!({ "itemId": "memory-id" }),
+        )
+        .expect("itemId alias should validate");
+        assert_eq!(normalized["item_id"], json!("memory-id"));
     }
 
     #[test]
