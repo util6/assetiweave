@@ -1,8 +1,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryRunKind {
     AutoDream,
@@ -111,6 +112,283 @@ pub enum MemoryRevisionChangeKind {
 pub enum MemoryEvidenceRecordKind {
     Session,
     Web,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryRecallMode {
+    #[default]
+    Exact,
+    Full,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryRecallEvidence {
+    pub reference: String,
+    pub card_type: String,
+    pub snapshot: NewMemoryEvidenceSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryRecallQuestion {
+    pub record_kind: MemoryEvidenceRecordKind,
+    pub source_id: String,
+    pub session_id: String,
+    pub session_title: String,
+    pub project_path: Option<String>,
+    pub question_id: String,
+    pub question_index: i64,
+    pub question_title: String,
+    pub evidence_ids: Vec<String>,
+    pub input_char_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MemoryRecallQuestionRef {
+    pub record_kind: MemoryEvidenceRecordKind,
+    pub source_id: String,
+    pub session_id: String,
+    pub session_title: String,
+    pub project_path: Option<String>,
+    pub question_id: String,
+    pub question_index: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryRawMemory {
+    pub kind: MemoryItemKind,
+    pub text: String,
+    pub evidence_ids: Vec<String>,
+    pub confidence: Option<f64>,
+    pub uncertainty: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryExtraction {
+    pub id: String,
+    pub run_id: String,
+    pub batch_index: usize,
+    pub raw_memories: Vec<MemoryRawMemory>,
+    pub session_summary: String,
+    pub question_count: usize,
+    pub input_char_count: usize,
+    pub evidence_count: usize,
+    pub validation_status: MemoryExtractionValidationStatus,
+    pub attempt_count: usize,
+    pub error_message: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryRecallClaim {
+    pub text: String,
+    pub evidence_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryRecallCandidate {
+    pub kind: MemoryItemKind,
+    pub title: String,
+    pub content_markdown: String,
+    pub evidence_ids: Vec<String>,
+    pub confidence: Option<f64>,
+    pub supersedes_item_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryRecallConflict {
+    pub description: String,
+    pub evidence_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryDreamTrigger {
+    Automatic,
+    #[default]
+    Manual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryDreamGateKind {
+    Enabled,
+    Runtime,
+    Time,
+    Sessions,
+    Lock,
+    Budget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryDreamGateResult {
+    pub gate: MemoryDreamGateKind,
+    pub passed: bool,
+    pub reason_code: String,
+    pub message: String,
+    pub actual: Option<i64>,
+    pub required: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryDreamCursor {
+    pub session_sort_key: String,
+    pub question_offset: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryDreamDeltaQuestion {
+    pub id: String,
+    pub question_index: i64,
+    pub input_char_count: usize,
+    pub input_truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryDreamDeltaSession {
+    pub record_kind: MemoryEvidenceRecordKind,
+    pub session_id: String,
+    pub source_id: String,
+    pub adapter_id: String,
+    pub project_path: Option<String>,
+    pub title: String,
+    pub imported_at: String,
+    pub session_sort_key: String,
+    pub available_question_count: usize,
+    pub questions: Vec<MemoryDreamDeltaQuestion>,
+    pub input_char_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryDreamState {
+    pub scope: MemoryScope,
+    pub scope_fingerprint: String,
+    pub last_successful_run_id: Option<String>,
+    pub last_successful_at: Option<String>,
+    pub source_revision_cursor: i64,
+    pub session_cursor: Option<MemoryDreamCursor>,
+    pub next_gate_at: Option<String>,
+    pub last_error_kind: Option<String>,
+    pub last_error_message: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MemoryDreamQuestionDeltaRow {
+    pub record_kind: MemoryEvidenceRecordKind,
+    pub session_id: String,
+    pub source_id: String,
+    pub adapter_id: String,
+    pub project_path: Option<String>,
+    pub title: String,
+    pub imported_at: String,
+    pub session_sort_key: String,
+    pub question_id: String,
+    pub question_index: i64,
+    pub input_char_count: usize,
+    pub available_question_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryRunRecord {
+    pub id: String,
+    pub kind: MemoryRunKind,
+    pub trigger: MemoryRunTrigger,
+    pub scope: MemoryScope,
+    pub scope_fingerprint: String,
+    pub source_revision_start: i64,
+    pub source_revision_end: Option<i64>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub prompt_version: Option<String>,
+    pub phase: MemoryRunPhase,
+    pub processed_count: i64,
+    pub total_count: i64,
+    pub skipped_count: i64,
+    pub failed_count: i64,
+    pub status: MemoryRunStatus,
+    pub result: Option<Value>,
+    pub error_kind: Option<String>,
+    pub error_message: Option<String>,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryDreamNote {
+    pub id: String,
+    pub run_id: String,
+    pub scope: MemoryScope,
+    pub scope_fingerprint: String,
+    pub markdown: String,
+    pub session_count: usize,
+    pub question_count: usize,
+    pub evidence_count: usize,
+    pub source_revision: i64,
+    pub status: MemoryDreamNoteStatus,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryDreamNoteDetail {
+    pub note: MemoryDreamNote,
+    pub evidence: Vec<MemoryEvidenceSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MemoryDreamCandidateDraft {
+    pub kind: MemoryItemKind,
+    pub title: String,
+    pub content_markdown: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryDreamBullet {
+    pub text: String,
+    pub evidence_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryDreamSection {
+    pub heading: String,
+    pub bullets: Vec<MemoryDreamBullet>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryDreamOutput {
+    pub sections: Vec<MemoryDreamSection>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct MemoryDreamEvidenceDraft {
+    pub reference: String,
+    pub draft: NewMemoryEvidenceSnapshot,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct MemoryDreamPersistInput {
+    pub run_id: String,
+    pub note_id: String,
+    pub scope: MemoryScope,
+    pub trigger: MemoryRunTrigger,
+    pub source_revision_start: i64,
+    pub source_revision_end: i64,
+    pub provider: String,
+    pub model: Option<String>,
+    pub prompt_version: String,
+    pub processed_count: usize,
+    pub total_count: usize,
+    pub markdown: String,
+    pub output: Value,
+    pub session_count: usize,
+    pub question_count: usize,
+    pub cursor_end: MemoryDreamCursor,
+    pub next_gate_at: String,
+    pub evidence: Vec<MemoryDreamEvidenceDraft>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -2467,6 +2467,29 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
         .as_ref()
         .is_some_and(|segments| segments.iter().any(|segment| segment.matched)));
 
+    let session_fragment =
+        crate::backend::models::conversation_id_fragment(&result.hits[0].session.session.id);
+    let id_result = service
+        .search_conversation_records(ConversationSearchParams {
+            record_kind: Some("session".to_string()),
+            adapter_id: None,
+            source_id: None,
+            project_path: None,
+            query: session_fragment,
+            content_types: vec![crate::backend::dto::ConversationSearchCardType::Answer],
+            since: None,
+            until: None,
+            timeline: false,
+            limit: Some(20),
+            offset: Some(0),
+            search_options: None,
+        })
+        .expect("search rebuilt conversation index by session id fragment");
+    assert_eq!(id_result.backend, "tantivy");
+    assert_eq!(id_result.total_count, 1);
+    assert!(id_result.hits[0].snippet.starts_with("Rust fallback"));
+    assert!(id_result.hits[0].highlight_segments.is_none());
+
     service
         .update_conversation_part_translation(ConversationPartTranslationUpdateParams {
             record_kind: Some("session".to_string()),

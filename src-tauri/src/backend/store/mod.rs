@@ -58,9 +58,19 @@ pub(crate) use group_repo::{
     load_skill_group_details_by_ids_sqlx, load_skill_group_details_sqlx,
     replace_asset_group_members_sqlx, upsert_asset_group_sqlx,
 };
+#[cfg(test)]
+pub(crate) use memory_repo::upsert_memory_evidence_snapshot_sqlx;
 pub(crate) use memory_repo::{
-    count_memory_items_sqlx, create_memory_item_sqlx, list_memory_items_sqlx,
-    load_memory_item_detail_sqlx, update_memory_item_sqlx, upsert_memory_evidence_snapshot_sqlx,
+    archive_memory_dream_note_sqlx, count_memory_dream_notes_sqlx, count_memory_items_sqlx,
+    create_memory_dream_run_sqlx, create_memory_item_sqlx, create_memory_recall_run_sqlx,
+    fail_memory_recall_run_sqlx, finish_memory_dream_error_sqlx, has_active_memory_scope_lock_sqlx,
+    interrupt_stale_memory_runs_sqlx, list_memory_dream_notes_sqlx, list_memory_items_sqlx,
+    list_memory_recall_question_refs_sqlx, load_memory_dream_delta_rows_sqlx,
+    load_memory_dream_note_detail_sqlx, load_memory_dream_state_sqlx, load_memory_item_detail_sqlx,
+    load_memory_run_evidence_sqlx, load_memory_source_revision_sqlx,
+    memory_evidence_stale_reason_sqlx, persist_memory_dream_success_sqlx,
+    persist_memory_extraction_sqlx, persist_memory_recall_success_sqlx,
+    promote_memory_dream_note_sqlx, set_memory_run_phase_sqlx, update_memory_item_sqlx,
 };
 pub(crate) use menu_repo::{load_navigation_model_sqlx, save_navigation_model_sqlx};
 #[cfg(test)]

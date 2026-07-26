@@ -448,7 +448,58 @@ const LEGACY_COLUMN_MIGRATIONS: &[(&str, &str, &str)] = &[
 mod tests {
     use super::*;
     use rusqlite::Connection;
+    use sha2::{Digest, Sha384};
     use uuid::Uuid;
+
+    #[test]
+    fn released_memory_domain_migration_remains_immutable() {
+        let migration = include_str!("../../../migrations/202607230001_memory_domain.sql");
+        assert_eq!(
+            format!("{:x}", Sha384::digest(migration.as_bytes())),
+            "bdc84ed0a2c958b8bcd86ed8ffe364b9cf5954002531ac9e015503bab702ba2850586cacbdfcd291fcdc97b41bc8db8b"
+        );
+    }
+
+    #[test]
+    fn migrations_upgrade_an_existing_memory_database_with_recall_indexes() {
+        let db_path = temp_database_path("memory-recall-index-upgrade");
+        migrate_database(&db_path).expect("create current database");
+
+        let conn = Connection::open(&db_path).expect("open migrated database");
+        conn.execute_batch(
+            r#"
+            DROP INDEX idx_memory_recall_questions_created;
+            DROP INDEX idx_memory_recall_web_questions_created;
+            DELETE FROM _sqlx_migrations WHERE version = 202607240001;
+            "#,
+        )
+        .expect("simulate database at the Memory domain migration");
+        drop(conn);
+
+        migrate_database(&db_path).expect("upgrade existing Memory database");
+
+        let conn = Connection::open(&db_path).expect("open upgraded database");
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_memory_recall_questions_created', 'idx_memory_recall_web_questions_created')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query Recall indexes");
+        let memory_checksum: String = conn
+            .query_row(
+                "SELECT lower(hex(checksum)) FROM _sqlx_migrations WHERE version = 202607230001",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query Memory migration checksum");
+        assert_eq!(index_count, 2);
+        assert_eq!(
+            memory_checksum,
+            "bdc84ed0a2c958b8bcd86ed8ffe364b9cf5954002531ac9e015503bab702ba2850586cacbdfcd291fcdc97b41bc8db8b"
+        );
+        cleanup_database(&db_path);
+    }
 
     #[test]
     fn migrations_create_fresh_schema_and_track_version() {
@@ -476,10 +527,18 @@ mod tests {
                 row.get(0)
             })
             .expect("query migrations");
+        let memory_recall_index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_memory_recall_questions_created', 'idx_memory_recall_web_questions_created')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query Memory Recall indexes");
 
         assert_eq!(source_table_count, 1);
         assert_eq!(memory_table_count, 3);
-        assert_eq!(migration_count, 15);
+        assert_eq!(memory_recall_index_count, 2);
+        assert_eq!(migration_count, 16);
         cleanup_database(&db_path);
     }
 
@@ -554,7 +613,7 @@ mod tests {
             )
         );
         assert_eq!(cursor_target_path, "@config/Cursor/skills");
-        assert_eq!(migration_count, 15);
+        assert_eq!(migration_count, 16);
         cleanup_database(&db_path);
     }
 
@@ -615,7 +674,7 @@ mod tests {
                 row.get(0)
             })
             .expect("query migrations");
-        assert_eq!(migration_count, 15);
+        assert_eq!(migration_count, 16);
         cleanup_database(&db_path);
     }
 

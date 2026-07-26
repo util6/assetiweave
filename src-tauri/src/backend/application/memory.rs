@@ -199,6 +199,68 @@ impl AppService {
         self.persist_memory_item_update(detail.item, None, MemoryRevisionChangeKind::Status)
     }
 
+    pub(crate) fn verify_memory(
+        &self,
+        params: MemoryVerifyParams,
+    ) -> AppResult<MemoryVerifyResult> {
+        if params.item_ids.is_empty() {
+            return Err("memory.verify requires at least one item id".to_string());
+        }
+        if params.item_ids.len() > 200 {
+            return Err("memory.verify accepts at most 200 item ids".to_string());
+        }
+        let mut unique_ids = Vec::new();
+        let mut seen = HashSet::new();
+        for item_id in params.item_ids {
+            validate_memory_item_id(&item_id)?;
+            if seen.insert(item_id.clone()) {
+                unique_ids.push(item_id);
+            }
+        }
+        let source_revision =
+            self.db
+                .block_on(crate::backend::store::load_memory_source_revision_sqlx(
+                    self.db.pool(),
+                    self.tenant_id(),
+                ))?;
+        let mut unchanged_revision = true;
+        let mut results = Vec::with_capacity(unique_ids.len());
+        for item_id in unique_ids {
+            let mut detail = self.get_memory_item(MemoryItemGetParams { item_id })?;
+            if detail.item.source_revision == source_revision {
+                results.push(detail);
+                continue;
+            }
+            unchanged_revision = false;
+            let mut reason = None;
+            for evidence in &detail.evidence {
+                let evidence_reason =
+                    self.db
+                        .block_on(crate::backend::store::memory_evidence_stale_reason_sqlx(
+                            self.db.pool(),
+                            self.tenant_id(),
+                            evidence,
+                        ))?;
+                reason = stronger_stale_reason(reason, evidence_reason);
+            }
+            detail.item.source_revision = source_revision;
+            detail.item.stale_reason = reason;
+            if reason.is_none() {
+                detail.item.verified_revision = source_revision;
+            }
+            results.push(self.persist_memory_item_update(
+                detail.item,
+                None,
+                MemoryRevisionChangeKind::Status,
+            )?);
+        }
+        Ok(MemoryVerifyResult {
+            source_revision,
+            unchanged_revision,
+            items: results,
+        })
+    }
+
     fn persist_memory_item_update(
         &self,
         item: MemoryItem,
@@ -218,6 +280,27 @@ impl AppService {
             )
             .await
         })
+    }
+}
+
+fn stronger_stale_reason(
+    current: Option<MemoryStaleReason>,
+    candidate: Option<MemoryStaleReason>,
+) -> Option<MemoryStaleReason> {
+    fn weight(reason: MemoryStaleReason) -> u8 {
+        match reason {
+            MemoryStaleReason::EvidenceChanged => 1,
+            MemoryStaleReason::EvidenceMissing => 2,
+            MemoryStaleReason::SourceUnavailable => 3,
+        }
+    }
+    match (current, candidate) {
+        (None, value) | (value, None) => value,
+        (Some(left), Some(right)) => Some(if weight(right) > weight(left) {
+            right
+        } else {
+            left
+        }),
     }
 }
 
@@ -264,7 +347,7 @@ fn validate_memory_content(title: &str, content_markdown: &str) -> AppResult<()>
     Ok(())
 }
 
-fn validate_memory_scope(scope: &MemoryScope) -> AppResult<()> {
+pub(super) fn validate_memory_scope(scope: &MemoryScope) -> AppResult<()> {
     for (name, value, limit) in [
         ("app_id", scope.app_id.as_deref(), 256usize),
         ("source_id", scope.source_id.as_deref(), 256usize),
@@ -326,6 +409,24 @@ fn memory_status_label(status: MemoryItemStatus) -> &'static str {
 mod tests {
     use super::*;
     use crate::backend::models::{MemoryEvidenceRecordKind, NewMemoryEvidenceSnapshot};
+
+    #[test]
+    fn memory_freshness_uses_specific_reason_precedence() {
+        assert_eq!(
+            stronger_stale_reason(
+                Some(MemoryStaleReason::EvidenceChanged),
+                Some(MemoryStaleReason::EvidenceMissing)
+            ),
+            Some(MemoryStaleReason::EvidenceMissing)
+        );
+        assert_eq!(
+            stronger_stale_reason(
+                Some(MemoryStaleReason::EvidenceMissing),
+                Some(MemoryStaleReason::SourceUnavailable)
+            ),
+            Some(MemoryStaleReason::SourceUnavailable)
+        );
+    }
 
     #[test]
     fn memory_item_app_service_supports_create_list_update_get_and_archive() {
