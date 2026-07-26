@@ -9,7 +9,10 @@ use std::{
 const CONFIG_DIR_NAME: &str = ".assetiweave";
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONVERSATION_ADAPTER_DIR_NAME: &str = "conversation-adapters";
-const SETTINGS_SCHEMA_VERSION: u32 = 1;
+const SETTINGS_SCHEMA_VERSION: u32 = 2;
+const DEFAULT_AI_RUNTIME_CLI: &str = "opencode";
+const DEFAULT_AUTO_DREAM_MIN_HOURS: i64 = 12;
+const DEFAULT_AUTO_DREAM_MIN_SESSIONS: i64 = 3;
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct AppSettingsFile {
@@ -125,14 +128,17 @@ fn read_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
 fn read_normalized_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
     let mut document = read_settings_document(path)?;
     let normalized = normalize_settings_paths(document.settings.clone())?;
-    if normalized != document.settings {
+    let schema_changed = document.schema_version != SETTINGS_SCHEMA_VERSION;
+    if normalized != document.settings || schema_changed {
         document.settings = normalized;
+        document.schema_version = SETTINGS_SCHEMA_VERSION;
         write_settings_document(path, &document)?;
     }
     Ok(document)
 }
 
 fn normalize_settings_paths(mut settings: Value) -> AppResult<Value> {
+    normalize_shared_ai_settings(&mut settings);
     for path in [
         &["dataBackup", "customDirectory"][..],
         &["conversationRuntimeOverrides", "bash"][..],
@@ -142,6 +148,108 @@ fn normalize_settings_paths(mut settings: Value) -> AppResult<Value> {
         normalize_json_path_setting(&mut settings, path)?;
     }
     Ok(settings)
+}
+
+fn normalize_shared_ai_settings(settings: &mut Value) {
+    let Some(root) = settings.as_object_mut() else {
+        return;
+    };
+
+    let legacy_translation = root
+        .get("conversationTranslation")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let stored_runtime = root
+        .get("aiRuntime")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+
+    let cli = normalize_ai_runtime_cli(
+        stored_runtime
+            .get("cli")
+            .or_else(|| legacy_translation.get("cli")),
+    );
+    let model = normalize_ai_runtime_model(
+        stored_runtime
+            .get("model")
+            .or_else(|| legacy_translation.get("model")),
+    );
+    root.insert(
+        "aiRuntime".to_string(),
+        json!({ "cli": cli, "model": model }),
+    );
+
+    let mut translation = legacy_translation;
+    translation.remove("cli");
+    translation.remove("model");
+    root.insert(
+        "conversationTranslation".to_string(),
+        Value::Object(translation),
+    );
+
+    let mut memory = root
+        .get("memory")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let auto_dream_enabled = memory
+        .get("autoDreamEnabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let min_hours =
+        normalize_integer_setting(memory.get("minHours"), 1, 168, DEFAULT_AUTO_DREAM_MIN_HOURS);
+    let min_sessions = normalize_integer_setting(
+        memory.get("minSessions"),
+        1,
+        50,
+        DEFAULT_AUTO_DREAM_MIN_SESSIONS,
+    );
+    memory.insert(
+        "autoDreamEnabled".to_string(),
+        Value::Bool(auto_dream_enabled),
+    );
+    memory.insert("minHours".to_string(), json!(min_hours));
+    memory.insert("minSessions".to_string(), json!(min_sessions));
+    root.insert("memory".to_string(), Value::Object(memory));
+}
+
+fn normalize_ai_runtime_cli(value: Option<&Value>) -> &'static str {
+    if value.and_then(Value::as_str) == Some("gemini") {
+        "gemini"
+    } else {
+        DEFAULT_AI_RUNTIME_CLI
+    }
+}
+
+fn normalize_ai_runtime_model(value: Option<&Value>) -> String {
+    let Some(value) = value.and_then(Value::as_str) else {
+        return String::new();
+    };
+    let normalized = value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    let normalized = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.len() <= 120 {
+        normalized
+    } else {
+        String::new()
+    }
+}
+
+fn normalize_integer_setting(value: Option<&Value>, min: i64, max: i64, fallback: i64) -> i64 {
+    value
+        .and_then(Value::as_i64)
+        .map(|value| value.clamp(min, max))
+        .unwrap_or(fallback)
 }
 
 fn normalize_json_path_setting(value: &mut Value, path: &[&str]) -> AppResult<()> {
@@ -267,5 +375,25 @@ mod tests {
             settings["conversationRuntimeOverrides"]["bash"],
             "/opt/homebrew/bin/bash"
         );
+    }
+
+    #[test]
+    fn legacy_translation_runtime_moves_to_shared_ai_settings() {
+        let settings = normalize_settings_paths(json!({
+            "conversationTranslation": {
+                "cli": "gemini",
+                "model": "gemini-2.5-pro",
+                "provider": "cli"
+            }
+        }))
+        .expect("normalize AI settings");
+
+        assert_eq!(settings["aiRuntime"]["cli"], "gemini");
+        assert_eq!(settings["aiRuntime"]["model"], "gemini-2.5-pro");
+        assert!(settings["conversationTranslation"].get("cli").is_none());
+        assert!(settings["conversationTranslation"].get("model").is_none());
+        assert_eq!(settings["memory"]["autoDreamEnabled"], false);
+        assert_eq!(settings["memory"]["minHours"], 12);
+        assert_eq!(settings["memory"]["minSessions"], 3);
     }
 }

@@ -180,8 +180,8 @@ export function PromptOverviewPage({
     setAvailability("checking");
     const check = availabilityChecker ?? (() =>
       checkConversationTranslationAvailability({
-        cli: settings.conversationTranslation.cli,
-        model: settings.conversationTranslation.model,
+        cli: settings.aiRuntime.cli,
+        model: settings.aiRuntime.model,
         provider: settings.conversationTranslation.provider,
       }));
 
@@ -200,8 +200,8 @@ export function PromptOverviewPage({
     };
   }, [
     availabilityChecker,
-    settings.conversationTranslation.cli,
-    settings.conversationTranslation.model,
+    settings.aiRuntime.cli,
+    settings.aiRuntime.model,
     settings.conversationTranslation.provider,
   ]);
 
@@ -392,8 +392,8 @@ export function PromptOverviewPage({
     setBusyActions((current) => ({ ...current, [note.id]: action }));
     try {
       const result = await translator({
-        cli: settings.conversationTranslation.cli,
-        model: settings.conversationTranslation.model,
+        cli: settings.aiRuntime.cli,
+        model: settings.aiRuntime.model,
         provider: settings.conversationTranslation.provider,
         promptTemplate: request.promptTemplate,
         targetLanguage: request.targetLanguage,

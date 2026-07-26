@@ -9,7 +9,8 @@ export type FontFamilyToken = BuiltInFontFamilyPresetId;
 export type FontFallbackKind = "sans" | "serif" | "mono";
 export type ConversationTranslationTargetLanguage = string;
 export type ConversationTranslationProvider = "cli" | "google" | "apple";
-export type ConversationTranslationCli = "opencode" | "gemini";
+export type AiRuntimeCli = "opencode" | "gemini";
+export type ConversationTranslationCli = AiRuntimeCli;
 
 export interface FontFamilySetting {
   customFontFamily: string;
@@ -20,6 +21,7 @@ export type FontFamilyValue = FontFamilySetting;
 
 export type SettingsPanelId =
   | "general.appearance"
+  | "general.ai"
   | "general.typography"
   | "general.storage"
   | "workspace.menu"
@@ -73,6 +75,12 @@ export const DEFAULT_RESULT_PREVIEW_LINE_LIMIT = 10;
 export const TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH = 80;
 export const TRANSLATION_MODEL_MAX_LENGTH = 120;
 export const TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH = 4000;
+export const AUTO_DREAM_MIN_HOURS_MIN = 1;
+export const AUTO_DREAM_MIN_HOURS_MAX = 168;
+export const AUTO_DREAM_MIN_SESSIONS_MIN = 1;
+export const AUTO_DREAM_MIN_SESSIONS_MAX = 50;
+export const DEFAULT_AUTO_DREAM_MIN_HOURS = 12;
+export const DEFAULT_AUTO_DREAM_MIN_SESSIONS = 3;
 export const DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE = "简体中文";
 export const DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE = [
   "You are translating a technical conversation content card.",
@@ -107,12 +115,24 @@ export interface ConversationPageSettings {
   sessionToolbarCompact: boolean;
 }
 
-export interface ConversationTranslationSettings {
-  cli: ConversationTranslationCli;
+export interface AiRuntimeSettings {
+  cli: AiRuntimeCli;
   model: string;
+}
+
+export interface ConversationTranslationSettings {
   promptTemplate: string;
   provider: ConversationTranslationProvider;
   targetLanguage: ConversationTranslationTargetLanguage;
+}
+
+export type ResolvedConversationTranslationSettings = AiRuntimeSettings &
+  ConversationTranslationSettings;
+
+export interface MemorySettings {
+  autoDreamEnabled: boolean;
+  minHours: number;
+  minSessions: number;
 }
 
 export interface ConversationContentCardColorSettings {
@@ -142,12 +162,14 @@ export const DEFAULT_CONVERSATION_CONTENT_CARD_COLORS: ConversationContentCardCo
 };
 
 export interface AppSettings {
+  aiRuntime: AiRuntimeSettings;
   columnMinWidth: number;
   confirmBeforeDeploy: boolean;
   conversationRuntimeOverrides: ConversationRuntimeOverrideSettings;
   conversationTranslation: ConversationTranslationSettings;
   dataBackup: DataBackupSettings;
   density: InterfaceDensity;
+  memory: MemorySettings;
   reduceMotion: boolean;
   showStartupNotification: boolean;
   theme: ThemeId;
@@ -163,6 +185,10 @@ export interface AppSettingsStorageInfo {
 }
 
 export const defaultSettings: AppSettings = {
+  aiRuntime: {
+    cli: "opencode",
+    model: "",
+  },
   columnMinWidth: DEFAULT_COLUMN_MIN_WIDTH,
   confirmBeforeDeploy: true,
   conversationRuntimeOverrides: {
@@ -174,6 +200,11 @@ export const defaultSettings: AppSettings = {
     customDirectory: "",
   },
   density: "comfortable",
+  memory: {
+    autoDreamEnabled: false,
+    minHours: DEFAULT_AUTO_DREAM_MIN_HOURS,
+    minSessions: DEFAULT_AUTO_DREAM_MIN_SESSIONS,
+  },
   reduceMotion: false,
   showStartupNotification: true,
   theme: "promptStudio",
@@ -196,8 +227,6 @@ export const defaultSettings: AppSettings = {
     sessionToolbarCompact: true,
   },
   conversationTranslation: {
-    cli: "opencode",
-    model: "",
     promptTemplate: DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
     provider: "cli",
     targetLanguage: DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
@@ -219,12 +248,17 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
   const stored = value as Partial<AppSettings>;
   const typography = normalizeTypographySettings(stored.typography);
   const conversations = normalizeConversationPageSettings(stored.conversations, typography);
+  const aiRuntime = normalizeAiRuntimeSettings(
+    stored.aiRuntime,
+    stored.conversationTranslation,
+  );
   const conversationTranslation = normalizeConversationTranslationSettings(
     stored.conversationTranslation,
     stored.conversations,
   );
 
   return {
+    aiRuntime,
     columnMinWidth: normalizeColumnMinWidth(stored.columnMinWidth),
     confirmBeforeDeploy:
       typeof stored.confirmBeforeDeploy === "boolean"
@@ -236,6 +270,7 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
     ),
     conversationTranslation,
     density: stored.density === "compact" ? "compact" : defaultSettings.density,
+    memory: normalizeMemorySettings(stored.memory),
     reduceMotion:
       typeof stored.reduceMotion === "boolean"
         ? stored.reduceMotion
@@ -336,8 +371,6 @@ function normalizeConversationTranslationSettings(
     ? (legacyConversationSettings as { translationTargetLanguage?: unknown })
     : {};
   return {
-    cli: normalizeConversationTranslationCli(stored.cli),
-    model: normalizeConversationTranslationModel(stored.model),
     promptTemplate: normalizeConversationTranslationPromptTemplate(stored.promptTemplate),
     provider: normalizeConversationTranslationProvider(stored.provider),
     targetLanguage: normalizeConversationTranslationTargetLanguage(
@@ -346,17 +379,51 @@ function normalizeConversationTranslationSettings(
   };
 }
 
+function normalizeAiRuntimeSettings(
+  value: unknown,
+  legacyConversationTranslation: unknown,
+): AiRuntimeSettings {
+  const stored = isRecord(value) ? value : {};
+  const legacy = isRecord(legacyConversationTranslation) ? legacyConversationTranslation : {};
+  return {
+    cli: normalizeAiRuntimeCli(stored.cli ?? legacy.cli),
+    model: normalizeAiRuntimeModel(stored.model ?? legacy.model),
+  };
+}
+
+function normalizeMemorySettings(value: unknown): MemorySettings {
+  const stored = isRecord(value) ? value : {};
+  return {
+    autoDreamEnabled:
+      typeof stored.autoDreamEnabled === "boolean"
+        ? stored.autoDreamEnabled
+        : defaultSettings.memory.autoDreamEnabled,
+    minHours: normalizeIntegerSetting(
+      stored.minHours,
+      AUTO_DREAM_MIN_HOURS_MIN,
+      AUTO_DREAM_MIN_HOURS_MAX,
+      DEFAULT_AUTO_DREAM_MIN_HOURS,
+    ),
+    minSessions: normalizeIntegerSetting(
+      stored.minSessions,
+      AUTO_DREAM_MIN_SESSIONS_MIN,
+      AUTO_DREAM_MIN_SESSIONS_MAX,
+      DEFAULT_AUTO_DREAM_MIN_SESSIONS,
+    ),
+  };
+}
+
 function normalizeConversationTranslationProvider(value: unknown): ConversationTranslationProvider {
   return value === "google" || value === "apple" ? value : defaultSettings.conversationTranslation.provider;
 }
 
-function normalizeConversationTranslationCli(value: unknown): ConversationTranslationCli {
-  return value === "gemini" ? value : defaultSettings.conversationTranslation.cli;
+function normalizeAiRuntimeCli(value: unknown): AiRuntimeCli {
+  return value === "gemini" ? value : defaultSettings.aiRuntime.cli;
 }
 
-function normalizeConversationTranslationModel(value: unknown): string {
+function normalizeAiRuntimeModel(value: unknown): string {
   if (typeof value !== "string") {
-    return defaultSettings.conversationTranslation.model;
+    return defaultSettings.aiRuntime.model;
   }
   const normalized = value
     .replace(/[\u0000-\u001f\u007f]/g, " ")
@@ -364,7 +431,7 @@ function normalizeConversationTranslationModel(value: unknown): string {
     .replace(/\s+/g, " ");
   return normalized.length <= TRANSLATION_MODEL_MAX_LENGTH
     ? normalized
-    : defaultSettings.conversationTranslation.model;
+    : defaultSettings.aiRuntime.model;
 }
 
 function normalizeConversationTranslationPromptTemplate(value: unknown): string {
@@ -448,6 +515,18 @@ function normalizeResultPreviewLineLimit(value: unknown) {
     RESULT_PREVIEW_LINE_LIMIT_MIN,
     RESULT_PREVIEW_LINE_LIMIT_MAX,
   );
+}
+
+function normalizeIntegerSetting(
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number,
+) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return clamp(Math.round(value), min, max);
 }
 
 function normalizeDirectorySetting(value: unknown) {
@@ -647,6 +726,6 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
-function isRecord(value: unknown) {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

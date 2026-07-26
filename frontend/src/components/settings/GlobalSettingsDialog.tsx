@@ -21,6 +21,7 @@ import {
   Bell,
   Code2,
   Columns3,
+  Cpu,
   ChevronDown,
   ChevronRight,
   Database,
@@ -78,6 +79,10 @@ import type { ThemeId } from "../../theme/schema";
 import { isHexColor } from "../../theme/colorValidation";
 import { themeOptions } from "../../theme/themes";
 import {
+  AUTO_DREAM_MIN_HOURS_MAX,
+  AUTO_DREAM_MIN_HOURS_MIN,
+  AUTO_DREAM_MIN_SESSIONS_MAX,
+  AUTO_DREAM_MIN_SESSIONS_MIN,
   COLUMN_MIN_WIDTH_MAX,
   COLUMN_MIN_WIDTH_MIN,
   COLUMN_MIN_WIDTH_STEP,
@@ -95,7 +100,7 @@ import {
   TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH,
   TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH,
   useAppSettings,
-  type ConversationTranslationCli,
+  type AiRuntimeCli,
   type ConversationTranslationProvider,
   type ConversationRuntimeOverrideSettings,
   type ConversationContentCardColorSettings,
@@ -176,9 +181,8 @@ export function GlobalSettingsDialog({
     setTranslationModels([]);
     setTranslationModelsMessage("");
   }, [
-    settings.conversationTranslation.cli,
-    settings.conversationTranslation.model,
-    settings.conversationTranslation.provider,
+    settings.aiRuntime.cli,
+    settings.aiRuntime.model,
   ]);
 
   function toggleGroupCollapsed(groupId: string) {
@@ -291,6 +295,7 @@ export function GlobalSettingsDialog({
       scope: t("settings.scope.general"),
       panels: [
         { id: "general.appearance", icon: Palette, label: t("settings.section.appearance") },
+        { id: "general.ai", icon: Cpu, label: t("settings.section.aiRuntime") },
         { id: "general.typography", icon: Type, label: t("settings.section.typography") },
         { id: "general.storage", icon: FileJson, label: t("settings.section.storage") },
       ],
@@ -472,15 +477,22 @@ export function GlobalSettingsDialog({
     });
   }
 
+  function updateAiRuntime(patch: Partial<typeof settings.aiRuntime>) {
+    updateSetting("aiRuntime", {
+      ...settings.aiRuntime,
+      ...patch,
+    });
+  }
+
   async function testTranslationConnection() {
     setTranslationConnectionState("checking");
     setTranslationConnectionMessage("");
     try {
       const result = await testConversationTranslationConnection({
-        cli: settings.conversationTranslation.cli,
-        model: settings.conversationTranslation.model,
+        cli: settings.aiRuntime.cli,
+        model: settings.aiRuntime.model,
         prompt: "Reply with OK only.",
-        provider: settings.conversationTranslation.provider,
+        provider: "cli",
       });
       setTranslationConnectionState(result.available ? "connected" : "failed");
       setTranslationConnectionMessage(
@@ -499,8 +511,8 @@ export function GlobalSettingsDialog({
     setTranslationModelsMessage("");
     try {
       const result = await listConversationTranslationModels({
-        cli: settings.conversationTranslation.cli,
-        provider: settings.conversationTranslation.provider,
+        cli: settings.aiRuntime.cli,
+        provider: "cli",
       });
       setTranslationModels(result.models);
       setTranslationModelsMessage(
@@ -766,6 +778,153 @@ export function GlobalSettingsDialog({
                     checked={settings.reduceMotion}
                     label={t("settings.reduceMotion")}
                     onChange={(checked) => updateSetting("reduceMotion", checked)}
+                  />
+                </SettingRow>
+              </SettingsGroup>
+            )}
+
+            {activePanel === "general.ai" && (
+              <SettingsGroup>
+                <SettingRow icon={<Terminal size={18} />} label={t("settings.conversation.translationCli")}>
+                  <SegmentedControl
+                    label={t("settings.conversation.translationCli")}
+                    onChange={(value) =>
+                      updateAiRuntime({
+                        cli: value as AiRuntimeCli,
+                        model: "",
+                      })
+                    }
+                    options={[
+                      { label: t("settings.conversation.translationCli.opencode"), value: "opencode" },
+                      { label: t("settings.conversation.translationCli.gemini"), value: "gemini" },
+                    ]}
+                    value={settings.aiRuntime.cli}
+                  />
+                </SettingRow>
+                <SettingRow icon={<RefreshCw size={18} />} label={t("settings.conversation.translationModel")}>
+                  <div className="grid w-[min(38rem,52vw)] gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Input
+                        aria-label={t("settings.conversation.translationModel")}
+                        className="h-9 min-w-0 flex-1"
+                        list={translationModels.length > 0 ? "ai-runtime-models" : undefined}
+                        maxLength={TRANSLATION_MODEL_MAX_LENGTH}
+                        onChange={(event) =>
+                          updateAiRuntime({
+                            model: event.target.value.slice(0, TRANSLATION_MODEL_MAX_LENGTH),
+                          })
+                        }
+                        placeholder={t("settings.conversation.translationModelPlaceholder")}
+                        value={settings.aiRuntime.model}
+                      />
+                      {translationModels.length > 0 ? (
+                        <datalist id="ai-runtime-models">
+                          {translationModels.map((model) => (
+                            <option key={model} value={model} />
+                          ))}
+                        </datalist>
+                      ) : null}
+                      <Button
+                        disabled={translationModelsLoading}
+                        onClick={() => void refreshTranslationModels()}
+                        type="button"
+                        variant="outline"
+                      >
+                        <RefreshCw className={translationModelsLoading ? "animate-spin" : ""} size={15} />
+                        <span>{t("settings.conversation.translationRefreshModels")}</span>
+                      </Button>
+                    </div>
+                    {translationModelsMessage ? (
+                      <p className="truncate text-body-sm text-on-surface-variant" title={translationModelsMessage}>
+                        {translationModelsMessage}
+                      </p>
+                    ) : null}
+                  </div>
+                </SettingRow>
+                <SettingRow icon={<Activity size={18} />} label={t("settings.conversation.translationConnection")}>
+                  <div className="flex w-[min(38rem,52vw)] min-w-0 items-center gap-2">
+                    <Button
+                      disabled={translationConnectionState === "checking"}
+                      onClick={() => void testTranslationConnection()}
+                      type="button"
+                      variant="outline"
+                    >
+                      <Activity className={translationConnectionState === "checking" ? "animate-pulse" : ""} size={15} />
+                      <span>
+                        {translationConnectionState === "checking"
+                          ? t("settings.conversation.translationConnecting")
+                          : t("settings.conversation.translationConnect")}
+                      </span>
+                    </Button>
+                    <span
+                      className={clsx(
+                        "min-w-0 flex-1 truncate text-body-sm",
+                        translationConnectionState === "connected"
+                          ? "text-status-create"
+                          : translationConnectionState === "failed"
+                            ? "text-status-remove"
+                            : "text-on-surface-variant",
+                      )}
+                      title={translationConnectionMessage}
+                    >
+                      {translationConnectionState === "connected"
+                        ? translationConnectionMessage || t("settings.conversation.translationConnected")
+                        : translationConnectionState === "failed"
+                          ? translationConnectionMessage || t("settings.conversation.translationConnectionFailed")
+                          : t("settings.conversation.translationConnectionIdle")}
+                    </span>
+                  </div>
+                </SettingRow>
+                <SettingRow icon={<ShieldCheck size={18} />} label={t("settings.ai.executionBoundary")}>
+                  <p className="w-[min(38rem,52vw)] rounded-lg border border-status-update/35 bg-status-update/10 px-3 py-2 text-body-sm text-on-surface-variant">
+                    {t("settings.ai.externalWarning")}
+                  </p>
+                </SettingRow>
+                <SettingRow icon={<Cpu size={18} />} label={t("settings.ai.autoDream")}>
+                  <div className="flex w-[min(38rem,52vw)] items-center justify-between gap-4">
+                    <p className="text-body-sm text-on-surface-variant">{t("settings.ai.autoDreamHint")}</p>
+                    <SwitchControl
+                      checked={settings.memory.autoDreamEnabled}
+                      label={t("settings.ai.autoDream")}
+                      onChange={(checked) =>
+                        updateSetting("memory", {
+                          ...settings.memory,
+                          autoDreamEnabled: checked,
+                        })
+                      }
+                    />
+                  </div>
+                </SettingRow>
+                <SettingRow icon={<Gauge size={18} />} label={t("settings.ai.autoDreamMinHours")}>
+                  <RangeSettingControl
+                    label={t("settings.ai.autoDreamMinHours")}
+                    max={AUTO_DREAM_MIN_HOURS_MAX}
+                    min={AUTO_DREAM_MIN_HOURS_MIN}
+                    onChange={(value) =>
+                      updateSetting("memory", {
+                        ...settings.memory,
+                        minHours: value,
+                      })
+                    }
+                    step={1}
+                    unit={t("settings.unit.hours")}
+                    value={settings.memory.minHours}
+                  />
+                </SettingRow>
+                <SettingRow icon={<ListTree size={18} />} label={t("settings.ai.autoDreamMinSessions")}>
+                  <RangeSettingControl
+                    label={t("settings.ai.autoDreamMinSessions")}
+                    max={AUTO_DREAM_MIN_SESSIONS_MAX}
+                    min={AUTO_DREAM_MIN_SESSIONS_MIN}
+                    onChange={(value) =>
+                      updateSetting("memory", {
+                        ...settings.memory,
+                        minSessions: value,
+                      })
+                    }
+                    step={1}
+                    unit={t("settings.unit.sessions")}
+                    value={settings.memory.minSessions}
                   />
                 </SettingRow>
               </SettingsGroup>
@@ -1170,106 +1329,13 @@ export function GlobalSettingsDialog({
                     value={settings.conversationTranslation.provider}
                   />
                 </SettingRow>
-                {settings.conversationTranslation.provider === "cli" ? (
-                  <>
-                    <SettingRow icon={<Terminal size={18} />} label={t("settings.conversation.translationCli")}>
-                      <SegmentedControl
-                        label={t("settings.conversation.translationCli")}
-                        onChange={(value) =>
-                          updateConversationTranslation({
-                            cli: value as ConversationTranslationCli,
-                            model: "",
-                          })
-                        }
-                        options={[
-                          { label: t("settings.conversation.translationCli.opencode"), value: "opencode" },
-                          { label: t("settings.conversation.translationCli.gemini"), value: "gemini" },
-                        ]}
-                        value={settings.conversationTranslation.cli}
-                      />
-                    </SettingRow>
-                    <SettingRow icon={<RefreshCw size={18} />} label={t("settings.conversation.translationModel")}>
-                      <div className="grid w-[min(38rem,52vw)] gap-2">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <Input
-                            aria-label={t("settings.conversation.translationModel")}
-                            className="h-9 min-w-0 flex-1"
-                            list={translationModels.length > 0 ? "conversation-translation-models" : undefined}
-                            maxLength={TRANSLATION_MODEL_MAX_LENGTH}
-                            onChange={(event) =>
-                              updateConversationTranslation({
-                                model: event.target.value.slice(0, TRANSLATION_MODEL_MAX_LENGTH),
-                              })
-                            }
-                            placeholder={t("settings.conversation.translationModelPlaceholder")}
-                            value={settings.conversationTranslation.model}
-                          />
-                          {translationModels.length > 0 ? (
-                            <datalist id="conversation-translation-models">
-                              {translationModels.map((model) => (
-                                <option key={model} value={model} />
-                              ))}
-                            </datalist>
-                          ) : null}
-                          <Button
-                            disabled={translationModelsLoading}
-                            onClick={() => void refreshTranslationModels()}
-                            type="button"
-                            variant="outline"
-                          >
-                            <RefreshCw className={translationModelsLoading ? "animate-spin" : ""} size={15} />
-                            <span>{t("settings.conversation.translationRefreshModels")}</span>
-                          </Button>
-                        </div>
-                        {translationModelsMessage ? (
-                          <p className="truncate text-body-sm text-on-surface-variant" title={translationModelsMessage}>
-                            {translationModelsMessage}
-                          </p>
-                        ) : null}
-                      </div>
-                    </SettingRow>
-                    <SettingRow icon={<Activity size={18} />} label={t("settings.conversation.translationConnection")}>
-                      <div className="flex w-[min(38rem,52vw)] min-w-0 items-center gap-2">
-                        <Button
-                          disabled={translationConnectionState === "checking"}
-                          onClick={() => void testTranslationConnection()}
-                          type="button"
-                          variant="outline"
-                        >
-                          <Activity className={translationConnectionState === "checking" ? "animate-pulse" : ""} size={15} />
-                          <span>
-                            {translationConnectionState === "checking"
-                              ? t("settings.conversation.translationConnecting")
-                              : t("settings.conversation.translationConnect")}
-                          </span>
-                        </Button>
-                        <span
-                          className={clsx(
-                            "min-w-0 flex-1 truncate text-body-sm",
-                            translationConnectionState === "connected"
-                              ? "text-status-create"
-                              : translationConnectionState === "failed"
-                                ? "text-status-remove"
-                                : "text-on-surface-variant",
-                          )}
-                          title={translationConnectionMessage}
-                        >
-                          {translationConnectionState === "connected"
-                            ? translationConnectionMessage || t("settings.conversation.translationConnected")
-                            : translationConnectionState === "failed"
-                              ? translationConnectionMessage || t("settings.conversation.translationConnectionFailed")
-                              : t("settings.conversation.translationConnectionIdle")}
-                        </span>
-                      </div>
-                    </SettingRow>
-                  </>
-                ) : (
+                {settings.conversationTranslation.provider !== "cli" ? (
                   <SettingRow icon={<Activity size={18} />} label={t("settings.conversation.translationConnection")}>
                     <div className="w-[min(38rem,52vw)] rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 text-body-sm text-on-surface-variant">
                       {t("settings.conversation.translationProviderReserved")}
                     </div>
                   </SettingRow>
-                )}
+                ) : null}
                 <SettingRow icon={<Languages size={18} />} label={t("settings.conversation.translationTarget")}>
                   <Input
                     aria-label={t("settings.conversation.translationTarget")}

@@ -125,7 +125,7 @@ describe("AppSettingsProvider", () => {
     expect(normalizeStoredSettings({
       conversations: { translationTargetLanguage: "  Spanish (Latin America)  " },
     }).conversationTranslation.targetLanguage).toBe("Spanish (Latin America)");
-    expect(normalizeStoredSettings({
+    const normalized = normalizeStoredSettings({
       conversationTranslation: {
         cli: "gemini",
         model: "gemini-2.5-pro",
@@ -133,9 +133,12 @@ describe("AppSettingsProvider", () => {
         provider: "cli",
         targetLanguage: "French\n\nCanadian",
       },
-    }).conversationTranslation).toEqual({
+    });
+    expect(normalized.aiRuntime).toEqual({
       cli: "gemini",
       model: "gemini-2.5-pro",
+    });
+    expect(normalized.conversationTranslation).toEqual({
       promptTemplate: "Translate into {targetLanguage}: {content}",
       provider: "cli",
       targetLanguage: "French Canadian",
@@ -154,6 +157,46 @@ describe("AppSettingsProvider", () => {
     });
     expect(DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE).toContain("{targetLanguage}");
     expect(DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE).toContain("{content}");
+  });
+
+  it("migrates legacy translation runtime settings into the shared AI runtime", () => {
+    const settings = normalizeStoredSettings({
+      conversationTranslation: {
+        cli: "gemini",
+        model: "  gemini-2.5-pro  ",
+        provider: "cli",
+        targetLanguage: "English",
+      },
+    });
+
+    expect(settings.aiRuntime).toEqual({
+      cli: "gemini",
+      model: "gemini-2.5-pro",
+    });
+    expect(settings.conversationTranslation).toEqual({
+      promptTemplate: defaultSettings.conversationTranslation.promptTemplate,
+      provider: "cli",
+      targetLanguage: "English",
+    });
+  });
+
+  it("keeps Auto-Dream disabled by default and normalizes its gates", () => {
+    expect(normalizeStoredSettings({}).memory).toEqual({
+      autoDreamEnabled: false,
+      minHours: 12,
+      minSessions: 3,
+    });
+    expect(normalizeStoredSettings({
+      memory: {
+        autoDreamEnabled: true,
+        minHours: 0,
+        minSessions: 999,
+      },
+    }).memory).toEqual({
+      autoDreamEnabled: true,
+      minHours: 1,
+      minSessions: 50,
+    });
   });
 
   it("normalizes command result preview line limits", () => {

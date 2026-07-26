@@ -12,10 +12,16 @@ import {
 } from "./settingsSchema";
 
 export {
+  AUTO_DREAM_MIN_HOURS_MAX,
+  AUTO_DREAM_MIN_HOURS_MIN,
+  AUTO_DREAM_MIN_SESSIONS_MAX,
+  AUTO_DREAM_MIN_SESSIONS_MIN,
   COLUMN_MIN_WIDTH_MAX,
   COLUMN_MIN_WIDTH_MIN,
   COLUMN_MIN_WIDTH_STEP,
   DEFAULT_COLUMN_MIN_WIDTH,
+  DEFAULT_AUTO_DREAM_MIN_HOURS,
+  DEFAULT_AUTO_DREAM_MIN_SESSIONS,
   DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
   DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
   DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
@@ -39,6 +45,8 @@ export {
   TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH,
 } from "./settingsSchema";
 export type {
+  AiRuntimeCli,
+  AiRuntimeSettings,
   AppSettings,
   AppSettingsStorageInfo,
   ConversationContentCardColorSettings,
@@ -52,6 +60,8 @@ export type {
   FontFamilyPresetId,
   FontFamilyValue,
   InterfaceDensity,
+  MemorySettings,
+  ResolvedConversationTranslationSettings,
   SettingsPanelId,
 } from "./settingsSchema";
 
