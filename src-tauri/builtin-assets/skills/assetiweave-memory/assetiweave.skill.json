@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "assetiweave.memory",
+  "content_version": "1.0.0",
+  "engine_contract": ">=3",
+  "entry": "SKILL.md",
+  "capabilities": [
+    "memory.overview",
+    "memory.dream.status",
+    "memory.dream.preview",
+    "memory.dream.run",
+    "memory.dream.list",
+    "memory.dream.get",
+    "memory.recall.preview",
+    "memory.recall.run",
+    "memory.item.list",
+    "memory.item.get",
+    "memory.item.create",
+    "memory.item.update",
+    "memory.item.archive",
+    "memory.candidate.accept",
+    "memory.candidate.reject",
+    "memory.verify"
+  ]
+}

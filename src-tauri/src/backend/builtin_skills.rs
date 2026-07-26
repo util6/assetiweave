@@ -32,6 +32,10 @@ const WEB_REPAIR_SKILL: &[u8] =
 const WEB_REPAIR_MANIFEST: &[u8] = include_bytes!(
     "../../builtin-assets/skills/assetiweave-web-conversation-repair/assetiweave.skill.json"
 );
+const MEMORY_SKILL: &[u8] =
+    include_bytes!("../../builtin-assets/skills/assetiweave-memory/SKILL.md");
+const MEMORY_MANIFEST: &[u8] =
+    include_bytes!("../../builtin-assets/skills/assetiweave-memory/assetiweave.skill.json");
 
 struct EmbeddedFile {
     relative_path: &'static str,
@@ -80,6 +84,16 @@ const EMBEDDED_FILES: &[EmbeddedFile] = &[
         contents: WEB_REPAIR_MANIFEST,
         executable: false,
     },
+    EmbeddedFile {
+        relative_path: "assetiweave-memory/SKILL.md",
+        contents: MEMORY_SKILL,
+        executable: false,
+    },
+    EmbeddedFile {
+        relative_path: "assetiweave-memory/assetiweave.skill.json",
+        contents: MEMORY_MANIFEST,
+        executable: false,
+    },
 ];
 
 struct EmbeddedSkill {
@@ -111,6 +125,13 @@ const EMBEDDED_SKILLS: &[EmbeddedSkill] = &[
         id: "assetiweave.web-conversation-repair",
         skill: WEB_REPAIR_SKILL,
         manifest: WEB_REPAIR_MANIFEST,
+    },
+    EmbeddedSkill {
+        directory: "assetiweave-memory",
+        name: "assetiweave-memory",
+        id: "assetiweave.memory",
+        skill: MEMORY_SKILL,
+        manifest: MEMORY_MANIFEST,
     },
 ];
 
@@ -402,6 +423,7 @@ mod tests {
         for skill in [
             "assetiweave-conversation-recall",
             "assetiweave-web-conversation-repair",
+            "assetiweave-memory",
         ] {
             assert!(root.join(skill).join("SKILL.md").is_file());
             assert!(root.join(skill).join("assetiweave.skill.json").is_file());
