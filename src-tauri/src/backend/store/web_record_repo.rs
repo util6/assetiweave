@@ -143,6 +143,7 @@ pub(crate) async fn list_web_record_sessions_sqlx(
     offset: usize,
 ) -> AppResult<Vec<ConversationSessionListItem>> {
     let needle = normalize_query(query);
+    let id_needle = query.and_then(crate::backend::models::conversation_id_search_term);
     let rows = sqlx::query(
         r#"
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, NULL AS project_path,
@@ -166,6 +167,7 @@ pub(crate) async fn list_web_record_sessions_sqlx(
               ?4 IS NULL
               OR instr(lower(s.title), ?4) > 0
               OR instr(lower(s.external_id), ?4) > 0
+              OR (?5 IS NOT NULL AND instr(lower(s.id), ?5) > 0)
               OR EXISTS (
                   SELECT 1
                   FROM web_record_questions q
@@ -180,13 +182,14 @@ pub(crate) async fn list_web_record_sessions_sqlx(
               )
           )
         ORDER BY COALESCE(s.updated_at, s.imported_at) DESC, s.title ASC
-        LIMIT ?5 OFFSET ?6
+        LIMIT ?6 OFFSET ?7
         "#,
     )
     .bind(tenant_id)
     .bind(adapter_id)
     .bind(source_id)
     .bind(needle.as_deref())
+    .bind(id_needle.as_deref())
     .bind(i64::try_from(limit).map_err(|_| format!("invalid web record limit: {limit}"))?)
     .bind(i64::try_from(offset).map_err(|_| format!("invalid web record offset: {offset}"))?)
     .fetch_all(pool)
@@ -1517,6 +1520,65 @@ mod tests {
         assert_eq!(detail.questions.len(), 1);
         assert_eq!(detail.questions[0].turns.len(), 1);
         assert_eq!(detail.questions[0].parts.len(), 1);
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_web_record_lists_sessions_by_display_id_fragment() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-web-record-id-fragment-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let source = fixture_source();
+
+        let (fragment_matches, full_matches) = database
+            .block_on(async {
+                super::super::conversation_repo::upsert_conversation_source_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                )
+                .await?;
+                import_web_record_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[fixture_session()],
+                    false,
+                )
+                .await?;
+                let session_id = stable_id("web-record-session", &[&source.id, "web-session-1"]);
+                let fragment = crate::backend::models::conversation_id_fragment(&session_id);
+                let fragment_matches = list_web_record_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    None,
+                    Some(&source.id),
+                    Some(&fragment),
+                    20,
+                    0,
+                )
+                .await?;
+                let full_matches = list_web_record_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    None,
+                    Some(&source.id),
+                    Some(&session_id),
+                    20,
+                    0,
+                )
+                .await?;
+                AppResult::Ok((fragment_matches, full_matches))
+            })
+            .expect("list web record sessions by display id fragment");
+
+        assert_eq!(fragment_matches.len(), 1);
+        assert_eq!(full_matches.len(), 1);
+        assert_eq!(full_matches[0].session.external_id, "web-session-1");
 
         drop(database);
         cleanup_database(&db_path);

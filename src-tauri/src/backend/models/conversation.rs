@@ -382,6 +382,100 @@ pub struct ConversationGroupSeed {
     pub origin: ConversationGroupingOrigin,
 }
 
+pub fn conversation_id_fragment(value: &str) -> String {
+    let normalized = value.trim().to_ascii_lowercase();
+    find_conversation_hash(&normalized)
+        .or_else(|| find_legacy_conversation_hash(&normalized))
+        .unwrap_or(normalized.as_str())
+        .chars()
+        .take(8)
+        .collect()
+}
+
+pub fn conversation_id_search_term(value: &str) -> Option<String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.len() == 8 && normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Some(normalized);
+    }
+    if is_conversation_domain_id(&normalized)
+        && (find_conversation_hash(&normalized).is_some()
+            || find_legacy_conversation_hash(&normalized).is_some())
+    {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
+fn is_conversation_domain_id(value: &str) -> bool {
+    [
+        "conversation-session-",
+        "conversation-question-",
+        "conversation-turn-",
+        "conversation-part-",
+        "web-record-session-",
+        "web-record-question-",
+        "web-record-turn-",
+        "web-record-part-",
+    ]
+    .iter()
+    .any(|prefix| value.starts_with(prefix))
+}
+
+fn find_conversation_hash(value: &str) -> Option<&str> {
+    find_hex_run(value, 64)
+}
+
+fn find_legacy_conversation_hash(value: &str) -> Option<&str> {
+    find_hex_run_at_least(value, 12)
+}
+
+fn find_hex_run(value: &str, expected_length: usize) -> Option<&str> {
+    let bytes = value.as_bytes();
+    if bytes.len() < expected_length {
+        return None;
+    }
+    let mut start = 0;
+    while start < bytes.len() {
+        if !bytes[start].is_ascii_hexdigit() {
+            start += 1;
+            continue;
+        }
+        let mut end = start + 1;
+        while end < bytes.len() && bytes[end].is_ascii_hexdigit() {
+            end += 1;
+        }
+        if end - start == expected_length {
+            return value.get(start..end);
+        }
+        start = end;
+    }
+    None
+}
+
+fn find_hex_run_at_least(value: &str, minimum_length: usize) -> Option<&str> {
+    let bytes = value.as_bytes();
+    if bytes.len() < minimum_length {
+        return None;
+    }
+    let mut start = 0;
+    while start < bytes.len() {
+        if !bytes[start].is_ascii_hexdigit() {
+            start += 1;
+            continue;
+        }
+        let mut end = start + 1;
+        while end < bytes.len() && bytes[end].is_ascii_hexdigit() {
+            end += 1;
+        }
+        if end - start >= minimum_length {
+            return value.get(start..end);
+        }
+        start = end;
+    }
+    None
+}
+
 pub fn should_auto_merge_acknowledgement(user_text: &str) -> bool {
     let normalized = user_text.trim().to_ascii_lowercase();
     if normalized.is_empty()
@@ -475,6 +569,54 @@ pub fn conversation_turn_fingerprint(turn: &NormalizedConversationTurn) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conversation_id_fragment_extracts_hashes_and_supports_legacy_ids() {
+        assert_eq!(
+            conversation_id_fragment(
+                "conversation-session-ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+            ),
+            "abcdef01"
+        );
+        assert_eq!(
+            conversation_id_fragment(
+                "conversation-part-1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef-answer"
+            ),
+            "12345678"
+        );
+        assert_eq!(conversation_id_fragment("  Legacy-Session  "), "legacy-s");
+        assert_eq!(
+            conversation_id_fragment("conversation-session-abcdef1234567890abcdef1234567890"),
+            "abcdef12"
+        );
+        assert_eq!(conversation_id_fragment("   "), "");
+    }
+
+    #[test]
+    fn conversation_id_search_term_only_accepts_display_fragments_or_full_hash_ids() {
+        assert_eq!(
+            conversation_id_search_term("ABCDEF01"),
+            Some("abcdef01".to_string())
+        );
+        assert_eq!(conversation_id_search_term("dead"), None);
+        assert_eq!(conversation_id_search_term("abcdef123456"), None);
+        assert_eq!(conversation_id_search_term("session title"), None);
+        assert_eq!(
+            conversation_id_search_term(
+                "conversation-session-abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+            ),
+            Some(
+                "conversation-session-abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            conversation_id_search_term(
+                "unrelated-abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+            ),
+            None
+        );
+    }
 
     #[test]
     fn only_merges_exact_simple_acknowledgements() {

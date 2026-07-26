@@ -23,10 +23,11 @@ import {
   DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
   normalizeConversationTranslationTargetLanguage,
   type ConversationContentCardColorSettings,
-  type ConversationTranslationSettings,
+  type ResolvedConversationTranslationSettings,
   type ConversationTranslationTargetLanguage,
 } from "../../store/settings/AppSettingsProvider";
 import { abbreviateHomePath } from "../../utils/path";
+import { conversationIdFragment } from "../../utils/conversationIds";
 import { MarkdownContent } from "./ConversationMarkdown";
 
 export type ConversationContentType = "answer" | "tool" | "command" | "code" | "result";
@@ -101,7 +102,7 @@ export function ConversationContentCards({
   t: Translator;
   translationAvailabilityChecker?: () => Promise<OpencodeTranslationAvailability>;
   translationSaver?: (request: ConversationPartTranslationUpdateRequest) => Promise<void>;
-  translationSettings?: ConversationTranslationSettings;
+  translationSettings?: ResolvedConversationTranslationSettings;
   translator?: (request: ConversationCardTranslationRequest) => Promise<OpencodeTranslationResult>;
   visibility: ConversationContentVisibility;
 }) {
@@ -249,7 +250,7 @@ export function ConversationContentCards({
   );
 }
 
-const DEFAULT_TRANSLATION_SETTINGS: ConversationTranslationSettings = {
+const DEFAULT_TRANSLATION_SETTINGS: ResolvedConversationTranslationSettings = {
   cli: "opencode",
   model: "",
   promptTemplate: DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
@@ -322,6 +323,12 @@ function ConversationContentCard({
           <span>{label}</span>
         </div>
         <div className="flex items-center gap-1.5 text-label-caps">
+          <span
+            className="select-text rounded-md border border-inherit bg-theme-card/45 px-1.5 py-0.5 font-mono text-code-sm normal-case text-on-surface-muted"
+            title={block.id}
+          >
+            {conversationIdFragment(block.id)}
+          </span>
           <span className="text-label-caps text-on-surface-muted">{role}</span>
           <button
             aria-label={copyLabel}

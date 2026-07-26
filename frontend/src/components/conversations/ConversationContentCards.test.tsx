@@ -80,6 +80,33 @@ describe("ConversationContentCards", () => {
     expect(html).toContain("Declared result");
   });
 
+  it("shows the derived id fragment for every card type while retaining full block ids", () => {
+    const partId = "conversation-part-1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+    const cardTypes = ["answer", "tool", "command", "code", "result"] as const;
+    const blocks = buildConversationContentBlocks(cardTypes.map((cardType, index) => (
+      declaredPart(`${partId}-${index}`, cardType, `Fragment-targeted ${cardType}`)
+    )));
+
+    const html = renderToStaticMarkup(
+      <ConversationContentCards
+        blocks={blocks}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    expect(html.match(/>12345678</g)).toHaveLength(cardTypes.length);
+    cardTypes.forEach((cardType, index) => {
+      expect(html).toContain(`data-conversation-card-id="${partId}-${index}-${cardType}"`);
+    });
+  });
+
   it("does not render protocol metadata as card body", () => {
     const blocks = buildConversationContentBlocks([
       {

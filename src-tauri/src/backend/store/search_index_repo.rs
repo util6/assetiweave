@@ -3,7 +3,7 @@ use chrono::Utc;
 use sqlx::{AssertSqlSafe, Row, SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
-const CONVERSATION_SEARCH_SCHEMA_VERSION: i64 = 1;
+const CONVERSATION_SEARCH_SCHEMA_VERSION: i64 = 2;
 const CONVERSATION_SEARCH_TOKENIZER_VERSION: &str = "tantivy-jieba-0.20.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -313,8 +313,8 @@ pub(crate) async fn complete_conversation_search_index_rebuild_sqlx(
         SET indexed_revision = ?1, active_generation = ?2, health = 'ready',
             document_count = ?3, size_bytes = ?4, last_built_at = ?5,
             last_error = NULL, lease_owner = NULL, lease_expires_at = NULL,
-            updated_at = ?5
-        WHERE tenant_id = ?6 AND source_revision = ?1
+            schema_version = ?6, tokenizer_version = ?7, updated_at = ?5
+        WHERE tenant_id = ?8 AND source_revision = ?1
         "#,
     )
     .bind(expected_revision)
@@ -322,6 +322,8 @@ pub(crate) async fn complete_conversation_search_index_rebuild_sqlx(
     .bind(document_count)
     .bind(size_bytes)
     .bind(&now)
+    .bind(CONVERSATION_SEARCH_SCHEMA_VERSION)
+    .bind(CONVERSATION_SEARCH_TOKENIZER_VERSION)
     .bind(tenant_id)
     .execute(pool)
     .await
@@ -524,6 +526,10 @@ mod tests {
                 assert_eq!(initial.health, ConversationSearchIndexHealth::Missing);
                 assert_eq!(initial.source_revision, 0);
                 assert_eq!(initial.indexed_revision, None);
+                assert!(initial.is_compatible());
+                let mut previous_schema = initial.clone();
+                previous_schema.schema_version = CONVERSATION_SEARCH_SCHEMA_VERSION - 1;
+                assert!(!previous_schema.is_compatible());
 
                 let revision =
                     bump_conversation_search_source_revision_sqlx(database.pool(), TENANT_ID)
@@ -566,6 +572,30 @@ mod tests {
                         .await?;
                 assert_eq!(state.source_revision, 1);
                 assert_eq!(state.lease_owner.as_deref(), Some("cli"));
+
+                sqlx::query(
+                    "UPDATE conversation_search_index_state SET schema_version = ?1 WHERE tenant_id = ?2",
+                )
+                .bind(CONVERSATION_SEARCH_SCHEMA_VERSION - 1)
+                .bind(TENANT_ID)
+                .execute(database.pool())
+                .await
+                .map_err(|error| error.to_string())?;
+                assert!(complete_conversation_search_index_rebuild_sqlx(
+                    database.pool(),
+                    TENANT_ID,
+                    revision,
+                    "generation-upgraded",
+                    12,
+                    4096,
+                )
+                .await?);
+                let rebuilt =
+                    load_or_create_conversation_search_index_state_sqlx(database.pool(), TENANT_ID)
+                        .await?;
+                assert!(rebuilt.is_compatible());
+                assert_eq!(rebuilt.health, ConversationSearchIndexHealth::Ready);
+                assert_eq!(rebuilt.active_generation.as_deref(), Some("generation-upgraded"));
                 crate::backend::dto::AppResult::Ok(())
             })
             .expect("track search state");

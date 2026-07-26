@@ -1196,6 +1196,7 @@ pub(crate) async fn list_conversation_sessions_sqlx(
     offset: usize,
 ) -> AppResult<Vec<ConversationSessionListItem>> {
     let needle = normalize_query(query);
+    let id_needle = query.and_then(crate::backend::models::conversation_id_search_term);
     let rows = sqlx::query(
         r#"
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
@@ -1221,6 +1222,7 @@ pub(crate) async fn list_conversation_sessions_sqlx(
               OR instr(lower(s.title), ?4) > 0
               OR instr(lower(COALESCE(s.project_path, '')), ?4) > 0
               OR instr(lower(s.external_id), ?4) > 0
+              OR (?5 IS NOT NULL AND instr(lower(s.id), ?5) > 0)
               OR EXISTS (
                   SELECT 1
                   FROM conversation_questions q
@@ -1235,13 +1237,14 @@ pub(crate) async fn list_conversation_sessions_sqlx(
               )
           )
         ORDER BY COALESCE(s.updated_at, s.imported_at) DESC, s.title ASC
-        LIMIT ?5 OFFSET ?6
+        LIMIT ?6 OFFSET ?7
         "#,
     )
     .bind(tenant_id)
     .bind(adapter_id)
     .bind(source_id)
     .bind(needle.as_deref())
+    .bind(id_needle.as_deref())
     .bind(i64::try_from(limit).map_err(|_| format!("invalid conversation limit: {limit}"))?)
     .bind(i64::try_from(offset).map_err(|_| format!("invalid conversation offset: {offset}"))?)
     .fetch_all(pool)
@@ -1741,6 +1744,8 @@ pub(crate) async fn search_conversation_cards_sqlx(
 ) -> AppResult<ConversationSearchPage> {
     let needle = normalize_query(Some(query))
         .ok_or_else(|| "conversation search query is required".to_string())?;
+    let id_fragment = crate::backend::models::conversation_id_search_term(query)
+        .map(|value| crate::backend::models::conversation_id_fragment(&value));
     let project_path = normalize_project_path(project_path);
     let since = parse_search_time_bound(since, SearchTimeBound::Since)?;
     let until = parse_search_time_bound(until, SearchTimeBound::Until)?;
@@ -1794,6 +1799,7 @@ pub(crate) async fn search_conversation_cards_sqlx(
                 .filter(|title| !title.trim().is_empty())
                 .unwrap_or_else(|| first_line(&question.question_text));
             for turn in turns_by_question.remove(&question.id).unwrap_or_default() {
+                let question_block_id = format!("{}-question", turn.id);
                 push_search_hit_if_matching(
                     &mut hits,
                     &needle,
@@ -1803,13 +1809,16 @@ pub(crate) async fn search_conversation_cards_sqlx(
                     &question_title,
                     Some(turn.id.clone()),
                     None,
-                    format!("{}-question", turn.id),
+                    question_block_id.clone(),
                     ConversationSearchCardType::Question,
                     &turn.user_text,
+                    id_fragment.as_deref(),
+                    &[&session.id, &question.id, &turn.id, &question_block_id],
                 );
 
                 for part in parts_by_turn.remove(&turn.id).unwrap_or_default() {
                     for entry in search_entries_for_part(&part) {
+                        let entry_block_id = entry.block_id.clone();
                         push_search_hit_if_matching(
                             &mut hits,
                             &needle,
@@ -1822,6 +1831,14 @@ pub(crate) async fn search_conversation_cards_sqlx(
                             entry.block_id,
                             entry.card_type,
                             &entry.text,
+                            id_fragment.as_deref(),
+                            &[
+                                &session.id,
+                                &question.id,
+                                &turn.id,
+                                &part.id,
+                                &entry_block_id,
+                            ],
                         );
                     }
                 }
@@ -1906,9 +1923,22 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
     .collect::<BTreeMap<_, _>>();
     let needle = normalize_query(Some(query))
         .ok_or_else(|| "conversation search query is required".to_string())?;
+    let id_fragment = crate::backend::models::conversation_id_search_term(query)
+        .map(|value| crate::backend::models::conversation_id_fragment(&value));
     let mut hits = Vec::with_capacity(matches.hits.len());
 
     for matched in matches.hits {
+        let matched_by_id = id_fragment.as_deref().is_some_and(|fragment| {
+            [
+                matched.session_id.as_str(),
+                matched.question_id.as_str(),
+                matched.turn_id.as_str(),
+                matched.part_id.as_str(),
+                matched.document_id.as_str(),
+            ]
+            .into_iter()
+            .any(|value| crate::backend::models::conversation_id_fragment(value) == fragment)
+        });
         let session = sessions
             .get(&matched.session_id)
             .ok_or_else(|| "conversation search index hydration missed a session".to_string())?;
@@ -1955,9 +1985,17 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
             part_id,
             block_id: matched.document_id,
             card_type,
-            snippet: search_snippet(&text, &needle),
+            snippet: if matched_by_id {
+                leading_search_snippet(&text)
+            } else {
+                search_snippet(&text, &needle)
+            },
             score: matched.score,
-            highlight_segments: search_highlight_segments(&text, &needle),
+            highlight_segments: if matched_by_id {
+                None
+            } else {
+                search_highlight_segments(&text, &needle)
+            },
         });
     }
     Ok(ConversationSearchPage {
@@ -3561,11 +3599,18 @@ fn push_search_hit_if_matching(
     block_id: String,
     card_type: ConversationSearchCardType,
     text: &str,
+    id_fragment: Option<&str>,
+    related_ids: &[&str],
 ) {
     if !allowed_types.is_empty() && !allowed_types.contains(&card_type) {
         return;
     }
-    if !text.to_lowercase().contains(needle) {
+    let matched_by_id = id_fragment.is_some_and(|fragment| {
+        related_ids
+            .iter()
+            .any(|value| crate::backend::models::conversation_id_fragment(value) == fragment)
+    });
+    if !matched_by_id && !text.to_lowercase().contains(needle) {
         return;
     }
 
@@ -3578,8 +3623,16 @@ fn push_search_hit_if_matching(
         part_id,
         block_id,
         card_type,
-        snippet: search_snippet(text, needle),
-        score: match_count(text, needle) * 100,
+        snippet: if matched_by_id {
+            leading_search_snippet(text)
+        } else {
+            search_snippet(text, needle)
+        },
+        score: if matched_by_id {
+            12_000
+        } else {
+            match_count(text, needle) * 100
+        },
         highlight_segments: None,
     });
 }
@@ -3655,6 +3708,16 @@ fn search_snippet(text: &str, needle: &str) -> String {
     compact_whitespace(&format!(
         "{prefix}{}{suffix}",
         chars[start..end].iter().collect::<String>()
+    ))
+}
+
+fn leading_search_snippet(text: &str) -> String {
+    let chars = text.chars().collect::<Vec<_>>();
+    let end = 104.min(chars.len());
+    let suffix = if end < chars.len() { "..." } else { "" };
+    compact_whitespace(&format!(
+        "{}{suffix}",
+        chars[..end].iter().collect::<String>()
     ))
 }
 
@@ -4862,6 +4925,87 @@ mod tests {
     }
 
     #[test]
+    fn sqlx_conversation_lists_sessions_by_display_id_fragment() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-id-fragment-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let adapter = test_conversation_adapter(
+            "id-fragment-external",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let source = test_conversation_source(&adapter.id);
+
+        let (fragment_matches, full_matches) = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[fixture_session("v1")],
+                    false,
+                )
+                .await?;
+                let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+                let fragment = crate::backend::models::conversation_id_fragment(&session_id);
+                let collision_id = format!("conversation-session-{fragment}{}", "0".repeat(56));
+                sqlx::query(
+                    r#"
+                    INSERT INTO conversation_sessions (
+                        tenant_id, id, source_id, adapter_id, external_id, title, project_path,
+                        started_at, updated_at, source_locator, source_fingerprint, missing,
+                        created_at, imported_at
+                    )
+                    SELECT tenant_id, ?1, source_id, adapter_id, 'fragment-collision',
+                           'Fragment collision', project_path, started_at, updated_at,
+                           source_locator, source_fingerprint, missing, created_at, imported_at
+                    FROM conversation_sessions
+                    WHERE tenant_id = ?2 AND id = ?3
+                    "#,
+                )
+                .bind(&collision_id)
+                .bind(TEST_TENANT_ID)
+                .bind(&session_id)
+                .execute(database.pool())
+                .await
+                .map_err(|error| error.to_string())?;
+                let fragment_matches = list_conversation_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    None,
+                    Some(&source.id),
+                    Some(&fragment),
+                    20,
+                    0,
+                )
+                .await?;
+                let full_matches = list_conversation_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    None,
+                    Some(&source.id),
+                    Some(&session_id),
+                    20,
+                    0,
+                )
+                .await?;
+                AppResult::Ok((fragment_matches, full_matches))
+            })
+            .expect("list conversation sessions by display id fragment");
+
+        assert_eq!(fragment_matches.len(), 2);
+        assert_eq!(full_matches.len(), 1);
+        assert_eq!(full_matches[0].session.external_id, "session-1");
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
     fn sqlx_merge_and_split_conversation_questions_preserve_grouping() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-mutation-sqlx-{}.sqlite",
@@ -4994,7 +5138,7 @@ mod tests {
         web_session.external_id = "web-session".to_string();
         web_session.started_at = Some("2026-04-02T10:00:00Z".to_string());
 
-        let (session_page, web_page) = database
+        let (session_page, web_page, fragment_page) = database
             .block_on(async {
                 upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &session_adapter)
                     .await?;
@@ -5052,7 +5196,26 @@ mod tests {
                     0,
                 )
                 .await?;
-                AppResult::Ok((session_page, web_page))
+                let session_id =
+                    stable_id("conversation-session", &[&session_source.id, "session-1"]);
+                let fragment = crate::backend::models::conversation_id_fragment(&session_id);
+                let fragment_page = search_conversation_cards_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    ConversationRecordKind::Session,
+                    Some(&session_adapter.id),
+                    Some(&session_source.id),
+                    Some("/tmp/project"),
+                    &fragment,
+                    &[],
+                    None,
+                    None,
+                    false,
+                    20,
+                    0,
+                )
+                .await?;
+                AppResult::Ok((session_page, web_page, fragment_page))
             })
             .expect("search session and web records through SQLx");
 
@@ -5071,6 +5234,13 @@ mod tests {
             web_page.hits[0].card_type,
             ConversationSearchCardType::Answer
         );
+        assert!(fragment_page.total_count > 0);
+        assert!(fragment_page.hits.iter().all(|hit| hit.session.session.id
+            == stable_id("conversation-session", &[&session_source.id, "session-1"])));
+        assert!(fragment_page
+            .hits
+            .iter()
+            .all(|hit| hit.highlight_segments.is_none()));
 
         drop(database);
         cleanup_database(&db_path);

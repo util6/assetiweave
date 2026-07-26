@@ -5,6 +5,7 @@ import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { defaultSettings } from "../../store/settings/settingsSchema";
+import type { ConversationNavigationTarget } from "../../router/navigationTargets";
 import type { ConversationAdapter, ConversationSessionDetail, ConversationSessionListItem } from "../../types";
 import { ConversationsPage } from "./ConversationsPage";
 
@@ -13,6 +14,7 @@ type ConversationNotify = ComponentProps<typeof ConversationsPage>["onNotify"];
 const startSyncMock = vi.hoisted(() => vi.fn());
 const exportConversationSessionMock = vi.hoisted(() => vi.fn());
 const getConversationSessionMock = vi.hoisted(() => vi.fn());
+const getWebRecordSessionMock = vi.hoisted(() => vi.fn());
 const listConversationAdaptersMock = vi.hoisted(() => vi.fn());
 const listConversationSessionsMock = vi.hoisted(() => vi.fn());
 const listWebRecordSessionsMock = vi.hoisted(() => vi.fn());
@@ -63,6 +65,7 @@ vi.mock("../../services/conversations", async () => {
     ...actual,
     exportConversationSession: exportConversationSessionMock,
     getConversationSession: getConversationSessionMock,
+    getWebRecordSession: getWebRecordSessionMock,
     listConversationAdapters: listConversationAdaptersMock,
     listConversationSessions: listConversationSessionsMock,
     listWebRecordSessions: listWebRecordSessionsMock,
@@ -97,6 +100,7 @@ describe("ConversationsPage sync scope", () => {
       session_id: "session-export-target",
     });
     getConversationSessionMock.mockReset().mockResolvedValue(conversationSessionDetail);
+    getWebRecordSessionMock.mockReset().mockResolvedValue(conversationSessionDetail);
     listConversationAdaptersMock.mockReset().mockResolvedValue([]);
     listConversationSessionsMock.mockReset().mockResolvedValue([]);
     listWebRecordSessionsMock.mockReset().mockResolvedValue([]);
@@ -218,6 +222,59 @@ describe("ConversationsPage sync scope", () => {
     });
     expect(screen.queryByText("Exported session Markdown")).toBeNull();
   });
+
+  it.each(["session", "web"] as const)(
+    "opens a %s evidence target once and highlights its exact block",
+    async (recordKind) => {
+      const targetSession = recordKind === "web" ? webConversationSession : conversationSession;
+      const targetDetail = { ...conversationSessionDetail, session: targetSession };
+      const navigationTarget: ConversationNavigationTarget = {
+        blockId: "part-export-target-answer-answer",
+        nonce: `target-${recordKind}`,
+        questionId: "question-export-target",
+        recordKind,
+        sessionId: targetSession.id,
+      };
+      const onNavigationTargetConsumed = vi.fn();
+      listConversationAdaptersMock.mockResolvedValue([
+        recordKind === "web" ? webConversationAdapter : conversationAdapter,
+      ]);
+      (recordKind === "web" ? listWebRecordSessionsMock : listConversationSessionsMock).mockResolvedValue([
+        targetSession,
+      ]);
+      (recordKind === "web" ? getWebRecordSessionMock : getConversationSessionMock).mockResolvedValue(targetDetail);
+
+      const view = renderConversationsPage(recordKind, { navigationTarget, onNavigationTargetConsumed });
+
+      await waitFor(() => {
+        expect(recordKind === "web" ? getWebRecordSessionMock : getConversationSessionMock).toHaveBeenCalledWith(targetSession.id);
+      });
+      const targetCard = await waitFor(() => {
+        const element = document.querySelector('[data-conversation-card-id="part-export-target-answer-answer"]');
+        expect(element).toBeTruthy();
+        return element as HTMLElement;
+      });
+      expect(targetCard.className).toContain("ring-2");
+      expect(onNavigationTargetConsumed).toHaveBeenCalledTimes(1);
+      expect(onNavigationTargetConsumed).toHaveBeenCalledWith(navigationTarget.nonce);
+
+      view.rerender(
+        <I18nProvider>
+          <ConversationsPage
+            appShortcuts={[]}
+            navigationTarget={navigationTarget}
+            onManualOpen={vi.fn()}
+            onNavigationTargetConsumed={onNavigationTargetConsumed}
+            onNotify={() => undefined}
+            onNotifyError={vi.fn()}
+            onOpenSettings={vi.fn()}
+            recordKind={recordKind}
+          />
+        </I18nProvider>,
+      );
+      await waitFor(() => expect(onNavigationTargetConsumed).toHaveBeenCalledTimes(1));
+    },
+  );
 
   it.each(["session", "web"] as const)(
     "coalesces session list typing before refreshing %s pages",
@@ -832,7 +889,11 @@ describe("ConversationsPage sync scope", () => {
 
 function renderConversationsPage(
   recordKind: "session" | "web",
-  options: { onNotify?: ConversationNotify } = {},
+  options: {
+    navigationTarget?: ConversationNavigationTarget | null;
+    onNavigationTargetConsumed?: (nonce: string) => void;
+    onNotify?: ConversationNotify;
+  } = {},
 ) {
   const onNotify = options.onNotify ?? (() => undefined);
 
@@ -840,7 +901,9 @@ function renderConversationsPage(
     <I18nProvider>
       <ConversationsPage
         appShortcuts={[]}
+        navigationTarget={options.navigationTarget}
         onManualOpen={vi.fn()}
+        onNavigationTargetConsumed={options.onNavigationTargetConsumed}
         onNotify={onNotify}
         onNotifyError={vi.fn()}
         onOpenSettings={vi.fn()}
@@ -917,6 +980,22 @@ const conversationSession: ConversationSessionListItem = {
   source_id: "codex-live",
   title: "Export target",
   turn_count: 1,
+};
+
+const webConversationAdapter: ConversationAdapter = {
+  ...conversationAdapter,
+  capabilities: ["probe", "read_session", "web_records"],
+  id: "chatgpt-web",
+  name: "ChatGPT Web",
+};
+
+const webConversationSession: ConversationSessionListItem = {
+  ...conversationSession,
+  adapter_id: "chatgpt-web",
+  id: "web-session-target",
+  project_path: null,
+  source_id: "chatgpt-web-export",
+  title: "Web target",
 };
 
 const conversationSessionDetail: ConversationSessionDetail = {

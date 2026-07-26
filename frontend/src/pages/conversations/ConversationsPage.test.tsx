@@ -735,6 +735,58 @@ describe("MarkdownContent", () => {
     expect(html).toContain("ring-2 ring-primary/70");
   });
 
+  it("shows the derived turn fragment on the user question card", () => {
+    const turnId = "conversation-turn-abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+    const question = {
+      ...questionDetail,
+      turns: [{ ...questionDetail.turns[0], id: turnId }],
+      parts: questionDetail.parts.map((part) => ({ ...part, turn_id: turnId })),
+    };
+    const html = renderToStaticMarkup(
+      <QuestionPreview
+        onExport={async () => undefined}
+        onPickOutputRoot={async () => null}
+        outputRoot="/tmp/conversation-export"
+        question={question}
+        session={{ ...sessionDetail, questions: [question] }}
+        setOutputRoot={vi.fn()}
+        t={t}
+      />,
+    );
+
+    expect(html).toContain(">abcdef12<");
+    expect(html).toContain(`data-conversation-card-id="${turnId}-question"`);
+  });
+
+  it.each([
+    ["question", "turn-1-question"],
+    ["answer", "part-1-answer"],
+    ["tool", "part-4-tool"],
+    ["command", "part-2-command"],
+    ["code", "part-3-code"],
+    ["result", "part-2-result-result"],
+  ] as const)("highlights the exact %s card for Memory evidence navigation", (_cardType, blockId) => {
+    render(
+      <QuestionPreview
+        activeSearchTarget={{
+          blockId,
+          cardType: _cardType,
+          questionId: richQuestionDetail.question.id,
+          sessionId: sessionDetail.session.id,
+        }}
+        onExport={async () => undefined}
+        onPickOutputRoot={async () => null}
+        outputRoot="/tmp/conversation-export"
+        question={richQuestionDetail}
+        session={{ ...sessionDetail, questions: [richQuestionDetail] }}
+        setOutputRoot={vi.fn()}
+        t={t}
+      />,
+    );
+
+    expect(document.querySelector(`[data-conversation-card-id="${blockId}"]`)?.className).toContain("ring-2");
+  });
+
   it("preserves and restores line breaks in command result previews", () => {
     const html = renderToStaticMarkup(
       <ConversationContentCards

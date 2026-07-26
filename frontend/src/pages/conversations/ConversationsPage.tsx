@@ -56,7 +56,7 @@ import {
   resolveFontFamilyCss,
   useAppSettings,
   type ConversationContentCardColorSettings,
-  type ConversationTranslationSettings,
+  type ResolvedConversationTranslationSettings,
   type SettingsPanelId,
 } from "../../store/settings/AppSettingsProvider";
 import {
@@ -89,6 +89,8 @@ import type {
   ConversationSessionListItem,
 } from "../../types";
 import { abbreviateHomePath } from "../../utils/path";
+import { conversationIdFragment } from "../../utils/conversationIds";
+import type { ConversationNavigationTarget } from "../../router/navigationTargets";
 
 export { MarkdownContent } from "../../components/conversations/ConversationMarkdown";
 
@@ -122,7 +124,7 @@ interface ConversationSearchResultState {
 
 interface ConversationSearchTarget {
   blockId: string;
-  cardType: ConversationSearchCardType;
+  cardType?: ConversationSearchCardType;
   questionId: string;
   sessionId: string;
 }
@@ -153,7 +155,9 @@ export async function loadAllConversationSessionPages(
 
 export function ConversationsPage({
   appShortcuts,
+  navigationTarget,
   onManualOpen,
+  onNavigationTargetConsumed,
   onNotify,
   onNotifyError,
   onOpenSettings,
@@ -161,7 +165,9 @@ export function ConversationsPage({
 }: {
   activeSubNavId?: string;
   appShortcuts: AppShortcut[];
+  navigationTarget?: ConversationNavigationTarget | null;
   onManualOpen: () => void;
+  onNavigationTargetConsumed?: (nonce: string) => void;
   onNotify: (notification: ConversationPageNotification) => void;
   onNotifyError: (message: string) => void;
   onOpenSettings: (panel?: SettingsPanelId) => void;
@@ -214,7 +220,10 @@ export function ConversationsPage({
   const [contentSearchResult, setContentSearchResult] = useState<ConversationSearchResultState | null>(null);
   const [contentSearchLoading, setContentSearchLoading] = useState(false);
   const [activeSearchTarget, setActiveSearchTarget] = useState<ConversationSearchTarget | null>(null);
+  const [sessionCatalogReady, setSessionCatalogReady] = useState(false);
   const importedSourceNamesRef = useRef<Map<string, string>>(new Map());
+  const startedNavigationNonceRef = useRef<string | null>(null);
+  const consumedNavigationNonceRef = useRef<string | null>(null);
 
   const sessionQuestionCount = useMemo(() => sessions.reduce((total, session) => total + session.question_count, 0), [sessions]);
   const sortedSessions = useMemo(
@@ -286,6 +295,7 @@ export function ConversationsPage({
     setImportDialogOpen(false);
     setSyncProgress(null);
     setSyncProgressDismissed(false);
+    setSessionCatalogReady(false);
     handledSyncTaskIdRef.current = null;
     setOutputRoot(
       webRecordMode ? "~/Desktop/assetiweave-web-records" : "~/Desktop/assetiweave-conversations",
@@ -424,6 +434,101 @@ export function ConversationsPage({
     }
   }, [activeSearchTarget, sessionDetail]);
 
+  const consumeNavigationTarget = useCallback((nonce: string) => {
+    if (consumedNavigationNonceRef.current === nonce) return;
+    consumedNavigationNonceRef.current = nonce;
+    onNavigationTargetConsumed?.(nonce);
+  }, [onNavigationTargetConsumed]);
+
+  useEffect(() => {
+    if (
+      !navigationTarget ||
+      navigationTarget.recordKind !== currentRecordKind ||
+      startedNavigationNonceRef.current === navigationTarget.nonce ||
+      consumedNavigationNonceRef.current === navigationTarget.nonce ||
+      !sessionCatalogReady
+    ) {
+      return;
+    }
+    const targetSession = sessions.find((session) => session.id === navigationTarget.sessionId);
+    if (!targetSession) {
+      onNotifyError(t("conversation.navigation.sessionMissing"));
+      consumeNavigationTarget(navigationTarget.nonce);
+      return;
+    }
+
+    startedNavigationNonceRef.current = navigationTarget.nonce;
+    setSelectedAppId(targetSession.adapter_id);
+    setSelectedProjectKey(
+      currentRecordKind === "web" ? null : normalizedProjectPath(targetSession) ?? NO_PROJECT_GROUP_KEY,
+    );
+    setSelectedSessionId(targetSession.id);
+    setSelectedQuestionId(navigationTarget.questionId ?? null);
+    setDetailQuery("");
+    setSelectedQuestionIds(new Set());
+    setSessionView("detail");
+    setActiveSearchTarget(
+      navigationTarget.blockId && navigationTarget.questionId
+        ? {
+            blockId: navigationTarget.blockId,
+            questionId: navigationTarget.questionId,
+            sessionId: navigationTarget.sessionId,
+          }
+        : null,
+    );
+  }, [
+    consumeNavigationTarget,
+    currentRecordKind,
+    navigationTarget,
+    onNotifyError,
+    sessionCatalogReady,
+    sessions,
+    t,
+  ]);
+
+  useEffect(() => {
+    if (
+      !navigationTarget ||
+      navigationTarget.recordKind !== currentRecordKind ||
+      consumedNavigationNonceRef.current === navigationTarget.nonce ||
+      startedNavigationNonceRef.current !== navigationTarget.nonce ||
+      sessionDetail?.session.id !== navigationTarget.sessionId
+    ) {
+      return;
+    }
+    const resolved = resolveConversationNavigationTarget(sessionDetail, navigationTarget);
+    if (!resolved) {
+      onNotifyError(t("conversation.navigation.questionMissing"));
+      consumeNavigationTarget(navigationTarget.nonce);
+      return;
+    }
+
+    setSelectedQuestionId(resolved.questionId);
+    if (navigationTarget.blockId) {
+      if (!resolved.blockFound) {
+        onNotifyError(t("conversation.navigation.blockMissing"));
+      } else {
+        setActiveSearchTarget({
+          blockId: navigationTarget.blockId,
+          cardType: resolved.cardType ?? undefined,
+          questionId: resolved.questionId,
+          sessionId: navigationTarget.sessionId,
+        });
+        if (resolved.cardType && resolved.cardType !== "question") {
+          setContentVisibility((current) => ({ ...current, [resolved.cardType!]: true }));
+        }
+      }
+    }
+    consumeNavigationTarget(navigationTarget.nonce);
+  }, [
+    consumeNavigationTarget,
+    currentRecordKind,
+    navigationTarget,
+    onNotifyError,
+    sessionDetail,
+    t,
+  ]);
+
   useEffect(() => {
     if (!syncTask) {
       return;
@@ -523,6 +628,7 @@ export function ConversationsPage({
     } finally {
       if (sessionSearchRequestIdRef.current === requestId) {
         setSessionSearchLoading(false);
+        setSessionCatalogReady(true);
       }
     }
   }
@@ -1010,12 +1116,44 @@ export function ConversationsPage({
           setOutputRoot={setOutputRoot}
           t={t}
           recordKind={currentRecordKind}
-          translationSettings={appSettings.conversationTranslation}
+          translationSettings={{
+            ...appSettings.conversationTranslation,
+            ...appSettings.aiRuntime,
+          }}
           visibility={contentVisibility}
         />
       )}
     </ConversationShell>
   );
+}
+
+export function resolveConversationNavigationTarget(
+  session: ConversationSessionDetail,
+  target: ConversationNavigationTarget,
+): { blockFound: boolean; cardType: ConversationSearchCardType | null; questionId: string } | null {
+  const candidateQuestions = target.questionId
+    ? session.questions.filter((question) => question.question.id === target.questionId)
+    : session.questions;
+  if (candidateQuestions.length === 0) return null;
+  if (!target.blockId) {
+    return { blockFound: true, cardType: null, questionId: candidateQuestions[0].question.id };
+  }
+
+  for (const question of candidateQuestions) {
+    if (question.turns.some((turn) => `${turn.id}-question` === target.blockId)) {
+      return { blockFound: true, cardType: "question", questionId: question.question.id };
+    }
+    const block = buildConversationContentBlocks(question.parts).find((candidate) => candidate.id === target.blockId);
+    if (block) {
+      return { blockFound: true, cardType: block.type, questionId: question.question.id };
+    }
+  }
+
+  return {
+    blockFound: false,
+    cardType: null,
+    questionId: candidateQuestions[0].question.id,
+  };
 }
 
 function ConversationShell({
@@ -1701,7 +1839,7 @@ export function ConversationContentSearchResults({
                         />
                         <SearchHitMetaChip
                           className="font-mono"
-                          label={t("conversation.search.sessionChip", { sessionId: shortSessionHashId(hit.session.id) })}
+                          label={t("conversation.search.sessionChip", { sessionId: conversationIdFragment(hit.session.id) })}
                         />
                         <span className="min-w-0 truncate text-body-sm font-semibold text-on-surface">
                           {hit.session.title}
@@ -1956,7 +2094,7 @@ function SessionCard({
   showProjectPath?: boolean;
   t: Translator;
 }) {
-  const hashId = shortSessionHashId(session.id);
+  const idFragment = conversationIdFragment(session.id);
 
   return (
     <article className="group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-xl border border-theme-card-border bg-theme-card/75 px-4 py-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/45 hover:bg-theme-card">
@@ -1968,7 +2106,7 @@ function SessionCard({
           </span>
         ) : null}
         <SessionMetaChips
-          hashId={hashId}
+          idFragment={idFragment}
           questions={session.question_count}
           t={t}
           turns={session.turn_count}
@@ -1987,12 +2125,12 @@ function SessionCard({
 }
 
 function SessionMetaChips({
-  hashId,
+  idFragment,
   questions,
   t,
   turns,
 }: {
-  hashId: string;
+  idFragment: string;
   questions: number;
   t: Translator;
   turns: number;
@@ -2002,7 +2140,7 @@ function SessionMetaChips({
       aria-label={t("conversation.session.counts", { questions, turns })}
       className="mt-3 flex min-w-0 flex-wrap items-center gap-1.5"
     >
-      <SessionMetaChip className="font-mono" label={hashId} />
+      <SessionMetaChip className="font-mono" label={idFragment} />
       <SessionMetaChip label={t("conversation.session.questionCountChip", { count: questions })} />
       <SessionMetaChip label={t("conversation.session.turnCountChip", { count: turns })} />
     </span>
@@ -2023,13 +2161,6 @@ function SessionMetaChip({
       {label}
     </span>
   );
-}
-
-function shortSessionHashId(sessionId: string) {
-  const trimmed = sessionId.trim();
-  const hashMatch = trimmed.match(/-([a-f0-9]{12,})$/i);
-  const hashId = hashMatch?.[1] ?? trimmed;
-  return hashId.slice(0, 8);
 }
 
 export function SessionQuestionWorkspace({
@@ -2076,7 +2207,7 @@ export function SessionQuestionWorkspace({
   session: ConversationSessionDetail | null;
   setOutputRoot: (value: string) => void;
   t: Translator;
-  translationSettings?: ConversationTranslationSettings;
+  translationSettings?: ResolvedConversationTranslationSettings;
   visibility: ConversationContentVisibility;
 }) {
   const [questionListCollapsed, setQuestionListCollapsed] = useState(false);
@@ -2298,7 +2429,7 @@ export function QuestionPreview({
   session: ConversationSessionDetail;
   setOutputRoot: (value: string) => void;
   t: Translator;
-  translationSettings?: ConversationTranslationSettings;
+  translationSettings?: ResolvedConversationTranslationSettings;
   visibility?: ConversationContentVisibility;
 }) {
   const title = question.question.title || firstLine(question.question.question_text, t);
@@ -2319,7 +2450,7 @@ export function QuestionPreview({
     const frameId = window.requestAnimationFrame(() => {
       document
         .getElementById(conversationCardDomId(activeBlockId))
-        ?.scrollIntoView({ behavior: "auto", block: "center" });
+        ?.scrollIntoView?.({ behavior: "auto", block: "center" });
     });
     return () => window.cancelAnimationFrame(frameId);
   }, [activeBlockId]);
@@ -2404,6 +2535,12 @@ export function QuestionPreview({
                     {t("conversation.question.userPrompt")}
                   </h3>
                   <div className="flex items-center gap-2">
+                    <span
+                      className="select-text rounded-md border border-primary/25 bg-theme-card/45 px-1.5 py-0.5 font-mono text-code-sm normal-case text-on-surface-muted"
+                      title={promptBlockId}
+                    >
+                      {conversationIdFragment(promptBlockId)}
+                    </span>
                     {index > 0 && onSplit ? (
                       <ToolbarTextButton icon={<Scissors size={15} />} label={t("conversation.question.splitHere")} onClick={() => void onSplit(question, turn.id)} />
                     ) : null}

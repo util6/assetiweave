@@ -3,6 +3,7 @@ use super::schema::{
     JIEBA_TOKENIZER,
 };
 use crate::backend::dto::AppResult;
+use crate::backend::models::{conversation_id_fragment, conversation_id_search_term};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -29,6 +30,7 @@ pub(super) struct ConversationSearchDocument {
     project_path: String,
     turn_id: String,
     part_id: String,
+    id_fragments: BTreeSet<String>,
 }
 
 impl ConversationSearchDocument {
@@ -73,6 +75,11 @@ impl ConversationSearchDocument {
         turn_id: &str,
         part_id: &str,
     ) -> Self {
+        let id_fragments = [session_id, question_id, turn_id, part_id, document_id]
+            .into_iter()
+            .map(conversation_id_fragment)
+            .filter(|fragment| conversation_id_search_term(fragment).is_some())
+            .collect();
         Self {
             document_type: "card".to_string(),
             document_id: document_id.to_string(),
@@ -87,6 +94,7 @@ impl ConversationSearchDocument {
             project_path: project_path.to_string(),
             turn_id: turn_id.to_string(),
             part_id: part_id.to_string(),
+            id_fragments,
         }
     }
 }
@@ -198,26 +206,30 @@ fn replace_documents(
         .delete_all_documents()
         .map_err(|error| error.to_string())?;
     for item in documents {
+        let mut document = doc!(
+                fields.document_type => item.document_type.as_str(),
+                fields.document_id => item.document_id.as_str(),
+                fields.record_kind => item.record_kind.as_str(),
+                fields.session_id => item.session_id.as_str(),
+                fields.question_id => item.question_id.as_str(),
+                fields.turn_id => item.turn_id.as_str(),
+                fields.part_id => item.part_id.as_str(),
+                fields.block_id => item.document_id.as_str(),
+                fields.card_type => item.card_type.as_str(),
+                fields.adapter_id => item.adapter_id.as_str(),
+                fields.source_id => item.source_id.as_str(),
+                fields.project_path => item.project_path.as_str(),
+                fields.question_title_zh => item.question_title.as_str(),
+                fields.question_title_en => item.question_title.as_str(),
+                fields.question_title_ngram => item.question_title.as_str(),
+                fields.content_zh => item.content.as_str(),
+                fields.content_en => item.content.as_str(),
+        );
+        for fragment in &item.id_fragments {
+            document.add_text(fields.id_fragment, fragment);
+        }
         writer
-            .add_document(doc!(
-                    fields.document_type => item.document_type.as_str(),
-                    fields.document_id => item.document_id.as_str(),
-                    fields.record_kind => item.record_kind.as_str(),
-                    fields.session_id => item.session_id.as_str(),
-                    fields.question_id => item.question_id.as_str(),
-                    fields.turn_id => item.turn_id.as_str(),
-                    fields.part_id => item.part_id.as_str(),
-                    fields.block_id => item.document_id.as_str(),
-                    fields.card_type => item.card_type.as_str(),
-                    fields.adapter_id => item.adapter_id.as_str(),
-                    fields.source_id => item.source_id.as_str(),
-                    fields.project_path => item.project_path.as_str(),
-                    fields.question_title_zh => item.question_title.as_str(),
-                    fields.question_title_en => item.question_title.as_str(),
-                    fields.question_title_ngram => item.question_title.as_str(),
-                    fields.content_zh => item.content.as_str(),
-                    fields.content_en => item.content.as_str(),
-            ))
+            .add_document(document)
             .map_err(|error| error.to_string())?;
     }
     writer.commit().map_err(|error| error.to_string())?;
@@ -317,6 +329,20 @@ fn build_card_query(
     let jieba_tokens = tokens_for(index, JIEBA_TOKENIZER, query)?;
     let default_tokens = tokens_for(index, "default", query)?;
     let mut lexical_branches = Vec::new();
+    if let Some(id_fragment) =
+        conversation_id_search_term(query).map(|value| conversation_id_fragment(&value))
+    {
+        lexical_branches.push((
+            Occur::Should,
+            Box::new(BoostQuery::new(
+                Box::new(TermQuery::new(
+                    Term::from_field_text(fields.id_fragment, &id_fragment),
+                    IndexRecordOption::Basic,
+                )),
+                12.0,
+            )) as Box<dyn Query>,
+        ));
+    }
     if !jieba_tokens.is_empty() {
         lexical_branches.push((
             Occur::Should,
@@ -535,5 +561,48 @@ mod tests {
             })
             .expect("filter web cards");
         assert_eq!(filtered.total_count, 0);
+    }
+
+    #[test]
+    fn in_memory_index_searches_cards_by_related_id_fragments() {
+        let index = InMemoryConversationIndex::new().expect("create conversation index");
+        let session_id = format!("conversation-session-{}", "1".repeat(64));
+        let question_id = format!("conversation-question-{}", "2".repeat(64));
+        let turn_id = format!("conversation-turn-{}", "3".repeat(64));
+        let part_id = format!("conversation-part-{}", "4".repeat(64));
+        let block_id = format!("{part_id}-answer");
+        index
+            .replace_documents(&[ConversationSearchDocument::scoped_card(
+                "session",
+                &session_id,
+                &question_id,
+                &block_id,
+                "answer",
+                "Unrelated title",
+                "Content without hexadecimal identifiers",
+                "codex",
+                "codex-live",
+                "/tmp/project",
+                &turn_id,
+                &part_id,
+            )])
+            .expect("index conversation card");
+
+        for fragment in ["11111111", "22222222", "33333333", "44444444"] {
+            let matches = index
+                .search_cards(&ConversationCardQuery {
+                    query: fragment.to_string(),
+                    record_kind: "session".to_string(),
+                    card_types: Vec::new(),
+                    limit: 20,
+                    offset: 0,
+                    adapter_id: None,
+                    source_id: None,
+                    project_path: None,
+                })
+                .expect("search card by id fragment");
+            assert_eq!(matches.total_count, 1, "fragment {fragment}");
+            assert_eq!(matches.hits[0].document_id, block_id);
+        }
     }
 }

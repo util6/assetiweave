@@ -19,6 +19,7 @@ pub(super) struct ConversationSearchSchema {
     pub(super) turn_id: Field,
     pub(super) part_id: Field,
     pub(super) block_id: Field,
+    pub(super) id_fragment: Field,
     pub(super) card_type: Field,
     pub(super) adapter_id: Field,
     pub(super) source_id: Field,
@@ -48,6 +49,7 @@ pub(super) fn build_conversation_schema() -> ConversationSearchSchema {
     let turn_id = builder.add_text_field("turn_id", STRING | STORED);
     let part_id = builder.add_text_field("part_id", STRING | STORED);
     let block_id = builder.add_text_field("block_id", STRING | STORED);
+    let id_fragment = builder.add_text_field("id_fragment", STRING);
     let card_type = builder.add_text_field("card_type", STRING | STORED);
     let adapter_id = builder.add_text_field("adapter_id", STRING | STORED);
     let source_id = builder.add_text_field("source_id", STRING | STORED);
@@ -76,6 +78,7 @@ pub(super) fn build_conversation_schema() -> ConversationSearchSchema {
         turn_id,
         part_id,
         block_id,
+        id_fragment,
         card_type,
         adapter_id,
         source_id,
@@ -138,6 +141,10 @@ mod tests {
             "question_id"
         );
         assert_eq!(fields.schema.get_field_name(fields.card_type), "card_type");
+        assert_eq!(
+            fields.schema.get_field_name(fields.id_fragment),
+            "id_fragment"
+        );
         assert_eq!(
             fields.schema.get_field_name(fields.content_zh),
             "content_zh"
