@@ -1,6 +1,7 @@
 use std::{
     io::Read,
     process::{Command, ExitStatus, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant},
 };
@@ -24,6 +25,20 @@ pub(crate) enum HostProcessError {
         stdout_truncated: bool,
         stderr_truncated: bool,
     },
+    Cancelled {
+        stdout: Vec<u8>,
+        stderr: Vec<u8>,
+        stdout_truncated: bool,
+        stderr_truncated: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HostProcessControl<'a> {
+    pub(crate) timeout: Duration,
+    pub(crate) stdout_cap: usize,
+    pub(crate) stderr_cap: usize,
+    pub(crate) cancellation: Option<&'a AtomicBool>,
 }
 
 pub(crate) fn run_command_with_timeout(
@@ -32,28 +47,66 @@ pub(crate) fn run_command_with_timeout(
     stdout_cap: usize,
     stderr_cap: usize,
 ) -> Result<HostProcessOutput, HostProcessError> {
+    run_command_with_control(
+        command,
+        HostProcessControl {
+            timeout,
+            stdout_cap,
+            stderr_cap,
+            cancellation: None,
+        },
+    )
+}
+
+pub(crate) fn run_command_with_control(
+    command: &mut Command,
+    control: HostProcessControl<'_>,
+) -> Result<HostProcessOutput, HostProcessError> {
+    if is_cancelled(control.cancellation) {
+        return Err(HostProcessError::Cancelled {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+        });
+    }
+
+    configure_process_tree(command);
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| HostProcessError::Spawn(error.to_string()))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| HostProcessError::Output("process stdout was not available".to_string()))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| HostProcessError::Output("process stderr was not available".to_string()))?;
-    let stdout_reader = thread::spawn(move || read_capped_and_drain(stdout, stdout_cap));
-    let stderr_reader = thread::spawn(move || read_capped_and_drain(stderr, stderr_cap));
+    let Some(stdout) = child.stdout.take() else {
+        terminate_child_tree(&mut child);
+        let _ = child.wait();
+        return Err(HostProcessError::Output(
+            "process stdout was not available".to_string(),
+        ));
+    };
+    let Some(stderr) = child.stderr.take() else {
+        terminate_child_tree(&mut child);
+        let _ = child.wait();
+        return Err(HostProcessError::Output(
+            "process stderr was not available".to_string(),
+        ));
+    };
+    let stdout_reader = thread::spawn(move || read_capped_and_drain(stdout, control.stdout_cap));
+    let stderr_reader = thread::spawn(move || read_capped_and_drain(stderr, control.stderr_cap));
     let started = Instant::now();
 
     loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| HostProcessError::Output(error.to_string()))?
-        {
+        let status = match child.try_wait() {
+            Ok(status) => status,
+            Err(error) => {
+                terminate_child_tree(&mut child);
+                let _ = child.wait();
+                let _ = join_output_reader(stdout_reader, "stdout");
+                let _ = join_output_reader(stderr_reader, "stderr");
+                return Err(HostProcessError::Output(error.to_string()));
+            }
+        };
+        if let Some(status) = status {
             let (stdout, stdout_truncated) = join_output_reader(stdout_reader, "stdout")?;
             let (stderr, stderr_truncated) = join_output_reader(stderr_reader, "stderr")?;
             return Ok(HostProcessOutput {
@@ -65,7 +118,20 @@ pub(crate) fn run_command_with_timeout(
             });
         }
 
-        if started.elapsed() >= timeout {
+        if is_cancelled(control.cancellation) {
+            terminate_child_tree(&mut child);
+            let _ = child.wait();
+            let (stdout, stdout_truncated) = join_output_reader(stdout_reader, "stdout")?;
+            let (stderr, stderr_truncated) = join_output_reader(stderr_reader, "stderr")?;
+            return Err(HostProcessError::Cancelled {
+                stdout,
+                stderr,
+                stdout_truncated,
+                stderr_truncated,
+            });
+        }
+
+        if started.elapsed() >= control.timeout {
             terminate_child_tree(&mut child);
             let _ = child.wait();
             let (stdout, stdout_truncated) = join_output_reader(stdout_reader, "stdout")?;
@@ -78,8 +144,12 @@ pub(crate) fn run_command_with_timeout(
             });
         }
 
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(25));
     }
+}
+
+fn is_cancelled(cancellation: Option<&AtomicBool>) -> bool {
+    cancellation.is_some_and(|cancellation| cancellation.load(Ordering::Acquire))
 }
 
 fn read_capped_and_drain<R: Read>(mut reader: R, cap: usize) -> Result<(Vec<u8>, bool), String> {
@@ -125,10 +195,25 @@ fn terminate_child_tree(child: &mut std::process::Child) {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
 fn terminate_child_tree(child: &mut std::process::Child) {
+    let process_group = -(child.id() as libc::pid_t);
+    // SAFETY: the child is spawned into a dedicated process group below, so the
+    // negative PID targets only that group. Failure is handled by killing the
+    // direct child as a fallback.
+    let _ = unsafe { libc::kill(process_group, libc::SIGKILL) };
     let _ = child.kill();
 }
+
+#[cfg(unix)]
+fn configure_process_tree(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    command.process_group(0);
+}
+
+#[cfg(windows)]
+fn configure_process_tree(_command: &mut Command) {}
 
 #[cfg(test)]
 mod tests {

@@ -1,6 +1,16 @@
 use super::prelude::*;
 
 impl AppService {
+    pub(crate) fn execute_ai_structured_text(
+        &self,
+        request: crate::backend::ai_execution::AiStructuredTextRequest,
+    ) -> Result<
+        crate::backend::ai_execution::AiStructuredTextResult,
+        crate::backend::ai_execution::AiExecutionError,
+    > {
+        crate::backend::ai_execution::execute_structured_text(request)
+    }
+
     pub(crate) fn check_opencode_translation_availability(
         &self,
     ) -> AppResult<crate::backend::card_translation::OpencodeTranslationAvailability> {

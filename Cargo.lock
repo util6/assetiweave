@@ -85,6 +85,8 @@ dependencies = [
  "chrono",
  "dirs",
  "globset",
+ "libc",
+ "regex",
  "rusqlite",
  "schemars 1.2.1",
  "semver",

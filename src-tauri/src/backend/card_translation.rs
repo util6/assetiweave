@@ -1,18 +1,29 @@
-use crate::backend::dto::AppResult;
+#[cfg(test)]
+use crate::backend::ai_execution::{
+    cli_search_candidates, executable_name, resolve_cli_executable_from_sources,
+};
+use crate::backend::{
+    ai_execution::{
+        execute_structured_text, run_cli_command, AiCliRuntime, AiCommandOptions, AiCommandOutput,
+        AiExecutionError, AiStructuredTextRequest,
+    },
+    dto::AppResult,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
+#[cfg(test)]
 use std::{
-    env,
-    ffi::{OsStr, OsString},
-    fs,
+    ffi::OsString,
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
-    thread,
-    time::{Duration, Instant},
 };
 
+#[cfg(test)]
 const OPENCODE_COMMAND: &str = "opencode";
+#[cfg(test)]
 const GEMINI_COMMAND: &str = "gemini";
+const TRANSLATION_STDOUT_CAP: usize = 1024 * 1024;
+const TRANSLATION_STDERR_CAP: usize = 256 * 1024;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct OpencodeTranslationAvailability {
@@ -39,7 +50,7 @@ pub(crate) enum ConversationTranslationProvider {
     Apple,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ConversationTranslationCli {
     Opencode,
@@ -75,7 +86,11 @@ pub(crate) struct ConversationTranslationModelsResult {
 }
 
 pub(crate) fn check_opencode_translation_availability() -> OpencodeTranslationAvailability {
-    match run_opencode_command(&["--version"], Duration::from_secs(8)) {
+    match run_translation_cli_command(
+        AiCliRuntime::Opencode,
+        &["--version"],
+        Duration::from_secs(8),
+    ) {
         Ok(output) if output.status.success() => OpencodeTranslationAvailability {
             available: true,
             version: first_nonempty_line(&output.stdout)
@@ -132,7 +147,7 @@ pub(crate) fn list_conversation_translation_models(
     match params.cli {
         ConversationTranslationCli::Opencode => {
             match run_translation_cli_command(
-                OPENCODE_COMMAND,
+                AiCliRuntime::Opencode,
                 &["models"],
                 Duration::from_secs(20),
             ) {
@@ -168,7 +183,7 @@ pub(crate) fn translate_conversation_card(
 
     match params.provider {
         ConversationTranslationProvider::Cli => {
-            translate_with_cli(params.cli, model.as_deref(), &params.prompt)
+            translate_with_cli(params.cli, model, params.prompt)
         }
         ConversationTranslationProvider::Google => {
             Err("Google Translate provider is reserved but not implemented yet".to_string())
@@ -183,57 +198,47 @@ pub(crate) fn translate_conversation_card_with_opencode(
     params: OpencodeTranslationRequest,
 ) -> AppResult<OpencodeTranslationResult> {
     validate_translation_prompt(&params.prompt)?;
-    let output = run_opencode_command(&["run", params.prompt.trim()], Duration::from_secs(180))?;
-    if !output.status.success() {
-        return Err(command_failure_message("opencode run", &output));
-    }
-
-    let translated_text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if translated_text.is_empty() {
-        return Err("opencode returned an empty translation".to_string());
-    }
+    let translated_text =
+        execute_translation_text(AiCliRuntime::Opencode, None, params.prompt, "opencode run")?;
 
     Ok(OpencodeTranslationResult { translated_text })
 }
 
 fn translate_with_cli(
     cli: ConversationTranslationCli,
-    model: Option<&str>,
-    prompt: &str,
+    model: Option<String>,
+    prompt: String,
 ) -> AppResult<OpencodeTranslationResult> {
-    let prompt = prompt.trim();
-    let (program, args) = match cli {
-        ConversationTranslationCli::Opencode => {
-            let mut args = vec!["run"];
-            if let Some(model) = model {
-                args.extend(["--model", model]);
-            }
-            args.push(prompt);
-            (OPENCODE_COMMAND, args)
-        }
-        ConversationTranslationCli::Gemini => {
-            let mut args = Vec::new();
-            if let Some(model) = model {
-                args.extend(["--model", model]);
-            }
-            args.extend(["--prompt", prompt]);
-            (GEMINI_COMMAND, args)
-        }
-    };
-    let output = run_translation_cli_command(program, &args, Duration::from_secs(180))?;
-    if !output.status.success() {
-        return Err(command_failure_message(
-            &format!("{program} translation"),
-            &output,
-        ));
-    }
-
-    let translated_text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if translated_text.is_empty() {
-        return Err(format!("{program} returned an empty translation"));
-    }
+    let runtime = translation_runtime(cli);
+    let program = runtime.command_name();
+    let translated_text =
+        execute_translation_text(runtime, model, prompt, &format!("{program} translation"))?;
 
     Ok(OpencodeTranslationResult { translated_text })
+}
+
+fn execute_translation_text(
+    runtime: AiCliRuntime,
+    model: Option<String>,
+    prompt: String,
+    failure_label: &str,
+) -> AppResult<String> {
+    let program = runtime.command_name();
+    let result = execute_structured_text(AiStructuredTextRequest {
+        runtime,
+        model,
+        prompt,
+        options: translation_command_options(Duration::from_secs(180)),
+    })
+    .map_err(|error| translation_execution_error_message(program, failure_label, error))?;
+    Ok(result.text)
+}
+
+fn translation_runtime(cli: ConversationTranslationCli) -> AiCliRuntime {
+    match cli {
+        ConversationTranslationCli::Opencode => AiCliRuntime::Opencode,
+        ConversationTranslationCli::Gemini => AiCliRuntime::Gemini,
+    }
 }
 
 fn validate_translation_prompt(prompt: &str) -> AppResult<()> {
@@ -258,98 +263,42 @@ fn normalize_model(model: &str) -> AppResult<Option<String>> {
     Ok(Some(model.to_string()))
 }
 
-fn run_opencode_command(args: &[&str], timeout: Duration) -> AppResult<Output> {
-    let program = resolve_translation_cli_executable(OPENCODE_COMMAND)?;
-    run_command_with_timeout(&program, args, timeout)
-}
-
 fn run_translation_cli_command(
-    command_name: &str,
+    runtime: AiCliRuntime,
     args: &[&str],
     timeout: Duration,
-) -> AppResult<Output> {
-    let program = resolve_translation_cli_executable(command_name)?;
-    run_command_with_timeout(&program, args, timeout)
+) -> AppResult<AiCommandOutput> {
+    let args = args
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect::<Vec<_>>();
+    let output = run_cli_command(runtime, &args, translation_command_options(timeout))
+        .map_err(|error| error.to_string())?;
+    if output.status.success() && output.stdout_truncated {
+        return Err(format!(
+            "{} exceeded the configured output limit",
+            output.program.display()
+        ));
+    }
+    Ok(output)
 }
 
-fn resolve_translation_cli_executable(command_name: &str) -> AppResult<PathBuf> {
-    let path_env = env::var_os("PATH");
-    let login_shell_candidate = find_command_with_login_shell(command_name);
-    let home_dir = dirs::home_dir();
-    let search_candidates = translation_cli_search_candidates(command_name, home_dir.as_deref());
-    resolve_translation_cli_executable_from_sources(
-        command_name,
-        path_env.as_deref(),
-        login_shell_candidate,
-        &search_candidates,
-    )
+fn translation_command_options(timeout: Duration) -> AiCommandOptions {
+    AiCommandOptions::new(timeout, TRANSLATION_STDOUT_CAP, TRANSLATION_STDERR_CAP)
 }
 
-fn resolve_translation_cli_executable_from_sources(
-    command_name: &str,
-    path_env: Option<&OsStr>,
-    login_shell_candidate: Option<PathBuf>,
-    search_candidates: &[PathBuf],
-) -> AppResult<PathBuf> {
-    if let Some(path) = find_program_on_path(command_name, path_env) {
-        return Ok(path);
-    }
-
-    if let Some(path) = login_shell_candidate.filter(|path| is_executable_file(path)) {
-        return Ok(path);
-    }
-
-    for candidate in search_candidates {
-        if is_executable_file(candidate) {
-            return Ok(candidate.clone());
+fn translation_execution_error_message(
+    program: &str,
+    failure_label: &str,
+    error: AiExecutionError,
+) -> String {
+    match error {
+        AiExecutionError::CommandFailed(output) => command_failure_message(failure_label, &output),
+        AiExecutionError::EmptyOutput { .. } => {
+            format!("{program} returned an empty translation")
         }
+        other => other.to_string(),
     }
-
-    Err(format!("{command_name} was not found on this host. Install it and make `{command_name}` available on PATH or from a login shell."))
-}
-
-fn find_program_on_path(program: &str, path_env: Option<&OsStr>) -> Option<PathBuf> {
-    let path_env = path_env?;
-    for directory in env::split_paths(path_env) {
-        if directory.as_os_str().is_empty() {
-            continue;
-        }
-        for file_name in executable_file_names(program) {
-            let candidate = directory.join(file_name);
-            if is_executable_file(&candidate) {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-#[cfg(not(windows))]
-fn executable_file_names(program: &str) -> Vec<OsString> {
-    vec![OsString::from(program)]
-}
-
-#[cfg(windows)]
-fn executable_file_names(program: &str) -> Vec<OsString> {
-    let program_path = Path::new(program);
-    if program_path.extension().is_some() {
-        return vec![OsString::from(program)];
-    }
-
-    ["exe", "cmd", "bat", "com"]
-        .into_iter()
-        .map(|extension| OsString::from(format!("{program}.{extension}")))
-        .collect()
-}
-
-#[cfg(not(windows))]
-fn executable_name(command_name: &str) -> OsString {
-    OsString::from(command_name)
-}
-
-#[cfg(windows)]
-fn executable_name(command_name: &str) -> OsString {
-    OsString::from(format!("{command_name}.exe"))
 }
 
 #[cfg(test)]
@@ -359,124 +308,7 @@ fn opencode_executable_name() -> OsString {
 
 #[cfg(test)]
 fn opencode_search_candidates(home_dir: Option<&Path>) -> Vec<PathBuf> {
-    translation_cli_search_candidates(OPENCODE_COMMAND, home_dir)
-}
-
-fn translation_cli_search_candidates(command_name: &str, home_dir: Option<&Path>) -> Vec<PathBuf> {
-    let executable = executable_name(command_name);
-    let mut candidates = Vec::new();
-
-    #[cfg(not(windows))]
-    candidates.extend([
-        Path::new("/opt/homebrew/bin").join(&executable),
-        Path::new("/usr/local/bin").join(&executable),
-        Path::new("/opt/local/bin").join(&executable),
-    ]);
-
-    if let Some(home_dir) = home_dir {
-        candidates.extend([
-            home_dir
-                .join(format!(".{command_name}"))
-                .join("bin")
-                .join(&executable),
-            home_dir.join(".local").join("bin").join(&executable),
-            home_dir.join(".npm-global").join("bin").join(&executable),
-            home_dir.join(".pnpm-global").join("bin").join(&executable),
-            home_dir.join(".bun").join("bin").join(&executable),
-            home_dir.join(".deno").join("bin").join(&executable),
-            home_dir.join(".cargo").join("bin").join(&executable),
-            home_dir.join(".volta").join("bin").join(&executable),
-            home_dir.join("Library").join("pnpm").join(&executable),
-        ]);
-    }
-
-    candidates
-}
-
-#[cfg(not(windows))]
-fn find_command_with_login_shell(command_name: &str) -> Option<PathBuf> {
-    let shell = login_shell()?;
-    let script = format!("command -v {command_name}");
-    let output = Command::new(shell)
-        .args(["-lc", &script])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let path = PathBuf::from(first_nonempty_line(&output.stdout)?);
-    if path.is_absolute() && is_executable_file(&path) {
-        Some(path)
-    } else {
-        None
-    }
-}
-
-#[cfg(windows)]
-fn find_command_with_login_shell(_command_name: &str) -> Option<PathBuf> {
-    None
-}
-
-#[cfg(not(windows))]
-fn login_shell() -> Option<PathBuf> {
-    env::var_os("SHELL")
-        .map(PathBuf::from)
-        .filter(|path| is_executable_file(path))
-        .or_else(|| {
-            ["/bin/zsh", "/bin/bash", "/bin/sh"]
-                .into_iter()
-                .map(PathBuf::from)
-                .find(|path| is_executable_file(path))
-        })
-}
-
-fn is_executable_file(path: &Path) -> bool {
-    let Ok(metadata) = fs::metadata(path) else {
-        return false;
-    };
-    if !metadata.is_file() {
-        return false;
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        metadata.permissions().mode() & 0o111 != 0
-    }
-
-    #[cfg(not(unix))]
-    {
-        true
-    }
-}
-
-fn run_command_with_timeout(program: &Path, args: &[&str], timeout: Duration) -> AppResult<Output> {
-    let mut child = Command::new(program)
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("failed to start {}: {error}", program.display()))?;
-    let started_at = Instant::now();
-
-    loop {
-        match child.try_wait().map_err(|error| error.to_string())? {
-            Some(_) => return child.wait_with_output().map_err(|error| error.to_string()),
-            None if started_at.elapsed() >= timeout => {
-                let _ = child.kill();
-                let _ = child.wait_with_output();
-                return Err(format!(
-                    "{} timed out after {} seconds",
-                    program.display(),
-                    timeout.as_secs()
-                ));
-            }
-            None => thread::sleep(Duration::from_millis(50)),
-        }
-    }
+    cli_search_candidates(OPENCODE_COMMAND, home_dir)
 }
 
 fn first_nonempty_line(bytes: &[u8]) -> Option<String> {
@@ -498,7 +330,7 @@ fn parse_model_lines(bytes: &[u8]) -> Vec<String> {
         .collect()
 }
 
-fn command_failure_message(command_name: &str, output: &Output) -> String {
+fn command_failure_message(command_name: &str, output: &AiCommandOutput) -> String {
     let detail = first_nonempty_line(&output.stderr)
         .or_else(|| first_nonempty_line(&output.stdout))
         .unwrap_or_else(|| output.status.to_string());
@@ -539,7 +371,7 @@ mod tests {
         write_executable(&executable);
         let path_env = env::join_paths([dir.path()]).unwrap();
 
-        let resolved = resolve_translation_cli_executable_from_sources(
+        let resolved = resolve_cli_executable_from_sources(
             OPENCODE_COMMAND,
             Some(path_env.as_os_str()),
             None,
@@ -556,7 +388,7 @@ mod tests {
         let executable = dir.path().join(opencode_executable_name());
         write_executable(&executable);
 
-        let resolved = resolve_translation_cli_executable_from_sources(
+        let resolved = resolve_cli_executable_from_sources(
             OPENCODE_COMMAND,
             Some(std::ffi::OsStr::new("")),
             None,
@@ -573,7 +405,7 @@ mod tests {
         let fallback = dir.path().join(opencode_executable_name());
         write_executable(&fallback);
 
-        let resolved = resolve_translation_cli_executable_from_sources(
+        let resolved = resolve_cli_executable_from_sources(
             OPENCODE_COMMAND,
             Some(std::ffi::OsStr::new("")),
             Some(dir.path().join("missing-opencode")),
@@ -615,7 +447,7 @@ mod tests {
         write_executable(&executable);
         let path_env = env::join_paths([dir.path()]).unwrap();
 
-        let resolved = resolve_translation_cli_executable_from_sources(
+        let resolved = resolve_cli_executable_from_sources(
             GEMINI_COMMAND,
             Some(path_env.as_os_str()),
             None,

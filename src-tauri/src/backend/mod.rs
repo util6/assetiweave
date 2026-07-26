@@ -1,3 +1,4 @@
+pub(crate) mod ai_execution;
 pub(crate) mod app_paths;
 pub(crate) mod app_settings;
 pub(crate) mod application;
@@ -13,6 +14,7 @@ pub(crate) mod host_filesystem;
 pub(crate) mod host_paths;
 pub(crate) mod host_process;
 pub(crate) mod logs;
+pub(crate) mod memory_redaction;
 pub(crate) mod models;
 pub(crate) mod operation_log;
 pub(crate) mod path_utils;
