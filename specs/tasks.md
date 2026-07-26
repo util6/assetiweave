@@ -260,7 +260,7 @@
 - [X] 15.4 实现 App Shortcut 设置 UI：启用/隐藏/排序/图标/颜色
 - [ ] 15.5 Git 源 clone/pull 管理
 - [ ] 15.6 MCP 配置管理和合并部署
-- [ ] 15.7 App memory 管理
+- [X] 15.7 App memory 管理
 - [ ] 15.8 Slash command 管理
 - [ ] 15.9 后台 watcher
 - [ ] 15.10 登录启动项
@@ -304,6 +304,7 @@
 - [X] 17.18 使用真实本机三类来源做手工同步验收
 - [X] 17.19 使用浏览器/桌面窗口验收 Conversations 页面交互和控制台错误
 - [X] 17.20 创建 `util6-agents` 双语 `assetiweave-conversation-organizer` Skill
+- [X] 17.21 统一 Conversation/Web Record 的 8 位派生 ID 片段展示与 Session/Card 检索；保留完整内部 ID、外部 ID 和精确写操作边界
 
 ## Phase 18：CLI P0 与 Skill 互联网发现导入
 

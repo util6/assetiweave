@@ -110,7 +110,7 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - 产品内置 Conversation Recall Skill 以 `conversation search` 为入口，先读取命中摘要，再按记录类型读取 Question、Session 或 Web Record；回答保留 Session/Question/Block 证据标识，形成后续 Memory 的只读检索基础。
 - 网页 Conversation Harvester 提供本地 `doctor -> repair -> auth-check/auth-detect -> run -> conversation sync -> web-record verify` 恢复链路。Doctor 不发起网络请求；Repair 只恢复官方模板静态文件和执行权限，保留认证状态与历史输出，Runtime 或网站协议问题必须按诊断提示单独处理。
 
-下一阶段重点不是继续搭框架，而是继续补齐产品边界和可靠性：实施独立 Memory 与双层记忆纵切，同时推进 Profile 规则细化、执行确认与结果展示、导出复制、后台任务可观测性、批量流程测试、性能拆包和更完整的跨端契约验证。
+下一阶段重点不是继续搭框架，而是继续补齐产品边界和可靠性：在已交付的独立 Memory 与双层记忆纵切之上，推进 Profile 规则细化、执行确认与结果展示、导出复制、批量流程测试、性能拆包和更完整的跨端契约验证。
 
 ### 3.4 前端目录边界
 
@@ -150,6 +150,14 @@ Conversation 不属于文件资产 Catalog。它拥有独立的数据流：
 - `ConversationTurn`：以真实用户消息为边界的源对齐记录。
 - `ConversationPart`：Turn 内有序内容，支持 text、code_block、command、tool、file_change、subagent。
 - `ConversationQuestion`：用户可见的问题分组，可包含同一 Session 内相邻多个 Turn。
+
+身份与展示约定：
+
+- 第三方 Session/Turn 身份原样保存在 `external_id`；其唯一范围由 tenant、source 或所属 Session 共同限定，不加工为产品主键。
+- `conversation_sessions.id` 及 Turn、Part、Question 的完整 `id` 是 AssetIWeave 的规范内部身份。数据库关联、React key、导航定位、Memory 证据和所有精确读写操作均使用完整 ID。
+- 页面从完整 ID 的第一个 64 位十六进制哈希段派生 8 位小写展示片段；兼容旧数据中的较短哈希段，无哈希数据或测试夹具退化为原值前 8 位。展示片段不持久化、不保证唯一，也不称为 Public ID。
+- 只有严格 8 位十六进制输入或完整领域 ID 才进入 ID 搜索分支。发现型搜索返回全部匹配项并允许碰撞；合并、拆分、删除、导出等精确操作继续要求完整 ID 或无歧义的既有前缀解析。
+- fingerprint、content hash 和 scope fingerprint 仅表达内容或版本状态，不属于实体身份。
 
 同步原则：
 
@@ -368,6 +376,8 @@ source repo asset
 - `Sessions`：先搜索/选择 Session，再浏览该 Session 中的 Question Group。
 - `Sources`：查看 Codex、OpenCode 和通过外部插件注册的来源，并触发同步。
 - `Adapters`：查看 Codex/OpenCode 兜底适配器、外部适配器、信任状态和 CLI 开发工作流。
+
+Session 芯片和用户问题、Answer、Tool、Command、Code、Result 卡片标题栏常显 8 位等宽 ID 片段。Session/Web Record 列表搜索支持片段、完整内部 ID、原始外部 ID及既有文本字段；Card 搜索为 Session、Question、Turn、Part、Block 片段建立多值索引，并在 Tantivy 不兼容或不可用时保持 SQL fallback 的同等匹配语义。ID 命中只用于发现，结果导航仍携带完整 Session、Question 和 Block ID。
 
 页面不嵌入 AI API。需要 AI 辅助整理时，UI 提供 CLI 指令，引导外部 Agent/Skill 调用 `assetiweave-cli conversation ...` 完成同步、检查、merge/split 和导出。
 
