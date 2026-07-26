@@ -3,6 +3,7 @@ import { AppUpdateDialog } from "../app/updates/AppUpdateDialog";
 import { useConversationSync } from "../app/backgroundTasks/ConversationSyncProvider";
 import { useSearchIndex } from "../app/backgroundTasks/SearchIndexProvider";
 import { useSkillBackup } from "../app/backgroundTasks/SkillBackupProvider";
+import { useMemoryTasks } from "../app/backgroundTasks/MemoryTaskProvider";
 import { SkillBackupBackgroundTaskIndicator } from "../components/backup/SkillBackupProgress";
 import { ConversationBackgroundTaskIndicator } from "../components/conversations/ConversationToolbarControls";
 import { useCatalogController } from "../hooks/catalog/useCatalogController";
@@ -13,6 +14,12 @@ import { UnderConstructionPage } from "../pages/under-construction/UnderConstruc
 import { resolveAppRoute } from "./routes";
 import type { HeaderTabItem } from "./types";
 import type { SettingsPanelId } from "../store/settings/AppSettingsProvider";
+import type { MemoryEvidenceSnapshot } from "../types/memory";
+import {
+  conversationSubNavId,
+  createConversationNavigationTarget,
+  type ConversationNavigationTarget,
+} from "./navigationTargets";
 
 const CatalogPage = lazy(() =>
   import("../pages/catalog/CatalogPage").then((module) => ({
@@ -35,6 +42,12 @@ const LogViewerModal = lazy(() =>
 const ManualPage = lazy(() =>
   import("../manuals/ManualPage").then((module) => ({
     default: module.ManualPage,
+  })),
+);
+
+const MemoryPage = lazy(() =>
+  import("../pages/memory/MemoryPage").then((module) => ({
+    default: module.MemoryPage,
   })),
 );
 
@@ -67,6 +80,7 @@ export function AppRouter() {
   const { tasks: conversationSyncTasks } = useConversationSync();
   const { task: searchIndexTask } = useSearchIndex();
   const { task: skillBackupTask } = useSkillBackup();
+  const { tasks: memoryTasks } = useMemoryTasks();
   const catalog = useCatalogController();
   const handledSkillBackupTaskId = useRef<string | null>(null);
   const runningSkillBackupTaskIds = useRef(new Set<string>());
@@ -75,6 +89,7 @@ export function AppRouter() {
   const [manualRouteKey, setManualRouteKey] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPanel, setSettingsPanel] = useState<SettingsPanelId>("general.appearance");
+  const [conversationNavigationTarget, setConversationNavigationTarget] = useState<ConversationNavigationTarget | null>(null);
 
   useEffect(() => {
     setActiveSubNavId(catalog.navigationModel.activeSubNavId);
@@ -147,6 +162,7 @@ export function AppRouter() {
     const nextSubNavId = catalog.navigationModel.subNavItems[tab.id]?.find((item) => item.enabled)?.id ?? "overview";
     setActiveSubNavId(nextSubNavId);
     setManualRouteKey(null);
+    setConversationNavigationTarget(null);
     void catalog.saveNavigationModel({
       ...catalog.navigationModel,
       activeHeaderTabId: tab.id,
@@ -161,7 +177,26 @@ export function AppRouter() {
 
   function handleSubNavSelect(id: string) {
     setManualRouteKey(null);
+    setConversationNavigationTarget(null);
     setActiveSubNavId(id);
+  }
+
+  function handleMemoryEvidenceOpen(evidence: MemoryEvidenceSnapshot) {
+    const target = createConversationNavigationTarget({
+      blockId: evidence.block_id,
+      questionId: evidence.question_id ?? undefined,
+      recordKind: evidence.record_kind,
+      sessionId: evidence.session_id,
+    });
+    const nextSubNavId = conversationSubNavId(target.recordKind);
+    setConversationNavigationTarget(target);
+    setManualRouteKey(null);
+    setActiveSubNavId(nextSubNavId);
+    void catalog.saveNavigationModel({
+      ...catalog.navigationModel,
+      activeHeaderTabId: "conversations",
+      activeSubNavId: nextSubNavId,
+    });
   }
 
   function openCurrentManual() {
@@ -208,6 +243,12 @@ export function AppRouter() {
                 activeSubNavId={activeSubNavId}
                 appShortcuts={catalog.appShortcuts}
                 onManualOpen={openCurrentManual}
+                navigationTarget={conversationNavigationTarget?.recordKind === (routeId === "web-records" ? "web" : "session")
+                  ? conversationNavigationTarget
+                  : null}
+                onNavigationTargetConsumed={(nonce) =>
+                  setConversationNavigationTarget((current) => current?.nonce === nonce ? null : current)
+                }
                 onNotify={(notification) => catalog.showNotification(notification)}
                 onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
                 onOpenSettings={openSettings}
@@ -285,7 +326,11 @@ export function AppRouter() {
                 refreshingMountStatus={catalog.refreshingMountStatus}
               />
             </Suspense>
-          ) : routeId === "memory" || routeId === "under-construction" ? (
+          ) : routeId === "memory" ? (
+            <Suspense fallback={<RouteLoadingState />}>
+              <MemoryPage activeSubNavId={activeSubNavId} onEvidenceOpen={handleMemoryEvidenceOpen} />
+            </Suspense>
+          ) : routeId === "under-construction" ? (
             <UnderConstructionPage featureLabel={underConstructionFeatureLabel} onManualOpen={openCurrentManual} routeKey={activeRouteKey} />
           ) : (
             <Suspense fallback={<RouteLoadingState />}>
@@ -308,6 +353,17 @@ export function AppRouter() {
         ) : null}
         {conversationSyncTasks.map((task) => (
           <ConversationBackgroundTaskIndicator key={task.id} task={task} t={t} />
+        ))}
+        {memoryTasks.filter((task) => task.status === "running").map((task) => (
+          <div
+            className="rounded-lg border border-outline-variant bg-surface-container px-4 py-3 text-body-sm text-on-surface shadow-lg"
+            key={task.id}
+          >
+            <div className="font-medium">{t("memory.task.running")}</div>
+            <div className="mt-1 text-on-surface-variant">
+              {task.phase} · {task.processed_count}/{task.total_count || "?"}
+            </div>
+          </div>
         ))}
         <SkillBackupBackgroundTaskIndicator task={skillBackupTask} t={t} />
       </div>

@@ -287,6 +287,7 @@ function RailButton({
 
 function headerTabIcon(tab: HeaderTabItem): NavigationIcon {
   if (tab.id === "conversations") return "file-text";
+  if (tab.id === "memory") return "brain";
 
   switch (tab.assetKind) {
     case "skill":

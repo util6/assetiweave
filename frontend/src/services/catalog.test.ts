@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { backupSkills, startSkillBackupTask } from "./catalog";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fallbackNavigationModel } from "../mock/catalog";
+import { backupSkills, getNavigationModel, startSkillBackupTask } from "./catalog";
 
 const invokeMock = vi.hoisted(() => vi.fn());
 const openMock = vi.hoisted(() => vi.fn());
@@ -16,6 +17,10 @@ describe("catalog services", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     openMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("backs up each unique Skill asset id", async () => {
@@ -67,4 +72,41 @@ describe("catalog services", () => {
     });
     expect(invokeMock).toHaveBeenCalledTimes(1);
   });
+
+  it("adds new default Memory navigation to an older browser-preview model without overwriting custom labels", async () => {
+    const storedModel = JSON.parse(JSON.stringify(fallbackNavigationModel));
+    storedModel.headerTabs = storedModel.headerTabs
+      .filter((tab: { id: string }) => tab.id !== "memory")
+      .map((tab: { id: string; label: string }) => (tab.id === "skills" ? { ...tab, label: "My Skills" } : tab));
+    delete storedModel.subNavItems.memory;
+    const storage = createMockLocalStorage();
+    storage.setItem("assetiweave.preview.navigation", JSON.stringify(storedModel));
+    vi.stubGlobal("localStorage", storage);
+    invokeMock.mockRejectedValueOnce(new Error("browser preview"));
+
+    const model = await getNavigationModel();
+
+    expect(model.headerTabs.find((tab) => tab.id === "skills")?.label).toBe("My Skills");
+    expect(model.headerTabs.some((tab) => tab.id === "memory")).toBe(true);
+    expect(model.subNavItems.memory.map((item) => item.routeKey)).toEqual([
+      "memory.overview",
+      "memory.dreams",
+      "memory.recall",
+      "memory.library",
+    ]);
+  });
 });
+
+function createMockLocalStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: vi.fn(() => values.clear()),
+    getItem: vi.fn((key: string) => values.get(key) ?? null),
+    key: vi.fn((index: number) => Array.from(values.keys())[index] ?? null),
+    removeItem: vi.fn((key: string) => values.delete(key)),
+    setItem: vi.fn((key: string, value: string) => values.set(key, value)),
+  };
+}

@@ -8,6 +8,7 @@ import { SideRail } from "./SideRail";
 const headerTabs: HeaderTabItem[] = [
   { id: "skills", label: "Skills", assetKind: "skill", enabled: true },
   { id: "mcp", label: "MCP", assetKind: "mcp", enabled: true },
+  { id: "memory", label: "Memory", enabled: true },
 ];
 
 const railItems: RailMenuItem[] = [
@@ -42,6 +43,12 @@ describe("SideRail", () => {
     expect(html).toContain("data-side-rail-label");
     expect(html).toContain(">技能<");
     expect(html).toContain(">日志<");
+  });
+
+  it("uses the brain icon for the independent Memory module", () => {
+    const html = renderSideRail(true);
+
+    expect(html).toContain("lucide-brain");
   });
 
   it("turns the collapsed brand icon into a regular intro button", () => {

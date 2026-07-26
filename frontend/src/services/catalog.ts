@@ -768,10 +768,33 @@ function getStoredFallbackNavigationModel(): NavigationModel {
     const model = stored
       ? parseSchemaOrFallback(navigationModelSchema, JSON.parse(stored), fallbackNavigationModel)
       : fallbackNavigationModel;
-    return normalizeNavigationModelRoutes(model);
+    return normalizeNavigationModelRoutes(mergeNavigationModelDefaults(model, fallbackNavigationModel));
   } catch {
     return normalizeNavigationModelRoutes(fallbackNavigationModel);
   }
+}
+
+function mergeNavigationModelDefaults(model: NavigationModel, defaults: NavigationModel): NavigationModel {
+  const railItemIds = new Set(model.railItems.map((item) => item.id));
+  const headerTabIds = new Set(model.headerTabs.map((item) => item.id));
+  const subNavItems = { ...model.subNavItems };
+
+  for (const [parentId, defaultItems] of Object.entries(defaults.subNavItems)) {
+    const existingItems = subNavItems[parentId] ?? [];
+    const existingIds = new Set(existingItems.map((item) => item.id));
+    const existingRouteKeys = new Set(existingItems.map((item) => item.routeKey));
+    subNavItems[parentId] = [
+      ...existingItems,
+      ...defaultItems.filter((item) => !existingIds.has(item.id) && !existingRouteKeys.has(item.routeKey)),
+    ];
+  }
+
+  return {
+    ...model,
+    headerTabs: [...model.headerTabs, ...defaults.headerTabs.filter((item) => !headerTabIds.has(item.id))],
+    railItems: [...model.railItems, ...defaults.railItems.filter((item) => !railItemIds.has(item.id))],
+    subNavItems,
+  };
 }
 
 function getStoredFallbackProfiles(): TargetProfile[] {
