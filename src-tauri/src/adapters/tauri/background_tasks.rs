@@ -1,9 +1,11 @@
 use crate::backend::{
+    ai_execution::AiExecutionCancellation,
     application::{
         ConversationAdapterPackageInstallParams, ConversationAdapterPackageUninstallParams,
-        ConversationScriptInstallParams, ConversationSyncParams,
+        ConversationScriptInstallParams, ConversationSyncParams, MemoryTaskStartParams,
     },
     dto::{AppResult, CatalogAsset},
+    models::{MemoryDreamTrigger, MemoryRunKind, MemoryScope},
 };
 use chrono::Utc;
 use serde::Serialize;
@@ -20,6 +22,7 @@ pub(crate) enum BackgroundTaskStatus {
     Running,
     Completed,
     Failed,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -115,12 +118,38 @@ pub(crate) struct SkillBackupTaskSnapshot {
     pub(crate) error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct MemoryTaskSnapshot {
+    pub(crate) id: String,
+    pub(crate) status: BackgroundTaskStatus,
+    pub(crate) kind: MemoryRunKind,
+    pub(crate) scope: MemoryScope,
+    pub(crate) scope_fingerprint: String,
+    pub(crate) trigger: MemoryDreamTrigger,
+    pub(crate) dry_run: bool,
+    pub(crate) phase: String,
+    pub(crate) processed_count: usize,
+    pub(crate) total_count: usize,
+    pub(crate) run_id: Option<String>,
+    pub(crate) cancel_requested: bool,
+    pub(crate) started_at: String,
+    pub(crate) finished_at: Option<String>,
+    pub(crate) result: Option<Value>,
+    pub(crate) error: Option<String>,
+}
+
+struct MemoryTaskEntry {
+    snapshot: MemoryTaskSnapshot,
+    cancellation: AiExecutionCancellation,
+}
+
 #[derive(Default)]
 pub(crate) struct BackgroundTaskRegistry {
     conversation_sync: Mutex<HashMap<ConversationSyncScope, ConversationSyncTaskSnapshot>>,
     conversation_script_install: Mutex<Option<ConversationScriptInstallTaskSnapshot>>,
     skill_backup: Mutex<Option<SkillBackupTaskSnapshot>>,
     conversation_search_index: Mutex<Option<ConversationSearchIndexTaskSnapshot>>,
+    memory_tasks: Mutex<HashMap<String, MemoryTaskEntry>>,
 }
 
 impl BackgroundTaskRegistry {
@@ -569,6 +598,176 @@ impl BackgroundTaskRegistry {
             .map_err(|error| error.to_string())
     }
 
+    pub(crate) fn begin_memory_task(
+        &self,
+        params: &MemoryTaskStartParams,
+    ) -> AppResult<(MemoryTaskSnapshot, AiExecutionCancellation, bool)> {
+        let scope_fingerprint = params.scope.fingerprint()?;
+        let mut tasks = self
+            .memory_tasks
+            .lock()
+            .map_err(|error| error.to_string())?;
+        if let Some(entry) = tasks.values().find(|entry| {
+            entry.snapshot.status == BackgroundTaskStatus::Running
+                && entry.snapshot.scope_fingerprint == scope_fingerprint
+                && entry.snapshot.kind == params.kind
+        }) {
+            return Ok((entry.snapshot.clone(), entry.cancellation.clone(), false));
+        }
+        if let Some(entry) = tasks.values().find(|entry| {
+            entry.snapshot.status == BackgroundTaskStatus::Running
+                && entry.snapshot.scope_fingerprint == scope_fingerprint
+        }) {
+            return Err(format!(
+                "Memory scope is already running task {} ({:?})",
+                entry.snapshot.id, entry.snapshot.kind
+            ));
+        }
+
+        let id = Uuid::new_v4().to_string();
+        let cancellation = AiExecutionCancellation::default();
+        let snapshot = MemoryTaskSnapshot {
+            id: id.clone(),
+            status: BackgroundTaskStatus::Running,
+            kind: params.kind,
+            scope: params.scope.clone(),
+            scope_fingerprint,
+            trigger: params.trigger,
+            dry_run: params.dry_run,
+            phase: "queued".to_string(),
+            processed_count: 0,
+            total_count: 0,
+            run_id: None,
+            cancel_requested: false,
+            started_at: Utc::now().to_rfc3339(),
+            finished_at: None,
+            result: None,
+            error: None,
+        };
+        tasks.insert(
+            id,
+            MemoryTaskEntry {
+                snapshot: snapshot.clone(),
+                cancellation: cancellation.clone(),
+            },
+        );
+        Ok((snapshot, cancellation, true))
+    }
+
+    pub(crate) fn update_memory_task(
+        &self,
+        task_id: &str,
+        phase: &str,
+        processed_count: usize,
+        total_count: usize,
+        run_id: Option<String>,
+    ) -> AppResult<MemoryTaskSnapshot> {
+        let mut tasks = self
+            .memory_tasks
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| format!("Memory task was not found: {task_id}"))?;
+        if entry.snapshot.status != BackgroundTaskStatus::Running {
+            return Ok(entry.snapshot.clone());
+        }
+        entry.snapshot.phase = phase.to_string();
+        entry.snapshot.processed_count = processed_count.min(total_count);
+        entry.snapshot.total_count = total_count;
+        if run_id.is_some() {
+            entry.snapshot.run_id = run_id;
+        }
+        Ok(entry.snapshot.clone())
+    }
+
+    pub(crate) fn finish_memory_task(
+        &self,
+        task_id: &str,
+        result: AppResult<Value>,
+    ) -> AppResult<MemoryTaskSnapshot> {
+        let mut tasks = self
+            .memory_tasks
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| format!("Memory task was not found: {task_id}"))?;
+        entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
+        match result {
+            Ok(value) => {
+                entry.snapshot.status = if entry.snapshot.cancel_requested {
+                    BackgroundTaskStatus::Cancelled
+                } else {
+                    BackgroundTaskStatus::Completed
+                };
+                entry.snapshot.phase = if entry.snapshot.cancel_requested {
+                    "cancelled".to_string()
+                } else {
+                    "completed".to_string()
+                };
+                entry.snapshot.processed_count = entry.snapshot.total_count;
+                entry.snapshot.result = Some(value);
+                entry.snapshot.error = None;
+            }
+            Err(error) => {
+                entry.snapshot.status = if entry.snapshot.cancel_requested {
+                    BackgroundTaskStatus::Cancelled
+                } else {
+                    BackgroundTaskStatus::Failed
+                };
+                entry.snapshot.phase = if entry.snapshot.cancel_requested {
+                    "cancelled".to_string()
+                } else {
+                    "failed".to_string()
+                };
+                entry.snapshot.result = None;
+                entry.snapshot.error = Some(error);
+            }
+        }
+        Ok(entry.snapshot.clone())
+    }
+
+    pub(crate) fn cancel_memory_task(&self, task_id: &str) -> AppResult<MemoryTaskSnapshot> {
+        let mut tasks = self
+            .memory_tasks
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| format!("Memory task was not found: {task_id}"))?;
+        if entry.snapshot.status == BackgroundTaskStatus::Running {
+            entry.snapshot.cancel_requested = true;
+            entry.snapshot.phase = "cancelling".to_string();
+            entry.cancellation.cancel();
+        }
+        Ok(entry.snapshot.clone())
+    }
+
+    pub(crate) fn memory_task_snapshot(
+        &self,
+        task_id: &str,
+    ) -> AppResult<Option<MemoryTaskSnapshot>> {
+        self.memory_tasks
+            .lock()
+            .map(|tasks| tasks.get(task_id).map(|entry| entry.snapshot.clone()))
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn memory_task_snapshots(&self) -> AppResult<Vec<MemoryTaskSnapshot>> {
+        self.memory_tasks
+            .lock()
+            .map(|tasks| {
+                let mut snapshots = tasks
+                    .values()
+                    .map(|entry| entry.snapshot.clone())
+                    .collect::<Vec<_>>();
+                snapshots.sort_by(|left, right| left.started_at.cmp(&right.started_at));
+                snapshots
+            })
+            .map_err(|error| error.to_string())
+    }
+
     pub(crate) fn has_running_tasks(&self) -> bool {
         let conversation_sync_running = self
             .conversation_sync
@@ -606,10 +805,20 @@ impl BackgroundTaskRegistry {
                     .is_some_and(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
             })
             .unwrap_or(true);
+        let memory_running = self
+            .memory_tasks
+            .lock()
+            .map(|tasks| {
+                tasks
+                    .values()
+                    .any(|entry| entry.snapshot.status == BackgroundTaskStatus::Running)
+            })
+            .unwrap_or(true);
         conversation_sync_running
             || conversation_script_install_running
             || skill_backup_running
             || conversation_search_index_running
+            || memory_running
     }
 }
 
@@ -835,5 +1044,48 @@ mod tests {
         assert_eq!(running.action, "uninstall");
         assert_eq!(running.phase.as_deref(), Some("uninstalling"));
         assert!(registry.has_running_tasks());
+    }
+
+    #[test]
+    fn memory_task_deduplicates_scope_reports_progress_and_cancels() {
+        let registry = BackgroundTaskRegistry::default();
+        let params = MemoryTaskStartParams {
+            kind: MemoryRunKind::AutoDream,
+            scope: MemoryScope {
+                project_path: Some("~/project".to_string()),
+                ..MemoryScope::default()
+            },
+            trigger: MemoryDreamTrigger::Manual,
+            dry_run: false,
+            recall: None,
+            synthesize: false,
+        };
+        let (first, cancellation, should_start) = registry
+            .begin_memory_task(&params)
+            .expect("begin Memory task");
+        let (duplicate, _, should_start_duplicate) = registry
+            .begin_memory_task(&params)
+            .expect("deduplicate Memory task");
+
+        assert!(should_start);
+        assert!(!should_start_duplicate);
+        assert_eq!(first.id, duplicate.id);
+        let progress = registry
+            .update_memory_task(&first.id, "dreaming", 1, 3, Some("run-1".to_string()))
+            .expect("update Memory task");
+        assert_eq!(progress.processed_count, 1);
+        assert_eq!(progress.total_count, 3);
+        assert_eq!(progress.run_id.as_deref(), Some("run-1"));
+
+        let cancelling = registry
+            .cancel_memory_task(&first.id)
+            .expect("cancel Memory task");
+        assert!(cancelling.cancel_requested);
+        assert!(cancellation.is_cancelled());
+        let cancelled = registry
+            .finish_memory_task(&first.id, Err("cancelled".to_string()))
+            .expect("finish cancelled Memory task");
+        assert_eq!(cancelled.status, BackgroundTaskStatus::Cancelled);
+        assert!(!registry.has_running_tasks());
     }
 }

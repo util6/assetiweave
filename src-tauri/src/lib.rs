@@ -23,6 +23,9 @@ pub fn run() {
     {
         let service = AppService::open_with_db_path(db_path.clone())
             .expect("failed to initialize AssetIWeave database");
+        if let Err(error) = service.interrupt_stale_memory_runs() {
+            eprintln!("failed to mark interrupted Memory runs on startup: {error}");
+        }
         if let Err(error) = service.refresh_recorded_assets() {
             eprintln!("failed to validate recorded AssetIWeave assets on startup: {error}");
         }

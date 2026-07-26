@@ -4,6 +4,7 @@ import { AppSettingsProvider } from "../store/settings/AppSettingsProvider";
 import { ConversationSyncProvider } from "./backgroundTasks/ConversationSyncProvider";
 import { SearchIndexProvider } from "./backgroundTasks/SearchIndexProvider";
 import { SkillBackupProvider } from "./backgroundTasks/SkillBackupProvider";
+import { MemoryTaskProvider } from "./backgroundTasks/MemoryTaskProvider";
 import { AppUpdateProvider } from "./updates/AppUpdateProvider";
 
 export function AppProviders({ children }: { children: ReactNode }) {
@@ -11,11 +12,13 @@ export function AppProviders({ children }: { children: ReactNode }) {
     <I18nProvider>
       <AppSettingsProvider>
         <ConversationSyncProvider>
-          <SearchIndexProvider>
-            <SkillBackupProvider>
-              <AppUpdateProvider>{children}</AppUpdateProvider>
-            </SkillBackupProvider>
-          </SearchIndexProvider>
+          <MemoryTaskProvider>
+            <SearchIndexProvider>
+              <SkillBackupProvider>
+                <AppUpdateProvider>{children}</AppUpdateProvider>
+              </SkillBackupProvider>
+            </SearchIndexProvider>
+          </MemoryTaskProvider>
         </ConversationSyncProvider>
       </AppSettingsProvider>
     </I18nProvider>
