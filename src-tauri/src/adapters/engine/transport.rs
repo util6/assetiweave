@@ -302,10 +302,12 @@ mod tests {
     use super::*;
     use std::{
         collections::BTreeSet,
-        env, fs,
+        env,
+        ffi::OsString,
+        fs,
         path::PathBuf,
         process::Command,
-        sync::{Mutex, OnceLock},
+        sync::{Mutex, MutexGuard, OnceLock},
     };
     use uuid::Uuid;
 
@@ -1269,9 +1271,69 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+    #[test]
+    fn environment_lock_restores_mutated_process_variables() {
+        let original_home = env::var_os("HOME");
+        let original_db_path = env::var_os("ASSETIWEAVE_DB_PATH");
+        let original_policy_path = env::var_os("ASSETIWEAVE_POLICY_PATH");
+        {
+            let _guard = env_lock().lock().expect("env lock");
+            env::set_var("HOME", "/tmp/assetiweave-env-guard-home");
+            env::set_var("ASSETIWEAVE_DB_PATH", "/tmp/assetiweave-env-guard.db");
+            env::set_var(
+                "ASSETIWEAVE_POLICY_PATH",
+                "/tmp/assetiweave-env-guard-policy.json",
+            );
+        }
+
+        assert_eq!(env::var_os("HOME"), original_home);
+        assert_eq!(env::var_os("ASSETIWEAVE_DB_PATH"), original_db_path);
+        assert_eq!(env::var_os("ASSETIWEAVE_POLICY_PATH"), original_policy_path);
+    }
+
+    struct TestEnvLock {
+        lock: Mutex<()>,
+    }
+
+    impl TestEnvLock {
+        fn lock(&self) -> Result<TestEnvGuard<'_>, String> {
+            let lock = self.lock.lock().map_err(|error| error.to_string())?;
+            Ok(TestEnvGuard {
+                _lock: lock,
+                home: env::var_os("HOME"),
+                db_path: env::var_os("ASSETIWEAVE_DB_PATH"),
+                policy_path: env::var_os("ASSETIWEAVE_POLICY_PATH"),
+            })
+        }
+    }
+
+    struct TestEnvGuard<'a> {
+        _lock: MutexGuard<'a, ()>,
+        home: Option<OsString>,
+        db_path: Option<OsString>,
+        policy_path: Option<OsString>,
+    }
+
+    impl Drop for TestEnvGuard<'_> {
+        fn drop(&mut self) {
+            restore_env_var("HOME", self.home.take());
+            restore_env_var("ASSETIWEAVE_DB_PATH", self.db_path.take());
+            restore_env_var("ASSETIWEAVE_POLICY_PATH", self.policy_path.take());
+        }
+    }
+
+    fn restore_env_var(key: &str, value: Option<OsString>) {
+        match value {
+            Some(value) => env::set_var(key, value),
+            None => env::remove_var(key),
+        }
+    }
+
+    fn env_lock() -> &'static TestEnvLock {
+        static LOCK: OnceLock<TestEnvLock> = OnceLock::new();
+        LOCK.get_or_init(|| TestEnvLock {
+            lock: Mutex::new(()),
+        })
     }
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {

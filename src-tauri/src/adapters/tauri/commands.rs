@@ -4,7 +4,8 @@ use crate::adapters::prompt_clipboard::{
 };
 use crate::adapters::tauri::background_tasks::{
     BackgroundTaskStatus, ConversationScriptInstallTaskSnapshot,
-    ConversationSearchIndexTaskSnapshot, ConversationSyncTaskSnapshot, SkillBackupTaskSnapshot,
+    ConversationSearchIndexTaskSnapshot, ConversationSyncTaskSnapshot, MemoryTaskSnapshot,
+    SkillBackupTaskSnapshot,
 };
 #[cfg(test)]
 use crate::backend::capabilities::{
@@ -31,8 +32,11 @@ use crate::{
         ConversationSessionExportParams, ConversationSessionGetParams,
         ConversationSessionListParams, ConversationSourceDisableParams,
         ConversationSourceUpsertParams, ConversationSyncParams, ListAssetsParams,
-        MemoryCandidateAcceptParams, MemoryItemCreateParams, MemoryItemGetParams,
-        MemoryItemListParams, MemoryItemUpdateParams, SkillAcquireParams, SkillRemoteCheckParams,
+        MemoryCandidateAcceptParams, MemoryDreamGetParams, MemoryDreamListParams,
+        MemoryDreamPreviewParams, MemoryDreamRunParams, MemoryDreamScopeParams,
+        MemoryItemCreateParams, MemoryItemGetParams, MemoryItemListParams, MemoryItemUpdateParams,
+        MemoryRecallPreviewParams, MemoryRecallRunParams, MemoryTaskGetParams,
+        MemoryTaskStartParams, MemoryVerifyParams, SkillAcquireParams, SkillRemoteCheckParams,
         SkillSearchParams, SkillSearchResult, SourceRemoveParams, SourceScanParams,
         TenantCreateParams, UpdateSkillBackupSettingsParams,
     },
@@ -59,8 +63,8 @@ use crate::{
     },
     backend::models::{
         Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
-        ConversationSource, DeploymentPlan, DeploymentStrategy, MemoryItemDetail, Source,
-        TargetProfile, Tenant,
+        ConversationSource, DeploymentPlan, DeploymentStrategy, MemoryItemDetail, MemoryRunKind,
+        Source, TargetProfile, Tenant,
     },
     backend::operation_log::{
         asset_log_fields, log_error, log_info, log_warn, profile_log_fields,
@@ -269,6 +273,225 @@ pub(crate) fn reject_memory_candidate(
         ),
     }
     result
+}
+
+#[tauri::command]
+pub(crate) fn memory_dream_status(
+    state: State<'_, AppState>,
+    params: MemoryDreamScopeParams,
+) -> AppResult<crate::backend::dto::MemoryDreamPreview> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.memory_dream_status(params)
+}
+
+#[tauri::command]
+pub(crate) fn memory_overview(
+    state: State<'_, AppState>,
+    params: MemoryDreamScopeParams,
+) -> AppResult<crate::backend::dto::MemoryOverview> {
+    AppService::open_with_db_path(state.db_path.clone())?.memory_overview(params)
+}
+
+#[tauri::command]
+pub(crate) fn list_memory_dream_notes(
+    state: State<'_, AppState>,
+    params: MemoryDreamListParams,
+) -> AppResult<crate::backend::dto::MemoryDreamNotePage> {
+    AppService::open_with_db_path(state.db_path.clone())?.list_memory_dream_notes(params)
+}
+
+#[tauri::command]
+pub(crate) fn get_memory_dream_note(
+    state: State<'_, AppState>,
+    params: MemoryDreamGetParams,
+) -> AppResult<crate::backend::models::MemoryDreamNoteDetail> {
+    AppService::open_with_db_path(state.db_path.clone())?.get_memory_dream_note(params)
+}
+
+#[tauri::command]
+pub(crate) fn archive_memory_dream_note(
+    state: State<'_, AppState>,
+    params: MemoryDreamGetParams,
+) -> AppResult<crate::backend::models::MemoryDreamNoteDetail> {
+    AppService::open_with_db_path(state.db_path.clone())?.archive_memory_dream_note(params)
+}
+
+#[tauri::command]
+pub(crate) fn promote_memory_dream_note(
+    state: State<'_, AppState>,
+    params: MemoryDreamGetParams,
+) -> AppResult<Vec<MemoryItemDetail>> {
+    AppService::open_with_db_path(state.db_path.clone())?.promote_memory_dream_note(params)
+}
+
+#[tauri::command]
+pub(crate) fn preview_memory_dream(
+    state: State<'_, AppState>,
+    params: MemoryDreamPreviewParams,
+) -> AppResult<crate::backend::dto::MemoryDreamPreview> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.preview_memory_dream(params)
+}
+
+#[tauri::command]
+pub(crate) fn run_memory_dream(
+    state: State<'_, AppState>,
+    params: MemoryDreamRunParams,
+) -> AppResult<crate::backend::dto::MemoryDreamRunResult> {
+    AppService::open_with_db_path(state.db_path.clone())?.run_memory_dream(params)
+}
+
+#[tauri::command]
+pub(crate) fn preview_memory_recall(
+    state: State<'_, AppState>,
+    params: MemoryRecallPreviewParams,
+) -> AppResult<crate::backend::dto::MemoryRecallPreview> {
+    AppService::open_with_db_path(state.db_path.clone())?.preview_memory_recall(params)
+}
+
+#[tauri::command]
+pub(crate) fn run_memory_recall(
+    state: State<'_, AppState>,
+    params: MemoryRecallRunParams,
+) -> AppResult<crate::backend::dto::MemoryRecallRunResult> {
+    AppService::open_with_db_path(state.db_path.clone())?.run_memory_recall(params)
+}
+
+#[tauri::command]
+pub(crate) fn verify_memory(
+    state: State<'_, AppState>,
+    params: MemoryVerifyParams,
+) -> AppResult<crate::backend::dto::MemoryVerifyResult> {
+    AppService::open_with_db_path(state.db_path.clone())?.verify_memory(params)
+}
+
+#[tauri::command]
+pub(crate) fn start_memory_task(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: MemoryTaskStartParams,
+) -> AppResult<MemoryTaskSnapshot> {
+    if params.kind != MemoryRunKind::AutoDream && params.recall.is_none() {
+        return Err(
+            "deep Recall and full organize background tasks require Recall parameters".to_string(),
+        );
+    }
+    let (snapshot, cancellation, should_start) =
+        state.background_tasks.begin_memory_task(&params)?;
+    if !should_start {
+        return Ok(snapshot);
+    }
+
+    let db_path = state.db_path.clone();
+    let background_tasks = state.background_tasks.clone();
+    let task_id = snapshot.id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let progress_tasks = background_tasks.clone();
+        let progress_app = app.clone();
+        let progress_task_id = task_id.clone();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let service = AppService::open_with_db_path(db_path)?;
+            let report = move |phase: &str,
+                               processed_count: usize,
+                               total_count: usize,
+                               run_id: Option<&str>| {
+                if let Ok(snapshot) = progress_tasks.update_memory_task(
+                    &progress_task_id,
+                    phase,
+                    processed_count,
+                    total_count,
+                    run_id.map(str::to_string),
+                ) {
+                    emit_memory_task(&progress_app, &snapshot);
+                }
+            };
+            match params.kind {
+                MemoryRunKind::AutoDream => service
+                    .run_memory_dream_with_control(
+                        MemoryDreamRunParams {
+                            scope: params.scope,
+                            trigger: params.trigger,
+                            dry_run: params.dry_run,
+                        },
+                        Some(cancellation),
+                        report,
+                    )
+                    .and_then(|value| {
+                        serde_json::to_value(value).map_err(|error| error.to_string())
+                    }),
+                MemoryRunKind::DeepRecall | MemoryRunKind::FullOrganize => {
+                    let mut recall = params
+                        .recall
+                        .ok_or_else(|| "Recall task parameters are required".to_string())?;
+                    recall.scope = params.scope;
+                    recall.mode = if params.kind == MemoryRunKind::FullOrganize {
+                        crate::backend::models::MemoryRecallMode::Full
+                    } else {
+                        crate::backend::models::MemoryRecallMode::Exact
+                    };
+                    service
+                        .run_memory_recall_with_control(
+                            MemoryRecallRunParams {
+                                preview: recall,
+                                synthesize: params.synthesize,
+                                dry_run: params.dry_run,
+                            },
+                            Some(cancellation),
+                            report,
+                        )
+                        .and_then(|value| {
+                            serde_json::to_value(value).map_err(|error| error.to_string())
+                        })
+                }
+            }
+        }))
+        .unwrap_or_else(|_| Err("Memory task panicked".to_string()));
+        match background_tasks.finish_memory_task(&task_id, result) {
+            Ok(snapshot) => emit_memory_task(&app, &snapshot),
+            Err(error) => log_error(
+                "memory.task",
+                "更新 Memory 后台任务状态失败",
+                &error,
+                &[("task_id", task_id)],
+            ),
+        }
+    });
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub(crate) fn get_memory_task(
+    state: State<'_, AppState>,
+    params: MemoryTaskGetParams,
+) -> AppResult<Option<MemoryTaskSnapshot>> {
+    state.background_tasks.memory_task_snapshot(&params.task_id)
+}
+
+#[tauri::command]
+pub(crate) fn list_memory_tasks(state: State<'_, AppState>) -> AppResult<Vec<MemoryTaskSnapshot>> {
+    state.background_tasks.memory_task_snapshots()
+}
+
+#[tauri::command]
+pub(crate) fn cancel_memory_task(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: MemoryTaskGetParams,
+) -> AppResult<MemoryTaskSnapshot> {
+    let snapshot = state.background_tasks.cancel_memory_task(&params.task_id)?;
+    emit_memory_task(&app, &snapshot);
+    Ok(snapshot)
+}
+
+fn emit_memory_task(app: &AppHandle, snapshot: &MemoryTaskSnapshot) {
+    if let Err(error) = app.emit("memory-task-updated", snapshot) {
+        log_error(
+            "memory.task",
+            "推送 Memory 后台任务状态失败",
+            &error.to_string(),
+            &[("task_id", snapshot.id.clone())],
+        );
+    }
 }
 
 #[tauri::command]
@@ -2288,6 +2511,21 @@ pub(crate) fn command_handler(
         archive_memory_item,
         accept_memory_candidate,
         reject_memory_candidate,
+        memory_dream_status,
+        memory_overview,
+        list_memory_dream_notes,
+        get_memory_dream_note,
+        archive_memory_dream_note,
+        promote_memory_dream_note,
+        preview_memory_dream,
+        run_memory_dream,
+        preview_memory_recall,
+        run_memory_recall,
+        verify_memory,
+        start_memory_task,
+        get_memory_task,
+        list_memory_tasks,
+        cancel_memory_task,
         get_skill_backup_settings,
         update_skill_backup_settings,
         backup_skill,

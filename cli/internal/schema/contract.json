@@ -443,6 +443,694 @@
       "supports_dry_run": false
     },
     {
+      "canonical_method": "memory.overview",
+      "cli": "assetiweave-cli memory overview",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Get the local deterministic Memory overview without invoking AI",
+      "exposure": "friendly",
+      "method": "memory.overview",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "default": {
+              "app_id": null,
+              "project_path": null,
+              "session_id": null,
+              "source_id": null
+            },
+            "description": "Optional Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.dream.status",
+      "cli": "assetiweave-cli memory dream status",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Explain Auto-Dream gates and preview the stable incremental delta",
+      "exposure": "friendly",
+      "method": "memory.dream.status",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "default": {
+              "app_id": null,
+              "project_path": null,
+              "session_id": null,
+              "source_id": null
+            },
+            "description": "Optional Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.dream.preview",
+      "cli": "assetiweave-cli memory dream preview",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Preview the stable incremental Dream input without AI or writes",
+      "exposure": "friendly",
+      "method": "memory.dream.preview",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "default": {
+              "app_id": null,
+              "project_path": null,
+              "session_id": null,
+              "source_id": null
+            },
+            "description": "Optional Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "trigger": {
+            "default": "manual",
+            "description": "Automatic or manual gate semantics",
+            "enum": [
+              "automatic",
+              "manual"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.dream.run",
+      "cli": "assetiweave-cli memory dream run",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Run a bounded incremental Dream and persist its note atomically",
+      "exposure": "friendly",
+      "method": "memory.dream.run",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview without AI or writes",
+            "type": "boolean"
+          },
+          "scope": {
+            "default": {
+              "app_id": null,
+              "project_path": null,
+              "session_id": null,
+              "source_id": null
+            },
+            "description": "Optional Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "trigger": {
+            "default": "manual",
+            "description": "Automatic or manual gate semantics",
+            "enum": [
+              "automatic",
+              "manual"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
+      "supports_dry_run": true
+    },
+    {
+      "canonical_method": "memory.dream.list",
+      "cli": "assetiweave-cli memory dream list",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List persisted Dream notes",
+      "exposure": "friendly",
+      "method": "memory.dream.list",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "description": "Maximum number of notes",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offset": {
+            "description": "Pagination offset",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "scope": {
+            "default": null,
+            "description": "Optional exact Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "statuses": {
+            "default": [],
+            "description": "Optional Dream note statuses",
+            "items": {
+              "enum": [
+                "active",
+                "promoted",
+                "archived",
+                "stale"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.dream.get",
+      "cli": "assetiweave-cli memory dream get <note-id>",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Get one Dream note with evidence",
+      "exposure": "friendly",
+      "method": "memory.dream.get",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "note_id": {
+            "aliases": [
+              "noteId"
+            ],
+            "description": "Dream note identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "note_id"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.dream.archive",
+      "cli": "assetiweave-cli memory dream archive <note-id>",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Archive one Dream note",
+      "exposure": "friendly",
+      "method": "memory.dream.archive",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "note_id": {
+            "aliases": [
+              "noteId"
+            ],
+            "description": "Dream note identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "note_id"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.dream.promote",
+      "cli": "assetiweave-cli memory dream promote <note-id>",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Copy Dream bullets into reviewable formal Memory candidates",
+      "exposure": "friendly",
+      "method": "memory.dream.promote",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "note_id": {
+            "aliases": [
+              "noteId"
+            ],
+            "description": "Dream note identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "note_id"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.recall.preview",
+      "cli": "assetiweave-cli memory recall preview --query <question>",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Build an evidence-only exact Recall or full-organize preview",
+      "exposure": "friendly",
+      "method": "memory.recall.preview",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "include_unavailable": {
+            "aliases": [
+              "includeUnavailable"
+            ],
+            "default": false,
+            "description": "Include bounded missing records",
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "Question page size",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "mode": {
+            "default": "exact",
+            "description": "exact or full",
+            "enum": [
+              "exact",
+              "full"
+            ],
+            "type": "string"
+          },
+          "offset": {
+            "description": "Question page offset",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "query": {
+            "description": "Recall question",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "default": {
+              "app_id": null,
+              "project_path": null,
+              "session_id": null,
+              "source_id": null
+            },
+            "description": "Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "since": {
+            "description": "Inclusive start time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "until": {
+            "description": "Inclusive end time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.recall.run",
+      "cli": "assetiweave-cli memory recall run --query <question>",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Run evidence-only Recall or opt-in two-phase AI synthesis",
+      "exposure": "friendly",
+      "method": "memory.recall.run",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview without writes",
+            "type": "boolean"
+          },
+          "include_unavailable": {
+            "default": false,
+            "description": "include unavailable",
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "limit",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "mode": {
+            "default": "exact",
+            "description": "exact or full",
+            "enum": [
+              "exact",
+              "full"
+            ],
+            "type": "string"
+          },
+          "offset": {
+            "description": "offset",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "query": {
+            "description": "Recall question",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "default": {
+              "app_id": null,
+              "project_path": null,
+              "session_id": null,
+              "source_id": null
+            },
+            "description": "Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "since": {
+            "description": "since",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "synthesize": {
+            "default": false,
+            "description": "Use external AI",
+            "type": "boolean"
+          },
+          "until": {
+            "description": "until",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
+      "supports_dry_run": true
+    },
+    {
+      "canonical_method": "memory.verify",
+      "cli": "assetiweave-cli memory verify --item <item-id>",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Verify freshness only for selected Memory evidence",
+      "exposure": "friendly",
+      "method": "memory.verify",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "item_ids": {
+            "aliases": [
+              "itemIds"
+            ],
+            "default": [],
+            "description": "Memory item identifiers",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
       "canonical_method": "memory.item.list",
       "cli": "assetiweave-cli memory item list",
       "confirmation_required": false,
@@ -4511,6 +5199,1491 @@
       },
       "risk": "write",
       "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.overview",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Get the local deterministic Memory overview without invoking AI",
+      "exposure": "app",
+      "method": "memory_overview",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "default": {
+              "app_id": null,
+              "project_path": null,
+              "session_id": null,
+              "source_id": null
+            },
+            "description": "Optional Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.dream.list",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List persisted Dream notes",
+      "exposure": "app",
+      "method": "list_memory_dream_notes",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "description": "Maximum number of notes",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offset": {
+            "description": "Pagination offset",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "scope": {
+            "default": null,
+            "description": "Optional exact Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "statuses": {
+            "default": [],
+            "description": "Optional Dream note statuses",
+            "items": {
+              "enum": [
+                "active",
+                "promoted",
+                "archived",
+                "stale"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.dream.get",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Get one Dream note with evidence",
+      "exposure": "app",
+      "method": "get_memory_dream_note",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "note_id": {
+            "aliases": [
+              "noteId"
+            ],
+            "description": "Dream note identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "note_id"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.dream.archive",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Archive one Dream note",
+      "exposure": "app",
+      "method": "archive_memory_dream_note",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "note_id": {
+            "aliases": [
+              "noteId"
+            ],
+            "description": "Dream note identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "note_id"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.dream.promote",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Copy Dream bullets into reviewable formal Memory candidates",
+      "exposure": "app",
+      "method": "promote_memory_dream_note",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "note_id": {
+            "aliases": [
+              "noteId"
+            ],
+            "description": "Dream note identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "note_id"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.dream.status",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Explain Auto-Dream gates and preview the stable incremental delta",
+      "exposure": "app",
+      "method": "memory_dream_status",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "default": {
+              "app_id": null,
+              "project_path": null,
+              "session_id": null,
+              "source_id": null
+            },
+            "description": "Optional Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.dream.preview",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Preview the stable incremental Dream input without AI or writes",
+      "exposure": "app",
+      "method": "preview_memory_dream",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "default": {
+              "app_id": null,
+              "project_path": null,
+              "session_id": null,
+              "source_id": null
+            },
+            "description": "Optional Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "trigger": {
+            "default": "manual",
+            "description": "Automatic or manual gate semantics",
+            "enum": [
+              "automatic",
+              "manual"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.dream.run",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Run a bounded incremental Dream and persist its note atomically",
+      "exposure": "app",
+      "method": "run_memory_dream",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview without AI or writes",
+            "type": "boolean"
+          },
+          "scope": {
+            "default": {
+              "app_id": null,
+              "project_path": null,
+              "session_id": null,
+              "source_id": null
+            },
+            "description": "Optional Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "trigger": {
+            "default": "manual",
+            "description": "Automatic or manual gate semantics",
+            "enum": [
+              "automatic",
+              "manual"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
+      "supports_dry_run": true
+    },
+    {
+      "canonical_method": "memory.recall.preview",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Build an evidence-only exact Recall or full-organize preview",
+      "exposure": "app",
+      "method": "preview_memory_recall",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "include_unavailable": {
+            "aliases": [
+              "includeUnavailable"
+            ],
+            "default": false,
+            "description": "Include unavailable records",
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "Question page size",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "mode": {
+            "default": "exact",
+            "description": "exact or full",
+            "enum": [
+              "exact",
+              "full"
+            ],
+            "type": "string"
+          },
+          "offset": {
+            "description": "Question page offset",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "query": {
+            "description": "Recall question",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "default": {
+              "app_id": null,
+              "project_path": null,
+              "session_id": null,
+              "source_id": null
+            },
+            "description": "Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "since": {
+            "description": "since",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "until": {
+            "description": "until",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.recall.run",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Run evidence-only Recall or opt-in two-phase AI synthesis",
+      "exposure": "app",
+      "method": "run_memory_recall",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview without writes",
+            "type": "boolean"
+          },
+          "include_unavailable": {
+            "default": false,
+            "description": "include unavailable",
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "limit",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "mode": {
+            "default": "exact",
+            "description": "exact or full",
+            "enum": [
+              "exact",
+              "full"
+            ],
+            "type": "string"
+          },
+          "offset": {
+            "description": "offset",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "query": {
+            "description": "Recall question",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "default": {
+              "app_id": null,
+              "project_path": null,
+              "session_id": null,
+              "source_id": null
+            },
+            "description": "Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "since": {
+            "description": "since",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "synthesize": {
+            "default": false,
+            "description": "Use external AI",
+            "type": "boolean"
+          },
+          "until": {
+            "description": "until",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
+      "supports_dry_run": true
+    },
+    {
+      "canonical_method": "memory.verify",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Verify freshness only for selected Memory evidence",
+      "exposure": "app",
+      "method": "verify_memory",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "item_ids": {
+            "aliases": [
+              "itemIds"
+            ],
+            "default": [],
+            "description": "Memory item identifiers",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "start_memory_task",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Start a desktop Memory background task",
+      "exposure": "app",
+      "method": "start_memory_task",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Preview without AI or writes",
+            "type": "boolean"
+          },
+          "kind": {
+            "description": "Memory task kind",
+            "enum": [
+              "auto_dream",
+              "deep_recall",
+              "full_organize"
+            ],
+            "type": "string"
+          },
+          "recall": {
+            "description": "recall",
+            "properties": {
+              "include_unavailable": {
+                "default": false,
+                "type": "boolean"
+              },
+              "limit": {
+                "format": "uint",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "mode": {
+                "default": "exact",
+                "enum": [
+                  "exact",
+                  "full"
+                ],
+                "type": "string"
+              },
+              "offset": {
+                "format": "uint",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "query": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "scope": {
+                "default": {
+                  "app_id": null,
+                  "project_path": null,
+                  "session_id": null,
+                  "source_id": null
+                },
+                "properties": {
+                  "app_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "project_path": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "session_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "source_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              },
+              "since": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "until": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "scope": {
+            "default": {
+              "app_id": null,
+              "project_path": null,
+              "session_id": null,
+              "source_id": null
+            },
+            "description": "Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "synthesize": {
+            "default": false,
+            "description": "synthesize",
+            "type": "boolean"
+          },
+          "trigger": {
+            "default": "manual",
+            "description": "Automatic or manual trigger",
+            "enum": [
+              "automatic",
+              "manual"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
+      "supports_dry_run": true
+    },
+    {
+      "canonical_method": "get_memory_task",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Get one desktop Memory background task",
+      "exposure": "app",
+      "method": "get_memory_task",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "aliases": [
+              "taskId"
+            ],
+            "description": "Memory task identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "list_memory_tasks",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List desktop Memory background tasks",
+      "exposure": "app",
+      "method": "list_memory_tasks",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "cancel_memory_task",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Cancel one desktop Memory background task",
+      "exposure": "app",
+      "method": "cancel_memory_task",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "aliases": [
+              "taskId"
+            ],
+            "description": "Memory task identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.item.list",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List formal Memory items and review candidates with pagination",
+      "exposure": "app",
+      "method": "list_memory_items",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "kinds": {
+            "default": [],
+            "description": "Optional Memory kind filters",
+            "items": {
+              "enum": [
+                "preference",
+                "decision",
+                "method",
+                "context",
+                "follow_up"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "description": "Maximum number of items",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offset": {
+            "description": "Pagination offset",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "origins": {
+            "default": [],
+            "description": "Optional Memory origin filters",
+            "items": {
+              "enum": [
+                "manual",
+                "auto_dream",
+                "deep_recall",
+                "full_organize"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "default": null,
+            "description": "Optional exact Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "stale_only": {
+            "aliases": [
+              "staleOnly"
+            ],
+            "default": false,
+            "description": "Only return stale Memory items",
+            "type": "boolean"
+          },
+          "statuses": {
+            "default": [],
+            "description": "Optional Memory status filters",
+            "items": {
+              "enum": [
+                "candidate",
+                "active",
+                "completed",
+                "superseded",
+                "archived",
+                "rejected"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.item.get",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Get one Memory item with evidence and revision history",
+      "exposure": "app",
+      "method": "get_memory_item",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "item_id": {
+            "aliases": [
+              "itemId"
+            ],
+            "description": "Memory item identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.item.create",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Create a user-confirmed formal Memory item",
+      "exposure": "app",
+      "method": "create_memory_item",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "confidence": {
+            "description": "Optional confidence between 0 and 1",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "content_markdown": {
+            "aliases": [
+              "contentMarkdown"
+            ],
+            "description": "Memory Markdown content",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "aliases": [
+              "evidenceIds"
+            ],
+            "default": [],
+            "description": "Evidence snapshot identifiers",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "description": "Formal Memory kind",
+            "enum": [
+              "preference",
+              "decision",
+              "method",
+              "context",
+              "follow_up"
+            ],
+            "type": "string"
+          },
+          "scope": {
+            "default": {
+              "app_id": null,
+              "project_path": null,
+              "session_id": null,
+              "source_id": null
+            },
+            "description": "Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "title": {
+            "description": "Memory title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "title",
+          "content_markdown"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.item.update",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Edit a Memory item while preserving revision history",
+      "exposure": "app",
+      "method": "update_memory_item",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "confidence": {
+            "description": "Updated confidence between 0 and 1",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "content_markdown": {
+            "aliases": [
+              "contentMarkdown"
+            ],
+            "description": "Updated Markdown content",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidence_ids": {
+            "aliases": [
+              "evidenceIds"
+            ],
+            "description": "Replacement evidence identifiers",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "item_id": {
+            "aliases": [
+              "itemId"
+            ],
+            "description": "Memory item identifier",
+            "type": "string"
+          },
+          "kind": {
+            "description": "Updated Memory kind",
+            "enum": [
+              "preference",
+              "decision",
+              "method",
+              "context",
+              "follow_up"
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "description": "Updated Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "title": {
+            "description": "Updated title",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.item.archive",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Archive a Memory item and append a status revision",
+      "exposure": "app",
+      "method": "archive_memory_item",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "item_id": {
+            "aliases": [
+              "itemId"
+            ],
+            "description": "Memory item identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.candidate.accept",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Accept and optionally edit a reviewable Memory candidate",
+      "exposure": "app",
+      "method": "accept_memory_candidate",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "confidence": {
+            "description": "Accepted confidence between 0 and 1",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "content_markdown": {
+            "aliases": [
+              "contentMarkdown"
+            ],
+            "description": "Accepted Markdown content",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidence_ids": {
+            "aliases": [
+              "evidenceIds"
+            ],
+            "description": "Evidence identifiers committed with acceptance",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "item_id": {
+            "aliases": [
+              "itemId"
+            ],
+            "description": "Candidate Memory item identifier",
+            "type": "string"
+          },
+          "kind": {
+            "description": "Accepted Memory kind",
+            "enum": [
+              "preference",
+              "decision",
+              "method",
+              "context",
+              "follow_up"
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "description": "Accepted Memory scope",
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "project_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "title": {
+            "description": "Accepted title",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "memory.candidate.reject",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Reject a reviewable Memory candidate",
+      "exposure": "app",
+      "method": "reject_memory_candidate",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "item_id": {
+            "aliases": [
+              "itemId"
+            ],
+            "description": "Candidate Memory item identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "type": "object"
+      },
+      "risk": "write",
+      "since": "0.5.2",
       "supports_dry_run": false
     },
     {
@@ -9792,6 +11965,17 @@
     "source.remove",
     "source.scan",
     "profile.list",
+    "memory.overview",
+    "memory.dream.status",
+    "memory.dream.preview",
+    "memory.dream.run",
+    "memory.dream.list",
+    "memory.dream.get",
+    "memory.dream.archive",
+    "memory.dream.promote",
+    "memory.recall.preview",
+    "memory.recall.run",
+    "memory.verify",
     "memory.item.list",
     "memory.item.get",
     "memory.item.create",
@@ -9874,6 +12058,28 @@
     "switch_tenant",
     "get_app_settings",
     "save_app_settings",
+    "memory_overview",
+    "list_memory_dream_notes",
+    "get_memory_dream_note",
+    "archive_memory_dream_note",
+    "promote_memory_dream_note",
+    "memory_dream_status",
+    "preview_memory_dream",
+    "run_memory_dream",
+    "preview_memory_recall",
+    "run_memory_recall",
+    "verify_memory",
+    "start_memory_task",
+    "get_memory_task",
+    "list_memory_tasks",
+    "cancel_memory_task",
+    "list_memory_items",
+    "get_memory_item",
+    "create_memory_item",
+    "update_memory_item",
+    "archive_memory_item",
+    "accept_memory_candidate",
+    "reject_memory_candidate",
     "list_assets",
     "get_skill_backup_settings",
     "update_skill_backup_settings",

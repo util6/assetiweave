@@ -112,6 +112,98 @@ pub(crate) struct MemoryCandidateAcceptParams {
     pub(crate) evidence_ids: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub(crate) struct MemoryDreamScopeParams {
+    #[serde(default)]
+    pub(crate) scope: MemoryScope,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct MemoryRecallPreviewParams {
+    #[serde(default)]
+    pub(crate) mode: crate::backend::models::MemoryRecallMode,
+    #[serde(default)]
+    pub(crate) scope: MemoryScope,
+    pub(crate) query: Option<String>,
+    pub(crate) since: Option<String>,
+    pub(crate) until: Option<String>,
+    #[serde(default, alias = "includeUnavailable")]
+    pub(crate) include_unavailable: bool,
+    pub(crate) limit: Option<usize>,
+    pub(crate) offset: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct MemoryRecallRunParams {
+    #[serde(flatten)]
+    pub(crate) preview: MemoryRecallPreviewParams,
+    #[serde(default)]
+    pub(crate) synthesize: bool,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct MemoryVerifyParams {
+    #[serde(default, alias = "itemIds")]
+    pub(crate) item_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub(crate) struct MemoryDreamPreviewParams {
+    #[serde(default)]
+    pub(crate) scope: MemoryScope,
+    #[serde(default)]
+    pub(crate) trigger: MemoryDreamTrigger,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub(crate) struct MemoryDreamRunParams {
+    #[serde(default)]
+    pub(crate) scope: MemoryScope,
+    #[serde(default)]
+    pub(crate) trigger: MemoryDreamTrigger,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct MemoryTaskStartParams {
+    pub(crate) kind: MemoryRunKind,
+    #[serde(default)]
+    pub(crate) scope: MemoryScope,
+    #[serde(default)]
+    pub(crate) trigger: MemoryDreamTrigger,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+    #[serde(default)]
+    pub(crate) recall: Option<MemoryRecallPreviewParams>,
+    #[serde(default)]
+    pub(crate) synthesize: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct MemoryTaskGetParams {
+    #[serde(alias = "taskId")]
+    pub(crate) task_id: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub(crate) struct MemoryDreamListParams {
+    #[serde(default)]
+    pub(crate) statuses: Vec<MemoryDreamNoteStatus>,
+    #[serde(default)]
+    pub(crate) scope: Option<MemoryScope>,
+    pub(crate) limit: Option<usize>,
+    pub(crate) offset: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct MemoryDreamGetParams {
+    #[serde(alias = "noteId")]
+    pub(crate) note_id: String,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct TenantCreateParams {
     pub(crate) name: String,
