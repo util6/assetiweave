@@ -12,11 +12,12 @@ use sqlx::{Row as SqlxRow, Sqlite, SqlitePool, Transaction};
 use std::collections::BTreeMap;
 
 use super::{
-    codec::encode_enum,
+    codec::{decode_json, encode_enum, encode_json},
     conversation_repo::{
-        append_declared_card_to_question_aggregate, map_sqlx_conversation_part,
-        map_sqlx_conversation_question, map_sqlx_conversation_session, map_sqlx_conversation_turn,
-        ConversationImportResult, CONVERSATION_IMPORT_BATCH_SIZE,
+        append_declared_card_to_question_aggregate, insert_conversation_sync_delta_sqlx_tx,
+        map_sqlx_conversation_part, map_sqlx_conversation_question, map_sqlx_conversation_session,
+        map_sqlx_conversation_turn, project_conversation_cards_and_nodes, ConversationImportResult,
+        CONVERSATION_IMPORT_BATCH_SIZE,
     },
 };
 
@@ -33,8 +34,10 @@ pub(crate) async fn import_web_record_sessions_sqlx(
             source_id: source.id.clone(),
             adapter_id: source.adapter_id.clone(),
             dry_run: true,
+            sync_run_id: None,
             session_count: sessions.len(),
             skipped_session_count: 0,
+            changed_session_count: 0,
             turn_count,
             warning_count: 0,
             warnings: Vec::new(),
@@ -42,6 +45,7 @@ pub(crate) async fn import_web_record_sessions_sqlx(
     }
 
     let now = Utc::now().to_rfc3339();
+    let sync_run_id = stable_id("web-record-sync", &[&source.id, &now]);
     {
         let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
         clear_legacy_conversation_records_for_source_sqlx_tx(&mut tx, tenant_id, &source.id)
@@ -51,16 +55,26 @@ pub(crate) async fn import_web_record_sessions_sqlx(
 
     let mut warning_count = 0usize;
     let mut skipped_session_count = 0usize;
+    let mut changed_session_count = 0usize;
     for batch in sessions.chunks(CONVERSATION_IMPORT_BATCH_SIZE) {
         let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
         for normalized in batch {
             let session = web_record_session_from_normalized(source, normalized, &now);
+            let change_kind =
+                if web_record_session_exists_sqlx_tx(&mut tx, tenant_id, &session.id).await? {
+                    "updated"
+                } else {
+                    "new"
+                };
             if web_record_session_is_unchanged_sqlx_tx(&mut tx, tenant_id, &session, normalized)
                 .await?
             {
                 skipped_session_count += 1;
                 continue;
             }
+            let translation_state =
+                load_web_record_part_translation_state_sqlx_tx(&mut tx, tenant_id, &session.id)
+                    .await?;
             delete_web_record_session_sqlx_tx(&mut tx, tenant_id, &session.id).await?;
             insert_web_record_session_sqlx_tx(&mut tx, tenant_id, &session).await?;
 
@@ -72,8 +86,14 @@ pub(crate) async fn import_web_record_sessions_sqlx(
                 }
                 let stored_turn = web_record_turn_from_normalized(&session.id, turn, &now);
                 insert_web_record_turn_sqlx_tx(&mut tx, tenant_id, &stored_turn).await?;
-                insert_web_record_parts_sqlx_tx(&mut tx, tenant_id, &stored_turn.id, &turn.parts)
-                    .await?;
+                insert_web_record_parts_sqlx_tx(
+                    &mut tx,
+                    tenant_id,
+                    &stored_turn.id,
+                    &turn.parts,
+                    &translation_state,
+                )
+                .await?;
                 stored_turns.push(stored_turn);
             }
             insert_web_record_questions_sqlx_tx(
@@ -84,6 +104,17 @@ pub(crate) async fn import_web_record_sessions_sqlx(
                 &now,
             )
             .await?;
+            insert_conversation_sync_delta_sqlx_tx(
+                &mut tx,
+                tenant_id,
+                &sync_run_id,
+                "web",
+                &session.id,
+                change_kind,
+                &now,
+            )
+            .await?;
+            changed_session_count += 1;
         }
         tx.commit().await.map_err(|error| error.to_string())?;
     }
@@ -106,7 +137,7 @@ pub(crate) async fn import_web_record_sessions_sqlx(
         &mut tx,
         tenant_id,
         &ConversationSyncRun {
-            id: stable_id("web-record-sync", &[&source.id, &now]),
+            id: sync_run_id.clone(),
             source_id: Some(source.id.clone()),
             adapter_id: Some(source.adapter_id.clone()),
             status: ConversationSyncStatus::Completed,
@@ -125,8 +156,10 @@ pub(crate) async fn import_web_record_sessions_sqlx(
         source_id: source.id.clone(),
         adapter_id: source.adapter_id.clone(),
         dry_run: false,
+        sync_run_id: Some(sync_run_id),
         session_count: sessions.len(),
         skipped_session_count,
+        changed_session_count,
         turn_count,
         warning_count,
         warnings: Vec::new(),
@@ -368,7 +401,8 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
     let part_rows = sqlx::query(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
-               p.command, p.cwd, p.status, p.exit_code, p.metadata_json, p.translated_text
+               p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
+               p.content_card_json, p.translated_text, p.source_execution_id
         FROM web_record_parts p
         JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
         WHERE t.tenant_id = ?1 AND t.session_id = ?2
@@ -389,21 +423,34 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
             .push(part);
     }
 
-    let question_details = questions
-        .into_iter()
-        .map(|question| {
-            let turns = turns_by_question.remove(&question.id).unwrap_or_default();
-            let mut parts = Vec::new();
-            for turn in &turns {
-                parts.extend(parts_by_turn.remove(&turn.id).unwrap_or_default());
-            }
-            ConversationQuestionDetail {
-                question,
-                turns,
-                parts,
-            }
-        })
-        .collect();
+    let card_kinds_json = sqlx::query_scalar::<_, String>(
+        "SELECT card_kinds_json FROM conversation_adapters WHERE tenant_id = ?1 AND id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(&session.adapter_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?
+    .unwrap_or_else(|| "[]".to_string());
+    let card_kinds: Vec<crate::backend::models::ConversationCardKindDefinition> =
+        decode_json(card_kinds_json)?;
+    let mut question_details = Vec::with_capacity(questions.len());
+    for question in questions {
+        let turns = turns_by_question.remove(&question.id).unwrap_or_default();
+        let mut parts = Vec::new();
+        for turn in &turns {
+            parts.extend(parts_by_turn.remove(&turn.id).unwrap_or_default());
+        }
+        let (cards, content_nodes) =
+            project_conversation_cards_and_nodes(&parts, &session.adapter_id, &card_kinds)?;
+        question_details.push(ConversationQuestionDetail {
+            question,
+            turns,
+            parts,
+            cards,
+            content_nodes,
+        });
+    }
     Ok(ConversationSessionDetail {
         session,
         questions: question_details,
@@ -588,6 +635,22 @@ async fn web_record_session_is_unchanged_sqlx_tx(
         && missing == 0
         && web_record_session_turns_are_unchanged_sqlx_tx(tx, tenant_id, &session.id, normalized)
             .await?)
+}
+
+async fn web_record_session_exists_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+    session_id: &str,
+) -> AppResult<bool> {
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(SELECT 1 FROM web_record_sessions WHERE tenant_id = ?1 AND id = ?2)",
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(exists != 0)
 }
 
 async fn web_record_session_turns_are_unchanged_sqlx_tx(
@@ -789,19 +852,27 @@ async fn insert_web_record_parts_sqlx_tx(
     tenant_id: &str,
     turn_id: &str,
     parts: &[crate::backend::models::NormalizedConversationPart],
+    translation_state: &BTreeMap<String, (Option<String>, Option<String>, Option<String>)>,
 ) -> AppResult<()> {
     for (index, part) in parts.iter().enumerate() {
+        let part_id = stable_id("web-record-part", &[turn_id, &index.to_string()]);
+        let content_card_json = part.content_card.as_ref().map(encode_json).transpose()?;
+        let translated_text = translation_state
+            .get(&part_id)
+            .filter(|(text, command, _)| text == &part.text && command == &part.command)
+            .and_then(|(_, _, translated_text)| translated_text.as_ref());
         sqlx::query(
             r#"
             INSERT INTO web_record_parts (
                 tenant_id, id, turn_id, part_index, role, kind, text, language, command,
-                cwd, status, exit_code, metadata_json
+                cwd, status, exit_code, metadata_json, content_card_json, translated_text,
+                source_execution_id
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
             "#,
         )
         .bind(tenant_id)
-        .bind(stable_id("web-record-part", &[turn_id, &index.to_string()]))
+        .bind(part_id)
         .bind(turn_id)
         .bind(index as i64)
         .bind(encode_enum(part.role)?)
@@ -813,11 +884,46 @@ async fn insert_web_record_parts_sqlx_tx(
         .bind(&part.status)
         .bind(part.exit_code)
         .bind(&part.metadata_json)
+        .bind(content_card_json)
+        .bind(translated_text)
+        .bind(&part.source_execution_id)
         .execute(&mut **tx)
         .await
         .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+async fn load_web_record_part_translation_state_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+    session_id: &str,
+) -> AppResult<BTreeMap<String, (Option<String>, Option<String>, Option<String>)>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT p.id, p.text, p.command, p.translated_text
+        FROM web_record_parts p
+        JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
+        WHERE t.tenant_id = ?1 AND t.session_id = ?2
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    rows.iter()
+        .map(|row| {
+            Ok((
+                row.try_get(0).map_err(|error| error.to_string())?,
+                (
+                    row.try_get(1).map_err(|error| error.to_string())?,
+                    row.try_get(2).map_err(|error| error.to_string())?,
+                    row.try_get(3).map_err(|error| error.to_string())?,
+                ),
+            ))
+        })
+        .collect()
 }
 
 async fn insert_web_record_questions_sqlx_tx(
@@ -928,7 +1034,8 @@ async fn load_web_record_parts_sqlx_tx(
     let rows = sqlx::query(
         r#"
         SELECT id, turn_id, part_index, role, kind, text, language, command,
-               cwd, status, exit_code, metadata_json, translated_text
+               cwd, status, exit_code, metadata_json, content_card_json, translated_text,
+               source_execution_id
         FROM web_record_parts
         WHERE tenant_id = ?1 AND turn_id = ?2
         ORDER BY part_index ASC
@@ -1007,8 +1114,8 @@ mod tests {
     use super::*;
     use crate::backend::dto::{ConversationRecordKind, ConversationSearchCardType};
     use crate::backend::models::{
-        ConversationPartKind, ConversationPartRole, ConversationSourceKind,
-        NormalizedConversationPart, NormalizedConversationTurn,
+        ConversationContentCardDescriptor, ConversationPartKind, ConversationPartRole,
+        ConversationSourceKind, NormalizedConversationPart, NormalizedConversationTurn,
     };
     use crate::backend::store::Database;
     use uuid::Uuid;
@@ -1534,7 +1641,7 @@ mod tests {
         let database = Database::open(&db_path).expect("open database");
         let source = fixture_source();
 
-        let (fragment_matches, full_matches) = database
+        let (fragment_matches, direct_fragment_matches, full_matches) = database
             .block_on(async {
                 super::super::conversation_repo::upsert_conversation_source_sqlx(
                     database.pool(),
@@ -1562,6 +1669,17 @@ mod tests {
                     0,
                 )
                 .await?;
+                let direct_fragment_matches = super::super::conversation_repo::list_conversation_sessions_by_id_fragment_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    crate::backend::dto::ConversationRecordKind::Web,
+                    None,
+                    Some(&source.id),
+                    &fragment,
+                    20,
+                    0,
+                )
+                .await?;
                 let full_matches = list_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1572,11 +1690,12 @@ mod tests {
                     0,
                 )
                 .await?;
-                AppResult::Ok((fragment_matches, full_matches))
+                AppResult::Ok((fragment_matches, direct_fragment_matches, full_matches))
             })
             .expect("list web record sessions by display id fragment");
 
         assert_eq!(fragment_matches.len(), 1);
+        assert_eq!(direct_fragment_matches.len(), 1);
         assert_eq!(full_matches.len(), 1);
         assert_eq!(full_matches[0].session.external_id, "web-session-1");
 
@@ -1611,6 +1730,8 @@ mod tests {
                 cwd: None,
                 status: None,
                 exit_code: None,
+                source_execution_id: None,
+                content_card: None,
                 metadata_json: content_card_metadata("answer"),
             }],
         });
@@ -1738,12 +1859,16 @@ mod tests {
                     Some(&source.id),
                     None,
                     "beta web answer",
-                    &[ConversationSearchCardType::Answer],
+                    &[ConversationSearchCardType::answer()],
+                    &[],
+                    false,
+                    true,
                     None,
                     None,
                     false,
                     20,
                     0,
+                    None,
                 )
                 .await?;
                 let beta_page = super::super::conversation_repo::search_conversation_cards_sqlx(
@@ -1754,12 +1879,16 @@ mod tests {
                     Some(&source.id),
                     None,
                     "alpha web answer",
-                    &[ConversationSearchCardType::Answer],
+                    &[ConversationSearchCardType::answer()],
+                    &[],
+                    false,
+                    true,
                     None,
                     None,
                     false,
                     20,
                     0,
+                    None,
                 )
                 .await?;
                 AppResult::Ok((session_id, alpha_detail, beta_detail, alpha_page, beta_page))
@@ -1778,6 +1907,91 @@ mod tests {
         );
         assert_eq!(alpha_page.total_count, 0);
         assert_eq!(beta_page.total_count, 0);
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_web_records_round_trip_structured_cards_and_preserve_translation() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-web-record-card-persistence-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let source = fixture_source();
+        let mut first = fixture_session();
+        first.turns[0].parts[0].content_card = Some(ConversationContentCardDescriptor {
+            schema_version: 1,
+            kind: "qwen-web.reasoning".to_string(),
+            renderer: Some("markdown".to_string()),
+        });
+        let mut second = first.clone();
+        second.turns[0].parts[0].content_card.as_mut().unwrap().kind =
+            "qwen-web.analysis".to_string();
+
+        let (part_id, detail) = database
+            .block_on(async {
+                super::super::conversation_repo::upsert_conversation_source_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                )
+                .await?;
+                import_web_record_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[first],
+                    false,
+                )
+                .await?;
+                let session_id = stable_id("web-record-session", &[&source.id, "web-session-1"]);
+                let initial = load_web_record_session_detail_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &session_id,
+                )
+                .await?;
+                let part_id = initial.questions[0].parts[0].id.clone();
+                update_web_record_part_translation_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &part_id,
+                    "网页译文",
+                )
+                .await?;
+                import_web_record_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[second],
+                    false,
+                )
+                .await?;
+                let detail = load_web_record_session_detail_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &session_id,
+                )
+                .await?;
+                AppResult::Ok((part_id, detail))
+            })
+            .expect("round trip web record card");
+
+        let part = &detail.questions[0].parts[0];
+        assert_eq!(part.id, part_id);
+        assert_eq!(part.translated_text.as_deref(), Some("网页译文"));
+        assert_eq!(
+            part.content_card.as_ref().map(|card| card.kind.as_str()),
+            Some("qwen-web.analysis")
+        );
+        assert_eq!(detail.questions[0].cards.len(), 1);
+        assert_eq!(detail.questions[0].cards[0].card_id, part_id);
+        assert_eq!(
+            detail.questions[0].cards[0].renderer,
+            crate::backend::dto::ConversationCardRenderer::Markdown
+        );
 
         drop(database);
         cleanup_database(&db_path);
@@ -1838,6 +2052,8 @@ mod tests {
                     cwd: None,
                     status: None,
                     exit_code: None,
+                    source_execution_id: None,
+                    content_card: None,
                     metadata_json: content_card_metadata("answer"),
                 }],
             }],

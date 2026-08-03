@@ -5,6 +5,7 @@ use super::{
     register_external_adapter, scaffold_external_adapter, try_run_external_adapter,
     validate_external_adapter,
 };
+use crate::backend::models::ConversationPartRole;
 use std::collections::BTreeMap;
 
 struct TempFixture {
@@ -27,6 +28,68 @@ impl Drop for TempFixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
     }
+}
+
+fn card_contract_manifest(card_kinds: Value) -> ConversationAdapterManifest {
+    serde_json::from_value(json!({
+        "schema_version": 1,
+        "id": "fixture",
+        "name": "Fixture",
+        "version": "0.1.0",
+        "protocol_version": 1,
+        "command": ["adapter.sh"],
+        "capabilities": ["read_session"],
+        "input_kinds": ["directory"],
+        "card_contract_version": 1,
+        "card_kinds": card_kinds
+    }))
+    .unwrap()
+}
+
+fn structured_card_adapter_output(kind: &str, renderer: &str) -> Vec<u8> {
+    format!(
+        "{}\n{}\n",
+        json!({
+            "type": "item",
+            "item": {
+                "kind": "session",
+                "session": {
+                    "external_id": "session-1",
+                    "title": "Fixture",
+                    "project_path": null,
+                    "started_at": null,
+                    "updated_at": null,
+                    "source_locator": null,
+                    "source_fingerprint": null,
+                    "turns": [{
+                        "external_id": "turn-1",
+                        "turn_index": 0,
+                        "user_text": "Question",
+                        "title": null,
+                        "started_at": null,
+                        "ended_at": null,
+                        "parts": [{
+                            "role": "assistant",
+                            "kind": "text",
+                            "text": "Thinking",
+                            "language": null,
+                            "command": null,
+                            "cwd": null,
+                            "status": null,
+                            "exit_code": null,
+                            "content_card": {
+                                "schema_version": 1,
+                                "kind": kind,
+                                "renderer": renderer
+                            }
+                        }]
+                    }]
+                }
+            }
+        }),
+        json!({ "type": "complete", "item": { "session_count": 1 } })
+    )
+    .into_bytes()
 }
 
 fn adapter_with_manifest_runtime(
@@ -71,6 +134,8 @@ fn adapter_with_manifest_runtime(
         protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
         capabilities: vec!["probe".to_string(), "read_session".to_string()],
         input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     }
@@ -123,6 +188,97 @@ fn adapter_output_accepts_large_atomic_session_item() {
 
     assert_eq!(result.sessions.len(), 1);
     assert_eq!(result.sessions[0].external_id, "large-session");
+}
+
+#[test]
+fn adapter_output_accepts_declared_structured_content_card() {
+    let manifest = card_contract_manifest(json!([{
+        "id": "fixture.reasoning",
+        "semantic_role": "reasoning",
+        "label": "Reasoning",
+        "default_renderer": "markdown",
+        "allowed_renderers": ["markdown"]
+    }]));
+
+    let result = parse_external_adapter_output_with_manifest(
+        "read_session",
+        structured_card_adapter_output("fixture.reasoning", "markdown"),
+        Vec::new(),
+        &manifest,
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.sessions[0].turns[0].parts[0]
+            .content_card
+            .as_ref()
+            .map(|card| card.kind.as_str()),
+        Some("fixture.reasoning")
+    );
+    assert_eq!(result.legacy_cards_upgraded, 0);
+}
+
+#[test]
+fn adapter_output_aggregates_legacy_card_upgrades_once_per_run() {
+    let manifest = card_contract_manifest(json!([{
+        "id": "fixture.answer",
+        "semantic_role": "answer",
+        "label": "Answer",
+        "default_renderer": "markdown",
+        "allowed_renderers": ["markdown"]
+    }]));
+    let output = format!(
+        "{}\n{}\n",
+        json!({
+            "type": "item",
+            "item": {"kind": "session", "session": {
+                "external_id": "legacy-session", "title": null, "project_path": null,
+                "started_at": null, "updated_at": null, "source_locator": null,
+                "source_fingerprint": null, "turns": [{
+                    "external_id": "turn-1", "turn_index": 0, "user_text": "Question",
+                    "title": null, "started_at": null, "ended_at": null, "parts": [{
+                        "role": "assistant", "kind": "text", "text": "Answer",
+                        "language": null, "command": null, "cwd": null, "status": null,
+                        "exit_code": null,
+                        "metadata_json": {"content_card": {"type": "answer", "format": "markdown"}}
+                    }]
+                }]
+            }}
+        }),
+        json!({"type": "complete", "item": {"session_count": 1}}),
+    );
+
+    let result = parse_external_adapter_output_with_manifest(
+        "read_session",
+        output.into_bytes(),
+        Vec::new(),
+        &manifest,
+    )
+    .expect("legacy Card is upgraded during the observation window");
+
+    assert_eq!(result.legacy_cards_upgraded, 1);
+    assert_eq!(
+        result.sessions[0].turns[0].parts[0]
+            .content_card
+            .as_ref()
+            .map(|card| card.kind.as_str()),
+        Some("fixture.answer")
+    );
+}
+
+#[test]
+fn adapter_output_rejects_undeclared_structured_content_card() {
+    let manifest = card_contract_manifest(json!([]));
+
+    let error = parse_external_adapter_output_with_manifest(
+        "read_session",
+        structured_card_adapter_output("fixture.reasoning", "markdown"),
+        Vec::new(),
+        &manifest,
+    )
+    .expect_err("undeclared kind must fail at the adapter boundary");
+
+    assert!(error.contains("undeclared conversation card kind"));
 }
 
 #[test]
@@ -254,6 +410,8 @@ fn legacy_javascript_command_is_promoted_to_node_runtime() {
         runtime: None,
         capabilities: vec!["probe".to_string(), "read_session".to_string()],
         input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
     };
 
     let runtime = adapter_execution_runtime(&manifest).expect("legacy js runtime");
@@ -579,6 +737,8 @@ fn adapter_runtime_requirements_include_legacy_javascript_commands() {
         protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
         capabilities: vec!["probe".to_string(), "read_session".to_string()],
         input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     };
@@ -721,6 +881,81 @@ fn external_adapter_validation_accepts_runtime_without_legacy_command() {
             .map(|runtime| runtime.entry.as_str()),
         Some("adapter.mjs")
     );
+}
+
+#[test]
+fn external_adapter_validation_accepts_namespaced_card_contract() {
+    let fixture = TempFixture::new("assetiweave-adapter-card-contract-fixture");
+    fs::write(fixture.path().join("adapter.mjs"), "#!/usr/bin/env node\n").unwrap();
+    let manifest_path = fixture.path().join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "id": "fixture-runtime",
+            "name": "Fixture Runtime",
+            "version": "0.1.0",
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "runtime": { "type": "node", "entry": "adapter.mjs", "version": ">=20" },
+            "capabilities": ["probe", "read_session"],
+            "input_kinds": ["directory"],
+            "card_contract_version": 1,
+            "card_kinds": [{
+                "id": "fixture-runtime.reasoning",
+                "semantic_role": "reasoning",
+                "label": "Reasoning",
+                "default_renderer": "markdown",
+                "allowed_renderers": ["markdown"],
+                "icon_hint": "brain"
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let validation =
+        validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref()).unwrap();
+
+    assert_eq!(validation.manifest.card_contract_version, Some(1));
+    assert_eq!(
+        validation.manifest.card_kinds[0].id,
+        "fixture-runtime.reasoning"
+    );
+}
+
+#[test]
+fn external_adapter_validation_rejects_card_kind_owned_by_another_namespace() {
+    let fixture = TempFixture::new("assetiweave-adapter-card-namespace-fixture");
+    fs::write(fixture.path().join("adapter.mjs"), "#!/usr/bin/env node\n").unwrap();
+    let manifest_path = fixture.path().join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "id": "fixture-runtime",
+            "name": "Fixture Runtime",
+            "version": "0.1.0",
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "runtime": { "type": "node", "entry": "adapter.mjs", "version": ">=20" },
+            "capabilities": ["probe", "read_session"],
+            "input_kinds": ["directory"],
+            "card_contract_version": 1,
+            "card_kinds": [{
+                "id": "other.reasoning",
+                "semantic_role": "reasoning",
+                "label": "Reasoning",
+                "default_renderer": "markdown",
+                "allowed_renderers": ["markdown"]
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let error = validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref())
+        .expect_err("cross-namespace kind must be rejected");
+
+    assert!(error.contains("fixture-runtime."));
 }
 
 #[test]
@@ -1045,6 +1280,8 @@ printf '%s\n' '{"type":"complete","item":{}}'
             "export_markdown".to_string(),
         ],
         input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
     };
     fs::write(
         &manifest,
@@ -1241,6 +1478,8 @@ printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
         protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
         capabilities: vec!["read_session".to_string()],
         input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     };
@@ -1303,6 +1542,8 @@ esac
         protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
         capabilities: vec!["list_sessions".to_string(), "read_session".to_string()],
         input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     };
@@ -1430,6 +1671,18 @@ fn official_web_adapters_expose_incremental_session_discovery() {
                             "kind": "text",
                             "text": "answer",
                             "metadata_json": "{\"content_card\":{\"type\":\"answer\"}}"
+                        }, {
+                            "role": "tool",
+                            "kind": "command",
+                            "command": "printf '\\n'",
+                            "metadata_json": "{\"content_card\":{\"type\":\"command\"}}"
+                        }, {
+                            "role": "tool",
+                            "kind": "tool",
+                            "text": "\"Script completed\\nWall time 0.1 seconds\\nOutput:\\n\\u001b[32mok\\u001b[0m\"",
+                            "status": "completed",
+                            "exit_code": 0,
+                            "metadata_json": "{\"content_card\":{\"type\":\"result\",\"format\":\"plain\"}}"
                         }]
                     }]
                 }]
@@ -1459,12 +1712,103 @@ fn official_web_adapters_expose_incremental_session_discovery() {
         assert!(result.incremental, "{adapter_id}");
         assert_eq!(result.discovered_session_count, 1, "{adapter_id}");
         assert_eq!(result.active_session_count, 1, "{adapter_id}");
+        let part = &result.sessions[0].turns[0].parts[0];
+        assert_eq!(
+            part.content_card.as_ref().map(|card| card.kind.as_str()),
+            Some(format!("{adapter_id}.answer").as_str()),
+            "{adapter_id}"
+        );
+        assert!(
+            part.metadata_json
+                .as_deref()
+                .is_none_or(|metadata| !metadata.contains("content_card")),
+            "{adapter_id}"
+        );
+        let command = &result.sessions[0].turns[0].parts[1];
+        assert_eq!(
+            command.command.as_deref(),
+            Some("printf '\\n'"),
+            "{adapter_id}"
+        );
+        assert_eq!(
+            command
+                .content_card
+                .as_ref()
+                .and_then(|card| card.renderer.as_deref()),
+            Some("command"),
+            "{adapter_id}"
+        );
+        let execution_result = &result.sessions[0].turns[0].parts[2];
+        assert_eq!(execution_result.text.as_deref(), Some("ok"), "{adapter_id}");
+        assert_eq!(
+            execution_result
+                .content_card
+                .as_ref()
+                .and_then(|card| card.renderer.as_deref()),
+            Some("terminal_output"),
+            "{adapter_id}"
+        );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn official_zcode_adapter_emits_structured_cards_without_legacy_metadata() {
+    if !command_available("python3") {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-zcode-card-contract-fixture");
+    let db_path = fixture.path().join("db.sqlite");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch(
+        r#"
+        CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, path TEXT, time_updated INTEGER);
+        CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT);
+        CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
+        INSERT INTO session VALUES ('session-1', 'ZCode fixture', '/tmp/project', 2);
+        INSERT INTO message VALUES ('user-1', 'session-1', 1, '{"role":"user"}');
+        INSERT INTO part VALUES ('user-part', 'user-1', 'session-1', 1, '{"type":"text","text":"Explain it"}');
+        INSERT INTO message VALUES ('assistant-1', 'session-1', 2, '{"role":"assistant"}');
+        INSERT INTO part VALUES ('assistant-part', 'assistant-1', 'session-1', 2, '{"type":"text","text":"Structured answer"}');
+        INSERT INTO part VALUES ('tool-part', 'assistant-1', 'session-1', 3, '{"type":"tool","command":"printf ok","output":"[{\"type\":\"input_text\",\"text\":\"Script completed\\nWall time 0.1 seconds\\nOutput:\\n\"},{\"type\":\"input_text\",\"text\":\"\\u001b[32mok\\u001b[0m\"}]"}');
+        "#,
+    )
+    .unwrap();
+    drop(conn);
+    let adapter = official_adapter_fixture(
+        "zcode",
+        "ZCode",
+        "../parser-catalog/adapters/zcode/conversation-adapter.json",
+        vec![ConversationSourceKind::Sqlite],
+    );
+    let source = source_fixture(
+        "zcode",
+        ConversationSourceKind::Sqlite,
+        &db_path.to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+    let parts = &sessions[0].turns[0].parts;
+    assert_content_card_types(parts, &["answer", "command", "result"]);
+    assert_eq!(parts[1].command.as_deref(), Some("printf ok"));
+    assert_eq!(parts[2].text.as_deref(), Some("ok"));
+    assert_eq!(
+        parts[2]
+            .content_card
+            .as_ref()
+            .and_then(|card| card.renderer.as_deref()),
+        Some("terminal_output")
+    );
+    assert!(parts[0]
+        .metadata_json
+        .as_deref()
+        .is_none_or(|metadata| !metadata.contains("content_card")));
 }
 
 #[test]
 fn official_adapter_manifests_use_runtime_without_legacy_command() {
     for manifest_relative_path in [
+        "bundled/conversation-adapters/antigravity/conversation-adapter.json",
         "bundled/conversation-adapters/codex/conversation-adapter.json",
         "bundled/conversation-adapters/opencode/conversation-adapter.json",
         "bundled/conversation-adapters/claude-code/conversation-adapter.json",
@@ -1484,9 +1828,42 @@ fn official_adapter_manifests_use_runtime_without_legacy_command() {
     }
 }
 
+#[test]
+fn first_party_adapter_manifests_declare_namespaced_card_contracts() {
+    for manifest_relative_path in [
+        "bundled/conversation-adapters/antigravity/conversation-adapter.json",
+        "bundled/conversation-adapters/codex/conversation-adapter.json",
+        "bundled/conversation-adapters/opencode/conversation-adapter.json",
+        "bundled/conversation-adapters/claude-code/conversation-adapter.json",
+        "../parser-catalog/adapters/chatgpt-web/conversation-adapter.json",
+        "../parser-catalog/adapters/gemini-web/conversation-adapter.json",
+        "../parser-catalog/adapters/qwen-web/conversation-adapter.json",
+        "../parser-catalog/adapters/zcode/conversation-adapter.json",
+    ] {
+        let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest_relative_path);
+        let validation =
+            validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref())
+                .unwrap_or_else(|error| panic!("{manifest_relative_path}: {error}"));
+        let manifest = validation.manifest;
+        assert_eq!(
+            manifest.card_contract_version,
+            Some(1),
+            "{manifest_relative_path}"
+        );
+        assert!(!manifest.card_kinds.is_empty(), "{manifest_relative_path}");
+        assert!(
+            manifest
+                .card_kinds
+                .iter()
+                .all(|kind| kind.id.starts_with(&format!("{}.", manifest.id))),
+            "{manifest_relative_path}"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
-fn official_codex_adapter_splits_command_and_result_cards() {
+fn official_codex_adapter_separates_skill_context_and_splits_command_result_cards() {
     if !command_available("node") || !command_available("sqlite3") {
         return;
     }
@@ -1496,10 +1873,13 @@ fn official_codex_adapter_splits_command_and_result_cards() {
         &rollout,
         [
             r#"{"payload":{"type":"message","role":"user","id":"turn-context","content":"Repository context only"}}"#,
-            r#"{"payload":{"type":"message","role":"user","id":"turn-1","content":"Run tests"}}"#,
+            r#"{"payload":{"type":"message","role":"user","id":"turn-1","content":"[$test-skill](/tmp/test-skill/SKILL.md) Run tests"}}"#,
+            r#"{"payload":{"type":"message","role":"user","content":"<skill>\n<name>test-skill</name>\n<path>/tmp/test-skill/SKILL.md</path>\n---\nname: test-skill\n</skill>"}}"#,
             r#"{"payload":{"type":"message","role":"assistant","content":"Use this:\n```sh\ncargo test\n```"}}"#,
             r#"{"payload":{"type":"function_call","name":"update_plan","arguments":"{\"plan\":[]}"}}"#,
             r#"{"payload":{"type":"exec","command":"cargo test","output":"tests passed","status":"completed","exit_code":0}}"#,
+            r#"{"payload":{"type":"custom_tool_call","name":"exec","call_id":"call-skill-read","input":"const r = await tools.exec_command({\"cmd\":\"cat /tmp/test-skill/SKILL.md\",\"workdir\":\"/tmp\"});\ntext(r.output);"}}"#,
+            r#"{"payload":{"type":"custom_tool_call_output","call_id":"call-skill-read","output":[{"type":"input_text","text":"Script completed\nWall time 0.1 seconds\nOutput:\n"},{"type":"input_text","text":"---\nname: test-skill\ndescription: Fixture Skill content.\n---\n\n# Test Skill"}]}}"#,
         ]
         .join("\n"),
     )
@@ -1543,30 +1923,46 @@ fn official_codex_adapter_splits_command_and_result_cards() {
     let parts = &sessions[0].turns[0].parts;
     let card_types = parts
         .iter()
-        .filter_map(|part| content_card_type(part.metadata_json.as_deref()))
+        .filter_map(content_card_type)
         .collect::<Vec<_>>();
     assert_eq!(
         card_types,
         vec![
+            "skill".to_string(),
             "answer".to_string(),
             "code".to_string(),
             "tool".to_string(),
             "command".to_string(),
-            "result".to_string()
+            "result".to_string(),
+            "command".to_string(),
+            "skill".to_string(),
         ]
     );
-    assert_eq!(parts[2].text.as_deref(), Some("function_call: update_plan"));
-    assert_eq!(parts[3].command.as_deref(), Some("cargo test"));
-    assert_eq!(parts[4].text.as_deref(), Some("tests passed"));
+    assert_eq!(parts[0].role, ConversationPartRole::System);
+    assert_eq!(parts[0].text.as_deref(), Some("/tmp/test-skill/SKILL.md"));
+    assert_eq!(
+        parts[0]
+            .content_card
+            .as_ref()
+            .and_then(|card| card.renderer.as_deref()),
+        Some("path")
+    );
+    assert_eq!(parts[3].text.as_deref(), Some("function_call: update_plan"));
+    assert_eq!(parts[4].command.as_deref(), Some("cargo test"));
+    assert_eq!(parts[5].text.as_deref(), Some("tests passed"));
+    assert_eq!(
+        parts[6].command.as_deref(),
+        Some("cat /tmp/test-skill/SKILL.md")
+    );
+    assert_eq!(parts[6].cwd.as_deref(), Some("/tmp"));
+    assert_eq!(parts[7].role, ConversationPartRole::System);
+    assert_eq!(parts[7].text.as_deref(), Some("/tmp/test-skill/SKILL.md"));
 }
 
-#[cfg(unix)]
 #[test]
-fn official_adapters_export_markdown_from_standard_session_detail() {
-    if !command_available("node") {
-        return;
-    }
+fn current_first_party_v1_adapters_do_not_ship_legacy_exporters() {
     for manifest_relative_path in [
+        "bundled/conversation-adapters/antigravity/conversation-adapter.json",
         "bundled/conversation-adapters/codex/conversation-adapter.json",
         "bundled/conversation-adapters/opencode/conversation-adapter.json",
         "bundled/conversation-adapters/claude-code/conversation-adapter.json",
@@ -1574,49 +1970,15 @@ fn official_adapters_export_markdown_from_standard_session_detail() {
         let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest_relative_path);
         let validation =
             validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref()).unwrap();
-        let request = json!({
-            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
-            "request_id": "fixture-export-markdown",
-            "method": "export_markdown",
-            "source": { "location": ".", "config": null },
-            "params": {
-                "session_detail": export_session_detail_fixture(),
-                "question_ids": ["question-1"],
-                "content_filter": {
-                    "answer": true,
-                    "tool": true,
-                    "command": false,
-                    "code": true,
-                    "result": true
-                },
-                "record_kind": "session",
-                "default_relative_path": "adapter/project/custom.md"
-            }
-        });
-
-        let result = run_external_adapter(
-            &validation,
-            "export_markdown",
-            request,
-            Duration::from_millis(DEFAULT_READ_TIMEOUT_MS),
-        )
-        .unwrap();
-        let export = result.markdown_export.expect("markdown export");
-
-        assert_eq!(export.relative_path, "adapter/project/custom.md");
-        assert!(export.content.contains("## 1. Export this"));
-        assert!(!export.content.contains("## Session Metadata"));
-        assert!(export
-            .content
-            .contains("### Answer\n\n```markdown\n# visible answer\n\n## nested heading\n```"));
-        assert!(export
-            .content
-            .contains("### Code\n\n```ts\nconst ok = true;\n```"));
-        assert!(export
-            .content
-            .contains("### Result\n\n```\n# result heading\n```"));
-        assert!(!export.content.contains("raw hidden answer"));
-        assert!(!export.content.contains("pnpm test"));
+        assert_eq!(validation.manifest.card_contract_version, Some(1));
+        assert!(!validation
+            .manifest
+            .capabilities
+            .iter()
+            .any(|value| value == "export_markdown"));
+        let entry = validation.manifest.runtime.as_ref().unwrap().entry.as_str();
+        let runtime = fs::read_to_string(manifest_path.parent().unwrap().join(entry)).unwrap();
+        assert!(!runtime.contains("method === \"export_markdown\""));
     }
 }
 
@@ -1760,13 +2122,8 @@ fn official_codex_adapter_truncates_large_browse_text() {
         metadata.get("truncated").and_then(Value::as_bool),
         Some(true)
     );
-    assert_eq!(
-        metadata
-            .get("content_card")
-            .and_then(|value| value.get("type"))
-            .and_then(Value::as_str),
-        Some("result")
-    );
+    assert!(metadata.get("content_card").is_none());
+    assert_eq!(content_card_type(result_part).as_deref(), Some("result"));
 }
 
 #[cfg(unix)]
@@ -2276,6 +2633,7 @@ fn official_opencode_adapter_extracts_json_fields_without_raw_metadata() {
                 "opencode-session-1",
                 json!({
                     "type": "tool",
+                    "callID": "call-opencode-tests",
                     "tool": "bash",
                     "state": {
                         "status": "completed",
@@ -2284,7 +2642,7 @@ fn official_opencode_adapter_extracts_json_fields_without_raw_metadata() {
                             "cwd": "/tmp/project",
                             "description": "Run Rust tests"
                         },
-                        "output": "tests passed",
+                    "output": "[{\"type\":\"input_text\",\"text\":\"Script completed\\nWall time 0.1 seconds\\nOutput:\\n\"},{\"type\":\"input_text\",\"text\":\"\\u001b[32mtests passed\\u001b[0m\"}]",
                         "metadata": {
                             "output": "tests passed",
                             "exit": 0,
@@ -2318,6 +2676,21 @@ fn official_opencode_adapter_extracts_json_fields_without_raw_metadata() {
     assert_content_card_types(parts, &["answer", "code", "command", "result"]);
     assert_eq!(parts[2].command.as_deref(), Some("cargo test"));
     assert_eq!(parts[3].text.as_deref(), Some("tests passed"));
+    assert_eq!(
+        parts[3]
+            .content_card
+            .as_ref()
+            .and_then(|card| card.renderer.as_deref()),
+        Some("terminal_output")
+    );
+    assert_eq!(
+        parts[2].source_execution_id.as_deref(),
+        Some("call-opencode-tests")
+    );
+    assert_eq!(
+        parts[3].source_execution_id.as_deref(),
+        Some("call-opencode-tests")
+    );
     let metadata = parts
         .iter()
         .filter_map(|part| part.metadata_json.as_deref())
@@ -2395,7 +2768,7 @@ fn official_claude_code_adapter_reads_content_array_tool_use_and_result_cards() 
         [
             r#"{"type":"user","message":{"role":"user","content":"Run tests"},"uuid":"turn-1","timestamp":"2026-06-26T00:00:00Z"}"#,
             r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I will run the test suite."},{"type":"tool_use","id":"call-1","name":"Bash","input":{"command":"cargo test","description":"Run Rust tests"}}]},"timestamp":"2026-06-26T00:00:01Z"}"#,
-            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call-1","content":"tests passed"}]},"toolUseResult":{"stdout":"tests passed","stderr":"","interrupted":false,"isImage":false},"timestamp":"2026-06-26T00:00:02Z"}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call-1","content":"[{\"type\":\"input_text\",\"text\":\"Script completed\\nWall time 0.1 seconds\\nOutput:\\n\"},{\"type\":\"input_text\",\"text\":\"\\u001b[32mtests passed\\u001b[0m\"}]"}]},"toolUseResult":{"stdout":"tests passed","stderr":"","interrupted":false,"isImage":false},"timestamp":"2026-06-26T00:00:02Z"}"#,
             r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"All tests passed."}]},"timestamp":"2026-06-26T00:00:03Z"}"#,
         ]
         .join("\n"),
@@ -2434,6 +2807,74 @@ fn official_claude_code_adapter_reads_content_array_tool_use_and_result_cards() 
         sessions[0].turns[0].parts[2].text.as_deref(),
         Some("tests passed")
     );
+    assert_eq!(
+        sessions[0].turns[0].parts[2]
+            .content_card
+            .as_ref()
+            .and_then(|card| card.renderer.as_deref()),
+        Some("terminal_output")
+    );
+    assert_eq!(
+        sessions[0].turns[0].parts[1].source_execution_id.as_deref(),
+        Some("call-1")
+    );
+    assert_eq!(
+        sessions[0].turns[0].parts[2].source_execution_id.as_deref(),
+        Some("call-1")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn official_claude_code_adapter_emits_namespaced_reasoning_without_core_kind_changes() {
+    if !command_available("node") {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-official-claude-reasoning-fixture");
+    fs::write(
+        fixture.path().join("session.jsonl"),
+        [
+            r#"{"type":"user","message":{"role":"user","content":"Explain the choice"},"uuid":"turn-1"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Compare the two execution paths."},{"type":"text","text":"Use the background task path."}]}}"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let adapter = official_adapter_fixture(
+        "claude-code",
+        "Claude Code",
+        "bundled/conversation-adapters/claude-code/conversation-adapter.json",
+        vec![ConversationSourceKind::Directory],
+    );
+    let source = source_fixture(
+        "claude-code",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+    let parts = &sessions[0].turns[0].parts;
+
+    assert_eq!(parts.len(), 2);
+    assert_eq!(
+        parts[0]
+            .content_card
+            .as_ref()
+            .map(|card| card.kind.as_str()),
+        Some("claude-code.reasoning")
+    );
+    assert_eq!(
+        parts[0].text.as_deref(),
+        Some("Compare the two execution paths.")
+    );
+    assert_eq!(
+        parts[1]
+            .content_card
+            .as_ref()
+            .map(|card| card.kind.as_str()),
+        Some("claude-code.answer")
+    );
+    assert_content_card_types(parts, &["reasoning", "answer"]);
 }
 
 #[cfg(unix)]
@@ -2491,19 +2932,20 @@ fn official_adapter_fixture(
             "export_markdown".to_string(),
         ],
         input_kinds,
+        card_contract_version: None,
+        card_kinds: Vec::new(),
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     }
 }
 
 #[cfg(unix)]
-fn content_card_type(metadata_json: Option<&str>) -> Option<String> {
-    let value: Value = serde_json::from_str(metadata_json?).ok()?;
-    value
-        .get("content_card")?
-        .get("type")?
-        .as_str()
-        .map(ToString::to_string)
+fn content_card_type(part: &crate::backend::models::NormalizedConversationPart) -> Option<String> {
+    part.content_card
+        .as_ref()?
+        .kind
+        .rsplit_once('.')
+        .map(|(_, kind)| kind.to_string())
 }
 
 #[cfg(unix)]
@@ -2513,7 +2955,7 @@ fn assert_content_card_types(
 ) {
     let card_types = parts
         .iter()
-        .filter_map(|part| content_card_type(part.metadata_json.as_deref()))
+        .filter_map(content_card_type)
         .collect::<Vec<_>>();
     assert_eq!(
         card_types,
@@ -2522,112 +2964,11 @@ fn assert_content_card_types(
             .map(|value| value.to_string())
             .collect::<Vec<_>>()
     );
-}
-
-fn export_session_detail_fixture() -> serde_json::Value {
-    json!({
-        "session": {
-            "id": "session-1",
-            "source_id": "source-1",
-            "adapter_id": "adapter-1",
-            "external_id": "external-session-1",
-            "title": "Export Fixture",
-            "project_path": "/tmp/project",
-            "started_at": null,
-            "updated_at": null,
-            "source_locator": null,
-            "source_fingerprint": null,
-            "missing": false,
-            "created_at": "2026-01-01T00:00:00Z",
-            "imported_at": "2026-01-01T00:00:00Z"
-        },
-        "questions": [{
-            "question": {
-                "id": "question-1",
-                "session_id": "session-1",
-                "question_index": 0,
-                "title": null,
-                "question_text": "Export this",
-                "answer_text": "visible answer",
-                "code_text": "const ok = true;",
-                "command_text": "pnpm test",
-                "grouping_origin": "imported",
-                "created_at": "2026-01-01T00:00:00Z",
-                "updated_at": "2026-01-01T00:00:00Z"
-            },
-            "turns": [{
-                "id": "turn-1",
-                "session_id": "session-1",
-                "external_id": "turn-1",
-                "turn_index": 0,
-                "user_text": "Export this",
-                "title": null,
-                "started_at": null,
-                "ended_at": null,
-                "fingerprint": "turn-fingerprint",
-                "missing": false,
-                "imported_at": "2026-01-01T00:00:00Z"
-            }],
-            "parts": [
-                {
-                    "id": "part-answer",
-                    "turn_id": "turn-1",
-                    "part_index": 0,
-                    "role": "assistant",
-                    "kind": "text",
-                    "text": "raw hidden answer",
-                    "language": null,
-                    "command": null,
-                    "cwd": null,
-                    "status": null,
-                    "exit_code": null,
-                    "metadata_json": "{\"content_card\":{\"type\":\"answer\",\"format\":\"markdown\",\"text\":\"# visible answer\\n\\n## nested heading\"}}"
-                },
-                {
-                    "id": "part-code",
-                    "turn_id": "turn-1",
-                    "part_index": 1,
-                    "role": "assistant",
-                    "kind": "code_block",
-                    "text": "const ok = true;",
-                    "language": "ts",
-                    "command": null,
-                    "cwd": null,
-                    "status": null,
-                    "exit_code": null,
-                    "metadata_json": "{\"content_card\":{\"type\":\"code\",\"language\":\"ts\"}}"
-                },
-                {
-                    "id": "part-command",
-                    "turn_id": "turn-1",
-                    "part_index": 2,
-                    "role": "tool",
-                    "kind": "command",
-                    "text": null,
-                    "language": null,
-                    "command": "pnpm test",
-                    "cwd": "/tmp/project",
-                    "status": "completed",
-                    "exit_code": 0,
-                    "metadata_json": "{\"content_card\":{\"type\":\"command\"}}"
-                },
-                {
-                    "id": "part-result",
-                    "turn_id": "turn-1",
-                    "part_index": 3,
-                    "role": "tool",
-                    "kind": "tool",
-                    "text": "# result heading",
-                    "language": null,
-                    "command": null,
-                    "cwd": null,
-                    "status": "completed",
-                    "exit_code": 0,
-                    "metadata_json": "{\"content_card\":{\"type\":\"result\",\"format\":\"plain\"}}"
-                }
-            ]
-        }]
-    })
+    assert!(parts.iter().all(|part| {
+        part.metadata_json.as_deref().is_none_or(|metadata| {
+            !metadata.contains("\"content_card\"") && !metadata.contains("\"contentCard\"")
+        })
+    }));
 }
 
 #[cfg(unix)]
@@ -2689,6 +3030,8 @@ fn write_manifest(dir: &Path, command: Vec<String>) -> PathBuf {
             "export_markdown".to_string(),
         ],
         input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
     };
     let path = dir.join("conversation-adapter.json");
     fs::write(&path, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();

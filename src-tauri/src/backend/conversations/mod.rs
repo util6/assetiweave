@@ -1,3 +1,4 @@
+pub(crate) mod cards;
 mod external;
 mod harvester;
 mod io_utils;

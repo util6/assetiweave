@@ -3,17 +3,16 @@ use super::prelude::*;
 pub(super) fn read_external_adapter_sessions(
     adapter: &ConversationAdapter,
     source: &ConversationSource,
-) -> AppResult<Vec<NormalizedConversationSession>> {
-    run_external_adapter_read_session(adapter, source, None).map(|result| result.sessions)
+) -> AppResult<ExternalAdapterRunResult> {
+    run_external_adapter_read_session(adapter, source, None)
 }
 
 pub(super) fn read_external_adapter_session(
     adapter: &ConversationAdapter,
     source: &ConversationSource,
     session_id: &str,
-) -> AppResult<Vec<NormalizedConversationSession>> {
+) -> AppResult<ExternalAdapterRunResult> {
     run_external_adapter_read_session(adapter, source, Some(session_id))
-        .map(|result| result.sessions)
 }
 
 pub(super) fn discover_external_adapter_sessions(
@@ -279,6 +278,8 @@ pub(crate) fn scaffold_external_adapter(
             ConversationSourceKind::Directory,
             ConversationSourceKind::File,
         ],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
     };
     fs::write(
         &manifest_path,
@@ -574,6 +575,8 @@ pub(crate) fn register_external_adapter(params: ExternalAdapterRegisterParams) -
         protocol_version: Some(validation.manifest.protocol_version),
         capabilities: validation.manifest.capabilities.clone(),
         input_kinds: validation.manifest.input_kinds.clone(),
+        card_contract_version: validation.manifest.card_contract_version,
+        card_kinds: validation.manifest.card_kinds.clone(),
         created_at: now.clone(),
         updated_at: now,
     };
@@ -758,6 +761,11 @@ fn validate_manifest_shape(manifest: &ConversationAdapterManifest) -> AppResult<
     if manifest.name.trim().is_empty() {
         return Err("adapter name is required".to_string());
     }
+    super::cards::validate_manifest_card_kinds(
+        &manifest.id,
+        manifest.card_contract_version,
+        &manifest.card_kinds,
+    )?;
     if manifest.runtime.is_some() && !manifest.command.is_empty() {
         return Err("adapter manifest must not declare both runtime and command".to_string());
     }
@@ -886,7 +894,7 @@ pub(super) fn run_external_adapter(
                     String::from_utf8_lossy(&stderr)
                 ));
             }
-            return parse_external_adapter_output(method, stdout, stderr);
+            return parse_external_adapter_output_with_manifest(method, stdout, stderr, manifest);
         }
         if started.elapsed() > timeout {
             let _ = child.kill();
@@ -904,6 +912,24 @@ pub(super) fn parse_external_adapter_output(
     stdout: Vec<u8>,
     stderr: Vec<u8>,
 ) -> AppResult<ExternalAdapterRunResult> {
+    parse_external_adapter_output_impl(method, stdout, stderr, None)
+}
+
+pub(super) fn parse_external_adapter_output_with_manifest(
+    method: &str,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    manifest: &ConversationAdapterManifest,
+) -> AppResult<ExternalAdapterRunResult> {
+    parse_external_adapter_output_impl(method, stdout, stderr, Some(manifest))
+}
+
+fn parse_external_adapter_output_impl(
+    method: &str,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    manifest: Option<&ConversationAdapterManifest>,
+) -> AppResult<ExternalAdapterRunResult> {
     let stdout = String::from_utf8(stdout).map_err(|error| error.to_string())?;
     let stderr = String::from_utf8_lossy(&stderr).to_string();
     let mut session_descriptors = Vec::new();
@@ -913,6 +939,7 @@ pub(super) fn parse_external_adapter_output(
     let mut warnings = Vec::new();
     let mut saw_complete = false;
     let mut item_count = 0usize;
+    let mut legacy_cards_upgraded = 0usize;
 
     for (index, line) in stdout.lines().enumerate() {
         let line_bytes = line.as_bytes().len();
@@ -938,7 +965,10 @@ pub(super) fn parse_external_adapter_output(
                         session_descriptors.push(parse_adapter_session_descriptor_item(item)?);
                     }
                     "session" => {
-                        if let Some(session) = parse_adapter_session_item(item)? {
+                        if let Some((session, upgraded)) =
+                            parse_adapter_session_item(item, manifest)?
+                        {
+                            legacy_cards_upgraded += upgraded;
                             sessions.push(session);
                         }
                     }
@@ -994,6 +1024,7 @@ pub(super) fn parse_external_adapter_output(
         method: method.to_string(),
         item_count,
         warning_count: warnings.len(),
+        legacy_cards_upgraded,
         session_descriptors,
         snapshot_complete,
         sessions,
@@ -1061,31 +1092,50 @@ fn parse_adapter_markdown_export_item(item: Value) -> AppResult<ExternalMarkdown
     Ok(export)
 }
 
-fn parse_adapter_session_item(item: Value) -> AppResult<Option<NormalizedConversationSession>> {
+fn parse_adapter_session_item(
+    item: Value,
+    manifest: Option<&ConversationAdapterManifest>,
+) -> AppResult<Option<(NormalizedConversationSession, usize)>> {
     let kind = adapter_item_kind(&item);
     if kind != "session" {
         return Ok(None);
     }
     let session_value = item.get("session").cloned().unwrap_or(item);
-    let session: NormalizedConversationSession =
+    let mut session: NormalizedConversationSession =
         serde_json::from_value(session_value).map_err(|error| error.to_string())?;
-    validate_normalized_session(&session)?;
-    Ok(Some(session))
+    let legacy_cards_upgraded = validate_normalized_session(&mut session, manifest)?;
+    Ok(Some((session, legacy_cards_upgraded)))
 }
 
-fn validate_normalized_session(session: &NormalizedConversationSession) -> AppResult<()> {
+fn validate_normalized_session(
+    session: &mut NormalizedConversationSession,
+    manifest: Option<&ConversationAdapterManifest>,
+) -> AppResult<usize> {
     if session.external_id.trim().is_empty() {
         return Err("normalized session external_id is required".to_string());
     }
-    for turn in &session.turns {
+    let mut legacy_cards_upgraded = 0usize;
+    for turn in &mut session.turns {
         if turn.external_id.trim().is_empty() {
             return Err("normalized turn external_id is required".to_string());
         }
         if turn.user_text.trim().is_empty() {
             return Err("normalized turn user_text is required".to_string());
         }
+        if let Some(manifest) = manifest {
+            for part in &mut turn.parts {
+                if super::cards::canonicalize_normalized_content_card(
+                    part,
+                    &manifest.id,
+                    manifest.card_contract_version,
+                    &manifest.card_kinds,
+                )? {
+                    legacy_cards_upgraded += 1;
+                }
+            }
+        }
     }
-    Ok(())
+    Ok(legacy_cards_upgraded)
 }
 
 fn example_session_detail() -> Value {

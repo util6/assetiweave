@@ -24,6 +24,10 @@ pub(crate) struct ConversationAdapterManifest {
     pub(crate) capabilities: Vec<String>,
     #[serde(alias = "inputKinds")]
     pub(crate) input_kinds: Vec<ConversationSourceKind>,
+    #[serde(default, alias = "cardContractVersion")]
+    pub(crate) card_contract_version: Option<u32>,
+    #[serde(default, alias = "cardKinds")]
+    pub(crate) card_kinds: Vec<ConversationCardKindDefinition>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -127,6 +131,7 @@ pub(crate) struct ExternalAdapterRunResult {
     pub(crate) method: String,
     pub(crate) item_count: usize,
     pub(crate) warning_count: usize,
+    pub(crate) legacy_cards_upgraded: usize,
     pub(crate) session_descriptors: Vec<ConversationSessionDescriptor>,
     pub(crate) snapshot_complete: bool,
     pub(crate) sessions: Vec<NormalizedConversationSession>,

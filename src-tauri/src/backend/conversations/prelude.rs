@@ -4,16 +4,16 @@ pub(super) use super::external::{
 };
 #[cfg(test)]
 pub(super) use super::external::{
-    parse_external_adapter_output, run_external_adapter, validate_external_adapter_line_size,
-    validate_external_adapter_manifest,
+    parse_external_adapter_output, parse_external_adapter_output_with_manifest,
+    run_external_adapter, validate_external_adapter_line_size, validate_external_adapter_manifest,
 };
 pub(super) use super::io_utils::*;
 pub(super) use super::types::*;
 pub(super) use crate::backend::dto::AppResult;
 pub(super) use crate::backend::models::{
     ConversationAdapter, ConversationAdapterKind, ConversationAdapterPackageRecordKind,
-    ConversationAdapterTrustState, ConversationSource, ConversationSourceKind,
-    NormalizedConversationSession,
+    ConversationAdapterTrustState, ConversationCardKindDefinition, ConversationSource,
+    ConversationSourceKind, NormalizedConversationSession,
 };
 pub(super) use chrono::Utc;
 pub(super) use schemars::JsonSchema;

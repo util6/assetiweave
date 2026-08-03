@@ -8,6 +8,7 @@ pub(crate) struct ConversationSourceReadResult {
     pub(crate) discovered_session_count: usize,
     pub(crate) active_session_count: usize,
     pub(crate) skipped_session_count: usize,
+    pub(crate) legacy_cards_upgraded: usize,
     pub(crate) incremental: bool,
 }
 
@@ -18,7 +19,7 @@ pub(crate) fn read_source_sessions_with_adapter(
 ) -> AppResult<Vec<NormalizedConversationSession>> {
     let adapter =
         adapter.ok_or_else(|| format!("conversation adapter not found: {}", source.adapter_id))?;
-    read_external_adapter_sessions(adapter, source)
+    read_external_adapter_sessions(adapter, source).map(|result| result.sessions)
 }
 
 pub(crate) fn read_source_sessions_incrementally_with_adapter(
@@ -29,12 +30,14 @@ pub(crate) fn read_source_sessions_incrementally_with_adapter(
     let adapter =
         adapter.ok_or_else(|| format!("conversation adapter not found: {}", source.adapter_id))?;
     let Some(discovery) = discover_external_adapter_sessions(adapter, source)? else {
-        let sessions = read_external_adapter_sessions(adapter, source)?;
+        let result = read_external_adapter_sessions(adapter, source)?;
+        let sessions = result.sessions;
         return Ok(ConversationSourceReadResult {
             session_descriptors: Vec::new(),
             discovered_session_count: sessions.len(),
             active_session_count: sessions.len(),
             skipped_session_count: 0,
+            legacy_cards_upgraded: result.legacy_cards_upgraded,
             sessions,
             incremental: false,
         });
@@ -49,19 +52,24 @@ pub(crate) fn read_source_sessions_incrementally_with_adapter(
             discovered_session_count,
             active_session_count: 0,
             skipped_session_count: discovered_session_count,
+            legacy_cards_upgraded: 0,
             incremental: true,
         });
     }
 
-    let (sessions, empty_session_count) = if known_versions.is_empty()
+    let (sessions, empty_session_count, legacy_cards_upgraded) = if known_versions.is_empty()
         && active.len() == descriptors.len()
     {
-        (read_external_adapter_sessions(adapter, source)?, 0usize)
+        let result = read_external_adapter_sessions(adapter, source)?;
+        (result.sessions, 0usize, result.legacy_cards_upgraded)
     } else {
         let mut sessions = Vec::with_capacity(active.len());
         let mut empty_count = 0usize;
+        let mut legacy_cards_upgraded = 0usize;
         for descriptor in &active {
-            let mut read = read_external_adapter_session(adapter, source, &descriptor.external_id)?;
+            let result = read_external_adapter_session(adapter, source, &descriptor.external_id)?;
+            legacy_cards_upgraded += result.legacy_cards_upgraded;
+            let mut read = result.sessions;
             if read.is_empty() {
                 // Session was discovered by list_sessions but has no readable
                 // content yet (e.g. an active session that just started and has
@@ -80,7 +88,7 @@ pub(crate) fn read_source_sessions_incrementally_with_adapter(
             }
             sessions.append(&mut read);
         }
-        (sessions, empty_count)
+        (sessions, empty_count, legacy_cards_upgraded)
     };
 
     let descriptors_by_id = descriptors
@@ -106,6 +114,7 @@ pub(crate) fn read_source_sessions_incrementally_with_adapter(
         discovered_session_count,
         active_session_count: effective_active,
         skipped_session_count: discovered_session_count.saturating_sub(effective_active),
+        legacy_cards_upgraded,
         sessions,
         incremental: true,
     })

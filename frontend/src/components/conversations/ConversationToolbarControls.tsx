@@ -13,6 +13,11 @@ import type {
   ConversationContentType,
   ConversationContentVisibility,
 } from "./ConversationContentCards";
+import { conversationCardColor, conversationCardLabel } from "./ConversationContentCards";
+import {
+  isRedundantConversationCardKind,
+  useConversationCardKindRegistry,
+} from "./ConversationCardKindRegistry";
 
 export type ConversationSyncPhase =
   | "preparing"
@@ -73,33 +78,41 @@ export function ConversationBackgroundTaskIndicator({
 const contentFilterOptions: ConversationContentType[] = ["answer", "tool", "command", "code", "result"];
 
 export function ConversationContentFilter({
+  availableTypes,
   colors = DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
   onChange,
   t,
   visibility,
 }: {
+  availableTypes: readonly ConversationContentType[];
   colors?: ConversationContentCardColorSettings;
   onChange: (type: ConversationContentType, checked: boolean) => void;
   t: Translator;
   visibility: ConversationContentVisibility;
 }) {
+  const { definitions } = useConversationCardKindRegistry();
+  const types = Array.from(new Set(availableTypes))
+    .filter((type) => !isRedundantConversationCardKind(type, definitions.get(type)))
+    .sort(compareConversationContentTypes);
+  if (types.length === 0) return null;
+
   return (
     <ToolbarCluster ariaLabel={t("conversation.content.filterAria")} className="justify-start">
       <span className="mr-1 whitespace-nowrap text-label-caps text-on-surface-muted">
         {t("conversation.content.visible")}
       </span>
-      {contentFilterOptions.map((type) => {
-        const label = t(`conversation.content.${type}` as TranslationKey);
+      {types.map((type) => {
+        const label = definitions.get(type)?.label ?? conversationCardLabel(type, t);
         return (
           <label
             className="inline-flex min-h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-1.5 text-body-sm text-on-surface-variant transition-colors hover:bg-theme-control-hover/70"
             key={type}
           >
-            <span className="size-2 rounded-full" style={{ backgroundColor: colors[type] }} />
+            <span className="size-2 rounded-full" style={{ backgroundColor: conversationCardColor(type, colors) }} />
             <span className="whitespace-nowrap">{label}</span>
             <Switch
               aria-label={t("conversation.content.toggle", { type: label })}
-              checked={visibility[type]}
+              checked={visibility[type] ?? true}
               onCheckedChange={(checked) => onChange(type, checked)}
             />
           </label>
@@ -107,6 +120,15 @@ export function ConversationContentFilter({
       })}
     </ToolbarCluster>
   );
+}
+
+function compareConversationContentTypes(left: ConversationContentType, right: ConversationContentType) {
+  const leftIndex = contentFilterOptions.indexOf(left);
+  const rightIndex = contentFilterOptions.indexOf(right);
+  if (leftIndex >= 0 && rightIndex >= 0) return leftIndex - rightIndex;
+  if (leftIndex >= 0) return -1;
+  if (rightIndex >= 0) return 1;
+  return 0;
 }
 
 export function ConversationSyncProgress({

@@ -18,22 +18,25 @@ struct HarvesterManifest {
     runtime: Option<ConversationAdapterRuntime>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn run_conversation_harvester_for_source(source: &ConversationSource) -> AppResult<()> {
     let source_dir = crate::backend::path_utils::expand_path(&source.location)?;
-    run_conversation_harvester_in_dir(&source_dir).map(|_| ())
+    run_conversation_harvester_in_dir(&source_dir, false).map(|_| ())
 }
 
 pub(crate) fn run_conversation_harvester_for_adapter_source(
     adapter: Option<&ConversationAdapter>,
     source: &ConversationSource,
+    full_reparse: bool,
 ) -> AppResult<()> {
     if let Some(adapter_dir) = adapter.and_then(adapter_manifest_dir) {
-        if run_conversation_harvester_in_dir(&adapter_dir)? {
+        if run_conversation_harvester_in_dir(&adapter_dir, full_reparse)? {
             return Ok(());
         }
     }
 
-    run_conversation_harvester_for_source(source)
+    let source_dir = crate::backend::path_utils::expand_path(&source.location)?;
+    run_conversation_harvester_in_dir(&source_dir, full_reparse).map(|_| ())
 }
 
 fn adapter_manifest_dir(adapter: &ConversationAdapter) -> Option<PathBuf> {
@@ -42,7 +45,7 @@ fn adapter_manifest_dir(adapter: &ConversationAdapter) -> Option<PathBuf> {
     manifest_path.parent().map(Path::to_path_buf)
 }
 
-fn run_conversation_harvester_in_dir(source_dir: &Path) -> AppResult<bool> {
+fn run_conversation_harvester_in_dir(source_dir: &Path, full_reparse: bool) -> AppResult<bool> {
     let manifest_path = source_dir.join(HARVESTER_MANIFEST_FILE);
     if !manifest_path.is_file() {
         return Ok(false);
@@ -62,6 +65,9 @@ fn run_conversation_harvester_in_dir(source_dir: &Path) -> AppResult<bool> {
         .current_dir(source_dir)
         .env("ASSETIWEAVE_HARVESTER_DIR", source_dir)
         .env("ASSETIWEAVE_HARVESTER_ID", &manifest.id);
+    if full_reparse {
+        command.env("ASSETIWEAVE_FULL_REPARSE", "1");
+    }
     let output = match crate::backend::host_process::run_command_with_timeout(
         &mut command,
         Duration::from_millis(HARVESTER_TIMEOUT_MS),
@@ -520,12 +526,51 @@ mod tests {
         let adapter = adapter_fixture(&fixture.path().join("conversation-adapter.json"));
         let source = source_fixture(&normalized_dir);
 
-        run_conversation_harvester_for_adapter_source(Some(&adapter), &source)
+        run_conversation_harvester_for_adapter_source(Some(&adapter), &source, false)
             .expect("run adapter-directory harvester");
 
         assert_eq!(
             fs::read_to_string(normalized_dir.join("fresh.txt")).unwrap(),
             "fresh"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn full_reparse_tells_web_harvesters_to_bypass_incremental_caches() {
+        let fixture = TempFixture::new("assetiweave-harvester-full-reparse");
+        let normalized_dir = fixture.path().join("output").join("normalized");
+        fs::create_dir_all(fixture.path().join("scripts")).unwrap();
+        fs::create_dir_all(&normalized_dir).unwrap();
+        fs::write(
+            fixture.path().join("conversation-adapter.json"),
+            r#"{"schema_version":1,"id":"fixture-web","name":"Fixture","version":"0.1.0","protocol_version":1,"command":["adapter.sh"],"capabilities":["read_session","web_records"],"input_kinds":["directory"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("harvester.json"),
+            r#"{"schema_version":1,"id":"fixture-web","name":"Fixture","version":"0.1.0","entrypoint":["scripts/harvest.sh"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("scripts").join("harvest.sh"),
+            "#!/bin/sh\nprintf '%s' \"$ASSETIWEAVE_FULL_REPARSE\" > output/normalized/full-reparse.txt\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let script = fixture.path().join("scripts").join("harvest.sh");
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&script, permissions).unwrap();
+        let adapter = adapter_fixture(&fixture.path().join("conversation-adapter.json"));
+        let source = source_fixture(&normalized_dir);
+
+        run_conversation_harvester_for_adapter_source(Some(&adapter), &source, true)
+            .expect("run full-reparse harvester");
+
+        assert_eq!(
+            fs::read_to_string(normalized_dir.join("full-reparse.txt")).unwrap(),
+            "1"
         );
     }
 
@@ -560,6 +605,8 @@ mod tests {
             protocol_version: Some(1),
             capabilities: vec!["read_session".to_string(), "web_records".to_string()],
             input_kinds: vec![ConversationSourceKind::Directory],
+            card_contract_version: None,
+            card_kinds: Vec::new(),
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         }

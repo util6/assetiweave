@@ -145,8 +145,25 @@ pub struct ConversationAdapter {
     pub protocol_version: Option<u32>,
     pub capabilities: Vec<String>,
     pub input_kinds: Vec<ConversationSourceKind>,
+    pub card_contract_version: Option<u32>,
+    pub card_kinds: Vec<ConversationCardKindDefinition>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConversationCardKindDefinition {
+    pub id: String,
+    #[serde(default, alias = "semanticRole")]
+    pub semantic_role: Option<String>,
+    pub label: String,
+    #[serde(alias = "defaultRenderer")]
+    pub default_renderer: String,
+    #[serde(alias = "allowedRenderers")]
+    pub allowed_renderers: Vec<String>,
+    #[serde(default, alias = "iconHint")]
+    pub icon_hint: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -282,6 +299,8 @@ pub struct ConversationPart {
     pub cwd: Option<String>,
     pub status: Option<String>,
     pub exit_code: Option<i32>,
+    pub source_execution_id: Option<String>,
+    pub content_card: Option<ConversationContentCardDescriptor>,
     pub metadata_json: Option<String>,
     pub translated_text: Option<String>,
 }
@@ -348,8 +367,22 @@ pub struct NormalizedConversationPart {
     pub cwd: Option<String>,
     pub status: Option<String>,
     pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub source_execution_id: Option<String>,
+    #[serde(default, alias = "contentCard")]
+    pub content_card: Option<ConversationContentCardDescriptor>,
     #[serde(default, deserialize_with = "deserialize_optional_metadata_json")]
     pub metadata_json: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConversationContentCardDescriptor {
+    #[serde(alias = "schemaVersion")]
+    pub schema_version: u32,
+    pub kind: String,
+    #[serde(default)]
+    pub renderer: Option<String>,
 }
 
 fn deserialize_optional_metadata_json<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -558,6 +591,9 @@ pub fn conversation_turn_fingerprint(turn: &NormalizedConversationTurn) -> Strin
         }
         if let Some(value) = part.exit_code {
             hasher.update(value.to_string().as_bytes());
+        }
+        if let Some(value) = &part.source_execution_id {
+            hasher.update(value.as_bytes());
         }
         if let Some(value) = &part.metadata_json {
             hasher.update(value.as_bytes());

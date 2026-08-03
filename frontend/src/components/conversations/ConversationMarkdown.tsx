@@ -1,5 +1,7 @@
 import katex from "katex";
 import { useEffect, useId, useMemo, useState } from "react";
+import { ConversationDiff } from "./ConversationDiff";
+import { isDiffLanguage } from "./conversationDiffLanguage";
 
 type MarkdownBlock =
   | { type: "heading"; level: number; text: string }
@@ -47,6 +49,9 @@ export function MarkdownContent({ value }: { value: string }) {
           );
         }
         if (block.type === "code") {
+          if (isDiffLanguage(block.language)) {
+            return <ConversationDiff key={index} value={block.text} />;
+          }
           if (isMermaidLanguage(block.language)) {
             return <MermaidDiagram key={index} value={block.text} />;
           }

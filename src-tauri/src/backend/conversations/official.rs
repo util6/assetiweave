@@ -74,6 +74,8 @@ pub(crate) fn ensure_official_conversation_adapters() -> AppResult<Vec<Conversat
             protocol_version: Some(validation.manifest.protocol_version),
             capabilities: validation.manifest.capabilities.clone(),
             input_kinds: validation.manifest.input_kinds.clone(),
+            card_contract_version: validation.manifest.card_contract_version,
+            card_kinds: validation.manifest.card_kinds.clone(),
             created_at: now.clone(),
             updated_at: now,
         });
