@@ -1,15 +1,16 @@
 use crate::backend::models::{
-    AppKind, Asset, AssetGroupRules, AssetKind, AssetMount, ConversationPart, ConversationQuestion,
-    ConversationSession, ConversationTurn, DeploymentStrategy, MemoryDreamCursor,
-    MemoryDreamDeltaSession, MemoryDreamGateResult, MemoryDreamNote, MemoryDreamNoteDetail,
-    MemoryDreamState, MemoryDreamTrigger, MemoryExtraction, MemoryItem, MemoryRecallCandidate,
-    MemoryRecallClaim, MemoryRecallConflict, MemoryRecallEvidence, MemoryRecallMode,
-    MemoryRecallQuestion, MemoryScope, ProfileSafety, RuleSet, SourceKind, SourceOrigin,
-    SourceScannerKind,
+    AppKind, Asset, AssetGroupRules, AssetKind, AssetMount, ConversationPart, ConversationPartRole,
+    ConversationQuestion, ConversationSession, ConversationTurn, DeploymentStrategy,
+    MemoryDreamCursor, MemoryDreamDeltaSession, MemoryDreamGateResult, MemoryDreamNote,
+    MemoryDreamNoteDetail, MemoryDreamState, MemoryDreamTrigger, MemoryExtraction, MemoryItem,
+    MemoryRecallCandidate, MemoryRecallClaim, MemoryRecallConflict, MemoryRecallEvidence,
+    MemoryRecallMode, MemoryRecallQuestion, MemoryScope, ProfileSafety, RuleSet, SourceKind,
+    SourceOrigin, SourceScannerKind,
 };
 use crate::backend::targeting::PhysicalMountState;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub(crate) type AppResult<T> = Result<T, String>;
 
@@ -111,29 +112,25 @@ pub(crate) struct MemoryVerifyResult {
     pub(crate) items: Vec<crate::backend::models::MemoryItemDetail>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct ConversationExportContentFilter {
-    #[serde(default = "default_true")]
-    pub(crate) answer: bool,
-    #[serde(default = "default_true")]
-    pub(crate) tool: bool,
-    #[serde(default = "default_true")]
-    pub(crate) command: bool,
-    #[serde(default = "default_true")]
-    pub(crate) code: bool,
-    #[serde(default = "default_true")]
-    pub(crate) result: bool,
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(transparent)]
+pub(crate) struct ConversationExportContentFilter(BTreeMap<String, bool>);
+
+impl ConversationExportContentFilter {
+    pub(crate) fn is_visible(&self, kind: &str) -> bool {
+        self.0.get(kind).copied().unwrap_or(true)
+    }
 }
 
 impl Default for ConversationExportContentFilter {
     fn default() -> Self {
-        Self {
-            answer: true,
-            tool: true,
-            command: true,
-            code: true,
-            result: true,
-        }
+        Self(BTreeMap::from([
+            ("answer".to_string(), true),
+            ("tool".to_string(), true),
+            ("command".to_string(), true),
+            ("code".to_string(), true),
+            ("result".to_string(), true),
+        ]))
     }
 }
 
@@ -150,6 +147,88 @@ pub(crate) struct ConversationQuestionDetail {
     pub(crate) question: ConversationQuestion,
     pub(crate) turns: Vec<ConversationTurn>,
     pub(crate) parts: Vec<ConversationPart>,
+    pub(crate) cards: Vec<ConversationCard>,
+    pub(crate) content_nodes: Vec<ConversationContentNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum ConversationContentNode {
+    Card {
+        turn_id: String,
+        card_index: usize,
+    },
+    Execution {
+        turn_id: String,
+        source_execution_id: String,
+        command_card_index: Option<usize>,
+        result_card_indices: Vec<usize>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ConversationCardRenderer {
+    Markdown,
+    Plain,
+    Path,
+    Json,
+    Code,
+    Command,
+    TerminalOutput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub(crate) struct ConversationCard {
+    pub(crate) card_id: String,
+    pub(crate) part_id: String,
+    pub(crate) adapter_id: String,
+    pub(crate) kind: String,
+    pub(crate) semantic_role: Option<String>,
+    pub(crate) renderer: ConversationCardRenderer,
+    pub(crate) role: ConversationPartRole,
+    pub(crate) body: String,
+    pub(crate) language: Option<String>,
+    pub(crate) cwd: Option<String>,
+    pub(crate) status: Option<String>,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) source_execution_id: Option<String>,
+    pub(crate) translated_body: Option<String>,
+    pub(crate) legacy_anchor_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ConversationBlockLocator {
+    pub(crate) record_kind: String,
+    pub(crate) session_id: String,
+    pub(crate) question_id: String,
+    pub(crate) turn_id: String,
+    pub(crate) block_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) part_id: Option<String>,
+    pub(crate) kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) semantic_role: Option<String>,
+    pub(crate) renderer: ConversationCardRenderer,
+    pub(crate) role: ConversationPartRole,
+    pub(crate) content_length: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) exit_code: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ConversationBlockDetail {
+    #[serde(flatten)]
+    pub(crate) locator: ConversationBlockLocator,
+    pub(crate) content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) translated_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -200,17 +279,42 @@ pub(crate) struct ConversationSearchIndexRebuildReport {
     pub(crate) duration_ms: u64,
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ConversationSearchCardType {
-    Question,
-    Answer,
-    Tool,
-    Command,
-    Code,
-    Result,
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, JsonSchema)]
+#[serde(transparent)]
+pub(crate) struct ConversationSearchCardType(String);
+
+impl ConversationSearchCardType {
+    pub(crate) fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub(crate) fn question() -> Self {
+        Self::new("question")
+    }
+
+    pub(crate) fn answer() -> Self {
+        Self::new("answer")
+    }
+
+    pub(crate) fn tool() -> Self {
+        Self::new("tool")
+    }
+
+    pub(crate) fn command() -> Self {
+        Self::new("command")
+    }
+
+    pub(crate) fn code() -> Self {
+        Self::new("code")
+    }
+
+    pub(crate) fn result() -> Self {
+        Self::new("result")
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -226,7 +330,16 @@ pub(crate) struct ConversationSearchHit {
     pub(crate) snippet: String,
     pub(crate) score: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) incremental: Option<ConversationSearchIncrementalMatch>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) highlight_segments: Option<Vec<ConversationSearchHighlightSegment>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ConversationSearchIncrementalMatch {
+    pub(crate) sync_run_id: String,
+    pub(crate) change_kind: String,
+    pub(crate) observed_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -247,10 +360,6 @@ pub(crate) struct ConversationMutationResult {
     pub(crate) session_id: String,
     pub(crate) affected_question_ids: Vec<String>,
     pub(crate) questions: Vec<ConversationQuestionDetail>,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 #[derive(Debug, Serialize)]

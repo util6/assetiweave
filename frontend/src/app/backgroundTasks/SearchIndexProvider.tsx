@@ -5,7 +5,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -32,7 +31,6 @@ const SearchIndexContext = createContext<SearchIndexContextValue | null>(null);
 export function SearchIndexProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<ConversationSearchIndexStatus | null>(null);
   const [task, setTask] = useState<ConversationSearchIndexTaskSnapshot | null>(null);
-  const autoRebuildAttemptRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     const [nextStatus, nextTask] = await Promise.all([
@@ -88,16 +86,6 @@ export function SearchIndexProvider({ children }: { children: ReactNode }) {
     setTask(snapshot);
     return snapshot;
   }, []);
-
-  useEffect(() => {
-    if (!status || task?.status === "running" || !["missing", "stale", "failed"].includes(status.health)) {
-      return;
-    }
-    const attemptKey = `${status.health}:${status.source_revision}`;
-    if (autoRebuildAttemptRef.current === attemptKey) return;
-    autoRebuildAttemptRef.current = attemptKey;
-    void rebuild().catch(() => {});
-  }, [rebuild, status, task?.status]);
 
   const value = useMemo<SearchIndexContextValue>(
     () => ({ status, task, rebuild, refresh }),

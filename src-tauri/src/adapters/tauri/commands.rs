@@ -25,6 +25,7 @@ use crate::{
         ConversationAdapterPackageUninstallParams, ConversationAdapterPackageUpdateCheckParams,
         ConversationAdapterPackageUpdatePolicyParams,
         ConversationAdapterPackageVersionChangeParams, ConversationAdapterUnregisterParams,
+        ConversationBlockGetParams, ConversationBlockListParams,
         ConversationPartTranslationUpdateParams, ConversationQuestionGetParams,
         ConversationQuestionListParams, ConversationQuestionMergeParams,
         ConversationQuestionSplitParams, ConversationScriptCatalogParams,
@@ -156,6 +157,15 @@ pub(crate) fn list_assets(
 ) -> AppResult<Vec<CatalogAsset>> {
     let _guard = state.lock.lock().map_err(|error| error.to_string())?;
     AppService::open_with_db_path(state.db_path.clone())?.list_assets(ListAssetsParams { kind })
+}
+
+#[tauri::command]
+pub(crate) fn list_source_assets(
+    state: State<'_, AppState>,
+    kind: Option<AssetKind>,
+) -> AppResult<Vec<CatalogAsset>> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.list_source_assets(kind)
 }
 
 #[tauri::command]
@@ -2100,9 +2110,42 @@ pub(crate) fn sync_conversations(
     let background_tasks = state.background_tasks.clone();
     let task_id = snapshot.id.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let progress_app = app.clone();
+        let progress_tasks = background_tasks.clone();
+        let progress_task_id = task_id.clone();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            AppService::open_with_db_path(db_path)
-                .and_then(|service| service.sync_conversations(params))
+            AppService::open_with_db_path(db_path).and_then(|service| {
+                service.sync_conversations_with_progress(
+                    params,
+                    |completed_source_count, total_source_count, current_source_name| {
+                        match progress_tasks.update_conversation_sync_progress(
+                            &progress_task_id,
+                            completed_source_count,
+                            total_source_count,
+                            current_source_name,
+                        ) {
+                            Ok(snapshot) => {
+                                if let Err(error) =
+                                    progress_app.emit("conversation-sync-task-updated", &snapshot)
+                                {
+                                    log_error(
+                                        "conversation.sync",
+                                        "推送后台同步进度失败",
+                                        &error.to_string(),
+                                        &[("task_id", progress_task_id.clone())],
+                                    );
+                                }
+                            }
+                            Err(error) => log_error(
+                                "conversation.sync",
+                                "更新后台同步进度失败",
+                                &error,
+                                &[("task_id", progress_task_id.clone())],
+                            ),
+                        }
+                    },
+                )
+            })
         }))
         .unwrap_or_else(|_| Err("conversation sync task panicked".to_string()));
         match &result {
@@ -2322,6 +2365,24 @@ pub(crate) fn get_conversation_question(
 }
 
 #[tauri::command]
+pub(crate) fn list_conversation_blocks(
+    state: State<'_, AppState>,
+    params: ConversationBlockListParams,
+) -> AppResult<Vec<crate::backend::dto::ConversationBlockLocator>> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.list_conversation_blocks(params)
+}
+
+#[tauri::command]
+pub(crate) fn get_conversation_block(
+    state: State<'_, AppState>,
+    params: ConversationBlockGetParams,
+) -> AppResult<crate::backend::dto::ConversationBlockDetail> {
+    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
+    AppService::open_with_db_path(state.db_path.clone())?.get_conversation_block(params)
+}
+
+#[tauri::command]
 pub(crate) fn merge_conversation_questions(
     state: State<'_, AppState>,
     params: ConversationQuestionMergeParams,
@@ -2504,6 +2565,7 @@ pub(crate) fn command_handler(
         get_app_settings,
         save_app_settings,
         list_assets,
+        list_source_assets,
         list_memory_items,
         get_memory_item,
         create_memory_item,
@@ -2617,6 +2679,8 @@ pub(crate) fn command_handler(
         export_web_record_session,
         list_conversation_questions,
         get_conversation_question,
+        list_conversation_blocks,
+        get_conversation_block,
         merge_conversation_questions,
         split_conversation_question,
         update_conversation_part_translation,

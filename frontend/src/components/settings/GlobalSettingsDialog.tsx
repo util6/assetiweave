@@ -61,6 +61,13 @@ import {
 } from "../apps/AppShortcutIcon";
 import { SkillBackupDirectorySetting } from "../backup/SkillBackupDirectorySetting";
 import { SkillBackupLibraryDialog } from "../backup/SkillBackupLibraryDialog";
+import { ConfirmDialog } from "../common/ConfirmDialog";
+import { ConversationFullSyncProgress } from "./ConversationFullSyncProgress";
+import { conversationCardColor, conversationCardLabel } from "../conversations/ConversationContentCards";
+import {
+  isRedundantConversationCardKind,
+  useConversationCardKindRegistry,
+} from "../conversations/ConversationCardKindRegistry";
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
 import { headerTabLabel, railLabel, subNavLabel } from "../../i18n/navigation";
 import type { Locale, TranslationKey } from "../../i18n/messages";
@@ -112,6 +119,7 @@ import {
 } from "../../store/settings/AppSettingsProvider";
 import type { AppShortcut, AppShortcutIconSvg, SkillBackupSettings } from "../../types";
 import { abbreviateHomePath } from "../../utils/path";
+import { useConversationSync } from "../../app/backgroundTasks/ConversationSyncProvider";
 
 interface SettingsPanelConfig {
   id: SettingsPanelId;
@@ -147,6 +155,7 @@ export function GlobalSettingsDialog({
 }) {
   const { locale, setLocale, t } = useI18n();
   const { resetSettings, settings, storageInfo, updateSetting } = useAppSettings();
+  const { startSync: startConversationSync, tasks: conversationSyncTasks } = useConversationSync();
   const [activePanel, setActivePanel] = useState<SettingsPanelId>(initialPanel);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [editingShortcutIconId, setEditingShortcutIconId] = useState<string | null>(null);
@@ -167,6 +176,9 @@ export function GlobalSettingsDialog({
   const [translationModels, setTranslationModels] = useState<string[]>([]);
   const [translationModelsLoading, setTranslationModelsLoading] = useState(false);
   const [translationModelsMessage, setTranslationModelsMessage] = useState("");
+  const [fullSyncConfirmOpen, setFullSyncConfirmOpen] = useState(false);
+  const [fullSyncStarting, setFullSyncStarting] = useState(false);
+  const [fullSyncError, setFullSyncError] = useState("");
 
   useEffect(() => {
     if (open) {
@@ -307,8 +319,6 @@ export function GlobalSettingsDialog({
       panels: [
         { id: "workspace.menu", icon: Menu, label: t("settings.section.menu") },
         { id: "workspace.shortcuts", icon: MousePointerClick, label: t("settings.section.shortcuts") },
-        { id: "workspace.deployment", icon: ShieldCheck, label: t("settings.section.deployment") },
-        { id: "workspace.notifications", icon: Bell, label: t("settings.section.notifications") },
       ],
     },
     {
@@ -634,7 +644,58 @@ export function GlobalSettingsDialog({
     closeShortcutIconEditor();
   }
 
+  async function startFullConversationSync() {
+    setFullSyncStarting(true);
+    setFullSyncError("");
+    try {
+      const snapshot = await startConversationSync({
+        dry_run: false,
+        mode: "full",
+        record_kind: null,
+      });
+      if (snapshot.mode !== "full") {
+        throw new Error(t("settings.conversation.fullSyncConflict"));
+      }
+      setFullSyncConfirmOpen(false);
+    } catch (error) {
+      setFullSyncError(errorMessage(error));
+    } finally {
+      setFullSyncStarting(false);
+    }
+  }
+
   const editingShortcutIcon = appShortcuts.find((shortcut) => shortcut.profileId === editingShortcutIconId) ?? null;
+  const runningConversationSync = conversationSyncTasks.some((task) => task.status === "running");
+  const fullConversationSyncTask = conversationSyncTasks
+    .filter((task) => task.mode === "full" && task.record_kind == null)
+    .sort((left, right) => right.started_at.localeCompare(left.started_at))[0] ?? null;
+  const fullConversationSyncStatus = fullConversationSyncTask?.status === "running"
+    ? t("settings.conversation.fullSyncRunning")
+    : fullConversationSyncTask?.status === "completed"
+      ? t("settings.conversation.fullSyncCompleted")
+      : fullConversationSyncTask?.status === "failed"
+        ? fullConversationSyncTask.error || t("settings.conversation.fullSyncFailed")
+        : t("settings.conversation.fullSyncIdle");
+  const fullSyncRunning = fullConversationSyncTask?.status === "running";
+  const fullSyncAnimating = fullSyncStarting || fullSyncRunning;
+  const fullSyncButtonPercent = fullSyncRunning
+    && fullConversationSyncTask.progress
+    && fullConversationSyncTask.progress.total_source_count > 0
+    ? Math.round(
+      (Math.min(
+        fullConversationSyncTask.progress.completed_source_count,
+        fullConversationSyncTask.progress.total_source_count,
+      )
+        / fullConversationSyncTask.progress.total_source_count) * 100,
+    )
+    : null;
+  const fullSyncButtonLabel = fullSyncButtonPercent == null
+    ? fullSyncAnimating
+      ? t("settings.conversation.fullSyncButtonRunning")
+      : t("settings.conversation.fullSyncAction")
+    : t("settings.conversation.fullSyncButtonRunningWithProgress", {
+      percent: fullSyncButtonPercent,
+    });
 
   return (
     <div className="fixed inset-x-0 bottom-0 top-[var(--app-window-titlebar-height)] z-50 bg-background text-on-surface">
@@ -773,11 +834,11 @@ export function GlobalSettingsDialog({
                     value={settings.columnMinWidth}
                   />
                 </SettingRow>
-                <SettingRow icon={<Activity size={18} />} label={t("settings.reduceMotion")}>
+                <SettingRow icon={<Bell size={18} />} label={t("settings.showStartupNotification")}>
                   <SwitchControl
-                    checked={settings.reduceMotion}
-                    label={t("settings.reduceMotion")}
-                    onChange={(checked) => updateSetting("reduceMotion", checked)}
+                    checked={settings.showStartupNotification}
+                    label={t("settings.showStartupNotification")}
+                    onChange={(checked) => updateSetting("showStartupNotification", checked)}
                   />
                 </SettingRow>
               </SettingsGroup>
@@ -1069,6 +1130,17 @@ export function GlobalSettingsDialog({
                   openLabel={t("settings.storage.open")}
                   value={storageInfo.conversationAdapterDir}
                 />
+
+
+                <SkillBackupDirectorySetting
+                  onOpen={() => setBackupDialogOpen(true)}
+                  rootPath={backupSettings?.display_root_path ?? backupSettings?.expanded_root_path}
+                />
+                {backupError && (
+                  <div className="rounded-lg border border-status-remove/30 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove">
+                    {backupError}
+                  </div>
+                )}
               </SettingsGroup>
             )}
 
@@ -1157,41 +1229,46 @@ export function GlobalSettingsDialog({
               </MenuSection>
             )}
 
-            {activePanel === "workspace.deployment" && (
-              <SettingsGroup>
-                <SettingRow icon={<ShieldCheck size={18} />} label={t("settings.confirmBeforeDeploy")}>
-                  <SwitchControl
-                    checked={settings.confirmBeforeDeploy}
-                    label={t("settings.confirmBeforeDeploy")}
-                    onChange={(checked) => updateSetting("confirmBeforeDeploy", checked)}
-                  />
-                </SettingRow>
-                <SkillBackupDirectorySetting
-                  onOpen={() => setBackupDialogOpen(true)}
-                  rootPath={backupSettings?.display_root_path ?? backupSettings?.expanded_root_path}
-                />
-                {backupError && (
-                  <div className="rounded-lg border border-status-remove/30 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove">
-                    {backupError}
-                  </div>
-                )}
-              </SettingsGroup>
-            )}
 
-            {activePanel === "workspace.notifications" && (
-              <SettingsGroup>
-                <SettingRow icon={<Bell size={18} />} label={t("settings.showStartupNotification")}>
-                  <SwitchControl
-                    checked={settings.showStartupNotification}
-                    label={t("settings.showStartupNotification")}
-                    onChange={(checked) => updateSetting("showStartupNotification", checked)}
-                  />
-                </SettingRow>
-              </SettingsGroup>
-            )}
 
             {activePanel === "conversations.sessions" && (
               <SettingsGroup>
+                <SettingRow icon={<RefreshCw size={18} />} label={t("settings.conversation.fullSyncTitle")}>
+                  <div className="flex w-[min(38rem,52vw)] flex-col gap-2 py-1">
+                    <p className="text-body-sm leading-6 text-on-surface-variant">
+                      {t("settings.conversation.fullSyncDescription")}
+                    </p>
+                    <div className="flex items-center justify-between gap-3">
+                      <span aria-live="polite" className="min-w-0 truncate text-body-sm text-outline">
+                        {fullConversationSyncStatus}
+                      </span>
+                      <Button
+                        className={fullSyncAnimating
+                          ? "border-status-update/55 bg-status-update/10 text-status-update disabled:opacity-100"
+                          : undefined}
+                        disabled={runningConversationSync || fullSyncStarting}
+                        onClick={() => {
+                          setFullSyncError("");
+                          setFullSyncConfirmOpen(true);
+                        }}
+                        type="button"
+                        variant="outline"
+                      >
+                        <RefreshCw
+                          className={fullSyncAnimating ? "motion-safe:animate-spin" : undefined}
+                          size={16}
+                        />
+                        {fullSyncButtonLabel}
+                      </Button>
+                    </div>
+                    {fullConversationSyncTask?.progress ? (
+                      <ConversationFullSyncProgress progress={fullConversationSyncTask.progress} t={t} />
+                    ) : null}
+                    {fullSyncError ? (
+                      <p className="text-body-sm text-status-remove" role="alert">{fullSyncError}</p>
+                    ) : null}
+                  </div>
+                </SettingRow>
                 <SettingRow icon={<Type size={18} />} label={t("settings.conversation.sessionBrowserFont")}>
                   <FontFamilyControl
                     fallback="sans"
@@ -1433,6 +1510,19 @@ export function GlobalSettingsDialog({
           await onSkillBackupLibraryChange?.();
         }}
         open={backupDialogOpen}
+      />
+      <ConfirmDialog
+        busy={fullSyncStarting}
+        confirmLabel={t("settings.conversation.fullSyncConfirmAction")}
+        message={t("settings.conversation.fullSyncConfirmMessage")}
+        onClose={() => {
+          if (!fullSyncStarting) {
+            setFullSyncConfirmOpen(false);
+          }
+        }}
+        onConfirm={() => void startFullConversationSync()}
+        open={fullSyncConfirmOpen}
+        title={t("settings.conversation.fullSyncConfirmTitle")}
       />
     </div>
   );
@@ -2077,16 +2167,7 @@ function FontFamilyControl({
   );
 }
 
-const conversationContentCardColorFields: Array<{
-  key: keyof ConversationContentCardColorSettings;
-  labelKey: TranslationKey;
-}> = [
-  { key: "answer", labelKey: "conversation.content.answer" },
-  { key: "tool", labelKey: "conversation.content.tool" },
-  { key: "command", labelKey: "conversation.content.command" },
-  { key: "code", labelKey: "conversation.content.code" },
-  { key: "result", labelKey: "conversation.content.result" },
-];
+const builtInConversationCardKinds = ["answer", "tool", "command", "code", "result"];
 
 function ConversationContentCardColorControl({
   onChange,
@@ -2097,7 +2178,17 @@ function ConversationContentCardColorControl({
   t: Translator;
   value: ConversationContentCardColorSettings;
 }) {
-  function commitColor(key: keyof ConversationContentCardColorSettings, color: string) {
+  const { definitions } = useConversationCardKindRegistry();
+  const [draftKind, setDraftKind] = useState("");
+  const fields = Array.from(new Set([
+    ...builtInConversationCardKinds,
+    ...Array.from(definitions.entries())
+      .filter(([kind, definition]) => !isRedundantConversationCardKind(kind, definition))
+      .map(([kind]) => kind),
+    ...Object.keys(value),
+  ])).filter((kind) => !isRedundantConversationCardKind(kind, definitions.get(kind)));
+
+  function commitColor(key: string, color: string) {
     const nextColor = color.trim();
     if (!isHexColor(nextColor) || nextColor === value[key]) {
       return;
@@ -2109,16 +2200,39 @@ function ConversationContentCardColorControl({
     });
   }
 
+  function addHistoricalKind() {
+    const kind = draftKind.trim();
+    if (!/^[a-z0-9][a-z0-9._-]{0,127}$/.test(kind)) return;
+    onChange({ ...value, [kind]: conversationCardColor(kind, value) });
+    setDraftKind("");
+  }
+
   return (
-    <div className="grid w-[min(42rem,100%)] grid-cols-2 gap-3 max-[900px]:grid-cols-1">
-      {conversationContentCardColorFields.map((field) => (
-        <ConversationContentCardColorField
-          key={field.key}
-          label={t(field.labelKey)}
-          onCommit={(color) => commitColor(field.key, color)}
-          value={value[field.key]}
+    <div className="w-[min(42rem,100%)] space-y-3">
+      <div className="grid grid-cols-2 gap-3 max-[900px]:grid-cols-1">
+        {fields.map((kind) => (
+          <ConversationContentCardColorField
+            key={kind}
+            label={definitions.get(kind)?.label ?? conversationCardLabel(kind, t)}
+            onCommit={(color) => commitColor(kind, color)}
+            value={conversationCardColor(kind, value)}
+          />
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          aria-label={t("settings.conversation.addCardKind")}
+          onChange={(event) => setDraftKind(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") addHistoricalKind();
+          }}
+          placeholder={t("settings.conversation.cardKindPlaceholder")}
+          value={draftKind}
         />
-      ))}
+        <Button onClick={addHistoricalKind} type="button" variant="outline">
+          {t("settings.conversation.addCardKind")}
+        </Button>
+      </div>
     </div>
   );
 }

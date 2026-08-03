@@ -21,6 +21,13 @@ impl AppService {
         })
     }
 
+    pub(crate) fn list_source_assets(
+        &self,
+        kind: Option<AssetKind>,
+    ) -> AppResult<Vec<CatalogAsset>> {
+        capabilities::source_assets_sqlx(&self.db, self.tenant_id(), kind)
+    }
+
     pub(crate) fn add_source(&self, source: SourceInput) -> AppResult<Source> {
         let source = source_from_input(source);
         let pool = self.db.pool().clone();

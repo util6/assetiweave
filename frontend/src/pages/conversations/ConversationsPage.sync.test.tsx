@@ -110,7 +110,11 @@ describe("ConversationsPage sync scope", () => {
       record_kind: "session",
       scope: {
         adapter_id: null,
-        content_types: ["question", "answer", "tool", "command", "code", "result"],
+        card_kinds: [],
+        content_types: [],
+        include_cards: true,
+        include_questions: true,
+        semantic_roles: [],
         limit: 50,
         offset: 0,
         project_path: null,
@@ -396,7 +400,11 @@ describe("ConversationsPage sync scope", () => {
         });
 
         expect(searchConversationRecordsMock).toHaveBeenCalledWith({
-          content_types: ["question", "answer", "tool", "command", "code", "result"],
+          card_kinds: [],
+          content_types: [],
+          include_cards: true,
+          include_questions: true,
+          semantic_roles: [],
           limit: 50,
           query: "deploy",
           record_kind: recordKind,
@@ -419,7 +427,11 @@ describe("ConversationsPage sync scope", () => {
       await act(async () => undefined);
 
       expect(searchConversationRecordsMock).toHaveBeenCalledWith({
-        content_types: ["question", "answer", "tool", "command", "code", "result"],
+        card_kinds: [],
+        content_types: [],
+        include_cards: true,
+        include_questions: true,
+        semantic_roles: [],
         limit: 50,
         query: "deploy",
         record_kind: "session",
@@ -438,7 +450,11 @@ describe("ConversationsPage sync scope", () => {
       await act(async () => undefined);
 
       expect(searchConversationRecordsMock).toHaveBeenCalledWith({
-        content_types: ["question", "answer", "tool", "command", "code", "result"],
+        card_kinds: [],
+        content_types: [],
+        include_cards: true,
+        include_questions: true,
+        semantic_roles: [],
         limit: 50,
         query: "rollback",
         record_kind: "session",
@@ -470,7 +486,11 @@ describe("ConversationsPage sync scope", () => {
       record_kind: "session",
       scope: {
         adapter_id: null,
-        content_types: ["question", "answer", "tool", "command", "code", "result"],
+        card_kinds: [],
+        content_types: [],
+        include_cards: true,
+        include_questions: true,
+        semantic_roles: [],
         limit: 50,
         offset: 0,
         project_path: null,
@@ -585,7 +605,11 @@ describe("ConversationsPage sync scope", () => {
 
     await waitFor(() =>
       expect(searchConversationRecordsMock).toHaveBeenLastCalledWith({
-        content_types: ["command"],
+        card_kinds: ["command"],
+        content_types: [],
+        include_cards: true,
+        include_questions: true,
+        semantic_roles: [],
         limit: 50,
         query: "deploy",
         record_kind: "session",
@@ -605,7 +629,11 @@ describe("ConversationsPage sync scope", () => {
 
     await waitFor(() =>
       expect(searchConversationRecordsMock).toHaveBeenLastCalledWith({
-        content_types: ["answer", "command"],
+        card_kinds: ["command", "answer"],
+        content_types: [],
+        include_cards: true,
+        include_questions: true,
+        semantic_roles: [],
         limit: 50,
         query: "deploy",
         record_kind: "session",
@@ -636,6 +664,55 @@ describe("ConversationsPage sync scope", () => {
       expect(screen.getByText("answer match one")).toBeTruthy();
     });
     expect(screen.getByText("command match")).toBeTruthy();
+  });
+
+  it("sends semantic roles and question visibility independently from card kinds", async () => {
+    searchConversationRecordsMock.mockResolvedValueOnce({
+      content_type_counts: { "claude-code.reasoning": 1, question: 1 },
+      semantic_role_counts: { reasoning: 1 },
+      hits: [
+        searchHit("question-hit", "question", "question match"),
+        searchHit("reasoning-hit", "claude-code.reasoning", "reasoning match"),
+      ],
+      query: "reasoning",
+      record_kind: "session",
+      scope: searchScope("reasoning", []),
+      total_count: 2,
+    });
+
+    renderConversationsPage("session");
+    const searchInput = screen.getByPlaceholderText("Search content and jump to cards...");
+    fireEvent.change(searchInput, { target: { value: "reasoning" } });
+    fireEvent.keyDown(searchInput, { key: "Enter" });
+
+    await screen.findByText("reasoning match");
+    searchConversationRecordsMock.mockReturnValue(new Promise(() => undefined));
+
+    fireEvent.click(screen.getByRole("button", { name: "role:reasoning" }));
+    await waitFor(() => expect(searchConversationRecordsMock).toHaveBeenLastCalledWith({
+      card_kinds: [],
+      content_types: [],
+      include_cards: true,
+      include_questions: true,
+      semantic_roles: ["reasoning"],
+      limit: 50,
+      query: "reasoning",
+      record_kind: "session",
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "User question" }));
+    await waitFor(() => expect(searchConversationRecordsMock).toHaveBeenLastCalledWith({
+      card_kinds: [],
+      content_types: [],
+      include_cards: true,
+      include_questions: false,
+      semantic_roles: ["reasoning"],
+      limit: 50,
+      query: "reasoning",
+      record_kind: "session",
+    }));
+    expect(screen.queryByText("question match")).toBeNull();
+    expect(screen.getByText("reasoning match")).toBeTruthy();
   });
 
   it.each(["session", "web"] as const)(
@@ -673,7 +750,11 @@ describe("ConversationsPage sync scope", () => {
         });
 
         expect(searchConversationRecordsMock).toHaveBeenCalledWith({
-          content_types: ["question", "answer", "tool", "command", "code", "result"],
+          card_kinds: [],
+          content_types: [],
+          include_cards: true,
+          include_questions: true,
+          semantic_roles: [],
           limit: 50,
           query: "中",
           record_kind: recordKind,
@@ -915,16 +996,21 @@ function renderConversationsPage(
 
 function searchScope(
   query: string,
-  contentTypes: Array<"question" | "answer" | "tool" | "command" | "code" | "result">,
+  contentTypes: string[],
 ) {
   return {
     adapter_id: null,
+    card_kinds: contentTypes.filter((kind) => kind !== "question"),
     content_types: contentTypes,
+    include_cards: true,
+    include_questions: contentTypes.length === 0 || contentTypes.includes("question"),
     limit: 50,
     offset: 0,
     project_path: null,
     query,
     record_kind: "session" as const,
+    semantic_roles: [],
+    source_id: null,
     since: null,
     timeline: false,
     until: null,
@@ -933,7 +1019,7 @@ function searchScope(
 
 function searchHit(
   id: string,
-  cardType: "question" | "answer" | "tool" | "command" | "code" | "result",
+  cardType: string,
   snippet: string,
 ) {
   return {

@@ -145,6 +145,35 @@ describe("ConversationSyncProvider", () => {
     expect(screen.getByTestId("web-sync-status").textContent).toBe("running");
     expect(syncConversationsMock).toHaveBeenCalledTimes(2);
   });
+
+  it("tracks a full all-record sync without treating it as a session-only task", async () => {
+    syncConversationsMock.mockResolvedValue({
+      id: "sync-full",
+      status: "running",
+      source_id: null,
+      adapter_id: null,
+      record_kind: null,
+      mode: "full",
+      dry_run: false,
+      started_at: "2026-07-27T00:00:00Z",
+      finished_at: null,
+      result: null,
+      error: null,
+    });
+
+    render(
+      <ConversationSyncProvider>
+        <FullSyncHarness />
+      </ConversationSyncProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start full sync" }));
+    await act(async () => {});
+
+    expect(screen.getByTestId("full-sync-status").textContent).toBe("running");
+    expect(screen.getByTestId("session-sync-status").textContent).toBe("running");
+    expect(screen.getByTestId("web-sync-status").textContent).toBe("running");
+  });
 });
 
 function ProviderHarness() {
@@ -172,6 +201,22 @@ function IndependentSyncHarness() {
       <button onClick={() => void startSync({ record_kind: "web" })} type="button">
         Start web sync
       </button>
+      <output data-testid="session-sync-status">{taskFor("session")?.status ?? "idle"}</output>
+      <output data-testid="web-sync-status">{taskFor("web")?.status ?? "idle"}</output>
+    </>
+  );
+}
+
+function FullSyncHarness() {
+  const { startSync, taskFor, tasks } = useConversationSync();
+  const fullTask = tasks.find((task) => task.record_kind == null && task.mode === "full");
+
+  return (
+    <>
+      <button onClick={() => void startSync({ mode: "full", record_kind: null })} type="button">
+        Start full sync
+      </button>
+      <output data-testid="full-sync-status">{fullTask?.status ?? "idle"}</output>
       <output data-testid="session-sync-status">{taskFor("session")?.status ?? "idle"}</output>
       <output data-testid="web-sync-status">{taskFor("web")?.status ?? "idle"}</output>
     </>

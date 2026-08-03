@@ -65,16 +65,8 @@ describe("SearchIndexProvider", () => {
     expect(screen.getByTestId("index-health").textContent).toBe("ready");
   });
 
-  it("automatically starts one rebuild for a missing revision", async () => {
+  it("does not rebuild a missing index until the user requests it", async () => {
     statusMock.mockResolvedValue({ health: "missing", source_revision: 3 });
-    rebuildMock.mockResolvedValue({
-      id: "auto-index-1",
-      status: "running",
-      started_at: "2026-07-22T00:00:00Z",
-      finished_at: null,
-      result: null,
-      error: null,
-    });
 
     render(
       <SearchIndexProvider>
@@ -83,7 +75,8 @@ describe("SearchIndexProvider", () => {
     );
     await act(async () => {});
     await act(async () => {});
-    expect(rebuildMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("index-health").textContent).toBe("missing");
+    expect(rebuildMock).not.toHaveBeenCalled();
   });
 });
 

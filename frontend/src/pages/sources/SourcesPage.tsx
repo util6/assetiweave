@@ -72,7 +72,7 @@ export function SourcesPage({
 }) {
   const { t } = useI18n();
   const { startBackup, task: backupTask } = useSkillBackup();
-  const sources = useSourcesController(assets, onCatalogRefresh);
+  const sources = useSourcesController(onCatalogRefresh);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [acquireDialogOpen, setAcquireDialogOpen] = useState(false);
   const [editingSource, setEditingSource] = useState<Source | null>(null);
@@ -87,7 +87,7 @@ export function SourcesPage({
   const [sortBy, setSortBy] = useState<SourceSortBy>("priority");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const currentEditingAsset = editingAsset
-    ? (assets.find((asset) => asset.id === editingAsset.id) ?? editingAsset)
+    ? (sources.sourceAssets.find((asset) => asset.id === editingAsset.id) ?? assets.find((asset) => asset.id === editingAsset.id) ?? editingAsset)
     : null;
   const visibleSources = useMemo(
     () =>
@@ -131,8 +131,8 @@ export function SourcesPage({
     if (!editingSource) {
       return [];
     }
-    return getBackupableSkillAssets(assets.filter((asset) => asset.source_id === editingSource.id));
-  }, [assets, editingSource]);
+    return getBackupableSkillAssets(sources.sourceAssets.filter((asset) => asset.source_id === editingSource.id));
+  }, [editingSource, sources.sourceAssets]);
 
   useEffect(() => {
     if (!editingAsset) {
@@ -143,10 +143,10 @@ export function SourcesPage({
   }, [editingAsset]);
 
   useEffect(() => {
-    if (editingAsset && !assets.some((asset) => asset.id === editingAsset.id)) {
+    if (editingAsset && !sources.sourceAssets.some((asset) => asset.id === editingAsset.id)) {
       setEditingAsset(null);
     }
-  }, [assets, editingAsset]);
+  }, [editingAsset, sources.sourceAssets]);
 
   async function refreshAssetGroups() {
     try {
@@ -182,7 +182,9 @@ export function SourcesPage({
     setAssetActionBusy(true);
     try {
       const savedAsset = await updateAssetDescription(editingAsset.id, description);
-      onApplyAssetUpdate({ ...editingAsset, ...savedAsset });
+      const nextAsset = { ...editingAsset, ...savedAsset };
+      onApplyAssetUpdate(nextAsset);
+      sources.applySourceAssetUpdate(nextAsset);
       onClearDeploymentPlan();
       setEditingAsset(null);
     } catch (error) {
@@ -201,6 +203,7 @@ export function SourcesPage({
     try {
       const deletedAsset = await deleteAsset(deletingAsset.id, unmount);
       onRemoveAsset(deletedAsset.id);
+      sources.removeSourceAsset(deletedAsset.id);
       onClearDeploymentPlan();
       setDeletingAsset(null);
     } catch (error) {
@@ -393,7 +396,7 @@ export function SourcesPage({
       <SourceList
         appShortcuts={appShortcuts}
         assetMountStatuses={assetMountStatuses}
-        assets={assets}
+        assets={sources.sourceAssets}
         busy={sources.busy}
         expandedAssetIds={expandedAssetIds}
         onDelete={setDeletingSource}

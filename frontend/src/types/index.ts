@@ -236,8 +236,19 @@ export interface ConversationAdapter {
   protocol_version?: number | null;
   capabilities: string[];
   input_kinds: ConversationSourceKind[];
+  card_contract_version?: number | null;
+  card_kinds?: ConversationCardKindDefinition[];
   created_at: string;
   updated_at: string;
+}
+
+export interface ConversationCardKindDefinition {
+  id: string;
+  semantic_role?: string | null;
+  label: string;
+  default_renderer: ConversationCardRenderer;
+  allowed_renderers: ConversationCardRenderer[];
+  icon_hint?: string | null;
 }
 
 export interface ConversationAdapterPackage {
@@ -329,9 +340,58 @@ export interface ConversationPart {
   cwd?: string | null;
   status?: string | null;
   exit_code?: number | null;
+  content_card?: ConversationContentCardDescriptor | null;
   metadata_json?: string | null;
   translated_text?: string | null;
+  source_execution_id?: string | null;
 }
+
+export interface ConversationContentCardDescriptor {
+  schema_version: number;
+  kind: string;
+  renderer?: ConversationCardRenderer | null;
+}
+
+export type ConversationCardRenderer =
+  | "markdown"
+  | "plain"
+  | "path"
+  | "json"
+  | "code"
+  | "command"
+  | "terminal_output";
+
+export interface ConversationCard {
+  card_id: string;
+  part_id: string;
+  adapter_id: string;
+  kind: string;
+  semantic_role?: string | null;
+  renderer: ConversationCardRenderer;
+  role: ConversationPartRole;
+  body: string;
+  language?: string | null;
+  cwd?: string | null;
+  status?: string | null;
+  exit_code?: number | null;
+  translated_body?: string | null;
+  source_execution_id?: string | null;
+  legacy_anchor_ids: string[];
+}
+
+export type ConversationContentNode =
+  | {
+      type: "card";
+      turn_id: string;
+      card_index: number;
+    }
+  | {
+      type: "execution";
+      turn_id: string;
+      source_execution_id: string;
+      command_card_index?: number | null;
+      result_card_indices: number[];
+    };
 
 export interface ConversationQuestion {
   id: string;
@@ -351,6 +411,8 @@ export interface ConversationQuestionDetail {
   question: ConversationQuestion;
   turns: ConversationTurn[];
   parts: ConversationPart[];
+  cards?: ConversationCard[];
+  content_nodes?: ConversationContentNode[];
 }
 
 export interface ConversationSessionDetail {
@@ -360,7 +422,7 @@ export interface ConversationSessionDetail {
 
 export type ConversationRecordKind = "session" | "web";
 
-export type ConversationSearchCardType = "question" | "answer" | "tool" | "command" | "code" | "result";
+export type ConversationSearchCardType = string;
 
 export interface ConversationSearchScope {
   record_kind: ConversationRecordKind;
@@ -369,6 +431,10 @@ export interface ConversationSearchScope {
   project_path?: string | null;
   query: string;
   content_types: ConversationSearchCardType[];
+  card_kinds: string[];
+  semantic_roles: string[];
+  include_questions: boolean;
+  include_cards: boolean;
   since?: string | null;
   until?: string | null;
   timeline: boolean;
@@ -396,8 +462,9 @@ export interface ConversationSearchResult {
   scope?: ConversationSearchScope;
   total_count: number;
   hits: ConversationSearchHit[];
-  backend?: "tantivy" | "legacy_scan";
+  backend?: "id_lookup" | "tantivy" | "legacy_scan";
   content_type_counts?: Partial<Record<ConversationSearchCardType, number>>;
+  semantic_role_counts?: Partial<Record<string, number>>;
 }
 
 export interface ConversationMutationResult {

@@ -133,7 +133,6 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
 
   useLayoutEffect(() => {
     document.documentElement.dataset.density = settings.density;
-    document.documentElement.dataset.motion = settings.reduceMotion ? "reduced" : "full";
     document.documentElement.style.setProperty(
       "--app-font-family",
       resolveFontFamilyCss(settings.typography.interfaceFontFamily, "sans"),
@@ -159,7 +158,7 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
       `${settings.typography.codeFontSize}px`,
     );
     applyThemeToElement(document.documentElement, settings.theme);
-  }, [settings.density, settings.reduceMotion, settings.theme, settings.typography]);
+  }, [settings.density, settings.theme, settings.typography]);
 
   const value = useMemo<AppSettingsContextValue>(() => {
     function updateSetting<Key extends keyof AppSettings>(key: Key, settingValue: AppSettings[Key]) {

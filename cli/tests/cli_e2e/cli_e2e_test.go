@@ -291,6 +291,64 @@ fi
 	if !sync.OK {
 		t.Fatalf("sync conversation failed: %#v", sync.Error)
 	}
+	for _, filter := range []struct {
+		kind  string
+		value string
+		key   string
+	}{
+		{kind: "cli-export-fixture.answer", value: "cli-export-fixture.answer", key: "card_kinds"},
+		{kind: "answer", value: "answer", key: "semantic_roles"},
+	} {
+		search := runCLIWithEnv(t, env, "conversation", "search", "--query", "CLI", "--kind", filter.kind, "--format", "compact-json")
+		data, ok := search.Data.(map[string]any)
+		if !ok {
+			t.Fatalf("search data for %s = %#v", filter.kind, search.Data)
+		}
+		scope, ok := data["scope"].(map[string]any)
+		values, valuesOK := scope[filter.key].([]any)
+		if !ok || !valuesOK || len(values) != 1 || values[0] != filter.value {
+			t.Fatalf("search scope for %s = %#v", filter.kind, data["scope"])
+		}
+	}
+	questionSearch := runCLIWithEnv(t, env, "conversation", "search", "--query", "CLI", "--kind", "question", "--format", "compact-json")
+	questionData, ok := questionSearch.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("question search data = %#v", questionSearch.Data)
+	}
+	questionHits, ok := questionData["hits"].([]any)
+	if !ok || len(questionHits) != 1 {
+		t.Fatalf("question search hits = %#v", questionData["hits"])
+	}
+	questionHit, ok := questionHits[0].(map[string]any)
+	if !ok || questionHit["question_id"] == "" {
+		t.Fatalf("question search hit = %#v", questionHits[0])
+	}
+	blocks := runCLIWithEnv(t, env, "conversation", "block", "list", questionHit["question_id"].(string))
+	blockItems, ok := blocks.Data.([]any)
+	if !ok || len(blockItems) != 2 {
+		t.Fatalf("block locators = %#v", blocks.Data)
+	}
+	var answerBlockID string
+	for _, item := range blockItems {
+		block, ok := item.(map[string]any)
+		if !ok || block["content"] != nil {
+			t.Fatalf("block locator leaked content = %#v", item)
+		}
+		if block["semantic_role"] == "answer" {
+			answerBlockID, _ = block["block_id"].(string)
+		}
+	}
+	if answerBlockID == "" {
+		t.Fatalf("answer block locator = %#v", blockItems)
+	}
+	answer := runCLIWithEnv(t, env, "conversation", "block", "get", answerBlockID)
+	answerData, ok := answer.Data.(map[string]any)
+	if !ok ||
+		answerData["content"] != "CLI answer" ||
+		answerData["kind"] != "answer" ||
+		answerData["semantic_role"] != "answer" {
+		t.Fatalf("answer block detail = %#v", answer.Data)
+	}
 	list := runCLIWithEnv(t, env, "conversation", "session", "list", "--source", "cli-export-source", "--limit", "1")
 	sessions, ok := list.Data.([]any)
 	if !ok || len(sessions) != 1 {

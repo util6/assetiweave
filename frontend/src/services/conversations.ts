@@ -39,6 +39,10 @@ export interface ConversationSearchParams {
   project_path?: string | null;
   query: string;
   content_types?: ConversationSearchCardType[];
+  card_kinds?: string[];
+  semantic_roles?: string[];
+  include_questions?: boolean;
+  include_cards?: boolean;
   since?: string | null;
   until?: string | null;
   timeline?: boolean;
@@ -46,13 +50,7 @@ export interface ConversationSearchParams {
   offset?: number;
 }
 
-export interface ConversationExportContentFilter {
-  answer: boolean;
-  tool: boolean;
-  command: boolean;
-  code: boolean;
-  result: boolean;
-}
+export type ConversationExportContentFilter = Record<string, boolean>;
 
 export interface ConversationAdapterManifest {
   schema_version: number;
@@ -64,6 +62,8 @@ export interface ConversationAdapterManifest {
   runtime?: ConversationAdapterRuntime | null;
   capabilities: string[];
   input_kinds: ConversationSourceKind[];
+  card_contract_version?: number | null;
+  card_kinds?: import("../types").ConversationCardKindDefinition[];
 }
 
 export type ConversationAdapterRuntimeKind = "node" | "python" | "bash" | "executable";
@@ -291,11 +291,22 @@ export interface ConversationSyncTaskSnapshot {
   source_id: string | null;
   adapter_id: string | null;
   record_kind?: ConversationRecordKind | null;
+  mode?: ConversationSyncMode;
   dry_run: boolean;
+  progress?: ConversationSyncTaskProgress;
   started_at: string;
   finished_at: string | null;
   result: unknown | null;
   error: string | null;
+}
+
+export type ConversationSyncMode = "incremental" | "full";
+
+export interface ConversationSyncTaskProgress {
+  phase: "preparing" | "syncing" | "completed" | "failed";
+  completed_source_count: number;
+  total_source_count: number;
+  current_source_name: string | null;
 }
 
 export interface ConversationSearchIndexStatus {
@@ -470,20 +481,24 @@ export async function registerConversationAdapter(
   confirmed = false,
 ): Promise<ConversationAdapterRegisterResult> {
   try {
-    return await invoke<ConversationAdapterRegisterResult>("register_conversation_adapter", {
+    const result = await invoke<ConversationAdapterRegisterResult>("register_conversation_adapter", {
       params: { dry_run: dryRun, manifest_path: manifestPath, yes: confirmed },
     });
+    if (!dryRun) notifyConversationAdaptersChanged();
+    return result;
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
     }
 
     const validation = fallbackConversationAdapterValidation(manifestPath);
-    return {
+    const result = {
       dry_run: dryRun,
       adapter: conversationAdapterFromValidation(validation),
       validation,
     };
+    if (!dryRun) notifyConversationAdaptersChanged();
+    return result;
   }
 }
 
@@ -744,7 +759,7 @@ export async function switchConversationAdapterPackageVersion(params: {
   dryRun?: boolean;
   confirmed?: boolean;
 }): Promise<unknown> {
-  return await invoke("switch_conversation_adapter_package_version", {
+  const result = await invoke("switch_conversation_adapter_package_version", {
     params: {
       package_id: params.packageId,
       version: params.version,
@@ -752,6 +767,8 @@ export async function switchConversationAdapterPackageVersion(params: {
       yes: params.confirmed ?? false,
     },
   });
+  if (!(params.dryRun ?? false)) notifyConversationAdaptersChanged();
+  return result;
 }
 
 export async function rollbackConversationAdapterPackageVersion(params: {
@@ -759,7 +776,7 @@ export async function rollbackConversationAdapterPackageVersion(params: {
   dryRun?: boolean;
   confirmed?: boolean;
 }): Promise<unknown> {
-  return await invoke("rollback_conversation_adapter_package_version", {
+  const result = await invoke("rollback_conversation_adapter_package_version", {
     params: {
       package_id: params.packageId,
       version: null,
@@ -767,6 +784,8 @@ export async function rollbackConversationAdapterPackageVersion(params: {
       yes: params.confirmed ?? false,
     },
   });
+  if (!(params.dryRun ?? false)) notifyConversationAdaptersChanged();
+  return result;
 }
 
 export async function deleteConversationAdapterPackageVersion(params: {
@@ -775,7 +794,7 @@ export async function deleteConversationAdapterPackageVersion(params: {
   dryRun?: boolean;
   confirmed?: boolean;
 }): Promise<unknown> {
-  return await invoke("delete_conversation_adapter_package_version", {
+  const result = await invoke("delete_conversation_adapter_package_version", {
     params: {
       package_id: params.packageId,
       version: params.version,
@@ -783,6 +802,8 @@ export async function deleteConversationAdapterPackageVersion(params: {
       yes: params.confirmed ?? false,
     },
   });
+  if (!(params.dryRun ?? false)) notifyConversationAdaptersChanged();
+  return result;
 }
 
 export async function refreshConversationAdapterCatalogs(params?: {
@@ -838,7 +859,7 @@ export async function installConversationAdapterPackage(params: {
   confirmed?: boolean;
 }): Promise<ConversationScriptInstallTaskSnapshot> {
   try {
-    return await invoke<ConversationScriptInstallTaskSnapshot>("install_conversation_adapter_package", {
+    const result = await invoke<ConversationScriptInstallTaskSnapshot>("install_conversation_adapter_package", {
       params: {
         catalog_url: params.catalogUrl?.trim() || null,
         dry_run: params.dryRun ?? false,
@@ -847,12 +868,16 @@ export async function installConversationAdapterPackage(params: {
         yes: params.confirmed ?? false,
       },
     });
+    if (!(params.dryRun ?? false)) notifyConversationAdaptersChanged();
+    return result;
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
     }
 
-    return fallbackPackageTask(params.packageId, params.catalogUrl, params.dryRun);
+    const result = fallbackPackageTask(params.packageId, params.catalogUrl, params.dryRun);
+    if (!(params.dryRun ?? false)) notifyConversationAdaptersChanged();
+    return result;
   }
 }
 
@@ -864,7 +889,7 @@ export async function updateConversationAdapterPackage(params: {
   confirmed?: boolean;
 }): Promise<ConversationScriptInstallTaskSnapshot> {
   try {
-    return await invoke<ConversationScriptInstallTaskSnapshot>("update_conversation_adapter_package", {
+    const result = await invoke<ConversationScriptInstallTaskSnapshot>("update_conversation_adapter_package", {
       params: {
         catalog_url: params.catalogUrl?.trim() || null,
         dry_run: params.dryRun ?? false,
@@ -873,12 +898,16 @@ export async function updateConversationAdapterPackage(params: {
         yes: params.confirmed ?? false,
       },
     });
+    if (!(params.dryRun ?? false)) notifyConversationAdaptersChanged();
+    return result;
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
     }
 
-    return fallbackPackageTask(params.packageId, params.catalogUrl, params.dryRun);
+    const result = fallbackPackageTask(params.packageId, params.catalogUrl, params.dryRun);
+    if (!(params.dryRun ?? false)) notifyConversationAdaptersChanged();
+    return result;
   }
 }
 
@@ -887,13 +916,15 @@ export async function uninstallConversationAdapterPackage(params: {
   dryRun?: boolean;
   confirmed?: boolean;
 }): Promise<ConversationScriptInstallTaskSnapshot> {
-  return await invoke<ConversationScriptInstallTaskSnapshot>("uninstall_conversation_adapter_package", {
+  const result = await invoke<ConversationScriptInstallTaskSnapshot>("uninstall_conversation_adapter_package", {
     params: {
       dry_run: params.dryRun ?? false,
       package_id: params.packageId,
       yes: params.confirmed ?? false,
     },
   });
+  if (!(params.dryRun ?? false)) notifyConversationAdaptersChanged();
+  return result;
 }
 
 export async function unregisterConversationAdapter(params: {
@@ -901,13 +932,21 @@ export async function unregisterConversationAdapter(params: {
   dryRun?: boolean;
   confirmed?: boolean;
 }): Promise<unknown> {
-  return await invoke("unregister_conversation_adapter", {
+  const result = await invoke("unregister_conversation_adapter", {
     params: {
       adapter_id: params.adapterId,
       dry_run: params.dryRun ?? false,
       yes: params.confirmed ?? false,
     },
   });
+  if (!(params.dryRun ?? false)) notifyConversationAdaptersChanged();
+  return result;
+}
+
+function notifyConversationAdaptersChanged() {
+  if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+    window.dispatchEvent(new Event("assetiweave:conversation-adapters-changed"));
+  }
 }
 
 export async function installConversationScript(params: {
@@ -981,6 +1020,7 @@ export async function syncConversations(
     adapter_id?: string | null;
     dry_run?: boolean;
     record_kind?: ConversationRecordKind | null;
+    mode?: ConversationSyncMode;
   },
 ): Promise<ConversationSyncTaskSnapshot> {
   try {
@@ -997,11 +1037,19 @@ export async function syncConversations(
       source_id: params.source_id ?? null,
       adapter_id: params.adapter_id ?? null,
       record_kind: recordKind,
+      mode: params.mode ?? "incremental",
       dry_run: Boolean(params.dry_run),
+      progress: {
+        phase: "completed",
+        completed_source_count: 1,
+        total_source_count: 1,
+        current_source_name: null,
+      },
       started_at: new Date().toISOString(),
       finished_at: new Date().toISOString(),
       result: {
         dry_run: Boolean(params.dry_run),
+        mode: params.mode ?? "incremental",
         errors: [],
         results: [
           {
@@ -1009,6 +1057,7 @@ export async function syncConversations(
             adapter_id: "codex",
             dry_run: Boolean(params.dry_run),
             record_kind: recordKind,
+            mode: params.mode ?? "incremental",
             session_count: fallbackSessions.length,
             active_session_count: fallbackSessions.length,
             skipped_session_count: 0,
@@ -1166,6 +1215,10 @@ export async function searchConversationRecords(params: ConversationSearchParams
         query: "",
         record_kind: recordKind,
         content_types: params.content_types ?? [],
+        card_kinds: params.card_kinds ?? [],
+        semantic_roles: params.semantic_roles ?? [],
+        include_questions: params.include_questions,
+        include_cards: params.include_cards,
         limit,
         offset,
         timeline: params.timeline ?? false,
@@ -1180,6 +1233,10 @@ export async function searchConversationRecords(params: ConversationSearchParams
     query: trimmedQuery,
     record_kind: params.record_kind ?? "session",
     content_types: params.content_types ?? [],
+    card_kinds: params.card_kinds ?? [],
+    semantic_roles: params.semantic_roles ?? [],
+    include_questions: params.include_questions,
+    include_cards: params.include_cards,
     since: params.since ?? null,
     until: params.until ?? null,
     timeline: params.timeline ?? false,
@@ -1359,13 +1416,19 @@ function fallbackConversationSearch(params: Required<Pick<ConversationSearchPara
     };
   }
   const allowedTypes = new Set(params.content_types);
+  const allowedCardKinds = new Set(params.card_kinds ?? []);
+  const allowedSemanticRoles = new Set(params.semantic_roles ?? []);
+  const filtersCards = allowedTypes.size > 0 || allowedCardKinds.size > 0 || allowedSemanticRoles.size > 0;
+  const includeQuestions = params.include_questions
+    ?? (!filtersCards || allowedTypes.has("question"));
+  const includeCards = params.include_cards
+    ?? (allowedTypes.size === 0 || allowedCardKinds.size > 0 || allowedSemanticRoles.size > 0);
   const hits: ConversationSearchHit[] = [];
 
   for (const questionDetail of detail.questions) {
     const questionTitle = questionDetail.question.title || firstLine(questionDetail.question.question_text);
     for (const turn of questionDetail.turns) {
-      pushFallbackHit(hits, {
-        allowedTypes,
+      if (includeQuestions) pushFallbackHit(hits, {
         blockId: `${turn.id}-question`,
         cardType: "question",
         needle,
@@ -1377,10 +1440,16 @@ function fallbackConversationSearch(params: Required<Pick<ConversationSearchPara
         turnId: turn.id,
       });
 
+      if (!includeCards) continue;
       for (const part of questionDetail.parts.filter((candidate) => candidate.turn_id === turn.id)) {
-        for (const entry of fallbackEntriesForPart(part)) {
+        for (const entry of fallbackEntriesForPart(part, questionDetail.cards)) {
+          const selected = !filtersCards
+            || allowedTypes.has(entry.cardType)
+            || (entry.semanticRole ? allowedTypes.has(entry.semanticRole) : false)
+            || allowedCardKinds.has(entry.cardType)
+            || (entry.semanticRole ? allowedSemanticRoles.has(entry.semanticRole) : false);
+          if (!selected) continue;
           pushFallbackHit(hits, {
-            allowedTypes,
             blockId: entry.blockId,
             cardType: entry.cardType,
             needle,
@@ -1402,6 +1471,12 @@ function fallbackConversationSearch(params: Required<Pick<ConversationSearchPara
     scope: conversationSearchScope(params),
     total_count: hits.length,
     hits: hits.slice(params.offset, params.offset + params.limit),
+    content_type_counts: Object.fromEntries(
+      [...new Set(hits.map((hit) => hit.card_type))].map((kind) => [
+        kind,
+        hits.filter((hit) => hit.card_type === kind).length,
+      ]),
+    ),
   };
 }
 
@@ -1413,6 +1488,13 @@ function conversationSearchScope(params: Required<Pick<ConversationSearchParams,
     project_path: params.project_path ?? null,
     query: params.query,
     content_types: params.content_types,
+    card_kinds: params.card_kinds ?? [],
+    semantic_roles: params.semantic_roles ?? [],
+    include_questions: params.include_questions
+      ?? ((params.content_types.length === 0 && (params.card_kinds?.length ?? 0) === 0 && (params.semantic_roles?.length ?? 0) === 0)
+        || params.content_types.includes("question")),
+    include_cards: params.include_cards
+      ?? (params.content_types.length === 0 || (params.card_kinds?.length ?? 0) > 0 || (params.semantic_roles?.length ?? 0) > 0),
     since: params.since ?? null,
     until: params.until ?? null,
     timeline: params.timeline,
@@ -1439,7 +1521,6 @@ function searchDateBound(value: string, bound: "start" | "end") {
 function pushFallbackHit(
   hits: ConversationSearchHit[],
   params: {
-    allowedTypes: Set<ConversationSearchCardType>;
     blockId: string;
     cardType: ConversationSearchCardType;
     needle: string;
@@ -1453,7 +1534,6 @@ function pushFallbackHit(
 ) {
   const text = params.text?.trim();
   if (!text) return;
-  if (params.allowedTypes.size > 0 && !params.allowedTypes.has(params.cardType)) return;
   if (!text.toLowerCase().includes(params.needle)) return;
 
   hits.push({
@@ -1470,7 +1550,19 @@ function pushFallbackHit(
   });
 }
 
-function fallbackEntriesForPart(part: ConversationQuestionDetail["parts"][number]) {
+function fallbackEntriesForPart(
+  part: ConversationQuestionDetail["parts"][number],
+  cards: ConversationQuestionDetail["cards"] = [],
+) {
+  const projected = cards.find((card) => card.part_id === part.id);
+  if (projected) {
+    return [{
+      blockId: projected.card_id,
+      cardType: projected.kind,
+      semanticRole: projected.semantic_role ?? undefined,
+      text: projected.body,
+    }];
+  }
   const declaredCard = declaredContentCard(part.metadata_json);
   if (!declaredCard) return [];
 
@@ -1489,7 +1581,7 @@ function fallbackEntry(
   suffix: string = cardType,
 ) {
   const trimmedText = text?.trim();
-  return trimmedText ? [{ blockId: `${partId}-${suffix}`, cardType, text: trimmedText }] : [];
+  return trimmedText ? [{ blockId: `${partId}-${suffix}`, cardType, semanticRole: cardType, text: trimmedText }] : [];
 }
 
 interface DeclaredContentCard {

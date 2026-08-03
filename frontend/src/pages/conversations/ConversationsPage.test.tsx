@@ -30,6 +30,7 @@ import type {
 import {
   AppSessionBrowser,
   ConversationContentSearchResults,
+  conversationContentTypesForQuestions,
   groupConversationSessionsByApp,
   ConversationExportDialog,
   loadAllConversationSessionPages,
@@ -37,6 +38,7 @@ import {
   QuestionPreview,
   SessionQuestionWorkspace,
   preferredConversationQuestionId,
+  resolveConversationNavigationTarget,
 } from "./ConversationsPage";
 
 beforeEach(() => {
@@ -102,6 +104,67 @@ describe("MarkdownContent", () => {
     expect(html).toContain("完成");
     expect(html).toContain('data-mermaid-diagram="true"');
     expect(html).toContain("flowchart TD");
+  });
+
+  it("renders diff and patch fences as unified code changes", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent
+        value={[
+          "```diff",
+          "diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx",
+          "--- a/frontend/src/App.tsx",
+          "+++ b/frontend/src/App.tsx",
+          "@@ -10,2 +10,2 @@ export function App() {",
+          "-  return <OldView />;",
+          "+  return <NewView />;",
+          " }",
+          "```",
+          "",
+          "```patch",
+          "@@ -1 +1 @@",
+          "-before",
+          "+after",
+          "```",
+        ].join("\n")}
+      />,
+    );
+
+    expect(html.match(/data-conversation-diff="unified"/g)).toHaveLength(2);
+    expect(html).toContain('data-diff-file="frontend/src/App.tsx"');
+    expect(html).toContain('data-diff-line-type="deletion"');
+    expect(html).toContain('data-diff-line-type="addition"');
+    expect(html).toContain("OldView");
+    expect(html).toContain("NewView");
+    expect(html).not.toContain("<code>diff --git");
+  });
+
+  it("keeps truncated multi-file diff sections isolated", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent
+        value={[
+          "```diff",
+          "diff --git a/src/first.ts b/src/first.ts",
+          "--- a/src/first.ts",
+          "+++ b/src/first.ts",
+          "@@ -1,8 +1,8 @@",
+          "-before",
+          "+after",
+          "diff --git a/src/second.ts b/src/second.ts",
+          "--- a/src/second.ts",
+          "+++ b/src/second.ts",
+          "@@ -1 +1 @@",
+          "-old",
+          "+new",
+          "```",
+        ].join("\n")}
+      />,
+    );
+
+    const secondFileIndex = html.indexOf('data-diff-file="src/second.ts"');
+    expect(secondFileIndex).toBeGreaterThan(0);
+    expect(html.slice(0, secondFileIndex)).not.toContain("diff --git");
+    expect(html.match(/data-diff-line-type="deletion"/g)).toHaveLength(2);
+    expect(html.match(/data-diff-line-type="addition"/g)).toHaveLength(2);
   });
 
   it("normalizes escaped OpenCode markdown text before rendering", () => {
@@ -410,18 +473,24 @@ describe("MarkdownContent", () => {
       <ConversationContentSearchResults
         appMetaById={new Map([["codex", { accentColor: "#10b981", name: "Codex" }]])}
         contentCardColors={DEFAULT_CONVERSATION_CONTENT_CARD_COLORS}
+        includeQuestions={false}
         loading={false}
-        onCardTypeToggle={vi.fn()}
+        onCardKindToggle={vi.fn()}
         onOpenHit={vi.fn()}
+        onQuestionToggle={vi.fn()}
+        onSemanticRoleToggle={vi.fn()}
         onShowAllCardTypes={vi.fn()}
         result={{
-          contentTypes: ["answer"],
+          cardKinds: ["answer"],
+          semanticRoles: [],
+          includeQuestions: false,
           hits: [hit],
           query: "导入",
           recordKind: "session",
           totalCount: 1,
         }}
-        selectedCardTypes={["answer"]}
+        selectedCardKinds={["answer"]}
+        selectedSemanticRoles={[]}
         t={t}
       />,
     );
@@ -434,6 +503,49 @@ describe("MarkdownContent", () => {
     expect(screen.getByText("abcdef12").className).toContain("font-mono");
     expect(screen.queryByText("Session abcdef12")).toBeNull();
     expect(screen.queryByText(/abcdef123/)).toBeNull();
+  });
+
+  it("renders dynamic namespaced search facets without a frontend kind whitelist", () => {
+    const hit: ConversationSearchHit = {
+      block_id: "part-reasoning",
+      card_type: "claude-code.reasoning",
+      part_id: "part-reasoning",
+      question_id: "question-1",
+      question_index: 0,
+      question_title: "选择执行路径",
+      score: 100,
+      session: { ...sessionDetail.session, question_count: 1, turn_count: 1 },
+      snippet: "比较两个执行路径。",
+      turn_id: "turn-1",
+    };
+
+    render(
+      <ConversationContentSearchResults
+        contentCardColors={DEFAULT_CONVERSATION_CONTENT_CARD_COLORS}
+        includeQuestions={true}
+        loading={false}
+        onCardKindToggle={vi.fn()}
+        onOpenHit={vi.fn()}
+        onQuestionToggle={vi.fn()}
+        onSemanticRoleToggle={vi.fn()}
+        onShowAllCardTypes={vi.fn()}
+        result={{
+          cardKinds: ["claude-code.reasoning"],
+          semanticRoles: ["reasoning"],
+          includeQuestions: true,
+          hits: [hit],
+          query: "路径",
+          recordKind: "session",
+          totalCount: 1,
+        }}
+        selectedCardKinds={[]}
+        selectedSemanticRoles={[]}
+        t={t}
+      />,
+    );
+
+    expect(screen.getAllByText("Reasoning").length).toBeGreaterThan(0);
+    expect(screen.getByText("比较两个执行路径。")).toBeTruthy();
   });
 
   it("omits project path UI when browsing web record sessions", () => {
@@ -864,7 +976,7 @@ describe("MarkdownContent", () => {
     expect(screen.getByRole("button", { name: "收起" })).toBeTruthy();
   });
 
-  it("renders content switches as toolbar controls and cards for every supported type", () => {
+  it("renders switches only for card types available in the current content scope", () => {
     const visibility: ConversationContentVisibility = {
       answer: true,
       code: true,
@@ -874,6 +986,7 @@ describe("MarkdownContent", () => {
     };
     const filterHtml = renderToStaticMarkup(
       <ConversationContentFilter
+        availableTypes={["answer", "code", "codex.skill"]}
         onChange={vi.fn()}
         t={t}
         visibility={visibility}
@@ -892,13 +1005,50 @@ describe("MarkdownContent", () => {
       />,
     );
 
-    for (const label of ["回答文字", "工具调用", "命令执行", "代码", "执行结果"]) {
+    for (const label of ["回答文字", "代码", "Skill"]) {
       expect(filterHtml).toContain(label);
+    }
+    for (const label of ["工具调用", "命令执行", "执行结果"]) {
+      expect(filterHtml).not.toContain(label);
     }
     for (const type of Object.keys(visibility)) {
       expect(previewHtml).toContain(`data-content-type="${type}"`);
     }
     expect(previewHtml).not.toContain("回答内容显示设置");
+  });
+
+  it("derives filter types from only the cards present in the selected question", () => {
+    const types = conversationContentTypesForQuestions([{
+      ...questionDetail,
+      cards: [
+        {
+          card_id: "part-answer",
+          part_id: "part-answer",
+          adapter_id: "codex",
+          kind: "codex.answer",
+          semantic_role: "answer",
+          renderer: "markdown",
+          role: "assistant",
+          body: "Answer",
+          legacy_anchor_ids: [],
+        },
+        {
+          card_id: "part-skill",
+          part_id: "part-skill",
+          adapter_id: "codex",
+          kind: "codex.skill",
+          semantic_role: "skill",
+          renderer: "path",
+          role: "system",
+          body: "/tmp/test-skill/SKILL.md",
+          legacy_anchor_ids: [],
+        },
+      ],
+    }]);
+
+    expect(types).toEqual(["answer", "codex.skill"]);
+    expect(types).not.toContain("command");
+    expect(types).not.toContain("result");
   });
 
   it("renders question checkboxes for batch export selection", () => {
@@ -1003,6 +1153,7 @@ describe("MarkdownContent", () => {
   it("renders an export dialog that reuses content visibility controls", () => {
     const html = renderToStaticMarkup(
       <ConversationExportDialog
+        availableTypes={["answer", "code"]}
         contentCardColors={{
           answer: "#facc15",
           code: "#60a5fa",
@@ -1035,8 +1186,11 @@ describe("MarkdownContent", () => {
     expect(html).toContain("2 个问题");
     expect(html).toContain("/tmp/conversation-export");
     expect(html).toContain('aria-label="选择导出根目录"');
-    for (const label of ["回答文字", "工具调用", "命令执行", "代码", "执行结果"]) {
+    for (const label of ["回答文字", "代码"]) {
       expect(html).toContain(label);
+    }
+    for (const label of ["工具调用", "命令执行", "执行结果"]) {
+      expect(html).not.toContain(label);
     }
     expect(html).toContain("确认导出");
   });
@@ -1047,6 +1201,7 @@ describe("MarkdownContent", () => {
 
     render(
       <ConversationExportDialog
+        availableTypes={["answer", "code", "command", "result", "tool"]}
         contentCardColors={{
           answer: "#facc15",
           code: "#60a5fa",
@@ -1214,6 +1369,40 @@ function createMockLocalStorage(): Storage {
     }),
   };
 }
+
+describe("conversation navigation compatibility", () => {
+  it("resolves a legacy type anchor to the stable namespaced card id", () => {
+    const namespaced: ConversationSessionDetail = {
+      ...sessionDetail,
+      questions: [{
+        ...questionDetail,
+        cards: [{
+          adapter_id: "claude-code",
+          body: "Visible answer",
+          card_id: "part-1",
+          kind: "claude-code.answer",
+          legacy_anchor_ids: ["part-1-claude-code.answer", "part-1-answer"],
+          part_id: "part-1",
+          renderer: "markdown",
+          role: "assistant",
+          semantic_role: "answer",
+        }],
+      }],
+    };
+
+    expect(resolveConversationNavigationTarget(namespaced, {
+      blockId: "part-1-answer",
+      nonce: "legacy-anchor",
+      questionId: "question-1",
+      recordKind: "session",
+      sessionId: "session-1",
+    })).toMatchObject({
+      blockFound: true,
+      blockId: "part-1",
+      cardType: "claude-code.answer",
+    });
+  });
+});
 
 const questionDetail: ConversationQuestionDetail = {
   question: {

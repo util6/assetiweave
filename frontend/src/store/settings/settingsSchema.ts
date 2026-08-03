@@ -26,8 +26,6 @@ export type SettingsPanelId =
   | "general.storage"
   | "workspace.menu"
   | "workspace.shortcuts"
-  | "workspace.deployment"
-  | "workspace.notifications"
   | "conversations.sessions"
   | "conversations.translation"
   | "conversations.adapters";
@@ -135,13 +133,7 @@ export interface MemorySettings {
   minSessions: number;
 }
 
-export interface ConversationContentCardColorSettings {
-  answer: string;
-  code: string;
-  command: string;
-  result: string;
-  tool: string;
-}
+export type ConversationContentCardColorSettings = Record<string, string>;
 
 export interface DataBackupSettings {
   customDirectory: string;
@@ -164,13 +156,13 @@ export const DEFAULT_CONVERSATION_CONTENT_CARD_COLORS: ConversationContentCardCo
 export interface AppSettings {
   aiRuntime: AiRuntimeSettings;
   columnMinWidth: number;
-  confirmBeforeDeploy: boolean;
+
   conversationRuntimeOverrides: ConversationRuntimeOverrideSettings;
   conversationTranslation: ConversationTranslationSettings;
   dataBackup: DataBackupSettings;
   density: InterfaceDensity;
   memory: MemorySettings;
-  reduceMotion: boolean;
+
   showStartupNotification: boolean;
   theme: ThemeId;
   typography: TypographySettings;
@@ -190,7 +182,7 @@ export const defaultSettings: AppSettings = {
     model: "",
   },
   columnMinWidth: DEFAULT_COLUMN_MIN_WIDTH,
-  confirmBeforeDeploy: true,
+
   conversationRuntimeOverrides: {
     bash: "",
     node: "",
@@ -205,7 +197,7 @@ export const defaultSettings: AppSettings = {
     minHours: DEFAULT_AUTO_DREAM_MIN_HOURS,
     minSessions: DEFAULT_AUTO_DREAM_MIN_SESSIONS,
   },
-  reduceMotion: false,
+
   showStartupNotification: true,
   theme: "promptStudio",
   typography: {
@@ -260,10 +252,7 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
   return {
     aiRuntime,
     columnMinWidth: normalizeColumnMinWidth(stored.columnMinWidth),
-    confirmBeforeDeploy:
-      typeof stored.confirmBeforeDeploy === "boolean"
-        ? stored.confirmBeforeDeploy
-        : defaultSettings.confirmBeforeDeploy,
+
     dataBackup: normalizeDataBackupSettings(stored.dataBackup),
     conversationRuntimeOverrides: normalizeConversationRuntimeOverrides(
       stored.conversationRuntimeOverrides,
@@ -271,10 +260,7 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
     conversationTranslation,
     density: stored.density === "compact" ? "compact" : defaultSettings.density,
     memory: normalizeMemorySettings(stored.memory),
-    reduceMotion:
-      typeof stored.reduceMotion === "boolean"
-        ? stored.reduceMotion
-        : defaultSettings.reduceMotion,
+
     showStartupNotification:
       typeof stored.showStartupNotification === "boolean"
         ? stored.showStartupNotification
@@ -470,14 +456,14 @@ const legacyTranslationTargetLanguageNames: Record<string, string> = {
 };
 
 function normalizeContentCardColors(value: unknown): ConversationContentCardColorSettings {
-  const stored = isRecord(value) ? (value as Partial<ConversationContentCardColorSettings>) : {};
-  return {
-    answer: normalizeHexColor(stored.answer, defaultSettings.conversations.contentCardColors.answer),
-    code: normalizeHexColor(stored.code, defaultSettings.conversations.contentCardColors.code),
-    command: normalizeHexColor(stored.command, defaultSettings.conversations.contentCardColors.command),
-    result: normalizeHexColor(stored.result, defaultSettings.conversations.contentCardColors.result),
-    tool: normalizeHexColor(stored.tool, defaultSettings.conversations.contentCardColors.tool),
-  };
+  const normalized = { ...defaultSettings.conversations.contentCardColors };
+  if (!isRecord(value)) return normalized;
+  for (const [kind, color] of Object.entries(value)) {
+    if (!/^[a-z0-9][a-z0-9._-]{0,127}$/.test(kind)) continue;
+    if (typeof color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(color.trim())) continue;
+    normalized[kind] = color.trim().toLowerCase();
+  }
+  return normalized;
 }
 
 function normalizeHexColor(value: unknown, fallback: string) {

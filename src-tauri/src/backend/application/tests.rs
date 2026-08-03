@@ -390,6 +390,8 @@ fn upsert_conversation_export_fixture(
         protocol_version: Some(1),
         capabilities: adapter_capabilities,
         input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
         created_at: now.clone(),
         updated_at: now.clone(),
     };
@@ -430,6 +432,8 @@ fn upsert_conversation_export_fixture(
                 cwd: None,
                 status: None,
                 exit_code: None,
+                source_execution_id: None,
+                content_card: None,
                 metadata_json: Some(
                     r#"{"content_card":{"type":"answer","format":"markdown"}}"#.to_string(),
                 ),
@@ -517,6 +521,81 @@ fn load_export_fixture_adapter(service: &AppService, session_id: &str) -> Conver
 
 #[cfg(unix)]
 #[test]
+fn conversation_blocks_list_locators_and_get_selected_content_for_each_record_kind() {
+    for (web_record, record_kind) in [(false, "session"), (true, "web")] {
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-blocks-{record_kind}-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create conversation block fixture root");
+        let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+        let session_id =
+            upsert_conversation_export_fixture(&service, &root, Vec::new(), None, web_record);
+        let search = service
+            .search_conversation_records(ConversationSearchParams {
+                record_kind: Some(record_kind.to_string()),
+                adapter_id: None,
+                source_id: None,
+                project_path: None,
+                query: session_id,
+                content_types: vec![crate::backend::dto::ConversationSearchCardType::question()],
+                card_kinds: Vec::new(),
+                semantic_roles: Vec::new(),
+                include_questions: Some(true),
+                include_cards: Some(false),
+                since: None,
+                until: None,
+                timeline: false,
+                limit: Some(5),
+                offset: Some(0),
+                search_options: None,
+            })
+            .expect("locate fixture question");
+        let question_id = search.hits[0].question_id.clone();
+
+        let blocks = service
+            .list_conversation_blocks(ConversationBlockListParams { question_id })
+            .expect("list block locators");
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks.iter().all(|block| block.record_kind == record_kind));
+        assert!(!serde_json::to_string(&blocks)
+            .expect("serialize locators")
+            .contains("Rust fallback should not appear"));
+
+        let question_block = blocks
+            .iter()
+            .find(|block| block.kind == "question")
+            .expect("question block");
+        let answer_block = blocks
+            .iter()
+            .find(|block| block.semantic_role.as_deref() == Some("answer"))
+            .expect("answer block");
+        assert_eq!(question_block.content_length, "Export this".chars().count());
+        assert_eq!(
+            answer_block.content_length,
+            "Rust fallback should not appear".chars().count()
+        );
+
+        let question = service
+            .get_conversation_block(ConversationBlockGetParams {
+                block_id: question_block.block_id.clone(),
+            })
+            .expect("load only the question block");
+        assert_eq!(question.content, "Export this");
+
+        let answer = service
+            .get_conversation_block(ConversationBlockGetParams {
+                block_id: answer_block.block_id.clone(),
+            })
+            .expect("load only the answer block");
+        assert_eq!(answer.content, "Rust fallback should not appear");
+        assert_eq!(answer.locator.kind, "answer");
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn conversation_session_export_uses_adapter_markdown_formatter() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-export-plugin-{}",
@@ -559,6 +638,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         fs::read_to_string(path).expect("read exported file"),
         "adapter markdown export"
     );
+    assert_eq!(result["legacy_adapter_exporter_used"], true);
     drop(service);
     fs::remove_dir_all(root).ok();
 }
@@ -608,6 +688,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
     assert_eq!(result["bytes"], "dry run markdown".len());
     assert!(ran_marker.exists());
     assert!(!path.exists());
+    assert_eq!(result["legacy_adapter_exporter_used"], true);
     drop(service);
     fs::remove_dir_all(root).ok();
 }
@@ -662,7 +743,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
 
 #[cfg(unix)]
 #[test]
-fn conversation_session_export_requires_adapter_markdown_capability() {
+fn conversation_session_export_falls_back_to_core_without_adapter_markdown_capability() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-export-no-cap-{}",
         Uuid::new_v4()
@@ -678,7 +759,7 @@ fn conversation_session_export_requires_adapter_markdown_capability() {
         false,
     );
 
-    let error = service
+    let result = service
         .export_conversation_session(ConversationSessionExportParams {
             session_id,
             output_root: root.join("exports").to_string_lossy().to_string(),
@@ -686,10 +767,190 @@ fn conversation_session_export_requires_adapter_markdown_capability() {
             content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
             dry_run: true,
         })
-        .expect_err("missing export_markdown should fail");
+        .expect("Core exporter should handle adapters without export_markdown");
 
-    assert!(error.contains("export_markdown"));
-    assert!(error.contains("fixture-export"));
+    assert_eq!(result["dry_run"], true);
+    assert_eq!(result["written"], false);
+    assert_eq!(result["legacy_adapter_exporter_used"], false);
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn card_contract_v1_export_uses_core_and_preserves_reasoning() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-export-v1-reasoning-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create test root");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let script = write_executable_script(
+        &root,
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf 'ran' > "$0.ran"
+printf '%s\n' '{"type":"item","item":{"kind":"markdown_export","content":"legacy exporter","relative_path":"plugin/export.md"}}'
+printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
+"#,
+    );
+    let marker = script.with_file_name("adapter.sh.ran");
+    let session_id = upsert_conversation_export_fixture(
+        &service,
+        &root,
+        vec!["export_markdown".to_string()],
+        Some(&script),
+        false,
+    );
+    let adapter = load_export_fixture_adapter(&service, &session_id);
+    let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
+    service
+        .db
+        .block_on(async move {
+            sqlx::query(
+                "UPDATE conversation_adapters SET card_contract_version = 1, card_kinds_json = ?1 WHERE id = ?2",
+            )
+            .bind(r#"[{"id":"fixture-export.reasoning","semantic_role":"reasoning","label":"Reasoning","default_renderer":"markdown","allowed_renderers":["markdown"],"icon_hint":"brain"},{"id":"fixture-export.trace","semantic_role":"tool","label":"Trace","default_renderer":"json","allowed_renderers":["json"],"icon_hint":"braces"}]"#)
+            .bind(&adapter.id)
+            .execute(&pool)
+            .await
+            .map_err(|error| error.to_string())?;
+            sqlx::query(
+                "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text, language, command, cwd, status, exit_code, metadata_json, translated_text, content_card_json) SELECT tenant_id, 'fixture-json-part', turn_id, 1, role, 'text', '{\"step\":\"inspect\"}', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{\"schema_version\":1,\"kind\":\"fixture-export.trace\",\"renderer\":\"json\"}' FROM conversation_parts WHERE tenant_id = ?1 LIMIT 1",
+            )
+            .bind(&tenant_id)
+            .execute(&pool)
+            .await
+            .map_err(|error| error.to_string())?;
+            sqlx::query(
+                "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text, language, command, cwd, status, exit_code, metadata_json, translated_text, content_card_json) SELECT tenant_id, 'fixture-history-part', turn_id, 2, role, 'text', 'Future history remains visible', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{\"schema_version\":1,\"kind\":\"future.history-note\",\"renderer\":\"plain\"}' FROM conversation_parts WHERE tenant_id = ?1 LIMIT 1",
+            )
+            .bind(&tenant_id)
+            .execute(&pool)
+            .await
+            .map_err(|error| error.to_string())?;
+            sqlx::query(
+                "UPDATE conversation_parts SET text = 'Compare both paths', metadata_json = '{\"source_type\":\"thinking\"}', content_card_json = '{\"schema_version\":1,\"kind\":\"fixture-export.reasoning\",\"renderer\":\"markdown\"}' WHERE tenant_id = ?1 AND id NOT IN ('fixture-json-part', 'fixture-history-part')",
+            )
+            .bind(tenant_id)
+            .execute(&pool)
+            .await
+            .map_err(|error| error.to_string())?;
+            AppResult::Ok(())
+        })
+        .expect("promote fixture to Card Contract v1");
+    let output_root = root.join("exports");
+
+    let result = service
+        .export_conversation_session(ConversationSessionExportParams {
+            session_id,
+            output_root: output_root.to_string_lossy().to_string(),
+            question_ids: Vec::new(),
+            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            dry_run: false,
+        })
+        .expect("export v1 reasoning through Core");
+
+    let path = PathBuf::from(result["path"].as_str().expect("export path"));
+    let markdown = fs::read_to_string(path).expect("read Core export");
+    assert!(markdown.contains("### reasoning"));
+    assert!(markdown.contains("Compare both paths"));
+    assert!(markdown.contains("### trace"));
+    assert!(markdown.contains("```json"));
+    assert!(markdown.contains("\"step\":\"inspect\""));
+    assert!(markdown.contains("### history note"));
+    assert!(markdown.contains("Future history remains visible"));
+    assert_eq!(result["legacy_adapter_exporter_used"], false);
+    assert!(
+        !marker.exists(),
+        "v1 export must not invoke the legacy exporter"
+    );
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn card_contract_v1_web_and_dry_run_exports_share_the_core_path() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-web-export-v1-reasoning-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create test root");
+    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let script = write_executable_script(
+        &root,
+        "adapter.sh",
+        "#!/bin/sh\ncat >/dev/null\nprintf 'ran' > \"$0.ran\"\n",
+    );
+    let marker = script.with_file_name("adapter.sh.ran");
+    let session_id = upsert_conversation_export_fixture(
+        &service,
+        &root,
+        vec!["export_markdown".to_string()],
+        Some(&script),
+        true,
+    );
+    let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
+    let lookup_session_id = session_id.clone();
+    service
+        .db
+        .block_on(async move {
+            let detail = crate::backend::store::load_web_record_session_detail_sqlx(
+                &pool,
+                &tenant_id,
+                &lookup_session_id,
+            )
+            .await?;
+            sqlx::query(
+                "UPDATE conversation_adapters SET card_contract_version = 1, card_kinds_json = ?1 WHERE tenant_id = ?2 AND id = ?3",
+            )
+            .bind(r#"[{"id":"fixture-export.reasoning","semantic_role":"reasoning","label":"Reasoning","default_renderer":"markdown","allowed_renderers":["markdown"]}]"#)
+            .bind(&tenant_id)
+            .bind(&detail.session.adapter_id)
+            .execute(&pool)
+            .await
+            .map_err(|error| error.to_string())?;
+            sqlx::query(
+                "UPDATE web_record_parts SET text = 'Web reasoning survives', metadata_json = NULL, content_card_json = '{\"schema_version\":1,\"kind\":\"fixture-export.reasoning\",\"renderer\":\"markdown\"}' WHERE tenant_id = ?1",
+            )
+            .bind(tenant_id)
+            .execute(&pool)
+            .await
+            .map_err(|error| error.to_string())?;
+            AppResult::Ok(())
+        })
+        .expect("promote web fixture to v1");
+    let output_root = root.join("exports");
+
+    let dry_run = service
+        .export_web_record_session(ConversationSessionExportParams {
+            session_id: session_id.clone(),
+            output_root: output_root.to_string_lossy().to_string(),
+            question_ids: Vec::new(),
+            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            dry_run: true,
+        })
+        .expect("dry-run web export through Core");
+    assert_eq!(dry_run["legacy_adapter_exporter_used"], false);
+    assert!(!marker.exists());
+
+    let written = service
+        .export_web_record_session(ConversationSessionExportParams {
+            session_id,
+            output_root: output_root.to_string_lossy().to_string(),
+            question_ids: Vec::new(),
+            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            dry_run: false,
+        })
+        .expect("write web export through Core");
+    let markdown = fs::read_to_string(written["path"].as_str().unwrap()).unwrap();
+    assert!(markdown.contains("Web reasoning survives"));
+    assert!(!marker.exists());
     drop(service);
     fs::remove_dir_all(root).ok();
 }
@@ -992,6 +1253,8 @@ printf '%s\n' '{"type":"complete","item":{}}'
             protocol_version: Some(1),
             capabilities: vec!["probe".to_string(), "read_session".to_string()],
             input_kinds: vec![ConversationSourceKind::Directory],
+            card_contract_version: None,
+            card_kinds: Vec::new(),
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         };
@@ -2426,6 +2689,28 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
     fs::create_dir_all(&root).expect("create temp search index query directory");
     let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
     upsert_conversation_export_fixture(&service, &root, vec![], None, false);
+    let legacy = service
+        .search_conversation_records(ConversationSearchParams {
+            record_kind: Some("session".to_string()),
+            adapter_id: None,
+            source_id: None,
+            project_path: None,
+            query: "Rust fallback".to_string(),
+            content_types: vec![crate::backend::dto::ConversationSearchCardType::answer()],
+            card_kinds: Vec::new(),
+            semantic_roles: Vec::new(),
+            include_questions: None,
+            include_cards: None,
+            since: None,
+            until: None,
+            timeline: false,
+            limit: Some(20),
+            offset: Some(0),
+            search_options: None,
+        })
+        .expect("search SQLite projection before the derived index exists");
+    assert_eq!(legacy.backend, "legacy_scan");
+    assert_eq!(legacy.total_count, 1);
     let report = service
         .rebuild_conversation_search_index()
         .expect("rebuild conversation search index");
@@ -2438,7 +2723,11 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
             source_id: None,
             project_path: None,
             query: "Rust fallback".to_string(),
-            content_types: vec![crate::backend::dto::ConversationSearchCardType::Answer],
+            content_types: vec![crate::backend::dto::ConversationSearchCardType::answer()],
+            card_kinds: Vec::new(),
+            semantic_roles: Vec::new(),
+            include_questions: None,
+            include_cards: None,
             since: None,
             until: None,
             timeline: false,
@@ -2450,9 +2739,12 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
 
     assert_eq!(result.backend, "tantivy");
     assert_eq!(result.total_count, 1);
+    assert_eq!(result.hits[0].part_id, legacy.hits[0].part_id);
+    assert_eq!(result.hits[0].card_type, legacy.hits[0].card_type);
+    assert_eq!(result.hits[0].snippet, legacy.hits[0].snippet);
     assert_eq!(
         result.hits[0].card_type,
-        crate::backend::dto::ConversationSearchCardType::Answer
+        crate::backend::dto::ConversationSearchCardType::answer()
     );
     assert!(result.hits[0].snippet.contains("Rust fallback"));
     assert_eq!(
@@ -2467,6 +2759,34 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
         .as_ref()
         .is_some_and(|segments| segments.iter().any(|segment| segment.matched)));
 
+    let detail = service
+        .get_conversation_question(ConversationQuestionGetParams {
+            question_id: result.hits[0].question_id.clone(),
+        })
+        .expect("load the same persisted Part through the detail DTO");
+    let part_id = result.hits[0].part_id.as_deref().expect("answer Part id");
+    let card = detail
+        .cards
+        .iter()
+        .find(|card| card.part_id == part_id)
+        .expect("detail Card for indexed Part");
+    assert_eq!(card.kind, result.hits[0].card_type.as_str());
+    assert_eq!(card.semantic_role.as_deref(), Some("answer"));
+    assert_eq!(card.body, result.hits[0].snippet);
+    let memory_card = super::memory_recall::recall_card_projection_for_test(&detail)
+        .into_iter()
+        .find(|(candidate_part_id, _, _)| candidate_part_id == part_id)
+        .expect("Memory evidence for the same Part");
+    assert_eq!(memory_card.1, card.kind);
+    assert_eq!(memory_card.2, card.body);
+    assert_eq!(
+        result
+            .semantic_role_counts
+            .as_ref()
+            .and_then(|counts| counts.get("answer")),
+        Some(&1)
+    );
+
     let session_fragment =
         crate::backend::models::conversation_id_fragment(&result.hits[0].session.session.id);
     let id_result = service
@@ -2476,7 +2796,11 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
             source_id: None,
             project_path: None,
             query: session_fragment,
-            content_types: vec![crate::backend::dto::ConversationSearchCardType::Answer],
+            content_types: vec![crate::backend::dto::ConversationSearchCardType::answer()],
+            card_kinds: Vec::new(),
+            semantic_roles: Vec::new(),
+            include_questions: None,
+            include_cards: None,
             since: None,
             until: None,
             timeline: false,
@@ -2485,7 +2809,7 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
             search_options: None,
         })
         .expect("search rebuilt conversation index by session id fragment");
-    assert_eq!(id_result.backend, "tantivy");
+    assert_eq!(id_result.backend, "id_lookup");
     assert_eq!(id_result.total_count, 1);
     assert!(id_result.hits[0].snippet.starts_with("Rust fallback"));
     assert!(id_result.hits[0].highlight_segments.is_none());
@@ -2504,7 +2828,11 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
             source_id: None,
             project_path: None,
             query: "Rust fallback".to_string(),
-            content_types: vec![crate::backend::dto::ConversationSearchCardType::Answer],
+            content_types: vec![crate::backend::dto::ConversationSearchCardType::answer()],
+            card_kinds: Vec::new(),
+            semantic_roles: Vec::new(),
+            include_questions: None,
+            include_cards: None,
             since: None,
             until: None,
             timeline: false,
@@ -2520,6 +2848,161 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
             .expect("load stale status")
             .health,
         "stale"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_history() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-recent-incremental-search-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create recent incremental search root");
+    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let adapter = ConversationAdapter {
+        id: "recent-incremental-adapter".to_string(),
+        name: "Recent incremental adapter".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: None,
+        executable_path: None,
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(1),
+        capabilities: Vec::new(),
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+    let source = ConversationSource {
+        id: "recent-incremental-source".to_string(),
+        adapter_id: adapter.id.clone(),
+        name: "Recent incremental source".to_string(),
+        kind: ConversationSourceKind::Directory,
+        location: root.to_string_lossy().to_string(),
+        config_json: None,
+        enabled: true,
+        last_synced_at: None,
+        last_sync_status: None,
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+    let session =
+        |external_id: &str, fingerprint: &str, answer: &str| NormalizedConversationSession {
+            external_id: external_id.to_string(),
+            title: Some(format!("{external_id} title")),
+            project_path: Some(root.join("project").to_string_lossy().to_string()),
+            started_at: Some("2025-01-01T00:00:00Z".to_string()),
+            updated_at: Some("2025-01-01T00:00:00Z".to_string()),
+            source_locator: None,
+            source_fingerprint: Some(fingerprint.to_string()),
+            turns: vec![NormalizedConversationTurn {
+                external_id: format!("{external_id}-turn"),
+                turn_index: 0,
+                user_text: "How should we handle recall?".to_string(),
+                title: None,
+                started_at: None,
+                ended_at: None,
+                parts: vec![NormalizedConversationPart {
+                    role: ConversationPartRole::Assistant,
+                    kind: ConversationPartKind::Text,
+                    text: Some(answer.to_string()),
+                    language: None,
+                    command: None,
+                    cwd: None,
+                    status: None,
+                    exit_code: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: Some(
+                        r#"{"content_card":{"type":"answer","format":"markdown"}}"#.to_string(),
+                    ),
+                }],
+            }],
+        };
+    let old_changed = session(
+        "old-changed",
+        "v1",
+        "Deep recall keeps topic context in its original answer.",
+    );
+    let unchanged = session(
+        "unchanged",
+        "v1",
+        "Deep recall also has a historical answer that remains unchanged.",
+    );
+    let updated_old = session(
+        "old-changed",
+        "v2",
+        "Deep recall now prioritizes recent incremental sync evidence.",
+    );
+    let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
+    service
+        .db
+        .block_on(async move {
+            crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &adapter)
+                .await?;
+            crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source)
+                .await?;
+            crate::backend::store::import_conversation_sessions_sqlx(
+                &pool,
+                &tenant_id,
+                &source,
+                &[old_changed, unchanged.clone()],
+                false,
+            )
+            .await?;
+            crate::backend::store::import_conversation_sessions_sqlx(
+                &pool,
+                &tenant_id,
+                &source,
+                &[updated_old, unchanged],
+                false,
+            )
+            .await
+        })
+        .expect("persist initial and incremental conversation syncs");
+
+    let result = service
+        .search_recent_incremental_conversation_records(ConversationIncrementalSearchParams {
+            record_kind: Some("session".to_string()),
+            adapter_id: None,
+            source_id: None,
+            project_path: None,
+            query: "Deep recall".to_string(),
+            content_types: vec![crate::backend::dto::ConversationSearchCardType::answer()],
+            card_kinds: Vec::new(),
+            semantic_roles: Vec::new(),
+            include_questions: Some(false),
+            include_cards: Some(true),
+            recent_runs: Some(1),
+            limit: Some(20),
+            offset: Some(0),
+            search_options: None,
+        })
+        .expect("search the latest incremental delta");
+
+    assert_eq!(result.backend, "incremental_delta_scan");
+    assert_eq!(result.total_count, 1);
+    assert_eq!(result.hits[0].session.session.external_id, "old-changed");
+    assert_eq!(
+        result.hits[0]
+            .incremental
+            .as_ref()
+            .map(|value| value.change_kind.as_str()),
+        Some("updated")
+    );
+    assert_eq!(
+        result
+            .incremental
+            .as_ref()
+            .map(|value| value.changed_session_count),
+        Some(1)
     );
     let _ = fs::remove_dir_all(root);
 }

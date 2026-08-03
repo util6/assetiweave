@@ -98,6 +98,29 @@ describe("conversation services", () => {
     });
   });
 
+  it("requests a full conversation reparse explicitly", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValueOnce({
+      id: "sync-full",
+      status: "running",
+      source_id: null,
+      adapter_id: null,
+      record_kind: null,
+      mode: "full",
+      dry_run: false,
+      started_at: "2026-07-27T00:00:00Z",
+      finished_at: null,
+      result: null,
+      error: null,
+    });
+
+    await syncConversations({ mode: "full", record_kind: null, dry_run: false });
+
+    expect(invokeMock).toHaveBeenCalledWith("sync_conversations", {
+      params: { mode: "full", record_kind: null, dry_run: false },
+    });
+  });
+
   it("loads the conversation script catalog with an optional catalog URL", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
     invokeMock.mockResolvedValueOnce([]);
@@ -462,6 +485,8 @@ describe("conversation services", () => {
         record_kind: "session",
         project_path: "/Users/util6/code-space/assetiweave",
         content_types: ["question", "answer"],
+        card_kinds: [],
+        semantic_roles: [],
         since: "2026-01-01",
         until: "2026-06-01T00:00:00Z",
         timeline: true,
@@ -477,6 +502,8 @@ describe("conversation services", () => {
         record_kind: "session",
         project_path: "/Users/util6/code-space/assetiweave",
         content_types: ["question", "answer"],
+        card_kinds: [],
+        semantic_roles: [],
         since: "2026-01-01",
         until: "2026-06-01T00:00:00Z",
         timeline: true,

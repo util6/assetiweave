@@ -1474,6 +1474,29 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli conversation search --query <query>")
     ),
     command!(
+        "conversation.search.incremental",
+        "conversation.search.incremental",
+        "Search content cards changed by the most recent incremental conversation sync runs",
+        Read,
+        Friendly,
+        false,
+        crate::backend::application::ConversationIncrementalSearchParams,
+        Service => |service, params| service.search_recent_incremental_conversation_records(params),
+        &[
+            param!("record_kind", "Conversation record kind", ["recordKind"]),
+            param!("adapter_id", "Optional adapter filter", ["adapterId"]),
+            param!("source_id", "Optional source filter", ["sourceId"]),
+            param!("project_path", "Optional project path filter", ["projectPath"]),
+            param!("query", "Search query"),
+            param!("content_types", "Content card types", ["contentTypes"]),
+            param!("recent_runs", "Most recent delta-bearing sync runs to inspect", ["recentRuns"]),
+            param!("limit", "Maximum number of hits"),
+            param!("offset", "Pagination offset"),
+            param!("search_options", "Optional retrieval settings", ["searchOptions"]),
+        ],
+        Some("assetiweave-cli conversation search incremental --query <query>")
+    ),
+    command!(
         "conversation.search.index.status",
         "conversation.search.index.status",
         "Get the local conversation search index status",
@@ -1619,6 +1642,30 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Service => |service, params| service.get_conversation_question(params),
         &[param!("question_id", "Question identifier", ["questionId"])],
         Some("assetiweave-cli conversation question get <question-id>")
+    ),
+    command!(
+        "conversation.block.list",
+        "conversation.block.list",
+        "List content block locators for one question without reading block content",
+        Read,
+        Friendly,
+        false,
+        crate::backend::application::ConversationBlockListParams,
+        Service => |service, params| service.list_conversation_blocks(params),
+        &[param!("question_id", "Question identifier", ["questionId"])],
+        Some("assetiweave-cli conversation block list <question-id>")
+    ),
+    command!(
+        "conversation.block.get",
+        "conversation.block.get",
+        "Get exact content for one conversation block",
+        Read,
+        Friendly,
+        false,
+        crate::backend::application::ConversationBlockGetParams,
+        Service => |service, params| service.get_conversation_block(params),
+        &[param!("block_id", "Block identifier", ["blockId"])],
+        Some("assetiweave-cli conversation block get <block-id>")
     ),
     command!(
         "conversation.question.merge",
@@ -3377,6 +3424,29 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "search_recent_incremental_conversation_records",
+        "conversation.search.incremental",
+        "Search content cards changed by the most recent incremental conversation sync runs",
+        Read,
+        App,
+        false,
+        crate::backend::application::ConversationIncrementalSearchParams,
+        Service => |service, params| service.search_recent_incremental_conversation_records(params),
+        &[
+            param!("record_kind", "Conversation record kind", ["recordKind"]),
+            param!("adapter_id", "Optional adapter filter", ["adapterId"]),
+            param!("source_id", "Optional source filter", ["sourceId"]),
+            param!("project_path", "Optional project path filter", ["projectPath"]),
+            param!("query", "Search query"),
+            param!("content_types", "Content card types", ["contentTypes"]),
+            param!("recent_runs", "Most recent delta-bearing sync runs to inspect", ["recentRuns"]),
+            param!("limit", "Maximum number of hits"),
+            param!("offset", "Pagination offset"),
+            param!("search_options", "Optional retrieval settings", ["searchOptions"]),
+        ],
+        None
+    ),
+    command!(
         "get_conversation_search_index_status",
         "conversation.search.index.status",
         "Get the local conversation search index status",
@@ -3465,6 +3535,30 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         crate::backend::application::ConversationQuestionGetParams,
         Service => |service, params| service.get_conversation_question(params),
         &[param!("question_id", "Question identifier", ["questionId"])],
+        None
+    ),
+    command!(
+        "list_conversation_blocks",
+        "conversation.block.list",
+        "List content block locators for one question without reading block content",
+        Read,
+        App,
+        false,
+        crate::backend::application::ConversationBlockListParams,
+        Service => |service, params| service.list_conversation_blocks(params),
+        &[param!("question_id", "Question identifier", ["questionId"])],
+        None
+    ),
+    command!(
+        "get_conversation_block",
+        "conversation.block.get",
+        "Get exact content for one conversation block",
+        Read,
+        App,
+        false,
+        crate::backend::application::ConversationBlockGetParams,
+        Service => |service, params| service.get_conversation_block(params),
+        &[param!("block_id", "Block identifier", ["blockId"])],
         None
     ),
     command!(

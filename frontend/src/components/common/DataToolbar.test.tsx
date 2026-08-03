@@ -161,6 +161,28 @@ describe("DataToolbar", () => {
     expect(onChange).toHaveBeenCalledWith("agent");
   });
 
+  it("commits recognized short IDs without waiting for the debounce timer", () => {
+    vi.useFakeTimers();
+    const onChange = vi.fn();
+
+    render(
+      <DebouncedToolbarSearch
+        commitDelayMs={700}
+        commitImmediatelyWhen={(value) => /^[0-9a-f]{8}$/i.test(value.trim())}
+        onChange={onChange}
+        placeholder="Search conversations..."
+        value=""
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Search conversations..."), {
+      target: { value: "ABCDEF01" },
+    });
+
+    expect(onChange).toHaveBeenCalledWith("ABCDEF01");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("renders custom toolbar dropdown triggers instead of native select controls", () => {
     const html = renderToStaticMarkup(
       <DataToolbar

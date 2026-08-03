@@ -3,27 +3,29 @@ import {
   createSource,
   deleteSource as deleteSourceById,
   listSkillSources,
+  listSourceAssets,
   revealPath,
   scanSkillSources,
   updateSource,
 } from "../../services/catalog";
 import type { Asset, Source, SourceInput } from "../../types";
 
-export function useSourcesController(assets: Asset[], onCatalogRefresh?: (assets?: Asset[]) => Promise<void>) {
+export function useSourcesController(onCatalogRefresh?: (assets?: Asset[]) => Promise<void>) {
   const [sources, setSources] = useState<Source[]>([]);
+  const [sourceAssets, setSourceAssets] = useState<Asset[]>([]);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    void refreshSources();
+    void Promise.all([refreshSources(), refreshSourceAssets()]);
   }, []);
 
   const assetCounts = useMemo(() => {
-    return assets.reduce<Record<string, number>>((counts, asset) => {
+    return sourceAssets.reduce<Record<string, number>>((counts, asset) => {
       counts[asset.source_id] = (counts[asset.source_id] ?? 0) + 1;
       return counts;
     }, {});
-  }, [assets]);
+  }, [sourceAssets]);
 
   const filteredSources = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -61,6 +63,10 @@ export function useSourcesController(assets: Asset[], onCatalogRefresh?: (assets
     setSources(await listSkillSources());
   }
 
+  async function refreshSourceAssets() {
+    setSourceAssets(await listSourceAssets("skill"));
+  }
+
   async function toggleSource(source: Source) {
     setBusy(true);
     try {
@@ -76,6 +82,7 @@ export function useSourcesController(assets: Asset[], onCatalogRefresh?: (assets
     try {
       await deleteSourceById(source.id);
       setSources((currentSources) => currentSources.filter((candidate) => candidate.id !== source.id));
+      setSourceAssets((currentAssets) => currentAssets.filter((candidate) => candidate.source_id !== source.id));
       await onCatalogRefresh?.();
     } finally {
       setBusy(false);
@@ -90,7 +97,7 @@ export function useSourcesController(assets: Asset[], onCatalogRefresh?: (assets
       if (saved.enabled && saved.last_scan_status !== "preview") {
         const scannedAssets = await scanSkillSources();
         await onCatalogRefresh?.(scannedAssets);
-        await refreshSources();
+        await Promise.all([refreshSources(), refreshSourceAssets()]);
       } else {
         await onCatalogRefresh?.();
       }
@@ -107,7 +114,7 @@ export function useSourcesController(assets: Asset[], onCatalogRefresh?: (assets
       if (saved.enabled && saved.last_scan_status !== "preview") {
         const scannedAssets = await scanSkillSources();
         await onCatalogRefresh?.(scannedAssets);
-        await refreshSources();
+        await Promise.all([refreshSources(), refreshSourceAssets()]);
       } else {
         await onCatalogRefresh?.();
       }
@@ -121,13 +128,15 @@ export function useSourcesController(assets: Asset[], onCatalogRefresh?: (assets
     try {
       const scannedAssets = await scanSkillSources();
       await onCatalogRefresh?.(scannedAssets);
-      await refreshSources();
+      await Promise.all([refreshSources(), refreshSourceAssets()]);
     } finally {
       setBusy(false);
     }
   }
 
   return {
+    applySourceAssetUpdate: (asset: Asset) =>
+      setSourceAssets((currentAssets) => currentAssets.map((candidate) => (candidate.id === asset.id ? asset : candidate))),
     assetCounts,
     busy,
     filteredSources,
@@ -140,8 +149,11 @@ export function useSourcesController(assets: Asset[], onCatalogRefresh?: (assets
     scanAllSources,
     setQuery,
     sources,
+    sourceAssets,
     summary,
     toggleSource,
+    removeSourceAsset: (assetId: string) =>
+      setSourceAssets((currentAssets) => currentAssets.filter((asset) => asset.id !== assetId)),
   };
 }
 

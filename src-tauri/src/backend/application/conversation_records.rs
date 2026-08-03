@@ -1,18 +1,5 @@
 use super::prelude::*;
 
-fn conversation_search_card_type_label(
-    card_type: &crate::backend::dto::ConversationSearchCardType,
-) -> &'static str {
-    match card_type {
-        crate::backend::dto::ConversationSearchCardType::Question => "question",
-        crate::backend::dto::ConversationSearchCardType::Answer => "answer",
-        crate::backend::dto::ConversationSearchCardType::Tool => "tool",
-        crate::backend::dto::ConversationSearchCardType::Command => "command",
-        crate::backend::dto::ConversationSearchCardType::Code => "code",
-        crate::backend::dto::ConversationSearchCardType::Result => "result",
-    }
-}
-
 impl AppService {
     pub(crate) fn list_conversation_sessions(
         &self,
@@ -25,17 +12,35 @@ impl AppService {
         let query = params.query;
         let limit = params.limit.unwrap_or(50).clamp(1, 500);
         let offset = params.offset.unwrap_or(0);
+        let direct_id_query = query.as_deref().is_some_and(|value| {
+            value.trim().len() == 8
+                && crate::backend::models::conversation_id_search_term(value).is_some()
+        });
         self.db.block_on(async move {
-            crate::backend::store::list_conversation_sessions_sqlx(
-                &pool,
-                &tenant_id,
-                adapter_id.as_deref(),
-                source_id.as_deref(),
-                query.as_deref(),
-                limit,
-                offset,
-            )
-            .await
+            if direct_id_query {
+                crate::backend::store::list_conversation_sessions_by_id_fragment_sqlx(
+                    &pool,
+                    &tenant_id,
+                    crate::backend::dto::ConversationRecordKind::Session,
+                    adapter_id.as_deref(),
+                    source_id.as_deref(),
+                    query.as_deref().unwrap_or_default(),
+                    limit,
+                    offset,
+                )
+                .await
+            } else {
+                crate::backend::store::list_conversation_sessions_sqlx(
+                    &pool,
+                    &tenant_id,
+                    adapter_id.as_deref(),
+                    source_id.as_deref(),
+                    query.as_deref(),
+                    limit,
+                    offset,
+                )
+                .await
+            }
         })
     }
 
@@ -72,17 +77,35 @@ impl AppService {
         let query = params.query;
         let limit = params.limit.unwrap_or(50).clamp(1, 500);
         let offset = params.offset.unwrap_or(0);
+        let direct_id_query = query.as_deref().is_some_and(|value| {
+            value.trim().len() == 8
+                && crate::backend::models::conversation_id_search_term(value).is_some()
+        });
         self.db.block_on(async move {
-            crate::backend::store::list_web_record_sessions_sqlx(
-                &pool,
-                &tenant_id,
-                adapter_id.as_deref(),
-                source_id.as_deref(),
-                query.as_deref(),
-                limit,
-                offset,
-            )
-            .await
+            if direct_id_query {
+                crate::backend::store::list_conversation_sessions_by_id_fragment_sqlx(
+                    &pool,
+                    &tenant_id,
+                    crate::backend::dto::ConversationRecordKind::Web,
+                    adapter_id.as_deref(),
+                    source_id.as_deref(),
+                    query.as_deref().unwrap_or_default(),
+                    limit,
+                    offset,
+                )
+                .await
+            } else {
+                crate::backend::store::list_web_record_sessions_sqlx(
+                    &pool,
+                    &tenant_id,
+                    adapter_id.as_deref(),
+                    source_id.as_deref(),
+                    query.as_deref(),
+                    limit,
+                    offset,
+                )
+                .await
+            }
         })
     }
 
@@ -112,6 +135,25 @@ impl AppService {
         &self,
         params: ConversationSearchParams,
     ) -> AppResult<ConversationSearchResult> {
+        self.search_conversation_records_with_recent_deltas(params, None)
+    }
+
+    pub(crate) fn search_recent_incremental_conversation_records(
+        &self,
+        params: ConversationIncrementalSearchParams,
+    ) -> AppResult<ConversationSearchResult> {
+        let recent_runs = params.recent_runs.unwrap_or(3).clamp(1, 20);
+        self.search_conversation_records_with_recent_deltas(
+            params.into_search_params(),
+            Some(recent_runs),
+        )
+    }
+
+    fn search_conversation_records_with_recent_deltas(
+        &self,
+        params: ConversationSearchParams,
+        recent_run_limit: Option<usize>,
+    ) -> AppResult<ConversationSearchResult> {
         let query = params.query.trim();
         if query.is_empty() {
             return Err("conversation search query is required".to_string());
@@ -119,6 +161,7 @@ impl AppService {
         if query.chars().count() > 512 {
             return Err("conversation search query must not exceed 512 characters".to_string());
         }
+        let direct_id_query = crate::backend::models::conversation_id_search_term(query).is_some();
         if let Some(mode) = params
             .search_options
             .as_ref()
@@ -143,6 +186,60 @@ impl AppService {
         let tenant_id = self.tenant_id().to_string();
         let adapter_id = params.adapter_id.clone();
         let source_id = params.source_id.clone();
+        let recent_deltas = if let Some(recent_run_limit) = recent_run_limit {
+            let delta_pool = pool.clone();
+            let delta_tenant_id = tenant_id.clone();
+            let delta_adapter_id = adapter_id.clone();
+            let delta_source_id = source_id.clone();
+            self.db.block_on(async move {
+                crate::backend::store::load_recent_conversation_sync_deltas_sqlx(
+                    &delta_pool,
+                    &delta_tenant_id,
+                    record_kind,
+                    delta_source_id.as_deref(),
+                    delta_adapter_id.as_deref(),
+                    recent_run_limit,
+                )
+                .await
+            })?
+        } else {
+            Vec::new()
+        };
+        let incremental_scope = recent_run_limit.map(|recent_runs| {
+            let included_run_count = recent_deltas
+                .iter()
+                .map(|delta| delta.sync_run_id.as_str())
+                .collect::<BTreeSet<_>>()
+                .len();
+            ConversationSearchIncrementalScope {
+                recent_runs,
+                included_run_count,
+                changed_session_count: recent_deltas
+                    .iter()
+                    .map(|delta| delta.session_id.as_str())
+                    .collect::<BTreeSet<_>>()
+                    .len(),
+            }
+        });
+        let allowed_session_ids = recent_run_limit.map(|_| {
+            recent_deltas
+                .iter()
+                .map(|delta| delta.session_id.clone())
+                .collect::<BTreeSet<_>>()
+        });
+        let incremental_match_by_session =
+            recent_deltas
+                .into_iter()
+                .fold(BTreeMap::new(), |mut matches, delta| {
+                    matches.entry(delta.session_id).or_insert_with(|| {
+                        crate::backend::dto::ConversationSearchIncrementalMatch {
+                            sync_run_id: delta.sync_run_id,
+                            change_kind: delta.change_kind,
+                            observed_at: delta.observed_at,
+                        }
+                    });
+                    matches
+                });
         let project_path = if record_kind == crate::backend::dto::ConversationRecordKind::Web {
             None
         } else {
@@ -151,97 +248,146 @@ impl AppService {
         let query = query.to_string();
         let search_query = query.clone();
         let content_types = params.content_types.clone();
+        let legacy_semantic_roles = ["answer", "tool", "command", "code", "result"];
+        let mut card_kinds = params.card_kinds.clone();
+        let mut semantic_roles = params.semantic_roles.clone();
+        for content_type in &content_types {
+            let value = content_type.as_str();
+            if legacy_semantic_roles.contains(&value) {
+                if !semantic_roles.iter().any(|role| role == value) {
+                    semantic_roles.push(value.to_string());
+                }
+            } else if value != "question" && !card_kinds.iter().any(|kind| kind == value) {
+                card_kinds.push(value.to_string());
+            }
+        }
+        let mut scan_content_types = content_types.clone();
+        for kind in &card_kinds {
+            let kind = crate::backend::dto::ConversationSearchCardType::new(kind);
+            if !scan_content_types.contains(&kind) {
+                scan_content_types.push(kind);
+            }
+        }
+        let include_questions = params.include_questions.unwrap_or_else(|| {
+            (content_types.is_empty() && card_kinds.is_empty() && semantic_roles.is_empty())
+                || content_types.iter().any(|kind| kind.as_str() == "question")
+        });
+        let include_cards = params.include_cards.unwrap_or_else(|| {
+            content_types.is_empty() || !card_kinds.is_empty() || !semantic_roles.is_empty()
+        });
         let since = params.since.clone();
         let until = params.until.clone();
         let timeline = params.timeline;
         let search_project_path = project_path.clone();
-        let indexed_page = if since.is_none() && until.is_none() && !timeline {
-            let card_types = content_types
-                .iter()
-                .map(conversation_search_card_type_label)
-                .map(str::to_string)
-                .collect();
-            crate::backend::search::conversation::search_ready_conversation_index(
-                &self.db,
-                &self.db_path,
-                &tenant_id,
-                search_query.clone(),
-                record_kind_label.clone(),
-                card_types,
-                adapter_id.clone(),
-                source_id.clone(),
-                search_project_path.clone(),
-                limit,
-                offset,
-            )
-            .ok()
-            .flatten()
-        } else {
-            None
-        };
-        let (page, backend, content_type_counts) = if let Some(matches) = indexed_page {
-            let facet_counts = matches.content_type_counts.clone();
-            let hydrate_pool = pool.clone();
-            let hydrate_tenant = tenant_id.clone();
-            let hydrate_adapter = adapter_id.clone();
-            let hydrate_source = source_id.clone();
-            let hydrate_query = search_query.clone();
-            match self.db.block_on(async move {
-                crate::backend::store::hydrate_conversation_search_matches_sqlx(
-                    &hydrate_pool,
-                    &hydrate_tenant,
-                    record_kind,
-                    hydrate_adapter.as_deref(),
-                    hydrate_source.as_deref(),
-                    &hydrate_query,
-                    matches,
-                )
-                .await
-            }) {
-                Ok(page) => (page, "tantivy", Some(facet_counts)),
-                Err(_) => {
-                    let page = self.db.block_on(async move {
-                        crate::backend::store::search_conversation_cards_sqlx(
-                            &pool,
-                            &tenant_id,
-                            record_kind,
-                            adapter_id.as_deref(),
-                            source_id.as_deref(),
-                            search_project_path.as_deref(),
-                            &search_query,
-                            &content_types,
-                            since.as_deref(),
-                            until.as_deref(),
-                            timeline,
-                            limit,
-                            offset,
-                        )
-                        .await
-                    })?;
-                    (page, "legacy_scan", None)
-                }
-            }
-        } else {
-            let page = self.db.block_on(async move {
-                crate::backend::store::search_conversation_cards_sqlx(
-                    &pool,
+        let indexed_page =
+            if allowed_session_ids.is_none() && since.is_none() && until.is_none() && !timeline {
+                crate::backend::search::conversation::search_ready_conversation_index(
+                    &self.db,
+                    &self.db_path,
                     &tenant_id,
-                    record_kind,
-                    adapter_id.as_deref(),
-                    source_id.as_deref(),
-                    search_project_path.as_deref(),
-                    &search_query,
-                    &content_types,
-                    since.as_deref(),
-                    until.as_deref(),
-                    timeline,
+                    search_query.clone(),
+                    record_kind_label.clone(),
+                    card_kinds.clone(),
+                    semantic_roles.clone(),
+                    include_questions,
+                    include_cards,
+                    adapter_id.clone(),
+                    source_id.clone(),
+                    search_project_path.clone(),
                     limit,
                     offset,
                 )
-                .await
-            })?;
-            (page, "legacy_scan", None)
+                .ok()
+                .flatten()
+            } else {
+                None
+            };
+        let fallback_backend = if incremental_scope.is_some() {
+            "incremental_delta_scan"
+        } else {
+            "legacy_scan"
         };
+        let (mut page, backend, content_type_counts, semantic_role_counts) =
+            if let Some(matches) = indexed_page {
+                let facet_counts = matches.content_type_counts.clone();
+                let semantic_counts = matches.semantic_role_counts.clone();
+                let hydrate_pool = pool.clone();
+                let hydrate_tenant = tenant_id.clone();
+                let hydrate_adapter = adapter_id.clone();
+                let hydrate_source = source_id.clone();
+                let hydrate_query = search_query.clone();
+                match self.db.block_on(async move {
+                    crate::backend::store::hydrate_conversation_search_matches_sqlx(
+                        &hydrate_pool,
+                        &hydrate_tenant,
+                        record_kind,
+                        hydrate_adapter.as_deref(),
+                        hydrate_source.as_deref(),
+                        &hydrate_query,
+                        matches,
+                    )
+                    .await
+                }) {
+                    Ok(page) => (page, "tantivy", Some(facet_counts), Some(semantic_counts)),
+                    Err(_) => {
+                        let page = self.db.block_on(async move {
+                            crate::backend::store::search_conversation_cards_sqlx(
+                                &pool,
+                                &tenant_id,
+                                record_kind,
+                                adapter_id.as_deref(),
+                                source_id.as_deref(),
+                                search_project_path.as_deref(),
+                                &search_query,
+                                &scan_content_types,
+                                &semantic_roles,
+                                include_questions,
+                                include_cards,
+                                since.as_deref(),
+                                until.as_deref(),
+                                timeline,
+                                limit,
+                                offset,
+                                None,
+                            )
+                            .await
+                        })?;
+                        (page, "legacy_scan", None, None)
+                    }
+                }
+            } else {
+                let allowed_session_ids = allowed_session_ids.clone();
+                let page = self.db.block_on(async move {
+                    crate::backend::store::search_conversation_cards_sqlx(
+                        &pool,
+                        &tenant_id,
+                        record_kind,
+                        adapter_id.as_deref(),
+                        source_id.as_deref(),
+                        search_project_path.as_deref(),
+                        &search_query,
+                        &scan_content_types,
+                        &semantic_roles,
+                        include_questions,
+                        include_cards,
+                        since.as_deref(),
+                        until.as_deref(),
+                        timeline,
+                        limit,
+                        offset,
+                        allowed_session_ids.as_ref(),
+                    )
+                    .await
+                })?;
+                (page, fallback_backend, None, None)
+            };
+        if incremental_scope.is_some() {
+            for hit in &mut page.hits {
+                hit.incremental = incremental_match_by_session
+                    .get(&hit.session.session.id)
+                    .cloned();
+            }
+        }
         Ok(ConversationSearchResult {
             query: query.to_string(),
             record_kind: record_kind_label.clone(),
@@ -252,6 +398,10 @@ impl AppService {
                 project_path,
                 query: query.to_string(),
                 content_types: params.content_types,
+                card_kinds: params.card_kinds,
+                semantic_roles: params.semantic_roles,
+                include_questions,
+                include_cards,
                 since: params.since,
                 until: params.until,
                 timeline: params.timeline,
@@ -260,8 +410,14 @@ impl AppService {
             },
             total_count: page.total_count,
             hits: page.hits,
-            backend: backend.to_string(),
+            backend: if direct_id_query {
+                "id_lookup".to_string()
+            } else {
+                backend.to_string()
+            },
+            incremental: incremental_scope,
             content_type_counts,
+            semantic_role_counts,
         })
     }
 
@@ -374,6 +530,42 @@ impl AppService {
                 &pool,
                 &tenant_id,
                 &question_id,
+            )
+            .await
+        })
+    }
+
+    pub(crate) fn list_conversation_blocks(
+        &self,
+        params: ConversationBlockListParams,
+    ) -> AppResult<Vec<crate::backend::dto::ConversationBlockLocator>> {
+        let record_kind = conversation_record_kind_from_locator(&params.question_id)?;
+        let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
+        self.db.block_on(async move {
+            crate::backend::store::list_conversation_block_locators_sqlx(
+                &pool,
+                &tenant_id,
+                record_kind,
+                &params.question_id,
+            )
+            .await
+        })
+    }
+
+    pub(crate) fn get_conversation_block(
+        &self,
+        params: ConversationBlockGetParams,
+    ) -> AppResult<crate::backend::dto::ConversationBlockDetail> {
+        let record_kind = conversation_record_kind_from_locator(&params.block_id)?;
+        let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
+        self.db.block_on(async move {
+            crate::backend::store::load_conversation_block_detail_sqlx(
+                &pool,
+                &tenant_id,
+                record_kind,
+                &params.block_id,
             )
             .await
         })
@@ -535,37 +727,152 @@ fn export_loaded_conversation_markdown(
     let default_relative_path =
         default_export_relative_path(&detail, &params.question_ids, fallback_project_segment);
     let default_relative_path_text = relative_path_text(&default_relative_path);
-    let export = crate::backend::conversations::export_external_adapter_markdown(
-        &adapter,
-        &source,
-        &detail,
-        &params.question_ids,
-        &params.content_filter,
-        record_kind,
-        &default_relative_path_text,
-    )?;
-    let relative_path = validate_export_relative_path(&export.relative_path)?;
+    let use_legacy_adapter_exporter = adapter.card_contract_version != Some(1)
+        && adapter
+            .capabilities
+            .iter()
+            .any(|capability| capability == "export_markdown");
+    let (content, relative_path_text) = if use_legacy_adapter_exporter {
+        let export = crate::backend::conversations::export_external_adapter_markdown(
+            &adapter,
+            &source,
+            &detail,
+            &params.question_ids,
+            &params.content_filter,
+            record_kind,
+            &default_relative_path_text,
+        )?;
+        (export.content, export.relative_path)
+    } else {
+        (
+            export_conversation_cards_markdown(
+                &detail,
+                &params.question_ids,
+                &params.content_filter,
+            ),
+            default_relative_path_text,
+        )
+    };
+    let relative_path = validate_export_relative_path(&relative_path_text)?;
     let target_path = output_root.join(&relative_path);
     let question_count = params.question_ids.len();
     if params.dry_run {
+        record_conversation_export_observation(
+            &adapter.id,
+            record_kind,
+            true,
+            use_legacy_adapter_exporter,
+        );
         return Ok(json!({
             "dry_run": true,
             "written": false,
             "path": target_path,
-            "bytes": export.content.len(),
+            "bytes": content.len(),
             "question_ids": params.question_ids,
-            "question_count": question_count
+            "question_count": question_count,
+            "legacy_adapter_exporter_used": use_legacy_adapter_exporter
         }));
     }
-    write_export_content(&output_root, &relative_path, &export.content)?;
+    write_export_content(&output_root, &relative_path, &content)?;
+    record_conversation_export_observation(
+        &adapter.id,
+        record_kind,
+        false,
+        use_legacy_adapter_exporter,
+    );
     Ok(json!({
         "dry_run": false,
         "written": true,
         "path": target_path,
-        "bytes": export.content.len(),
+        "bytes": content.len(),
         "question_ids": params.question_ids,
-        "question_count": question_count
+        "question_count": question_count,
+        "legacy_adapter_exporter_used": use_legacy_adapter_exporter
     }))
+}
+
+fn record_conversation_export_observation(
+    adapter_id: &str,
+    record_kind: &str,
+    dry_run: bool,
+    legacy_adapter_exporter_used: bool,
+) {
+    crate::backend::logs::record_info(
+        "conversation.export",
+        "Conversation Markdown export completed",
+        &[
+            ("adapter_id", adapter_id.to_string()),
+            ("record_kind", record_kind.to_string()),
+            ("dry_run", dry_run.to_string()),
+            (
+                "legacy_adapter_exporter_used",
+                legacy_adapter_exporter_used.to_string(),
+            ),
+        ],
+    );
+}
+
+fn export_conversation_cards_markdown(
+    detail: &crate::backend::dto::ConversationSessionDetail,
+    question_ids: &[String],
+    content_filter: &crate::backend::dto::ConversationExportContentFilter,
+) -> String {
+    let selected = question_ids.iter().collect::<BTreeSet<_>>();
+    let mut output = format!("# {}\n", detail.session.title.trim());
+    for question in &detail.questions {
+        if !selected.is_empty() && !selected.contains(&question.question.id) {
+            continue;
+        }
+        output.push_str(&format!(
+            "\n## {}. {}\n\n{}\n",
+            question.question.question_index + 1,
+            question
+                .question
+                .title
+                .as_deref()
+                .filter(|title| !title.trim().is_empty())
+                .unwrap_or("Question"),
+            question.question.question_text.trim(),
+        ));
+        for card in &question.cards {
+            if !content_filter.is_visible(&card.kind) {
+                continue;
+            }
+            output.push_str(&format!("\n### {}\n\n", humanize_card_kind(&card.kind)));
+            match card.renderer {
+                crate::backend::dto::ConversationCardRenderer::Markdown => {
+                    output.push_str(card.body.trim());
+                    output.push('\n');
+                }
+                crate::backend::dto::ConversationCardRenderer::Code => {
+                    output.push_str(&format!(
+                        "```{}\n{}\n```\n",
+                        card.language.as_deref().unwrap_or(""),
+                        card.body.trim_end()
+                    ));
+                }
+                crate::backend::dto::ConversationCardRenderer::Json => {
+                    output.push_str(&format!("```json\n{}\n```\n", card.body.trim_end()));
+                }
+                crate::backend::dto::ConversationCardRenderer::Command => {
+                    output.push_str(&format!("```sh\n{}\n```\n", card.body.trim_end()));
+                }
+                crate::backend::dto::ConversationCardRenderer::Plain
+                | crate::backend::dto::ConversationCardRenderer::Path
+                | crate::backend::dto::ConversationCardRenderer::TerminalOutput => {
+                    output.push_str(&format!("```text\n{}\n```\n", card.body.trim_end()));
+                }
+            }
+        }
+    }
+    output
+}
+
+fn humanize_card_kind(kind: &str) -> String {
+    kind.rsplit('.')
+        .next()
+        .unwrap_or(kind)
+        .replace(['-', '_'], " ")
 }
 
 fn validate_export_question_ids(
@@ -749,6 +1056,27 @@ fn normalize_conversation_record_kind(
         )),
         other => Err(format!("unsupported conversation record kind: {other}")),
     }
+}
+
+fn conversation_record_kind_from_locator(
+    locator: &str,
+) -> AppResult<crate::backend::dto::ConversationRecordKind> {
+    let locator = locator.trim();
+    if locator.starts_with("web-record-question-")
+        || locator.starts_with("web-record-turn-")
+        || locator.starts_with("web-record-part-")
+    {
+        return Ok(crate::backend::dto::ConversationRecordKind::Web);
+    }
+    if locator.starts_with("conversation-question-")
+        || locator.starts_with("conversation-turn-")
+        || locator.starts_with("conversation-part-")
+    {
+        return Ok(crate::backend::dto::ConversationRecordKind::Session);
+    }
+    Err(format!(
+        "conversation locator must use a full conversation-* or web-record-* identifier: {locator}"
+    ))
 }
 
 fn sanitize_path_segment(value: &str) -> String {

@@ -32,12 +32,22 @@ import { AppShortcutIconForShortcut } from "../../components/apps/AppShortcutIco
 import type { NotificationMessage } from "../../components/notifications/NotificationBanner";
 import {
   buildConversationContentBlocks,
+  buildConversationDisplayNodes,
+  conversationCardColor,
+  conversationCardLabel,
   conversationCardDomId,
   ConversationContentCards,
   DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
+  type ConversationContentType,
   type ConversationContentVisibility,
 } from "../../components/conversations/ConversationContentCards";
 import { MarkdownContent } from "../../components/conversations/ConversationMarkdown";
+import {
+  ConversationCardKindIcon,
+  conversationCardPresentationKind,
+  isRedundantConversationCardKind,
+  useConversationCardKindRegistry,
+} from "../../components/conversations/ConversationCardKindRegistry";
 import {
   ConversationContentFilter,
   ConversationSyncProgress,
@@ -84,6 +94,7 @@ import type {
   ConversationQuestionDetail,
   ConversationSearchCardType,
   ConversationSearchHit,
+  ConversationSearchResult,
   ConversationRecordKind,
   ConversationSessionDetail,
   ConversationSessionListItem,
@@ -97,14 +108,11 @@ export { MarkdownContent } from "../../components/conversations/ConversationMark
 const SESSION_PAGE_SIZE = 100;
 const SESSION_SEARCH_COMMIT_DELAY_MS = 700;
 const CONTENT_SEARCH_COMMIT_DELAY_MS = 700;
-const CONVERSATION_SEARCH_CARD_TYPES: ConversationSearchCardType[] = [
-  "question",
-  "answer",
-  "tool",
-  "command",
-  "code",
-  "result",
-];
+const CONVERSATION_SHORT_ID_PATTERN = /^[0-9a-f]{8}$/i;
+
+export function isConversationShortIdQuery(value: string) {
+  return CONVERSATION_SHORT_ID_PATTERN.test(value.trim());
+}
 const DISMISSED_SYNC_PROGRESS_TASK_LIMIT = 50;
 const dismissedConversationSyncProgressTaskKeys = new Set<string>();
 
@@ -115,7 +123,9 @@ type ListConversationSessionPage = (params: {
 }) => Promise<ConversationSessionListItem[]>;
 
 interface ConversationSearchResultState {
-  contentTypes: ConversationSearchCardType[];
+  cardKinds: string[];
+  semanticRoles: string[];
+  includeQuestions: boolean;
   recordKind: ConversationRecordKind;
   query: string;
   totalCount: number;
@@ -211,8 +221,9 @@ export function ConversationsPage({
   const searchIndexRunning = searchIndexTask?.status === "running";
   const [sessionSearchLoading, setSessionSearchLoading] = useState(false);
   const [contentQuery, setContentQuery] = useState("");
-  const [contentSearchCardTypes, setContentSearchCardTypes] =
-    useState<ConversationSearchCardType[]>(CONVERSATION_SEARCH_CARD_TYPES);
+  const [contentSearchCardKinds, setContentSearchCardKinds] = useState<string[]>([]);
+  const [contentSearchSemanticRoles, setContentSearchSemanticRoles] = useState<string[]>([]);
+  const [contentSearchIncludesQuestions, setContentSearchIncludesQuestions] = useState(true);
   const [sessionSortBy, setSessionSortBy] = useState<ConversationSessionSortBy>("updated");
   const [sessionSortDirection, setSessionSortDirection] = useState<"asc" | "desc">("desc");
   const [questionSortBy, setQuestionSortBy] = useState<ConversationQuestionSortBy>("index");
@@ -255,6 +266,12 @@ export function ConversationsPage({
     () => sessionDetail?.questions.find((question) => question.question.id === selectedQuestionId) ?? null,
     [selectedQuestionId, sessionDetail],
   );
+  const availableContentTypes = useMemo(
+    () => conversationContentTypesForQuestions(
+      selectedQuestion ? [selectedQuestion] : sessionDetail?.questions ?? [],
+    ),
+    [selectedQuestion, sessionDetail],
+  );
   const visibleSessionQuestions = useMemo(
     () =>
       sortConversationQuestions(
@@ -265,6 +282,14 @@ export function ConversationsPage({
     [detailQuery, questionSortBy, questionSortDirection, sessionDetail],
   );
   const selectedQuestionCount = selectedQuestionIds.size;
+  const exportAvailableContentTypes = useMemo(() => {
+    if (!exportDialog || !sessionDetail) return [];
+    const selectedIds = new Set(exportDialog.questionIds);
+    const questions = exportDialog.mode === "questions"
+      ? sessionDetail.questions.filter((question) => selectedIds.has(question.question.id))
+      : sessionDetail.questions;
+    return conversationContentTypesForQuestions(questions);
+  }, [exportDialog, sessionDetail]);
   const conversationStyle = useMemo(
     () =>
       ({
@@ -287,7 +312,9 @@ export function ConversationsPage({
     setSessionView("browser");
     setSelectedQuestionIds(new Set());
     setContentQuery("");
-    setContentSearchCardTypes(CONVERSATION_SEARCH_CARD_TYPES);
+    setContentSearchCardKinds([]);
+    setContentSearchSemanticRoles([]);
+    setContentSearchIncludesQuestions(true);
     setContentSearchResult(null);
     sessionSearchRequestIdRef.current += 1;
     setSessionSearchLoading(false);
@@ -308,6 +335,20 @@ export function ConversationsPage({
   }, [query, currentRecordKind]);
 
   useEffect(() => {
+    const kinds = sessionDetail?.questions.flatMap((question) =>
+      question.cards?.map((card) => conversationCardPresentationKind(card.kind, card.semantic_role)) ?? []
+    ) ?? [];
+    if (kinds.length === 0) return;
+    setContentVisibility((current) => {
+      const next = { ...current };
+      for (const kind of kinds) {
+        if (!(kind in next)) next[kind] = true;
+      }
+      return next;
+    });
+  }, [sessionDetail]);
+
+  useEffect(() => {
     const trimmedQuery = contentQuery.trim();
     if (!trimmedQuery) {
       setContentSearchResult(null);
@@ -316,12 +357,13 @@ export function ConversationsPage({
     }
 
     let cancelled = false;
-    const contentTypes = contentSearchCardTypes.length > 0
-      ? contentSearchCardTypes
-      : CONVERSATION_SEARCH_CARD_TYPES;
     setContentSearchLoading(true);
     void searchConversationRecords({
-      content_types: contentTypes,
+      content_types: [],
+      card_kinds: contentSearchCardKinds,
+      semantic_roles: contentSearchSemanticRoles,
+      include_questions: contentSearchIncludesQuestions,
+      include_cards: true,
       limit: 50,
       query: trimmedQuery,
       record_kind: currentRecordKind,
@@ -329,7 +371,9 @@ export function ConversationsPage({
       .then((result) => {
         if (cancelled) return;
         setContentSearchResult({
-          contentTypes: result.scope?.content_types ?? contentTypes,
+          cardKinds: conversationSearchCardKinds(result),
+          semanticRoles: Object.keys(result.semantic_role_counts ?? {}),
+          includeQuestions: result.scope?.include_questions ?? contentSearchIncludesQuestions,
           hits: result.hits,
           recordKind: result.record_kind,
           query: result.query,
@@ -351,14 +395,27 @@ export function ConversationsPage({
     return () => {
       cancelled = true;
     };
-  }, [contentQuery, contentSearchCardTypes, currentRecordKind, onNotifyError]);
+  }, [
+    contentQuery,
+    contentSearchCardKinds,
+    contentSearchSemanticRoles,
+    contentSearchIncludesQuestions,
+    currentRecordKind,
+    onNotifyError,
+  ]);
 
   const handleShowAllContentSearchCardTypes = useCallback(() => {
-    setContentSearchCardTypes(CONVERSATION_SEARCH_CARD_TYPES);
+    setContentSearchCardKinds([]);
+    setContentSearchSemanticRoles([]);
+    setContentSearchIncludesQuestions(true);
   }, []);
 
-  const handleToggleContentSearchCardType = useCallback((cardType: ConversationSearchCardType) => {
-    setContentSearchCardTypes((current) => toggleConversationSearchCardType(current, cardType));
+  const handleToggleContentSearchCardKind = useCallback((kind: string) => {
+    setContentSearchCardKinds((current) => toggleStringFilter(current, kind));
+  }, []);
+
+  const handleToggleContentSearchSemanticRole = useCallback((role: string) => {
+    setContentSearchSemanticRoles((current) => toggleStringFilter(current, role));
   }, []);
 
   useEffect(() => {
@@ -509,13 +566,14 @@ export function ConversationsPage({
         onNotifyError(t("conversation.navigation.blockMissing"));
       } else {
         setActiveSearchTarget({
-          blockId: navigationTarget.blockId,
+          blockId: resolved.blockId ?? navigationTarget.blockId,
           cardType: resolved.cardType ?? undefined,
           questionId: resolved.questionId,
           sessionId: navigationTarget.sessionId,
         });
         if (resolved.cardType && resolved.cardType !== "question") {
-          setContentVisibility((current) => ({ ...current, [resolved.cardType!]: true }));
+          const presentationType = conversationCardPresentationKind(resolved.cardType);
+          setContentVisibility((current) => ({ ...current, [presentationType]: true }));
         }
       }
     }
@@ -887,6 +945,7 @@ export function ConversationsPage({
               <DebouncedToolbarSearch
                 className="w-[min(22rem,100%)] max-[980px]:w-64"
                 commitDelayMs={SESSION_SEARCH_COMMIT_DELAY_MS}
+                commitImmediatelyWhen={isConversationShortIdQuery}
                 onChange={setQuery}
                 placeholder={t("conversation.toolbar.searchPlaceholder")}
                 resetSignal={currentRecordKind}
@@ -897,6 +956,7 @@ export function ConversationsPage({
               <DebouncedToolbarSearch
                 className="w-[min(24rem,100%)] max-[980px]:w-64"
                 commitDelayMs={CONTENT_SEARCH_COMMIT_DELAY_MS}
+                commitImmediatelyWhen={isConversationShortIdQuery}
                 onChange={setContentQuery}
                 placeholder={t("conversation.search.contentPlaceholder")}
                 resetSignal={currentRecordKind}
@@ -932,7 +992,7 @@ export function ConversationsPage({
         <div className="sticky top-[calc(var(--app-toolbar-top)+var(--app-notification-offset,0px))] z-10 -mx-[var(--app-page-x)] border-b border-theme-card-border bg-theme-toolbar/85 shadow-[0_12px_28px_rgb(var(--theme-panel-shadow)/0.18)] backdrop-blur">
           <section
             aria-label={t("conversation.content.filterAria")}
-            className="flex min-w-0 flex-nowrap items-center gap-3 overflow-hidden border-b border-theme-card-border/70 px-[var(--app-page-x)] py-3"
+            className="flex min-w-0 flex-nowrap items-center gap-3 overflow-x-auto border-b border-theme-card-border/70 px-[var(--app-page-x)] py-3"
           >
             <ToolbarTextButton
               icon={<ArrowLeft size={16} />}
@@ -940,6 +1000,7 @@ export function ConversationsPage({
               onClick={() => setSessionView("browser")}
             />
             <ConversationContentFilter
+              availableTypes={availableContentTypes}
               colors={appSettings.conversations.contentCardColors}
               onChange={(type, checked) =>
                 setContentVisibility((current) => ({ ...current, [type]: checked }))
@@ -1039,17 +1100,22 @@ export function ConversationsPage({
         <ConversationContentSearchResults
           appMetaById={appMetaById}
           contentCardColors={appSettings.conversations.contentCardColors}
+          includeQuestions={contentSearchIncludesQuestions}
           loading={contentSearchLoading}
-          onCardTypeToggle={handleToggleContentSearchCardType}
+          onCardKindToggle={handleToggleContentSearchCardKind}
+          onQuestionToggle={() => setContentSearchIncludesQuestions((current) => !current)}
+          onSemanticRoleToggle={handleToggleContentSearchSemanticRole}
           onShowAllCardTypes={handleShowAllContentSearchCardTypes}
           onOpenHit={handleOpenSearchHit}
           result={contentSearchResult}
-          selectedCardTypes={contentSearchCardTypes}
+          selectedCardKinds={contentSearchCardKinds}
+          selectedSemanticRoles={contentSearchSemanticRoles}
           t={t}
         />
       ) : null}
       {exportDialog ? (
         <ConversationExportDialog
+          availableTypes={exportAvailableContentTypes}
           contentCardColors={appSettings.conversations.contentCardColors}
           exporting={exporting}
           mode={exportDialog.mode}
@@ -1130,27 +1196,35 @@ export function ConversationsPage({
 export function resolveConversationNavigationTarget(
   session: ConversationSessionDetail,
   target: ConversationNavigationTarget,
-): { blockFound: boolean; cardType: ConversationSearchCardType | null; questionId: string } | null {
+): { blockFound: boolean; blockId: string | null; cardType: ConversationSearchCardType | null; questionId: string } | null {
   const candidateQuestions = target.questionId
     ? session.questions.filter((question) => question.question.id === target.questionId)
     : session.questions;
   if (candidateQuestions.length === 0) return null;
   if (!target.blockId) {
-    return { blockFound: true, cardType: null, questionId: candidateQuestions[0].question.id };
+    return { blockFound: true, blockId: null, cardType: null, questionId: candidateQuestions[0].question.id };
   }
 
   for (const question of candidateQuestions) {
     if (question.turns.some((turn) => `${turn.id}-question` === target.blockId)) {
-      return { blockFound: true, cardType: "question", questionId: question.question.id };
+      return { blockFound: true, blockId: target.blockId, cardType: "question", questionId: question.question.id };
     }
-    const block = buildConversationContentBlocks(question.parts).find((candidate) => candidate.id === target.blockId);
+    const block = buildConversationContentBlocks(question.parts, question.cards).find(
+      (candidate) => candidate.id === target.blockId || candidate.legacyAnchorIds?.includes(target.blockId ?? ""),
+    );
     if (block) {
-      return { blockFound: true, cardType: block.type, questionId: question.question.id };
+      return {
+        blockFound: true,
+        blockId: block.id,
+        cardType: block.kind ?? block.type,
+        questionId: question.question.id,
+      };
     }
   }
 
   return {
     blockFound: false,
+    blockId: null,
     cardType: null,
     questionId: candidateQuestions[0].question.id,
   };
@@ -1235,6 +1309,16 @@ export interface ConversationProjectSessionGroup {
   sessions: ConversationSessionListItem[];
   questionCount: number;
   turnCount: number;
+}
+
+export function conversationContentTypesForQuestions(
+  questions: readonly ConversationQuestionDetail[],
+): ConversationContentType[] {
+  return Array.from(new Set(
+    questions.flatMap((question) =>
+      buildConversationContentBlocks(question.parts, question.cards).map((block) => block.type)
+    ),
+  ));
 }
 
 type ConversationExportMode = "session" | "questions";
@@ -1392,6 +1476,7 @@ function compareOptionalDate(left: string | null | undefined, right: string | nu
 }
 
 export function ConversationExportDialog({
+  availableTypes,
   contentCardColors,
   exporting,
   mode,
@@ -1405,6 +1490,7 @@ export function ConversationExportDialog({
   t,
   visibility,
 }: {
+  availableTypes: readonly ConversationContentType[];
   contentCardColors: ConversationContentCardColorSettings;
   exporting: boolean;
   mode: ConversationExportMode;
@@ -1482,6 +1568,7 @@ export function ConversationExportDialog({
           />
         </div>
         <ConversationContentFilter
+          availableTypes={availableTypes}
           colors={contentCardColors}
           onChange={onVisibilityChange}
           t={t}
@@ -1686,64 +1773,90 @@ function projectGroupLabel(group: ConversationProjectSessionGroup, t: Translator
   return group.projectPath ? abbreviateHomePath(group.projectPath) : t("conversation.session.noProject");
 }
 
-function toggleConversationSearchCardType(
-  selectedCardTypes: ConversationSearchCardType[],
-  cardType: ConversationSearchCardType,
-) {
-  if (allConversationSearchCardTypesSelected(selectedCardTypes)) {
-    return [cardType];
-  }
-  if (selectedCardTypes.includes(cardType)) {
-    if (selectedCardTypes.length === 1) return selectedCardTypes;
-    return CONVERSATION_SEARCH_CARD_TYPES.filter((candidate) => (
-      candidate !== cardType && selectedCardTypes.includes(candidate)
-    ));
-  }
-  return CONVERSATION_SEARCH_CARD_TYPES.filter((candidate) => (
-    candidate === cardType || selectedCardTypes.includes(candidate)
-  ));
+function toggleStringFilter(values: string[], value: string) {
+  return values.includes(value)
+    ? values.filter((candidate) => candidate !== value)
+    : [...values, value];
 }
 
-function allConversationSearchCardTypesSelected(selectedCardTypes: ConversationSearchCardType[]) {
-  return searchResultMatchesSelectedCardTypes(CONVERSATION_SEARCH_CARD_TYPES, selectedCardTypes);
+function conversationSearchCardKinds(result: ConversationSearchResult) {
+  const dynamicKinds = [
+    ...Object.keys(result.content_type_counts ?? {}),
+    ...result.hits.map((hit) => hit.card_type),
+  ].filter((kind) => kind !== "question");
+  return [...new Set(dynamicKinds)].sort((left, right) => left.localeCompare(right));
 }
 
 export function ConversationContentSearchResults({
   appMetaById,
   contentCardColors,
+  includeQuestions,
   loading,
-  onCardTypeToggle,
+  onCardKindToggle,
   onOpenHit,
+  onQuestionToggle,
+  onSemanticRoleToggle,
   onShowAllCardTypes,
   result,
-  selectedCardTypes,
+  selectedCardKinds,
+  selectedSemanticRoles,
   t,
 }: {
   appMetaById?: ReadonlyMap<string, ConversationSearchAppChipMeta>;
   contentCardColors: ConversationContentCardColorSettings;
+  includeQuestions: boolean;
   loading: boolean;
-  onCardTypeToggle: (cardType: ConversationSearchCardType) => void;
+  onCardKindToggle: (kind: string) => void;
   onOpenHit: (hit: ConversationSearchHit) => void;
+  onQuestionToggle: () => void;
+  onSemanticRoleToggle: (role: string) => void;
   onShowAllCardTypes: () => void;
   result: ConversationSearchResultState | null;
-  selectedCardTypes: ConversationSearchCardType[];
+  selectedCardKinds: string[];
+  selectedSemanticRoles: string[];
   t: Translator;
 }) {
+  const { definitions } = useConversationCardKindRegistry();
   const hits = result?.hits ?? [];
+  const availableCardKinds = (result?.cardKinds ?? []).filter(
+    (kind) => !isRedundantConversationCardKind(kind, definitions.get(kind)),
+  );
+  const availableSemanticRoles = [...new Set([
+    ...(result?.semanticRoles ?? []),
+    ...(result?.cardKinds ?? []).flatMap((kind) => {
+      const definition = definitions.get(kind);
+      return isRedundantConversationCardKind(kind, definition) && definition?.semantic_role
+        ? [definition.semantic_role]
+        : [];
+    }),
+  ])];
   const showProjectPath = result?.recordKind !== "web";
-  const allCardTypesSelected = allConversationSearchCardTypesSelected(selectedCardTypes);
-  const visibleHits = allCardTypesSelected
-    ? hits
-    : hits.filter((hit) => selectedCardTypes.includes(hit.card_type));
+  const allCardTypesSelected = includeQuestions
+    && selectedCardKinds.length === 0
+    && selectedSemanticRoles.length === 0;
+  // Keep the previous result useful while a narrowed request is in flight. Card
+  // kinds are carried by every hit, so they can be filtered optimistically;
+  // semantic roles are facet metadata and are applied by the backend response.
+  const visibleHits = hits.filter((hit) => {
+    if (hit.card_type === "question") return includeQuestions;
+    if (selectedCardKinds.length === 0 || selectedSemanticRoles.length > 0) return true;
+    return selectedCardKinds.includes(hit.card_type);
+  });
   const query = result?.query ?? "";
-  const resultMatchesActiveFilter = result
-    ? searchResultMatchesSelectedCardTypes(result.contentTypes, selectedCardTypes)
-    : false;
-  const displayedTotalCount = resultMatchesActiveFilter && result ? result.totalCount : visibleHits.length;
-  const groupedHits = CONVERSATION_SEARCH_CARD_TYPES
+  const displayedTotalCount = result?.totalCount ?? visibleHits.length;
+  const groupedCardTypes = [...new Set(visibleHits
+    .filter((hit) => hit.card_type !== "question")
+    .map((hit) => conversationCardPresentationKind(
+      hit.card_type,
+      definitions.get(hit.card_type)?.semantic_role,
+    )))].sort((left, right) => left.localeCompare(right));
+  const groupedHits = ["question", ...groupedCardTypes]
     .map((cardType) => ({
       cardType,
-      hits: visibleHits.filter((hit) => hit.card_type === cardType),
+      hits: visibleHits.filter((hit) => conversationCardPresentationKind(
+        hit.card_type,
+        definitions.get(hit.card_type)?.semantic_role,
+      ) === cardType),
     }))
     .filter((group) => group.hits.length > 0);
 
@@ -1780,15 +1893,31 @@ export function ConversationContentSearchResults({
           >
             {t("conversation.search.type.all")}
           </button>
-          {CONVERSATION_SEARCH_CARD_TYPES.map((cardType) => (
+          <SearchCardTypeFilterButton
+            active={includeQuestions}
+            cardType="question"
+            colors={contentCardColors}
+            disabled={false}
+            onClick={onQuestionToggle}
+            t={t}
+          />
+          {availableCardKinds.map((cardType) => (
             <SearchCardTypeFilterButton
-              active={selectedCardTypes.includes(cardType)}
+              active={selectedCardKinds.includes(cardType)}
               cardType={cardType}
               colors={contentCardColors}
-              disabled={selectedCardTypes.length === 1 && selectedCardTypes[0] === cardType}
+              disabled={false}
               key={cardType}
-              onClick={() => onCardTypeToggle(cardType)}
+              onClick={() => onCardKindToggle(cardType)}
               t={t}
+            />
+          ))}
+          {availableSemanticRoles.map((role) => (
+            <SemanticRoleFilterButton
+              active={selectedSemanticRoles.includes(role)}
+              key={role}
+              onClick={() => onSemanticRoleToggle(role)}
+              role={role}
             />
           ))}
         </div>
@@ -1824,7 +1953,13 @@ export function ConversationContentSearchResults({
                     <button
                       aria-label={t("conversation.search.openHit", {
                         title: hit.session.title,
-                        type: conversationSearchCardTypeLabel(hit.card_type, t),
+                        type: conversationSearchCardTypeLabel(
+                          conversationCardPresentationKind(
+                            hit.card_type,
+                            definitions.get(hit.card_type)?.semantic_role,
+                          ),
+                          t,
+                        ),
                       })}
                       className="grid gap-2 px-4 py-3 text-left transition-colors hover:bg-theme-card-header/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                       key={`${hit.session.id}-${hit.block_id}-${hit.question_id}`}
@@ -1909,6 +2044,8 @@ function SearchCardTypeFilterButton({
   onClick: () => void;
   t: Translator;
 }) {
+  const { definitions } = useConversationCardKindRegistry();
+  const definition = definitions.get(cardType);
   const palette = searchCardTypePalette(cardType, colors);
   return (
     <button
@@ -1923,20 +2060,44 @@ function SearchCardTypeFilterButton({
       }}
       type="button"
     >
-      <span className="size-2 rounded-full" style={{ backgroundColor: palette.accentColor }} />
-      <span>{conversationSearchCardTypeLabel(cardType, t)}</span>
+      {cardType === "question" ? (
+        <span className="size-2 rounded-full" style={{ backgroundColor: palette.accentColor }} />
+      ) : (
+        <ConversationCardKindIcon
+          iconHint={definition?.icon_hint}
+          kind={cardType}
+          renderer={definition?.default_renderer ?? "plain"}
+          size={13}
+        />
+      )}
+      <span>{definition?.label ?? conversationSearchCardTypeLabel(cardType, t)}</span>
     </button>
   );
 }
 
-function searchResultMatchesSelectedCardTypes(
-  contentTypes: ConversationSearchCardType[],
-  selectedCardTypes: ConversationSearchCardType[],
-) {
-  if (contentTypes.length !== selectedCardTypes.length) return false;
-  return CONVERSATION_SEARCH_CARD_TYPES.every((cardType) => (
-    contentTypes.includes(cardType) === selectedCardTypes.includes(cardType)
-  ));
+function SemanticRoleFilterButton({
+  active,
+  onClick,
+  role,
+}: {
+  active: boolean;
+  onClick: () => void;
+  role: string;
+}) {
+  return (
+    <button
+      aria-pressed={active}
+      className={`inline-flex h-8 shrink-0 items-center rounded-lg border px-2.5 text-label-caps transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 ${
+        active
+          ? "border-primary/50 bg-primary/12 text-primary"
+          : "border-theme-control-border bg-theme-control/80 text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface"
+      }`}
+      onClick={onClick}
+      type="button"
+    >
+      role:{role.replace(/_/g, " ")}
+    </button>
+  );
 }
 
 function SearchCardTypeBadge({
@@ -1948,7 +2109,11 @@ function SearchCardTypeBadge({
   colors: ConversationContentCardColorSettings;
   t: Translator;
 }) {
-  const palette = searchCardTypePalette(cardType, colors);
+  const { definitions } = useConversationCardKindRegistry();
+  const definition = definitions.get(cardType);
+  const presentationType = conversationCardPresentationKind(cardType, definition?.semantic_role);
+  const presentationDefinition = presentationType === cardType ? definition : undefined;
+  const palette = searchCardTypePalette(presentationType, colors);
   return (
     <span
       className="inline-flex shrink-0 items-center rounded-full border px-2 py-1 text-label-caps"
@@ -1959,7 +2124,7 @@ function SearchCardTypeBadge({
         color: palette.accentColor,
       }}
     >
-      {conversationSearchCardTypeLabel(cardType, t)}
+      {presentationDefinition?.label ?? conversationSearchCardTypeLabel(presentationType, t)}
     </span>
   );
 }
@@ -1975,7 +2140,7 @@ function searchCardTypePalette(
       borderColor: "rgb(var(--color-primary-strong) / 0.42)",
     };
   }
-  const accentColor = colors[cardType];
+  const accentColor = conversationCardColor(cardType, colors);
   return {
     accentColor,
     backgroundColor: hexWithAlpha(accentColor, "18"),
@@ -1991,7 +2156,7 @@ function conversationSearchCardTypeLabel(cardType: ConversationSearchCardType, t
   if (cardType === "question") {
     return t("conversation.search.card.question");
   }
-  return t(`conversation.content.${cardType}` as TranslationKey);
+  return conversationCardLabel(cardType, t);
 }
 
 function AppListItem({
@@ -2515,9 +2680,23 @@ export function QuestionPreview({
       </header>
       <div className="min-h-0 flex-1 overflow-auto px-5 py-5">
         {question.turns.map((turn, index) => {
-          const blocks = buildConversationContentBlocks(
-            question.parts.filter((part) => part.turn_id === turn.id),
-          );
+          const usesStructuredContent = Boolean(question.cards && question.content_nodes);
+          const turnParts = usesStructuredContent
+            ? []
+            : question.parts.filter((part) => part.turn_id === turn.id);
+          const displayNodes = usesStructuredContent
+            ? buildConversationDisplayNodes(
+                question.cards ?? [],
+                question.content_nodes?.filter((node) => node.turn_id === turn.id) ?? [],
+              )
+            : undefined;
+          const blocks = displayNodes
+            ? []
+            : buildConversationContentBlocks(
+                turnParts,
+                question.cards?.filter((card) => turnParts.some((part) => part.id === card.part_id)),
+              );
+          const hasContent = displayNodes ? displayNodes.length > 0 : blocks.length > 0;
           const promptBlockId = `${turn.id}-question`;
           const promptHighlighted = activeBlockId === promptBlockId;
           return (
@@ -2555,13 +2734,14 @@ export function QuestionPreview({
               </div>
               <div className="mt-3 pl-3">
                 <h3 className="mb-3 text-label-caps text-on-surface-muted">{t("conversation.question.parts")}</h3>
-                {blocks.length === 0 ? (
+                {!hasContent ? (
                   <EmptyPanel>{t("conversation.markdown.empty")}</EmptyPanel>
                 ) : (
                   <ConversationContentCards
                     activeBlockId={activeBlockId}
                     blocks={blocks}
                     colors={contentCardColors}
+                    nodes={displayNodes}
                     onCopyError={onCopyError}
                     recordKind={recordKind}
                     resultPreviewLineLimit={resultPreviewLineLimit}

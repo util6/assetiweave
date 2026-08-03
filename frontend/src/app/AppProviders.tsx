@@ -6,20 +6,23 @@ import { SearchIndexProvider } from "./backgroundTasks/SearchIndexProvider";
 import { SkillBackupProvider } from "./backgroundTasks/SkillBackupProvider";
 import { MemoryTaskProvider } from "./backgroundTasks/MemoryTaskProvider";
 import { AppUpdateProvider } from "./updates/AppUpdateProvider";
+import { ConversationCardKindRegistryProvider } from "../components/conversations/ConversationCardKindRegistry";
 
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <I18nProvider>
       <AppSettingsProvider>
-        <ConversationSyncProvider>
-          <MemoryTaskProvider>
-            <SearchIndexProvider>
-              <SkillBackupProvider>
-                <AppUpdateProvider>{children}</AppUpdateProvider>
-              </SkillBackupProvider>
-            </SearchIndexProvider>
-          </MemoryTaskProvider>
-        </ConversationSyncProvider>
+        <ConversationCardKindRegistryProvider>
+          <ConversationSyncProvider>
+            <MemoryTaskProvider>
+              <SearchIndexProvider>
+                <SkillBackupProvider>
+                  <AppUpdateProvider>{children}</AppUpdateProvider>
+                </SkillBackupProvider>
+              </SearchIndexProvider>
+            </MemoryTaskProvider>
+          </ConversationSyncProvider>
+        </ConversationCardKindRegistryProvider>
       </AppSettingsProvider>
     </I18nProvider>
   );

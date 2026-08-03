@@ -152,6 +152,7 @@ export function DebouncedToolbarSearch({
   ariaLabel,
   className,
   commitDelayMs,
+  commitImmediatelyWhen,
   onChange,
   placeholder,
   resetSignal,
@@ -162,6 +163,7 @@ export function DebouncedToolbarSearch({
   ariaLabel?: string;
   className?: string;
   commitDelayMs: number;
+  commitImmediatelyWhen?: (value: string) => boolean;
   onChange: (value: string) => void;
   placeholder: string;
   resetSignal?: string;
@@ -228,6 +230,11 @@ export function DebouncedToolbarSearch({
     draftRef.current = nextValue;
     if (composingRef.current || inputEventIsComposing(event)) {
       clearDebouncedSearchTimer(timerRef);
+      return;
+    }
+    if (commitImmediatelyWhen?.(nextValue)) {
+      clearDebouncedSearchTimer(timerRef);
+      commitDraft(nextValue);
       return;
     }
     scheduleCommit(nextValue);

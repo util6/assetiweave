@@ -264,7 +264,7 @@ export function AppRouter() {
                 onCatalogRefresh={catalog.refreshOverview}
                 onManualOpen={openCurrentManual}
                 onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
-                onOpenSettings={() => openSettings("workspace.deployment")}
+                onOpenSettings={() => openSettings("general.storage")}
                 onRefreshMountStatus={catalog.refreshMountStatus}
                 onRefreshProfiles={catalog.refreshProfiles}
                 onRevealPath={(path) => void catalog.revealPath(path)}
@@ -285,7 +285,7 @@ export function AppRouter() {
                 expandedAssetIds={catalog.expandedIds}
                 onManualOpen={openCurrentManual}
                 onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
-                onOpenSettings={() => openSettings("workspace.deployment")}
+                onOpenSettings={() => openSettings("general.storage")}
                 onApplyGroupExclusiveMount={catalog.applyGroupExclusiveMount}
                 onPreviewGroupExclusiveMount={catalog.previewGroupExclusiveMount}
                 onRefreshMountStatus={catalog.refreshMountStatus}

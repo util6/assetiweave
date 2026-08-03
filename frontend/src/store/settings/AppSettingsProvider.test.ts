@@ -39,6 +39,22 @@ describe("AppSettingsProvider", () => {
     expect(settings.conversationRuntimeOverrides).toEqual(defaultSettings.conversationRuntimeOverrides);
   });
 
+  it("preserves dynamic and unregistered conversation Card color overrides", () => {
+    const settings = normalizeStoredSettings({
+      conversations: {
+        contentCardColors: {
+          "claude-code.reasoning": "#123abc",
+          "history.custom-trace": "#fedcba",
+          "Invalid Kind": "#ffffff",
+        },
+      },
+    });
+
+    expect(settings.conversations.contentCardColors["claude-code.reasoning"]).toBe("#123abc");
+    expect(settings.conversations.contentCardColors["history.custom-trace"]).toBe("#fedcba");
+    expect(settings.conversations.contentCardColors["Invalid Kind"]).toBeUndefined();
+  });
+
   it("preserves configured conversation runtime override paths", () => {
     const settings = normalizeStoredSettings({
       conversationRuntimeOverrides: {

@@ -4144,6 +4144,15 @@
             "description": "Preview without importing",
             "type": "boolean"
           },
+          "mode": {
+            "default": "incremental",
+            "description": "Synchronization strategy. Incremental is the default; full reparses every discoverable record.",
+            "enum": [
+              "incremental",
+              "full"
+            ],
+            "type": "string"
+          },
           "record_kind": {
             "aliases": [
               "recordKind"
@@ -4260,6 +4269,14 @@
               "null"
             ]
           },
+          "card_kinds": {
+            "default": [],
+            "description": "card kinds",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "content_types": {
             "aliases": [
               "contentTypes"
@@ -4267,17 +4284,25 @@
             "default": [],
             "description": "Content card types",
             "items": {
-              "enum": [
-                "question",
-                "answer",
-                "tool",
-                "command",
-                "code",
-                "result"
-              ],
               "type": "string"
             },
             "type": "array"
+          },
+          "include_cards": {
+            "default": null,
+            "description": "include cards",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "include_questions": {
+            "default": null,
+            "description": "include questions",
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "limit": {
             "description": "Maximum number of hits",
@@ -4347,6 +4372,14 @@
               "null"
             ]
           },
+          "semantic_roles": {
+            "default": [],
+            "description": "semantic roles",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "since": {
             "description": "Only include sessions on or after this RFC3339 timestamp or YYYY-MM-DD date",
             "type": [
@@ -4371,6 +4404,172 @@
           },
           "until": {
             "description": "Only include sessions on or before this RFC3339 timestamp or YYYY-MM-DD date",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.search.incremental",
+      "cli": "assetiweave-cli conversation search incremental --query <query>",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Search content cards changed by the most recent incremental conversation sync runs",
+      "exposure": "friendly",
+      "method": "conversation.search.incremental",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter_id": {
+            "aliases": [
+              "adapterId"
+            ],
+            "description": "Optional adapter filter",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "card_kinds": {
+            "default": [],
+            "description": "card kinds",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "content_types": {
+            "aliases": [
+              "contentTypes"
+            ],
+            "default": [],
+            "description": "Content card types",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "include_cards": {
+            "default": null,
+            "description": "include cards",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "include_questions": {
+            "default": null,
+            "description": "include questions",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "limit": {
+            "description": "Maximum number of hits",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offset": {
+            "description": "Pagination offset",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "project_path": {
+            "aliases": [
+              "projectPath"
+            ],
+            "description": "Optional project path filter",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "query": {
+            "description": "Search query",
+            "type": "string"
+          },
+          "recent_runs": {
+            "aliases": [
+              "recentRuns"
+            ],
+            "default": null,
+            "description": "Most recent delta-bearing sync runs to inspect",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "record_kind": {
+            "aliases": [
+              "recordKind"
+            ],
+            "default": null,
+            "description": "Conversation record kind",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "search_options": {
+            "aliases": [
+              "searchOptions"
+            ],
+            "description": "Optional retrieval settings",
+            "properties": {
+              "retrieval_mode": {
+                "default": null,
+                "enum": [
+                  "lexical",
+                  "semantic",
+                  "hybrid",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "semantic_roles": {
+            "default": [],
+            "description": "semantic roles",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "source_id": {
+            "aliases": [
+              "sourceId"
+            ],
+            "description": "Optional source filter",
             "type": [
               "string",
               "null"
@@ -4466,6 +4665,9 @@
         "additionalProperties": false,
         "properties": {
           "content_filter": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
             "aliases": [
               "contentFilter"
             ],
@@ -4477,28 +4679,6 @@
               "tool": true
             },
             "description": "Optional content categories to include in Markdown export",
-            "properties": {
-              "answer": {
-                "default": true,
-                "type": "boolean"
-              },
-              "code": {
-                "default": true,
-                "type": "boolean"
-              },
-              "command": {
-                "default": true,
-                "type": "boolean"
-              },
-              "result": {
-                "default": true,
-                "type": "boolean"
-              },
-              "tool": {
-                "default": true,
-                "type": "boolean"
-              }
-            },
             "type": "object"
           },
           "dry_run": {
@@ -4652,6 +4832,9 @@
         "additionalProperties": false,
         "properties": {
           "content_filter": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
             "aliases": [
               "contentFilter"
             ],
@@ -4663,28 +4846,6 @@
               "tool": true
             },
             "description": "Optional content categories to include in Markdown export",
-            "properties": {
-              "answer": {
-                "default": true,
-                "type": "boolean"
-              },
-              "code": {
-                "default": true,
-                "type": "boolean"
-              },
-              "command": {
-                "default": true,
-                "type": "boolean"
-              },
-              "result": {
-                "default": true,
-                "type": "boolean"
-              },
-              "tool": {
-                "default": true,
-                "type": "boolean"
-              }
-            },
             "type": "object"
           },
           "dry_run": {
@@ -4807,6 +4968,64 @@
         },
         "required": [
           "question_id"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.block.list",
+      "cli": "assetiweave-cli conversation block list <question-id>",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List content block locators for one question without reading block content",
+      "exposure": "friendly",
+      "method": "conversation.block.list",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "question_id": {
+            "aliases": [
+              "questionId"
+            ],
+            "description": "Question identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question_id"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.block.get",
+      "cli": "assetiweave-cli conversation block get <block-id>",
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Get exact content for one conversation block",
+      "exposure": "friendly",
+      "method": "conversation.block.get",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "block_id": {
+            "aliases": [
+              "blockId"
+            ],
+            "description": "Block identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "block_id"
         ],
         "type": "object"
       },
@@ -10741,6 +10960,15 @@
             "description": "Preview without importing",
             "type": "boolean"
           },
+          "mode": {
+            "default": "incremental",
+            "description": "Synchronization strategy. Incremental is the default; full reparses every discoverable record.",
+            "enum": [
+              "incremental",
+              "full"
+            ],
+            "type": "string"
+          },
           "record_kind": {
             "aliases": [
               "recordKind"
@@ -10915,6 +11143,9 @@
         "additionalProperties": false,
         "properties": {
           "content_filter": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
             "aliases": [
               "contentFilter"
             ],
@@ -10926,28 +11157,6 @@
               "tool": true
             },
             "description": "Optional content categories to include in Markdown export",
-            "properties": {
-              "answer": {
-                "default": true,
-                "type": "boolean"
-              },
-              "code": {
-                "default": true,
-                "type": "boolean"
-              },
-              "command": {
-                "default": true,
-                "type": "boolean"
-              },
-              "result": {
-                "default": true,
-                "type": "boolean"
-              },
-              "tool": {
-                "default": true,
-                "type": "boolean"
-              }
-            },
             "type": "object"
           },
           "dry_run": {
@@ -11110,6 +11319,14 @@
               "null"
             ]
           },
+          "card_kinds": {
+            "default": [],
+            "description": "card kinds",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "content_types": {
             "aliases": [
               "contentTypes"
@@ -11117,17 +11334,25 @@
             "default": [],
             "description": "Content card types",
             "items": {
-              "enum": [
-                "question",
-                "answer",
-                "tool",
-                "command",
-                "code",
-                "result"
-              ],
               "type": "string"
             },
             "type": "array"
+          },
+          "include_cards": {
+            "default": null,
+            "description": "include cards",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "include_questions": {
+            "default": null,
+            "description": "include questions",
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "limit": {
             "description": "Maximum number of hits",
@@ -11197,6 +11422,14 @@
               "null"
             ]
           },
+          "semantic_roles": {
+            "default": [],
+            "description": "semantic roles",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "since": {
             "description": "Only include sessions on or after this RFC3339 timestamp or YYYY-MM-DD date",
             "type": [
@@ -11221,6 +11454,172 @@
           },
           "until": {
             "description": "Only include sessions on or before this RFC3339 timestamp or YYYY-MM-DD date",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.search.incremental",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Search content cards changed by the most recent incremental conversation sync runs",
+      "exposure": "app",
+      "method": "search_recent_incremental_conversation_records",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter_id": {
+            "aliases": [
+              "adapterId"
+            ],
+            "description": "Optional adapter filter",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "card_kinds": {
+            "default": [],
+            "description": "card kinds",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "content_types": {
+            "aliases": [
+              "contentTypes"
+            ],
+            "default": [],
+            "description": "Content card types",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "include_cards": {
+            "default": null,
+            "description": "include cards",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "include_questions": {
+            "default": null,
+            "description": "include questions",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "limit": {
+            "description": "Maximum number of hits",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offset": {
+            "description": "Pagination offset",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "project_path": {
+            "aliases": [
+              "projectPath"
+            ],
+            "description": "Optional project path filter",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "query": {
+            "description": "Search query",
+            "type": "string"
+          },
+          "recent_runs": {
+            "aliases": [
+              "recentRuns"
+            ],
+            "default": null,
+            "description": "Most recent delta-bearing sync runs to inspect",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "record_kind": {
+            "aliases": [
+              "recordKind"
+            ],
+            "default": null,
+            "description": "Conversation record kind",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "search_options": {
+            "aliases": [
+              "searchOptions"
+            ],
+            "description": "Optional retrieval settings",
+            "properties": {
+              "retrieval_mode": {
+                "default": null,
+                "enum": [
+                  "lexical",
+                  "semantic",
+                  "hybrid",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "semantic_roles": {
+            "default": [],
+            "description": "semantic roles",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "source_id": {
+            "aliases": [
+              "sourceId"
+            ],
+            "description": "Optional source filter",
             "type": [
               "string",
               "null"
@@ -11306,6 +11705,9 @@
         "additionalProperties": false,
         "properties": {
           "content_filter": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
             "aliases": [
               "contentFilter"
             ],
@@ -11317,28 +11719,6 @@
               "tool": true
             },
             "description": "Optional content categories to include in Markdown export",
-            "properties": {
-              "answer": {
-                "default": true,
-                "type": "boolean"
-              },
-              "code": {
-                "default": true,
-                "type": "boolean"
-              },
-              "command": {
-                "default": true,
-                "type": "boolean"
-              },
-              "result": {
-                "default": true,
-                "type": "boolean"
-              },
-              "tool": {
-                "default": true,
-                "type": "boolean"
-              }
-            },
             "type": "object"
           },
           "dry_run": {
@@ -11461,6 +11841,64 @@
         },
         "required": [
           "question_id"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.block.list",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "List content block locators for one question without reading block content",
+      "exposure": "app",
+      "method": "list_conversation_blocks",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "question_id": {
+            "aliases": [
+              "questionId"
+            ],
+            "description": "Question identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question_id"
+        ],
+        "type": "object"
+      },
+      "risk": "read",
+      "since": "0.1.0",
+      "supports_dry_run": false
+    },
+    {
+      "canonical_method": "conversation.block.get",
+      "cli": null,
+      "confirmation_required": false,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Get exact content for one conversation block",
+      "exposure": "app",
+      "method": "get_conversation_block",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "block_id": {
+            "aliases": [
+              "blockId"
+            ],
+            "description": "Block identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "block_id"
         ],
         "type": "object"
       },
@@ -12035,6 +12473,7 @@
     "conversation.sync",
     "conversation.session.list",
     "conversation.search",
+    "conversation.search.incremental",
     "conversation.search.index.status",
     "conversation.search.index.rebuild",
     "conversation.session.get",
@@ -12044,6 +12483,8 @@
     "conversation.web-record.export",
     "conversation.question.list",
     "conversation.question.get",
+    "conversation.block.list",
+    "conversation.block.get",
     "conversation.question.merge",
     "conversation.question.split",
     "conversation.part.translation.update",
@@ -12166,12 +12607,15 @@
     "list_web_record_sessions",
     "get_web_record_session",
     "search_conversation_records",
+    "search_recent_incremental_conversation_records",
     "get_conversation_search_index_status",
     "start_conversation_search_index_rebuild",
     "get_conversation_search_index_task",
     "export_web_record_session",
     "list_conversation_questions",
     "get_conversation_question",
+    "list_conversation_blocks",
+    "get_conversation_block",
     "merge_conversation_questions",
     "split_conversation_question",
     "update_conversation_part_translation",

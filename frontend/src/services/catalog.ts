@@ -78,6 +78,14 @@ export async function listAssets(kind?: AssetKind): Promise<Asset[]> {
   }
 }
 
+export async function listSourceAssets(kind?: AssetKind): Promise<Asset[]> {
+  try {
+    return await invoke<Asset[]>("list_source_assets", { kind: kind ?? null });
+  } catch {
+    return kind ? fallbackAssets.filter((asset) => asset.kind === kind) : fallbackAssets;
+  }
+}
+
 export async function getSkillBackupSettings(): Promise<SkillBackupSettings> {
   try {
     return await invoke<SkillBackupSettings>("get_skill_backup_settings");

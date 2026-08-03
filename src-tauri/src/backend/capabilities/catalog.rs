@@ -113,6 +113,21 @@ pub(crate) fn catalog_assets_sqlx(
     })
 }
 
+pub(crate) fn source_assets_sqlx(
+    db: &crate::backend::store::Database,
+    tenant_id: &str,
+    kind: Option<AssetKind>,
+) -> AppResult<Vec<CatalogAsset>> {
+    let pool = db.pool().clone();
+    let tenant_id = tenant_id.to_string();
+    db.block_on(async move {
+        let assets = crate::backend::store::load_assets_sqlx(&pool, &tenant_id, kind).await?;
+        let sources = crate::backend::store::load_sources_sqlx(&pool, &tenant_id).await?;
+        let assets = filter_unavailable_backup_library_assets(assets, &sources);
+        AppResult::Ok(build_source_assets(assets, &sources))
+    })
+}
+
 pub(crate) fn catalog_visible_assets_sqlx(
     db: &crate::backend::store::Database,
     tenant_id: &str,
@@ -150,6 +165,32 @@ fn filter_unavailable_backup_library_assets(assets: Vec<Asset>, sources: &[Sourc
 pub(crate) fn build_catalog_assets(assets: Vec<Asset>, sources: &[Source]) -> Vec<CatalogAsset> {
     let mut catalog_assets = build_catalog_asset_entries(assets, sources);
     attach_git_repository_info(&mut catalog_assets);
+    catalog_assets
+}
+
+pub(crate) fn build_source_assets(assets: Vec<Asset>, sources: &[Source]) -> Vec<CatalogAsset> {
+    let source_by_id = sources
+        .iter()
+        .map(|source| (source.id.as_str(), source))
+        .collect::<HashMap<_, _>>();
+    let mut catalog_assets = assets
+        .into_iter()
+        .map(|asset| {
+            let backup_status = standalone_backup_status(
+                &asset,
+                source_by_id.get(asset.source_id.as_str()).copied(),
+            );
+            catalog_asset(asset, backup_status)
+        })
+        .collect::<Vec<_>>();
+    attach_git_repository_info(&mut catalog_assets);
+    catalog_assets.sort_by(|left, right| {
+        left.asset
+            .source_id
+            .cmp(&right.asset.source_id)
+            .then_with(|| left.asset.name.cmp(&right.asset.name))
+            .then_with(|| left.asset.relative_path.cmp(&right.asset.relative_path))
+    });
     catalog_assets
 }
 
@@ -383,6 +424,27 @@ mod tests {
 
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].asset.source_id, "assetiweave-system-skills");
+    }
+
+    #[test]
+    fn source_assets_keep_every_scanned_copy_for_source_views() {
+        let system_source =
+            test_source("assetiweave-system-skills", SourceOrigin::AssetiweaveSystem);
+        let external_source = test_source("external-skills", SourceOrigin::LocalFolder);
+        let assets = vec![
+            test_skill_asset("external-skill", &external_source.id),
+            test_skill_asset("system-skill", &system_source.id),
+        ];
+
+        let source_assets = build_source_assets(assets, &[external_source, system_source]);
+
+        assert_eq!(source_assets.len(), 2);
+        let source_ids = source_assets
+            .iter()
+            .map(|asset| asset.asset.source_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(source_ids.contains(&"external-skills"));
+        assert!(source_ids.contains(&"assetiweave-system-skills"));
     }
 
     fn test_source(id: &str, source_origin: SourceOrigin) -> Source {

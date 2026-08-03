@@ -2,7 +2,8 @@ use crate::backend::{
     ai_execution::AiExecutionCancellation,
     application::{
         ConversationAdapterPackageInstallParams, ConversationAdapterPackageUninstallParams,
-        ConversationScriptInstallParams, ConversationSyncParams, MemoryTaskStartParams,
+        ConversationScriptInstallParams, ConversationSyncMode, ConversationSyncParams,
+        MemoryTaskStartParams,
     },
     dto::{AppResult, CatalogAsset},
     models::{MemoryDreamTrigger, MemoryRunKind, MemoryScope},
@@ -26,13 +27,32 @@ pub(crate) enum BackgroundTaskStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct ConversationSyncTaskProgress {
+    pub(crate) phase: ConversationSyncProgressPhase,
+    pub(crate) completed_source_count: usize,
+    pub(crate) total_source_count: usize,
+    pub(crate) current_source_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ConversationSyncProgressPhase {
+    Preparing,
+    Syncing,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct ConversationSyncTaskSnapshot {
     pub(crate) id: String,
     pub(crate) status: BackgroundTaskStatus,
     pub(crate) source_id: Option<String>,
     pub(crate) adapter_id: Option<String>,
     pub(crate) record_kind: Option<String>,
+    pub(crate) mode: ConversationSyncMode,
     pub(crate) dry_run: bool,
+    pub(crate) progress: ConversationSyncTaskProgress,
     pub(crate) started_at: String,
     pub(crate) finished_at: Option<String>,
     pub(crate) result: Option<Value>,
@@ -248,7 +268,14 @@ impl BackgroundTaskRegistry {
             source_id: params.source_id.clone(),
             adapter_id: params.adapter_id.clone(),
             record_kind: scope.record_kind().map(str::to_string),
+            mode: params.mode,
             dry_run: params.dry_run,
+            progress: ConversationSyncTaskProgress {
+                phase: ConversationSyncProgressPhase::Preparing,
+                completed_source_count: 0,
+                total_source_count: 0,
+                current_source_name: None,
+            },
             started_at: Utc::now().to_rfc3339(),
             finished_at: None,
             result: None,
@@ -256,6 +283,30 @@ impl BackgroundTaskRegistry {
         };
         current.insert(scope, snapshot.clone());
         Ok((snapshot, true))
+    }
+
+    pub(crate) fn update_conversation_sync_progress(
+        &self,
+        task_id: &str,
+        completed_source_count: usize,
+        total_source_count: usize,
+        current_source_name: Option<String>,
+    ) -> AppResult<ConversationSyncTaskSnapshot> {
+        let mut current = self
+            .conversation_sync
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let snapshot = current
+            .values_mut()
+            .find(|snapshot| snapshot.id == task_id)
+            .ok_or_else(|| "conversation sync task not found".to_string())?;
+        snapshot.progress = ConversationSyncTaskProgress {
+            phase: ConversationSyncProgressPhase::Syncing,
+            completed_source_count: completed_source_count.min(total_source_count),
+            total_source_count,
+            current_source_name,
+        };
+        Ok(snapshot.clone())
     }
 
     pub(crate) fn finish_conversation_sync(
@@ -276,11 +327,16 @@ impl BackgroundTaskRegistry {
         match result {
             Ok(value) => {
                 snapshot.status = BackgroundTaskStatus::Completed;
+                snapshot.progress.phase = ConversationSyncProgressPhase::Completed;
+                snapshot.progress.completed_source_count = snapshot.progress.total_source_count;
+                snapshot.progress.current_source_name = None;
                 snapshot.result = Some(value);
                 snapshot.error = None;
             }
             Err(error) => {
                 snapshot.status = BackgroundTaskStatus::Failed;
+                snapshot.progress.phase = ConversationSyncProgressPhase::Failed;
+                snapshot.progress.current_source_name = None;
                 snapshot.result = None;
                 snapshot.error = Some(error);
             }
@@ -843,6 +899,7 @@ mod tests {
             source_id: None,
             adapter_id: None,
             record_kind: record_kind.map(str::to_string),
+            mode: ConversationSyncMode::Incremental,
             dry_run: false,
         }
     }
@@ -906,6 +963,43 @@ mod tests {
             .finish_conversation_sync(&session.id, Ok(serde_json::json!({ "results": [] })))
             .unwrap();
         assert!(registry.has_running_tasks());
+    }
+
+    #[test]
+    fn full_sync_owns_the_all_record_scope_and_blocks_scoped_syncs() {
+        let registry = BackgroundTaskRegistry::default();
+        let mut full_params = params(None);
+        full_params.mode = ConversationSyncMode::Full;
+
+        let (full, should_start_full) = registry.begin_conversation_sync(&full_params).unwrap();
+        let (session, should_start_session) = registry
+            .begin_conversation_sync(&params(Some("session")))
+            .unwrap();
+
+        assert!(should_start_full);
+        assert!(!should_start_session);
+        assert_eq!(session.id, full.id);
+        assert_eq!(full.record_kind, None);
+        assert_eq!(full.mode, ConversationSyncMode::Full);
+    }
+
+    #[test]
+    fn conversation_sync_progress_tracks_completed_and_current_sources() {
+        let registry = BackgroundTaskRegistry::default();
+        let (running, _) = registry
+            .begin_conversation_sync(&params(Some("session")))
+            .unwrap();
+
+        let updated = registry
+            .update_conversation_sync_progress(&running.id, 1, 3, Some("Gemini Web".to_string()))
+            .unwrap();
+
+        assert_eq!(updated.progress.completed_source_count, 1);
+        assert_eq!(updated.progress.total_source_count, 3);
+        assert_eq!(
+            updated.progress.current_source_name.as_deref(),
+            Some("Gemini Web")
+        );
     }
 
     #[test]
