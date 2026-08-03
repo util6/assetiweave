@@ -148,8 +148,22 @@ Conversation 不属于文件资产 Catalog。它拥有独立的数据流：
 
 - `ConversationSession`：第三方 App 的一个 Session，保留来源、外部 ID、标题、项目路径和 source locator。
 - `ConversationTurn`：以真实用户消息为边界的源对齐记录。
-- `ConversationPart`：Turn 内有序内容，支持 text、code_block、command、tool、file_change、subagent。
+- `ConversationPart`：Turn 内有序内容，支持 text、code_block、command、tool、file_change、subagent；可选 `source_execution_id` 原样保留来源工具调用身份。
 - `ConversationQuestion`：用户可见的问题分组，可包含同一 Session 内相邻多个 Turn。
+
+内容标准化边界：
+
+- 外部 Adapter 负责理解来源 JSON：识别 Command/Result、解开来源 envelope、解析完整 JSON 字符串或结构化文本片段、规范换行、移除 ANSI/控制字符与来源执行器头部；这些规则随 Adapter package 独立发布。
+- Core 不识别 `Output:`、`Wall time`、字面量 `\\n` 等来源协议细节，只校验 Adapter 输出、持久化 Part/Card，并按受控 renderer 投影展示数据。
+- 前端按 renderer 做通用的预格式化、滚动和折叠，不建立来源特定的清理规则。新增来源格式只改 Adapter；只有新增 Core renderer 时才改前端/Core。
+
+Execution 展示投影：
+
+- Codex、Claude Code、OpenCode Adapter 从来源 JSON 复制可靠的 call ID；Antigravity 暂不推断，保持 `source_execution_id = null`。
+- Core 只按精确的 `(turn_id, source_execution_id)` 将 `command` / `result` Card 投影为 Execution 父子节点，不按顺序、文本或时间做语义重匹配。
+- Question Detail 同时返回扁平 `cards` 和有序 `content_nodes`；Execution 节点仅保存同一响应内的 Card 数组索引，避免复制正文。
+- 前端直接消费 `content_nodes`，不创建配对 Map；没有结构化节点的历史数据继续使用扁平 Card 回退展示。
+- Execution 是可重建的读取模型，不单独建立实体表或关系表。完整决策见 `docs/decisions/ADR-006-source-execution-grouping.md`。
 
 身份与展示约定：
 
@@ -170,6 +184,10 @@ Conversation 不属于文件资产 Catalog。它拥有独立的数据流：
 - active 表示新建、版本变化、读取失败待重试或读取期间继续变化，不使用固定时间窗口判断，因此旧 Session 重新打开后仍能补充新内容。
 - Adapter 必须标明元数据快照是否完整；不完整快照不得把未返回记录标记为缺失或删除，也不得推进成功版本。
 - 旧 Adapter 的全量返回继续兼容，但 Store 采用保留式 upsert，不根据省略项删除历史。
+- `ConversationSyncParams.mode` 使用 `incremental | full` 显式区分同步意图，缺省为 `incremental`；Conversation 页面和既有调用不传 mode 时继续执行安全增量同步。
+- `full` 模式复用同一 AppService、后台任务 registry 与保留式 Store，但不向 Adapter 提供已成功 hydration version，使当前发现的所有 Session 都进入读取；网页 Harvester 同时通过进程环境标记绕过详情缓存。
+- 全局设置是 `full` 模式的人工入口并要求二次确认；全量重解析只覆盖仍可发现的来源内容，不能清除来源已不再返回的本地历史。
+- Conversation 同步后台任务快照持久携带 `phase`、`completed_source_count`、`total_source_count` 和 `current_source_name`；AppService 在来源边界回调进度，Tauri 事件实时推送，前端 Provider 继续以轮询作为丢失事件时的恢复路径。
 
 外部适配器协议：
 

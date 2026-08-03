@@ -359,6 +359,10 @@
 - [X] 20.7 同步任务返回发现、active、读取、跳过和保留统计，前端展示安全增量结果
 - [X] 20.8 补充不完整快照、来源缺失、旧 Session 追加、读取竞态和兼容 Adapter 回归测试
 - [X] 20.9 重新生成 Engine/CLI contract，并完成 Rust、前端、Adapter 与 Go CLI 验证
+- [X] 20.10 增加 `incremental | full` 同步模式，默认及 Conversation 页面按钮保持安全增量
+- [X] 20.11 在全局设置增加需确认的全量重解析入口，并让 Web Harvester 全量模式绕过详情缓存
+- [X] 20.12 保证全量重解析继续使用保留式 upsert，补齐 Core、前端、CLI、Contract 和 Adapter 回归验证
+- [X] 20.13 为全量同步增加来源级后台进度快照、事件推送、动态按钮和全局设置进度 UI
 
 ## Phase 21：Conversation Recall 与网页采集修复
 
