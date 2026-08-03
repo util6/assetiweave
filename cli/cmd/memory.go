@@ -80,7 +80,7 @@ func newCmdMemoryDream(f *cmdutil.Factory) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return callAndPrint(cmd, f, schema.MethodMemoryDreamList, map[string]any{"statuses": statuses, "scope": resolved, "limit": limit, "offset": offset})
+		return callAndPrint(cmd, f, schema.MethodMemoryDreamList, map[string]any{"statuses": nonNilStrings(statuses), "scope": resolved, "limit": limit, "offset": offset})
 	}}
 	addMemoryScopeFlags(list, &scope)
 	list.Flags().StringSliceVar(&statuses, "status", nil, "Dream status filter")
@@ -182,7 +182,7 @@ func newCmdMemoryItem(f *cmdutil.Factory) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return callAndPrint(cmd, f, schema.MethodMemoryItemList, map[string]any{"kinds": kinds, "statuses": statuses, "origins": origins, "scope": resolved, "stale_only": stale, "limit": limit, "offset": offset})
+		return callAndPrint(cmd, f, schema.MethodMemoryItemList, map[string]any{"kinds": nonNilStrings(kinds), "statuses": nonNilStrings(statuses), "origins": nonNilStrings(origins), "scope": resolved, "stale_only": stale, "limit": limit, "offset": offset})
 	}}
 	addMemoryScopeFlags(list, &scope)
 	list.Flags().StringSliceVar(&kinds, "kind", nil, "Memory kind filter")
@@ -307,6 +307,13 @@ func (scope memoryScopeFlags) params() (map[string]any, error) {
 
 func scopeHasValue(scope memoryScopeFlags) bool {
 	return scope.appID != "" || scope.sourceID != "" || scope.projectPath != "" || scope.sessionID != "" || scope.currentProject
+}
+
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 func compactMemoryRecall(value map[string]any) {

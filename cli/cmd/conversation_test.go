@@ -13,7 +13,7 @@ import (
 	"github.com/util6/assetiweave/internal/output"
 )
 
-func TestConversationSearchBuildsMemorySearchParams(t *testing.T) {
+func TestConversationSearchBuildsUnifiedKindSearchParams(t *testing.T) {
 	client := &recordingClient{}
 	err := executeSkillGroupTestCommand(t, client,
 		"conversation", "search",
@@ -22,8 +22,10 @@ func TestConversationSearchBuildsMemorySearchParams(t *testing.T) {
 		"--adapter", "codex",
 		"--source", "codex-live",
 		"--project", "/Users/util6/code-space/assetiweave",
-		"--type", "question",
-		"--card-type", "answer",
+		"--kind", "question",
+		"--kind", "answer",
+		"--kind", "claude-code.reasoning",
+		"--kind", "custom.trace",
 		"--since", "2026-01-01",
 		"--until", "2026-06-01T00:00:00Z",
 		"--timeline",
@@ -49,8 +51,63 @@ func TestConversationSearchBuildsMemorySearchParams(t *testing.T) {
 		params["offset"] != 10 {
 		t.Fatalf("params = %#v", params)
 	}
-	if !reflect.DeepEqual(params["content_types"], []string{"question", "answer"}) {
+	if !reflect.DeepEqual(params["content_types"], []string{"question"}) {
 		t.Fatalf("content_types = %#v", params["content_types"])
+	}
+	if !reflect.DeepEqual(params["card_kinds"], []string{"claude-code.reasoning", "custom.trace"}) {
+		t.Fatalf("card_kinds = %#v", params["card_kinds"])
+	}
+	if !reflect.DeepEqual(params["semantic_roles"], []string{"answer"}) {
+		t.Fatalf("semantic_roles = %#v", params["semantic_roles"])
+	}
+}
+
+func TestConversationSearchRejectsUnqualifiedUnknownKind(t *testing.T) {
+	client := &recordingClient{}
+	err := executeSkillGroupTestCommand(t, client,
+		"conversation", "search",
+		"--query", "memory",
+		"--kind", "custom",
+	)
+	if err == nil || !strings.Contains(err.Error(), "unqualified --kind") {
+		t.Fatalf("error = %v, want unqualified --kind validation error", err)
+	}
+}
+
+func TestConversationSearchHidesLegacyCardFilterFlags(t *testing.T) {
+	root := Build(context.Background(), &cmdutil.Factory{
+		IOStreams: &cmdutil.IOStreams{In: &bytes.Buffer{}, Out: &bytes.Buffer{}, ErrOut: &bytes.Buffer{}},
+		Client:    &recordingClient{},
+	})
+	command, _, err := root.Find([]string{"conversation", "search"})
+	if err != nil {
+		t.Fatalf("Find() error = %v", err)
+	}
+	for _, name := range []string{"type", "card-type", "card-kind", "semantic-role"} {
+		flag := command.Flags().Lookup(name)
+		if flag == nil || !flag.Hidden {
+			t.Fatalf("legacy flag %q = %#v, want hidden", name, flag)
+		}
+	}
+}
+
+func TestConversationSearchRetainsLegacyCardFilterAliases(t *testing.T) {
+	client := &recordingClient{}
+	err := executeSkillGroupTestCommand(t, client,
+		"conversation", "search",
+		"--query", "memory",
+		"--type", "question",
+		"--semantic-role", "answer",
+		"--card-kind", "adapter.decision",
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	params := recordedSkillGroupParams(t, client)
+	if !reflect.DeepEqual(params["content_types"], []string{"question"}) ||
+		!reflect.DeepEqual(params["semantic_roles"], []string{"answer"}) ||
+		!reflect.DeepEqual(params["card_kinds"], []string{"adapter.decision"}) {
+		t.Fatalf("params = %#v", params)
 	}
 }
 
@@ -109,6 +166,7 @@ func TestConversationSyncBuildsRecordKindParams(t *testing.T) {
 		"conversation", "sync",
 		"--adapter", "qwen-web",
 		"--record-kind", "web",
+		"--mode", "full",
 		"--dry-run",
 	)
 	if err != nil {
@@ -120,8 +178,66 @@ func TestConversationSyncBuildsRecordKindParams(t *testing.T) {
 	params := recordedSkillGroupParams(t, client)
 	if params["adapter_id"] != "qwen-web" ||
 		params["record_kind"] != "web" ||
+		params["mode"] != "full" ||
 		params["dry_run"] != true {
 		t.Fatalf("params = %#v", params)
+	}
+}
+
+func TestConversationIncrementalSearchBuildsRecentRunParams(t *testing.T) {
+	client := &recordingClient{}
+	err := executeSkillGroupTestCommand(t, client,
+		"conversation", "search", "incremental",
+		"--query", "recent memory",
+		"--record-kind", "session",
+		"--recent-runs", "5",
+		"--kind", "answer",
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if client.method != "conversation.search.incremental" {
+		t.Fatalf("method = %q, want conversation.search.incremental", client.method)
+	}
+	params := recordedSkillGroupParams(t, client)
+	if params["query"] != "recent memory" ||
+		params["record_kind"] != "session" ||
+		params["recent_runs"] != 5 {
+		t.Fatalf("params = %#v", params)
+	}
+	semanticRoles, ok := params["semantic_roles"].([]string)
+	if !ok || len(semanticRoles) != 1 || semanticRoles[0] != "answer" {
+		t.Fatalf("semantic_roles = %#v", params["semantic_roles"])
+	}
+}
+
+func TestConversationBlockCommandsUseOnlyExactLocators(t *testing.T) {
+	client := &recordingClient{}
+	err := executeSkillGroupTestCommand(t, client,
+		"conversation", "block", "list", "conversation-question-1234567890",
+	)
+	if err != nil {
+		t.Fatalf("list Execute() error = %v", err)
+	}
+	if client.method != "conversation.block.list" {
+		t.Fatalf("list method = %q", client.method)
+	}
+	if params := recordedSkillGroupParams(t, client); params["question_id"] != "conversation-question-1234567890" {
+		t.Fatalf("list params = %#v", params)
+	}
+
+	client = &recordingClient{}
+	err = executeSkillGroupTestCommand(t, client,
+		"conversation", "block", "get", "conversation-part-1234567890",
+	)
+	if err != nil {
+		t.Fatalf("get Execute() error = %v", err)
+	}
+	if client.method != "conversation.block.get" {
+		t.Fatalf("get method = %q", client.method)
+	}
+	if params := recordedSkillGroupParams(t, client); params["block_id"] != "conversation-part-1234567890" {
+		t.Fatalf("get params = %#v", params)
 	}
 }
 
@@ -206,6 +322,10 @@ func TestConversationSearchWritesMarkdownForAIContext(t *testing.T) {
 		"/Users/util6/code-space/assetiweave",
 		"p-1-answer",
 		"frontend style preference",
+		"Card kinds: `claude-code.reasoning`",
+		"Semantic roles: `reasoning`",
+		"Card kind facets: `claude-code.reasoning=1`",
+		"Semantic role facets: `reasoning=1`",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("markdown output missing %q:\n%s", want, output)
@@ -258,6 +378,13 @@ func TestConversationSearchWritesCompactJSONForAIContext(t *testing.T) {
 	if !ok || hit["session_id"] != "session-1" || hit["block_id"] != "p-1-answer" {
 		t.Fatalf("compact hit = %#v", hits[0])
 	}
+	scope, ok := data["scope"].(map[string]any)
+	if !ok || !reflect.DeepEqual(scope["card_kinds"], []any{"claude-code.reasoning"}) || !reflect.DeepEqual(scope["semantic_roles"], []any{"reasoning"}) {
+		t.Fatalf("compact scope = %#v", data["scope"])
+	}
+	if !reflect.DeepEqual(data["content_type_counts"], map[string]any{"claude-code.reasoning": float64(1)}) || !reflect.DeepEqual(data["semantic_role_counts"], map[string]any{"reasoning": float64(1)}) {
+		t.Fatalf("compact facets = %#v / %#v", data["content_type_counts"], data["semantic_role_counts"])
+	}
 }
 
 func executeConversationSearchOutputCommand(t *testing.T, data json.RawMessage, args ...string) (*bytes.Buffer, *recordingClient) {
@@ -287,6 +414,10 @@ func conversationSearchFixtureData() json.RawMessage {
 			"project_path": "/Users/util6/code-space/assetiweave",
 			"query": "frontend",
 			"content_types": ["answer"],
+			"card_kinds": ["claude-code.reasoning"],
+			"semantic_roles": ["reasoning"],
+			"include_questions": true,
+			"include_cards": true,
 			"since": null,
 			"until": null,
 			"timeline": false,
@@ -294,6 +425,8 @@ func conversationSearchFixtureData() json.RawMessage {
 			"offset": 0
 		},
 		"total_count": 1,
+		"content_type_counts": {"claude-code.reasoning": 1},
+		"semantic_role_counts": {"reasoning": 1},
 		"hits": [
 			{
 				"session": {

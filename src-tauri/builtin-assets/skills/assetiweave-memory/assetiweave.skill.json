@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "assetiweave.memory",
-  "content_version": "1.0.0",
+  "content_version": "1.3.0",
   "engine_contract": ">=3",
   "entry": "SKILL.md",
   "capabilities": [
@@ -20,6 +20,10 @@
     "memory.item.archive",
     "memory.candidate.accept",
     "memory.candidate.reject",
-    "memory.verify"
+    "memory.verify",
+    "conversation.search",
+    "conversation.search.incremental",
+    "conversation.block.list",
+    "conversation.block.get"
   ]
 }

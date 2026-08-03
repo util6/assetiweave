@@ -2,10 +2,33 @@ package cmd
 
 import (
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/util6/assetiweave/internal/schema"
 )
+
+func TestMemoryListCommandsSendEmptyFilterArrays(t *testing.T) {
+	for _, args := range [][]string{
+		{"memory", "dream", "list"},
+		{"memory", "item", "list"},
+	} {
+		client := &recordingClient{}
+		if err := executeSkillGroupTestCommand(t, client, args...); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		params := recordedSkillGroupParams(t, client)
+		for _, key := range []string{"statuses", "kinds", "origins"} {
+			value, present := params[key]
+			if !present {
+				continue
+			}
+			if !reflect.DeepEqual(value, []string{}) {
+				t.Fatalf("%v %s = %#v, want empty array", args, key, value)
+			}
+		}
+	}
+}
 
 func TestMemoryRecallDefaultsToEvidenceOnlyAndUsesCurrentProject(t *testing.T) {
 	wd, err := os.Getwd()

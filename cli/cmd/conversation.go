@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ func newCmdConversation(f *cmdutil.Factory) *cobra.Command {
 	cmd.AddCommand(newCmdConversationSession(f))
 	cmd.AddCommand(newCmdConversationWebRecord(f))
 	cmd.AddCommand(newCmdConversationQuestion(f))
+	cmd.AddCommand(newCmdConversationBlock(f))
 	cmd.AddCommand(newCmdConversationPart(f))
 	cmd.AddCommand(newCmdConversationWeb(f))
 	return cmd
@@ -31,7 +33,7 @@ func newCmdConversation(f *cmdutil.Factory) *cobra.Command {
 
 func newCmdConversationSearch(f *cmdutil.Factory) *cobra.Command {
 	var recordKind, adapterID, sourceID, projectPath, query, since, until, format string
-	var contentTypes, cardTypes []string
+	var kinds, contentTypes, cardTypes, cardKinds, semanticRoles []string
 	var currentProject, timeline bool
 	var limit, offset int
 	cmd := &cobra.Command{
@@ -46,20 +48,31 @@ func newCmdConversationSearch(f *cmdutil.Factory) *cobra.Command {
 				}
 				resolvedProjectPath = wd
 			}
-			resolvedContentTypes := append([]string{}, contentTypes...)
+			kindContentTypes, kindCardKinds, kindSemanticRoles, err := resolveConversationSearchKinds(kinds)
+			if err != nil {
+				return err
+			}
+			resolvedContentTypes := append([]string{}, kindContentTypes...)
+			resolvedContentTypes = append(resolvedContentTypes, contentTypes...)
 			resolvedContentTypes = append(resolvedContentTypes, cardTypes...)
+			resolvedCardKinds := append([]string{}, kindCardKinds...)
+			resolvedCardKinds = append(resolvedCardKinds, cardKinds...)
+			resolvedSemanticRoles := append([]string{}, kindSemanticRoles...)
+			resolvedSemanticRoles = append(resolvedSemanticRoles, semanticRoles...)
 			params := map[string]any{
-				"record_kind":   recordKind,
-				"adapter_id":    nil,
-				"source_id":     nil,
-				"project_path":  nil,
-				"query":         query,
-				"content_types": resolvedContentTypes,
-				"since":         nil,
-				"until":         nil,
-				"timeline":      timeline,
-				"limit":         limit,
-				"offset":        offset,
+				"record_kind":    recordKind,
+				"adapter_id":     nil,
+				"source_id":      nil,
+				"project_path":   nil,
+				"query":          query,
+				"content_types":  resolvedContentTypes,
+				"card_kinds":     resolvedCardKinds,
+				"semantic_roles": resolvedSemanticRoles,
+				"since":          nil,
+				"until":          nil,
+				"timeline":       timeline,
+				"limit":          limit,
+				"offset":         offset,
 			}
 			if adapterID != "" {
 				params["adapter_id"] = adapterID
@@ -113,8 +126,7 @@ func newCmdConversationSearch(f *cmdutil.Factory) *cobra.Command {
 	cmd.Flags().StringVar(&sourceID, "source", "", "source id filter")
 	cmd.Flags().StringVar(&projectPath, "project", "", "project path filter")
 	cmd.Flags().BoolVar(&currentProject, "current-project", false, "use the current working directory as the project path filter")
-	cmd.Flags().StringArrayVar(&contentTypes, "type", []string{}, "content card type filter; repeat for question, answer, tool, command, code, or result")
-	cmd.Flags().StringArrayVar(&cardTypes, "card-type", []string{}, "alias of --type")
+	bindConversationSearchKindFlags(cmd, &kinds, &contentTypes, &cardTypes, &cardKinds, &semanticRoles)
 	cmd.Flags().StringVar(&since, "since", "", "only include sessions on or after this RFC3339 timestamp or YYYY-MM-DD date")
 	cmd.Flags().StringVar(&until, "until", "", "only include sessions on or before this RFC3339 timestamp or YYYY-MM-DD date")
 	cmd.Flags().BoolVar(&timeline, "timeline", false, "return hits in chronological session order")
@@ -122,8 +134,127 @@ func newCmdConversationSearch(f *cmdutil.Factory) *cobra.Command {
 	cmd.Flags().IntVar(&offset, "offset", 0, "pagination offset")
 	cmd.Flags().StringVar(&format, "format", "json", "output format: json, compact-json, markdown, or prompt")
 	_ = cmd.MarkFlagRequired("query")
+	cmd.AddCommand(newCmdConversationIncrementalSearch(f))
 	cmd.AddCommand(newCmdConversationSearchIndex(f))
 	return cmd
+}
+
+func newCmdConversationIncrementalSearch(f *cmdutil.Factory) *cobra.Command {
+	var recordKind, adapterID, sourceID, projectPath, query string
+	var kinds, contentTypes, cardTypes, cardKinds, semanticRoles []string
+	var currentProject bool
+	var recentRuns, limit, offset int
+	cmd := &cobra.Command{
+		Use:   "incremental",
+		Short: "Search cards changed by recent incremental conversation syncs",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resolvedProjectPath := projectPath
+			if currentProject {
+				wd, err := os.Getwd()
+				if err != nil {
+					return err
+				}
+				resolvedProjectPath = wd
+			}
+			kindContentTypes, kindCardKinds, kindSemanticRoles, err := resolveConversationSearchKinds(kinds)
+			if err != nil {
+				return err
+			}
+			resolvedContentTypes := append([]string{}, kindContentTypes...)
+			resolvedContentTypes = append(resolvedContentTypes, contentTypes...)
+			resolvedContentTypes = append(resolvedContentTypes, cardTypes...)
+			resolvedCardKinds := append([]string{}, kindCardKinds...)
+			resolvedCardKinds = append(resolvedCardKinds, cardKinds...)
+			resolvedSemanticRoles := append([]string{}, kindSemanticRoles...)
+			resolvedSemanticRoles = append(resolvedSemanticRoles, semanticRoles...)
+			params := map[string]any{
+				"record_kind":    recordKind,
+				"adapter_id":     nil,
+				"source_id":      nil,
+				"project_path":   nil,
+				"query":          query,
+				"content_types":  resolvedContentTypes,
+				"card_kinds":     resolvedCardKinds,
+				"semantic_roles": resolvedSemanticRoles,
+				"recent_runs":    recentRuns,
+				"limit":          limit,
+				"offset":         offset,
+			}
+			if adapterID != "" {
+				params["adapter_id"] = adapterID
+			}
+			if sourceID != "" {
+				params["source_id"] = sourceID
+			}
+			if resolvedProjectPath != "" {
+				params["project_path"] = resolvedProjectPath
+			}
+			return callAndPrint(cmd, f, schema.MethodConversationSearchIncremental, params)
+		},
+	}
+	cmd.Flags().StringVar(&query, "query", "", "search query")
+	cmd.Flags().StringVar(&recordKind, "record-kind", "session", "conversation record kind: session or web")
+	cmd.Flags().StringVar(&adapterID, "adapter", "", "adapter id filter")
+	cmd.Flags().StringVar(&sourceID, "source", "", "source id filter")
+	cmd.Flags().StringVar(&projectPath, "project", "", "project path filter")
+	cmd.Flags().BoolVar(&currentProject, "current-project", false, "use the current working directory as the project path filter")
+	bindConversationSearchKindFlags(cmd, &kinds, &contentTypes, &cardTypes, &cardKinds, &semanticRoles)
+	cmd.Flags().IntVar(&recentRuns, "recent-runs", 3, "number of recent delta-bearing sync runs to search")
+	cmd.Flags().IntVar(&limit, "limit", 50, "maximum hits")
+	cmd.Flags().IntVar(&offset, "offset", 0, "pagination offset")
+	_ = cmd.MarkFlagRequired("query")
+	return cmd
+}
+
+func bindConversationSearchKindFlags(
+	cmd *cobra.Command,
+	kinds, contentTypes, cardTypes, cardKinds, semanticRoles *[]string,
+) {
+	cmd.Flags().StringArrayVar(kinds, "kind", []string{}, "question, semantic role, or namespaced card kind; repeat as needed")
+	cmd.Flags().StringArrayVar(contentTypes, "type", []string{}, "legacy alias of --kind")
+	cmd.Flags().StringArrayVar(cardTypes, "card-type", []string{}, "legacy alias of --kind")
+	cmd.Flags().StringArrayVar(cardKinds, "card-kind", []string{}, "legacy alias of --kind")
+	cmd.Flags().StringArrayVar(semanticRoles, "semantic-role", []string{}, "legacy alias of --kind")
+	for _, name := range []string{"type", "card-type", "card-kind", "semantic-role"} {
+		_ = cmd.Flags().MarkHidden(name)
+	}
+}
+
+func resolveConversationSearchKinds(kinds []string) ([]string, []string, []string, error) {
+	contentTypes := make([]string, 0, len(kinds))
+	cardKinds := make([]string, 0, len(kinds))
+	semanticRoles := make([]string, 0, len(kinds))
+	for _, raw := range kinds {
+		kind := strings.TrimSpace(raw)
+		if kind == "" {
+			return nil, nil, nil, fmt.Errorf("--kind must not be empty")
+		}
+		lower := strings.ToLower(kind)
+		switch lower {
+		case "question":
+			contentTypes = appendUniqueConversationSearchKind(contentTypes, "question")
+		case "answer", "reasoning", "code", "command", "result", "tool":
+			semanticRoles = appendUniqueConversationSearchKind(semanticRoles, lower)
+		case "":
+			return nil, nil, nil, fmt.Errorf("--kind must not be empty")
+		default:
+			if !strings.Contains(kind, ".") || strings.ContainsAny(kind, " \t\n") {
+				return nil, nil, nil, fmt.Errorf(
+					"unqualified --kind %q; use question, a semantic role (answer, reasoning, code, command, result, tool), or a namespaced card kind such as adapter.kind",
+					kind,
+				)
+			}
+			cardKinds = appendUniqueConversationSearchKind(cardKinds, kind)
+		}
+	}
+	return contentTypes, cardKinds, semanticRoles, nil
+}
+
+func appendUniqueConversationSearchKind(values []string, value string) []string {
+	if slices.Contains(values, value) {
+		return values
+	}
+	return append(values, value)
 }
 
 func newCmdConversationSearchIndex(f *cmdutil.Factory) *cobra.Command {
@@ -146,25 +277,31 @@ func newCmdConversationSearchIndex(f *cmdutil.Factory) *cobra.Command {
 }
 
 type conversationSearchScope struct {
-	RecordKind   string   `json:"record_kind"`
-	AdapterID    *string  `json:"adapter_id"`
-	SourceID     *string  `json:"source_id"`
-	ProjectPath  *string  `json:"project_path"`
-	Query        string   `json:"query"`
-	ContentTypes []string `json:"content_types"`
-	Since        *string  `json:"since"`
-	Until        *string  `json:"until"`
-	Timeline     bool     `json:"timeline"`
-	Limit        int      `json:"limit"`
-	Offset       int      `json:"offset"`
+	RecordKind       string   `json:"record_kind"`
+	AdapterID        *string  `json:"adapter_id"`
+	SourceID         *string  `json:"source_id"`
+	ProjectPath      *string  `json:"project_path"`
+	Query            string   `json:"query"`
+	ContentTypes     []string `json:"content_types"`
+	CardKinds        []string `json:"card_kinds"`
+	SemanticRoles    []string `json:"semantic_roles"`
+	IncludeQuestions bool     `json:"include_questions"`
+	IncludeCards     bool     `json:"include_cards"`
+	Since            *string  `json:"since"`
+	Until            *string  `json:"until"`
+	Timeline         bool     `json:"timeline"`
+	Limit            int      `json:"limit"`
+	Offset           int      `json:"offset"`
 }
 
 type conversationSearchResult struct {
-	Query      string                   `json:"query"`
-	RecordKind string                   `json:"record_kind"`
-	Scope      *conversationSearchScope `json:"scope,omitempty"`
-	TotalCount int                      `json:"total_count"`
-	Hits       []conversationSearchHit  `json:"hits"`
+	Query              string                   `json:"query"`
+	RecordKind         string                   `json:"record_kind"`
+	Scope              *conversationSearchScope `json:"scope,omitempty"`
+	TotalCount         int                      `json:"total_count"`
+	Hits               []conversationSearchHit  `json:"hits"`
+	ContentTypeCounts  map[string]int           `json:"content_type_counts,omitempty"`
+	SemanticRoleCounts map[string]int           `json:"semantic_role_counts,omitempty"`
 }
 
 type conversationSearchHit struct {
@@ -199,11 +336,13 @@ type conversationSearchSession struct {
 }
 
 type compactConversationSearchResult struct {
-	Query      string                         `json:"query"`
-	RecordKind string                         `json:"record_kind"`
-	Scope      conversationSearchScope        `json:"scope"`
-	TotalCount int                            `json:"total_count"`
-	Hits       []compactConversationSearchHit `json:"hits"`
+	Query              string                         `json:"query"`
+	RecordKind         string                         `json:"record_kind"`
+	Scope              conversationSearchScope        `json:"scope"`
+	TotalCount         int                            `json:"total_count"`
+	ContentTypeCounts  map[string]int                 `json:"content_type_counts,omitempty"`
+	SemanticRoleCounts map[string]int                 `json:"semantic_role_counts,omitempty"`
+	Hits               []compactConversationSearchHit `json:"hits"`
 }
 
 type compactConversationSearchHit struct {
@@ -235,17 +374,21 @@ func (r *conversationSearchResult) ensureScope(params map[string]any) {
 		return
 	}
 	r.Scope = &conversationSearchScope{
-		RecordKind:   stringParam(params, "record_kind"),
-		AdapterID:    optionalStringParam(params, "adapter_id"),
-		SourceID:     optionalStringParam(params, "source_id"),
-		ProjectPath:  optionalStringParam(params, "project_path"),
-		Query:        stringParam(params, "query"),
-		ContentTypes: stringSliceParam(params, "content_types"),
-		Since:        optionalStringParam(params, "since"),
-		Until:        optionalStringParam(params, "until"),
-		Timeline:     boolParam(params, "timeline"),
-		Limit:        intParam(params, "limit"),
-		Offset:       intParam(params, "offset"),
+		RecordKind:       stringParam(params, "record_kind"),
+		AdapterID:        optionalStringParam(params, "adapter_id"),
+		SourceID:         optionalStringParam(params, "source_id"),
+		ProjectPath:      optionalStringParam(params, "project_path"),
+		Query:            stringParam(params, "query"),
+		ContentTypes:     stringSliceParam(params, "content_types"),
+		CardKinds:        stringSliceParam(params, "card_kinds"),
+		SemanticRoles:    stringSliceParam(params, "semantic_roles"),
+		IncludeQuestions: boolParamDefault(params, "include_questions", true),
+		IncludeCards:     boolParamDefault(params, "include_cards", true),
+		Since:            optionalStringParam(params, "since"),
+		Until:            optionalStringParam(params, "until"),
+		Timeline:         boolParam(params, "timeline"),
+		Limit:            intParam(params, "limit"),
+		Offset:           intParam(params, "offset"),
 	}
 }
 
@@ -273,11 +416,13 @@ func (r conversationSearchResult) compact() compactConversationSearchResult {
 		})
 	}
 	return compactConversationSearchResult{
-		Query:      r.Query,
-		RecordKind: r.RecordKind,
-		Scope:      scope,
-		TotalCount: r.TotalCount,
-		Hits:       hits,
+		Query:              r.Query,
+		RecordKind:         r.RecordKind,
+		Scope:              scope,
+		TotalCount:         r.TotalCount,
+		ContentTypeCounts:  r.ContentTypeCounts,
+		SemanticRoleCounts: r.SemanticRoleCounts,
+		Hits:               hits,
 	}
 }
 
@@ -292,10 +437,14 @@ func (r conversationSearchResult) markdown() string {
 		writeMarkdownOptionalKV(&b, "Source", r.Scope.SourceID)
 		writeMarkdownOptionalKV(&b, "Project", r.Scope.ProjectPath)
 		if len(r.Scope.ContentTypes) == 0 {
-			writeMarkdownKV(&b, "Card types", "all")
+			writeMarkdownKV(&b, "Legacy content types", "all")
 		} else {
-			writeMarkdownKV(&b, "Card types", strings.Join(r.Scope.ContentTypes, ", "))
+			writeMarkdownKV(&b, "Legacy content types", strings.Join(r.Scope.ContentTypes, ", "))
 		}
+		writeMarkdownListKV(&b, "Card kinds", r.Scope.CardKinds)
+		writeMarkdownListKV(&b, "Semantic roles", r.Scope.SemanticRoles)
+		writeMarkdownKV(&b, "Questions", fmt.Sprintf("%t", r.Scope.IncludeQuestions))
+		writeMarkdownKV(&b, "Cards", fmt.Sprintf("%t", r.Scope.IncludeCards))
 		writeMarkdownOptionalKV(&b, "Since", r.Scope.Since)
 		writeMarkdownOptionalKV(&b, "Until", r.Scope.Until)
 		if r.Scope.Timeline {
@@ -309,6 +458,8 @@ func (r conversationSearchResult) markdown() string {
 		writeMarkdownKV(&b, "Record kind", r.RecordKind)
 		writeMarkdownKV(&b, "Returned", fmt.Sprintf("%d of %d", len(r.Hits), r.TotalCount))
 	}
+	writeMarkdownCounts(&b, "Card kind facets", r.ContentTypeCounts)
+	writeMarkdownCounts(&b, "Semantic role facets", r.SemanticRoleCounts)
 	b.WriteString("\n## Hits\n")
 	if len(r.Hits) == 0 {
 		b.WriteString("No matching cards were returned.\n")
@@ -358,6 +509,30 @@ func writeMarkdownKV(b *strings.Builder, key, value string) {
 	b.WriteString(fmt.Sprintf("- %s: `%s`\n", key, value))
 }
 
+func writeMarkdownListKV(b *strings.Builder, key string, values []string) {
+	if len(values) == 0 {
+		writeMarkdownKV(b, key, "all")
+		return
+	}
+	writeMarkdownKV(b, key, strings.Join(values, ", "))
+}
+
+func writeMarkdownCounts(b *strings.Builder, key string, values map[string]int) {
+	if len(values) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(values))
+	for value := range values {
+		keys = append(keys, value)
+	}
+	slices.Sort(keys)
+	formatted := make([]string, 0, len(keys))
+	for _, value := range keys {
+		formatted = append(formatted, fmt.Sprintf("%s=%d", value, values[value]))
+	}
+	writeMarkdownKV(b, key, strings.Join(formatted, ", "))
+}
+
 func writeMarkdownOptionalKV(b *strings.Builder, key string, value *string) {
 	if value == nil || strings.TrimSpace(*value) == "" {
 		writeMarkdownKV(b, key, "all")
@@ -397,6 +572,14 @@ func stringSliceParam(params map[string]any, key string) []string {
 
 func boolParam(params map[string]any, key string) bool {
 	value, _ := params[key].(bool)
+	return value
+}
+
+func boolParamDefault(params map[string]any, key string, fallback bool) bool {
+	value, ok := params[key].(bool)
+	if !ok {
+		return fallback
+	}
 	return value
 }
 
@@ -993,7 +1176,7 @@ func newCmdConversationPackageUninstall(f *cmdutil.Factory) *cobra.Command {
 }
 
 func newCmdConversationSync(f *cmdutil.Factory) *cobra.Command {
-	var sourceID, adapterID, recordKind string
+	var sourceID, adapterID, recordKind, mode string
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "sync",
@@ -1003,6 +1186,7 @@ func newCmdConversationSync(f *cmdutil.Factory) *cobra.Command {
 				"source_id":   nil,
 				"adapter_id":  nil,
 				"record_kind": recordKind,
+				"mode":        mode,
 				"dry_run":     dryRun,
 			}
 			if sourceID != "" {
@@ -1017,6 +1201,7 @@ func newCmdConversationSync(f *cmdutil.Factory) *cobra.Command {
 	cmd.Flags().StringVar(&sourceID, "source", "", "source id filter")
 	cmd.Flags().StringVar(&adapterID, "adapter", "", "adapter id filter")
 	cmd.Flags().StringVar(&recordKind, "record-kind", "session", "record kind: session or web")
+	cmd.Flags().StringVar(&mode, "mode", "incremental", "sync mode: incremental or full")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without importing")
 	return cmd
 }
@@ -1275,6 +1460,27 @@ func newCmdConversationWebSync(f *cmdutil.Factory) *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 0, "maximum sessions to download; 0 means all sessions in the list response")
+	return cmd
+}
+
+func newCmdConversationBlock(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "block", Short: "Locate and read individual conversation blocks"}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list <question-id>",
+		Short: "List block locators for one question without loading content",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodConversationBlockList, map[string]any{"question_id": args[0]})
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "get <block-id>",
+		Short: "Get exact content for one conversation block",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodConversationBlockGet, map[string]any{"block_id": args[0]})
+		},
+	})
 	return cmd
 }
 

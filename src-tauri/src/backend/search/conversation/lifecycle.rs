@@ -58,12 +58,14 @@ pub(crate) fn rebuild_conversation_search_index(
         let documents = rows
             .into_iter()
             .map(|row| {
-                ConversationSearchDocument::scoped_card(
+                ConversationSearchDocument::scoped_document(
+                    &row.document_kind,
                     &row.record_kind,
                     &row.session_id,
                     &row.question_id,
                     &row.block_id,
-                    &row.card_type,
+                    &row.card_kind,
+                    &row.semantic_role,
                     &row.question_title,
                     &row.content,
                     &row.adapter_id,
@@ -144,7 +146,10 @@ pub(crate) fn search_ready_conversation_index(
     tenant_id: &str,
     query: String,
     record_kind: String,
-    card_types: Vec<String>,
+    card_kinds: Vec<String>,
+    semantic_roles: Vec<String>,
+    include_questions: bool,
+    include_cards: bool,
     adapter_id: Option<String>,
     source_id: Option<String>,
     project_path: Option<String>,
@@ -195,7 +200,10 @@ pub(crate) fn search_ready_conversation_index(
         .search_cards(&ConversationCardQuery {
             query,
             record_kind,
-            card_types,
+            card_kinds,
+            semantic_roles,
+            include_questions,
+            include_cards,
             limit,
             offset,
             adapter_id,

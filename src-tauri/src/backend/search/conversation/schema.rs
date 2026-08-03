@@ -11,7 +11,7 @@ pub(super) const NGRAM_TOKENIZER: &str = "conversation_ngram";
 #[derive(Clone)]
 pub(super) struct ConversationSearchSchema {
     pub(super) schema: Schema,
-    pub(super) document_type: Field,
+    pub(super) document_kind: Field,
     pub(super) document_id: Field,
     pub(super) record_kind: Field,
     pub(super) session_id: Field,
@@ -20,7 +20,8 @@ pub(super) struct ConversationSearchSchema {
     pub(super) part_id: Field,
     pub(super) block_id: Field,
     pub(super) id_fragment: Field,
-    pub(super) card_type: Field,
+    pub(super) card_kind: Field,
+    pub(super) semantic_role: Field,
     pub(super) adapter_id: Field,
     pub(super) source_id: Field,
     pub(super) project_path: Field,
@@ -41,7 +42,7 @@ pub(super) struct ConversationSearchSchema {
 
 pub(super) fn build_conversation_schema() -> ConversationSearchSchema {
     let mut builder = Schema::builder();
-    let document_type = builder.add_text_field("document_type", STRING | STORED);
+    let document_kind = builder.add_text_field("document_kind", STRING | STORED);
     let document_id = builder.add_text_field("document_id", STRING | STORED);
     let record_kind = builder.add_text_field("record_kind", STRING | STORED);
     let session_id = builder.add_text_field("session_id", STRING | STORED);
@@ -50,7 +51,8 @@ pub(super) fn build_conversation_schema() -> ConversationSearchSchema {
     let part_id = builder.add_text_field("part_id", STRING | STORED);
     let block_id = builder.add_text_field("block_id", STRING | STORED);
     let id_fragment = builder.add_text_field("id_fragment", STRING);
-    let card_type = builder.add_text_field("card_type", STRING | STORED);
+    let card_kind = builder.add_text_field("card_kind", STRING | STORED);
+    let semantic_role = builder.add_text_field("semantic_role", STRING | STORED);
     let adapter_id = builder.add_text_field("adapter_id", STRING | STORED);
     let source_id = builder.add_text_field("source_id", STRING | STORED);
     let project_path = builder.add_text_field("project_path", STRING | STORED);
@@ -70,7 +72,7 @@ pub(super) fn build_conversation_schema() -> ConversationSearchSchema {
 
     ConversationSearchSchema {
         schema: builder.build(),
-        document_type,
+        document_kind,
         document_id,
         record_kind,
         session_id,
@@ -79,7 +81,8 @@ pub(super) fn build_conversation_schema() -> ConversationSearchSchema {
         part_id,
         block_id,
         id_fragment,
-        card_type,
+        card_kind,
+        semantic_role,
         adapter_id,
         source_id,
         project_path,
@@ -125,8 +128,8 @@ mod tests {
         let fields = build_conversation_schema();
 
         assert_eq!(
-            fields.schema.get_field_name(fields.document_type),
-            "document_type"
+            fields.schema.get_field_name(fields.document_kind),
+            "document_kind"
         );
         assert_eq!(
             fields.schema.get_field_name(fields.document_id),
@@ -140,7 +143,11 @@ mod tests {
             fields.schema.get_field_name(fields.question_id),
             "question_id"
         );
-        assert_eq!(fields.schema.get_field_name(fields.card_type), "card_type");
+        assert_eq!(fields.schema.get_field_name(fields.card_kind), "card_kind");
+        assert_eq!(
+            fields.schema.get_field_name(fields.semantic_role),
+            "semantic_role"
+        );
         assert_eq!(
             fields.schema.get_field_name(fields.id_fragment),
             "id_fragment"
@@ -163,7 +170,7 @@ mod tests {
         let mut writer = index.writer(50_000_000).expect("create writer");
         writer
             .add_document(doc!(
-                fields.document_type => "card",
+                fields.document_kind => "card",
                 fields.document_id => "card-1",
                 fields.content_zh => "本地全文搜索支持中文分词"
             ))

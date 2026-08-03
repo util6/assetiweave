@@ -3,7 +3,7 @@ use chrono::Utc;
 use sqlx::{AssertSqlSafe, Row, SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
-const CONVERSATION_SEARCH_SCHEMA_VERSION: i64 = 2;
+const CONVERSATION_SEARCH_SCHEMA_VERSION: i64 = 3;
 const CONVERSATION_SEARCH_TOKENIZER_VERSION: &str = "tantivy-jieba-0.20.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,13 +50,15 @@ pub(crate) struct ConversationSearchIndexState {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ConversationSearchIndexDocumentRow {
+    pub(crate) document_kind: String,
     pub(crate) record_kind: String,
     pub(crate) session_id: String,
     pub(crate) question_id: String,
     pub(crate) turn_id: String,
     pub(crate) part_id: String,
     pub(crate) block_id: String,
-    pub(crate) card_type: String,
+    pub(crate) card_kind: String,
+    pub(crate) semantic_role: String,
     pub(crate) question_title: String,
     pub(crate) content: String,
     pub(crate) adapter_id: String,
@@ -222,13 +224,15 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
             let question_text: String = row.try_get(4).map_err(|error| error.to_string())?;
             let turn_id: String = row.try_get(2).map_err(|error| error.to_string())?;
             documents.push(ConversationSearchIndexDocumentRow {
+                document_kind: "question".to_string(),
                 record_kind: tables.record_kind.to_string(),
                 session_id: row.try_get(0).map_err(|error| error.to_string())?,
                 question_id: row.try_get(1).map_err(|error| error.to_string())?,
                 turn_id: turn_id.clone(),
                 part_id: String::new(),
                 block_id: format!("{turn_id}-question"),
-                card_type: "question".to_string(),
+                card_kind: String::new(),
+                semantic_role: String::new(),
                 question_title: search_question_title(
                     row.try_get(3).map_err(|error| error.to_string())?,
                     &question_text,
@@ -243,13 +247,16 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
         let part_sql = format!(
             r#"
             SELECT s.id, q.id, t.id, p.id, q.title, q.question_text,
-                   p.text, p.command, p.translated_text, p.metadata_json,
-                   s.adapter_id, s.source_id, {project_path}
+                   p.text, p.language, p.command, p.cwd, p.status, p.exit_code,
+                   p.metadata_json, p.content_card_json,
+                   s.adapter_id, s.source_id, {project_path},
+                   COALESCE(a.card_kinds_json, '[]')
             FROM {sessions} s
             JOIN {questions} q ON q.tenant_id = s.tenant_id AND q.session_id = s.id
             JOIN {question_turns} qt ON qt.tenant_id = q.tenant_id AND qt.question_id = q.id
             JOIN {turns} t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
             JOIN {parts} p ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
+            LEFT JOIN conversation_adapters a ON a.tenant_id = s.tenant_id AND a.id = s.adapter_id
             WHERE s.tenant_id = ?1 AND s.missing = 0 AND t.missing = 0
             ORDER BY s.id, q.question_index, qt.turn_order, p.part_index
             "#,
@@ -266,32 +273,56 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
             .await
             .map_err(|error| error.to_string())?
         {
-            let metadata: Option<String> = row.try_get(9).map_err(|error| error.to_string())?;
-            let Some(card) = declared_search_card(
-                metadata.as_deref(),
-                row.try_get(6).map_err(|error| error.to_string())?,
-                row.try_get(7).map_err(|error| error.to_string())?,
-            ) else {
+            let text: Option<String> = row.try_get(6).map_err(|error| error.to_string())?;
+            let language: Option<String> = row.try_get(7).map_err(|error| error.to_string())?;
+            let command: Option<String> = row.try_get(8).map_err(|error| error.to_string())?;
+            let cwd: Option<String> = row.try_get(9).map_err(|error| error.to_string())?;
+            let status: Option<String> = row.try_get(10).map_err(|error| error.to_string())?;
+            let exit_code: Option<i32> = row.try_get(11).map_err(|error| error.to_string())?;
+            let metadata: Option<String> = row.try_get(12).map_err(|error| error.to_string())?;
+            let content_card_json: Option<String> =
+                row.try_get(13).map_err(|error| error.to_string())?;
+            let card_kinds_json: String = row.try_get(17).map_err(|error| error.to_string())?;
+            let card_kinds = serde_json::from_str::<
+                Vec<crate::backend::models::ConversationCardKindDefinition>,
+            >(&card_kinds_json)
+            .unwrap_or_default();
+            let Some(card) = crate::backend::conversations::cards::project_persisted_content_card(
+                crate::backend::conversations::cards::PersistedConversationCardProjectionSource {
+                    content_card_json: content_card_json.as_deref(),
+                    metadata_json: metadata.as_deref(),
+                    text: text.as_deref(),
+                    language: language.as_deref(),
+                    command: command.as_deref(),
+                    cwd: cwd.as_deref(),
+                    status: status.as_deref(),
+                    exit_code,
+                },
+                &card_kinds,
+            )?
+            else {
                 continue;
             };
             let part_id: String = row.try_get(3).map_err(|error| error.to_string())?;
             let question_text: String = row.try_get(5).map_err(|error| error.to_string())?;
             documents.push(ConversationSearchIndexDocumentRow {
+                document_kind: "card".to_string(),
                 record_kind: tables.record_kind.to_string(),
                 session_id: row.try_get(0).map_err(|error| error.to_string())?,
                 question_id: row.try_get(1).map_err(|error| error.to_string())?,
                 turn_id: row.try_get(2).map_err(|error| error.to_string())?,
                 part_id: part_id.clone(),
-                block_id: format!("{part_id}-{}", card.suffix),
-                card_type: card.card_type,
+                block_id: part_id.clone(),
+                card_kind: card.kind,
+                semantic_role: card.semantic_role.unwrap_or_default(),
                 question_title: search_question_title(
                     row.try_get(4).map_err(|error| error.to_string())?,
                     &question_text,
                 ),
-                content: card.text,
-                adapter_id: row.try_get(10).map_err(|error| error.to_string())?,
-                source_id: row.try_get(11).map_err(|error| error.to_string())?,
-                project_path: row.try_get(12).map_err(|error| error.to_string())?,
+                content: card.body,
+                adapter_id: row.try_get(14).map_err(|error| error.to_string())?,
+                source_id: row.try_get(15).map_err(|error| error.to_string())?,
+                project_path: row.try_get(16).map_err(|error| error.to_string())?,
             });
         }
     }
@@ -410,49 +441,6 @@ impl SearchDocumentTables {
             project_path: "''",
         }
     }
-}
-
-struct DeclaredSearchCard {
-    card_type: String,
-    suffix: String,
-    text: String,
-}
-
-fn declared_search_card(
-    metadata_json: Option<&str>,
-    text: Option<String>,
-    command: Option<String>,
-) -> Option<DeclaredSearchCard> {
-    let metadata = serde_json::from_str::<serde_json::Value>(metadata_json?.trim()).ok()?;
-    let card = metadata
-        .get("content_card")
-        .or_else(|| metadata.get("contentCard"))?
-        .as_object()?;
-    let card_type = card.get("type")?.as_str()?;
-    if !matches!(card_type, "answer" | "tool" | "command" | "code" | "result") {
-        return None;
-    }
-    let suffix = card
-        .get("suffix")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(card_type)
-        .to_string();
-    let declared_text = card
-        .get("text")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(str::to_string);
-    let fallback = if card_type == "command" {
-        command.or(text)
-    } else {
-        text.or(command)
-    };
-    Some(DeclaredSearchCard {
-        card_type: card_type.to_string(),
-        suffix,
-        text: declared_text.or(fallback)?.trim().to_string(),
-    })
 }
 
 fn search_question_title(title: Option<String>, question_text: &str) -> String {

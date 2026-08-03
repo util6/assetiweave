@@ -28,22 +28,25 @@ description: 从 AssetIWeave 的标准化对话 Card 中渐进检索历史证据
 
    - `--record-kind session|web`
    - `--since <YYYY-MM-DD>` 与 `--until <YYYY-MM-DD>`
-   - `--type question|answer|tool|command|code|result`
+   - `--kind question|answer|reasoning|tool|command|code|result`
+   - `--kind <adapter.namespaced-card-kind>` 用于适配器专属 Card
    - `--timeline`
 
 4. 如果首次搜索命中不足，改写关键词或分别搜索方法名、命令名、错误文本。不要仅因一次零命中就断言历史中不存在。
 
-5. 对排名靠前且互不重复的 `question_id` 做渐进展开：
+5. 对排名靠前且互不重复的 `question_id`，先只读取关联 Block 定位器：
 
    ```bash
-   assetiweave-cli conversation question get <question-id>
+   assetiweave-cli conversation block list <question-id>
    ```
 
-   对 `record-kind=web` 的命中，使用命中中的 `session_id` 读取网页记录，再定位相应 Question：
+   该命令不返回正文。根据 `kind`、`semantic_role`、`content_length`、`status` 和 `exit_code` 选择下一步要读的 Block。先读少量 `answer`，Answer 不足时才读 `command`、`result` 或 `tool`：
 
    ```bash
-   assetiweave-cli conversation web-record get <session-id>
+   assetiweave-cli conversation block get <block-id>
    ```
+
+   `question_id` 与 `block_id` 的前缀自动区分 Session 和网页记录；不需要为网页记录加载完整 Session。
 
 6. 只有在 Question 缺少前后决策、同一 Session 中存在关联问题，或用户明确要求完整回顾时，才读取整个 Session：
 

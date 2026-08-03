@@ -593,6 +593,20 @@ pub(crate) struct ConversationAdapterLocalRegisterParams {
     pub(crate) yes: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ConversationSyncMode {
+    #[default]
+    Incremental,
+    Full,
+}
+
+impl ConversationSyncMode {
+    pub(crate) fn uses_known_versions(self) -> bool {
+        matches!(self, Self::Incremental)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct ConversationSyncParams {
     #[serde(alias = "sourceId")]
@@ -601,6 +615,9 @@ pub(crate) struct ConversationSyncParams {
     pub(crate) adapter_id: Option<String>,
     #[serde(default, alias = "recordKind")]
     pub(crate) record_kind: Option<String>,
+    /// Synchronization strategy. Incremental is the default; full reparses every discoverable record.
+    #[serde(default)]
+    pub(crate) mode: ConversationSyncMode,
     #[serde(default, alias = "dryRun")]
     pub(crate) dry_run: bool,
 }
@@ -658,6 +675,14 @@ pub(crate) struct ConversationSearchParams {
     pub(crate) query: String,
     #[serde(default, alias = "contentTypes")]
     pub(crate) content_types: Vec<crate::backend::dto::ConversationSearchCardType>,
+    #[serde(default, alias = "cardKinds")]
+    pub(crate) card_kinds: Vec<String>,
+    #[serde(default, alias = "semanticRoles")]
+    pub(crate) semantic_roles: Vec<String>,
+    #[serde(default, alias = "includeQuestions")]
+    pub(crate) include_questions: Option<bool>,
+    #[serde(default, alias = "includeCards")]
+    pub(crate) include_cards: Option<bool>,
     pub(crate) since: Option<String>,
     pub(crate) until: Option<String>,
     #[serde(default)]
@@ -666,6 +691,58 @@ pub(crate) struct ConversationSearchParams {
     pub(crate) offset: Option<usize>,
     #[serde(default, alias = "searchOptions")]
     pub(crate) search_options: Option<ConversationSearchOptions>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationIncrementalSearchParams {
+    #[serde(default, alias = "recordKind")]
+    pub(crate) record_kind: Option<String>,
+    #[serde(alias = "adapterId")]
+    pub(crate) adapter_id: Option<String>,
+    #[serde(alias = "sourceId")]
+    pub(crate) source_id: Option<String>,
+    #[serde(alias = "projectPath")]
+    pub(crate) project_path: Option<String>,
+    pub(crate) query: String,
+    #[serde(default, alias = "contentTypes")]
+    pub(crate) content_types: Vec<crate::backend::dto::ConversationSearchCardType>,
+    #[serde(default, alias = "cardKinds")]
+    pub(crate) card_kinds: Vec<String>,
+    #[serde(default, alias = "semanticRoles")]
+    pub(crate) semantic_roles: Vec<String>,
+    #[serde(default, alias = "includeQuestions")]
+    pub(crate) include_questions: Option<bool>,
+    #[serde(default, alias = "includeCards")]
+    pub(crate) include_cards: Option<bool>,
+    #[serde(default, alias = "recentRuns")]
+    pub(crate) recent_runs: Option<usize>,
+    pub(crate) limit: Option<usize>,
+    pub(crate) offset: Option<usize>,
+    #[serde(default, alias = "searchOptions")]
+    pub(crate) search_options: Option<ConversationSearchOptions>,
+}
+
+impl ConversationIncrementalSearchParams {
+    pub(crate) fn into_search_params(self) -> ConversationSearchParams {
+        ConversationSearchParams {
+            record_kind: self.record_kind,
+            adapter_id: self.adapter_id,
+            source_id: self.source_id,
+            project_path: self.project_path,
+            query: self.query,
+            content_types: self.content_types,
+            card_kinds: self.card_kinds,
+            semantic_roles: self.semantic_roles,
+            include_questions: self.include_questions,
+            include_cards: self.include_cards,
+            since: None,
+            until: None,
+            timeline: false,
+            limit: self.limit,
+            offset: self.offset,
+            search_options: self.search_options,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -682,6 +759,10 @@ pub(crate) struct ConversationSearchScope {
     pub(crate) project_path: Option<String>,
     pub(crate) query: String,
     pub(crate) content_types: Vec<crate::backend::dto::ConversationSearchCardType>,
+    pub(crate) card_kinds: Vec<String>,
+    pub(crate) semantic_roles: Vec<String>,
+    pub(crate) include_questions: bool,
+    pub(crate) include_cards: bool,
     pub(crate) since: Option<String>,
     pub(crate) until: Option<String>,
     pub(crate) timeline: bool,
@@ -698,13 +779,36 @@ pub(crate) struct ConversationSearchResult {
     pub(crate) hits: Vec<crate::backend::dto::ConversationSearchHit>,
     pub(crate) backend: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) incremental: Option<ConversationSearchIncrementalScope>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) content_type_counts: Option<BTreeMap<String, usize>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) semantic_role_counts: Option<BTreeMap<String, usize>>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ConversationSearchIncrementalScope {
+    pub(crate) recent_runs: usize,
+    pub(crate) included_run_count: usize,
+    pub(crate) changed_session_count: usize,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ConversationQuestionGetParams {
     #[serde(alias = "questionId")]
     pub(crate) question_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationBlockListParams {
+    #[serde(alias = "questionId")]
+    pub(crate) question_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationBlockGetParams {
+    #[serde(alias = "blockId")]
+    pub(crate) block_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -733,4 +837,24 @@ pub(crate) struct ConversationPartTranslationUpdateParams {
     pub(crate) part_id: String,
     #[serde(alias = "translatedText")]
     pub(crate) translated_text: String,
+}
+
+#[cfg(test)]
+mod conversation_sync_mode_tests {
+    use super::*;
+
+    #[test]
+    fn conversation_sync_mode_defaults_to_incremental_and_accepts_full() {
+        let incremental: ConversationSyncParams = serde_json::from_value(serde_json::json!({}))
+            .expect("default conversation sync params");
+        let full: ConversationSyncParams = serde_json::from_value(serde_json::json!({
+            "mode": "full"
+        }))
+        .expect("full conversation sync params");
+
+        assert_eq!(incremental.mode, ConversationSyncMode::Incremental);
+        assert_eq!(full.mode, ConversationSyncMode::Full);
+        assert!(incremental.mode.uses_known_versions());
+        assert!(!full.mode.uses_known_versions());
+    }
 }

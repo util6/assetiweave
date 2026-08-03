@@ -17,12 +17,13 @@ use tantivy::{
 };
 
 pub(super) struct ConversationSearchDocument {
-    document_type: String,
+    document_kind: String,
     document_id: String,
     record_kind: String,
     session_id: String,
     question_id: String,
-    card_type: String,
+    card_kind: String,
+    semantic_role: String,
     question_title: String,
     content: String,
     adapter_id: String,
@@ -66,7 +67,42 @@ impl ConversationSearchDocument {
         session_id: &str,
         question_id: &str,
         document_id: &str,
-        card_type: &str,
+        card_kind: &str,
+        question_title: &str,
+        content: &str,
+        adapter_id: &str,
+        source_id: &str,
+        project_path: &str,
+        turn_id: &str,
+        part_id: &str,
+    ) -> Self {
+        Self::scoped_document(
+            "card",
+            record_kind,
+            session_id,
+            question_id,
+            document_id,
+            card_kind,
+            "",
+            question_title,
+            content,
+            adapter_id,
+            source_id,
+            project_path,
+            turn_id,
+            part_id,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn scoped_document(
+        document_kind: &str,
+        record_kind: &str,
+        session_id: &str,
+        question_id: &str,
+        document_id: &str,
+        card_kind: &str,
+        semantic_role: &str,
         question_title: &str,
         content: &str,
         adapter_id: &str,
@@ -81,12 +117,13 @@ impl ConversationSearchDocument {
             .filter(|fragment| conversation_id_search_term(fragment).is_some())
             .collect();
         Self {
-            document_type: "card".to_string(),
+            document_kind: document_kind.to_string(),
             document_id: document_id.to_string(),
             record_kind: record_kind.to_string(),
             session_id: session_id.to_string(),
             question_id: question_id.to_string(),
-            card_type: card_type.to_string(),
+            card_kind: card_kind.to_string(),
+            semantic_role: semantic_role.to_string(),
             question_title: question_title.to_string(),
             content: content.to_string(),
             adapter_id: adapter_id.to_string(),
@@ -103,7 +140,10 @@ impl ConversationSearchDocument {
 pub(super) struct ConversationCardQuery {
     pub(super) query: String,
     pub(super) record_kind: String,
-    pub(super) card_types: Vec<String>,
+    pub(super) card_kinds: Vec<String>,
+    pub(super) semantic_roles: Vec<String>,
+    pub(super) include_questions: bool,
+    pub(super) include_cards: bool,
     pub(super) limit: usize,
     pub(super) offset: usize,
     pub(super) adapter_id: Option<String>,
@@ -125,6 +165,7 @@ pub(crate) struct ConversationSearchMatches {
     pub(crate) total_count: usize,
     pub(crate) hits: Vec<ConversationSearchMatch>,
     pub(crate) content_type_counts: BTreeMap<String, usize>,
+    pub(crate) semantic_role_counts: BTreeMap<String, usize>,
 }
 
 #[cfg(test)]
@@ -207,7 +248,7 @@ fn replace_documents(
         .map_err(|error| error.to_string())?;
     for item in documents {
         let mut document = doc!(
-                fields.document_type => item.document_type.as_str(),
+                fields.document_kind => item.document_kind.as_str(),
                 fields.document_id => item.document_id.as_str(),
                 fields.record_kind => item.record_kind.as_str(),
                 fields.session_id => item.session_id.as_str(),
@@ -215,7 +256,8 @@ fn replace_documents(
                 fields.turn_id => item.turn_id.as_str(),
                 fields.part_id => item.part_id.as_str(),
                 fields.block_id => item.document_id.as_str(),
-                fields.card_type => item.card_type.as_str(),
+                fields.card_kind => item.card_kind.as_str(),
+                fields.semantic_role => item.semantic_role.as_str(),
                 fields.adapter_id => item.adapter_id.as_str(),
                 fields.source_id => item.source_id.as_str(),
                 fields.project_path => item.project_path.as_str(),
@@ -251,14 +293,36 @@ fn search_cards(
     let reader = index.reader().map_err(|error| error.to_string())?;
     let searcher = reader.searcher();
     let mut content_type_counts = BTreeMap::new();
-    for card_type in ["question", "answer", "tool", "command", "code", "result"] {
-        let mut facet_request = request.clone();
-        facet_request.card_types = vec![card_type.to_string()];
-        let facet_query = build_card_query(index, fields, query, &facet_request)?;
-        let count = searcher
-            .search(&facet_query, &Count)
+    let mut semantic_role_counts = BTreeMap::new();
+    let mut facet_request = request.clone();
+    facet_request.card_kinds.clear();
+    facet_request.semantic_roles.clear();
+    facet_request.include_questions = true;
+    facet_request.include_cards = true;
+    let facet_query = build_card_query(index, fields, query, &facet_request)?;
+    let facet_docs = searcher
+        .search(
+            &facet_query,
+            &TopDocs::with_limit(searcher.num_docs() as usize).order_by_score(),
+        )
+        .map_err(|error| error.to_string())?;
+    for (_, address) in facet_docs {
+        let document = searcher
+            .doc::<TantivyDocument>(address)
             .map_err(|error| error.to_string())?;
-        content_type_counts.insert(card_type.to_string(), count);
+        let document_kind = stored_text(&document, fields.document_kind)?;
+        if document_kind == "question" {
+            *content_type_counts
+                .entry("question".to_string())
+                .or_default() += 1;
+            continue;
+        }
+        let card_kind = stored_text(&document, fields.card_kind)?;
+        *content_type_counts.entry(card_kind).or_default() += 1;
+        let semantic_role = stored_text(&document, fields.semantic_role)?;
+        if !semantic_role.is_empty() {
+            *semantic_role_counts.entry(semantic_role).or_default() += 1;
+        }
     }
     let query = build_card_query(index, fields, query, request)?;
     let total_count = searcher
@@ -281,7 +345,11 @@ fn search_cards(
             document_id: stored_text(&document, fields.document_id)?,
             session_id: stored_text(&document, fields.session_id)?,
             question_id: stored_text(&document, fields.question_id)?,
-            card_type: stored_text(&document, fields.card_type)?,
+            card_type: if stored_text(&document, fields.document_kind)? == "question" {
+                "question".to_string()
+            } else {
+                stored_text(&document, fields.card_kind)?
+            },
             score: score_to_integer(score),
             turn_id: stored_text(&document, fields.turn_id)?,
             part_id: stored_text(&document, fields.part_id)?,
@@ -291,6 +359,7 @@ fn search_cards(
         total_count,
         hits,
         content_type_counts,
+        semantic_role_counts,
     })
 }
 
@@ -300,21 +369,51 @@ fn build_card_query(
     query: &str,
     request: &ConversationCardQuery,
 ) -> AppResult<BooleanQuery> {
-    let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![
-        exact_clause(fields.document_type, "card"),
-        exact_clause(fields.record_kind, &request.record_kind),
-    ];
-    if !request.card_types.is_empty() {
-        clauses.push((
-            Occur::Must,
-            Box::new(BooleanQuery::new(
-                request
-                    .card_types
-                    .iter()
-                    .map(|card_type| exact_should_clause(fields.card_type, card_type))
-                    .collect(),
-            )),
-        ));
+    let mut clauses: Vec<(Occur, Box<dyn Query>)> =
+        vec![exact_clause(fields.record_kind, &request.record_kind)];
+    let has_card_filters = !request.card_kinds.is_empty() || !request.semantic_roles.is_empty();
+    if !request.include_cards {
+        clauses.push(exact_clause(fields.document_kind, "question"));
+    } else if has_card_filters {
+        let mut card_clauses = vec![exact_clause(fields.document_kind, "card")];
+        if !request.card_kinds.is_empty() {
+            card_clauses.push((
+                Occur::Must,
+                Box::new(BooleanQuery::new(
+                    request
+                        .card_kinds
+                        .iter()
+                        .map(|kind| exact_should_clause(fields.card_kind, kind))
+                        .collect(),
+                )),
+            ));
+        }
+        if !request.semantic_roles.is_empty() {
+            card_clauses.push((
+                Occur::Must,
+                Box::new(BooleanQuery::new(
+                    request
+                        .semantic_roles
+                        .iter()
+                        .map(|role| exact_should_clause(fields.semantic_role, role))
+                        .collect(),
+                )),
+            ));
+        }
+        let card_query = Box::new(BooleanQuery::new(card_clauses)) as Box<dyn Query>;
+        if request.include_questions {
+            clauses.push((
+                Occur::Must,
+                Box::new(BooleanQuery::new(vec![
+                    exact_should_clause(fields.document_kind, "question"),
+                    (Occur::Should, card_query),
+                ])),
+            ));
+        } else {
+            clauses.push((Occur::Must, card_query));
+        }
+    } else if !request.include_questions {
+        clauses.push(exact_clause(fields.document_kind, "card"));
     }
     if let Some(adapter_id) = request.adapter_id.as_deref() {
         clauses.push(exact_clause(fields.adapter_id, adapter_id));
@@ -326,23 +425,22 @@ fn build_card_query(
         clauses.push(exact_clause(fields.project_path, project_path));
     }
 
-    let jieba_tokens = tokens_for(index, JIEBA_TOKENIZER, query)?;
-    let default_tokens = tokens_for(index, "default", query)?;
-    let mut lexical_branches = Vec::new();
     if let Some(id_fragment) =
         conversation_id_search_term(query).map(|value| conversation_id_fragment(&value))
     {
-        lexical_branches.push((
-            Occur::Should,
-            Box::new(BoostQuery::new(
-                Box::new(TermQuery::new(
-                    Term::from_field_text(fields.id_fragment, &id_fragment),
-                    IndexRecordOption::Basic,
-                )),
-                12.0,
-            )) as Box<dyn Query>,
+        clauses.push((
+            Occur::Must,
+            Box::new(TermQuery::new(
+                Term::from_field_text(fields.id_fragment, &id_fragment),
+                IndexRecordOption::Basic,
+            )),
         ));
+        return Ok(BooleanQuery::new(clauses));
     }
+
+    let jieba_tokens = tokens_for(index, JIEBA_TOKENIZER, query)?;
+    let default_tokens = tokens_for(index, "default", query)?;
+    let mut lexical_branches = Vec::new();
     if !jieba_tokens.is_empty() {
         lexical_branches.push((
             Occur::Should,
@@ -467,23 +565,37 @@ mod tests {
         let index = InMemoryConversationIndex::new().expect("create conversation index");
         index
             .replace_documents(&[
-                ConversationSearchDocument::card(
+                ConversationSearchDocument::scoped_document(
+                    "question",
                     "session",
                     "session-1",
                     "question-1",
                     "card-1",
-                    "question",
+                    "",
+                    "",
                     "Tantivy 本地搜索",
                     "如何实现中文全文搜索",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
                 ),
-                ConversationSearchDocument::card(
+                ConversationSearchDocument::scoped_document(
+                    "card",
                     "web",
                     "session-2",
                     "question-2",
                     "card-2",
                     "answer",
+                    "answer",
                     "Deploy pipeline",
                     "Use a release pipeline with rollback support",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
                 ),
             ])
             .expect("index conversation cards");
@@ -492,14 +604,14 @@ mod tests {
         let searcher = reader.searcher();
         assert_eq!(searcher.search(&AllQuery, &Count).expect("count cards"), 2);
         let card_filter = TermQuery::new(
-            Term::from_field_text(index.fields.document_type, "card"),
+            Term::from_field_text(index.fields.document_kind, "card"),
             IndexRecordOption::Basic,
         );
         assert_eq!(
             searcher
                 .search(&card_filter, &Count)
                 .expect("count card documents"),
-            2
+            1
         );
         let chinese_term = TermQuery::new(
             Term::from_field_text(index.fields.content_zh, "全文"),
@@ -520,7 +632,10 @@ mod tests {
             .search_cards(&ConversationCardQuery {
                 query: "全文搜索".to_string(),
                 record_kind: "session".to_string(),
-                card_types: vec!["question".to_string()],
+                card_kinds: Vec::new(),
+                semantic_roles: Vec::new(),
+                include_questions: true,
+                include_cards: false,
                 limit: 20,
                 offset: 0,
                 adapter_id: None,
@@ -532,13 +647,16 @@ mod tests {
         assert_eq!(chinese.hits[0].document_id, "card-1");
         assert_eq!(chinese.hits[0].session_id, "session-1");
         assert_eq!(chinese.content_type_counts.get("question"), Some(&1));
-        assert_eq!(chinese.content_type_counts.get("answer"), Some(&0));
+        assert_eq!(chinese.content_type_counts.get("answer"), None);
 
         let partial_title = index
             .search_cards(&ConversationCardQuery {
                 query: "antiv".to_string(),
                 record_kind: "session".to_string(),
-                card_types: vec!["question".to_string()],
+                card_kinds: Vec::new(),
+                semantic_roles: Vec::new(),
+                include_questions: true,
+                include_cards: false,
                 limit: 20,
                 offset: 0,
                 adapter_id: None,
@@ -552,7 +670,10 @@ mod tests {
             .search_cards(&ConversationCardQuery {
                 query: "pipeline".to_string(),
                 record_kind: "web".to_string(),
-                card_types: vec!["question".to_string()],
+                card_kinds: Vec::new(),
+                semantic_roles: Vec::new(),
+                include_questions: true,
+                include_cards: false,
                 limit: 20,
                 offset: 0,
                 adapter_id: None,
@@ -593,7 +714,10 @@ mod tests {
                 .search_cards(&ConversationCardQuery {
                     query: fragment.to_string(),
                     record_kind: "session".to_string(),
-                    card_types: Vec::new(),
+                    card_kinds: Vec::new(),
+                    semantic_roles: Vec::new(),
+                    include_questions: true,
+                    include_cards: true,
                     limit: 20,
                     offset: 0,
                     adapter_id: None,
@@ -604,5 +728,87 @@ mod tests {
             assert_eq!(matches.total_count, 1, "fragment {fragment}");
             assert_eq!(matches.hits[0].document_id, block_id);
         }
+    }
+
+    #[test]
+    fn in_memory_index_filters_dynamic_card_kinds_and_semantic_roles() {
+        let index = InMemoryConversationIndex::new().expect("create conversation index");
+        index
+            .replace_documents(&[
+                ConversationSearchDocument::scoped_document(
+                    "card",
+                    "session",
+                    "session-1",
+                    "question-1",
+                    "part-1",
+                    "claude-code.reasoning",
+                    "reasoning",
+                    "Claude",
+                    "shared reasoning evidence",
+                    "claude-code",
+                    "source-1",
+                    "/tmp/project",
+                    "turn-1",
+                    "part-1",
+                ),
+                ConversationSearchDocument::scoped_document(
+                    "card",
+                    "session",
+                    "session-2",
+                    "question-2",
+                    "part-2",
+                    "codex.analysis",
+                    "reasoning",
+                    "Codex",
+                    "shared reasoning evidence",
+                    "codex",
+                    "source-2",
+                    "/tmp/project",
+                    "turn-2",
+                    "part-2",
+                ),
+            ])
+            .expect("index dynamic cards");
+
+        let exact = index
+            .search_cards(&ConversationCardQuery {
+                query: "reasoning evidence".to_string(),
+                record_kind: "session".to_string(),
+                card_kinds: vec!["claude-code.reasoning".to_string()],
+                semantic_roles: Vec::new(),
+                include_questions: false,
+                include_cards: true,
+                limit: 20,
+                offset: 0,
+                adapter_id: None,
+                source_id: None,
+                project_path: None,
+            })
+            .expect("search exact custom kind");
+        assert_eq!(exact.total_count, 1);
+        assert_eq!(exact.hits[0].card_type, "claude-code.reasoning");
+
+        let semantic = index
+            .search_cards(&ConversationCardQuery {
+                query: "reasoning evidence".to_string(),
+                record_kind: "session".to_string(),
+                card_kinds: Vec::new(),
+                semantic_roles: vec!["reasoning".to_string()],
+                include_questions: false,
+                include_cards: true,
+                limit: 20,
+                offset: 0,
+                adapter_id: None,
+                source_id: None,
+                project_path: None,
+            })
+            .expect("search semantic role across adapters");
+        assert_eq!(semantic.total_count, 2);
+        assert_eq!(
+            semantic.content_type_counts.get("claude-code.reasoning"),
+            Some(&1)
+        );
+        assert_eq!(semantic.content_type_counts.get("codex.analysis"), Some(&1));
+        assert_eq!(semantic.semantic_role_counts.get("reasoning"), Some(&2));
     }
 }

@@ -683,7 +683,7 @@ struct MemoryQuestionEvidencePart {
     turn_id: Option<String>,
     part_id: Option<String>,
     block_id: String,
-    card_type: &'static str,
+    card_type: String,
     content: String,
 }
 
@@ -697,7 +697,7 @@ fn memory_question_evidence_parts(
                 turn_id: Some(turn.id.clone()),
                 part_id: None,
                 block_id: format!("{}-question", turn.id),
-                card_type: "question",
+                card_type: "question".to_string(),
                 content: turn.user_text.clone(),
             });
         }
@@ -707,67 +707,25 @@ fn memory_question_evidence_parts(
             turn_id: None,
             part_id: None,
             block_id: format!("{}-question", detail.question.id),
-            card_type: "question",
+            card_type: "question".to_string(),
             content: detail.question.question_text.clone(),
         });
     }
-    for part in &detail.parts {
-        let content = memory_part_content(part);
-        if content.trim().is_empty() {
-            continue;
-        }
+    for card in &detail.cards {
+        let turn_id = detail
+            .parts
+            .iter()
+            .find(|part| part.id == card.part_id)
+            .map(|part| part.turn_id.clone());
         evidence.push(MemoryQuestionEvidencePart {
-            turn_id: Some(part.turn_id.clone()),
-            part_id: Some(part.id.clone()),
-            block_id: part.id.clone(),
-            card_type: memory_part_card_type(part),
-            content,
+            turn_id,
+            part_id: Some(card.part_id.clone()),
+            block_id: card.card_id.clone(),
+            card_type: card.kind.clone(),
+            content: card.body.clone(),
         });
     }
     evidence
-}
-
-fn memory_part_content(part: &crate::backend::models::ConversationPart) -> String {
-    let mut values = Vec::new();
-    if let Some(command) = part
-        .command
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        values.push(command.to_string());
-    }
-    if let Some(text) = part
-        .text
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        values.push(text.to_string());
-    }
-    if let Some(status) = part
-        .status
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        values.push(format!("status: {status}"));
-    }
-    if let Some(exit_code) = part.exit_code {
-        values.push(format!("exit_code: {exit_code}"));
-    }
-    values.join("\n")
-}
-
-fn memory_part_card_type(part: &crate::backend::models::ConversationPart) -> &'static str {
-    use crate::backend::models::{ConversationPartKind, ConversationPartRole};
-    match part.kind {
-        ConversationPartKind::CodeBlock => "code",
-        ConversationPartKind::Command => "command",
-        ConversationPartKind::Tool
-        | ConversationPartKind::FileChange
-        | ConversationPartKind::Subagent
-        | ConversationPartKind::Metadata => "tool",
-        ConversationPartKind::Text if part.role == ConversationPartRole::Tool => "result",
-        ConversationPartKind::Text => "answer",
-    }
 }
 
 fn memory_record_kind_label(kind: MemoryEvidenceRecordKind) -> &'static str {

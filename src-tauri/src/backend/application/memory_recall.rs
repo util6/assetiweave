@@ -204,6 +204,10 @@ impl AppService {
                     project_path: params.scope.project_path.clone(),
                     query: query.to_string(),
                     content_types: Vec::new(),
+                    card_kinds: Vec::new(),
+                    semantic_roles: Vec::new(),
+                    include_questions: None,
+                    include_cards: None,
                     since: params.since.clone(),
                     until: params.until.clone(),
                     timeline: false,
@@ -333,7 +337,7 @@ struct RecallPart {
     turn_id: Option<String>,
     part_id: Option<String>,
     block_id: String,
-    card_type: &'static str,
+    card_type: String,
     content: String,
 }
 
@@ -347,7 +351,7 @@ fn recall_evidence_parts(
                 turn_id: Some(turn.id.clone()),
                 part_id: None,
                 block_id: format!("{}-question", turn.id),
-                card_type: "question",
+                card_type: "question".to_string(),
                 content: turn.user_text.clone(),
             });
         }
@@ -357,37 +361,38 @@ fn recall_evidence_parts(
             turn_id: None,
             part_id: None,
             block_id: format!("{}-question", detail.question.id),
-            card_type: "question",
+            card_type: "question".to_string(),
             content: detail.question.question_text.clone(),
         });
     }
-    for part in &detail.parts {
-        let content = [part.command.as_deref(), part.text.as_deref()]
-            .into_iter()
-            .flatten()
-            .filter(|value| !value.trim().is_empty())
-            .collect::<Vec<_>>()
-            .join("\n");
-        if content.is_empty() {
-            continue;
-        }
-        use crate::backend::models::{ConversationPartKind as K, ConversationPartRole as R};
-        let card_type = match part.kind {
-            K::CodeBlock => "code",
-            K::Command => "command",
-            K::Tool | K::FileChange | K::Subagent | K::Metadata => "tool",
-            K::Text if part.role == R::Tool => "result",
-            K::Text => "answer",
-        };
+    for card in &detail.cards {
+        let turn_id = detail
+            .parts
+            .iter()
+            .find(|part| part.id == card.part_id)
+            .map(|part| part.turn_id.clone());
         result.push(RecallPart {
-            turn_id: Some(part.turn_id.clone()),
-            part_id: Some(part.id.clone()),
-            block_id: part.id.clone(),
-            card_type,
-            content,
+            turn_id,
+            part_id: Some(card.part_id.clone()),
+            block_id: card.card_id.clone(),
+            card_type: card.kind.clone(),
+            content: card.body.clone(),
         });
     }
     result
+}
+
+#[cfg(test)]
+pub(crate) fn recall_card_projection_for_test(
+    detail: &crate::backend::dto::ConversationQuestionDetail,
+) -> Vec<(String, String, String)> {
+    recall_evidence_parts(detail)
+        .into_iter()
+        .filter_map(|part| {
+            part.part_id
+                .map(|part_id| (part_id, part.card_type, part.content))
+        })
+        .collect()
 }
 
 fn validate_recall_params(params: &MemoryRecallPreviewParams) -> AppResult<()> {
@@ -454,7 +459,10 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert_eq!(
             types,
-            BTreeSet::from(["answer", "code", "command", "question", "result", "tool"])
+            ["answer", "code", "command", "question", "result", "tool"]
+                .into_iter()
+                .map(str::to_string)
+                .collect::<BTreeSet<_>>()
         );
     }
 
@@ -486,10 +494,12 @@ mod tests {
                 cwd: None,
                 status: None,
                 exit_code: None,
+                source_execution_id: None,
+                content_card: None,
                 metadata_json: None,
                 translated_text: None,
             };
-        ConversationQuestionDetail {
+        let mut detail = ConversationQuestionDetail {
             question: ConversationQuestion {
                 id: "q-1".into(),
                 session_id: "session-1".into(),
@@ -541,6 +551,34 @@ mod tests {
                     None,
                 ),
             ],
-        }
+            cards: Vec::new(),
+            content_nodes: Vec::new(),
+        };
+        detail.cards = detail
+            .parts
+            .iter()
+            .map(|part| crate::backend::dto::ConversationCard {
+                card_id: part.id.clone(),
+                part_id: part.id.clone(),
+                adapter_id: "fixture".to_string(),
+                kind: part.id.clone(),
+                semantic_role: None,
+                renderer: crate::backend::dto::ConversationCardRenderer::Plain,
+                role: part.role,
+                body: part
+                    .text
+                    .clone()
+                    .or_else(|| part.command.clone())
+                    .unwrap_or_default(),
+                language: None,
+                cwd: None,
+                status: None,
+                exit_code: None,
+                source_execution_id: None,
+                translated_body: None,
+                legacy_anchor_ids: Vec::new(),
+            })
+            .collect();
+        detail
     }
 }

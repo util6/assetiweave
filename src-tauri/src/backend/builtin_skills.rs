@@ -36,6 +36,8 @@ const MEMORY_SKILL: &[u8] =
     include_bytes!("../../builtin-assets/skills/assetiweave-memory/SKILL.md");
 const MEMORY_MANIFEST: &[u8] =
     include_bytes!("../../builtin-assets/skills/assetiweave-memory/assetiweave.skill.json");
+const MEMORY_RECALL_SCRIPT: &[u8] =
+    include_bytes!("../../builtin-assets/skills/assetiweave-memory/scripts/recall.py");
 
 struct EmbeddedFile {
     relative_path: &'static str,
@@ -93,6 +95,11 @@ const EMBEDDED_FILES: &[EmbeddedFile] = &[
         relative_path: "assetiweave-memory/assetiweave.skill.json",
         contents: MEMORY_MANIFEST,
         executable: false,
+    },
+    EmbeddedFile {
+        relative_path: "assetiweave-memory/scripts/recall.py",
+        contents: MEMORY_RECALL_SCRIPT,
+        executable: true,
     },
 ];
 
@@ -427,6 +434,23 @@ mod tests {
         ] {
             assert!(root.join(skill).join("SKILL.md").is_file());
             assert!(root.join(skill).join("assetiweave.skill.json").is_file());
+        }
+        let memory_recall = root
+            .join("assetiweave-memory")
+            .join("scripts")
+            .join("recall.py");
+        assert!(memory_recall.is_file());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_ne!(
+                fs::metadata(&memory_recall)
+                    .expect("read Memory Recall script permissions")
+                    .permissions()
+                    .mode()
+                    & 0o111,
+                0
+            );
         }
         let adapter_dir = root
             .join("assetiweave-conversation-organizer")
