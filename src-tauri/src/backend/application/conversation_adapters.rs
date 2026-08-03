@@ -267,6 +267,17 @@ impl AppService {
     }
 
     pub(crate) fn sync_conversations(&self, params: ConversationSyncParams) -> AppResult<Value> {
+        self.sync_conversations_with_progress(params, |_, _, _| {})
+    }
+
+    pub(crate) fn sync_conversations_with_progress<F>(
+        &self,
+        params: ConversationSyncParams,
+        mut on_progress: F,
+    ) -> AppResult<Value>
+    where
+        F: FnMut(usize, usize, Option<String>),
+    {
         let record_kind = normalize_sync_record_kind(params.record_kind.as_deref())?;
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
@@ -289,9 +300,17 @@ impl AppService {
             return Err("no matching conversation sources".to_string());
         }
 
+        let total_source_count = sources.len();
+        let mut completed_source_count = 0;
+        on_progress(0, total_source_count, None);
         let mut results = Vec::new();
         let mut errors = Vec::new();
         for source in sources {
+            on_progress(
+                completed_source_count,
+                total_source_count,
+                Some(source.name.clone()),
+            );
             let pool = self.db.pool().clone();
             let tenant_id = self.tenant_id().to_string();
             let adapter_id = source.adapter_id.clone();
@@ -304,6 +323,8 @@ impl AppService {
                 .await
             })?;
             if !sync_source_matches_record_kind(adapter.as_ref(), &source.adapter_id, record_kind) {
+                completed_source_count += 1;
+                on_progress(completed_source_count, total_source_count, None);
                 continue;
             }
             let web_record_source = is_web_record_adapter(adapter.as_ref(), &source.adapter_id);
@@ -312,18 +333,31 @@ impl AppService {
             } else {
                 crate::backend::dto::ConversationRecordKind::Session
             };
+            let adapter_content_hash = adapter
+                .as_ref()
+                .and_then(|adapter| adapter.content_hash.clone());
+            let card_contract_version = adapter
+                .as_ref()
+                .and_then(|adapter| adapter.card_contract_version);
             let pool = self.db.pool().clone();
             let tenant_id = self.tenant_id().to_string();
             let source_id = source.id.clone();
-            let known_versions = self.db.block_on(async move {
-                crate::backend::store::load_conversation_session_versions_sqlx(
-                    &pool,
-                    &tenant_id,
-                    &source_id,
-                    source_record_kind,
-                )
-                .await
-            })?;
+            let known_adapter_content_hash = adapter_content_hash.clone();
+            let known_versions = if params.mode.uses_known_versions() {
+                self.db.block_on(async move {
+                    crate::backend::store::load_conversation_session_versions_sqlx(
+                        &pool,
+                        &tenant_id,
+                        &source_id,
+                        source_record_kind,
+                        known_adapter_content_hash.as_deref(),
+                        card_contract_version,
+                    )
+                    .await
+                })?
+            } else {
+                BTreeMap::new()
+            };
             let read_result = adapter
                 .as_ref()
                 .map(|adapter| self.ensure_conversation_adapter_package_runtime_ready(adapter))
@@ -333,6 +367,7 @@ impl AppService {
                         crate::backend::conversations::run_conversation_harvester_for_adapter_source(
                             adapter.as_ref(),
                             &source,
+                            matches!(params.mode, ConversationSyncMode::Full),
                         )
                         .and_then(|_| {
                             crate::backend::conversations::read_source_sessions_incrementally_with_adapter(
@@ -370,12 +405,15 @@ impl AppService {
                             source_record_kind,
                             &read,
                             params.dry_run,
+                            adapter_content_hash.as_deref(),
+                            card_contract_version,
                         )
                         .await?;
                         Ok(conversation_sync_result_value(
                             result,
                             &read,
                             retained_session_count,
+                            params.mode,
                         ))
                     })
                 }
@@ -416,38 +454,69 @@ impl AppService {
                             source_record_kind,
                             &read,
                             params.dry_run,
+                            adapter_content_hash.as_deref(),
+                            card_contract_version,
                         )
                         .await?;
                         Ok(conversation_sync_result_value(
                             result,
                             &read,
                             retained_session_count,
+                            params.mode,
                         ))
                     })
                 }
                 Err(error) => Err(error),
             };
-            match sync_result {
-                Ok(result) => results.push(result),
-                Err(error) if params.source_id.is_some() => return Err(error),
-                Err(error) => errors.push(json!({
-                    "source_id": source.id,
-                    "adapter_id": source.adapter_id,
-                    "message": error
-                })),
+            let source_error = match sync_result {
+                Ok(result) => {
+                    results.push(result);
+                    None
+                }
+                Err(error) if params.source_id.is_some() => Some(error),
+                Err(error) => {
+                    errors.push(json!({
+                        "source_id": source.id,
+                        "adapter_id": source.adapter_id,
+                        "message": error
+                    }));
+                    None
+                }
+            };
+            completed_source_count += 1;
+            on_progress(completed_source_count, total_source_count, None);
+            if let Some(error) = source_error {
+                return Err(error);
             }
         }
         if results.is_empty() && errors.is_empty() {
             return Err("no matching conversation sources".to_string());
         }
+        let legacy_cards_upgraded = results
+            .iter()
+            .filter_map(|result| result.get("legacy_cards_upgraded").and_then(Value::as_u64))
+            .sum::<u64>();
+        crate::backend::logs::record_info(
+            "conversation.sync",
+            "Conversation sync completed",
+            &[
+                ("legacy_cards_upgraded", legacy_cards_upgraded.to_string()),
+                ("source_count", results.len().to_string()),
+                ("error_count", errors.len().to_string()),
+                ("dry_run", params.dry_run.to_string()),
+                ("mode", format!("{:?}", params.mode).to_ascii_lowercase()),
+            ],
+        );
         Ok(json!({
             "dry_run": params.dry_run,
+            "mode": params.mode,
             "record_kind": record_kind.map(|kind| match kind {
                 crate::backend::dto::ConversationRecordKind::Session => "session",
                 crate::backend::dto::ConversationRecordKind::Web => "web",
             }),
             "results": results,
-            "errors": errors
+            "errors": errors,
+            "legacy_cards_upgraded": legacy_cards_upgraded
         }))
     }
 }
@@ -459,6 +528,8 @@ async fn persist_successful_conversation_observation(
     record_kind: crate::backend::dto::ConversationRecordKind,
     read: &crate::backend::conversations::ConversationSourceReadResult,
     dry_run: bool,
+    adapter_content_hash: Option<&str>,
+    card_contract_version: Option<u32>,
 ) -> AppResult<usize> {
     if dry_run || !read.incremental {
         return Ok(0);
@@ -475,6 +546,8 @@ async fn persist_successful_conversation_observation(
         record_kind,
         &read.session_descriptors,
         &hydrated_external_ids,
+        adapter_content_hash,
+        card_contract_version,
     )
     .await
 }
@@ -483,6 +556,7 @@ fn conversation_sync_result_value(
     result: crate::backend::store::ConversationImportResult,
     read: &crate::backend::conversations::ConversationSourceReadResult,
     retained_session_count: usize,
+    mode: ConversationSyncMode,
 ) -> Value {
     let mut value = json!(result);
     let Some(object) = value.as_object_mut() else {
@@ -505,6 +579,11 @@ fn conversation_sync_result_value(
         json!(read.skipped_session_count + store_skipped),
     );
     object.insert("incremental".to_string(), json!(read.incremental));
+    object.insert("mode".to_string(), json!(mode));
+    object.insert(
+        "legacy_cards_upgraded".to_string(),
+        json!(read.legacy_cards_upgraded),
+    );
     object.insert(
         "retained_session_count".to_string(),
         json!(retained_session_count),
@@ -580,6 +659,8 @@ mod tests {
             protocol_version: Some(1),
             capabilities: capabilities.iter().map(|value| value.to_string()).collect(),
             input_kinds: vec![crate::backend::models::ConversationSourceKind::Directory],
+            card_contract_version: None,
+            card_kinds: Vec::new(),
             created_at: "2026-06-23T00:00:00Z".to_string(),
             updated_at: "2026-06-23T00:00:00Z".to_string(),
         }

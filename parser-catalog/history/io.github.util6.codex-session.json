@@ -7,6 +7,150 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "1.5.5",
+      "channel": "stable",
+      "released_at": "2026-08-03T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.5.5-universal.zip",
+      "artifact_size": 41732,
+      "artifact_sha256": "6b232710a36c385a59e8ec9111a8e0c121c579e46272cffa1211950e16804703",
+      "changelog_markdown": "## 1.5.5\n\n- Decode structured execution output before text compaction and hide pending runner and wait control records from Card projection.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+      }
+    },
+    {
+      "version": "1.5.4",
+      "channel": "stable",
+      "released_at": "2026-08-02T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.5.4-universal.zip",
+      "artifact_size": 40723,
+      "artifact_sha256": "116df54e11f6f94725625b379558a1ad8bf02a326e117b05ea4f17ee209274e9",
+      "changelog_markdown": "## 1.5.4\n\n- Decode structured execution output, remove runner noise, and render plain results as terminal output.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+      }
+    },
+    {
+      "version": "1.5.3",
+      "channel": "stable",
+      "released_at": "2026-08-02T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.5.3-universal.zip",
+      "artifact_size": 36208,
+      "artifact_sha256": "4559b2a196982164025a19afdae1a9b7da64487b190f69b44d8a8af8979af359",
+      "changelog_markdown": "## 1.5.3\n\n- Preserve source call IDs so interleaved Command and Result cards can be grouped exactly.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+      }
+    },
+    {
+      "version": "1.5.2",
+      "channel": "stable",
+      "released_at": "2026-08-02T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.5.2-universal.zip",
+      "artifact_size": 35540,
+      "artifact_sha256": "cad011a888287c39e842a39459ce449a8f8f1a5e56807cfa21aadbad8c739584",
+      "changelog_markdown": "## 1.5.2\n\n- Recognize modern Codex custom exec calls so SKILL.md reads remain Skill cards after synchronization.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+      }
+    },
+    {
+      "version": "1.5.1",
+      "channel": "stable",
+      "released_at": "2026-07-28T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.5.1-universal.zip",
+      "artifact_size": 34422,
+      "artifact_sha256": "898b2f9145720acecba90a26c6c6a8251ecf46a7a7eaefe5b40c8802f5000a40",
+      "changelog_markdown": "## 1.5.1\n\n- Represent detected SKILL.md reads as clickable Skill path cards instead of rendering the document body.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+      }
+    },
+    {
+      "version": "1.5.0",
+      "channel": "stable",
+      "released_at": "2026-07-28T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.5.0-universal.zip",
+      "artifact_size": 34362,
+      "artifact_sha256": "5faf87d056e08c22f47be682f1b1ec8e2fc71f9de2b613acdd6b35bb9275779d",
+      "changelog_markdown": "## 1.5.0\n\n- Separate SKILL.md command output into Skill path and Skill content cards.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+      }
+    },
+    {
+      "version": "1.4.0",
+      "channel": "stable",
+      "released_at": "2026-07-27T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.4.0-universal.zip",
+      "artifact_size": 30477,
+      "artifact_sha256": "a5202f5f06f330ce62bd80b8fdf2e59d06957bccb8c9adc33706037eed4028d6",
+      "changelog_markdown": "## 1.4.0\n\n- Separate Codex Skill injections from real user questions and emit clickable Skill path cards.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+      }
+    },
+    {
+      "version": "1.3.0",
+      "channel": "stable",
+      "released_at": "2026-07-27T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.3.0-universal.zip",
+      "artifact_size": 27444,
+      "artifact_sha256": "efbfef758a1ee6938f7ea32c81325d9874c930d83143bd4b8f3c387927ac45f9",
+      "changelog_markdown": "## 1.3.0\n\n- Emit Card Contract v1 descriptors directly and remove current legacy Adapter exporters.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+      }
+    },
+    {
+      "version": "1.2.0",
+      "channel": "stable",
+      "released_at": "2026-07-27T00:00:00Z",
+      "core_compatibility": ">=0.5.0, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.2.0-universal.zip",
+      "artifact_size": 30384,
+      "artifact_sha256": "c5db2c412f4696cdc7bfea0fdec347b8a54e72e7345b15b1a0a6dedac7383998",
+      "changelog_markdown": "## 1.2.0\n\n- Declare namespaced conversation card kinds and Core-controlled renderers.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+      }
+    },
+    {
       "version": "1.1.0",
       "channel": "stable",
       "released_at": "2026-07-16T00:00:00Z",

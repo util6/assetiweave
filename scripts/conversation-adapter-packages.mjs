@@ -10,6 +10,31 @@ const legacyCatalogPath = path.join(catalogRoot, "catalog.json");
 const outputRoot = path.join(root, "target", "conversation-adapter-packages");
 const command = process.argv[2] ?? "check";
 const update = process.argv.includes("--update");
+const generatedCopies = [
+  ...["claude-code", "codex", "opencode"].flatMap((adapterId) => [
+    [`parser-catalog/adapters/${adapterId}/adapter.mjs`, `src-tauri/bundled/conversation-adapters/${adapterId}/adapter.mjs`],
+    [`parser-catalog/adapters/${adapterId}/conversation-adapter.json`, `src-tauri/bundled/conversation-adapters/${adapterId}/conversation-adapter.json`],
+  ]),
+  ...["gemini-web", "qwen-web"].flatMap((adapterId) => [
+    "adapter.js",
+    "conversation-adapter.json",
+    "harvester.json",
+    "web-harvester.json",
+    "requests",
+    "scripts",
+  ].map((relative) => [
+    `parser-catalog/adapters/${adapterId}/${relative}`,
+    `cli/internal/harvesters/templates/${adapterId}/${relative}`,
+  ])),
+  [
+    "parser-catalog/adapters/zcode/conversation-adapter.json",
+    "src-tauri/builtin-assets/skills/assetiweave-conversation-organizer/scripts/zcode-conversation-adapter/conversation-adapter.json",
+  ],
+  [
+    "parser-catalog/adapters/zcode/zcode_adapter.py",
+    "src-tauri/builtin-assets/skills/assetiweave-conversation-organizer/scripts/zcode-conversation-adapter/zcode_adapter.py",
+  ],
+];
 const crc32Table = Array.from({ length: 256 }, (_, index) => {
   let value = index;
   for (let bit = 0; bit < 8; bit += 1) {
@@ -21,6 +46,9 @@ const crc32Table = Array.from({ length: 256 }, (_, index) => {
 if (!['check', 'build'].includes(command)) {
   throw new Error("usage: node scripts/conversation-adapter-packages.mjs <check|build> [--update]");
 }
+
+syncOrCheckGeneratedCopies();
+selfTestGeneratedCopyDriftDetection();
 
 const index = readJson(indexPath);
 const legacyCatalog = readJson(legacyCatalogPath);
@@ -48,13 +76,21 @@ for (const packageIndex of index.packages) {
   const adapterManifest = readJson(adapterManifestPath);
   assert(packageManifest.package_id === history.package_id, `package manifest id mismatch: ${history.package_id}`);
   assert(adapterManifest.id === history.adapter_id, `adapter manifest id mismatch: ${history.package_id}`);
+  assert(adapterManifest.version === packageManifest.version, `adapter/package version mismatch: ${history.package_id}`);
   assert(packageManifest.adapter_manifest === path.basename(adapterManifestPath), `adapter manifest path mismatch: ${history.package_id}`);
   assert(packageManifest.runtime?.protocol === "stdio-ndjson-v1", `unsupported runtime protocol: ${history.package_id}`);
   assertVersion(packageManifest.version, `package manifest version: ${history.package_id}`);
   assertVersion(packageManifest.min_core_version, `minimum Core version: ${history.package_id}`);
 
-  const release = history.releases.find((candidate) => candidate.version === packageManifest.version);
+  let release = history.releases.find((candidate) => candidate.version === packageManifest.version);
+  if (!release && update) {
+    release = releaseFromPackageManifest(history, packageManifest);
+    history.releases.unshift(release);
+  }
   assert(release, `history is missing active package version: ${history.package_id}@${packageManifest.version}`);
+  if (update) {
+    packageIndex.stable_version = release.version;
+  }
   assert(packageIndex.stable_version === release.version || packageIndex.beta_version === release.version,
     `index does not reference active package version: ${history.package_id}@${release.version}`);
   assert(release.runtime_protocol === packageManifest.runtime.protocol, `history runtime protocol mismatch: ${history.package_id}`);
@@ -68,6 +104,7 @@ for (const packageIndex of index.packages) {
   const legacyItem = legacyCatalog.items.find((item) => item.id === history.package_id);
   assert(legacyItem, `legacy compatibility catalog is missing ${history.package_id}`);
   if (update) {
+    legacyItem.version = packageManifest.version;
     legacyItem.expected_package_hash = contentHash;
   } else {
     assert(legacyItem.expected_package_hash === contentHash,
@@ -100,6 +137,9 @@ for (const packageIndex of index.packages) {
 }
 
 if (update) {
+  index.updated_at = `${new Date().toISOString().slice(0, 10)}T00:00:00Z`;
+  legacyCatalog.updated_at = index.updated_at;
+  writeJson(indexPath, index);
   writeJson(legacyCatalogPath, legacyCatalog);
 }
 
@@ -116,6 +156,72 @@ function adapterDirectoryFromHistory(history) {
   const directory = path.join(root, relative);
   assert(fs.statSync(directory).isDirectory(), `adapter directory does not exist: ${directory}`);
   return directory;
+}
+
+function releaseFromPackageManifest(history, packageManifest) {
+  const previous = history.releases[0];
+  assert(previous, `cannot derive a release without history: ${history.package_id}`);
+  const changelog = packageManifest.changelog?.find((entry) => entry.version === packageManifest.version);
+  assert(changelog, `package changelog is missing ${history.package_id}@${packageManifest.version}`);
+  const artifactName = `${history.package_id}-${packageManifest.version}-universal.zip`;
+  return {
+    ...previous,
+    version: packageManifest.version,
+    channel: "stable",
+    released_at: `${changelog.date}T00:00:00Z`,
+    core_compatibility: `>=${packageManifest.min_core_version}, <1.0.0`,
+    artifact_url: previous.artifact_url.replace(/[^/]+$/, artifactName),
+    artifact_size: 0,
+    artifact_sha256: "",
+    changelog_markdown: `## ${packageManifest.version}\n\n${changelog.notes.map((note) => `- ${note}`).join("\n")}`,
+    breaking_change: false,
+  };
+}
+
+function syncOrCheckGeneratedCopies() {
+  for (const [sourceRelative, targetRelative] of generatedCopies) {
+    const source = path.join(root, sourceRelative);
+    const target = path.join(root, targetRelative);
+    assert(fs.existsSync(source), `canonical Adapter source is missing: ${sourceRelative}`);
+    if (command === "build" && update) {
+      fs.rmSync(target, { force: true, recursive: true });
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.cpSync(source, target, { recursive: true });
+      continue;
+    }
+    assert(fs.existsSync(target), `generated Adapter copy is missing: ${targetRelative}; run pnpm conversation-adapters:build --update`);
+    assert(pathsEqual(source, target),
+      `generated Adapter copy drifted: ${targetRelative}; run pnpm conversation-adapters:build --update`);
+  }
+}
+
+function pathsEqual(left, right) {
+  const leftStat = fs.statSync(left);
+  const rightStat = fs.statSync(right);
+  if (leftStat.isDirectory() !== rightStat.isDirectory()) return false;
+  if (leftStat.isDirectory()) {
+    const leftEntries = fs.readdirSync(left).sort();
+    const rightEntries = fs.readdirSync(right).sort();
+    if (leftEntries.length !== rightEntries.length) return false;
+    return leftEntries.every((entry, index) => entry === rightEntries[index]
+      && pathsEqual(path.join(left, entry), path.join(right, entry)));
+  }
+  return fs.readFileSync(left).equals(fs.readFileSync(right));
+}
+
+function selfTestGeneratedCopyDriftDetection() {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "assetiweave-adapter-drift-"));
+  try {
+    const source = path.join(fixture, "canonical.txt");
+    const target = path.join(fixture, "generated.txt");
+    fs.writeFileSync(source, "canonical\n");
+    fs.copyFileSync(source, target);
+    assert(pathsEqual(source, target), "generated-copy verifier rejected an identical fixture");
+    fs.appendFileSync(target, "drift\n");
+    assert(!pathsEqual(source, target), "generated-copy verifier did not detect fixture drift");
+  } finally {
+    fs.rmSync(fixture, { force: true, recursive: true });
+  }
 }
 
 function buildZip(directory, artifactPath) {

@@ -11,6 +11,7 @@ const rawDir = path.join(root, "output", "raw", runID);
 const detailDir = path.join(rawDir, "details");
 const normalizedDir = path.join(root, "output", "normalized");
 const normalizedFile = path.join(normalizedDir, "sessions.json");
+const forceFullReparse = process.env.ASSETIWEAVE_FULL_REPARSE === "1";
 
 const existingSessions = new Map();
 try {
@@ -203,7 +204,7 @@ async function collectViaBrowserContext() {
         if (!id) continue;
         const item = items[index];
         const updatedAt = timestamp(item.update_time);
-        if (cache[id] === updatedAt) {
+        if (!${JSON.stringify(forceFullReparse)} && cache[id] === updatedAt) {
           continue; // Skip fetch as local cache is up to date
         }
         const detail = await readJSON("/backend-api/conversation/" + encodeURIComponent(id), {
@@ -298,7 +299,7 @@ async function collectDirect() {
     // Check local cache
     const existing = existingSessions.get(sessionID);
     const updatedAt = timestamp(item.update_time);
-    if (existing && existing.updated_at === updatedAt) {
+    if (!forceFullReparse && existing && existing.updated_at === updatedAt) {
       continue;
     }
 

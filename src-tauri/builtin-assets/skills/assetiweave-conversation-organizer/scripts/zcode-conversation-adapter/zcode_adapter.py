@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -17,7 +18,7 @@ IGNORED_PART_TYPES = {
     "step-finish",
     "step-start",
 }
-CONTENT_CARD_SCHEMA_VERSION = "zcode-content-cards-v2"
+CONTENT_CARD_SCHEMA_VERSION = "zcode-content-cards-v4"
 
 
 def emit(payload: dict[str, Any]) -> None:
@@ -163,15 +164,20 @@ def collect_strings(value: Any, output: list[str]) -> None:
 
 def tool_text(data: dict[str, Any]) -> str | None:
     values: list[str] = []
-    for key in ("output", "result", "content", "summary", "message", "error"):
+    for key in ("output", "result", "content", "error"):
         if key in data:
             collect_strings(data[key], values)
     state = data.get("state")
     if isinstance(state, dict):
-        for key in ("title", "output", "error", "message"):
+        for key in ("output", "error", "message"):
             if key in state:
                 collect_strings(state[key], values)
-    text = "\n".join(values).strip()
+    if not values:
+        for source in (data, state if isinstance(state, dict) else {}):
+            for key in ("summary", "message", "title"):
+                if key in source:
+                    collect_strings(source[key], values)
+    text = "\n".join(dict.fromkeys(values)).strip()
     return text or None
 
 
@@ -571,6 +577,157 @@ def configured_limit(config: Any) -> int:
     return min(max(value, 1), 5000)
 
 
+def execution_text_value(value: Any, depth: int = 0) -> str:
+    if value is None or depth > 6:
+        return ""
+    if isinstance(value, str):
+        source = value.strip()
+        if source.startswith(("[", "{", '"')):
+            try:
+                return execution_text_value(json.loads(source), depth + 1)
+            except json.JSONDecodeError:
+                pass
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        fragment_keys = {"stdout", "stderr", "output", "result", "content", "text", "message"}
+        structured_fragments = bool(value) and all(
+            isinstance(entry, dict) and bool(fragment_keys.intersection(entry))
+            for entry in value
+        )
+        if not structured_fragments:
+            return json.dumps(value, ensure_ascii=False, indent=2)
+        result = ""
+        for entry in value:
+            fragment = execution_text_value(entry, depth + 1)
+            if not fragment:
+                continue
+            separator = "" if not result or result.endswith("\n") or fragment.startswith("\n") else "\n"
+            result += separator + fragment
+        return result
+    if isinstance(value, dict):
+        streams = [
+            execution_text_value(value.get(key), depth + 1)
+            for key in ("stdout", "stderr")
+        ]
+        streams = [entry for entry in streams if entry.strip()]
+        if streams:
+            return "\n".join(streams)
+        for key in ("output", "result", "content", "text", "message"):
+            if value.get(key) is not None:
+                return execution_text_value(value[key], depth + 1)
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    return str(value)
+
+
+def normalize_terminal_text(value: Any) -> str:
+    text = str(value or "").replace("\r\n", "\n")
+    text = re.sub(r"\x1b\][^\x07]*(?:\x07|\x1b\\)", "", text)
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+    text = re.sub(r"[\x00\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+    lines = []
+    for line in text.split("\n"):
+        if "\r" in line:
+            line = line[line.rfind("\r") + 1 :]
+        lines.append(line.rstrip())
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines).strip())
+
+
+def strip_execution_envelope(value: str) -> str:
+    header = re.compile(
+        r"(?:Created At:.*|Completed At:.*|Script completed(?: successfully)?(?: in .*)?|"
+        r"Wall time\b.*|Chunk ID:.*|Process exited with code\b.*|Original token count:.*|"
+        r"The command completed successfully\.?|(?:Final |Original |Command )?Output:)",
+        re.IGNORECASE,
+    )
+    lines = value.split("\n")
+    cursor = 0
+    matched = False
+    while cursor < len(lines):
+        line = lines[cursor].strip()
+        if header.fullmatch(line):
+            matched = True
+            cursor += 1
+        elif matched and not line:
+            cursor += 1
+        else:
+            break
+    return normalize_terminal_text("\n".join(lines[cursor:])) if matched else value
+
+
+def normalize_execution_result_text(value: Any) -> str:
+    without_envelope = strip_execution_envelope(normalize_terminal_text(execution_text_value(value)))
+    return normalize_terminal_text(execution_text_value(without_envelope))
+
+
+def normalize_execution_command_text(value: Any) -> str:
+    source = str(value or "").strip()
+    if source.startswith(("{", '"')):
+        try:
+            parsed = json.loads(source)
+            if isinstance(parsed, str):
+                return normalize_terminal_text(parsed)
+            if isinstance(parsed, dict):
+                command = parsed.get("command") or parsed.get("cmd") or parsed.get("shell_command")
+                if isinstance(command, str):
+                    return normalize_terminal_text(command)
+        except json.JSONDecodeError:
+            pass
+    return normalize_terminal_text(value)
+
+
+def finalize_structured_content_cards(session: dict[str, Any]) -> dict[str, Any]:
+    for turn in session.get("turns") or []:
+        for part in turn.get("parts") or []:
+            metadata: dict[str, Any] = {}
+            raw_metadata = part.get("metadata_json")
+            if isinstance(raw_metadata, str) and raw_metadata.strip():
+                try:
+                    parsed = json.loads(raw_metadata)
+                    if isinstance(parsed, dict):
+                        metadata = dict(parsed)
+                except json.JSONDecodeError:
+                    metadata = {}
+            legacy_card = metadata.pop("content_card", None) or metadata.pop("contentCard", None)
+            card_type = legacy_card.get("type") if isinstance(legacy_card, dict) else None
+            if not isinstance(card_type, str):
+                kind = (part.get("content_card") or {}).get("kind")
+                card_type = kind.rsplit(".", 1)[-1] if isinstance(kind, str) else None
+            if card_type == "result" and isinstance(part.get("text"), str):
+                part["text"] = normalize_execution_result_text(part["text"]) or None
+            elif card_type == "command":
+                field = "command" if isinstance(part.get("command"), str) else "text"
+                if isinstance(part.get(field), str):
+                    part[field] = normalize_execution_command_text(part[field]) or None
+            if not part.get("content_card") and isinstance(legacy_card, dict) and isinstance(legacy_card.get("type"), str):
+                card_type = legacy_card["type"]
+                part["content_card"] = {
+                    "schema_version": 1,
+                    "kind": f"zcode.{card_type}",
+                    "renderer": structured_card_renderer(legacy_card),
+                }
+            part["metadata_json"] = compact_json(metadata) if metadata else None
+    return session
+
+
+def structured_card_renderer(card: dict[str, Any]) -> str:
+    card_type = card.get("type")
+    if card_type == "code":
+        return "code"
+    if card_type == "command":
+        return "command"
+    if card_type == "result":
+        return str(card["format"]) if card.get("format") in {"markdown", "json"} else "terminal_output"
+    if card.get("format") in {"markdown", "plain", "json"}:
+        return str(card["format"])
+    if card_type == "answer":
+        return "markdown"
+    return "plain"
+
+
 def run(request: dict[str, Any]) -> None:
     if request.get("protocol_version") != 1:
         raise ValueError("unsupported protocol_version")
@@ -620,7 +777,7 @@ def run(request: dict[str, Any]) -> None:
                 },
             })
         else:
-            emit({"type": "item", "item": {"kind": "session", "session": session}})
+            emit({"type": "item", "item": {"kind": "session", "session": finalize_structured_content_cards(session)}})
     emit(
         {
             "type": "complete",

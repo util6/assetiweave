@@ -7,6 +7,54 @@
   "record_kind": "web",
   "releases": [
     {
+      "version": "0.4.1",
+      "channel": "stable",
+      "released_at": "2026-08-02T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.chatgpt-web-0.4.1-universal.zip",
+      "artifact_size": 61208,
+      "artifact_sha256": "836af9040e703634e1c8a0c87302a783cbabb357e66b257b75ce1f6338f13f20",
+      "changelog_markdown": "## 0.4.1\n\n- Decode structured execution output, remove runner noise, and render plain results as terminal output.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/chatgpt-web"
+      }
+    },
+    {
+      "version": "0.4.0",
+      "channel": "stable",
+      "released_at": "2026-07-27T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.chatgpt-web-0.4.0-universal.zip",
+      "artifact_size": 56815,
+      "artifact_sha256": "9db53f3e39e243819812b5269920c6ea3c330b9b65b59ae156e6752826cea7b7",
+      "changelog_markdown": "## 0.4.0\n\n- Emit Card Contract v1 descriptors directly and remove current legacy Adapter exporters.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/chatgpt-web"
+      }
+    },
+    {
+      "version": "0.3.0",
+      "channel": "stable",
+      "released_at": "2026-07-27T00:00:00Z",
+      "core_compatibility": ">=0.5.0, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.chatgpt-web-0.3.0-universal.zip",
+      "artifact_size": 55647,
+      "artifact_sha256": "ed442067a4a040b28e741dfb5b63513d963193f122cbcbad944f72ddd9f460cf",
+      "changelog_markdown": "## 0.3.0\n\n- Declare namespaced conversation card kinds and Core-controlled renderers.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/chatgpt-web"
+      }
+    },
+    {
       "version": "0.2.0",
       "channel": "stable",
       "released_at": "2026-07-16T00:00:00Z",

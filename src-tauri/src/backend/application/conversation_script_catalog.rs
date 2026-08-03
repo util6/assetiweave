@@ -2625,6 +2625,8 @@ mod tests {
             protocol_version: Some(1),
             capabilities: vec!["read_session".to_string()],
             input_kinds: Vec::new(),
+            card_contract_version: None,
+            card_kinds: Vec::new(),
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         }

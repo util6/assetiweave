@@ -7,6 +7,54 @@
   "record_kind": "web",
   "releases": [
     {
+      "version": "0.4.1",
+      "channel": "stable",
+      "released_at": "2026-08-02T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.gemini-web-0.4.1-universal.zip",
+      "artifact_size": 63479,
+      "artifact_sha256": "1f544125f7283a75a0b06024a7ca118576db73aec02dd0e50d419719b66be6dc",
+      "changelog_markdown": "## 0.4.1\n\n- Decode structured execution output, remove runner noise, and render plain results as terminal output.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/gemini-web"
+      }
+    },
+    {
+      "version": "0.4.0",
+      "channel": "stable",
+      "released_at": "2026-07-27T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.gemini-web-0.4.0-universal.zip",
+      "artifact_size": 59086,
+      "artifact_sha256": "e7f6daec71ac97e85ad0ae91e0ae82303e0aea49f160524965cf249310a52df0",
+      "changelog_markdown": "## 0.4.0\n\n- Emit Card Contract v1 descriptors directly and remove current legacy Adapter exporters.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/gemini-web"
+      }
+    },
+    {
+      "version": "0.3.0",
+      "channel": "stable",
+      "released_at": "2026-07-27T00:00:00Z",
+      "core_compatibility": ">=0.5.0, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.gemini-web-0.3.0-universal.zip",
+      "artifact_size": 57919,
+      "artifact_sha256": "51dc2f02b88172f8d29e88d24623f0830fd7c27ef308f4bfb0ef08948df772c5",
+      "changelog_markdown": "## 0.3.0\n\n- Declare namespaced conversation card kinds and Core-controlled renderers.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/gemini-web"
+      }
+    },
+    {
       "version": "0.2.0",
       "channel": "stable",
       "released_at": "2026-07-16T00:00:00Z",

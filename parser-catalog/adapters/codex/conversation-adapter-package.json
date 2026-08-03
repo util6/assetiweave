@@ -2,18 +2,80 @@
   "schema_version": 1,
   "package_id": "io.github.util6.codex-session",
   "name": "Codex Session Parser",
-  "version": "1.1.0",
-  "min_core_version": "0.5.0",
+  "version": "1.5.5",
+  "min_core_version": "0.5.2",
   "record_kind": "session",
   "adapter_manifest": "conversation-adapter.json",
   "capabilities": [
-    "read_session",
-    "export_markdown"
+    "read_session"
   ],
   "runtime": {
     "protocol": "stdio-ndjson-v1"
   },
   "changelog": [
+    {
+      "version": "1.5.5",
+      "date": "2026-08-03",
+      "notes": [
+        "Decode structured execution output before text compaction and hide pending runner and wait control records from Card projection."
+      ]
+    },
+    {
+      "version": "1.5.4",
+      "date": "2026-08-02",
+      "notes": [
+        "Decode structured execution output, remove runner noise, and render plain results as terminal output."
+      ]
+    },
+    {
+      "version": "1.5.3",
+      "date": "2026-08-02",
+      "notes": [
+        "Preserve source call IDs so interleaved Command and Result cards can be grouped exactly."
+      ]
+    },
+    {
+      "version": "1.5.2",
+      "date": "2026-08-02",
+      "notes": [
+        "Recognize modern Codex custom exec calls so SKILL.md reads remain Skill cards after synchronization."
+      ]
+    },
+    {
+      "version": "1.5.1",
+      "date": "2026-07-28",
+      "notes": [
+        "Represent detected SKILL.md reads as clickable Skill path cards instead of rendering the document body."
+      ]
+    },
+    {
+      "version": "1.5.0",
+      "date": "2026-07-28",
+      "notes": [
+        "Separate SKILL.md command output into Skill path and Skill content cards."
+      ]
+    },
+    {
+      "version": "1.4.0",
+      "date": "2026-07-27",
+      "notes": [
+        "Separate Codex Skill injections from real user questions and emit clickable Skill path cards."
+      ]
+    },
+    {
+      "version": "1.3.0",
+      "date": "2026-07-27",
+      "notes": [
+        "Emit Card Contract v1 descriptors directly and keep legacy Card metadata out of normalized Parts."
+      ]
+    },
+    {
+      "version": "1.2.0",
+      "date": "2026-07-27",
+      "notes": [
+        "Declare namespaced conversation card kinds and Core-controlled renderers."
+      ]
+    },
     {
       "version": "1.1.0",
       "date": "2026-07-16",

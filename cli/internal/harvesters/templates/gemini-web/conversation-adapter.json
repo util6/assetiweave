@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "gemini-web",
   "name": "Gemini Web",
-  "version": "0.1.3",
+  "version": "0.4.1",
   "protocol_version": 1,
   "runtime": {
     "type": "node",
@@ -11,10 +11,66 @@
   },
   "capabilities": [
     "probe",
+    "list_sessions",
     "read_session",
     "web_records"
   ],
   "input_kinds": [
     "directory"
+  ],
+  "card_contract_version": 1,
+  "card_kinds": [
+    {
+      "id": "gemini-web.answer",
+      "semantic_role": "answer",
+      "label": "Answer",
+      "default_renderer": "markdown",
+      "allowed_renderers": [
+        "markdown",
+        "plain",
+        "json"
+      ]
+    },
+    {
+      "id": "gemini-web.tool",
+      "semantic_role": "tool",
+      "label": "Tool",
+      "default_renderer": "plain",
+      "allowed_renderers": [
+        "plain",
+        "markdown",
+        "json"
+      ]
+    },
+    {
+      "id": "gemini-web.command",
+      "semantic_role": "command",
+      "label": "Command",
+      "default_renderer": "command",
+      "allowed_renderers": [
+        "command"
+      ]
+    },
+    {
+      "id": "gemini-web.code",
+      "semantic_role": "code",
+      "label": "Code",
+      "default_renderer": "code",
+      "allowed_renderers": [
+        "code"
+      ]
+    },
+    {
+      "id": "gemini-web.result",
+      "semantic_role": "result",
+      "label": "Result",
+      "default_renderer": "terminal_output",
+      "allowed_renderers": [
+        "terminal_output",
+        "plain",
+        "markdown",
+        "json"
+      ]
+    }
   ]
 }

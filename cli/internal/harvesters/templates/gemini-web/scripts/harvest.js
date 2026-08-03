@@ -11,6 +11,7 @@ const rawDir = path.join(root, "output", "raw", runID);
 const detailDir = path.join(rawDir, "details");
 const normalizedDir = path.join(root, "output", "normalized");
 const normalizedFile = path.join(normalizedDir, "sessions.json");
+const forceFullReparse = process.env.ASSETIWEAVE_FULL_REPARSE === "1";
 
 const existingSessions = new Map();
 try {
@@ -238,7 +239,7 @@ async function collectDirect() {
     
     // Check local cache
     const existing = existingSessions.get(item.cid);
-    if (existing && existing.updated_at === item.updatedAt) {
+    if (!forceFullReparse && existing && existing.updated_at === item.updatedAt) {
       sessions.push(existing);
       continue;
     }
@@ -430,7 +431,7 @@ async function collectViaBrowserContext() {
       const details = [];
       for (let index = 0; index < listItems.length; index++) {
         const item = listItems[index];
-        if (cache[item.cid] === item.updatedAt) {
+        if (!${JSON.stringify(forceFullReparse)} && cache[item.cid] === item.updatedAt) {
           continue; // Skip fetch as local cache is up to date
         }
         const snapshot = await batch("hNvQHb", [item.cid, 1000, null, 1, [1], [4], null, 1]);

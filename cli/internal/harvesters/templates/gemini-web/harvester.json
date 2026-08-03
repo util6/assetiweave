@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "gemini-web",
   "name": "Gemini Web",
-  "version": "0.1.3",
+  "version": "0.1.2",
   "origin": "official",
   "description": "Official AssetIWeave harvester template for Gemini web conversations.",
   "runtime": {

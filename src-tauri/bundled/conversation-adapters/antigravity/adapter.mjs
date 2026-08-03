@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
-const CONTENT_CARD_SCHEMA_VERSION = "antigravity-content-cards-v1";
+const CONTENT_CARD_SCHEMA_VERSION = "antigravity-content-cards-v6";
 const MAX_PART_TEXT_CHARS = 96 * 1024;
 const MAX_SESSION_TEXT_CHARS = 384 * 1024;
 const MAX_COMPACTED_TOOL_TEXT_CHARS = 24 * 1024;
@@ -419,6 +419,24 @@ function toolResultPart(step) {
   if (!content) return [];
   const status = step.status === "ERROR" ? "error" : step.status === "DONE" ? "success" : null;
 
+  const skillContent = skillContentFromViewFile(step, content);
+  if (skillContent) {
+    return [{
+      role: "tool",
+      kind: "metadata",
+      text: skillContent.body,
+      language: null,
+      command: null,
+      cwd: null,
+      status,
+      exit_code: null,
+      metadata_json: metadata(
+        compactObject({ type: "skill-content", format: "markdown", status }),
+        { source_type: type, skill_path: skillContent.path, detected_from_view_file: true },
+      ),
+    }];
+  }
+
   if (type === "RUN_COMMAND") {
     return [{
       role: "tool",
@@ -486,6 +504,40 @@ function toolResultPart(step) {
       { source_type: type },
     ),
   }];
+}
+
+function skillContentFromViewFile(step, content) {
+  if (step.type !== "VIEW_FILE") return null;
+  const filePath = viewFilePath(content);
+  if (!filePath || !/\/SKILL\.md$/i.test(filePath)) return null;
+  const body = viewFileBody(content);
+  if (!body || !/^---\s*$/m.test(body)) return null;
+  return { path: filePath, body };
+}
+
+function viewFilePath(content) {
+  const match = String(content).match(/File Path:\s*`(?:file:\/\/)?([^`]+)`/i);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1].trim());
+  } catch {
+    return match[1].trim();
+  }
+}
+
+function viewFileBody(content) {
+  const lines = String(content).split(/\r?\n/);
+  const firstDocumentLine = lines.findIndex((line) => /^\s*\d+:\s*---\s*$/.test(line));
+  if (firstDocumentLine < 0) return null;
+  const bodyLines = [];
+  for (const line of lines.slice(firstDocumentLine)) {
+    if (/^The above content shows the entire, complete file contents of the requested file\.?\s*$/i.test(line.trim())) {
+      break;
+    }
+    const numbered = line.match(/^\s*\d+: ?(.*)$/);
+    bodyLines.push(numbered ? numbered[1] : line);
+  }
+  return bodyLines.join("\n").trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -634,7 +686,7 @@ function readSession() {
       const turns = displayTurns(parsed.turns);
       if (!turns.length) return [];
       const externalId = path.basename(path.resolve(location, "../../..")) || "antigravity-session";
-      return [applyTextBudgets({
+      return [applyTextBudgets(finalizeStructuredContentCards({
         external_id: externalId,
         title: titleFromUserText(turns[0]?.user_text),
         project_path: parsed.projectPath ?? inferProjectPath(turns),
@@ -643,7 +695,7 @@ function readSession() {
         source_locator: location,
         source_fingerprint: sourceFingerprint(text),
         turns,
-      })];
+      }))];
     }
   } catch {
     return [];
@@ -657,7 +709,7 @@ function readSession() {
     const turns = displayTurns(parsed.turns);
     if (!turns.length) return [];
     const externalId = path.basename(brainDir) || "antigravity-session";
-    return [applyTextBudgets({
+    return [applyTextBudgets(finalizeStructuredContentCards({
       external_id: externalId,
       title: titleFromUserText(turns[0]?.user_text),
       project_path: parsed.projectPath ?? inferProjectPath(turns),
@@ -666,7 +718,7 @@ function readSession() {
       source_locator: transcriptInDir,
       source_fingerprint: sourceFingerprint(text),
       turns,
-    })];
+    }))];
   }
 
   // Brain directory: enumerate conversation subdirectories
@@ -685,7 +737,7 @@ function readSession() {
     const turns = displayTurns(parsed.turns);
     if (!turns.length) continue;
     const externalId = path.basename(convDir);
-    sessions.push(applyTextBudgets({
+    sessions.push(applyTextBudgets(finalizeStructuredContentCards({
       external_id: externalId,
       title: titleFromUserText(turns[0]?.user_text),
       project_path: parsed.projectPath ?? inferProjectPath(turns),
@@ -694,135 +746,168 @@ function readSession() {
       source_locator: transcriptPath,
       source_fingerprint: sourceFingerprint(text),
       turns,
-    }));
+    })));
   }
   return sessions;
 }
 
-// ---------------------------------------------------------------------------
-// Markdown export
-// ---------------------------------------------------------------------------
-
-function exportMarkdown() {
-  const params = input.params ?? {};
-  const detail = params.session_detail ?? params.sessionDetail;
-  if (!detail || typeof detail !== "object") {
-    throw new Error("export_markdown requires params.session_detail");
-  }
-  return {
-    content: renderSessionMarkdown(
-      detail,
-      params.question_ids ?? params.questionIds ?? [],
-      params.content_filter ?? params.contentFilter ?? {},
-    ),
-    relative_path: String(params.default_relative_path ?? params.defaultRelativePath ?? "conversation-export.md").trim(),
-  };
-}
-
-function renderSessionMarkdown(detail, questionIds, contentFilter) {
-  const session = detail.session ?? {};
-  const selectedIds = new Set(Array.isArray(questionIds) ? questionIds.map(String) : []);
-  const questions = Array.isArray(detail.questions)
-    ? detail.questions.filter((entry) => !selectedIds.size || selectedIds.has(String(entry?.question?.id ?? "")))
-    : [];
-  const lines = [
-    `# ${headingText(session.title || session.external_id || "Conversation export")}`,
-    "",
-    "**Session Metadata**",
-    "",
-    `- Adapter: \`${session.adapter_id ?? ""}\``,
-    `- Source: \`${session.source_id ?? ""}\``,
-    `- External Session: \`${session.external_id ?? ""}\``,
-  ];
-  if (session.project_path) lines.push(`- Project: \`${session.project_path}\``);
-  if (session.updated_at) lines.push(`- Updated: \`${session.updated_at}\``);
-  lines.push("");
-  questions.forEach((entry, index) => {
-    const question = entry.question ?? {};
-    const title = question.title || firstMarkdownLine(question.question_text) || `Question ${index + 1}`;
-    lines.push(`## ${index + 1}. ${headingText(title)}`, "");
-    const partsByTurn = new Map();
-    for (const part of [...(entry.parts ?? [])].sort((a, b) => Number(a.part_index ?? 0) - Number(b.part_index ?? 0))) {
-      const turnId = String(part.turn_id ?? "");
-      if (!partsByTurn.has(turnId)) partsByTurn.set(turnId, []);
-      partsByTurn.get(turnId).push(part);
-    }
-    for (const turn of [...(entry.turns ?? [])].sort((a, b) => Number(a.turn_index ?? 0) - Number(b.turn_index ?? 0))) {
-      for (const part of partsByTurn.get(String(turn.id ?? "")) ?? []) {
-        const rendered = renderContentCard(part, contentFilter);
-        if (rendered) lines.push(rendered);
+function executionTextValue(value, depth = 0) {
+  if (value == null || depth > 6) return "";
+  if (typeof value === "string") {
+    const source = value.trim();
+    if (/^[\[{\"]/.test(source)) {
+      try {
+        return executionTextValue(JSON.parse(source), depth + 1);
+      } catch {
+        // A normal terminal line may begin with a bracket; preserve it verbatim.
       }
     }
-  });
-  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
-}
-
-function renderContentCard(part, contentFilter) {
-  const card = contentCardMetadata(part.metadata_json);
-  const type = typeof card?.type === "string" ? card.type : null;
-  if (!["answer", "tool", "command", "code", "result"].includes(type)) return "";
-  if (contentFilter?.[type] === false) return "";
-  const text = cardString(card.text) ?? defaultCardText(part, type);
-  if (!text?.trim()) return "";
-  if (type === "code") return fencedSection("Code", cardString(card.language) ?? part.language, text);
-  if (type === "command") return fencedSection("Command", "sh", text);
-  if (type === "result") {
-    return fencedSection("Result", card.format === "markdown" ? "markdown" : "", text);
+    return value;
   }
-  return fencedSection(type === "tool" ? "Tool" : "Answer", card.format === "markdown" ? "markdown" : "", text);
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    const structuredFragments = value.length > 0 && value.every((entry) => (
+      entry && typeof entry === "object" && !Array.isArray(entry)
+      && ["stdout", "stderr", "output", "result", "content", "text", "message"].some((key) => key in entry)
+    ));
+    if (!structuredFragments) return JSON.stringify(value, null, 2);
+    return value.map((entry) => executionTextValue(entry, depth + 1)).filter(Boolean).reduce(
+      (text, fragment) => !text || text.endsWith("\n") || fragment.startsWith("\n")
+        ? text + fragment
+        : `${text}\n${fragment}`,
+      "",
+    );
+  }
+  if (typeof value === "object") {
+    const streams = [value.stdout, value.stderr]
+      .map((entry) => executionTextValue(entry, depth + 1))
+      .filter((entry) => entry.trim());
+    if (streams.length) return streams.join("\n");
+    for (const key of ["output", "result", "content", "text", "message"]) {
+      if (value[key] != null) return executionTextValue(value[key], depth + 1);
+    }
+    return JSON.stringify(value, null, 2);
+  }
+  return String(value);
 }
 
-function contentCardMetadata(value) {
-  const meta = typeof value === "string" ? parseJsonValue(value) : value;
-  const card = meta?.content_card ?? meta?.contentCard;
-  return card && typeof card === "object" && !Array.isArray(card) ? card : null;
+function normalizeTerminalText(value) {
+  return String(value ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g, "")
+    .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/[\u0000\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .split("\n")
+    .map((line) => (line.includes("\r") ? line.slice(line.lastIndexOf("\r") + 1) : line).trimEnd())
+    .join("\n")
+    .trim()
+    .replace(/\n{3,}/g, "\n\n");
 }
 
-function defaultCardText(part, type) {
-  if (type === "command") return String(part.command ?? part.text ?? "").trim();
-  return String(part.text ?? part.command ?? "").trim();
+function stripExecutionEnvelope(value) {
+  const lines = String(value ?? "").split("\n");
+  const header = /^(?:Created At:.*|Completed At:.*|Script completed(?: successfully)?(?: in .*)?|Script running with cell ID\b.*|Wall time\b.*|Chunk ID:.*|Process exited with code\b.*|Original token count:.*|The command completed successfully\.?|(?:Final |Original |Command )?Output:)$/i;
+  let cursor = 0;
+  let matched = false;
+  while (cursor < lines.length) {
+    const line = lines[cursor].trim();
+    if (header.test(line)) {
+      matched = true;
+      cursor += 1;
+    } else if (matched && !line) {
+      cursor += 1;
+    } else {
+      break;
+    }
+  }
+  return matched ? normalizeTerminalText(lines.slice(cursor).join("\n")) : value;
 }
 
-function fencedSection(label, language, value) {
-  const text = String(value ?? "").trim();
-  if (!text) return "";
-  const fence = markdownFenceFor(text);
-  const suffix = language ? String(language).trim() : "";
-  return `### ${label}\n\n${fence}${suffix}\n${text}\n${fence}\n`;
+function normalizeExecutionResultText(value) {
+  const withoutEnvelope = stripExecutionEnvelope(normalizeTerminalText(executionTextValue(value)));
+  return normalizeTerminalText(executionTextValue(withoutEnvelope));
 }
 
-function markdownFenceFor(text) {
-  const runs = String(text).match(/`+/g) ?? [];
-  const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
-  return "`".repeat(Math.max(3, longest + 1));
+function normalizeExecutionCommandText(value) {
+  const source = String(value ?? "").trim();
+  if (/^[{\"]/.test(source)) {
+    try {
+      const parsed = JSON.parse(source);
+      if (typeof parsed === "string") return normalizeTerminalText(parsed);
+      if (parsed && typeof parsed === "object") {
+        const command = parsed.command ?? parsed.cmd ?? parsed.shell_command;
+        if (typeof command === "string") return normalizeTerminalText(command);
+      }
+    } catch {
+      // Preserve command syntax that only resembles JSON.
+    }
+  }
+  return normalizeTerminalText(value);
 }
 
-function headingText(value) {
-  return String(value ?? "").replace(/\s+/g, " ").trim() || "Untitled";
+function structuredCardType(part, legacyCard) {
+  if (typeof legacyCard?.type === "string") return legacyCard.type;
+  const kind = part?.content_card?.kind;
+  return typeof kind === "string" ? kind.slice(kind.lastIndexOf(".") + 1) : null;
 }
 
-function firstMarkdownLine(value) {
-  return String(value ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
+function finalizeStructuredContentCards(session) {
+  for (const turn of Array.isArray(session?.turns) ? session.turns : []) {
+    for (const part of Array.isArray(turn?.parts) ? turn.parts : []) {
+      const metadataValue = parseStructuredMetadata(part.metadata_json);
+      const legacyCard = metadataValue.content_card ?? metadataValue.contentCard;
+      const cardType = structuredCardType(part, legacyCard);
+      if (cardType === "result" && typeof part.text === "string") {
+        part.text = normalizeExecutionResultText(part.text) || null;
+      } else if (cardType === "command") {
+        const field = typeof part.command === "string" ? "command" : typeof part.text === "string" ? "text" : null;
+        if (field) part[field] = normalizeExecutionCommandText(part[field]) || null;
+      }
+      if (!part.content_card && legacyCard && typeof legacyCard === "object" && typeof legacyCard.type === "string") {
+        part.content_card = {
+          schema_version: 1,
+          kind: `antigravity.${legacyCard.type}`,
+          renderer: structuredCardRenderer(legacyCard),
+        };
+      }
+      delete metadataValue.content_card;
+      delete metadataValue.contentCard;
+      part.metadata_json = Object.keys(metadataValue).length > 0 ? JSON.stringify(metadataValue) : null;
+    }
+  }
+  return session;
 }
 
-function cardString(value) {
-  return typeof value === "string" && value.trim() ? value : null;
+function parseStructuredMetadata(value) {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return { ...value };
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? { ...parsed } : {};
+  } catch {
+    return {};
+  }
 }
 
-// ---------------------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------------------
+function structuredCardRenderer(card) {
+  if (card.type === "code") return "code";
+  if (card.type === "command") return "command";
+  if (card.type === "result") {
+    return ["markdown", "json"].includes(card.format) ? card.format : "terminal_output";
+  }
+  if (["markdown", "plain", "json"].includes(card.format)) return card.format;
+  if (card.type === "answer") return "markdown";
+  if (card.type === "skill-content") return "markdown";
+  return "plain";
+}
 
 try {
   if (input.method === "probe" || input.method === "list_sessions") {
     emit("complete", { item: { session_count: 0 } });
   } else if (input.method === "read_session") {
     const sessions = readSession();
-    for (const session of sessions) emit("item", { item: { kind: "session", session } });
+    for (const session of sessions) emit("item", { item: { kind: "session", session: finalizeStructuredContentCards(session) } });
     emit("complete", { item: { session_count: sessions.length } });
-  } else if (input.method === "export_markdown") {
-    emit("item", { item: { kind: "markdown_export", ...exportMarkdown() } });
-    emit("complete", { item: { export_count: 1 } });
   } else {
     fail(`unsupported method: ${input.method}`);
   }

@@ -7,6 +7,70 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "1.3.2",
+      "channel": "stable",
+      "released_at": "2026-08-02T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.opencode-session-1.3.2-universal.zip",
+      "artifact_size": 30494,
+      "artifact_sha256": "d354085c7fb807280778cdc7ab5bd5c865d43bb02c9c81bc560f97b3438a2edc",
+      "changelog_markdown": "## 1.3.2\n\n- Decode structured execution output, remove runner noise, and render plain results as terminal output.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/opencode"
+      }
+    },
+    {
+      "version": "1.3.1",
+      "channel": "stable",
+      "released_at": "2026-08-02T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.opencode-session-1.3.1-universal.zip",
+      "artifact_size": 25979,
+      "artifact_sha256": "7705b51e02f7ef7d3b31538802e8009a2df6d410cb15d152fa7ed266a040a3f2",
+      "changelog_markdown": "## 1.3.1\n\n- Preserve source tool part IDs across split Command and Result cards.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/opencode"
+      }
+    },
+    {
+      "version": "1.3.0",
+      "channel": "stable",
+      "released_at": "2026-07-27T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.opencode-session-1.3.0-universal.zip",
+      "artifact_size": 24959,
+      "artifact_sha256": "80e7d6e16fcee6aeed9faf9e9aaee394a63d804c804411e444d7c67997b5075b",
+      "changelog_markdown": "## 1.3.0\n\n- Emit Card Contract v1 descriptors directly and remove current legacy Adapter exporters.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/opencode"
+      }
+    },
+    {
+      "version": "1.2.0",
+      "channel": "stable",
+      "released_at": "2026-07-27T00:00:00Z",
+      "core_compatibility": ">=0.5.0, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.opencode-session-1.2.0-universal.zip",
+      "artifact_size": 27891,
+      "artifact_sha256": "ed2b3a49b34b087f0ba9e856b82ab532dcde89a6b8d160be7d8f47ffd916ab0b",
+      "changelog_markdown": "## 1.2.0\n\n- Declare namespaced conversation card kinds and Core-controlled renderers.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/opencode"
+      }
+    },
+    {
       "version": "1.1.0",
       "channel": "stable",
       "released_at": "2026-07-16T00:00:00Z",

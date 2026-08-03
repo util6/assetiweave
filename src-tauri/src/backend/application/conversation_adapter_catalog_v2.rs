@@ -689,7 +689,22 @@ mod tests {
             })
             .expect("refresh local Catalog v2");
 
-        assert_eq!(releases.len(), 15);
+        let index: Value = serde_json::from_str(&fs::read_to_string(&index_path).unwrap()).unwrap();
+        let expected_release_count = index["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|package| {
+                let history_path = index_path
+                    .parent()
+                    .unwrap()
+                    .join(package["history_url"].as_str().unwrap());
+                let history: Value =
+                    serde_json::from_str(&fs::read_to_string(history_path).unwrap()).unwrap();
+                history["releases"].as_array().unwrap().len()
+            })
+            .sum::<usize>();
+        assert_eq!(releases.len(), expected_release_count);
         assert!(releases
             .iter()
             .all(|release| release.catalog_url == index_path.to_string_lossy()));

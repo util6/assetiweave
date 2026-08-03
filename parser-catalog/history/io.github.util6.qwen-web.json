@@ -7,6 +7,54 @@
   "record_kind": "web",
   "releases": [
     {
+      "version": "0.4.1",
+      "channel": "stable",
+      "released_at": "2026-08-02T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.qwen-web-0.4.1-universal.zip",
+      "artifact_size": 29412,
+      "artifact_sha256": "6cf84e74ae7d5c2e8d90575c858832aeb691197d16bcde3585c7340334673e50",
+      "changelog_markdown": "## 0.4.1\n\n- Decode structured execution output, remove runner noise, and render plain results as terminal output.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/qwen-web"
+      }
+    },
+    {
+      "version": "0.4.0",
+      "channel": "stable",
+      "released_at": "2026-07-27T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.qwen-web-0.4.0-universal.zip",
+      "artifact_size": 25019,
+      "artifact_sha256": "861b9251749482432e3b6f9189c9528c12ed53b98492c390717aeb730ecce72b",
+      "changelog_markdown": "## 0.4.0\n\n- Emit Card Contract v1 descriptors directly and remove current legacy Adapter exporters.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/qwen-web"
+      }
+    },
+    {
+      "version": "0.3.0",
+      "channel": "stable",
+      "released_at": "2026-07-27T00:00:00Z",
+      "core_compatibility": ">=0.5.0, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.qwen-web-0.3.0-universal.zip",
+      "artifact_size": 22943,
+      "artifact_sha256": "556daac044d02084bd42ea37c69ed34ee4f9afbfc8efac4e794c49d5605ec092",
+      "changelog_markdown": "## 0.3.0\n\n- Declare namespaced conversation card kinds and Core-controlled renderers.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/qwen-web"
+      }
+    },
+    {
       "version": "0.2.0",
       "channel": "stable",
       "released_at": "2026-07-16T00:00:00Z",

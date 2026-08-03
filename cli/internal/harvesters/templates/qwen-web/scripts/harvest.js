@@ -3,7 +3,6 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { normalizeRound } = require("./qwen-normalize.cjs");
-const { tryRefreshAuth } = require("./auth-refresh.cjs");
 
 const root = process.env.ASSETIWEAVE_HARVESTER_DIR || process.cwd();
 const nowID = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
@@ -11,6 +10,19 @@ const rawDir = path.join(root, "output", "raw", nowID);
 const detailDir = path.join(rawDir, "details");
 const normalizedDir = path.join(root, "output", "normalized");
 const normalizedFile = path.join(normalizedDir, "sessions.json");
+const forceFullReparse = process.env.ASSETIWEAVE_FULL_REPARSE === "1";
+
+const existingSessions = new Map();
+try {
+  if (fs.existsSync(normalizedFile)) {
+    const data = JSON.parse(fs.readFileSync(normalizedFile, "utf8"));
+    if (Array.isArray(data.sessions)) {
+      for (const session of data.sessions) {
+        existingSessions.set(session.external_id, session);
+      }
+    }
+  }
+} catch {}
 
 function mkdirp(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -66,7 +78,7 @@ async function requestJSON(url, headers) {
   return { status_code: response.status, body, json: parsed };
 }
 
-async function collect() {
+(async () => {
   mkdirp(detailDir);
   mkdirp(normalizedDir);
 
@@ -117,6 +129,12 @@ async function collect() {
   for (let index = 0; index < listItems.length; index++) {
     const item = listItems[index];
     const sessionID = text(item.session_id);
+    const updatedAt = text(item.update_time) || null;
+    const existing = existingSessions.get(sessionID);
+    if (!forceFullReparse && existing && existing.updated_at === updatedAt) {
+      sessions.push(existing);
+      continue;
+    }
     const rounds = [];
     const seenRounds = new Set();
     for (let page = 1; page <= 100; page++) {
@@ -154,7 +172,7 @@ async function collect() {
       title: text(item.title) || null,
       project_path: null,
       started_at: text(item.create_time) || null,
-      updated_at: text(item.update_time) || null,
+      updated_at: updatedAt,
       source_locator: "https://www.qianwen.com/",
       source_fingerprint: sessionID,
       turns
@@ -171,18 +189,6 @@ async function collect() {
     session_count: sessions.length,
     turn_count: turnCount
   }));
-}
-
-(async () => {
-  try {
-    await collect();
-  } catch (firstError) {
-    process.stderr.write(`[qwen-web] collection failed: ${firstError.message}; attempting auth-detect refresh...\n`);
-    if (!tryRefreshAuth(root, "qianwen.com")) {
-      throw firstError;
-    }
-    await collect();
-  }
 })().catch((error) => {
   console.error(error && error.message ? error.message : String(error));
   process.exit(1);

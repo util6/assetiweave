@@ -10,6 +10,7 @@ const rawDir = path.join(root, "output", "raw", nowID);
 const detailDir = path.join(rawDir, "details");
 const normalizedDir = path.join(root, "output", "normalized");
 const normalizedFile = path.join(normalizedDir, "sessions.json");
+const forceFullReparse = process.env.ASSETIWEAVE_FULL_REPARSE === "1";
 
 const existingSessions = new Map();
 try {
@@ -130,7 +131,7 @@ async function requestJSON(url, headers) {
     const sessionID = text(item.session_id);
     const updatedAt = text(item.update_time) || null;
     const existing = existingSessions.get(sessionID);
-    if (existing && existing.updated_at === updatedAt) {
+    if (!forceFullReparse && existing && existing.updated_at === updatedAt) {
       sessions.push(existing);
       continue;
     }
