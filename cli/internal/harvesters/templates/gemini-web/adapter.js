@@ -1,10 +1,16 @@
 #!/usr/bin/env node
+/**
+ * @file Gemini Web 会话解析适配器 (Gemini Web Adapter)
+ * @description 负责读取 Google Gemini Web 导出的会话结构，解析多轮对话与富文本响应。
+ */
+
 const fs = require("fs");
 const path = require("path");
 
 const CONTENT_CARD_SCHEMA = "web-content-cards-v4";
 const ADAPTER_ID = "gemini-web";
 
+/** 向标准输出发送 JSON 事件消息 */
 function emit(value) {
   process.stdout.write(JSON.stringify(value) + "\n");
 }
@@ -182,6 +188,8 @@ function normalizeSessionCards(session) {
   }
   return session;
 }
+
+
 
 function ensurePartContentCard(part) {
   if (!part || typeof part !== "object") return false;

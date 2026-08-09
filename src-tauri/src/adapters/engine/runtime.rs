@@ -1,14 +1,23 @@
+//! Engine 运行时 Invocation 生命周期与 Hook 挂钩模块
+//!
+//! 负责记录 Engine 命令调用的起始时间、耗时、风险等级、执行结果状态以及错误分类，并提供耗时统计等 Hook 钩子。
+
 use super::registry as command_registry;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::time::Instant;
 
+/// Engine 命令执行过程中的生命周期钩子接口
 trait Hook {
+    /// 获取 Hook 名称标识
     fn name(&self) -> &'static str;
+    /// 命令执行前触发
     fn before(&self, invocation: &mut Invocation);
+    /// 命令执行完成后触发
     fn after(&self, invocation: &mut Invocation);
 }
 
+/// 执行耗时统计 Hook 钩子
 struct TimingHook;
 
 impl Hook for TimingHook {
@@ -27,11 +36,13 @@ impl Hook for TimingHook {
     }
 }
 
+/// Hook 钩子注册表
 pub(crate) struct HookRegistry {
     hooks: Vec<Box<dyn Hook>>,
 }
 
 impl HookRegistry {
+    /// 创建带有默认 TimingHook 钩子的 Engine 运行时注册表
     fn engine() -> Self {
         Self {
             hooks: vec![Box::new(TimingHook)],
@@ -55,15 +66,25 @@ impl HookRegistry {
     }
 }
 
+/// 单次命令调用的上下文与执行状态记录
 pub(crate) struct Invocation {
+    /// 调用的原始方法名
     method: String,
+    /// 规范化方法名
     canonical_method: Option<&'static str>,
+    /// 命令风险等级
     risk: Option<&'static str>,
+    /// 暴露范围
     exposure: Option<&'static str>,
+    /// 执行结果状态 ("running", "success", "error")
     outcome: &'static str,
+    /// 错误分类标识（若失败）
     error_type: Option<String>,
+    /// 绑定的 Hook 钩子列表
     hooks: Vec<&'static str>,
+    /// 启动时间戳
     started_at: Option<Instant>,
+    /// 执行总耗时 (毫秒)
     duration_ms: Option<u64>,
 }
 

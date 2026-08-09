@@ -1,3 +1,8 @@
+//! CLI 工具包集成与 PATH 配置模块
+//!
+//! 负责检查应用随包附带的 CLI / Engine 二进制文件状态，
+//! 并提供将其安装（或创建 Shim 脚本）到系统 PATH 路径及更新用户 Shell 配置文件（如 `.zshrc`, `.profile` 等）的功能。
+
 use crate::backend::dto::AppResult;
 use serde::Serialize;
 #[cfg(windows)]
@@ -11,23 +16,37 @@ use tauri::{AppHandle, Manager};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+/// 附带 CLI 工具在资源目录下的相对路径
 const TOOL_DIR: &str = "bundled-cli/cli";
+/// CLI 主程序名称
 const CLI_NAME: &str = "assetiweave-cli";
+/// Engine 引擎程序名称
 const ENGINE_NAME: &str = "assetiweave-engine";
 
+/// CLI 工具在系统中的状态快照
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct CliToolsStatus {
+    /// 应用内部是否打包包含了 CLI 与 Engine 可执行文件
     pub(crate) bundled: bool,
+    /// CLI Shim / 快捷脚本是否已安装至系统安装目录
     pub(crate) installed: bool,
+    /// 系统环境变量 PATH 中是否已配置该安装目录
     pub(crate) path_configured: bool,
+    /// 目标安装目录路径字符串
     pub(crate) install_dir: String,
+    /// 应该加入 PATH 的条目路径字符串
     pub(crate) path_entry: String,
+    /// 主 CLI 程序 Shim 脚本的完整路径字符串
     pub(crate) shim_path: String,
+    /// 应用打包自带的 CLI 可执行文件绝对路径（若存在）
     pub(crate) bundled_cli_path: Option<String>,
+    /// 应用打包自带的 Engine 可执行文件绝对路径（若存在）
     pub(crate) bundled_engine_path: Option<String>,
+    /// 描述当前状态的可读提示信息
     pub(crate) message: String,
 }
 
+/// 查询当前 CLI 工具在本地系统中的安装与环境变量配置状态
 pub(crate) fn status(app: &AppHandle) -> AppResult<CliToolsStatus> {
     let resource_dir = app
         .path()
@@ -36,6 +55,7 @@ pub(crate) fn status(app: &AppHandle) -> AppResult<CliToolsStatus> {
     Ok(build_status(&resource_dir, current_path_env()))
 }
 
+/// 将随包附带的 CLI 工具安装/链接到本地系统，并自动写 Shell 配置添加环境变量 PATH
 pub(crate) fn install(app: &AppHandle) -> AppResult<CliToolsStatus> {
     let resource_dir = app
         .path()

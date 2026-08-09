@@ -1,10 +1,16 @@
 #!/usr/bin/env node
+/**
+ * @file Qwen Web (通义千问) 会话解析适配器 (Qwen Web Adapter)
+ * @description 负责读取通义千问 (Qwen Web) 导出的会话格式，转换为 AssetIWeave 标准会话与卡片。
+ */
+
 const fs = require("fs");
 const path = require("path");
 
 const CONTENT_CARD_SCHEMA = "web-content-cards-v4";
 const ADAPTER_ID = "qwen-web";
 
+/** 向标准输出发送 JSON 事件消息 */
 function emit(value) {
   process.stdout.write(JSON.stringify(value) + "\n");
 }
@@ -182,6 +188,8 @@ function normalizeSessionCards(session) {
   }
   return session;
 }
+
+
 
 function ensurePartContentCard(part) {
   if (!part || typeof part !== "object") return false;

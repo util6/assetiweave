@@ -1,3 +1,7 @@
+//! 平台原生交互与文件管理器适配模块
+//!
+//! 提供在操作系统文件管理器（Finder / Explorer / xdg-open）中定位与打开指定路径的能力。
+
 use crate::backend::{dto::AppResult, path_utils::expand_path};
 use std::{
     ffi::OsString,
@@ -5,11 +9,15 @@ use std::{
     process::Command,
 };
 
+/// 文件管理器命令行调用指令
 struct FileManagerInvocation {
+    /// 执行程序名称（如 `open`, `explorer`, `xdg-open`）
     program: &'static str,
+    /// 命令行参数列表
     args: Vec<OsString>,
 }
 
+/// 支持的操作系统文件管理器平台类型
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
 enum FileManagerPlatform {
@@ -18,6 +26,10 @@ enum FileManagerPlatform {
     Linux,
 }
 
+/// 在操作系统的文件管理器中打开或定位指定的路径
+///
+/// # 参数
+/// * `path` - 目标文件或目录的绝对路径或含 `~` 缩写的路径字符串
 pub(crate) fn reveal_path(path: String) -> AppResult<()> {
     let path = resolve_reveal_path(&path)?;
 
@@ -46,6 +58,7 @@ pub(crate) fn reveal_path(path: String) -> AppResult<()> {
     Err("unsupported platform".to_string())
 }
 
+/// 解析路径并校验其是否存在
 fn resolve_reveal_path(path: &str) -> AppResult<PathBuf> {
     let path = expand_path(path)?;
     if !path.exists() {
@@ -54,6 +67,7 @@ fn resolve_reveal_path(path: &str) -> AppResult<PathBuf> {
     Ok(path)
 }
 
+/// 根据目标路径类型与操作系统构建对应的文件管理器命令参数
 fn build_file_manager_invocation(
     path: &Path,
     is_dir: bool,
@@ -90,6 +104,7 @@ fn build_file_manager_invocation(
     }
 }
 
+/// 执行文件管理器命令并检查返回状态
 fn command_status(invocation: &FileManagerInvocation) -> AppResult<()> {
     let status = Command::new(invocation.program)
         .args(&invocation.args)

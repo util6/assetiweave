@@ -1,33 +1,52 @@
+//! Engine 命令执行策略与安全鉴权模块
+//!
+//! 根据环境变量中指定的策略文件（`ASSETIWEAVE_POLICY_PATH`），对发起的 CLI / Engine 命令进行匹配与风险审查（包含 Glob 白名单、黑名单及最大允许风险等级校验）。
+
 use super::registry::{CommandRisk, CommandSpec};
 use globset::Glob;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{env, fs, path::Path};
 
+/// 支持的策略文件版本号
 const POLICY_VERSION: u32 = 1;
+/// 诊断性免策略鉴权的白名单方法列表
 const DIAGNOSTIC_METHODS: &[&str] = &["system.version", "schema.list", "schema.get", "doctor.run"];
 
+/// 策略鉴权失败拒绝的错误详情描述
 #[derive(Debug)]
 pub(crate) struct PolicyFailure {
+    /// 失败类型标识
     pub(crate) kind: &'static str,
+    /// 错误可读消息
     pub(crate) message: String,
+    /// 附加诊断上下文 JSON 对象
     pub(crate) details: Value,
 }
 
+/// 策略配置文档结构定义
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PolicyDocument {
+    /// 策略版本号
     version: u32,
+    /// 策略名称标识
     #[serde(default)]
     name: Option<String>,
+    /// 允许执行的方法通配符规则列表 (Glob)
     #[serde(default)]
     allow: Vec<String>,
+    /// 明确拒绝执行的方法通配符规则列表 (Glob)
     #[serde(default)]
     deny: Vec<String>,
+    /// 允许的最大风险等级 (CommandRisk)
     #[serde(default)]
     max_risk: Option<CommandRisk>,
 }
 
+/// 对指定的命令规范执行策略鉴权
+///
+/// 若未设置 `ASSETIWEAVE_POLICY_PATH` 环境变量，或方法属于免鉴权诊断方法，则默认放行。
 pub(crate) fn authorize(spec: &CommandSpec) -> Result<(), PolicyFailure> {
     if DIAGNOSTIC_METHODS.contains(&spec.method) {
         return Ok(());

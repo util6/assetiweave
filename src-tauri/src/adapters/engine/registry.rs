@@ -1,14 +1,22 @@
+//! Engine 命令注册表与 schema 规范定义模块
+//!
+//! 定义 CLI Engine 暴露的所有命令契约元数据（规范方法名、风险等级 CommandRisk、暴露范围 CommandExposure、参数 Schema 及处理器绑定）。
+
 use super::protocol;
 use crate::backend::{application::AppService, dto::AppResult};
 use schemars::{generate::SchemaSettings, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 
+/// Engine 命令风险等级定义
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum CommandRisk {
+    /// 只读操作（无破坏性）
     Read,
+    /// 普通写入/更新操作
     Write,
+    /// 高风险写入/删除/挂载操作（需确认提示）
     HighRiskWrite,
 }
 
@@ -22,11 +30,15 @@ impl CommandRisk {
     }
 }
 
+/// Engine 命令暴露层级定义
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CommandExposure {
+    /// 对用户友好（易读 CLI 友好命令）
     Friendly,
+    /// 应用内部调用接口
     App,
+    /// 系统底层调优与诊断接口
     System,
 }
 
@@ -40,6 +52,7 @@ impl CommandExposure {
     }
 }
 
+/// 单个命令参数元数据规范
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ParamSpec {
     name: &'static str,

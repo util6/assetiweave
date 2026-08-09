@@ -1,3 +1,7 @@
+//! Prompt 卡片剪贴板复制模块
+//!
+//! 负责将带有文本及图片附件的 Prompt 卡片写回系统剪贴板（如 macOS `pbcopy` / AppleScript 等）。
+
 use crate::backend::dto::AppResult;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
@@ -9,27 +13,38 @@ use std::{
 };
 use uuid::Uuid;
 
+/// 允许单次复制的最大图片附件数
 const PROMPT_CLIPBOARD_ATTACHMENT_LIMIT: usize = 6;
+/// 单张图片附件最大允许字节数 (16MB)
 const PROMPT_CLIPBOARD_MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
+/// 缓存图片/临时文件的留存时间 (24小时)
 const PROMPT_CLIPBOARD_CACHE_TTL: Duration = Duration::from_secs(60 * 60 * 24);
 
+/// 复制 Prompt 卡片至剪贴板的请求参数
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PromptClipboardParams {
+    /// 包含的 Prompt 文本内容
     pub(crate) text: String,
+    /// 绑定的图片附件列表
     #[serde(default)]
     pub(crate) attachments: Vec<PromptClipboardImageAttachment>,
 }
 
+/// Prompt 图片附件描述
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PromptClipboardImageAttachment {
+    /// 图片文件名
     pub(crate) name: String,
+    /// 图片 MIME 类型 (如 image/png, image/jpeg)
     #[serde(default)]
     pub(crate) mime_type: String,
+    /// Base64 Data URL 编码的数据
     pub(crate) data_url: String,
 }
 
+/// 将指定的 Prompt 文本及图片附件一并写入系统剪贴板
 pub(crate) fn copy_prompt_card_to_clipboard(params: PromptClipboardParams) -> AppResult<()> {
     if params.attachments.len() > PROMPT_CLIPBOARD_ATTACHMENT_LIMIT {
         return Err(format!(

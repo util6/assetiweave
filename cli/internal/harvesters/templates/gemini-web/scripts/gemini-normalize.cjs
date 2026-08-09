@@ -1,5 +1,21 @@
+/**
+ * @file gemini-normalize.cjs — Google Gemini 网页端 API 响应格式归一化转换模块
+ *
+ * 职责：
+ * 1. 解码 Google Protobuf/Batchexecute 深度嵌套数组结构
+ * 2. 从响应 Candidate 节点中提取答案文本、代码块 Artifact 与多媒体/生成的图片链接
+ * 3. 将嵌套数据归一化为标准的 Session Turn 与 Part 数据块结构
+ */
 const crypto = require("crypto");
 
+/**
+ * 针对深度嵌套数组的强类型路径安全访问器
+ *
+ * @param {any} value - 根对象/数组
+ * @param {(number|string)[]} path - 下标路径数组 (如 [0, 1, 3])
+ * @param {any} [fallback=undefined] - 默认回退值
+ * @returns {any} 找到的值或 fallback
+ */
 function nested(value, path, fallback = undefined) {
   let current = value;
   for (const key of path) {
@@ -12,10 +28,12 @@ function nested(value, path, fallback = undefined) {
   return current == null ? fallback : current;
 }
 
+/** 辅助字符串清理函数 */
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+/** 构造标准化的内容卡片元数据 JSON 字符串 */
 function metadata(contentCard, extra = {}) {
   return JSON.stringify({
     ...extra,
@@ -23,6 +41,7 @@ function metadata(contentCard, extra = {}) {
   });
 }
 
+/** 构造统一的标准归一化 Part 数据结构 */
 function normalizedPart(role, kind, fields = {}) {
   return {
     role,
@@ -37,6 +56,11 @@ function normalizedPart(role, kind, fields = {}) {
   };
 }
 
+/**
+ * 从 Candidate 节点中提炼候选回答文本，并剥离 googleusercontent 的内部占位 URL
+ * @param {array} candidate - 原始 Candidate 数组
+ * @returns {string} 过滤后的正文文本
+ */
 function candidateText(candidate) {
   let value = text(nested(candidate, [1, 0], ""));
   if (/^http:\/\/googleusercontent\.com\/card_content\/\d+/.test(value)) {
@@ -45,6 +69,11 @@ function candidateText(candidate) {
   return value.replace(/http:\/\/googleusercontent\.com\/[\w-]+\/\d+\n*/g, "").trim();
 }
 
+/**
+ * 解析围栏代码块并提取语言及纯代码内容
+ * @param {string} value - 源码文本
+ * @param {string} [filename] - 文件名
+ */
 function parseFencedCode(value, filename) {
   const source = text(value);
   if (!source) return null;
@@ -61,6 +90,7 @@ function parseFencedCode(value, filename) {
   return null;
 }
 
+/** 根据文件名后缀推断代码编程语言 */
 function inferLanguage(filename) {
   const lower = String(filename || "").toLowerCase();
   if (lower.endsWith(".html") || lower.endsWith(".htm")) return "html";
@@ -81,15 +111,18 @@ function inferLanguage(filename) {
   return null;
 }
 
+/** 判断字符串是否符合文件名特征 */
 function looksLikeFilename(value) {
   return /\.(html?|css|m?js|cjs|jsx|tsx?|json|py|go|rs|java|sql|md|ya?ml|sh|bash|txt)$/i.test(String(value || ""));
 }
 
+/** 判断字符串是否包含围栏代码特征 */
 function looksLikeCode(value) {
   const source = text(value);
   return source.startsWith("```") || /^\s*<!doctype html/i.test(source) || /^\s*<html[\s>]/i.test(source);
 }
 
+/** 深度遍历数组查找首个符合条件的字符串 */
 function findFirstString(node, predicate) {
   if (!Array.isArray(node)) return null;
   for (const item of node) {
@@ -98,6 +131,7 @@ function findFirstString(node, predicate) {
   return null;
 }
 
+/** 从 Gemini 节点结构中深度搜索与提炼生成的代码 Artifact */
 function extractArtifactParts(candidate) {
   const parts = [];
   const seen = new Set();
@@ -125,6 +159,7 @@ function extractArtifactParts(candidate) {
   return parts;
 }
 
+/** 判断是否为 Google 托管的媒体资源 URL */
 function isMediaURL(value) {
   return (
     /^https:\/\/lh3\.googleusercontent\.com\/gg\//.test(value) ||
@@ -132,14 +167,17 @@ function isMediaURL(value) {
   );
 }
 
+/** 判断是否符合媒体扩展名特征 */
 function looksLikeMediaFilename(value) {
   return /\.(png|jpe?g|webp|gif|heic|heif|mp4|mov|webm|m4v|pdf)$/i.test(String(value || ""));
 }
 
+/** 判断是否符合 MIME Type 特征 */
 function looksLikeMime(value) {
   return /^(image|video|application\/pdf)\//i.test(String(value || ""));
 }
 
+/** 从节点子结构中递归收集关联的图片/视频/PDF媒体引用指针 */
 function extractMediaRefs(node) {
   const refs = [];
   const seen = new Set();
@@ -162,6 +200,7 @@ function extractMediaRefs(node) {
   return refs;
 }
 
+/** 将媒体引用格式化为 Markdown 附件段落 */
 function formatMediaRefs(label, refs) {
   if (!refs.length) return "";
   const lines = [label];
@@ -173,6 +212,14 @@ function formatMediaRefs(label, refs) {
   return lines.join("\n");
 }
 
+/**
+ * 将 Batchexecute 中的单个原始 Turn 转译为标准的 Turn 结构
+ *
+ * @param {string} cid - Conversation ID
+ * @param {array} rawTurn - 原始嵌套 Turn 数组
+ * @param {number} index - 轮次序号
+ * @returns {object|null}
+ */
 function normalizeTurn(cid, rawTurn, index) {
   const userMedia = extractMediaRefs(nested(rawTurn, [2], []));
   let userText = text(nested(rawTurn, [2, 0, 0], ""));
@@ -230,6 +277,13 @@ function normalizeTurn(cid, rawTurn, index) {
   };
 }
 
+/**
+ * 解析 Gemini 详情接口的完整的 Batchexecute 主响应体
+ *
+ * @param {string} cid - 会话 external_id
+ * @param {array} body - 解码后的 JSON 响应体
+ * @returns {object[]} 标准化 Turn 轮次数组
+ */
 function parseDetailBody(cid, body) {
   const rawTurns = nested(body, [0], []);
   if (!Array.isArray(rawTurns)) return [];

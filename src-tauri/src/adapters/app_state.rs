@@ -3,13 +3,23 @@ use std::{
     sync::{atomic::AtomicBool, Arc, Mutex},
 };
 
+/// 桌面应用全局共享状态
+///
+/// 在 Tauri 应用中托管全局互斥锁、数据库路径、后台任务注册表以及应用退出保护标志。
 pub(crate) struct AppState {
+    /// SQLite 数据库文件的本地绝对路径
     pub(crate) db_path: PathBuf,
+    /// 全局操作互斥锁，用于在关键写操作期间进行并发同步
     pub(crate) lock: Arc<Mutex<()>>,
+    /// 后台长运行任务（如扫描、备份、目录挂载等）的中央注册表
     pub(crate) background_tasks:
         Arc<crate::adapters::tauri::background_tasks::BackgroundTaskRegistry>,
+    /// 是否允许关闭主窗口标记
     pub(crate) allow_close: Arc<AtomicBool>,
+    /// 是否允许应用完全退出标记
     pub(crate) allow_exit: Arc<AtomicBool>,
+    /// 当前是否正在向用户展示退出确认弹窗标记
     pub(crate) exit_prompt_open: Arc<AtomicBool>,
+    /// 关机/退出前的同步清理工作是否已完成标记
     pub(crate) shutdown_sync_done: Arc<AtomicBool>,
 }

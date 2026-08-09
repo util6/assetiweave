@@ -1,3 +1,7 @@
+//! Tauri 后台异步长任务管理与状态推送模块
+//!
+//! 支持包含会话同步、内存整理 (Memory Run)、扫描索引、备份导入导出以及脚本安装卸载在内的异步后台任务注册、取消控制、状态快照与事件广播。
+
 use crate::backend::{
     ai_execution::AiExecutionCancellation,
     application::{
@@ -17,29 +21,44 @@ use std::{
 };
 use uuid::Uuid;
 
+/// 后台异步任务的状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum BackgroundTaskStatus {
+    /// 任务正在后台运行中
     Running,
+    /// 任务已成功完成
     Completed,
+    /// 任务运行失败
     Failed,
+    /// 任务已被用户取消
     Cancelled,
 }
 
+/// 会话同步任务进度快照
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct ConversationSyncTaskProgress {
+    /// 当前运行阶段
     pub(crate) phase: ConversationSyncProgressPhase,
+    /// 已完成处理的数据源数量
     pub(crate) completed_source_count: usize,
+    /// 需要处理的总数据源数量
     pub(crate) total_source_count: usize,
+    /// 当前正在同步的数据源名称
     pub(crate) current_source_name: Option<String>,
 }
 
+/// 会话同步任务阶段
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ConversationSyncProgressPhase {
+    /// 正在准备与初始化同步环境
     Preparing,
+    /// 正在同步会话记录
     Syncing,
+    /// 同步完成
     Completed,
+    /// 同步过程发生错误
     Failed,
 }
 
