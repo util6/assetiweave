@@ -209,6 +209,40 @@ describe("ConversationScriptResourcePanel", () => {
       .toBe("1.0.1");
   });
 
+  it("refreshes the open detail version after the market catalog reloads", async () => {
+    const refreshedEntries = entries.map((entry) => entry.item.id === "io.github.util6.codex-session"
+      ? {
+          ...entry,
+          installed_package: {
+            ...entry.installed_package!,
+            version: "1.0.1",
+          },
+          installed_adapter: {
+            ...entry.installed_adapter!,
+            version: "1.0.1",
+          },
+          status: "legacy_installed" as const,
+          update_available: false,
+        }
+      : entry);
+    serviceMocks.list.mockReset().mockResolvedValueOnce(entries).mockResolvedValueOnce(refreshedEntries);
+    renderPanel();
+
+    const details = await screen.findAllByRole("button", { name: "Details" });
+    fireEvent.click(details[1]);
+    expect(await screen.findByText("1.0.0")).toBeTruthy();
+
+    const checkUpdatesButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Check for updates"));
+    expect(checkUpdatesButton).toBeTruthy();
+    fireEvent.click(checkUpdatesButton!);
+
+    await waitFor(() => {
+      const currentVersion = screen.getByText("Current version").parentElement?.querySelector("p.font-mono");
+      expect(currentVersion?.textContent).toBe("1.0.1");
+    });
+  });
+
   it("does not execute an update until preflight is explicitly confirmed", async () => {
     renderPanel();
     fireEvent.click(await screen.findByRole("tab", { name: /Updates \(1\)/ }));

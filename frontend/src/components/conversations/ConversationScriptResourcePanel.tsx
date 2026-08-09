@@ -197,6 +197,15 @@ export function ConversationScriptResourcePanel({
   }, [installTask?.id, installTask?.status]);
 
   useEffect(() => {
+    setDetailEntry((current) => {
+      if (!current) {
+        return current;
+      }
+      return entries.find((entry) => entry.item.id === current.item.id) ?? current;
+    });
+  }, [entries]);
+
+  useEffect(() => {
     if (!installTask || installTask.status === "running" || handledInstallTaskIds.current.has(installTask.id)) {
       return;
     }

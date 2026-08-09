@@ -154,10 +154,20 @@ describe("conversation services", () => {
     expect(entries.every((entry) => typeof entry.ahead_of_release === "boolean")).toBe(true);
     expect(entries.every((entry) => !(entry.update_available && entry.ahead_of_release))).toBe(true);
     expect(zcodeEntry).toMatchObject({
-      ahead_of_release: true,
-      status: "ahead_of_release",
-      update_available: false,
+      ahead_of_release: false,
+      status: "update_available",
+      update_available: true,
     });
+  });
+
+  it("uses the repository catalog versions in browser preview fallbacks", async () => {
+    vi.stubGlobal("window", {});
+    invokeMock.mockRejectedValueOnce(new Error("preview backend missing"));
+
+    const entries = await listConversationAdapterPackages();
+    const codexEntry = entries.find((entry) => entry.item.adapter_id === "codex");
+
+    expect(codexEntry?.item.version).toBe("1.5.7");
   });
 
   it("routes installed-version lifecycle operations through the shared package API", async () => {

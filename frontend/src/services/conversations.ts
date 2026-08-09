@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import repositoryConversationCatalog from "../../../parser-catalog/catalog.json";
 import type {
   ConversationAdapter,
   ConversationAdapterPackage,
@@ -1645,6 +1646,15 @@ function isTauriRuntime() {
 
 const now = new Date().toISOString();
 
+const repositoryCatalogVersionByAdapterId = new Map(
+  repositoryConversationCatalog.items.flatMap((item) =>
+    item.adapter_id ? [[item.adapter_id, item.version] as const] : []),
+);
+
+function repositoryCatalogVersion(adapterId: string, fallback: string) {
+  return repositoryCatalogVersionByAdapterId.get(adapterId) ?? fallback;
+}
+
 const fallbackAdapters: ConversationAdapter[] = [
   {
     id: "codex",
@@ -1751,7 +1761,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
     {
       id: "codex-session",
       name: "Codex Session Parser",
-      version: "1.0.0",
+      version: repositoryCatalogVersion("codex", "1.0.0"),
       record_kind: "session",
       provider: "codex",
       adapter_id: "codex",
@@ -1768,7 +1778,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
     {
       id: "opencode-session",
       name: "OpenCode Session Parser",
-      version: "1.0.0",
+      version: repositoryCatalogVersion("opencode", "1.0.0"),
       record_kind: "session",
       provider: "opencode",
       adapter_id: "opencode",
@@ -1785,7 +1795,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
     {
       id: "claude-code-session",
       name: "Claude Code Session Parser",
-      version: "1.0.0",
+      version: repositoryCatalogVersion("claude-code", "1.0.0"),
       record_kind: "session",
       provider: "claude-code",
       adapter_id: "claude-code",
@@ -1802,7 +1812,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
     {
       id: "zcode-session",
       name: "ZCode Session Parser",
-      version: "0.1.0",
+      version: repositoryCatalogVersion("zcode", "0.1.0"),
       record_kind: "session",
       provider: "zcode",
       adapter_id: "zcode",
@@ -1819,7 +1829,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
     {
       id: "chatgpt-web",
       name: "ChatGPT Web Harvester",
-      version: "0.1.0",
+      version: repositoryCatalogVersion("chatgpt-web", "0.1.0"),
       record_kind: "web",
       provider: "chatgpt",
       adapter_id: "chatgpt-web",
@@ -1836,7 +1846,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
     {
       id: "qwen-web",
       name: "Qwen Web Harvester",
-      version: "0.1.0",
+      version: repositoryCatalogVersion("qwen-web", "0.1.0"),
       record_kind: "web",
       provider: "qwen",
       adapter_id: "qwen-web",
@@ -1853,7 +1863,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
     {
       id: "gemini-web",
       name: "Gemini Web Harvester",
-      version: "0.1.2",
+      version: repositoryCatalogVersion("gemini-web", "0.1.2"),
       record_kind: "web",
       provider: "gemini",
       adapter_id: "gemini-web",
