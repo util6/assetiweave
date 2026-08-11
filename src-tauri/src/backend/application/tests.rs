@@ -432,6 +432,7 @@ fn upsert_conversation_export_fixture(
                 cwd: None,
                 status: None,
                 exit_code: None,
+                command_label: None,
                 source_execution_id: None,
                 content_card: None,
                 metadata_json: Some(
@@ -2917,6 +2918,7 @@ fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_histor
                     cwd: None,
                     status: None,
                     exit_code: None,
+                    command_label: None,
                     source_execution_id: None,
                     content_card: None,
                     metadata_json: Some(

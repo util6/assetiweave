@@ -5,7 +5,7 @@ use super::{
     register_external_adapter, scaffold_external_adapter, try_run_external_adapter,
     validate_external_adapter,
 };
-use crate::backend::models::ConversationPartRole;
+use crate::backend::models::{ConversationPartKind, ConversationPartRole};
 use std::collections::BTreeMap;
 
 struct TempFixture {
@@ -1771,6 +1771,7 @@ fn official_zcode_adapter_emits_structured_cards_without_legacy_metadata() {
         INSERT INTO message VALUES ('assistant-1', 'session-1', 2, '{"role":"assistant"}');
         INSERT INTO part VALUES ('assistant-part', 'assistant-1', 'session-1', 2, '{"type":"text","text":"Structured answer"}');
         INSERT INTO part VALUES ('tool-part', 'assistant-1', 'session-1', 3, '{"type":"tool","command":"printf ok","output":"[{\"type\":\"input_text\",\"text\":\"Script completed\\nWall time 0.1 seconds\\nOutput:\\n\"},{\"type\":\"input_text\",\"text\":\"\\u001b[32mok\\u001b[0m\"}]"}');
+        INSERT INTO part VALUES ('patch-part', 'assistant-1', 'session-1', 4, '{"type":"patch","patch":"diff --git a/src/main.ts b/src/main.ts\n--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1 +1 @@\n-old\n+new\ndiff --git a/src/other.ts b/src/other.ts\n--- a/src/other.ts\n+++ b/src/other.ts\n@@ -1 +1 @@\n-before\n+after"}');
         "#,
     )
     .unwrap();
@@ -1789,7 +1790,10 @@ fn official_zcode_adapter_emits_structured_cards_without_legacy_metadata() {
 
     let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
     let parts = &sessions[0].turns[0].parts;
-    assert_content_card_types(parts, &["answer", "command", "result"]);
+    assert_content_card_types(
+        parts,
+        &["answer", "command", "result", "file-change", "file-change"],
+    );
     assert_eq!(parts[1].command.as_deref(), Some("printf ok"));
     assert_eq!(parts[2].text.as_deref(), Some("ok"));
     assert_eq!(
@@ -1803,6 +1807,27 @@ fn official_zcode_adapter_emits_structured_cards_without_legacy_metadata() {
         .metadata_json
         .as_deref()
         .is_none_or(|metadata| !metadata.contains("content_card")));
+    assert_eq!(parts[3].kind, ConversationPartKind::FileChange);
+    assert!(parts[3]
+        .text
+        .as_deref()
+        .is_some_and(|text| text.contains("@@ -1 +1 @@")));
+    assert!(!parts[3]
+        .text
+        .as_deref()
+        .is_some_and(|text| text.contains("src/other.ts")));
+    assert_eq!(parts[4].kind, ConversationPartKind::FileChange);
+    assert!(parts[4]
+        .text
+        .as_deref()
+        .is_some_and(|text| text.contains("src/other.ts")));
+    assert_eq!(
+        parts[3]
+            .content_card
+            .as_ref()
+            .and_then(|card| card.renderer.as_deref()),
+        Some("diff")
+    );
 }
 
 #[test]
@@ -1877,7 +1902,7 @@ fn official_codex_adapter_separates_skill_context_and_splits_command_result_card
             r#"{"payload":{"type":"message","role":"user","content":"<skill>\n<name>test-skill</name>\n<path>/tmp/test-skill/SKILL.md</path>\n---\nname: test-skill\n</skill>"}}"#,
             r#"{"payload":{"type":"message","role":"assistant","content":"Use this:\n```sh\ncargo test\n```"}}"#,
             r#"{"payload":{"type":"function_call","name":"update_plan","arguments":"{\"plan\":[]}"}}"#,
-            r#"{"payload":{"type":"exec","command":"cargo test","output":"tests passed","status":"completed","exit_code":0}}"#,
+            r#"{"payload":{"type":"exec","command":"cargo fmt --check && cargo test","output":"tests passed","status":"completed","exit_code":0}}"#,
             r#"{"payload":{"type":"custom_tool_call","name":"exec","call_id":"call-skill-read","input":"const r = await tools.exec_command({\"cmd\":\"cat /tmp/test-skill/SKILL.md\",\"workdir\":\"/tmp\"});\ntext(r.output);"}}"#,
             r#"{"payload":{"type":"custom_tool_call_output","call_id":"call-skill-read","output":[{"type":"input_text","text":"Script completed\nWall time 0.1 seconds\nOutput:\n"},{"type":"input_text","text":"---\nname: test-skill\ndescription: Fixture Skill content.\n---\n\n# Test Skill"}]}}"#,
         ]
@@ -1933,6 +1958,7 @@ fn official_codex_adapter_separates_skill_context_and_splits_command_result_card
             "code".to_string(),
             "tool".to_string(),
             "command".to_string(),
+            "command".to_string(),
             "result".to_string(),
             "command".to_string(),
             "skill".to_string(),
@@ -1948,15 +1974,146 @@ fn official_codex_adapter_separates_skill_context_and_splits_command_result_card
         Some("path")
     );
     assert_eq!(parts[3].text.as_deref(), Some("function_call: update_plan"));
-    assert_eq!(parts[4].command.as_deref(), Some("cargo test"));
-    assert_eq!(parts[5].text.as_deref(), Some("tests passed"));
+    assert_eq!(parts[4].command.as_deref(), Some("cargo fmt --check"));
+    assert_eq!(parts[5].command.as_deref(), Some("cargo test"));
+    assert_eq!(parts[6].text, None);
+    assert_ne!(parts[4].source_execution_id, parts[5].source_execution_id);
+    assert_eq!(parts[5].source_execution_id, parts[6].source_execution_id);
     assert_eq!(
-        parts[6].command.as_deref(),
-        Some("cat /tmp/test-skill/SKILL.md")
+        parts[7].command.as_deref(),
+        Some("/tmp/test-skill/SKILL.md")
     );
-    assert_eq!(parts[6].cwd.as_deref(), Some("/tmp"));
-    assert_eq!(parts[7].role, ConversationPartRole::System);
-    assert_eq!(parts[7].text.as_deref(), Some("/tmp/test-skill/SKILL.md"));
+    assert_eq!(parts[7].cwd.as_deref(), Some("/tmp"));
+    assert_eq!(parts[8].role, ConversationPartRole::System);
+    assert_eq!(parts[8].text.as_deref(), Some("/tmp/test-skill/SKILL.md"));
+}
+
+#[cfg(unix)]
+#[test]
+fn official_codex_adapter_preserves_patch_apply_end_as_diff_card() {
+    if !command_available("node") || !command_available("sqlite3") {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-official-codex-diff-fixture");
+    let rollout = fixture.path().join("rollout.jsonl");
+    let project_path = fixture.path().join("project");
+    fs::create_dir_all(&project_path).unwrap();
+    let patch_input = r#"*** Begin Patch
+*** Update File: src/lib.rs
+@@
+-const VALUE: &str = "old";
++const VALUE: &str = "command = npm test";
+*** End Patch"#;
+    let rollout_lines = [
+        json!({
+            "type": "session_meta",
+            "payload": { "cwd": project_path }
+        }),
+        json!({
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "id": "turn-1",
+                "content": "Update the fixture"
+            }
+        }),
+        json!({
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "call_id": "patch-outer",
+                "input": format!("const patch = {patch_input:?}; text(await tools.apply_patch(patch));"),
+                "internal_chat_message_metadata_passthrough": { "turn_id": "turn-runtime" }
+            }
+        }),
+        json!({
+            "payload": {
+                "type": "patch_apply_end",
+                "call_id": "patch-inner",
+                "turn_id": "turn-runtime",
+                "success": true,
+                "changes": {
+                    "src/lib.rs": {
+                        "type": "update",
+                        "unified_diff": "@@ -1 +1 @@\n-const VALUE: &str = \"old\";\n+const VALUE: &str = \"command = npm test\";"
+                    }
+                }
+            }
+        }),
+        json!({
+            "payload": {
+                "type": "custom_tool_call_output",
+                "call_id": "patch-outer",
+                "output": "Success. Updated the following files:\nM src/lib.rs"
+            }
+        }),
+    ];
+    fs::write(
+        &rollout,
+        rollout_lines
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    let db_path = fixture.path().join("state_5.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                "codex-session-diff",
+                rollout.to_string_lossy().to_string(),
+                "Codex diff fixture"
+            ],
+        )
+        .unwrap();
+    }
+    let adapter = official_adapter_fixture(
+        "codex",
+        "Codex",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
+        vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+    );
+    let source = source_fixture(
+        "codex",
+        ConversationSourceKind::Live,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+
+    assert_eq!(sessions.len(), 1);
+    let parts = &sessions[0].turns[0].parts;
+    assert_content_card_types(parts, &["command", "file-change"]);
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[0].command.as_deref(), Some("src/lib.rs"));
+    assert_eq!(parts[0].command_label.as_deref(), Some("Edit"));
+    assert_eq!(parts[0].source_execution_id.as_deref(), Some("patch-outer"));
+    assert_eq!(
+        parts[1].kind,
+        crate::backend::models::ConversationPartKind::FileChange
+    );
+    assert_eq!(parts[1].source_execution_id.as_deref(), Some("patch-outer"));
+    assert_eq!(parts[1].status.as_deref(), Some("completed"));
+    assert_eq!(parts[1].exit_code, Some(0));
+    assert!(parts[1]
+        .text
+        .as_deref()
+        .is_some_and(|text| text.starts_with("diff --git a/src/lib.rs b/src/lib.rs\n")));
+    assert_eq!(
+        parts[1]
+            .content_card
+            .as_ref()
+            .and_then(|card| card.renderer.as_deref()),
+        Some("diff")
+    );
 }
 
 #[test]
@@ -2039,7 +2196,7 @@ fn official_codex_adapter_does_not_embed_raw_tool_payload_metadata() {
     let parts = &sessions[0].turns[0].parts;
     assert_content_card_types(parts, &["command", "result"]);
     assert_eq!(parts[0].command.as_deref(), Some("cargo test"));
-    assert_eq!(parts[1].text.as_deref(), Some("tests passed"));
+    assert_eq!(parts[1].text, None);
     let metadata = parts
         .iter()
         .filter_map(|part| part.metadata_json.as_deref())
@@ -2110,18 +2267,10 @@ fn official_codex_adapter_truncates_large_browse_text() {
 
     let result_part = &sessions[0].turns[0].parts[1];
     assert_eq!(result_part.command.as_deref(), None);
-    assert!(result_part
-        .text
-        .as_deref()
-        .unwrap()
-        .contains("large-output-start"));
-    assert!(result_part.text.as_deref().unwrap().len() < 128 * 1024);
+    assert_eq!(result_part.text, None);
     let metadata: Value = serde_json::from_str(result_part.metadata_json.as_deref().unwrap())
         .expect("result metadata");
-    assert_eq!(
-        metadata.get("truncated").and_then(Value::as_bool),
-        Some(true)
-    );
+    assert_eq!(metadata.get("truncated").and_then(Value::as_bool), None);
     assert!(metadata.get("content_card").is_none());
     assert_eq!(content_card_type(result_part).as_deref(), Some("result"));
 }
@@ -2425,10 +2574,7 @@ fn official_opencode_adapter_splits_command_and_result_cards() {
         sessions[0].turns[0].parts[2].command.as_deref(),
         Some("cargo test")
     );
-    assert_eq!(
-        sessions[0].turns[0].parts[3].text.as_deref(),
-        Some("tests passed")
-    );
+    assert_eq!(sessions[0].turns[0].parts[3].text, None);
 }
 
 #[cfg(unix)]
@@ -2675,7 +2821,7 @@ fn official_opencode_adapter_extracts_json_fields_without_raw_metadata() {
     let parts = &sessions[0].turns[0].parts;
     assert_content_card_types(parts, &["answer", "code", "command", "result"]);
     assert_eq!(parts[2].command.as_deref(), Some("cargo test"));
-    assert_eq!(parts[3].text.as_deref(), Some("tests passed"));
+    assert_eq!(parts[3].text, None);
     assert_eq!(
         parts[3]
             .content_card
@@ -2749,10 +2895,7 @@ fn official_claude_code_adapter_splits_command_and_result_cards() {
         sessions[0].turns[0].parts[2].command.as_deref(),
         Some("cargo test")
     );
-    assert_eq!(
-        sessions[0].turns[0].parts[3].text.as_deref(),
-        Some("tests passed")
-    );
+    assert_eq!(sessions[0].turns[0].parts[3].text, None);
 }
 
 #[cfg(unix)]
@@ -2803,10 +2946,7 @@ fn official_claude_code_adapter_reads_content_array_tool_use_and_result_cards() 
         sessions[0].turns[0].parts[1].command.as_deref(),
         Some("cargo test")
     );
-    assert_eq!(
-        sessions[0].turns[0].parts[2].text.as_deref(),
-        Some("tests passed")
-    );
+    assert_eq!(sessions[0].turns[0].parts[2].text, None);
     assert_eq!(
         sessions[0].turns[0].parts[2]
             .content_card

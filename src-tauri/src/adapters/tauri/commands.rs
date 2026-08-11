@@ -1,3 +1,8 @@
+//! Tauri Command 暴露层与 IPC 调用适配模块
+//!
+//! 该模块包含了所有前端通过 `invoke('plugin:assetiweave|...')` 调用的 Tauri Command 函数实现。
+//! 包含应用配置、数据源管理、资产挂载、会话同步与翻译、内存梦境 (Memory Dream) 以及 CLI 安装等 IPC 交互逻辑。
+
 use crate::adapters::app_state::AppState;
 use crate::adapters::prompt_clipboard::{
     copy_prompt_card_to_clipboard as copy_prompt_card_to_clipboard_impl, PromptClipboardParams,
@@ -2101,13 +2106,27 @@ pub(crate) fn sync_conversations(
     state: State<'_, AppState>,
     params: ConversationSyncParams,
 ) -> AppResult<ConversationSyncTaskSnapshot> {
-    let (snapshot, should_start) = state.background_tasks.begin_conversation_sync(&params)?;
+    start_conversation_sync_background(
+        app,
+        state.db_path.clone(),
+        state.background_tasks.clone(),
+        params,
+    )
+}
+
+pub(crate) fn start_conversation_sync_background(
+    app: AppHandle,
+    db_path: std::path::PathBuf,
+    background_tasks: std::sync::Arc<
+        crate::adapters::tauri::background_tasks::BackgroundTaskRegistry,
+    >,
+    params: ConversationSyncParams,
+) -> AppResult<ConversationSyncTaskSnapshot> {
+    let (snapshot, should_start) = background_tasks.begin_conversation_sync(&params)?;
     if !should_start {
         return Ok(snapshot);
     }
 
-    let db_path = state.db_path.clone();
-    let background_tasks = state.background_tasks.clone();
     let task_id = snapshot.id.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let progress_app = app.clone();
@@ -2269,6 +2288,21 @@ pub(crate) async fn search_conversation_records(
     let db_path = state.db_path.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::open_with_db_path(db_path)?.search_conversation_records(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// 检索最近增量同步变动的会话卡片记录
+#[tauri::command]
+pub(crate) async fn search_recent_incremental_conversation_records(
+    state: State<'_, AppState>,
+    params: crate::backend::application::ConversationIncrementalSearchParams,
+) -> AppResult<ConversationSearchResult> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path(db_path)?
+            .search_recent_incremental_conversation_records(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2673,6 +2707,7 @@ pub(crate) fn command_handler(
         list_web_record_sessions,
         get_web_record_session,
         search_conversation_records,
+        search_recent_incremental_conversation_records,
         get_conversation_search_index_status,
         start_conversation_search_index_rebuild,
         get_conversation_search_index_task,

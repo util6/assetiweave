@@ -97,6 +97,7 @@ pub(crate) fn project_conversation_content_card(
         status: card.status,
         exit_code: card.exit_code,
         source_execution_id: part.source_execution_id.clone(),
+        command_label: part.command_label.clone(),
         translated_body: part.translated_text.clone(),
         legacy_anchor_ids,
     }))
@@ -299,6 +300,7 @@ fn renderer_name(renderer: ConversationCardRenderer) -> &'static str {
         ConversationCardRenderer::Code => "code",
         ConversationCardRenderer::Command => "command",
         ConversationCardRenderer::TerminalOutput => "terminal_output",
+        ConversationCardRenderer::Diff => "diff",
     }
 }
 
@@ -396,10 +398,14 @@ fn resolve_content_card(
             })?,
             None => ConversationCardRenderer::Plain,
         };
-        let Some(body) = default_body(source, renderer)
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-        else {
+        let status = source.status.and_then(owned);
+        let exit_code = source.exit_code;
+        let Some(body) = resolved_card_body(
+            default_body(source, renderer),
+            renderer,
+            status.is_some(),
+            exit_code,
+        ) else {
             return Ok(None);
         };
         return Ok(Some(ResolvedConversationContentCard {
@@ -410,8 +416,8 @@ fn resolve_content_card(
             body,
             language: source.language.and_then(owned),
             cwd: source.cwd.and_then(owned),
-            status: source.status.and_then(owned),
-            exit_code: source.exit_code,
+            status,
+            exit_code,
         }));
     }
     let Some(metadata_json) = source
@@ -453,11 +459,16 @@ fn resolve_content_card(
     }
     let renderer = resolve_renderer(card, &kind, mode)?;
     let legacy_suffix = optional_string(card, "suffix");
-    let body = optional_string(card, "text").or_else(|| default_body(source, renderer));
-    let Some(body) = body
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    else {
+    let status = optional_string(card, "status").or_else(|| source.status.and_then(owned));
+    let exit_code = optional_i32(card, "exit_code")
+        .or_else(|| optional_i32(card, "exitCode"))
+        .or(source.exit_code);
+    let Some(body) = resolved_card_body(
+        optional_string(card, "text").or_else(|| default_body(source, renderer)),
+        renderer,
+        status.is_some(),
+        exit_code,
+    ) else {
         return Ok(None);
     };
 
@@ -469,11 +480,27 @@ fn resolve_content_card(
         body,
         language: optional_string(card, "language").or_else(|| source.language.and_then(owned)),
         cwd: optional_string(card, "cwd").or_else(|| source.cwd.and_then(owned)),
-        status: optional_string(card, "status").or_else(|| source.status.and_then(owned)),
-        exit_code: optional_i32(card, "exit_code")
-            .or_else(|| optional_i32(card, "exitCode"))
-            .or(source.exit_code),
+        status,
+        exit_code,
     }))
+}
+
+fn resolved_card_body(
+    value: Option<String>,
+    renderer: ConversationCardRenderer,
+    has_status: bool,
+    exit_code: Option<i32>,
+) -> Option<String> {
+    if let Some(body) = value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        return Some(body);
+    }
+    if renderer == ConversationCardRenderer::TerminalOutput && (has_status || exit_code.is_some()) {
+        return Some(String::new());
+    }
+    None
 }
 
 fn legacy_suffix_from_metadata(metadata_json: Option<&str>) -> Option<String> {
@@ -594,6 +621,7 @@ fn parse_renderer(value: &str) -> Result<ConversationCardRenderer, String> {
         "code" => Ok(ConversationCardRenderer::Code),
         "command" => Ok(ConversationCardRenderer::Command),
         "terminal_output" => Ok(ConversationCardRenderer::TerminalOutput),
+        "diff" => Ok(ConversationCardRenderer::Diff),
         other => Err(format!("unsupported conversation card renderer {other:?}")),
     }
 }
@@ -692,6 +720,59 @@ mod tests {
         assert_eq!(card.renderer, ConversationCardRenderer::TerminalOutput);
         assert_eq!(card.card_id, "part-1");
         assert_eq!(card.legacy_anchor_ids, vec!["part-1-result"]);
+    }
+
+    #[test]
+    fn conversation_card_contract_keeps_status_only_result_cards() {
+        let mut part = part_with_metadata(
+            r#"{"content_card":{"type":"result","format":"plain","suffix":"result"}}"#,
+        );
+        part.text = None;
+        part.status = Some("completed".to_string());
+        part.exit_code = Some(0);
+
+        let card = project_conversation_content_card(&part, "legacy", &[])
+            .expect("project status-only result")
+            .expect("status-only result card");
+
+        assert_eq!(card.body, "");
+        assert_eq!(card.status.as_deref(), Some("completed"));
+        assert_eq!(card.exit_code, Some(0));
+    }
+
+    #[test]
+    fn conversation_card_contract_accepts_explicit_diff_renderer() {
+        let mut part = normalized_part_with_metadata(r#"{"source_type":"file_change"}"#);
+        part.kind = ConversationPartKind::FileChange;
+        part.text = Some("diff --git a/a.txt b/a.txt\n@@ -1 +1 @@\n-old\n+new".to_string());
+        part.content_card = Some(ConversationContentCardDescriptor {
+            schema_version: 1,
+            kind: "opencode.result".to_string(),
+            renderer: Some("diff".to_string()),
+        });
+        let declarations = vec![ConversationCardKindDefinition {
+            id: "opencode.result".to_string(),
+            semantic_role: Some("result".to_string()),
+            label: "Result".to_string(),
+            default_renderer: "terminal_output".to_string(),
+            allowed_renderers: vec!["terminal_output".to_string(), "diff".to_string()],
+            icon_hint: None,
+        }];
+
+        validate_normalized_content_card(&part, "opencode", Some(1), &declarations)
+            .expect("validate explicit diff card");
+        let projected = project_resolved_content_card(
+            ConversationCardProjectionSource {
+                content_card: part.content_card.as_ref(),
+                text: part.text.as_deref(),
+                metadata_json: part.metadata_json.as_deref(),
+                ..Default::default()
+            },
+            &declarations,
+        )
+        .expect("project diff card")
+        .expect("diff card");
+        assert_eq!(projected.renderer, ConversationCardRenderer::Diff);
     }
 
     #[test]
@@ -912,6 +993,7 @@ mod tests {
             cwd: None,
             status: None,
             exit_code: None,
+            command_label: None,
             source_execution_id: None,
             content_card: None,
             metadata_json: Some(metadata.to_string()),
@@ -929,6 +1011,7 @@ mod tests {
             cwd: None,
             status: None,
             exit_code: None,
+            command_label: None,
             source_execution_id: None,
             content_card: None,
             metadata_json: Some(metadata.to_string()),

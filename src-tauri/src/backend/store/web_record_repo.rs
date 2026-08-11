@@ -402,7 +402,7 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
                p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
-               p.content_card_json, p.translated_text, p.source_execution_id
+               p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
         FROM web_record_parts p
         JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
         WHERE t.tenant_id = ?1 AND t.session_id = ?2
@@ -865,10 +865,10 @@ async fn insert_web_record_parts_sqlx_tx(
             r#"
             INSERT INTO web_record_parts (
                 tenant_id, id, turn_id, part_index, role, kind, text, language, command,
-                cwd, status, exit_code, metadata_json, content_card_json, translated_text,
+                cwd, status, exit_code, command_label, metadata_json, content_card_json, translated_text,
                 source_execution_id
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
             "#,
         )
         .bind(tenant_id)
@@ -883,6 +883,7 @@ async fn insert_web_record_parts_sqlx_tx(
         .bind(&part.cwd)
         .bind(&part.status)
         .bind(part.exit_code)
+        .bind(&part.command_label)
         .bind(&part.metadata_json)
         .bind(content_card_json)
         .bind(translated_text)
@@ -1035,7 +1036,7 @@ async fn load_web_record_parts_sqlx_tx(
         r#"
         SELECT id, turn_id, part_index, role, kind, text, language, command,
                cwd, status, exit_code, metadata_json, content_card_json, translated_text,
-               source_execution_id
+               source_execution_id, command_label
         FROM web_record_parts
         WHERE tenant_id = ?1 AND turn_id = ?2
         ORDER BY part_index ASC
@@ -1730,6 +1731,7 @@ mod tests {
                 cwd: None,
                 status: None,
                 exit_code: None,
+                command_label: None,
                 source_execution_id: None,
                 content_card: None,
                 metadata_json: content_card_metadata("answer"),
@@ -2052,6 +2054,7 @@ mod tests {
                     cwd: None,
                     status: None,
                     exit_code: None,
+                    command_label: None,
                     source_execution_id: None,
                     content_card: None,
                     metadata_json: content_card_metadata("answer"),

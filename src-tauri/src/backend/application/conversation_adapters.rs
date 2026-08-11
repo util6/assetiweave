@@ -1,6 +1,19 @@
 use super::prelude::*;
 
 impl AppService {
+    pub(crate) fn conversation_payload_policy_reparse_required(&self) -> AppResult<bool> {
+        let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
+        self.db.block_on(async move {
+            crate::backend::store::conversation_payload_policy_reparse_required_sqlx(
+                &pool,
+                &tenant_id,
+                crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+            )
+            .await
+        })
+    }
+
     pub(crate) fn list_conversation_adapters(&self) -> AppResult<Vec<ConversationAdapter>> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
@@ -339,6 +352,8 @@ impl AppService {
             let card_contract_version = adapter
                 .as_ref()
                 .and_then(|adapter| adapter.card_contract_version);
+            let payload_policy_version =
+                crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION;
             let pool = self.db.pool().clone();
             let tenant_id = self.tenant_id().to_string();
             let source_id = source.id.clone();
@@ -352,6 +367,7 @@ impl AppService {
                         source_record_kind,
                         known_adapter_content_hash.as_deref(),
                         card_contract_version,
+                        payload_policy_version,
                     )
                     .await
                 })?
@@ -407,6 +423,7 @@ impl AppService {
                             params.dry_run,
                             adapter_content_hash.as_deref(),
                             card_contract_version,
+                            payload_policy_version,
                         )
                         .await?;
                         Ok(conversation_sync_result_value(
@@ -456,6 +473,7 @@ impl AppService {
                             params.dry_run,
                             adapter_content_hash.as_deref(),
                             card_contract_version,
+                            payload_policy_version,
                         )
                         .await?;
                         Ok(conversation_sync_result_value(
@@ -491,6 +509,23 @@ impl AppService {
         }
         if results.is_empty() && errors.is_empty() {
             return Err("no matching conversation sources".to_string());
+        }
+        if !params.dry_run
+            && params.source_id.is_none()
+            && params.adapter_id.is_none()
+            && record_kind.is_none()
+            && errors.is_empty()
+        {
+            let pool = self.db.pool().clone();
+            let tenant_id = self.tenant_id().to_string();
+            self.db.block_on(async move {
+                crate::backend::store::mark_conversation_payload_policy_applied_sqlx(
+                    &pool,
+                    &tenant_id,
+                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+                )
+                .await
+            })?;
         }
         let legacy_cards_upgraded = results
             .iter()
@@ -530,6 +565,7 @@ async fn persist_successful_conversation_observation(
     dry_run: bool,
     adapter_content_hash: Option<&str>,
     card_contract_version: Option<u32>,
+    payload_policy_version: u32,
 ) -> AppResult<usize> {
     if dry_run || !read.incremental {
         return Ok(0);
@@ -548,6 +584,7 @@ async fn persist_successful_conversation_observation(
         &hydrated_external_ids,
         adapter_content_hash,
         card_contract_version,
+        payload_policy_version,
     )
     .await
 }

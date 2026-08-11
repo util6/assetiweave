@@ -859,7 +859,8 @@ fn export_conversation_cards_markdown(
                 }
                 crate::backend::dto::ConversationCardRenderer::Plain
                 | crate::backend::dto::ConversationCardRenderer::Path
-                | crate::backend::dto::ConversationCardRenderer::TerminalOutput => {
+                | crate::backend::dto::ConversationCardRenderer::TerminalOutput
+                | crate::backend::dto::ConversationCardRenderer::Diff => {
                     output.push_str(&format!("```text\n{}\n```\n", card.body.trim_end()));
                 }
             }

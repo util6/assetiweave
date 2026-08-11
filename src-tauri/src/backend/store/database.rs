@@ -534,11 +534,19 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query Memory Recall indexes");
+        let execution_projection_index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_conversation_parts_execution', 'idx_web_record_parts_execution')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query obsolete Execution projection indexes");
 
         assert_eq!(source_table_count, 1);
         assert_eq!(memory_table_count, 3);
         assert_eq!(memory_recall_index_count, 2);
-        assert_eq!(migration_count, 19);
+        assert_eq!(execution_projection_index_count, 0);
+        assert_eq!(migration_count, 24);
         cleanup_database(&db_path);
     }
 
@@ -613,7 +621,7 @@ mod tests {
             )
         );
         assert_eq!(cursor_target_path, "@config/Cursor/skills");
-        assert_eq!(migration_count, 19);
+        assert_eq!(migration_count, 24);
         cleanup_database(&db_path);
     }
 
@@ -674,7 +682,7 @@ mod tests {
                 row.get(0)
             })
             .expect("query migrations");
-        assert_eq!(migration_count, 19);
+        assert_eq!(migration_count, 24);
         cleanup_database(&db_path);
     }
 

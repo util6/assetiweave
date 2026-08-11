@@ -176,6 +176,7 @@ pub(crate) enum ConversationCardRenderer {
     Code,
     Command,
     TerminalOutput,
+    Diff,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -193,6 +194,7 @@ pub(crate) struct ConversationCard {
     pub(crate) status: Option<String>,
     pub(crate) exit_code: Option<i32>,
     pub(crate) source_execution_id: Option<String>,
+    pub(crate) command_label: Option<String>,
     pub(crate) translated_body: Option<String>,
     pub(crate) legacy_anchor_ids: Vec<String>,
 }

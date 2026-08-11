@@ -1,0 +1,1 @@
+ALTER TABLE conversation_session_observations ADD COLUMN hydrated_payload_policy_version INTEGER;

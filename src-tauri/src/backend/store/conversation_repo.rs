@@ -657,6 +657,26 @@ pub(crate) async fn activate_conversation_adapter_package_sqlx(
     tx.commit().await.map_err(|error| error.to_string())
 }
 
+pub(crate) async fn activate_conversation_adapter_workspace_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    adapter: &ConversationAdapter,
+    package: &ConversationAdapterPackage,
+) -> AppResult<()> {
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    upsert_conversation_adapter_with_executor(&mut *tx, tenant_id, adapter).await?;
+    upsert_conversation_adapter_package_with_executor(&mut *tx, tenant_id, package).await?;
+    sqlx::query(
+        "DELETE FROM conversation_adapter_package_versions WHERE tenant_id = ?1 AND package_id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(&package.package_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    tx.commit().await.map_err(|error| error.to_string())
+}
+
 pub(crate) async fn deactivate_conversation_adapter_package_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -1417,7 +1437,7 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
                p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
-               p.content_card_json, p.translated_text, p.source_execution_id
+               p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
         FROM conversation_parts p
         JOIN conversation_question_turns qt ON qt.tenant_id = p.tenant_id AND qt.turn_id = p.turn_id
         WHERE qt.tenant_id = ?1 AND qt.question_id = ?2
@@ -1492,7 +1512,7 @@ pub(crate) async fn list_conversation_block_locators_sqlx(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
                p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
-               p.content_card_json, p.translated_text, p.source_execution_id
+               p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
         FROM {question_turns} qt
         JOIN {parts} p ON p.tenant_id = qt.tenant_id AND p.turn_id = qt.turn_id
         WHERE qt.tenant_id = ?1 AND qt.question_id = ?2
@@ -1587,7 +1607,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
                p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
-               p.content_card_json, p.translated_text, p.source_execution_id,
+               p.content_card_json, p.translated_text, p.source_execution_id, p.command_label,
                qt.question_id, t.session_id
         FROM {parts} p
         JOIN {question_turns} qt ON qt.tenant_id = p.tenant_id AND qt.turn_id = p.turn_id
@@ -1605,8 +1625,8 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
     .map_err(|error| error.to_string())?
     .ok_or_else(|| format!("conversation content block not found: {block_id}"))?;
     let part = map_sqlx_conversation_part(&row)?;
-    let question_id: String = row.try_get(15).map_err(|error| error.to_string())?;
-    let session_id: String = row.try_get(16).map_err(|error| error.to_string())?;
+    let question_id: String = row.try_get(16).map_err(|error| error.to_string())?;
+    let session_id: String = row.try_get(17).map_err(|error| error.to_string())?;
     let (adapter_id, card_kinds) = load_conversation_card_projection_context_for_record_sqlx(
         pool,
         tenant_id,
@@ -1921,7 +1941,7 @@ async fn load_conversation_question_details_for_session_sqlx(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
                p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
-               p.content_card_json, p.translated_text, p.source_execution_id
+               p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
         FROM conversation_parts p
         JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
         WHERE t.tenant_id = ?1 AND t.session_id = ?2
@@ -2110,25 +2130,29 @@ pub(super) fn project_conversation_cards_and_nodes(
             };
 
             let key = (part.turn_id.clone(), source_execution_id.to_string());
+            if execution_role == "command" {
+                let node_index = content_nodes.len();
+                content_nodes.push(ConversationContentNode::Execution {
+                    turn_id: part.turn_id.clone(),
+                    source_execution_id: source_execution_id.to_string(),
+                    command_card_index: Some(card_index),
+                    result_card_indices: Vec::new(),
+                });
+                execution_node_indices.insert(key, node_index);
+                continue;
+            }
+
             if let Some(node_index) = execution_node_indices.get(&key).copied() {
                 if let ConversationContentNode::Execution {
-                    command_card_index,
                     result_card_indices,
                     ..
                 } = &mut content_nodes[node_index]
                 {
-                    if execution_role == "command" && command_card_index.is_none() {
-                        *command_card_index = Some(card_index);
-                    } else if execution_role == "result" {
+                    if execution_role == "result" {
                         result_card_indices.push(card_index);
-                    } else {
-                        content_nodes.push(ConversationContentNode::Card {
-                            turn_id: part.turn_id.clone(),
-                            card_index,
-                        });
+                        continue;
                     }
                 }
-                continue;
             }
 
             let node_index = content_nodes.len();
@@ -2145,6 +2169,21 @@ pub(super) fn project_conversation_cards_and_nodes(
             execution_node_indices.insert(key, node_index);
         }
     }
+    let content_nodes = content_nodes
+        .into_iter()
+        .map(|node| match node {
+            ConversationContentNode::Execution {
+                turn_id,
+                command_card_index: Some(card_index),
+                result_card_indices,
+                ..
+            } if result_card_indices.is_empty() => ConversationContentNode::Card {
+                turn_id,
+                card_index,
+            },
+            node => node,
+        })
+        .collect();
     Ok((cards, content_nodes))
 }
 
@@ -2818,6 +2857,9 @@ pub(super) fn map_sqlx_conversation_part(row: &SqliteRow) -> AppResult<Conversat
         status: row.try_get(9).map_err(|error| error.to_string())?,
         exit_code: row.try_get(10).map_err(|error| error.to_string())?,
         metadata_json: row.try_get(11).map_err(|error| error.to_string())?,
+        command_label: row
+            .try_get("command_label")
+            .map_err(|error| error.to_string())?,
         source_execution_id: row
             .try_get("source_execution_id")
             .map_err(|error| error.to_string())?,
@@ -3106,9 +3148,9 @@ async fn replace_conversation_parts_sqlx_tx(
             r#"
             INSERT INTO conversation_parts (
                 tenant_id, id, turn_id, part_index, role, kind, text, language, command,
-                cwd, status, exit_code, metadata_json, content_card_json, source_execution_id
+                cwd, status, exit_code, command_label, metadata_json, content_card_json, source_execution_id
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
             ON CONFLICT(tenant_id, id) DO UPDATE SET
                 turn_id = excluded.turn_id,
                 part_index = excluded.part_index,
@@ -3120,6 +3162,7 @@ async fn replace_conversation_parts_sqlx_tx(
                 cwd = excluded.cwd,
                 status = excluded.status,
                 exit_code = excluded.exit_code,
+                command_label = excluded.command_label,
                 metadata_json = excluded.metadata_json,
                 content_card_json = excluded.content_card_json,
                 source_execution_id = excluded.source_execution_id,
@@ -3143,6 +3186,7 @@ async fn replace_conversation_parts_sqlx_tx(
         .bind(&part.cwd)
         .bind(&part.status)
         .bind(part.exit_code)
+        .bind(&part.command_label)
         .bind(&part.metadata_json)
         .bind(content_card_json)
         .bind(&part.source_execution_id)
@@ -3604,7 +3648,7 @@ async fn load_turn_parts_sqlx_tx(
         r#"
         SELECT id, turn_id, part_index, role, kind, text, language, command,
                cwd, status, exit_code, metadata_json, content_card_json, translated_text,
-               source_execution_id
+               source_execution_id, command_label
         FROM conversation_parts
         WHERE tenant_id = ?1 AND turn_id = ?2
         ORDER BY part_index ASC
@@ -4189,7 +4233,7 @@ async fn load_search_parts_sqlx(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
                p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
-               p.content_card_json, p.translated_text, p.source_execution_id
+               p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
         FROM {parts} p
         JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
         JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
@@ -4238,15 +4282,18 @@ pub(super) fn append_declared_card_to_question_aggregate(
     let Some(card) = resolved_content_card_for_part(part) else {
         return;
     };
-    match card.kind.as_str() {
+    let semantic_role = card
+        .semantic_role
+        .as_deref()
+        .or_else(|| card.kind.rsplit_once('.').map(|(_, value)| value))
+        .unwrap_or(card.kind.as_str());
+    match semantic_role {
         "answer" => answer_text.push(card.body),
-        // The existing summary schema has no separate tool/result text columns.
-        "tool" | "result" => {
-            answer_text.push(card.body);
-        }
         "code" => code_text.push(card.body),
         "command" => command_text.push(card.body),
-        _ => answer_text.push(card.body),
+        // Tool, result, file changes and adapter-specific cards are kept on their
+        // original Part/Card only; question aggregates must not duplicate them.
+        _ => {}
     }
 }
 
@@ -4536,6 +4583,65 @@ mod tests {
     const TEST_TENANT_ID: &str = "default";
 
     #[test]
+    fn question_aggregate_excludes_tool_result_and_diff_bodies() {
+        let base = |kind: ConversationPartKind, card_kind: &str, text: &str| ConversationPart {
+            id: format!("part-{card_kind}"),
+            turn_id: "turn-1".to_string(),
+            part_index: 0,
+            role: crate::backend::models::ConversationPartRole::Tool,
+            kind,
+            text: Some(text.to_string()),
+            language: None,
+            command: None,
+            cwd: None,
+            status: None,
+            exit_code: None,
+            command_label: None,
+            source_execution_id: None,
+            content_card: Some(ConversationContentCardDescriptor {
+                schema_version: 1,
+                kind: format!("fixture.{card_kind}"),
+                renderer: Some(if card_kind == "diff" { "diff" } else { "plain" }.to_string()),
+            }),
+            metadata_json: None,
+            translated_text: None,
+        };
+        let answer = base(ConversationPartKind::Text, "answer", "answer");
+        let result = base(ConversationPartKind::Tool, "result", "duplicated result");
+        let diff = base(
+            ConversationPartKind::FileChange,
+            "result",
+            "duplicated diff",
+        );
+        let mut answer_text = Vec::new();
+        let mut code_text = Vec::new();
+        let mut command_text = Vec::new();
+
+        append_declared_card_to_question_aggregate(
+            &answer,
+            &mut answer_text,
+            &mut code_text,
+            &mut command_text,
+        );
+        append_declared_card_to_question_aggregate(
+            &result,
+            &mut answer_text,
+            &mut code_text,
+            &mut command_text,
+        );
+        append_declared_card_to_question_aggregate(
+            &diff,
+            &mut answer_text,
+            &mut code_text,
+            &mut command_text,
+        );
+
+        assert_eq!(answer_text, vec!["answer"]);
+        assert!(code_text.is_empty());
+        assert!(command_text.is_empty());
+    }
+
+    #[test]
     fn conversation_content_nodes_group_interleaved_results_by_source_id() {
         let card_kinds = [
             ConversationCardKindDefinition {
@@ -4555,7 +4661,11 @@ mod tests {
                 icon_hint: None,
             },
         ];
-        let part = |id: &str, part_index: i64, source_execution_id: &str, command: bool| {
+        let part = |id: &str,
+                    part_index: i64,
+                    source_execution_id: &str,
+                    command: bool,
+                    command_label: Option<&str>| {
             ConversationPart {
                 id: id.to_string(),
                 turn_id: "turn-1".to_string(),
@@ -4572,6 +4682,7 @@ mod tests {
                 cwd: None,
                 status: None,
                 exit_code: None,
+                command_label: command_label.map(str::to_string),
                 source_execution_id: Some(source_execution_id.to_string()),
                 content_card: Some(ConversationContentCardDescriptor {
                     schema_version: 1,
@@ -4591,30 +4702,126 @@ mod tests {
             }
         };
         let parts = vec![
-            part("command-a", 0, "call-a", true),
-            part("command-b", 1, "call-b", true),
-            part("result-b", 2, "call-b", false),
-            part("result-a", 3, "call-a", false),
+            part("command-a", 0, "call-a", true, None),
+            part("command-a-2", 1, "call-a", true, Some("DEBUG")),
+            part("command-b", 2, "call-b", true, None),
+            part("result-b", 3, "call-b", false, None),
+            part("result-a", 4, "call-a", false, None),
         ];
 
         let (cards, nodes) = project_conversation_cards_and_nodes(&parts, "fixture", &card_kinds)
             .expect("project execution nodes");
 
-        assert_eq!(cards.len(), 4);
+        assert_eq!(cards.len(), 5);
+        assert_eq!(cards[0].card_id, "command-a");
+        assert_eq!(cards[1].card_id, "command-a-2");
+        assert_eq!(cards[1].command_label.as_deref(), Some("DEBUG"));
         assert_eq!(
             nodes,
             vec![
+                ConversationContentNode::Card {
+                    turn_id: "turn-1".to_string(),
+                    card_index: 0,
+                },
                 ConversationContentNode::Execution {
                     turn_id: "turn-1".to_string(),
                     source_execution_id: "call-a".to_string(),
-                    command_card_index: Some(0),
-                    result_card_indices: vec![3],
+                    command_card_index: Some(1),
+                    result_card_indices: vec![4],
                 },
                 ConversationContentNode::Execution {
                     turn_id: "turn-1".to_string(),
                     source_execution_id: "call-b".to_string(),
-                    command_card_index: Some(1),
-                    result_card_indices: vec![2],
+                    command_card_index: Some(2),
+                    result_card_indices: vec![3],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn conversation_content_nodes_keep_file_changes_outside_execution_results() {
+        let card_kinds = [
+            ConversationCardKindDefinition {
+                id: "fixture.command".to_string(),
+                semantic_role: Some("command".to_string()),
+                label: "Command".to_string(),
+                default_renderer: "command".to_string(),
+                allowed_renderers: vec!["command".to_string()],
+                icon_hint: None,
+            },
+            ConversationCardKindDefinition {
+                id: "fixture.file-change".to_string(),
+                semantic_role: Some("file-change".to_string()),
+                label: "文件更改".to_string(),
+                default_renderer: "diff".to_string(),
+                allowed_renderers: vec!["diff".to_string()],
+                icon_hint: None,
+            },
+        ];
+        let parts = vec![
+            ConversationPart {
+                id: "command".to_string(),
+                turn_id: "turn-1".to_string(),
+                part_index: 0,
+                role: ConversationPartRole::Tool,
+                kind: ConversationPartKind::Command,
+                text: None,
+                language: None,
+                command: Some("apply patch".to_string()),
+                cwd: None,
+                status: Some("completed".to_string()),
+                exit_code: Some(0),
+                command_label: None,
+                source_execution_id: Some("call-1".to_string()),
+                content_card: Some(ConversationContentCardDescriptor {
+                    schema_version: 1,
+                    kind: "fixture.command".to_string(),
+                    renderer: Some("command".to_string()),
+                }),
+                metadata_json: None,
+                translated_text: None,
+            },
+            ConversationPart {
+                id: "file-change".to_string(),
+                turn_id: "turn-1".to_string(),
+                part_index: 1,
+                role: ConversationPartRole::Tool,
+                kind: ConversationPartKind::FileChange,
+                text: Some("--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new\n".to_string()),
+                language: None,
+                command: None,
+                cwd: None,
+                status: None,
+                exit_code: None,
+                command_label: None,
+                source_execution_id: Some("call-1".to_string()),
+                content_card: Some(ConversationContentCardDescriptor {
+                    schema_version: 1,
+                    kind: "fixture.file-change".to_string(),
+                    renderer: Some("diff".to_string()),
+                }),
+                metadata_json: None,
+                translated_text: None,
+            },
+        ];
+
+        let (cards, nodes) = project_conversation_cards_and_nodes(&parts, "fixture", &card_kinds)
+            .expect("project standalone file change node");
+
+        assert_eq!(cards.len(), 2);
+        assert_eq!(cards[1].kind, "fixture.file-change");
+        assert_eq!(cards[1].semantic_role.as_deref(), Some("file-change"));
+        assert_eq!(
+            nodes,
+            vec![
+                ConversationContentNode::Card {
+                    turn_id: "turn-1".to_string(),
+                    card_index: 0,
+                },
+                ConversationContentNode::Card {
+                    turn_id: "turn-1".to_string(),
+                    card_index: 1,
                 },
             ]
         );
@@ -5390,7 +5597,7 @@ mod tests {
         refreshed_session.turns[0].parts[0].metadata_json =
             Some(r#"{"content_card":{"type":"answer","format":"markdown"}}"#.to_string());
 
-        let (result, imported_at, metadata_json) = database
+        let (result, imported_at, metadata_json, part_ids_before, part_ids_after) = database
             .block_on(async {
                 upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter)
                     .await?;
@@ -5403,6 +5610,20 @@ mod tests {
                     false,
                 )
                 .await?;
+                let part_ids_before = sqlx::query_as::<_, (String, i64)>(
+                    r#"
+                    SELECT p.id, p.part_index
+                    FROM conversation_parts p
+                    JOIN conversation_turns t ON t.id = p.turn_id
+                    JOIN conversation_sessions s ON s.id = t.session_id
+                    WHERE s.source_id = ?1
+                    ORDER BY t.turn_index ASC, p.part_index ASC
+                    "#,
+                )
+                .bind(&source.id)
+                .fetch_all(database.pool())
+                .await
+                .map_err(|error| error.to_string())?;
                 sqlx::query(
                     "UPDATE conversation_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
                 )
@@ -5440,12 +5661,34 @@ mod tests {
                 .fetch_one(database.pool())
                 .await
                 .map_err(|error| error.to_string())?;
-                AppResult::Ok((result, imported_at, metadata_json))
+                let part_ids_after = sqlx::query_as::<_, (String, i64)>(
+                    r#"
+                    SELECT p.id, p.part_index
+                    FROM conversation_parts p
+                    JOIN conversation_turns t ON t.id = p.turn_id
+                    JOIN conversation_sessions s ON s.id = t.session_id
+                    WHERE s.source_id = ?1
+                    ORDER BY t.turn_index ASC, p.part_index ASC
+                    "#,
+                )
+                .bind(&source.id)
+                .fetch_all(database.pool())
+                .await
+                .map_err(|error| error.to_string())?;
+                AppResult::Ok((
+                    result,
+                    imported_at,
+                    metadata_json,
+                    part_ids_before,
+                    part_ids_after,
+                ))
             })
             .expect("refresh normalized parts through SQLx");
 
         assert_eq!(result.skipped_session_count, 0);
         assert_ne!(imported_at, "preserved");
+        assert_eq!(part_ids_after, part_ids_before);
+        assert!(!part_ids_after.is_empty());
         assert!(metadata_json
             .as_deref()
             .unwrap_or("")
@@ -5691,6 +5934,7 @@ mod tests {
             cwd: Some("/tmp/project".to_string()),
             status: Some("completed".to_string()),
             exit_code: Some(0),
+            command_label: None,
             source_execution_id: Some("call-export".to_string()),
             content_card: None,
             metadata_json: content_card_metadata("command"),
@@ -5704,6 +5948,7 @@ mod tests {
             cwd: None,
             status: Some("completed".to_string()),
             exit_code: Some(0),
+            command_label: None,
             source_execution_id: Some("call-export".to_string()),
             content_card: None,
             metadata_json: content_card_metadata("result"),
@@ -5781,7 +6026,7 @@ mod tests {
         assert_eq!(nodes[0]["card_index"], 0);
         assert_eq!(nodes[1]["type"], "execution");
         assert_eq!(nodes[1]["source_execution_id"], "call-export");
-        assert_eq!(nodes[1]["command_card_index"], 1);
+        assert_eq!(nodes[1]["command_card_index"], serde_json::json!(1));
         assert_eq!(nodes[1]["result_card_indices"], serde_json::json!([2]));
 
         drop(database);
@@ -6447,6 +6692,7 @@ mod tests {
             kind: "fixture-cards.reasoning".to_string(),
             renderer: Some("markdown".to_string()),
         });
+        first.turns[0].parts[0].command_label = Some("DEBUG".to_string());
         let mut second = first.clone();
         second.turns[0].parts[0].content_card.as_mut().unwrap().kind =
             "fixture-cards.analysis".to_string();
@@ -6503,6 +6749,7 @@ mod tests {
         let part = &detail.questions[0].parts[0];
         assert_eq!(part.id, part_id);
         assert_eq!(part.translated_text.as_deref(), Some("译文"));
+        assert_eq!(part.command_label.as_deref(), Some("DEBUG"));
         assert_eq!(
             part.content_card.as_ref().map(|card| card.kind.as_str()),
             Some("fixture-cards.analysis")
@@ -6513,6 +6760,7 @@ mod tests {
             .find(|card| card.card_id == part_id)
             .expect("projected structured card");
         assert_eq!(projected.semantic_role.as_deref(), Some("reasoning"));
+        assert_eq!(projected.command_label.as_deref(), Some("DEBUG"));
         assert_eq!(stored_adapter.card_contract_version, Some(1));
         assert_eq!(stored_adapter.card_kinds, adapter.card_kinds);
 
@@ -6537,7 +6785,7 @@ mod tests {
         ];
         let hydrated = BTreeSet::from(["session-1".to_string()]);
 
-        let (same, adapter_changed, contract_changed) = database
+        let (same, adapter_changed, contract_changed, payload_policy_changed) = database
             .block_on(async {
                 persist_conversation_session_observations_sqlx(
                     database.pool(),
@@ -6548,6 +6796,7 @@ mod tests {
                     &hydrated,
                     Some("adapter-hash-v1"),
                     Some(1),
+                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
                 )
                 .await?;
                 let same = load_conversation_session_versions_sqlx(
@@ -6557,6 +6806,7 @@ mod tests {
                     ConversationRecordKind::Session,
                     Some("adapter-hash-v1"),
                     Some(1),
+                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
                 )
                 .await?;
                 let adapter_changed = load_conversation_session_versions_sqlx(
@@ -6566,6 +6816,7 @@ mod tests {
                     ConversationRecordKind::Session,
                     Some("adapter-hash-v2"),
                     Some(1),
+                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
                 )
                 .await?;
                 let contract_changed = load_conversation_session_versions_sqlx(
@@ -6575,15 +6826,87 @@ mod tests {
                     ConversationRecordKind::Session,
                     Some("adapter-hash-v1"),
                     Some(2),
+                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
                 )
                 .await?;
-                AppResult::Ok((same, adapter_changed, contract_changed))
+                let payload_policy_changed = load_conversation_session_versions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    "source-1",
+                    ConversationRecordKind::Session,
+                    Some("adapter-hash-v1"),
+                    Some(1),
+                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION + 1,
+                )
+                .await?;
+                AppResult::Ok((
+                    same,
+                    adapter_changed,
+                    contract_changed,
+                    payload_policy_changed,
+                ))
             })
             .expect("compare hydration identity");
 
         assert_eq!(same.get("session-1").map(String::as_str), Some("source-v1"));
         assert!(adapter_changed.is_empty());
         assert!(contract_changed.is_empty());
+        assert!(payload_policy_changed.is_empty());
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_payload_policy_state_requests_one_reparse_for_existing_records() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-payload-policy-state-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let adapter = test_conversation_adapter(
+            "payload-policy-state-external",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let source = test_conversation_source(&adapter.id);
+
+        let (required_before, required_after) = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[fixture_session("v1")],
+                    false,
+                )
+                .await?;
+                let required_before = conversation_payload_policy_reparse_required_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+                )
+                .await?;
+                mark_conversation_payload_policy_applied_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+                )
+                .await?;
+                let required_after = conversation_payload_policy_reparse_required_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+                )
+                .await?;
+                AppResult::Ok((required_before, required_after))
+            })
+            .expect("track payload policy reparse state");
+
+        assert!(required_before);
+        assert!(!required_after);
 
         drop(database);
         cleanup_database(&db_path);
@@ -6605,6 +6928,7 @@ mod tests {
                 cwd: None,
                 status: None,
                 exit_code: None,
+                command_label: None,
                 source_execution_id: None,
                 content_card: None,
                 metadata_json: content_card_metadata("code"),
@@ -6639,6 +6963,7 @@ mod tests {
                 cwd: None,
                 status: None,
                 exit_code: None,
+                command_label: None,
                 source_execution_id: None,
                 content_card: None,
                 metadata_json: content_card_metadata("answer"),
@@ -6919,6 +7244,7 @@ pub(crate) async fn load_conversation_session_versions_sqlx(
     record_kind: crate::backend::dto::ConversationRecordKind,
     adapter_content_hash: Option<&str>,
     card_contract_version: Option<u32>,
+    payload_policy_version: u32,
 ) -> AppResult<std::collections::BTreeMap<String, String>> {
     let kind_str = match record_kind {
         crate::backend::dto::ConversationRecordKind::Session => "session",
@@ -6932,6 +7258,7 @@ pub(crate) async fn load_conversation_session_versions_sqlx(
         WHERE tenant_id = ?1 AND source_id = ?2 AND record_kind = ?3
           AND COALESCE(hydrated_adapter_hash, '') = COALESCE(?4, '')
           AND COALESCE(hydrated_card_contract_version, 0) = COALESCE(?5, 0)
+          AND COALESCE(hydrated_payload_policy_version, 0) = ?6
         "#,
     )
     .bind(tenant_id)
@@ -6939,6 +7266,7 @@ pub(crate) async fn load_conversation_session_versions_sqlx(
     .bind(kind_str)
     .bind(adapter_content_hash)
     .bind(card_contract_version.map(i64::from))
+    .bind(i64::from(payload_policy_version))
     .fetch_all(pool)
     .await
     .map_err(|e| e.to_string())?;
@@ -6952,6 +7280,79 @@ pub(crate) async fn load_conversation_session_versions_sqlx(
     Ok(map)
 }
 
+pub(crate) async fn conversation_payload_policy_reparse_required_sqlx(
+    pool: &sqlx::SqlitePool,
+    tenant_id: &str,
+    payload_policy_version: u32,
+) -> AppResult<bool> {
+    let applied_version = sqlx::query_scalar::<_, i64>(
+        "SELECT applied_version FROM conversation_payload_policy_state WHERE tenant_id = ?1",
+    )
+    .bind(tenant_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    if applied_version.is_some_and(|version| version >= i64::from(payload_policy_version)) {
+        return Ok(false);
+    }
+
+    let stored_session_count = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*)
+        FROM conversation_sessions records
+        JOIN conversation_sources sources
+          ON sources.tenant_id = records.tenant_id AND sources.id = records.source_id
+        WHERE records.tenant_id = ?1 AND records.missing = 0 AND sources.enabled = 1
+        "#,
+    )
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    let stored_web_record_count = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*)
+        FROM web_record_sessions records
+        JOIN conversation_sources sources
+          ON sources.tenant_id = records.tenant_id AND sources.id = records.source_id
+        WHERE records.tenant_id = ?1 AND records.missing = 0 AND sources.enabled = 1
+        "#,
+    )
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    if stored_session_count + stored_web_record_count > 0 {
+        return Ok(true);
+    }
+
+    mark_conversation_payload_policy_applied_sqlx(pool, tenant_id, payload_policy_version).await?;
+    Ok(false)
+}
+
+pub(crate) async fn mark_conversation_payload_policy_applied_sqlx(
+    pool: &sqlx::SqlitePool,
+    tenant_id: &str,
+    payload_policy_version: u32,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_payload_policy_state (tenant_id, applied_version, updated_at)
+        VALUES (?1, ?2, ?3)
+        ON CONFLICT(tenant_id) DO UPDATE SET
+            applied_version = MAX(conversation_payload_policy_state.applied_version, excluded.applied_version),
+            updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(i64::from(payload_policy_version))
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 pub(crate) async fn persist_conversation_session_observations_sqlx(
     pool: &sqlx::SqlitePool,
     tenant_id: &str,
@@ -6961,6 +7362,7 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
     hydrated_external_ids: &std::collections::BTreeSet<String>,
     adapter_content_hash: Option<&str>,
     card_contract_version: Option<u32>,
+    payload_policy_version: u32,
 ) -> AppResult<usize> {
     let kind_str = match record_kind {
         crate::backend::dto::ConversationRecordKind::Session => "session",
@@ -6985,8 +7387,9 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
                 INSERT INTO conversation_session_observations (
                     tenant_id, source_id, record_kind, external_id, observed_version,
                     hydrated_version, last_seen_at, source_presence, dirty,
-                    hydrated_adapter_hash, hydrated_card_contract_version
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10)
+                    hydrated_adapter_hash, hydrated_card_contract_version,
+                    hydrated_payload_policy_version
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11)
                 ON CONFLICT(tenant_id, source_id, record_kind, external_id) DO UPDATE SET
                     observed_version = excluded.observed_version,
                     hydrated_version = excluded.hydrated_version,
@@ -6994,6 +7397,7 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
                     source_presence = excluded.source_presence,
                     hydrated_adapter_hash = excluded.hydrated_adapter_hash,
                     hydrated_card_contract_version = excluded.hydrated_card_contract_version,
+                    hydrated_payload_policy_version = excluded.hydrated_payload_policy_version,
                     dirty = 0
                 "#,
             )
@@ -7007,6 +7411,7 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
             .bind(presence)
             .bind(adapter_content_hash)
             .bind(card_contract_version.map(i64::from))
+            .bind(i64::from(payload_policy_version))
             .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
@@ -7016,14 +7421,16 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
                 INSERT INTO conversation_session_observations (
                     tenant_id, source_id, record_kind, external_id, observed_version,
                     last_seen_at, source_presence, dirty, hydrated_adapter_hash,
-                    hydrated_card_contract_version
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9)
+                    hydrated_card_contract_version,
+                    hydrated_payload_policy_version
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9, ?10)
                 ON CONFLICT(tenant_id, source_id, record_kind, external_id) DO UPDATE SET
                     observed_version = excluded.observed_version,
                     last_seen_at = excluded.last_seen_at,
                     source_presence = excluded.source_presence,
                     hydrated_adapter_hash = excluded.hydrated_adapter_hash,
-                    hydrated_card_contract_version = excluded.hydrated_card_contract_version
+                    hydrated_card_contract_version = excluded.hydrated_card_contract_version,
+                    hydrated_payload_policy_version = excluded.hydrated_payload_policy_version
                 "#,
             )
             .bind(tenant_id)
@@ -7035,6 +7442,7 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
             .bind(presence)
             .bind(adapter_content_hash)
             .bind(card_contract_version.map(i64::from))
+            .bind(i64::from(payload_policy_version))
             .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;

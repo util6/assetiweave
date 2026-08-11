@@ -299,6 +299,7 @@ pub struct ConversationPart {
     pub cwd: Option<String>,
     pub status: Option<String>,
     pub exit_code: Option<i32>,
+    pub command_label: Option<String>,
     pub source_execution_id: Option<String>,
     pub content_card: Option<ConversationContentCardDescriptor>,
     pub metadata_json: Option<String>,
@@ -367,6 +368,8 @@ pub struct NormalizedConversationPart {
     pub cwd: Option<String>,
     pub status: Option<String>,
     pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub command_label: Option<String>,
     #[serde(default)]
     pub source_execution_id: Option<String>,
     #[serde(default, alias = "contentCard")]

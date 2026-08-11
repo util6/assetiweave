@@ -20,7 +20,7 @@ pub fn run() {
     backend::builtin_skills::install_builtin_skills()
         .expect("failed to install AssetIWeave system Skills");
     let db_path = app_db_path().expect("failed to resolve AssetIWeave database path");
-    {
+    let conversation_payload_policy_reparse_required = {
         let service = AppService::open_with_db_path(db_path.clone())
             .expect("failed to initialize AssetIWeave database");
         if let Err(error) = service.interrupt_stale_memory_runs() {
@@ -32,7 +32,14 @@ pub fn run() {
         if let Err(error) = service.refresh_asset_mount_statuses(None) {
             eprintln!("failed to sync AssetIWeave mount observations on startup: {error}");
         }
-    }
+        match service.conversation_payload_policy_reparse_required() {
+            Ok(required) => required,
+            Err(error) => {
+                eprintln!("failed to inspect Conversation payload policy state: {error}");
+                false
+            }
+        }
+    };
     if let Err(error) = write_startup_log() {
         eprintln!("failed to write AssetIWeave startup log: {error}");
     }
@@ -107,6 +114,24 @@ pub fn run() {
         .invoke_handler(adapters::tauri::command_handler())
         .build(tauri::generate_context!())
         .expect("error while running AssetIWeave");
+    if conversation_payload_policy_reparse_required {
+        let state = app.state::<AppState>();
+        let params = backend::application::ConversationSyncParams {
+            source_id: None,
+            adapter_id: None,
+            record_kind: None,
+            mode: backend::application::ConversationSyncMode::Full,
+            dry_run: false,
+        };
+        if let Err(error) = adapters::tauri::commands::start_conversation_sync_background(
+            app.handle().clone(),
+            state.db_path.clone(),
+            state.background_tasks.clone(),
+            params,
+        ) {
+            eprintln!("failed to start Conversation payload policy reparse: {error}");
+        }
+    }
     app.run(move |app_handle, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = event {
             let state = app_handle.state::<AppState>();
