@@ -227,6 +227,19 @@ describe("ConversationsPage sync scope", () => {
     expect(screen.queryByText("Exported session Markdown")).toBeNull();
   });
 
+  it("removes the detail toolbar so the reading area gets the freed space", async () => {
+    listConversationAdaptersMock.mockResolvedValue([conversationAdapter]);
+    listConversationSessionsMock.mockResolvedValue([conversationSession]);
+
+    renderConversationsPage("session");
+    fireEvent.click(await screen.findByRole("button", { name: "Open session Export target" }));
+
+    await waitFor(() => expect(getConversationSessionMock).toHaveBeenCalledWith("session-export-target"));
+    expect(screen.queryByRole("region", { name: "对话记录操作栏" })).toBeNull();
+    expect(screen.queryByPlaceholderText("搜索当前 Session 的问题...")).toBeNull();
+    expect(screen.queryByRole("button", { name: "同步" })).toBeNull();
+  });
+
   it.each(["session", "web"] as const)(
     "opens a %s evidence target once and highlights its exact block",
     async (recordKind) => {

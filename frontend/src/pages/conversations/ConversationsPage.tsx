@@ -210,7 +210,6 @@ export function ConversationsPage({
   const [syncProgress, setSyncProgress] = useState<ConversationSyncProgressState | null>(null);
   const [syncProgressDismissed, setSyncProgressDismissed] = useState(false);
   const [query, setQuery] = useState("");
-  const [detailQuery, setDetailQuery] = useState("");
   const [outputRoot, setOutputRoot] = useState(
     webRecordMode ? "~/Desktop/assetiweave-web-records" : "~/Desktop/assetiweave-conversations",
   );
@@ -226,8 +225,6 @@ export function ConversationsPage({
   const [contentSearchIncludesQuestions, setContentSearchIncludesQuestions] = useState(true);
   const [sessionSortBy, setSessionSortBy] = useState<ConversationSessionSortBy>("updated");
   const [sessionSortDirection, setSessionSortDirection] = useState<"asc" | "desc">("desc");
-  const [questionSortBy, setQuestionSortBy] = useState<ConversationQuestionSortBy>("index");
-  const [questionSortDirection, setQuestionSortDirection] = useState<"asc" | "desc">("asc");
   const [contentSearchResult, setContentSearchResult] = useState<ConversationSearchResultState | null>(null);
   const [contentSearchLoading, setContentSearchLoading] = useState(false);
   const [activeSearchTarget, setActiveSearchTarget] = useState<ConversationSearchTarget | null>(null);
@@ -273,13 +270,8 @@ export function ConversationsPage({
     [selectedQuestion, sessionDetail],
   );
   const visibleSessionQuestions = useMemo(
-    () =>
-      sortConversationQuestions(
-        sessionDetail?.questions.filter((question) => questionMatchesQuery(question, detailQuery)) ?? [],
-        questionSortBy,
-        questionSortDirection,
-      ),
-    [detailQuery, questionSortBy, questionSortDirection, sessionDetail],
+    () => sortConversationQuestions(sessionDetail?.questions ?? [], "index", "asc"),
+    [sessionDetail],
   );
   const selectedQuestionCount = selectedQuestionIds.size;
   const exportAvailableContentTypes = useMemo(() => {
@@ -521,7 +513,6 @@ export function ConversationsPage({
     );
     setSelectedSessionId(targetSession.id);
     setSelectedQuestionId(navigationTarget.questionId ?? null);
-    setDetailQuery("");
     setSelectedQuestionIds(new Set());
     setSessionView("detail");
     setActiveSearchTarget(
@@ -813,7 +804,6 @@ export function ConversationsPage({
 
   const handleOpenSession = useCallback((sessionId: string) => {
     setSelectedSessionId(sessionId);
-    setDetailQuery("");
     setActiveSearchTarget(null);
     setSelectedQuestionIds(new Set());
     setSessionView("detail");
@@ -831,7 +821,6 @@ export function ConversationsPage({
     );
     setSelectedSessionId(hit.session.id);
     setSelectedQuestionId(hit.question_id);
-    setDetailQuery("");
     setSelectedQuestionIds(new Set());
     setSessionView("detail");
     setActiveSearchTarget({
@@ -1009,78 +998,6 @@ export function ConversationsPage({
               visibility={contentVisibility}
             />
           </section>
-          <DataToolbar
-            actions={
-              <>
-                <ToolbarActionButton
-                  icon={<Download size={17} />}
-                  label={t("conversation.session.exportMarkdown")}
-                  onClick={() => openExportDialog("session")}
-                  text={t("toolbar.export")}
-                />
-                <ToolbarActionButton
-                  disabled={selectedQuestionCount === 0}
-                  icon={<Download size={17} />}
-                  label={t("conversation.toolbar.batchExportSelected", { count: selectedQuestionCount })}
-                  onClick={handleBulkExport}
-                  text={t("conversation.toolbar.batchExport")}
-                />
-                <ToolbarTextButton
-                  icon={<Settings size={16} />}
-                  label={t("toolbar.settings")}
-                  onClick={() => onOpenSettings("conversations.sessions")}
-                />
-                <ToolbarActionButton
-                  disabled={syncRunning}
-                  icon={<PackageCheck size={17} />}
-                  label={t("conversation.scriptMarket.inlineTitle")}
-                  onClick={() => setImportDialogOpen(true)}
-                  text={t("conversation.scriptMarket.inlineTitle")}
-                />
-                <ToolbarActionButton
-                  disabled={syncRunning}
-                  icon={<RefreshCw size={17} />}
-                  label={syncRunning ? t("conversation.toolbar.syncing") : t("conversation.toolbar.sync")}
-                  onClick={() => void handleSync()}
-                  primary
-                  text={syncRunning ? t("conversation.toolbar.syncing") : t("conversation.toolbar.sync")}
-                />
-              </>
-            }
-            ariaLabel={t("conversation.toolbar.aria")}
-            className="px-[var(--app-page-x)] py-[var(--app-toolbar-y)]"
-            compact={appSettings.conversations.sessionToolbarCompact}
-            leading={
-              <>
-                <DebouncedToolbarSearch
-                  className="w-[min(22rem,100%)] max-[980px]:w-64"
-                  commitDelayMs={SESSION_SEARCH_COMMIT_DELAY_MS}
-                  onChange={setDetailQuery}
-                  placeholder={t("conversation.question.searchPlaceholder")}
-                  resetSignal={selectedSessionId ?? currentRecordKind}
-                  submitLabel={t("conversation.question.searchSubmit")}
-                  value={detailQuery}
-                />
-                <ToolbarSingleSelectDropdown
-                  ariaLabel={t("conversation.toolbar.questionSort")}
-                  icon={<ArrowDownWideNarrow size={15} />}
-                  onChange={setQuestionSortBy}
-                  options={[
-                    { label: t("conversation.toolbar.sort.original"), value: "index" },
-                    { label: t("conversation.toolbar.sort.updated"), value: "updated" },
-                    { label: t("toolbar.sort.name"), value: "title" },
-                  ]}
-                  value={questionSortBy}
-                />
-                <ToolbarSortDirectionButton
-                  direction={questionSortDirection}
-                  label={t("toolbar.sort.direction.label")}
-                  onClick={() => setQuestionSortDirection((current) => (current === "desc" ? "asc" : "desc"))}
-                  title={t(questionSortDirection === "desc" ? "toolbar.sort.direction.descTitle" : "toolbar.sort.direction.ascTitle")}
-                />
-              </>
-            }
-          />
         </div>
       )}
 
@@ -2796,23 +2713,6 @@ function questionOriginLabel(origin: string, t: Translator) {
 
 function firstLine(value: string, t: Translator) {
   return value.split(/\r?\n/).find((line) => line.trim())?.trim() ?? t("conversation.markdown.untitledQuestion");
-}
-
-function questionMatchesQuery(question: ConversationQuestionDetail, query: string) {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return true;
-
-  const searchable = [
-    question.question.title,
-    question.question.question_text,
-    question.question.answer_text,
-    question.question.code_text,
-    question.question.command_text,
-    ...question.turns.map((turn) => turn.user_text),
-    ...question.parts.flatMap((part) => [part.text, part.command, part.cwd, part.language]),
-  ];
-
-  return searchable.some((value) => value?.toLowerCase().includes(normalized));
 }
 
 export function preferredConversationQuestionId(
