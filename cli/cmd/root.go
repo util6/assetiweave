@@ -20,6 +20,8 @@ import (
 
 const rootLong = `assetiweave-cli controls AssetIWeave through the local Rust engine.
 
+The shorter executable name "aiwc" runs the same CLI.
+
 The CLI is designed for AI agents and scripts:
   - success data is written to stdout as JSON
   - errors are written to stderr as structured JSON
@@ -102,6 +104,7 @@ func buildInternalWithOptions(ctx context.Context, f *cmdutil.Factory, options b
 	root.AddCommand(newCmdDoctor(f))
 	root.AddCommand(newCmdUpdate(f))
 	root.AddCommand(newCmdCompletion(f))
+	applyCommandShortcuts(root)
 	annotateCommandTree(root)
 	applyProfileVisibility(root, options.HideProfiles)
 	installCobraValidation(root)
@@ -131,6 +134,7 @@ func buildInternalWithOptions(ctx context.Context, f *cmdutil.Factory, options b
 		installPluginInstallGuard(root, err)
 		return root, nil
 	}
+	applyCommandShortcuts(root)
 	rules, source, err := cmdpolicy.ResolvePluginRules(installResult.PluginRules)
 	if err != nil {
 		internalplatform.SetActiveInventory(nil)
@@ -254,7 +258,7 @@ func requireYes(yes bool, action string) error {
 
 func isCompletionCommandArgs(args []string) bool {
 	for _, arg := range args {
-		if arg == "completion" || arg == "__complete" || arg == "__completeNoDesc" {
+		if arg == "completion" || arg == "comp" || arg == "__complete" || arg == "__completeNoDesc" {
 			return true
 		}
 	}

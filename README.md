@@ -147,24 +147,28 @@ xattr -dr com.apple.quarantine "/Applications/AssetIWeave.app"
 
 ## CLI 自动化
 
-CLI 由 Go + Cobra 提供命令入口，通过 Rust JSON-RPC engine 与桌面 App 共用同一套业务规则。
+CLI 由 Go + Cobra 提供命令入口，通过 Rust JSON-RPC engine 与桌面 App 共用同一套业务规则。安装后可用简写入口 `aiwc`；原有 `assetiweave-cli` 命令保持兼容。
 
 ```bash
-assetiweave-cli doctor
-assetiweave-cli overview
-assetiweave-cli source list
-assetiweave-cli source add --name LocalSkills --path ./skills --dry-run
-assetiweave-cli source scan --kind skill
+aiwc doc
+aiwc ov
+aiwc src ls
+aiwc src a -n LocalSkills -p ./skills -d
+aiwc src sc -k skill
 
-assetiweave-cli skill list
-assetiweave-cli skill import --from ./downloaded-skill --name downloaded-skill
-assetiweave-cli skill search --query "browser automation skill"
-assetiweave-cli skill acquire --url <github-repo-or-tree-url> --dry-run
-assetiweave-cli skill acquire --url <github-repo-or-tree-url> --yes
-assetiweave-cli skill remote check
-assetiweave-cli skill backup <asset-id>
-assetiweave-cli skill mount downloaded-skill --profile codex
-assetiweave-cli skill unmount downloaded-skill --profile codex
+aiwc c ad upgrade
+aiwc c ad upgrade -d
+aiwc c ad upgrade ./path/to/codex
+
+aiwc sk ls
+aiwc sk imp -f ./downloaded-skill -n downloaded-skill
+aiwc sk s -q "browser automation skill"
+aiwc sk acq -u <github-repo-or-tree-url> -d
+aiwc sk acq -u <github-repo-or-tree-url> -y
+aiwc sk rem chk
+aiwc sk b <asset-id>
+aiwc sk mt downloaded-skill -p codex
+aiwc sk um downloaded-skill -p codex
 ```
 
 完整命令、JSON 输出约定和通用 API 调用方式见 [CLI 文档](docs/cli.md)。

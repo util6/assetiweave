@@ -1,5 +1,8 @@
 # AssetIWeave CLI
 
+> [!TIP]
+> 如果你需要面向用户和 AI Agent 的详细使用指南、命令说明与例程速查，请参阅 [CLI 用户指南](cli-user-guide.md)。
+
 AssetIWeave CLI follows the Feishu/Lark CLI-style split:
 
 ```text
@@ -62,6 +65,60 @@ Or build both local binaries through the wrapper script:
 ```bash
 pnpm cli:install
 ```
+
+## Short commands
+
+`aiwc` is installed and built beside `assetiweave-cli`; both names execute the
+same binary. Existing long commands remain compatible, while command aliases
+and one-character flag shorthands reduce interactive typing:
+
+```bash
+# assetiweave-cli source list
+aiwc src ls
+
+# assetiweave-cli source add --name LocalSkills --path ./skills --dry-run
+aiwc src a -n LocalSkills -p ./skills -d
+
+# assetiweave-cli skill acquire --url <github-url> --yes
+aiwc sk acq -u <github-url> -y
+
+# assetiweave-cli conversation session get <session-id>
+aiwc c ses g <session-id>
+
+# Promote editable adapters from ~/.assetiweave/conversation-adapters
+aiwc c ad upgrade
+
+# Promote adapters from this repository's builtin-assets/adapters
+aiwc c ad upgrade -d
+
+# Promote one adapter workspace from any location
+aiwc c ad upgrade ./path/to/codex
+
+# assetiweave-cli memory recall preview --query <question> --current-project
+aiwc m rec pv -q <question> -c
+```
+
+Frequently used top-level aliases include:
+
+| Canonical command | Aliases |
+| --- | --- |
+| `overview` | `ov`, `o` |
+| `source` | `src` |
+| `skill` | `sk` |
+| `conversation` | `c`, `conv` |
+| `memory` | `m`, `mem` |
+| `harvester` | `hv` |
+| `profile` | `p`, `prof` |
+| `tenant` | `t`, `tn` |
+| `version` | `v`, `ver` |
+
+Common nested aliases include `list -> ls`, `create -> cr`, `get -> g`,
+`search -> s`, `update/upgrade -> up`, `delete/remove -> rm`, `preview -> pv`, and
+`run -> r`. Every visible option has a unique shorthand within its command;
+use `aiwc <command> --help` to see the exact mapping. Stable common flag
+shorthands include `--name/-n`, `--path/-p`, `--query/-q`, `--limit/-l`,
+`--dry-run/-d`, and `--yes/-y`. For `conversation adapter upgrade`, `-d`
+specifically means `--developer`; use `--dry-run/-r` for previews.
 
 During development, `assetiweave-cli` resolves the engine in this order:
 

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { linkSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,4 +59,12 @@ if (result.error) {
   console.error(`go build failed: ${result.error.message}`);
   process.exit(1);
 }
-process.exit(result.status ?? 1);
+if (result.status !== 0) {
+  process.exit(result.status ?? 1);
+}
+
+const aliasOutput = join(dirname(output), `aiwc${exe}`);
+if (aliasOutput !== output) {
+  rmSync(aliasOutput, { force: true });
+  linkSync(output, aliasOutput);
+}

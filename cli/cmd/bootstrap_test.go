@@ -38,3 +38,20 @@ func TestParseBootstrapOptionsStopsAtArgumentSeparator(t *testing.T) {
 		t.Fatalf("EnginePath = %q, want empty after -- separator", options.EnginePath)
 	}
 }
+
+func TestParseBootstrapOptionsAcceptsShortGlobalFlags(t *testing.T) {
+	options, err := parseBootstrapOptions([]string{
+		"-C", "/tmp/plugins.json",
+		"-P=/tmp/policy.json",
+		"-E/tmp/engine",
+		"ov",
+	})
+	if err != nil {
+		t.Fatalf("parseBootstrapOptions() error = %v", err)
+	}
+	if options.PluginConfigPath != "/tmp/plugins.json" ||
+		options.PolicyPath != "/tmp/policy.json" ||
+		options.EnginePath != "/tmp/engine" {
+		t.Fatalf("options = %+v", options)
+	}
+}

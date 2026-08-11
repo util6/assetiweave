@@ -20,6 +20,8 @@ use std::os::unix::fs::PermissionsExt;
 const TOOL_DIR: &str = "bundled-cli/cli";
 /// CLI 主程序名称
 const CLI_NAME: &str = "assetiweave-cli";
+/// CLI 简写入口名称
+const CLI_ALIAS: &str = "aiwc";
 /// Engine 引擎程序名称
 const ENGINE_NAME: &str = "assetiweave-engine";
 
@@ -77,11 +79,15 @@ pub(crate) fn install(app: &AppHandle) -> AppResult<CliToolsStatus> {
         )
     })?;
     write_shim(&install_dir, CLI_NAME, &tools.cli_path)?;
+    write_shim(&install_dir, CLI_ALIAS, &tools.cli_path)?;
     write_shim(&install_dir, ENGINE_NAME, &tools.engine_path)?;
     configure_user_path(&install_dir)?;
 
     let mut next = build_status(&resource_dir, current_path_env());
-    next.message = format!("CLI shims installed in {}", install_dir.display());
+    next.message = format!(
+        "CLI shims (assetiweave-cli and aiwc) installed in {}",
+        install_dir.display()
+    );
     Ok(next)
 }
 
@@ -90,7 +96,7 @@ fn build_status(resource_dir: &Path, path_env: Option<String>) -> CliToolsStatus
     let install_dir = default_install_dir().unwrap_or_else(|_| fallback_install_dir());
     let primary_shim_path = shim_path(&install_dir, CLI_NAME);
     let bundled = tools.cli_path.is_file() && tools.engine_path.is_file();
-    let installed = primary_shim_path.is_file() && shim_path(&install_dir, ENGINE_NAME).is_file();
+    let installed = cli_tools_installed(&install_dir);
     let path_configured = path_env
         .as_deref()
         .map(|path| path_contains_entry(path, &install_dir))
@@ -103,7 +109,9 @@ fn build_status(resource_dir: &Path, path_env: Option<String>) -> CliToolsStatus
             "CLI shims are installed; restart your terminal or add the install directory to PATH."
                 .to_string()
         }
-        (true, true, true) => "CLI tools are installed and reachable from PATH.".to_string(),
+        (true, true, true) => {
+            "assetiweave-cli and aiwc are installed and reachable from PATH.".to_string()
+        }
     };
 
     CliToolsStatus {
@@ -123,6 +131,12 @@ fn build_status(resource_dir: &Path, path_env: Option<String>) -> CliToolsStatus
             .then(|| tools.engine_path.to_string_lossy().to_string()),
         message,
     }
+}
+
+fn cli_tools_installed(install_dir: &Path) -> bool {
+    shim_path(install_dir, CLI_NAME).is_file()
+        && shim_path(install_dir, CLI_ALIAS).is_file()
+        && shim_path(install_dir, ENGINE_NAME).is_file()
 }
 
 struct BundledTools {
@@ -396,6 +410,42 @@ mod tests {
         assert!(shim.contains(
             "exec '/Applications/AssetIWeave.app/Contents/Resources/cli/assetiweave-cli' \"$@\""
         ));
+    }
+
+    #[test]
+    fn short_cli_shim_execs_the_canonical_binary() {
+        assert_eq!(CLI_ALIAS, "aiwc");
+        let root = env::temp_dir().join(format!(
+            "assetiweave-cli-alias-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create install dir");
+        let target =
+            Path::new("/Applications/AssetIWeave.app/Contents/Resources/cli/assetiweave-cli");
+        write_shim(&root, CLI_NAME, target).expect("write canonical shim");
+        write_shim(&root, CLI_ALIAS, target).expect("write short shim");
+        assert_eq!(
+            fs::read_to_string(shim_path(&root, CLI_NAME)).expect("read canonical shim"),
+            fs::read_to_string(shim_path(&root, CLI_ALIAS)).expect("read short shim")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn installed_status_requires_the_short_cli_shim() {
+        let root = env::temp_dir().join(format!(
+            "assetiweave-cli-shortcut-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create install dir");
+        fs::write(shim_path(&root, CLI_NAME), "").expect("write cli shim");
+        fs::write(shim_path(&root, ENGINE_NAME), "").expect("write engine shim");
+        assert!(!cli_tools_installed(&root));
+
+        fs::write(shim_path(&root, CLI_ALIAS), "").expect("write alias shim");
+        assert!(cli_tools_installed(&root));
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

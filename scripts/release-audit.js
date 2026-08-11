@@ -95,6 +95,9 @@ requireIncludes("release workflow", releaseWorkflow, "updaterJsonPreferNsis: tru
 requireIncludes("package scripts", JSON.stringify(packageJSON.scripts), "bundle:cli");
 requireIncludes("Tauri beforeBuildCommand", tauriConfig.build.beforeBuildCommand, "pnpm bundle:cli");
 requireIncludes("Tauri bundle resources", JSON.stringify(tauriConfig.bundle.resources), "bundled-cli/cli");
+requireIncludes("CLI build", read("scripts/build-cli.js"), "aiwc");
+requireIncludes("CLI installer", read("src-tauri/src/adapters/cli_tools.rs"), "CLI_ALIAS");
+requireIncludes("CLI installer", read("src-tauri/src/adapters/cli_tools.rs"), '"aiwc"');
 requireNotIncludes("release workflow", releaseWorkflow, "assetiweave-tools-");
 requireNotIncludes("release workflow", releaseWorkflow, "CLI tools checksum assets");
 requireNotIncludes("release workflow", releaseWorkflow, "macOS app archive");
@@ -115,6 +118,12 @@ requireIncludes("root command", rootCommand, "ASSETIWEAVE_CLI_HIDE_PROFILES");
 requireIncludes("root command", rootCommand, "HideProfiles");
 requireIncludes("root command", rootCommand, "applyProfileVisibility");
 requireIncludes("root command", rootCommand, "installCobraValidation");
+requireIncludes("root command", rootCommand, "applyCommandShortcuts");
+
+const cliShortcuts = read("cli/cmd/shortcuts.go");
+requireIncludes("CLI shortcuts", cliShortcuts, '"conversation":');
+requireIncludes("CLI shortcuts", cliShortcuts, '"dry-run":');
+requireIncludes("CLI shortcuts", cliShortcuts, "assignFlagShorthands");
 
 const cobraErrors = read("cli/cmd/cobra_errors.go");
 requireIncludes("Cobra validation", cobraErrors, "SubtypeUnknownCommand");
