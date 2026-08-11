@@ -358,7 +358,7 @@ assetiweave-cli memory candidate accept|reject
 ```
 
 - `dream preview` 与 `recall preview` 不调用 AI、不写 run/note/candidate。
-- 新增内置 `assetiweave-memory` Skill，仍放在 `src-tauri/builtin-assets/skills/`。
+- 新增内置 `assetiweave-memory` Skill，仍放在 `builtin-assets/skills/`。
 - Skill 默认请求 evidence/extraction bundle，由宿主 Agent 完成综合；只有用户明确要求应用代为综合时才使用 `--ai`。
 - Conversation Recall Skill 保留为底层原始历史检索能力。
 
@@ -538,7 +538,7 @@ Memory evidence 点击后由 AppRouter：
 
 - Acceptance：Skill 能区分 Dream、精准回忆和完整整理；默认让宿主 AI 综合；保留 Session/Question/Block 证据。
 - Verify：builtin installer tests、CLI 示例 smoke test。
-- Files：`src-tauri/builtin-assets/skills/assetiweave-memory/SKILL.md`、`src-tauri/builtin-assets/skills/assetiweave-memory/assetiweave.skill.json`、`src-tauri/src/backend/builtin_skills.rs` 及测试。
+- Files：`builtin-assets/skills/assetiweave-memory/SKILL.md`、`builtin-assets/skills/assetiweave-memory/assetiweave.skill.json`、`src-tauri/src/backend/builtin_skills.rs` 及测试。
 
 #### Task 21：性能、安全与恢复门槛
 

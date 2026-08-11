@@ -347,6 +347,7 @@
 - [X] 19.14 实现已安装版本直接切换、一键回退和删除单个非 active 版本
 - [X] 19.15 实现 stable/beta channel 自动跟随策略和离线多版本切换 UI
 - [X] 19.16 市场页增加显式检查更新，并统一注册（下载安装）、卸载 runtime、删除版本的前端语义与入口
+- [X] 19.17 CLI 增加 `conversation adapter upgrade`，支持默认用户目录、仓库开发目录和任意单目录来源，并将 probe 成功的快照原子提升为唯一可用运行副本
 
 ## Phase 20：Conversation 安全增量同步
 

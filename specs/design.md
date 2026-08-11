@@ -101,10 +101,10 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - 前端目录架构已收敛：保留 `services` 和 `pages` 作为项目约定，新增/明确 `layouts`、`router`、`mock`、`store`、`styles`、`types` 等顶层边界。
 - 当前验证基线：`pnpm typecheck`、`pnpm test`、`cargo test`、`pnpm build` 通过；Vite 单 chunk 超过 500 kB 的提示保留为后续性能优化项。
 - Conversation v1 已接入独立领域模型、SQLite 表、Engine/Go CLI 方法、Tauri commands、Session-first 前端页面、Markdown Session 导出和双向导航入口。
-- Conversation Adapter Package runtime 已形成独立生命周期：外部目录使用 register/unregister，市场 artifact 使用 install/update/uninstall；所有变更先执行 preflight，托管安装写入 `packages/<package_id>/versions/<semver>` 并在数据库事务中激活。
-- Conversation Adapter Catalog v2 使用 `parser-catalog/index.json` 与 `history/<package_id>.json`，缓存版本、Core 兼容范围、artifact 大小与 SHA-256、changelog、breaking-change 和 ETag；远端缓存超过 24 小时才自动刷新，默认只提示更新。
+- Conversation Adapter 的用户第一存储现场固定为 `~/.assetiweave/conversation-adapters/<cli-name>`，已有文件不会被内置 seed 覆盖。注册升级先复制为 prepared 快照并执行 probe，成功后提升到 `packages/<package_id>/versions/<semver>-<content-hash>`，最后在数据库事务中激活；workspace 来源只保留最新可用的不可变运行副本。市场 artifact 仍使用 install/update/uninstall 和正式 SemVer 历史。
+- Conversation Adapter Catalog v2 使用 `builtin-assets/index.json` 与 `history/<package_id>.json`，缓存版本、Core 兼容范围、artifact 大小与 SHA-256、changelog、breaking-change 和 ETag；远端缓存超过 24 小时才自动刷新，默认只提示更新。
 - 对话插件页面提供已接入、更新、发现三个视图和详情/版本历史；市场下载与安装在 UI 中表达为“注册”，并提供显式检查更新。注册、更新、卸载 runtime 通过共享后台任务 registry 执行，页面只禁用冲突的生命周期操作。
-- Go CLI 的 `conversation adapter` 第一阶段只暴露 `list` 和 `inspect`，并通过 Engine 聚合与桌面端相同的 origin、版本、runtime gate、路径、hash、Source 和错误信息。
+- Go CLI 的 `conversation adapter` 暴露 `list`、`inspect` 和 `upgrade`。`aiwc c ad upgrade` 扫描默认第一现场，`aiwc c ad upgrade -d` 使用当前仓库的 `builtin-assets/adapters`，传入目录时只提升指定 workspace；三种形式都通过 Engine 完成快照、probe 和激活。
 - CLI 已形成分层：手写快捷命令、生成式 App 命令、Raw Engine API、稳定错误分类、命令策略、hook、插件平台、harvester/webharvester 和自更新。
 - Skill 互联网发现/导入已覆盖 GitHub 搜索、候选评分/解释、dry-run、确认导入、备份库导入、remote source 记录、drift 检测和前端入口。
 - 产品内置 Conversation Recall Skill 以 `conversation search` 为入口，先读取命中摘要，再按记录类型读取 Question、Session 或 Web Record；回答保留 Session/Question/Block 证据标识，形成后续 Memory 的只读检索基础。
@@ -160,10 +160,10 @@ Conversation 不属于文件资产 Catalog。它拥有独立的数据流：
 Execution 展示投影：
 
 - Codex、Claude Code、OpenCode Adapter 从来源 JSON 复制可靠的 call ID；Antigravity 暂不推断，保持 `source_execution_id = null`。
-- Core 只按精确的 `(turn_id, source_execution_id)` 将 `command` / `result` Card 投影为 Execution 父子节点，不按顺序、文本或时间做语义重匹配。
+- Core 只按精确的 `(turn_id, source_execution_id)` 将有关联 Result 的 `command` / `result` Card 投影为 Execution 父子节点，不按顺序、文本或时间做语义重匹配；没有 Result 子项的 Command 直接投影为普通 Card。
 - Question Detail 同时返回扁平 `cards` 和有序 `content_nodes`；Execution 节点仅保存同一响应内的 Card 数组索引，避免复制正文。
-- 前端直接消费 `content_nodes`，不创建配对 Map；没有结构化节点的历史数据继续使用扁平 Card 回退展示。
-- Execution 是可重建的读取模型，不单独建立实体表或关系表。完整决策见 `docs/decisions/ADR-006-source-execution-grouping.md`。
+- 前端直接消费 `content_nodes`，不创建配对 Map；旧 Engine 返回的 command-only 或仅含空 Result 的 Execution 在展示前退化为普通 Command Card。
+- `source_execution_id` 是内部关联身份，不作为用户可见标签；Execution 是可重建的读取模型，不单独建立实体表或关系表。完整决策见 `docs/decisions/ADR-006-source-execution-grouping.md` 与 `docs/decisions/ADR-007-delete-command-only-execution-shells.md`。
 
 身份与展示约定：
 
@@ -202,6 +202,7 @@ Execution 展示投影：
 Conversation Adapter Package 生命周期：
 
 - `conversation_adapters` 保持协议身份和 Source 绑定边界；`conversation_adapter_packages` 记录 active runtime、origin、catalog、更新策略和最新版本；`conversation_adapter_package_versions` 记录本地版本目录与 hash；`conversation_adapter_catalog_releases` 缓存远端发布历史。
+- 用户可编辑 workspace 与运行副本分离：顶层 `<cli-name>` 目录允许直接修改，运行时只读取已成功激活的 `packages` 副本。workspace 升级失败不修改 active runtime；升级成功后清理此前的 workspace 运行副本，只保留最新可用版本。
 - 外部 package 注册只记录路径、manifest、runtime、hash 和 Git 元数据，不复制或删除外部文件；注销只解除运行注册并保留 Source 与对话记录。
 - 市场安装先下载到 staging，限制 ZIP 条目数量和展开体积，拒绝路径穿越与 symlink，校验 HTTPS、artifact SHA-256、package/content hash、SemVer 和 Core 兼容性后再写入托管版本目录。
 - 新版本激活在一个数据库事务内更新 package、version 和 adapter runtime；失败时旧 active runtime 保持可用。同一正式 `package_id + version` 不允许 hash 变化。

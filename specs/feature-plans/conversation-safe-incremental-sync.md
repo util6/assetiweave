@@ -46,7 +46,7 @@ SQLite 将内容生命周期与来源观测分离：
 - `src-tauri/src/backend/conversations/`：Adapter 两阶段协议、输出校验和 active Session 编排。
 - `src-tauri/src/backend/store/`：来源观测、保留式导入和幂等内容更新。
 - `src-tauri/migrations/`：来源观测字段或表的 schema 演进。
-- `parser-catalog/adapters/`、`src-tauri/bundled/conversation-adapters/`：官方 Adapter 的元数据发现与按 ID 读取。
+- `builtin-assets/adapters/`：官方 Adapter 的唯一源码与元数据发现入口；Tauri 编译时直接嵌入所需 Adapter。
 - `frontend/src/services/`、`frontend/src/pages/conversations/`：同步结果类型和用户可见状态。
 - `cli/internal/schema/contract.json`：由 Rust Engine contract 生成，不手工编辑。
 
