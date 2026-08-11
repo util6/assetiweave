@@ -1,3 +1,8 @@
+//! Stdio JSON-RPC 通信传输与引擎命令分发模块
+//!
+//! 实现从标准输入 (stdin) 读取逐行的 JSON 请求，解析方法名与参数，经由 Policy 鉴权及注册表分发执行，
+//! 最终将格式化的 JSON 响应写回标准输出 (stdout) 的标准 Stdio 协议循环。
+
 use super::{policy, protocol, registry as command_registry, runtime};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -5,19 +10,28 @@ use std::io::{self, Read, Write};
 
 type EngineResult<T> = Result<T, EngineError>;
 
+/// 解析后的引擎请求对象
 #[derive(Debug)]
 struct EngineRequest {
+    /// 调用的方法名称
     method: String,
+    /// 传入的 JSON 参数
     params: Value,
 }
 
+/// 线缆/网络传输中的原始 JSON-RPC 请求结构
 #[derive(Debug, Deserialize)]
 struct WireEngineRequest {
+    /// 请求唯一 ID
     id: Option<String>,
+    /// 方法名称
     method: String,
+    /// 传入参数
     #[serde(default)]
     params: Value,
+    /// 客户端要求的协议版本
     protocol_version: Option<u32>,
+    /// 客户端要求的契约版本
     contract_version: Option<u32>,
 }
 
@@ -34,26 +48,38 @@ impl From<WireEngineRequest> for EngineRequest {
     }
 }
 
+/// 引擎标准 JSON 响应结构
 #[derive(Debug, Serialize)]
 struct EngineResponse {
+    /// 对应的请求 ID
     id: Option<String>,
+    /// 执行是否成功标志
     ok: bool,
+    /// 成功时返回的数据字段
     #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<Value>,
+    /// 协议元数据（包含执行耗时、版本号等）
     #[serde(skip_serializing_if = "Option::is_none")]
     meta: Option<Value>,
+    /// 失败时返回的错误详情对象
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<EngineError>,
 }
 
+/// 引擎标准错误对象
 #[derive(Debug, Serialize)]
 pub(crate) struct EngineError {
+    /// 错误分类名称 ("type")
     #[serde(rename = "type")]
     kind: String,
+    /// 稳定错误代码
     code: String,
+    /// 详细错误文本描述
     message: String,
+    /// 针对开发者的修复提示 (Hint)
     #[serde(skip_serializing_if = "Option::is_none")]
     hint: Option<String>,
+    /// 诊断细节数据 JSON
     #[serde(skip_serializing_if = "Option::is_none")]
     details: Option<Value>,
 }
@@ -1273,11 +1299,14 @@ mod tests {
 
     #[test]
     fn environment_lock_restores_mutated_process_variables() {
-        let original_home = env::var_os("HOME");
-        let original_db_path = env::var_os("ASSETIWEAVE_DB_PATH");
-        let original_policy_path = env::var_os("ASSETIWEAVE_POLICY_PATH");
+        let original_home;
+        let original_db_path;
+        let original_policy_path;
         {
             let _guard = env_lock().lock().expect("env lock");
+            original_home = env::var_os("HOME");
+            original_db_path = env::var_os("ASSETIWEAVE_DB_PATH");
+            original_policy_path = env::var_os("ASSETIWEAVE_POLICY_PATH");
             env::set_var("HOME", "/tmp/assetiweave-env-guard-home");
             env::set_var("ASSETIWEAVE_DB_PATH", "/tmp/assetiweave-env-guard.db");
             env::set_var(
@@ -1382,6 +1411,7 @@ mod tests {
             "copy_prompt_card_to_clipboard",
             "get_cli_tools_status",
             "install_cli_tools",
+            "list_source_assets",
         ])
     }
 

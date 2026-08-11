@@ -494,6 +494,7 @@ mod tests {
                 cwd: None,
                 status: None,
                 exit_code: None,
+                command_label: None,
                 source_execution_id: None,
                 content_card: None,
                 metadata_json: None,
@@ -575,6 +576,7 @@ mod tests {
                 status: None,
                 exit_code: None,
                 source_execution_id: None,
+                command_label: None,
                 translated_body: None,
                 legacy_anchor_ids: Vec::new(),
             })
