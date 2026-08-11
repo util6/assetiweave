@@ -1,4 +1,4 @@
-import { BookOpen, Braces, Brain, CheckCircle2, FileText, FolderOpen, Terminal, Wrench, type LucideIcon } from "lucide-react";
+import { BookOpen, Braces, Brain, CheckCircle2, FileText, FolderOpen, GitCompareArrows, Terminal, Wrench, type LucideIcon } from "lucide-react";
 import {
   createContext,
   useCallback,
@@ -97,6 +97,7 @@ const rendererIcons: Record<ConversationCardRenderer, LucideIcon> = {
   code: Braces,
   command: Terminal,
   terminal_output: CheckCircle2,
+  diff: GitCompareArrows,
 };
 
 const builtInKindIconHints: Record<string, keyof typeof iconHints> = {

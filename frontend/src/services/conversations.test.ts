@@ -167,7 +167,7 @@ describe("conversation services", () => {
     const entries = await listConversationAdapterPackages();
     const codexEntry = entries.find((entry) => entry.item.adapter_id === "codex");
 
-    expect(codexEntry?.item.version).toBe("1.5.7");
+    expect(codexEntry?.item.version).toBe("1.5.9");
   });
 
   it("routes installed-version lifecycle operations through the shared package API", async () => {

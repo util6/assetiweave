@@ -1,264 +1,173 @@
-import parseDiff from "parse-diff";
 import { useMemo } from "react";
+import { Diff, Hunk, parseDiff, type FileData } from "react-diff-view";
+import "react-diff-view/style/index.css";
 
-type ConversationDiffLineType = "addition" | "context" | "deletion" | "metadata";
+export function ConversationDiff({
+  value,
+  summary,
+}: {
+  value: string;
+  summary?: ConversationDiffSummary;
+}) {
+  const parsed = useMemo(() => parseConversationDiff(value), [value]);
 
-interface ConversationDiffLine {
-  content: string;
-  marker: "+" | " " | "-";
-  newLineNumber: number | null;
-  oldLineNumber: number | null;
-  type: ConversationDiffLineType;
-}
-
-interface ConversationDiffHunk {
-  header: string;
-  lines: ConversationDiffLine[];
-}
-
-interface ConversationDiffFile {
-  additions: number;
-  deletions: number;
-  displayPath: string;
-  hunks: ConversationDiffHunk[];
-  newPath: string | null;
-  oldPath: string | null;
-  primaryPath: string;
-}
-
-export function ConversationDiff({ value }: { value: string }) {
-  const files = useMemo(() => parseConversationDiff(value), [value]);
+  if (!parsed.files.length) {
+    return <PlainDiffFallback value={value} />;
+  }
 
   return (
     <div className="grid gap-3" data-conversation-diff="unified">
-      {files.map((file, fileIndex) => (
-        <section
+      {parsed.files.map((file, index) => {
+        const fileSummary = summary?.files[index];
+        const additions = fileSummary?.additions ?? countChanges(file, "insert");
+        const deletions = fileSummary?.deletions ?? countChanges(file, "delete");
+        return (
+          <section
           className="overflow-hidden rounded-lg border border-theme-card-border bg-theme-control/55"
-          data-diff-file={file.primaryPath}
-          data-diff-new-file={file.newPath ?? undefined}
-          data-diff-old-file={file.oldPath ?? undefined}
-          key={`${file.primaryPath}-${fileIndex}`}
+          data-diff-file={displayPath(file)}
+          key={`${displayPath(file)}-${index}`}
         >
           <header className="flex min-h-9 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-theme-card-border bg-theme-card-header/80 px-3 py-2">
-            <span className="min-w-0 truncate font-mono text-code-sm font-semibold text-on-surface" title={file.displayPath}>
-              {file.displayPath}
+            <span className="min-w-0 truncate font-mono text-code-sm font-semibold text-on-surface" title={displayPath(file)}>
+              {displayPath(file)}
             </span>
-            <span className="flex shrink-0 items-center gap-2 font-mono text-code-sm" aria-label={`${file.additions} additions, ${file.deletions} deletions`}>
-              <span className="text-status-create">+{file.additions}</span>
-              <span className="text-status-remove">-{file.deletions}</span>
+            <span className="flex shrink-0 items-center gap-2 font-mono text-code-sm" aria-label={`${additions} additions, ${deletions} deletions`}>
+              <span className="text-status-create">+{additions}</span>
+              <span className="text-status-remove">-{deletions}</span>
             </span>
           </header>
-          <div className="overflow-x-auto">
-            <table className="w-max min-w-full border-collapse font-mono text-code-sm leading-6">
-              <colgroup>
-                <col className="w-12" />
-                <col className="w-12" />
-                <col />
-              </colgroup>
-              <tbody>
-                {file.hunks.flatMap((hunk, hunkIndex) => [
-                  <tr className="bg-status-update/10 text-status-update" data-diff-line-type="hunk" key={`hunk-${hunkIndex}`}>
-                    <td className="border-b border-theme-card-border/70 px-3 py-1 font-medium" colSpan={3}>
-                      <span className="whitespace-pre">{hunk.header}</span>
-                    </td>
-                  </tr>,
-                  ...hunk.lines.map((line, lineIndex) => (
-                    <DiffLine key={`${hunkIndex}-${lineIndex}`} line={line} />
-                  )),
-                ])}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      ))}
+          {file.isBinary || file.hunks.length === 0 ? (
+            <PlainDiffFallback value={file.raw} />
+          ) : (
+            <div className="conversation-diff-view overflow-x-auto p-2">
+              <Diff
+                className="min-w-[42rem] font-mono text-code-sm"
+                diffType={file.type}
+                gutterType="default"
+                hunks={file.hunks}
+                viewType="unified"
+              >
+                {(hunks) => hunks.map((hunk) => <Hunk hunk={hunk} key={hunk.content} />)}
+              </Diff>
+            </div>
+          )}
+          </section>
+        );
+      })}
     </div>
   );
 }
 
-function DiffLine({ line }: { line: ConversationDiffLine }) {
-  const rowClass = line.type === "addition"
-    ? "bg-status-create/10"
-    : line.type === "deletion"
-      ? "bg-status-remove/10"
-      : line.type === "metadata"
-        ? "bg-theme-card/45 text-on-surface-muted"
-        : "text-on-surface";
-  const markerClass = line.type === "addition"
-    ? "text-status-create"
-    : line.type === "deletion"
-      ? "text-status-remove"
-      : "text-on-surface-muted";
-
-  return (
-    <tr className={rowClass} data-diff-line-type={line.type}>
-      <DiffLineNumber value={line.oldLineNumber} />
-      <DiffLineNumber value={line.newLineNumber} />
-      <td className="min-w-[32rem] border-b border-theme-card-border/45 px-3 align-top">
-        <span aria-hidden="true" className={`inline-block w-4 select-none ${markerClass}`}>
-          {line.marker}
-        </span>
-        <span className="whitespace-pre">{line.content}</span>
-      </td>
-    </tr>
-  );
+interface ParsedDiffFile extends FileData {
+  raw: string;
 }
 
-function DiffLineNumber({ value }: { value: number | null }) {
-  return (
-    <td
-      aria-label={value == null ? undefined : `Line ${value}`}
-      className="select-none border-b border-r border-theme-card-border/55 bg-theme-card/35 px-2 text-right align-top tabular-nums text-on-surface-muted"
-    >
-      {value ?? ""}
-    </td>
-  );
+export interface ConversationDiffFileSummary {
+  path: string;
+  additions: number;
+  deletions: number;
+  status: "added" | "deleted" | "modified" | "renamed";
+  binary: boolean;
 }
 
-function parseConversationDiff(value: string): ConversationDiffFile[] {
-  const normalizedValue = value.replace(/\r\n?/g, "\n").trimEnd();
-  const parsedFiles = splitDiffSections(normalizedValue).flatMap((section) => parseDiff(section));
-  const filesWithHunks = parsedFiles.filter((file) => file.chunks.length > 0);
-  if (filesWithHunks.length > 0) {
-    return filesWithHunks.map(normalizeDiffFile);
-  }
-
-  return [parseDiffFragment(normalizedValue)];
+export interface ConversationDiffSummary {
+  files: ConversationDiffFileSummary[];
+  additions: number;
+  deletions: number;
 }
 
-function splitDiffSections(value: string) {
-  const lines = value.split("\n");
-  const boundaries = lines.flatMap((line, index) => line.startsWith("diff ") ? [index] : []);
-  if (boundaries.length < 2) return [value];
-
-  return boundaries.map((boundary, index) => {
-    const start = index === 0 ? 0 : boundary;
-    const end = boundaries[index + 1] ?? lines.length;
-    return lines.slice(start, end).join("\n");
-  });
-}
-
-function normalizeDiffFile(file: parseDiff.File): ConversationDiffFile {
-  const oldPath = visibleDiffPath(file.from);
-  const newPath = visibleDiffPath(file.to);
-  const primaryPath = newPath ?? oldPath ?? "diff";
-  const displayPath = oldPath && newPath && oldPath !== newPath
-    ? `${oldPath} -> ${newPath}`
-    : primaryPath;
+export function summarizeConversationDiff(value: string): ConversationDiffSummary {
+  const parsed = parseConversationDiff(value);
+  const files = parsed.files.map((file) => ({
+    path: displayPath(file),
+    additions: countChanges(file, "insert"),
+    deletions: countChanges(file, "delete"),
+    status: diffStatus(file),
+    binary: /^(?:Binary files|GIT binary patch)/m.test(file.raw),
+  }));
 
   return {
-    additions: file.additions,
-    deletions: file.deletions,
-    displayPath,
-    hunks: file.chunks.map((chunk) => ({
-      header: chunk.content,
-      lines: chunk.changes.map(normalizeDiffChange),
-    })),
-    newPath,
-    oldPath,
-    primaryPath,
+    files,
+    additions: files.reduce((total, file) => total + file.additions, 0),
+    deletions: files.reduce((total, file) => total + file.deletions, 0),
   };
 }
 
-function normalizeDiffChange(change: parseDiff.Change): ConversationDiffLine {
-  if (change.content === "\\ No newline at end of file") {
-    return {
-      content: change.content,
-      marker: " ",
-      newLineNumber: null,
-      oldLineNumber: null,
-      type: "metadata",
-    };
-  }
-  if (change.type === "add") {
-    return {
-      content: change.content.slice(1),
-      marker: "+",
-      newLineNumber: change.ln,
-      oldLineNumber: null,
-      type: "addition",
-    };
-  }
-  if (change.type === "del") {
-    return {
-      content: change.content.slice(1),
-      marker: "-",
-      newLineNumber: null,
-      oldLineNumber: change.ln,
-      type: "deletion",
-    };
-  }
-  return {
-    content: change.content.slice(1),
-    marker: " ",
-    newLineNumber: change.ln2,
-    oldLineNumber: change.ln1,
-    type: "context",
-  };
-}
-
-function parseDiffFragment(value: string): ConversationDiffFile {
-  const lines = value.split("\n");
-  let additions = 0;
-  let deletions = 0;
-  let oldLineNumber = 1;
-  let newLineNumber = 1;
-  const normalizedLines = lines.map((line): ConversationDiffLine => {
-    if (line.startsWith("+") && !line.startsWith("+++")) {
-      additions += 1;
-      const parsedLine = {
-        content: line.slice(1),
-        marker: "+" as const,
-        newLineNumber,
-        oldLineNumber: null,
-        type: "addition" as const,
-      };
-      newLineNumber += 1;
-      return parsedLine;
-    }
-    if (line.startsWith("-") && !line.startsWith("---")) {
-      deletions += 1;
-      const parsedLine = {
-        content: line.slice(1),
-        marker: "-" as const,
-        newLineNumber: null,
-        oldLineNumber,
-        type: "deletion" as const,
-      };
-      oldLineNumber += 1;
-      return parsedLine;
-    }
-    if (line === "\\ No newline at end of file") {
+function parseConversationDiff(value: string): { files: ParsedDiffFile[] } {
+  const normalized = value.replace(/\r\n?/g, "\n").trimEnd();
+  try {
+    const parserSource = prepareDiffForParser(normalized);
+    const files = parseDiff(parserSource, { nearbySequences: "zip" });
+    if (files.length > 0) {
       return {
-        content: line,
-        marker: " ",
-        newLineNumber: null,
-        oldLineNumber: null,
-        type: "metadata",
+        files: files.map((file, index) => ({
+          ...file,
+          raw: rawFileForIndex(parserSource, index, files.length),
+        })),
       };
     }
-    const parsedLine = {
-      content: line.startsWith(" ") ? line.slice(1) : line,
-      marker: " " as const,
-      newLineNumber,
-      oldLineNumber,
-      type: "context" as const,
-    };
-    oldLineNumber += 1;
-    newLineNumber += 1;
-    return parsedLine;
-  });
-
-  return {
-    additions,
-    deletions,
-    displayPath: "diff",
-    hunks: [{ header: "@@", lines: normalizedLines }],
-    newPath: null,
-    oldPath: null,
-    primaryPath: "diff",
-  };
+  } catch {
+    // Keep the original payload visible when a source emits an invalid diff.
+  }
+  return { files: [] };
 }
 
-function visibleDiffPath(path?: string) {
-  return path && path !== "/dev/null" ? path : null;
+function prepareDiffForParser(value: string) {
+  const lines = value.split("\n");
+  if (lines[0]?.startsWith("@@")) {
+    return ["diff --git a/patch b/patch", "--- a/patch", "+++ b/patch", ...lines].join("\n");
+  }
+  const prepared: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const oldHeader = lines[index];
+    if (oldHeader == null) break;
+    const newHeader = lines[index + 1];
+    if (oldHeader?.startsWith("--- ") && newHeader?.startsWith("+++ ") && !lines[index - 1]?.startsWith("diff --git ")) {
+      const oldPath = oldHeader.slice(4).split("\t", 1)[0];
+      const newPath = newHeader.slice(4).split("\t", 1)[0];
+      prepared.push(`diff --git ${oldPath} ${newPath}`);
+    }
+    prepared.push(oldHeader);
+  }
+  return prepared.join("\n");
+}
+
+function rawFileForIndex(value: string, index: number, fileCount: number) {
+  const starts = [...value.matchAll(/^diff --git .*$/gm)].map((match) => match.index ?? 0);
+  if (starts.length !== fileCount || starts[index] == null) return value;
+  return value.slice(starts[index], starts[index + 1] ?? value.length);
+}
+
+function displayPath(file: FileData) {
+  const oldPath = visiblePath(file.oldPath);
+  const newPath = visiblePath(file.newPath);
+  if (oldPath && newPath && oldPath !== newPath) return `${oldPath} → ${newPath}`;
+  return newPath ?? oldPath ?? "diff";
+}
+
+function diffStatus(file: FileData): ConversationDiffFileSummary["status"] {
+  if (file.type === "add") return "added";
+  if (file.type === "delete") return "deleted";
+  const oldPath = visiblePath(file.oldPath);
+  const newPath = visiblePath(file.newPath);
+  return oldPath && newPath && oldPath !== newPath ? "renamed" : "modified";
+}
+
+function visiblePath(value?: string | null) {
+  return value && value !== "/dev/null" ? value : null;
+}
+
+function countChanges(file: FileData, type: "insert" | "delete") {
+  return file.hunks.reduce(
+    (total, hunk) => total + hunk.changes.filter((change) => change.type === type).length,
+    0,
+  );
+}
+
+function PlainDiffFallback({ value }: { value: string }) {
+  return (
+    <pre className="max-h-[38rem] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-code-sm leading-6 text-on-surface" data-diff-fallback="plain">
+      <code>{value}</code>
+    </pre>
+  );
 }

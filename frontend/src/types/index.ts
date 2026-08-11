@@ -340,6 +340,7 @@ export interface ConversationPart {
   cwd?: string | null;
   status?: string | null;
   exit_code?: number | null;
+  command_label?: string | null;
   content_card?: ConversationContentCardDescriptor | null;
   metadata_json?: string | null;
   translated_text?: string | null;
@@ -359,7 +360,8 @@ export type ConversationCardRenderer =
   | "json"
   | "code"
   | "command"
-  | "terminal_output";
+  | "terminal_output"
+  | "diff";
 
 export interface ConversationCard {
   card_id: string;
@@ -376,6 +378,7 @@ export interface ConversationCard {
   exit_code?: number | null;
   translated_body?: string | null;
   source_execution_id?: string | null;
+  command_label?: string | null;
   legacy_anchor_ids: string[];
 }
 

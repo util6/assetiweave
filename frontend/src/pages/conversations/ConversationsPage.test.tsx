@@ -131,8 +131,8 @@ describe("MarkdownContent", () => {
 
     expect(html.match(/data-conversation-diff="unified"/g)).toHaveLength(2);
     expect(html).toContain('data-diff-file="frontend/src/App.tsx"');
-    expect(html).toContain('data-diff-line-type="deletion"');
-    expect(html).toContain('data-diff-line-type="addition"');
+    expect(html).toContain('diff-code-delete');
+    expect(html).toContain('diff-code-insert');
     expect(html).toContain("OldView");
     expect(html).toContain("NewView");
     expect(html).not.toContain("<code>diff --git");
@@ -163,8 +163,8 @@ describe("MarkdownContent", () => {
     const secondFileIndex = html.indexOf('data-diff-file="src/second.ts"');
     expect(secondFileIndex).toBeGreaterThan(0);
     expect(html.slice(0, secondFileIndex)).not.toContain("diff --git");
-    expect(html.match(/data-diff-line-type="deletion"/g)).toHaveLength(2);
-    expect(html.match(/data-diff-line-type="addition"/g)).toHaveLength(2);
+    expect(html.match(/diff-code-delete/g)).toHaveLength(2);
+    expect(html.match(/diff-code-insert/g)).toHaveLength(2);
   });
 
   it("normalizes escaped OpenCode markdown text before rendering", () => {
@@ -761,7 +761,7 @@ describe("MarkdownContent", () => {
     expect(commandOnlyHtml).toContain("assetiweave-cli conversation sync --dry-run");
     expect(commandOnlyHtml).not.toContain("tests passed");
     expect(commandOnlyHtml).not.toContain("completed");
-    expect(commandOnlyHtml).not.toContain("退出码");
+    expect(commandOnlyHtml).toContain("退出码 0");
   });
 
   it("copies the raw text from a content card", async () => {
@@ -974,6 +974,38 @@ describe("MarkdownContent", () => {
     )).toBeTruthy();
     expect(screen.getByText("显示 4 / 4 行")).toBeTruthy();
     expect(screen.getByRole("button", { name: "收起" })).toBeTruthy();
+  });
+
+  it("applies the preview collapse to every text-based card renderer", () => {
+    const renderers = [
+      { id: "answer-card", renderer: "markdown" as const, type: "answer", prefix: "answer" },
+      { id: "tool-card", renderer: "plain" as const, type: "tool", prefix: "tool" },
+      { id: "command-card", renderer: "command" as const, type: "command", prefix: "command" },
+      { id: "code-card", renderer: "code" as const, type: "code", prefix: "code" },
+      { id: "result-card", renderer: "terminal_output" as const, type: "result", prefix: "result" },
+    ];
+    render(
+      <ConversationContentCards
+        blocks={renderers.map(({ id, renderer, type, prefix }) => ({
+          id,
+          renderer,
+          role: "assistant" as const,
+          text: [`${prefix} one`, `${prefix} two`, `${prefix} three`, `${prefix} four`].join("\n"),
+          type,
+        }))}
+        resultPreviewLineLimit={2}
+        t={t}
+        visibility={{ answer: true, code: true, command: true, result: true, tool: true }}
+      />,
+    );
+
+    expect(screen.getAllByText("显示 2 / 4 行")).toHaveLength(renderers.length);
+    const expandButtons = screen.getAllByRole("button", { name: "展开全部" });
+    expect(expandButtons).toHaveLength(renderers.length);
+    expandButtons.forEach((button) => fireEvent.click(button));
+
+    expect(screen.getAllByText("显示 4 / 4 行")).toHaveLength(renderers.length);
+    expect(screen.getAllByRole("button", { name: "收起" })).toHaveLength(renderers.length);
   });
 
   it("renders switches only for card types available in the current content scope", () => {

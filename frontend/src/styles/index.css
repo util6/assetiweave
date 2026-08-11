@@ -5,6 +5,35 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer components {
+  .conversation-diff-view .diff {
+    color: rgb(var(--color-on-surface));
+    background: rgb(var(--theme-control-bg) / 0.42);
+  }
+
+  .conversation-diff-view .diff-code-delete,
+  .conversation-diff-view .diff-gutter-delete {
+    background: rgb(var(--color-status-remove) / 0.14);
+  }
+
+  .conversation-diff-view .diff-code-insert,
+  .conversation-diff-view .diff-gutter-insert {
+    background: rgb(var(--color-status-create) / 0.14);
+  }
+
+  .conversation-diff-view .diff-code-delete {
+    color: rgb(var(--color-status-remove));
+  }
+
+  .conversation-diff-view .diff-code-insert {
+    color: rgb(var(--color-status-create));
+  }
+
+  .conversation-diff-view .diff-gutter {
+    color: rgb(var(--color-on-surface-variant));
+  }
+}
+
 @layer base {
   :root {
     color-scheme: dark;
