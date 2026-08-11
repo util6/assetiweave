@@ -1214,6 +1214,22 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "conversation.adapter_package.upgrade_workspace",
+        "conversation.adapter_package.upgrade_workspace",
+        "Validate editable conversation adapter workspaces and promote immutable runtime copies",
+        HighRiskWrite,
+        Friendly,
+        true,
+        crate::backend::application::ConversationAdapterWorkspaceUpgradeParams,
+        Service => |service, params| service.upgrade_conversation_adapter_workspace(params),
+        &[
+            param!("package_dir", "Optional adapter workspace directory", ["packageDir"]),
+            param!("developer", "Use builtin-assets/adapters from the current repository"),
+            param!("dry_run", "Validate and preview promotion", ["dryRun"]),
+        ],
+        Some("assetiweave-cli conversation adapter upgrade [adapter-directory]")
+    ),
+    command!(
         "conversation.adapter_package.inspect",
         "conversation.adapter_package.inspect",
         "Inspect an active conversation adapter package or adapter runtime",

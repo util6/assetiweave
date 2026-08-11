@@ -15,6 +15,63 @@ const CONVERSATION_SCRIPT_SECURITY_NOTICE: &str =
     "Review remote conversation adapter package contents before installing; AssetIWeave registers the downloaded adapter package as trusted for local execution.";
 
 impl AppService {
+    pub(crate) fn upgrade_conversation_adapter_workspace(
+        &self,
+        params: ConversationAdapterWorkspaceUpgradeParams,
+    ) -> AppResult<Value> {
+        if params.developer && params.package_dir.is_some() {
+            return Err(
+                "developer conversation adapter upgrade cannot be combined with package_dir"
+                    .to_string(),
+            );
+        }
+
+        let managed_root = crate::backend::app_settings::conversation_adapter_dir()?;
+        let (source_root, package_dirs) = if let Some(package_dir) = params.package_dir {
+            let package_dir = crate::backend::path_utils::expand_path(&package_dir)?;
+            (package_dir.clone(), vec![package_dir])
+        } else if params.developer {
+            let current_dir = env::current_dir().map_err(|error| error.to_string())?;
+            let adapter_root = find_developer_conversation_adapter_root(&current_dir)?;
+            let package_dirs = current_dir
+                .ancestors()
+                .find(|candidate| {
+                    candidate
+                        .join("conversation-adapter-package.json")
+                        .is_file()
+                        && candidate.parent() == Some(adapter_root.as_path())
+                })
+                .map(|package_dir| vec![package_dir.to_path_buf()])
+                .unwrap_or(discover_conversation_adapter_workspace_dirs(&adapter_root)?);
+            (adapter_root, package_dirs)
+        } else {
+            let package_dirs = discover_conversation_adapter_workspace_dirs(&managed_root)?;
+            (managed_root.clone(), package_dirs)
+        };
+        if package_dirs.is_empty() {
+            return Err(format!(
+                "no conversation adapter package directories found under {}",
+                source_root.display()
+            ));
+        }
+
+        let mut upgraded = Vec::with_capacity(package_dirs.len());
+        for package_dir in package_dirs {
+            upgraded.push(promote_conversation_adapter_workspace_package(
+                self,
+                &package_dir,
+                &managed_root,
+                params.dry_run,
+            )?);
+        }
+        Ok(json!({
+            "dry_run": params.dry_run,
+            "developer": params.developer,
+            "source_root": source_root,
+            "upgraded": upgraded,
+        }))
+    }
+
     pub(crate) fn inspect_conversation_adapter_package(
         &self,
         params: ConversationAdapterPackageInspectParams,
@@ -957,6 +1014,256 @@ impl AppService {
         package.updated_at = now;
         self.save_conversation_adapter_package(package)
     }
+}
+
+fn find_developer_conversation_adapter_root(start: &Path) -> AppResult<PathBuf> {
+    for ancestor in start.ancestors() {
+        let candidate = ancestor.join("builtin-assets").join("adapters");
+        if candidate.is_dir() {
+            return Ok(candidate);
+        }
+    }
+    Err(format!(
+        "builtin-assets/adapters was not found from {} or its ancestors",
+        start.display()
+    ))
+}
+
+fn discover_conversation_adapter_workspace_dirs(root: &Path) -> AppResult<Vec<PathBuf>> {
+    if !root.is_dir() {
+        return Err(format!(
+            "conversation adapter workspace root is not a directory: {}",
+            root.display()
+        ));
+    }
+    let mut package_dirs = fs::read_dir(root)
+        .map_err(|error| error.to_string())?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if matches!(name.as_ref(), "packages" | "staging") {
+                return None;
+            }
+            let path = entry.path();
+            (entry.file_type().ok()?.is_dir()
+                && path.join("conversation-adapter-package.json").is_file())
+            .then_some(path)
+        })
+        .collect::<Vec<_>>();
+    package_dirs.sort();
+    Ok(package_dirs)
+}
+
+fn promote_conversation_adapter_workspace_package(
+    service: &AppService,
+    package_dir: &Path,
+    managed_root: &Path,
+    dry_run: bool,
+) -> AppResult<Value> {
+    let source_dir = package_dir
+        .canonicalize()
+        .map_err(|error| format!("resolve adapter workspace failed: {error}"))?;
+    let source_validation =
+        crate::backend::conversations::validate_conversation_adapter_package_dir(&source_dir)?;
+    let adapter_id = source_validation.adapter_validation.manifest.id.as_str();
+    let directory_name = source_dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if directory_name != adapter_id {
+        return Err(format!(
+            "conversation adapter workspace directory must match adapter id: expected {adapter_id}, found {directory_name}"
+        ));
+    }
+    if source_validation.manifest.version != source_validation.adapter_validation.manifest.version {
+        return Err(format!(
+            "conversation adapter package and adapter versions must match: {} != {}",
+            source_validation.manifest.version,
+            source_validation.adapter_validation.manifest.version
+        ));
+    }
+    let preflight = service.prepare_conversation_adapter_package_change(
+        ConversationAdapterPackageChangeParams {
+            action: ConversationAdapterPackageChangeAction::Register,
+            package_id: None,
+            adapter_id: Some(adapter_id.to_string()),
+        },
+    )?;
+    reject_conversation_package_task_conflicts(&preflight)?;
+
+    let version = validated_package_version(&source_validation.manifest.version)?;
+    let revision = format!(
+        "{}-{}",
+        version,
+        &source_validation.content_hash[..12.min(source_validation.content_hash.len())]
+    );
+    let package_root = managed_root
+        .join("packages")
+        .join(&source_validation.manifest.package_id);
+    let version_dir = package_root.join("versions").join(&revision);
+    if dry_run {
+        return Ok(json!({
+            "dry_run": true,
+            "source_dir": source_dir,
+            "install_dir": version_dir,
+            "package_id": source_validation.manifest.package_id,
+            "adapter_id": adapter_id,
+            "version": version,
+            "content_hash": source_validation.content_hash,
+            "preflight": preflight,
+        }));
+    }
+
+    let prepared_dir = package_root.join("prepared").join(short_uuid());
+    if let Some(parent) = prepared_dir.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    capabilities::copy_dir(&source_dir, &prepared_dir)?;
+    let promotion = (|| {
+        let prepared_validation =
+            crate::backend::conversations::validate_conversation_adapter_package_dir(
+                &prepared_dir,
+            )?;
+        if prepared_validation.content_hash != source_validation.content_hash {
+            return Err(
+                "conversation adapter workspace changed while its runtime snapshot was being created"
+                    .to_string(),
+            );
+        }
+        crate::backend::conversations::register_external_adapter(
+            crate::backend::conversations::ExternalAdapterRegisterParams {
+                manifest_path: prepared_validation.adapter_manifest_path,
+                dry_run: false,
+                yes: true,
+            },
+        )?;
+
+        let created_version_dir = if version_dir.exists() {
+            let existing =
+                crate::backend::conversations::validate_conversation_adapter_package_dir(
+                    &version_dir,
+                )?;
+            if existing.content_hash != source_validation.content_hash {
+                return Err(format!(
+                    "conversation adapter runtime revision is immutable: {}",
+                    version_dir.display()
+                ));
+            }
+            fs::remove_dir_all(&prepared_dir).map_err(|error| error.to_string())?;
+            false
+        } else {
+            let parent = version_dir.parent().ok_or_else(|| {
+                "conversation adapter runtime has no versions directory".to_string()
+            })?;
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            fs::rename(&prepared_dir, &version_dir).map_err(|error| error.to_string())?;
+            true
+        };
+
+        let final_validation =
+            crate::backend::conversations::validate_conversation_adapter_package_dir(&version_dir)?;
+        let preview = crate::backend::conversations::register_external_adapter(
+            crate::backend::conversations::ExternalAdapterRegisterParams {
+                manifest_path: final_validation.adapter_manifest_path.clone(),
+                dry_run: true,
+                yes: true,
+            },
+        )?;
+        let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)?;
+        let previous_package =
+            service.load_conversation_adapter_package(&final_validation.manifest.package_id)?;
+        let now = Utc::now().to_rfc3339();
+        let package = ConversationAdapterPackage {
+            package_id: final_validation.manifest.package_id.clone(),
+            adapter_id: adapter.id.clone(),
+            name: final_validation.manifest.name.clone(),
+            version: final_validation.manifest.version.clone(),
+            record_kind: final_validation.manifest.record_kind,
+            install_dir: version_dir.to_string_lossy().to_string(),
+            manifest_path: final_validation.manifest_path.clone(),
+            adapter_manifest_path: final_validation.adapter_manifest_path.clone(),
+            runtime_protocol: final_validation
+                .manifest
+                .runtime
+                .protocol
+                .as_str()
+                .to_string(),
+            runtime_ready: true,
+            origin: ConversationAdapterPackageOrigin::LocalDirectory,
+            source_url: Some(source_dir.to_string_lossy().to_string()),
+            git_ref: None,
+            git_commit: None,
+            catalog_url: None,
+            update_policy: ConversationPackageUpdatePolicy::PinExact,
+            latest_version: Some(final_validation.manifest.version.clone()),
+            last_checked_at: Some(now.clone()),
+            runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
+            runtime_validated_at: Some(now.clone()),
+            installed_content_hash: Some(final_validation.content_hash.clone()),
+            trusted_package_hash: Some(final_validation.content_hash.clone()),
+            error_message: None,
+            created_at: previous_package
+                .as_ref()
+                .map(|package| package.created_at.clone())
+                .unwrap_or_else(|| now.clone()),
+            updated_at: now,
+        };
+        let pool = service.db.pool().clone();
+        let tenant_id = service.tenant_id().to_string();
+        let adapter_to_save = adapter.clone();
+        let package_to_save = package.clone();
+        let activation = service.db.block_on(async move {
+            crate::backend::store::activate_conversation_adapter_workspace_sqlx(
+                &pool,
+                &tenant_id,
+                &adapter_to_save,
+                &package_to_save,
+            )
+            .await
+        });
+        if let Err(error) = activation {
+            if created_version_dir {
+                let _ = fs::remove_dir_all(&version_dir);
+            }
+            return Err(error);
+        }
+        let cleanup_warning =
+            retain_only_active_workspace_runtime(&package_root, &version_dir).err();
+        Ok(json!({
+            "dry_run": false,
+            "upgraded": true,
+            "source_dir": source_dir,
+            "package": package,
+            "adapter": adapter,
+            "validation": final_validation,
+            "preflight": preflight,
+            "cleanup_warning": cleanup_warning,
+        }))
+    })();
+    if promotion.is_err() {
+        let _ = fs::remove_dir_all(&prepared_dir);
+    }
+    promotion
+}
+
+fn retain_only_active_workspace_runtime(package_root: &Path, active_dir: &Path) -> AppResult<()> {
+    let versions_dir = package_root.join("versions");
+    if !versions_dir.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&versions_dir).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if path == active_dir {
+            continue;
+        }
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        if file_type.is_dir() {
+            fs::remove_dir_all(path).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 fn discover_local_conversation_adapter_packages(
@@ -2603,7 +2910,8 @@ mod tests {
             artifact_size: None,
             source: ConversationScriptCatalogSource {
                 kind: ConversationScriptCatalogSourceKind::Github,
-                url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex".to_string(),
+                url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
+                    .to_string(),
                 branch: None,
                 path: None,
             },
@@ -3093,6 +3401,114 @@ mod tests {
             .find(|adapter| adapter.id == "builtin-preflight")
             .expect("built-in registration retained");
         assert!(!retained.enabled);
+
+        drop(service);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_upgrade_promotes_only_a_probed_immutable_runtime_copy() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("assetiweave-workspace-upgrade-{}", Uuid::new_v4()));
+        let package_dir = root.join("workspace").join("external-test");
+        let managed_root = root.join("managed");
+        fs::create_dir_all(&package_dir).expect("create workspace package");
+        fs::write(
+            package_dir.join("conversation-adapter-package.json"),
+            r#"{
+  "schema_version": 1,
+  "package_id": "com.util6.external-test",
+  "name": "External Test",
+  "version": "1.0.0",
+  "min_core_version": "0.1.0",
+  "record_kind": "session",
+  "adapter_manifest": "conversation-adapter.json",
+  "capabilities": ["probe", "read_session"],
+  "runtime": { "protocol": "stdio-ndjson-v1" },
+  "changelog": []
+}"#,
+        )
+        .expect("write package manifest");
+        fs::write(
+            package_dir.join("conversation-adapter.json"),
+            r#"{
+  "schema_version": 1,
+  "id": "external-test",
+  "name": "External Test",
+  "version": "1.0.0",
+  "protocol_version": 1,
+  "command": ["adapter.sh"],
+  "capabilities": ["probe", "read_session"],
+  "input_kinds": ["directory"]
+}"#,
+        )
+        .expect("write adapter manifest");
+        let executable = package_dir.join("adapter.sh");
+        let write_executable = |body: &str| {
+            fs::write(&executable, body).expect("write adapter executable");
+            let mut permissions = fs::metadata(&executable)
+                .expect("adapter metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&executable, permissions).expect("make adapter executable");
+        };
+        write_executable(
+            "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"revision\":1}}'\n",
+        );
+
+        let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+        let first = promote_conversation_adapter_workspace_package(
+            &service,
+            &package_dir,
+            &managed_root,
+            false,
+        )
+        .expect("promote first workspace revision");
+        let first_install = PathBuf::from(
+            first["package"]["install_dir"]
+                .as_str()
+                .expect("first install dir"),
+        );
+        assert_ne!(first_install, package_dir);
+        assert!(first_install.join("adapter.sh").is_file());
+
+        write_executable(
+            "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"revision\":2}}'\n",
+        );
+        let second = promote_conversation_adapter_workspace_package(
+            &service,
+            &package_dir,
+            &managed_root,
+            false,
+        )
+        .expect("promote second workspace revision");
+        let second_install = PathBuf::from(
+            second["package"]["install_dir"]
+                .as_str()
+                .expect("second install dir"),
+        );
+        assert_ne!(second_install, first_install);
+        assert!(!first_install.exists());
+        assert!(second_install.is_dir());
+
+        write_executable("#!/bin/sh\ncat >/dev/null\nprintf 'invalid\\n'\n");
+        let error = promote_conversation_adapter_workspace_package(
+            &service,
+            &package_dir,
+            &managed_root,
+            false,
+        )
+        .expect_err("reject invalid workspace revision");
+        assert!(error.contains("probe failed"));
+        let retained = service
+            .load_conversation_adapter_package("com.util6.external-test")
+            .expect("load retained package")
+            .expect("retained package");
+        assert_eq!(PathBuf::from(retained.install_dir), second_install);
+        assert!(second_install.is_dir());
 
         drop(service);
         let _ = fs::remove_dir_all(root);

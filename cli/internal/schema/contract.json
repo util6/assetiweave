@@ -3460,6 +3460,54 @@
       "supports_dry_run": true
     },
     {
+      "canonical_method": "conversation.adapter_package.upgrade_workspace",
+      "cli": "assetiweave-cli conversation adapter upgrade [adapter-directory]",
+      "confirmation_required": true,
+      "contract_version": 3,
+      "deprecated": false,
+      "description": "Validate editable conversation adapter workspaces and promote immutable runtime copies",
+      "exposure": "friendly",
+      "method": "conversation.adapter_package.upgrade_workspace",
+      "params_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "developer": {
+            "default": false,
+            "description": "Use builtin-assets/adapters from the current repository",
+            "type": "boolean"
+          },
+          "dry_run": {
+            "aliases": [
+              "dryRun"
+            ],
+            "default": false,
+            "description": "Validate and preview promotion",
+            "type": "boolean"
+          },
+          "package_dir": {
+            "aliases": [
+              "packageDir"
+            ],
+            "default": null,
+            "description": "Optional adapter workspace directory",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "yes": {
+            "description": "Confirm the high-risk operation",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "risk": "high-risk-write",
+      "since": "0.1.0",
+      "supports_dry_run": true
+    },
+    {
       "canonical_method": "conversation.adapter_package.inspect",
       "cli": "assetiweave-cli conversation adapter inspect <package-or-adapter-id>",
       "confirmation_required": false,
@@ -12456,6 +12504,7 @@
     "conversation.script.catalog",
     "conversation.script.install",
     "conversation.adapter_package.register_local",
+    "conversation.adapter_package.upgrade_workspace",
     "conversation.adapter_package.inspect",
     "conversation.adapter_package.prepare_change",
     "conversation.adapter_package.catalog",

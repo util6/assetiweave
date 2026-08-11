@@ -593,6 +593,16 @@ pub(crate) struct ConversationAdapterLocalRegisterParams {
     pub(crate) yes: bool,
 }
 
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct ConversationAdapterWorkspaceUpgradeParams {
+    #[serde(default, alias = "packageDir")]
+    pub(crate) package_dir: Option<String>,
+    #[serde(default)]
+    pub(crate) developer: bool,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+}
+
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ConversationSyncMode {

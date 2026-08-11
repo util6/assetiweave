@@ -62,6 +62,65 @@ func TestConversationSearchBuildsUnifiedKindSearchParams(t *testing.T) {
 	}
 }
 
+func TestConversationAdapterUpgradeUsesDefaultWorkspace(t *testing.T) {
+	client := &recordingClient{}
+	err := executeSkillGroupTestCommand(t, client, "c", "ad", "upgrade")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if client.method != "conversation.adapter_package.upgrade_workspace" {
+		t.Fatalf("method = %q, want conversation.adapter_package.upgrade_workspace", client.method)
+	}
+	params := recordedSkillGroupParams(t, client)
+	if params["package_dir"] != nil || params["developer"] != false || params["dry_run"] != false || params["yes"] != true {
+		t.Fatalf("params = %#v", params)
+	}
+}
+
+func TestConversationAdapterUpgradeDryRunDoesNotConfirmPromotion(t *testing.T) {
+	client := &recordingClient{}
+	err := executeSkillGroupTestCommand(t, client, "c", "ad", "upgrade", "--dry-run")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	params := recordedSkillGroupParams(t, client)
+	if params["dry_run"] != true || params["yes"] != false {
+		t.Fatalf("params = %#v", params)
+	}
+}
+
+func TestConversationAdapterUpgradeSupportsDeveloperWorkspace(t *testing.T) {
+	client := &recordingClient{}
+	err := executeSkillGroupTestCommand(t, client, "c", "ad", "upgrade", "-d")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	params := recordedSkillGroupParams(t, client)
+	if params["package_dir"] != nil || params["developer"] != true {
+		t.Fatalf("params = %#v", params)
+	}
+}
+
+func TestConversationAdapterUpgradeSupportsExplicitDirectory(t *testing.T) {
+	client := &recordingClient{}
+	err := executeSkillGroupTestCommand(t, client, "c", "ad", "upgrade", "/tmp/custom/codex")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	params := recordedSkillGroupParams(t, client)
+	if params["package_dir"] != "/tmp/custom/codex" || params["developer"] != false {
+		t.Fatalf("params = %#v", params)
+	}
+}
+
+func TestConversationAdapterUpgradeRejectsDeveloperFlagWithExplicitDirectory(t *testing.T) {
+	client := &recordingClient{}
+	err := executeSkillGroupTestCommand(t, client, "c", "ad", "upgrade", "-d", "/tmp/custom/codex")
+	if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("error = %v, want mutually exclusive input error", err)
+	}
+}
+
 func TestConversationSearchRejectsUnqualifiedUnknownKind(t *testing.T) {
 	client := &recordingClient{}
 	err := executeSkillGroupTestCommand(t, client,
@@ -241,7 +300,7 @@ func TestConversationBlockCommandsUseOnlyExactLocators(t *testing.T) {
 	}
 }
 
-func TestConversationAdapterCommandExposesOnlyListAndInspect(t *testing.T) {
+func TestConversationAdapterCommandExposesFocusedRuntimeCommands(t *testing.T) {
 	root := Build(context.Background(), &cmdutil.Factory{
 		IOStreams: &cmdutil.IOStreams{In: &bytes.Buffer{}, Out: &bytes.Buffer{}, ErrOut: &bytes.Buffer{}},
 		Client:    &recordingClient{},
@@ -254,8 +313,8 @@ func TestConversationAdapterCommandExposesOnlyListAndInspect(t *testing.T) {
 	for _, child := range command.Commands() {
 		names = append(names, child.Name())
 	}
-	if !reflect.DeepEqual(names, []string{"inspect", "list"}) {
-		t.Fatalf("conversation adapter commands = %#v, want inspect/list only", names)
+	if !reflect.DeepEqual(names, []string{"inspect", "list", "upgrade"}) {
+		t.Fatalf("conversation adapter commands = %#v, want inspect/list/upgrade", names)
 	}
 }
 

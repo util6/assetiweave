@@ -589,9 +589,37 @@ func intParam(params map[string]any, key string) int {
 }
 
 func newCmdConversationAdapter(f *cmdutil.Factory) *cobra.Command {
-	cmd := &cobra.Command{Use: "adapter", Short: "Inspect conversation adapter runtimes"}
+	cmd := &cobra.Command{Use: "adapter", Short: "Manage conversation adapter workspaces and runtimes"}
 	cmd.AddCommand(newCmdConversationAdapterList(f))
 	cmd.AddCommand(newCmdConversationAdapterInspect(f))
+	cmd.AddCommand(newCmdConversationAdapterUpgrade(f))
+	return cmd
+}
+
+func newCmdConversationAdapterUpgrade(f *cmdutil.Factory) *cobra.Command {
+	var developer, dryRun bool
+	cmd := &cobra.Command{
+		Use:   "upgrade [adapter-directory]",
+		Short: "Validate and promote editable adapter scripts to the runtime package store",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if developer && len(args) > 0 {
+				return fmt.Errorf("--developer cannot be combined with an explicit adapter directory")
+			}
+			params := map[string]any{
+				"package_dir": nil,
+				"developer":   developer,
+				"dry_run":     dryRun,
+				"yes":         !dryRun,
+			}
+			if len(args) == 1 {
+				params["package_dir"] = args[0]
+			}
+			return callAndPrint(cmd, f, schema.MethodConversationAdapterPackageUpgrade, params)
+		},
+	}
+	cmd.Flags().BoolVarP(&developer, "developer", "d", false, "upgrade adapters from this repository's builtin-assets/adapters directory")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "validate and preview without promoting runtime packages")
 	return cmd
 }
 
