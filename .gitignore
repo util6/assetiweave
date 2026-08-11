@@ -1,15 +1,94 @@
+# Operating system files
 **/.DS_Store
-**/__pycache__/
-*.pyc
-.specstory/
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+Desktop.ini
 
+# Local agent and IDE state
+**/.claude/settings.local.json
+.idea/
+*.iml
+
+# Environment files and signing material
+.env
+.env.*
+!.env.example
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Dependencies and package-manager state
 node_modules/
+.pnpm-store/
+
+# Build output and generated packaging artifacts
 dist/
 target/
-
-*.log
-*.tmp
-
-src-tauri/target/
+/build/
+/out/
+.tauri/
 src-tauri/bundled-cli/cli/*
 !src-tauri/bundled-cli/cli/.gitkeep
+
+# Frontend caches and incremental compiler state
+**/.vite/
+**/.vite-temp/
+**/.cache/
+**/.turbo/
+*.tsbuildinfo
+.eslintcache
+.stylelintcache
+
+# Test and coverage output
+coverage/
+.nyc_output/
+htmlcov/
+test-results/
+playwright-report/
+*.lcov
+.coverage
+.coverage.*
+cli/coverage.out
+
+# Python caches and virtual environments
+**/__pycache__/
+*.py[cod]
+*$py.class
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+.venv/
+venv/
+env/
+
+# Go build/test output
+cli/*.test
+*.prof
+
+# Local application databases and SQLite sidecars
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Logs, temporary files, and editor swap files
+*.log
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Conversation/tool metadata generated outside the builtin asset sources
+**/.specstory/
