@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; command-only presentation superseded by ADR-007
 
 ## Date
 
@@ -62,4 +62,5 @@ Codex, Claude Code and OpenCode already provide a stable call identifier in thei
 ## References
 
 - `docs/decisions/ADR-005-adapter-declared-conversation-card-contract.md`
+- `docs/decisions/ADR-007-delete-command-only-execution-shells.md`
 - `specs/design.md`

@@ -1,4 +1,4 @@
-import { Check, Copy, Languages } from "lucide-react";
+import { Check, CheckCircle2, Copy, GitCompareArrows, Languages, XCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Translator } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
@@ -38,8 +38,7 @@ import {
   conversationCardPresentationKind,
   useConversationCardKindRegistry,
 } from "./ConversationCardKindRegistry";
-import { ConversationDiff } from "./ConversationDiff";
-import { isDiffLanguage, isUnifiedDiffText } from "./conversationDiffLanguage";
+import { ConversationDiff, summarizeConversationDiff } from "./ConversationDiff";
 
 export type ConversationContentType = string;
 
@@ -62,6 +61,7 @@ export interface ConversationContentBlock {
   status?: string | null;
   exitCode?: number | null;
   translatedText?: string | null;
+  commandLabel?: string | null;
 }
 
 export type ConversationDisplayNode =
@@ -123,6 +123,13 @@ export function buildConversationDisplayNodes(
       return card ? [conversationCardToBlock(card)] : [];
     });
     if (!commandCard && results.length === 0) return [];
+    if (commandCard && results.length === 0) {
+      return [{
+        type: "card",
+        turnId: node.turn_id,
+        block: conversationCardToBlock(commandCard),
+      }];
+    }
 
     return [{
       type: "execution",
@@ -148,6 +155,7 @@ function conversationCardToBlock(card: ConversationCard): ConversationContentBlo
     cwd: card.cwd,
     status: card.status,
     exitCode: card.exit_code,
+    commandLabel: card.command_label,
     translatedText: card.translated_body,
     format: card.renderer === "markdown" ? "markdown" : "plain",
   };
@@ -193,7 +201,12 @@ export function ConversationContentCards({
     const command = node.command && (visibility[node.command.type] ?? true)
       ? node.command
       : undefined;
-    const results = node.results.filter((block) => visibility[block.type] ?? true);
+    const results = node.results.filter((block) => (
+      (visibility[block.type] ?? true) && shouldDisplayContentBlock(block)
+    ));
+    if (command && results.length === 0) {
+      return [{ type: "card", turnId: node.turnId, block: command }];
+    }
     return command || results.length > 0 ? [{ ...node, command, results }] : [];
   });
   const visibleBlocks = visibleNodes.flatMap((node) => (
@@ -333,15 +346,9 @@ export function ConversationContentCards({
             data-conversation-execution-id={node.sourceExecutionId}
             key={executionKey}
           >
-            <header className="flex flex-wrap items-center justify-between gap-2 border-b border-theme-card-border bg-theme-card/55 px-4 py-2.5">
+            <header className="flex flex-wrap items-center gap-2 border-b border-theme-card-border bg-theme-card/55 px-4 py-2.5">
               <span className="text-label-caps text-on-surface-variant">
                 {t("conversation.content.execution")}
-              </span>
-              <span
-                className="select-text rounded-md border border-theme-card-border bg-theme-card/65 px-1.5 py-0.5 font-mono text-code-sm normal-case text-on-surface-muted"
-                title={node.sourceExecutionId}
-              >
-                {conversationIdFragment(node.sourceExecutionId)}
               </span>
             </header>
             <div className="grid gap-3 p-3">
@@ -413,6 +420,7 @@ function ConversationContentCard({
   translationError?: string;
   translationTargetLanguage: ConversationTranslationTargetLanguage;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const renderer = block.renderer ?? legacyRenderer(block.type, block.format);
   const { definitions } = useConversationCardKindRegistry();
   const definition = block.kind && block.kind === block.type ? definitions.get(block.kind) : undefined;
@@ -432,6 +440,22 @@ function ConversationContentCard({
     targetLanguage: translationTargetLabel,
     translating,
   });
+  const resultPresentation = block.type === "result"
+    ? describeResultPresentation(block)
+    : undefined;
+  const diffSummary = renderer === "diff"
+    ? summarizeConversationDiff(block.text)
+    : undefined;
+  const preview = resultPresentation?.type === "file-change"
+    ? {
+        hasOverflow: false,
+        lines: [],
+        visibleLineCount: 0,
+        visibleValue: "",
+      }
+    : buildConversationCardPreview(block.text, resultPreviewLineLimit, expanded);
+  const canExpandDiff = resultPresentation?.type === "file-change" && block.text.trim().length > 0;
+  const canExpandResult = canExpandDiff || preview.hasOverflow;
 
   return (
     <section
@@ -447,9 +471,27 @@ function ConversationContentCard({
       }}
     >
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-inherit px-4 py-2.5">
-        <div className="flex items-center gap-2 text-label-caps" style={{ color: accentColor }}>
-          <ConversationCardKindIcon iconHint={definition?.icon_hint} kind={block.type} renderer={renderer} />
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-label-caps" style={{ color: accentColor }}>
+          {isSuccessfulCommand(block) ? (
+            <CheckCircle2 aria-hidden="true" size={15} />
+          ) : (
+            <ConversationCardKindIcon iconHint={definition?.icon_hint} kind={block.type} renderer={renderer} />
+          )}
           <span>{label}</span>
+          {block.commandLabel ? (
+            <span
+              className="max-w-48 truncate rounded-sm border border-status-create/55 bg-status-create/10 px-2 py-0.5 text-label-caps text-status-create"
+              data-command-label={block.commandLabel}
+              title={block.commandLabel}
+            >
+              {block.commandLabel}
+            </span>
+          ) : null}
+          {block.type === "command" && block.exitCode != null ? (
+            <span className="rounded-sm border border-inherit bg-theme-card/45 px-2 py-0.5 font-mono text-code-sm normal-case text-on-surface-variant">
+              {t("conversation.content.exitCode", { code: block.exitCode })}
+            </span>
+          ) : null}
         </div>
         <div className="flex items-center gap-1.5 text-label-caps">
           <span
@@ -484,9 +526,40 @@ function ConversationContentCard({
         <ConversationCardBody
           block={block}
           label={label}
-          resultPreviewLineLimit={resultPreviewLineLimit}
+          text={resultPresentation?.type === "file-change" ? block.text : preview.visibleValue}
+          expanded={expanded}
+          diffSummary={diffSummary}
+          resultPresentation={resultPresentation}
           t={t}
         />
+        {canExpandResult ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-inherit bg-theme-card/35 px-3 py-2">
+            {canExpandDiff ? (
+              <span className="text-code-sm text-on-surface-muted">
+                {t("conversation.content.diffSummaryFiles", { count: resultPresentation.summary.files.length })}
+              </span>
+            ) : (
+              <span className="text-code-sm text-on-surface-muted">
+                {t("conversation.content.resultPreviewLines", {
+                  shown: preview.visibleLineCount,
+                  total: preview.lines.length,
+                })}
+              </span>
+            )}
+            <button
+              aria-expanded={expanded}
+              className="rounded-lg border border-theme-control-border bg-theme-control/80 px-2.5 py-1 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface"
+              onClick={() => setExpanded((current) => !current)}
+              type="button"
+            >
+              {expanded
+                ? t("conversation.content.collapseResult")
+                : canExpandDiff
+                  ? t("conversation.content.viewDiff")
+                  : t("conversation.content.expandResult")}
+            </button>
+          </div>
+        ) : null}
         {translatedText ? (
           <div className="mt-3 rounded-lg border border-inherit bg-theme-card/45 px-3 py-3">
             <div className="mb-2 text-label-caps text-on-surface-muted">
@@ -508,54 +581,216 @@ function ConversationContentCard({
 
 function ConversationCardBody({
   block,
+  diffSummary,
+  expanded,
   label,
-  resultPreviewLineLimit,
+  resultPresentation,
+  text,
   t,
 }: {
   block: ConversationContentBlock;
+  diffSummary?: ReturnType<typeof summarizeConversationDiff>;
+  expanded: boolean;
   label: string;
-  resultPreviewLineLimit: number;
+  resultPresentation?: ConversationResultPresentation;
+  text: string;
+  t: Translator;
+}) {
+  if (resultPresentation) {
+    return (
+      <ConversationResultBody
+        block={block}
+        expanded={expanded}
+        diffSummary={diffSummary}
+        presentation={resultPresentation}
+        text={text}
+        t={t}
+      />
+    );
+  }
+
+  return (
+    <ConversationStandardCardBody
+      block={block}
+      diffSummary={diffSummary}
+      expanded={expanded}
+      label={label}
+      text={text}
+      t={t}
+    />
+  );
+}
+
+function ConversationStandardCardBody({
+  block,
+  diffSummary,
+  expanded,
+  label,
+  text,
+  t,
+}: {
+  block: ConversationContentBlock;
+  diffSummary?: ReturnType<typeof summarizeConversationDiff>;
+  expanded: boolean;
+  label: string;
+  text: string;
   t: Translator;
 }) {
   const renderer = block.renderer ?? legacyRenderer(block.type, block.format);
   switch (renderer) {
+    case "diff":
+      return <ConversationDiff summary={diffSummary} value={text} />;
     case "markdown":
-      return <MarkdownContent value={block.text} />;
+      return <MarkdownContent value={text} />;
     case "terminal_output":
-      if (isUnifiedDiffText(block.text)) {
-        return <ConversationDiff value={block.text} />;
+      if (block.format === "markdown") {
+        return (
+          <div
+            className="rounded-lg border border-inherit bg-theme-card/45 px-3 py-3"
+            data-result-format="markdown"
+          >
+            <MarkdownContent value={text} />
+          </div>
+        );
       }
       return (
-        <CommandResultPreview
-          format={block.format ?? "plain"}
-          lineLimit={resultPreviewLineLimit}
-          t={t}
-          value={block.text}
-        />
+        <pre className="max-h-[38rem] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-inherit bg-theme-card/45 p-3 text-code-sm leading-6 text-on-surface">
+          <code>{text}</code>
+        </pre>
       );
     case "path":
-      return <LocalPathCardBody label={label} path={block.text} t={t} />;
+      return <LocalPathCardBody label={label} path={text} t={t} />;
     case "json":
     case "code":
-      if (isDiffLanguage(block.language)) {
-        return <ConversationDiff value={block.text} />;
-      }
       return (
         <pre className="overflow-auto whitespace-pre-wrap break-words text-code-sm leading-6 text-on-surface">
-          <code>{block.text}</code>
+          <code>{text}</code>
         </pre>
       );
     case "command":
     case "plain":
-      if (isUnifiedDiffText(block.text)) {
-        return <ConversationDiff value={block.text} />;
-      }
       return (
         <pre className="overflow-auto whitespace-pre-wrap break-words text-code-sm leading-6 text-on-surface">
-          <code>{block.text}</code>
+          <code>{text}</code>
         </pre>
       );
   }
+}
+
+type ConversationResultPresentation =
+  | {
+      type: "file-change";
+      summary: ReturnType<typeof summarizeConversationDiff>;
+    }
+  | {
+      type: "success";
+    }
+  | {
+      type: "failure";
+    };
+
+function describeResultPresentation(block: ConversationContentBlock): ConversationResultPresentation | undefined {
+  const renderer = block.renderer ?? legacyRenderer(block.type, block.format);
+  if (renderer === "diff") {
+    return { type: "file-change", summary: summarizeConversationDiff(block.text) };
+  }
+  if (isSuccessfulResult(block)) return { type: "success" };
+  if (isFailedResult(block)) return { type: "failure" };
+  return undefined;
+}
+
+function ConversationResultBody({
+  block,
+  diffSummary,
+  expanded,
+  presentation,
+  text,
+  t,
+}: {
+  block: ConversationContentBlock;
+  diffSummary?: ReturnType<typeof summarizeConversationDiff>;
+  expanded: boolean;
+  presentation: ConversationResultPresentation;
+  text: string;
+  t: Translator;
+}) {
+  if (presentation.type === "file-change") {
+    return expanded ? (
+      <ConversationDiff summary={diffSummary ?? presentation.summary} value={block.text} />
+    ) : (
+      <FileChangeResultSummary summary={presentation.summary} t={t} />
+    );
+  }
+
+  if (presentation.type === "success") {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-status-create/30 bg-status-create/10 px-3 py-2.5 text-body-sm text-status-create" data-result-summary="success">
+        <CheckCircle2 aria-hidden="true" size={16} />
+        <span>{t("conversation.content.resultSuccess")}</span>
+        {block.exitCode != null ? <span>· {t("conversation.content.exitCode", { code: block.exitCode })}</span> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-2" data-result-summary="failure">
+      <div className="flex items-center gap-2 rounded-lg border border-status-remove/30 bg-status-remove/10 px-3 py-2.5 text-body-sm text-status-remove">
+        <XCircle aria-hidden="true" size={16} />
+        <span>{t("conversation.content.resultFailed")}</span>
+        {block.exitCode != null ? <span>· {t("conversation.content.exitCode", { code: block.exitCode })}</span> : null}
+      </div>
+      {text ? (
+        <pre className="max-h-[24rem] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-status-remove/20 bg-status-remove/[0.06] p-3 text-code-sm leading-6 text-on-surface">
+          <code>{text}</code>
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
+function FileChangeResultSummary({
+  summary,
+  t,
+}: {
+  summary: ReturnType<typeof summarizeConversationDiff>;
+  t: Translator;
+}) {
+  return (
+    <div className="grid gap-2" data-result-summary="file-change">
+      <div className="flex items-center gap-2 text-body-sm font-semibold text-on-surface">
+        <GitCompareArrows aria-hidden="true" size={16} className="text-status-update" />
+        <span>
+          {t("conversation.content.changedFiles", { count: summary.files.length })}
+          <span className="ml-2 font-mono text-code-sm font-normal text-status-create">+{summary.additions}</span>
+          <span className="ml-1 font-mono text-code-sm font-normal text-status-remove">-{summary.deletions}</span>
+        </span>
+      </div>
+      {summary.files.length > 0 ? (
+        <div className="divide-y divide-theme-card-border overflow-hidden rounded-lg border border-theme-card-border bg-theme-card/45">
+          {summary.files.map((file) => (
+            <div className="flex items-center gap-3 px-3 py-2 font-mono text-code-sm" data-diff-summary-file={file.path} key={file.path}>
+              <span className="w-4 shrink-0 text-center text-on-surface-muted">{fileStatusMark(file.status, file.binary)}</span>
+              <span className="min-w-0 flex-1 truncate text-on-surface" title={file.path}>{file.path}</span>
+              <span className="shrink-0 text-status-create">+{file.additions}</span>
+              <span className="shrink-0 text-status-remove">-{file.deletions}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-lg border border-theme-card-border bg-theme-card/45 px-3 py-2 text-code-sm text-on-surface-muted">
+          {t("conversation.content.diffSummaryUnavailable")}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function fileStatusMark(status: "added" | "deleted" | "modified" | "renamed", binary: boolean) {
+  if (binary) return "B";
+  if (status === "added") return "A";
+  if (status === "deleted") return "D";
+  if (status === "renamed") return "R";
+  return "M";
 }
 
 function LocalPathCardBody({ label, path, t }: { label: string; path: string; t: Translator }) {
@@ -672,70 +907,26 @@ function translationButtonLabel({
     : t("conversation.content.translate", { language: targetLanguage, type: label });
 }
 
-function CommandResultPreview({
-  format,
-  lineLimit,
-  t,
-  value,
-}: {
-  format: ConversationContentFormat;
-  lineLimit: number;
-  t: Translator;
-  value: string;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  if (format === "markdown") {
-    return (
-      <div
-        className="rounded-lg border border-inherit bg-theme-card/45 px-3 py-3"
-        data-result-format="markdown"
-      >
-        <MarkdownContent value={value} />
-      </div>
-    );
-  }
+function normalizeResultPreviewText(value: string) {
+  return value.replace(/\r\n?/g, "\n").trimEnd();
+}
 
+function buildConversationCardPreview(value: string, lineLimit: number, expanded: boolean) {
   const safeLineLimit = Number.isFinite(lineLimit)
     ? Math.max(1, Math.round(lineLimit))
     : DEFAULT_RESULT_PREVIEW_LINE_LIMIT;
   const formattedValue = normalizeResultPreviewText(value);
   const lines = formattedValue.split("\n");
   const hasOverflow = lines.length > safeLineLimit;
-  const visibleLineCount = hasOverflow && !expanded ? safeLineLimit : lines.length;
-  const visibleValue = hasOverflow && !expanded
-    ? lines.slice(0, safeLineLimit).join("\n")
-    : formattedValue;
 
-  return (
-    <div className="grid gap-2">
-      <pre className="max-h-[38rem] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-inherit bg-theme-card/45 p-3 text-code-sm leading-6 text-on-surface">
-        <code>{visibleValue}</code>
-      </pre>
-      {hasOverflow ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-inherit bg-theme-card/35 px-3 py-2">
-          <span className="text-code-sm text-on-surface-muted">
-            {t("conversation.content.resultPreviewLines", {
-              shown: visibleLineCount,
-              total: lines.length,
-            })}
-          </span>
-          <button
-            className="rounded-lg border border-theme-control-border bg-theme-control/80 px-2.5 py-1 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface"
-            onClick={() => setExpanded((current) => !current)}
-            type="button"
-          >
-            {expanded
-              ? t("conversation.content.collapseResult")
-              : t("conversation.content.expandResult")}
-          </button>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function normalizeResultPreviewText(value: string) {
-  return value.replace(/\r\n?/g, "\n").trimEnd();
+  return {
+    hasOverflow,
+    lines,
+    visibleLineCount: hasOverflow && !expanded ? safeLineLimit : lines.length,
+    visibleValue: hasOverflow && !expanded
+      ? lines.slice(0, safeLineLimit).join("\n")
+      : formattedValue,
+  };
 }
 
 function clearCopiedResetTimer(timerRef: { current: number | null }) {
@@ -769,8 +960,8 @@ function BlockMetadata({
   const details = [
     block.language,
     block.cwd ? abbreviateHomePath(block.cwd) : null,
-    block.status,
-    block.exitCode == null
+    block.type === "command" ? null : block.status,
+    block.type === "command" || block.exitCode == null
       ? null
       : t("conversation.content.exitCode", { code: block.exitCode }),
   ].filter(Boolean);
@@ -791,6 +982,37 @@ function BlockMetadata({
   );
 }
 
+function isSuccessfulCommand(block: ConversationContentBlock) {
+  if (block.type !== "command") return false;
+  if (block.exitCode === 0) return true;
+  return ["success", "succeeded", "completed", "complete", "done", "ok"].includes(
+    block.status?.toLowerCase() ?? "",
+  );
+}
+
+function isSuccessfulResult(block: ConversationContentBlock) {
+  if (block.type !== "result") return false;
+  if (block.exitCode === 0) return true;
+  return ["success", "succeeded", "completed", "complete", "done", "ok"].includes(
+    block.status?.toLowerCase() ?? "",
+  );
+}
+
+function isFailedResult(block: ConversationContentBlock) {
+  if (block.type !== "result") return false;
+  if (block.exitCode != null && block.exitCode !== 0) return true;
+  return ["error", "failed", "failure", "cancelled", "canceled", "interrupted", "timeout", "timed_out"].includes(
+    block.status?.toLowerCase() ?? "",
+  );
+}
+
+function shouldDisplayContentBlock(block: ConversationContentBlock) {
+  if (block.type !== "result") return true;
+  const renderer = block.renderer ?? legacyRenderer(block.type, block.format);
+  if (renderer === "diff") return block.text.trim().length > 0;
+  return block.text.trim().length > 0 || !isSuccessfulResult(block);
+}
+
 function createBlock(
   part: ConversationPart,
   type: ConversationContentType,
@@ -799,19 +1021,26 @@ function createBlock(
   metadataMode: "all" | "command" | "result" = "all",
   overrides: Partial<ConversationContentBlock> = {},
 ): ConversationContentBlock[] {
-  const text = visibleCardText(value);
-  if (!text) return [];
+  const text = visibleCardText(value) ?? "";
   const hasOverride = (key: keyof ConversationContentBlock) =>
-    Object.prototype.hasOwnProperty.call(overrides, key);
+    Object.prototype.hasOwnProperty.call(overrides, key) && overrides[key] !== undefined;
+  const status = hasOverride("status") ? overrides.status : part.status;
+  const exitCode = hasOverride("exitCode") ? overrides.exitCode : part.exit_code;
+  const renderer = overrides.renderer ?? legacyRenderer(type, overrides.format);
+  const statusOnlyResult = type === "result" && (
+    status != null || exitCode != null || renderer === "diff"
+  );
+  if (!text && !statusOnlyResult) return [];
 
   return [
     {
       id: `${part.id}-${suffix}`,
       partId: part.id,
       type,
-      renderer: overrides.renderer ?? legacyRenderer(type, overrides.format),
+      renderer,
       role: part.role,
       text,
+      commandLabel: part.command_label,
       translatedText: part.translated_text,
       format: overrides.format,
       language: hasOverride("language")
@@ -841,8 +1070,9 @@ function createBlock(
 function createDeclaredContentBlock(part: ConversationPart): ConversationContentBlock[] {
   if (part.content_card) {
     const renderer = part.content_card.renderer ?? "plain";
-    const type = contentTypeValue(part.content_card.kind);
-    if (!type) return [];
+    const declaredType = contentTypeValue(part.content_card.kind);
+    if (!declaredType) return [];
+    const type = conversationCardPresentationKind(declaredType);
     return createBlock(part, type, defaultContentCardText(part, type), type, "all", {
       renderer,
       format: renderer === "markdown" ? "markdown" : "plain",
@@ -851,8 +1081,9 @@ function createDeclaredContentBlock(part: ConversationPart): ConversationContent
   const card = contentCardMetadata(part.metadata_json);
   if (!card) return [];
 
-  const type = contentTypeValue(card.type);
-  if (!type) return [];
+  const declaredType = contentTypeValue(card.type);
+  if (!declaredType) return [];
+  const type = conversationCardPresentationKind(declaredType);
 
   const format = contentFormatValue(card.format);
   const renderer = rendererValue(card.renderer)
@@ -900,7 +1131,8 @@ function rendererValue(value: unknown): ConversationCardRenderer | undefined {
     value === "json" ||
     value === "code" ||
     value === "command" ||
-    value === "terminal_output"
+    value === "terminal_output" ||
+    value === "diff"
     ? value
     : undefined;
 }

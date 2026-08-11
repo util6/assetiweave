@@ -85,6 +85,39 @@ describe("ConversationContentCards", () => {
     expect(html).toContain("Declared result");
   });
 
+  it("keeps a status-only result part for semantic rendering", () => {
+    const blocks = buildConversationContentBlocks([{
+      id: "part-status-only-result",
+      turn_id: "turn-1",
+      part_index: 0,
+      role: "tool",
+      kind: "tool",
+      text: null,
+      status: "completed",
+      exit_code: 0,
+      metadata_json: JSON.stringify({
+        content_card: {
+          type: "result",
+          format: "plain",
+        },
+      }),
+    }]);
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ type: "result", text: "", exitCode: 0, status: "completed" });
+
+    const html = renderToStaticMarkup(
+      <ConversationContentCards
+        blocks={blocks}
+        t={t}
+        visibility={{ result: true }}
+      />,
+    );
+
+    expect(html).toContain('data-result-summary="success"');
+    expect(html).not.toContain("stdout");
+  });
+
   it("renders an unknown namespaced kind through its Core renderer and stable card id", () => {
     const blocks = buildConversationContentBlocks([], [{
       card_id: "conversation-part-stable",
@@ -342,9 +375,74 @@ describe("ConversationContentCards", () => {
 
     expect(html).toContain('data-conversation-execution-id="call-a"');
     expect(html).toContain("执行");
+    expect(html).not.toContain('title="call-a"');
     expect(html).toContain("pnpm typecheck");
     expect(html).toContain("types passed");
     expect(html.indexOf("pnpm typecheck")).toBeLessThan(html.indexOf("types passed"));
+  });
+
+  it("renders backend-split commands as independent cards with header labels", () => {
+    const blocks = buildConversationContentBlocks([], [
+      projectedCard("command-first", "command", "cat first.md"),
+      projectedCard("command-second", "command", "cat second.md", "DEBUG"),
+    ]);
+
+    const html = renderToStaticMarkup(
+      <ConversationContentCards
+        blocks={blocks}
+        t={t}
+        visibility={{ command: true }}
+      />,
+    );
+
+    expect(html).toContain('data-command-label="DEBUG"');
+    expect(html).toContain("cat first.md");
+    expect(html).toContain("cat second.md");
+    expect(html.match(/data-conversation-card-id=/g)).toHaveLength(2);
+  });
+
+  it("removes command-only Execution shells while preserving paired executions", () => {
+    const displayNodes = buildConversationDisplayNodes(
+      [
+        projectedCard("command-format", "command", "cargo fmt --check"),
+        projectedCard("command-test", "command", "cargo test"),
+        projectedCard("result-test", "result", "tests passed"),
+      ],
+      [
+        {
+          type: "execution",
+          turn_id: "turn-1",
+          source_execution_id: "call-checks:command:1",
+          command_card_index: 0,
+          result_card_indices: [],
+        },
+        {
+          type: "execution",
+          turn_id: "turn-1",
+          source_execution_id: "call-checks:command:2",
+          command_card_index: 1,
+          result_card_indices: [2],
+        },
+      ],
+    );
+
+    const html = renderToStaticMarkup(
+      <ConversationContentCards
+        blocks={[]}
+        nodes={displayNodes}
+        t={t}
+        visibility={{ command: true, result: true }}
+      />,
+    );
+
+    expect(displayNodes[0]).toMatchObject({
+      type: "card",
+      block: { id: "command-format" },
+    });
+    expect(html.match(/data-conversation-execution-id=/g)).toHaveLength(1);
+    expect(html).not.toContain('data-conversation-execution-id="call-checks:command:1"');
+    expect(html).toContain('data-conversation-execution-id="call-checks:command:2"');
+    expect(html.match(/data-content-type="command"/g)).toHaveLength(2);
   });
 
   it("does not infer markdown formatting from declared plain command output", () => {
@@ -405,7 +503,7 @@ describe("ConversationContentCards", () => {
       adapter_id: "codex",
       kind: "codex.code",
       semantic_role: "code",
-      renderer: "code",
+      renderer: "diff",
       role: "assistant",
       body: [
         "--- a/src/value.ts",
@@ -428,19 +526,105 @@ describe("ConversationContentCards", () => {
 
     expect(html).toContain('data-conversation-diff="unified"');
     expect(html).toContain('data-diff-file="src/value.ts"');
-    expect(html).toContain('data-diff-line-type="deletion"');
-    expect(html).toContain('data-diff-line-type="addition"');
+    expect(html).toContain('diff-code-delete');
+    expect(html).toContain('diff-code-insert');
+  });
+
+  it("renders an adapter-defined file change as a standalone Diff card", () => {
+    const cards: ConversationCard[] = [{
+      card_id: "conversation-part-file-change",
+      part_id: "conversation-part-file-change",
+      adapter_id: "codex",
+      kind: "codex.file-change",
+      semantic_role: "file-change",
+      renderer: "diff",
+      role: "tool",
+      body: [
+        "--- a/src/value.ts",
+        "+++ b/src/value.ts",
+        "@@ -1 +1 @@",
+        "-export const value = 1;",
+        "+export const value = 2;",
+      ].join("\n"),
+      legacy_anchor_ids: [],
+    }];
+    const contentNodes: ConversationContentNode[] = [{
+      type: "card",
+      turn_id: "turn-1",
+      card_index: 0,
+    }];
+    const blocks = buildConversationContentBlocks([], cards);
+    const nodes = buildConversationDisplayNodes(cards, contentNodes);
+
+    expect(nodes).toMatchObject([{
+      type: "card",
+      block: {
+        kind: "codex.file-change",
+        renderer: "diff",
+        type: "codex.file-change",
+      },
+    }]);
+
+    const html = renderToStaticMarkup(
+      <ConversationContentCards
+        blocks={blocks}
+        nodes={nodes}
+        t={t}
+        visibility={{}}
+      />,
+    );
+
+    expect(html).toContain('data-content-type="codex.file-change"');
+    expect(html).toContain('data-conversation-diff="unified"');
+    expect(html).not.toContain('data-conversation-execution-id=');
+    expect(html).not.toContain('data-result-summary=');
+  });
+
+  it("keeps standalone Diff statistics accurate when the collapsed preview is truncated", () => {
+    const blocks = buildConversationContentBlocks([], [{
+      card_id: "conversation-part-collapsed-file-change",
+      part_id: "conversation-part-collapsed-file-change",
+      adapter_id: "codex",
+      kind: "codex.file-change",
+      semantic_role: "file-change",
+      renderer: "diff",
+      role: "tool",
+      body: [
+        "diff --git a/src/value.ts b/src/value.ts",
+        "--- a/src/value.ts",
+        "+++ b/src/value.ts",
+        "@@ -1,2 +1,4 @@",
+        " export const before = true;",
+        "+export const value = 1;",
+        "+export const valueAgain = 2;",
+        " export const after = true;",
+      ].join("\n"),
+      legacy_anchor_ids: [],
+    }]);
+
+    const html = renderToStaticMarkup(
+      <ConversationContentCards
+        blocks={blocks}
+        resultPreviewLineLimit={5}
+        t={t}
+        visibility={{}}
+      />,
+    );
+
+    expect(html).toContain('data-conversation-diff="unified"');
+    expect(html).toContain(">+2<");
+    expect(html).toContain(">-0<");
   });
 
 
-  it("renders terminal output cards whose body is a unified diff with the diff viewer", () => {
+  it("summarizes terminal output cards whose body is a unified diff", () => {
     const blocks = buildConversationContentBlocks([], [{
       card_id: "conversation-part-terminal-diff",
       part_id: "conversation-part-terminal-diff",
       adapter_id: "opencode",
       kind: "opencode.result",
       semantic_role: "result",
-      renderer: "terminal_output",
+      renderer: "diff",
       role: "tool",
       body: [
         "--- a/frontend/src/App.tsx",
@@ -460,9 +644,83 @@ describe("ConversationContentCards", () => {
       />,
     );
 
-    expect(html).toContain('data-conversation-diff="unified"');
-    expect(html).toContain('data-diff-line-type="deletion"');
-    expect(html).toContain('data-diff-line-type="addition"');
+    expect(html).toContain('data-result-summary="file-change"');
+    expect(html).toContain("Changed files");
+    expect(html).toContain('data-diff-summary-file="frontend/src/App.tsx"');
+    expect(html).not.toContain('data-conversation-diff="unified"');
+  });
+
+  it("opens a result diff in the Diff component on demand", async () => {
+    const card = {
+      card_id: "conversation-part-expandable-diff",
+      part_id: "conversation-part-expandable-diff",
+      adapter_id: "opencode",
+      kind: "opencode.result",
+      semantic_role: "result" as const,
+      renderer: "diff" as const,
+      role: "tool" as const,
+      body: [
+        "--- a/frontend/src/App.tsx",
+        "+++ b/frontend/src/App.tsx",
+        "@@ -1,2 +1,2 @@",
+        "-<OldView />",
+        "+<NewView />",
+      ].join("\n"),
+      legacy_anchor_ids: [],
+    };
+
+    render(
+      <ConversationContentCards
+        blocks={buildConversationContentBlocks([], [card])}
+        t={t}
+        visibility={{ result: true }}
+      />,
+    );
+
+    expect(screen.queryByTestId("conversation-diff")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "查看 Diff" }));
+    await waitFor(() => expect(document.querySelector('[data-conversation-diff="unified"]')).not.toBeNull());
+  });
+
+  it("splits one persisted multi-file result diff into separate visual file sections", async () => {
+    const card = {
+      card_id: "conversation-part-multi-file-diff",
+      part_id: "conversation-part-multi-file-diff",
+      adapter_id: "codex",
+      kind: "codex.result",
+      semantic_role: "result" as const,
+      renderer: "diff" as const,
+      role: "tool" as const,
+      body: [
+        "diff --git a/src/first.ts b/src/first.ts",
+        "--- a/src/first.ts",
+        "+++ b/src/first.ts",
+        "@@ -1 +1 @@",
+        "-export const first = 1;",
+        "+export const first = 2;",
+        "diff --git a/src/second.ts b/src/second.ts",
+        "--- a/src/second.ts",
+        "+++ b/src/second.ts",
+        "@@ -1 +1 @@",
+        "-export const second = 1;",
+        "+export const second = 2;",
+      ].join("\n"),
+      legacy_anchor_ids: [],
+    };
+
+    render(
+      <ConversationContentCards
+        blocks={buildConversationContentBlocks([], [card])}
+        t={t}
+        visibility={{ result: true }}
+      />,
+    );
+
+    expect(document.querySelectorAll("[data-diff-summary-file]")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "查看 Diff" }));
+    await waitFor(() => expect(document.querySelectorAll("[data-diff-file]")).toHaveLength(2));
+    expect(document.querySelector('[data-diff-file="src/first.ts"]')).not.toBeNull();
+    expect(document.querySelector('[data-diff-file="src/second.ts"]')).not.toBeNull();
   });
 
   it("keeps ordinary plain output and shell transcripts in the plain viewer", () => {
@@ -524,14 +782,14 @@ describe("ConversationContentCards", () => {
     expect(html).not.toContain('data-conversation-diff="unified"');
     expect(html).toContain("fix: refresh mount state");
   });
-  it("renders plain result cards whose body is a unified diff with the diff viewer", () => {
+  it("summarizes plain result cards whose body is a unified diff", () => {
     const blocks = buildConversationContentBlocks([], [{
       card_id: "conversation-part-git-diff",
       part_id: "conversation-part-git-diff",
       adapter_id: "claude-code",
       kind: "claude-code.result",
       semantic_role: "result",
-      renderer: "plain",
+      renderer: "diff",
       role: "tool",
       body: [
         "diff --git a/cli/cmd/conversation.go b/cli/cmd/conversation.go",
@@ -553,11 +811,75 @@ describe("ConversationContentCards", () => {
       />,
     );
 
-    expect(html).toContain('data-conversation-diff="unified"');
-    expect(html).toContain('data-diff-file="cli/cmd/conversation.go"');
-    expect(html).toContain('data-diff-line-type="deletion"');
-    expect(html).toContain('data-diff-line-type="addition"');
+    expect(html).toContain('data-result-summary="file-change"');
+    expect(html).toContain('data-diff-summary-file="cli/cmd/conversation.go"');
+    expect(html).not.toContain('data-conversation-diff="unified"');
     expect(html).not.toContain("data-result-format=");
+  });
+
+  it("renders successful result cards as status summaries instead of stdout", () => {
+    const html = renderToStaticMarkup(
+      <ConversationContentCards
+        blocks={buildConversationContentBlocks([], [{
+          card_id: "conversation-part-success-result",
+          part_id: "conversation-part-success-result",
+          adapter_id: "opencode",
+          kind: "opencode.result",
+          semantic_role: "result",
+          renderer: "terminal_output",
+          role: "tool",
+          body: "large stdout that should stay out of the result card",
+          status: "completed",
+          exit_code: 0,
+          legacy_anchor_ids: [],
+        }])}
+        t={t}
+        visibility={{ result: true }}
+      />,
+    );
+
+    expect(html).toContain('data-result-summary="success"');
+    expect(html).toContain("成功");
+    expect(html).toContain("退出码 0");
+    expect(html).not.toContain("large stdout");
+  });
+
+  it("shows successful execution state on the Command card and hides its empty Result", () => {
+    const html = renderToStaticMarkup(
+      <ConversationContentCards
+        blocks={[]}
+        nodes={[{
+          type: "execution",
+          turnId: "turn-1",
+          sourceExecutionId: "call-1",
+          command: {
+            id: "command-1",
+            type: "command",
+            renderer: "command",
+            role: "tool",
+            text: "pnpm test",
+            status: "completed",
+            exitCode: 0,
+          },
+          results: [{
+            id: "result-1",
+            type: "result",
+            renderer: "terminal_output",
+            role: "tool",
+            text: "",
+            status: "completed",
+            exitCode: 0,
+          }],
+        }]}
+        t={t}
+        visibility={{ command: true, result: true }}
+      />,
+    );
+
+    expect(html).toContain('data-conversation-card-id="command-1"');
+    expect(html).toContain("退出码 0");
+    expect(html).not.toContain('data-conversation-card-id="result-1"');
+    expect(html).not.toContain('data-result-summary="success"');
   });
 
   it("inserts translated content for a custom target language after opencode is available", async () => {
@@ -797,6 +1119,7 @@ function projectedCard(
   id: string,
   semanticRole: "command" | "result",
   body: string,
+  commandLabel?: string,
 ): ConversationCard {
   return {
     card_id: id,
@@ -807,6 +1130,7 @@ function projectedCard(
     renderer: semanticRole === "command" ? "command" : "terminal_output",
     role: "tool",
     body,
+    command_label: commandLabel,
     legacy_anchor_ids: [],
   };
 }
