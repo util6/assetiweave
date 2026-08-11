@@ -1608,7 +1608,7 @@ fn conversation_incremental_web_adapter_skips_unchanged_and_reactivates_old_sess
     let adapter = official_adapter_fixture(
         "chatgpt-web",
         "ChatGPT Web",
-        "../parser-catalog/adapters/chatgpt-web/conversation-adapter.json",
+        "../builtin-assets/adapters/chatgpt-web/conversation-adapter.json",
         vec![ConversationSourceKind::Directory],
     );
     let source = source_fixture(
@@ -1693,7 +1693,7 @@ fn official_web_adapters_expose_incremental_session_discovery() {
         let adapter = official_adapter_fixture(
             adapter_id,
             adapter_id,
-            &format!("../parser-catalog/adapters/{adapter_id}/conversation-adapter.json"),
+            &format!("../builtin-assets/adapters/{adapter_id}/conversation-adapter.json"),
             vec![ConversationSourceKind::Directory],
         );
         let source = source_fixture(
@@ -1778,7 +1778,7 @@ fn official_zcode_adapter_emits_structured_cards_without_legacy_metadata() {
     let adapter = official_adapter_fixture(
         "zcode",
         "ZCode",
-        "../parser-catalog/adapters/zcode/conversation-adapter.json",
+        "../builtin-assets/adapters/zcode/conversation-adapter.json",
         vec![ConversationSourceKind::Sqlite],
     );
     let source = source_fixture(
@@ -1808,10 +1808,10 @@ fn official_zcode_adapter_emits_structured_cards_without_legacy_metadata() {
 #[test]
 fn official_adapter_manifests_use_runtime_without_legacy_command() {
     for manifest_relative_path in [
-        "bundled/conversation-adapters/antigravity/conversation-adapter.json",
-        "bundled/conversation-adapters/codex/conversation-adapter.json",
-        "bundled/conversation-adapters/opencode/conversation-adapter.json",
-        "bundled/conversation-adapters/claude-code/conversation-adapter.json",
+        "../builtin-assets/adapters/antigravity/conversation-adapter.json",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
+        "../builtin-assets/adapters/opencode/conversation-adapter.json",
+        "../builtin-assets/adapters/claude-code/conversation-adapter.json",
     ] {
         let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest_relative_path);
         let manifest: Value =
@@ -1831,14 +1831,14 @@ fn official_adapter_manifests_use_runtime_without_legacy_command() {
 #[test]
 fn first_party_adapter_manifests_declare_namespaced_card_contracts() {
     for manifest_relative_path in [
-        "bundled/conversation-adapters/antigravity/conversation-adapter.json",
-        "bundled/conversation-adapters/codex/conversation-adapter.json",
-        "bundled/conversation-adapters/opencode/conversation-adapter.json",
-        "bundled/conversation-adapters/claude-code/conversation-adapter.json",
-        "../parser-catalog/adapters/chatgpt-web/conversation-adapter.json",
-        "../parser-catalog/adapters/gemini-web/conversation-adapter.json",
-        "../parser-catalog/adapters/qwen-web/conversation-adapter.json",
-        "../parser-catalog/adapters/zcode/conversation-adapter.json",
+        "../builtin-assets/adapters/antigravity/conversation-adapter.json",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
+        "../builtin-assets/adapters/opencode/conversation-adapter.json",
+        "../builtin-assets/adapters/claude-code/conversation-adapter.json",
+        "../builtin-assets/adapters/chatgpt-web/conversation-adapter.json",
+        "../builtin-assets/adapters/gemini-web/conversation-adapter.json",
+        "../builtin-assets/adapters/qwen-web/conversation-adapter.json",
+        "../builtin-assets/adapters/zcode/conversation-adapter.json",
     ] {
         let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest_relative_path);
         let validation =
@@ -1905,7 +1905,7 @@ fn official_codex_adapter_separates_skill_context_and_splits_command_result_card
     let adapter = official_adapter_fixture(
         "codex",
         "Codex",
-        "bundled/conversation-adapters/codex/conversation-adapter.json",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
         vec![ConversationSourceKind::Live, ConversationSourceKind::File],
     );
     let source = source_fixture(
@@ -1962,10 +1962,10 @@ fn official_codex_adapter_separates_skill_context_and_splits_command_result_card
 #[test]
 fn current_first_party_v1_adapters_do_not_ship_legacy_exporters() {
     for manifest_relative_path in [
-        "bundled/conversation-adapters/antigravity/conversation-adapter.json",
-        "bundled/conversation-adapters/codex/conversation-adapter.json",
-        "bundled/conversation-adapters/opencode/conversation-adapter.json",
-        "bundled/conversation-adapters/claude-code/conversation-adapter.json",
+        "../builtin-assets/adapters/antigravity/conversation-adapter.json",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
+        "../builtin-assets/adapters/opencode/conversation-adapter.json",
+        "../builtin-assets/adapters/claude-code/conversation-adapter.json",
     ] {
         let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest_relative_path);
         let validation =
@@ -2024,7 +2024,7 @@ fn official_codex_adapter_does_not_embed_raw_tool_payload_metadata() {
     let adapter = official_adapter_fixture(
         "codex",
         "Codex",
-        "bundled/conversation-adapters/codex/conversation-adapter.json",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
         vec![ConversationSourceKind::Live, ConversationSourceKind::File],
     );
     let source = source_fixture(
@@ -2097,7 +2097,7 @@ fn official_codex_adapter_truncates_large_browse_text() {
     let adapter = official_adapter_fixture(
         "codex",
         "Codex",
-        "bundled/conversation-adapters/codex/conversation-adapter.json",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
         vec![ConversationSourceKind::Live, ConversationSourceKind::File],
     );
     let source = source_fixture(
@@ -2194,7 +2194,7 @@ fn official_codex_adapter_preserves_useful_browse_cards_after_large_tool_output(
     let adapter = official_adapter_fixture(
         "codex",
         "Codex",
-        "bundled/conversation-adapters/codex/conversation-adapter.json",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
         vec![ConversationSourceKind::Live, ConversationSourceKind::File],
     );
     let source = source_fixture(
@@ -2299,7 +2299,7 @@ fn official_codex_adapter_does_not_emit_internal_truncation_markers_as_card_text
     let adapter = official_adapter_fixture(
         "codex",
         "Codex",
-        "bundled/conversation-adapters/codex/conversation-adapter.json",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
         vec![ConversationSourceKind::Live, ConversationSourceKind::File],
     );
     let source = source_fixture(
@@ -2402,7 +2402,7 @@ fn official_opencode_adapter_splits_command_and_result_cards() {
     let adapter = official_adapter_fixture(
         "opencode",
         "OpenCode",
-        "bundled/conversation-adapters/opencode/conversation-adapter.json",
+        "../builtin-assets/adapters/opencode/conversation-adapter.json",
         vec![ConversationSourceKind::Live, ConversationSourceKind::Sqlite],
     );
     let source = source_fixture(
@@ -2467,7 +2467,7 @@ fn conversation_incremental_opencode_detects_reactivated_old_session() {
     let adapter = official_adapter_fixture(
         "opencode",
         "OpenCode",
-        "bundled/conversation-adapters/opencode/conversation-adapter.json",
+        "../builtin-assets/adapters/opencode/conversation-adapter.json",
         vec![ConversationSourceKind::Live, ConversationSourceKind::Sqlite],
     );
     let source = source_fixture(
@@ -2660,7 +2660,7 @@ fn official_opencode_adapter_extracts_json_fields_without_raw_metadata() {
     let adapter = official_adapter_fixture(
         "opencode",
         "OpenCode",
-        "bundled/conversation-adapters/opencode/conversation-adapter.json",
+        "../builtin-assets/adapters/opencode/conversation-adapter.json",
         vec![ConversationSourceKind::Live, ConversationSourceKind::Sqlite],
     );
     let source = source_fixture(
@@ -2722,7 +2722,7 @@ fn official_claude_code_adapter_splits_command_and_result_cards() {
     let adapter = official_adapter_fixture(
         "claude-code",
         "Claude Code",
-        "bundled/conversation-adapters/claude-code/conversation-adapter.json",
+        "../builtin-assets/adapters/claude-code/conversation-adapter.json",
         vec![
             ConversationSourceKind::Live,
             ConversationSourceKind::Directory,
@@ -2777,7 +2777,7 @@ fn official_claude_code_adapter_reads_content_array_tool_use_and_result_cards() 
     let adapter = official_adapter_fixture(
         "claude-code",
         "Claude Code",
-        "bundled/conversation-adapters/claude-code/conversation-adapter.json",
+        "../builtin-assets/adapters/claude-code/conversation-adapter.json",
         vec![
             ConversationSourceKind::Live,
             ConversationSourceKind::Directory,
@@ -2843,7 +2843,7 @@ fn official_claude_code_adapter_emits_namespaced_reasoning_without_core_kind_cha
     let adapter = official_adapter_fixture(
         "claude-code",
         "Claude Code",
-        "bundled/conversation-adapters/claude-code/conversation-adapter.json",
+        "../builtin-assets/adapters/claude-code/conversation-adapter.json",
         vec![ConversationSourceKind::Directory],
     );
     let source = source_fixture(

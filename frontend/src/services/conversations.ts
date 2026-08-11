@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import repositoryConversationCatalog from "../../../parser-catalog/catalog.json";
+import repositoryConversationCatalog from "../../../builtin-assets/catalog.json";
 import type {
   ConversationAdapter,
   ConversationAdapterPackage,
@@ -1772,7 +1772,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       expected_content_hash: "7cc193fcb5db8f7536792fd7480e376a9ca1acbca9c201736744304b599db094",
       source: {
         type: "github",
-        url: "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex",
+        url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex",
       },
     },
     {
@@ -1789,7 +1789,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       expected_content_hash: "7402082acd6351b771383f98988bf0a88ae1c5093b278ecce5d946df6884bd7e",
       source: {
         type: "github",
-        url: "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/opencode",
+        url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/opencode",
       },
     },
     {
@@ -1806,7 +1806,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       expected_content_hash: "84768c83036672f6a6569f9b22914352f58dc677ca4764a7387788376d64a475",
       source: {
         type: "github",
-        url: "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/claude-code",
+        url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/claude-code",
       },
     },
     {
@@ -1823,7 +1823,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       expected_content_hash: "5a50814a30a7894ee5243873bce8cb175ffdce9fab8d6a75324b5d446837c044",
       source: {
         type: "github",
-        url: "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/zcode",
+        url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/zcode",
       },
     },
     {
@@ -1840,7 +1840,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       expected_content_hash: "1b00dd931991ecfbe19954b4dd59cb92513fc28f43a0d8d1f129f275e737aa31",
       source: {
         type: "github",
-        url: "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/chatgpt-web",
+        url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/chatgpt-web",
       },
     },
     {
@@ -1857,7 +1857,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       expected_content_hash: "3c485df513a682713de1a946e69c19ddf2d6ed86e68e926e7af4f81338971756",
       source: {
         type: "github",
-        url: "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/qwen-web",
+        url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/qwen-web",
       },
     },
     {
@@ -1874,7 +1874,7 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       expected_content_hash: "20f277c789a111d06f87b30be7523905826d9cb63b7194f5bd18fcf6bc8bfd76",
       source: {
         type: "github",
-        url: "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/gemini-web",
+        url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/gemini-web",
       },
     },
   ];

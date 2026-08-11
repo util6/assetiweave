@@ -8,9 +8,9 @@ use sha2::{Digest, Sha256};
 use std::io::{Cursor, Read};
 
 const DEFAULT_CONVERSATION_SCRIPT_CATALOG_URL: &str =
-    "https://raw.githubusercontent.com/util6/assetiweave/main/parser-catalog/catalog.json";
+    "https://raw.githubusercontent.com/util6/assetiweave/main/builtin-assets/catalog.json";
 const LOCAL_DEFAULT_CONVERSATION_SCRIPT_CATALOG: &str =
-    include_str!("../../../../parser-catalog/catalog.json");
+    include_str!("../../../../builtin-assets/catalog.json");
 const CONVERSATION_SCRIPT_SECURITY_NOTICE: &str =
     "Review remote conversation adapter package contents before installing; AssetIWeave registers the downloaded adapter package as trusted for local execution.";
 
@@ -2603,7 +2603,7 @@ mod tests {
             artifact_size: None,
             source: ConversationScriptCatalogSource {
                 kind: ConversationScriptCatalogSourceKind::Github,
-                url: "https://github.com/util6/assetiweave/tree/main/src-tauri/bundled/conversation-adapters/codex".to_string(),
+                url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex".to_string(),
                 branch: None,
                 path: None,
             },
@@ -2755,7 +2755,7 @@ mod tests {
     fn parses_github_tree_url_into_repo_branch_and_path() {
         let source = ConversationScriptCatalogSource {
             kind: ConversationScriptCatalogSourceKind::Github,
-            url: "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+            url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
                 .to_string(),
             branch: None,
             path: None,
@@ -2770,7 +2770,7 @@ mod tests {
         assert_eq!(location.branch.as_deref(), Some("main"));
         assert_eq!(
             location.path.as_deref(),
-            Some("parser-catalog/adapters/codex"),
+            Some("builtin-assets/adapters/codex"),
         );
     }
 

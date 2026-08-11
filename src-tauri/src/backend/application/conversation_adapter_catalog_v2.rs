@@ -7,7 +7,7 @@ use chrono::Duration;
 use semver::{Version, VersionReq};
 
 const DEFAULT_CATALOG_V2_URL: &str =
-    "https://raw.githubusercontent.com/util6/assetiweave/main/parser-catalog/index.json";
+    "https://raw.githubusercontent.com/util6/assetiweave/main/builtin-assets/index.json";
 const CATALOG_CACHE_MAX_AGE_HOURS: i64 = 24;
 
 impl AppService {
@@ -633,27 +633,27 @@ fn default_adapter_manifest_file() -> String {
 
 fn bundled_catalog_document(path: &str) -> Option<&'static str> {
     match path {
-        "index.json" => Some(include_str!("../../../../parser-catalog/index.json")),
+        "index.json" => Some(include_str!("../../../../builtin-assets/index.json")),
         "history/io.github.util6.codex-session.json" => Some(include_str!(
-            "../../../../parser-catalog/history/io.github.util6.codex-session.json"
+            "../../../../builtin-assets/history/io.github.util6.codex-session.json"
         )),
         "history/io.github.util6.opencode-session.json" => Some(include_str!(
-            "../../../../parser-catalog/history/io.github.util6.opencode-session.json"
+            "../../../../builtin-assets/history/io.github.util6.opencode-session.json"
         )),
         "history/io.github.util6.claude-code-session.json" => Some(include_str!(
-            "../../../../parser-catalog/history/io.github.util6.claude-code-session.json"
+            "../../../../builtin-assets/history/io.github.util6.claude-code-session.json"
         )),
         "history/io.github.util6.zcode-session.json" => Some(include_str!(
-            "../../../../parser-catalog/history/io.github.util6.zcode-session.json"
+            "../../../../builtin-assets/history/io.github.util6.zcode-session.json"
         )),
         "history/io.github.util6.chatgpt-web.json" => Some(include_str!(
-            "../../../../parser-catalog/history/io.github.util6.chatgpt-web.json"
+            "../../../../builtin-assets/history/io.github.util6.chatgpt-web.json"
         )),
         "history/io.github.util6.qwen-web.json" => Some(include_str!(
-            "../../../../parser-catalog/history/io.github.util6.qwen-web.json"
+            "../../../../builtin-assets/history/io.github.util6.qwen-web.json"
         )),
         "history/io.github.util6.gemini-web.json" => Some(include_str!(
-            "../../../../parser-catalog/history/io.github.util6.gemini-web.json"
+            "../../../../builtin-assets/history/io.github.util6.gemini-web.json"
         )),
         _ => None,
     }
@@ -680,7 +680,7 @@ mod tests {
         let index_path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("workspace root")
-            .join("parser-catalog/index.json");
+            .join("builtin-assets/index.json");
 
         let releases = service
             .refresh_conversation_adapter_catalogs(ConversationAdapterCatalogRefreshParams {
@@ -728,7 +728,7 @@ mod tests {
         let index_path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("workspace root")
-            .join("parser-catalog/index.json");
+            .join("builtin-assets/index.json");
 
         let preview = service
             .install_conversation_adapter_package(ConversationAdapterPackageInstallParams {

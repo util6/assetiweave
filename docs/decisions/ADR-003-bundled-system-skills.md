@@ -16,7 +16,7 @@ The existing `assetiweave-library-skills` source is a tenant-scoped user backup 
 
 ## Decision
 
-- Keep product-owned Skill source files under `src-tauri/builtin-assets/skills/`.
+- Keep product-owned Skill source files under `builtin-assets/skills/`.
 - Compile their files into both the desktop application and standalone Engine.
 - Install them into `~/.assetiweave/skills/.system` on desktop or Engine startup.
 - Register the shared directory in every tenant as the protected `assetiweave-system-skills` source with `SourceOrigin::AssetiweaveSystem`.

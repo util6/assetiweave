@@ -12,32 +12,30 @@ pub(crate) const SYSTEM_SKILL_SOURCE_ID: &str = "assetiweave-system-skills";
 
 const ORGANIZER_SKILL_DIR: &str = "assetiweave-conversation-organizer";
 const ORGANIZER_SKILL: &[u8] =
-    include_bytes!("../../builtin-assets/skills/assetiweave-conversation-organizer/SKILL.md");
+    include_bytes!("../../../builtin-assets/skills/assetiweave-conversation-organizer/SKILL.md");
 const ORGANIZER_MANIFEST: &[u8] = include_bytes!(
-    "../../builtin-assets/skills/assetiweave-conversation-organizer/assetiweave.skill.json"
+    "../../../builtin-assets/skills/assetiweave-conversation-organizer/assetiweave.skill.json"
 );
-const ORGANIZER_ZCODE_MANIFEST: &[u8] = include_bytes!(
-    "../../builtin-assets/skills/assetiweave-conversation-organizer/scripts/zcode-conversation-adapter/conversation-adapter.json"
-);
-const ORGANIZER_ZCODE_ADAPTER: &[u8] = include_bytes!(
-    "../../builtin-assets/skills/assetiweave-conversation-organizer/scripts/zcode-conversation-adapter/zcode_adapter.py"
-);
+const ORGANIZER_ZCODE_MANIFEST: &[u8] =
+    include_bytes!("../../../builtin-assets/adapters/zcode/conversation-adapter.json");
+const ORGANIZER_ZCODE_ADAPTER: &[u8] =
+    include_bytes!("../../../builtin-assets/adapters/zcode/zcode_adapter.py");
 const RECALL_SKILL: &[u8] =
-    include_bytes!("../../builtin-assets/skills/assetiweave-conversation-recall/SKILL.md");
+    include_bytes!("../../../builtin-assets/skills/assetiweave-conversation-recall/SKILL.md");
 const RECALL_MANIFEST: &[u8] = include_bytes!(
-    "../../builtin-assets/skills/assetiweave-conversation-recall/assetiweave.skill.json"
+    "../../../builtin-assets/skills/assetiweave-conversation-recall/assetiweave.skill.json"
 );
 const WEB_REPAIR_SKILL: &[u8] =
-    include_bytes!("../../builtin-assets/skills/assetiweave-web-conversation-repair/SKILL.md");
+    include_bytes!("../../../builtin-assets/skills/assetiweave-web-conversation-repair/SKILL.md");
 const WEB_REPAIR_MANIFEST: &[u8] = include_bytes!(
-    "../../builtin-assets/skills/assetiweave-web-conversation-repair/assetiweave.skill.json"
+    "../../../builtin-assets/skills/assetiweave-web-conversation-repair/assetiweave.skill.json"
 );
 const MEMORY_SKILL: &[u8] =
-    include_bytes!("../../builtin-assets/skills/assetiweave-memory/SKILL.md");
+    include_bytes!("../../../builtin-assets/skills/assetiweave-memory/SKILL.md");
 const MEMORY_MANIFEST: &[u8] =
-    include_bytes!("../../builtin-assets/skills/assetiweave-memory/assetiweave.skill.json");
+    include_bytes!("../../../builtin-assets/skills/assetiweave-memory/assetiweave.skill.json");
 const MEMORY_RECALL_SCRIPT: &[u8] =
-    include_bytes!("../../builtin-assets/skills/assetiweave-memory/scripts/recall.py");
+    include_bytes!("../../../builtin-assets/skills/assetiweave-memory/scripts/recall.py");
 
 struct EmbeddedFile {
     relative_path: &'static str,
@@ -576,14 +574,14 @@ mod tests {
     }
 
     #[test]
-    fn packaged_zcode_adapter_matches_the_product_parser_catalog() {
+    fn packaged_zcode_adapter_matches_the_builtin_asset_source() {
         assert_eq!(
             ORGANIZER_ZCODE_MANIFEST,
-            include_bytes!("../../../parser-catalog/adapters/zcode/conversation-adapter.json")
+            include_bytes!("../../../builtin-assets/adapters/zcode/conversation-adapter.json")
         );
         assert_eq!(
             ORGANIZER_ZCODE_ADAPTER,
-            include_bytes!("../../../parser-catalog/adapters/zcode/zcode_adapter.py")
+            include_bytes!("../../../builtin-assets/adapters/zcode/zcode_adapter.py")
         );
     }
 

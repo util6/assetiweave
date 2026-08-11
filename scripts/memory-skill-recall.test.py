@@ -9,7 +9,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "src-tauri/builtin-assets/skills/assetiweave-memory/scripts/recall.py"
+SCRIPT = ROOT / "builtin-assets/skills/assetiweave-memory/scripts/recall.py"
 
 
 class MemorySkillRecallTest(unittest.TestCase):

@@ -1,6 +1,6 @@
 # 仓库目录与架构边界
 
-> 最后核对：2026-07-02
+> 最后核对：2026-08-11
 
 本文描述 AssetIWeave **当前代码实际采用的目录结构和职责边界**。它用于回答两个问题：
 
@@ -45,6 +45,7 @@ Go CLI
 | `src-tauri/` | 正式 | 完整 Rust 后端，包括 Tauri 壳、Engine、共享模型、存储和本地系统能力 | 前端展示状态、Go CLI 命令文案 |
 | `cli/` | 正式 | Go CLI、Engine 客户端、命令树、插件、策略、自更新 | 直接写数据库或自行创建挂载链接 |
 | `scripts/` | 正式辅助 | 构建、安装、契约生成和发布审计脚本 | 长期业务逻辑 |
+| `builtin-assets/` | 正式源码资产 | 官方 Conversation Adapter、内置 Skill、Catalog v1/v2 元数据和适配器测试；所有产品内置资产的唯一源码锚点 | 用户运行时副本、构建产物、手工维护的交付副本 |
 | `docs/` | 正式文档 | 面向开发和使用的当前说明 | 里程碑勾选清单、工具生成的会话历史 |
 | `specs/` | 需求与历史设计 | 产品需求、设计演进、任务里程碑 | 被当作当前代码目录地图 |
 | `.specstory/` | 本地历史，已忽略 | 本地工具生成的会话记录 | 项目源码或需要维护的正式文档 |
@@ -53,6 +54,14 @@ Go CLI
 | `node_modules/`、`frontend/node_modules/` | 生成，已忽略 | 包管理器依赖 | 项目代码 |
 
 `Cargo.toml`、`package.json`、`pnpm-workspace.yaml` 是仓库级构建入口。不要在子目录重新建立一套重复的 workspace 或版本来源。
+
+`builtin-assets/` 的目录边界如下：
+
+- `builtin-assets/adapters/`：官方 Adapter 与发布包的唯一源码；Tauri/Engine 编译时直接嵌入所需文件。
+- `builtin-assets/skills/`：随产品发布的只读系统 Skill 源码；Rust 启动时将其安装到 `~/.assetiweave/skills/.system`。
+- `builtin-assets/index.json`、`history/`、`catalog.json`：Adapter Catalog v2 与 legacy 兼容元数据。
+- `cli/internal/harvesters/templates/`：为 Go `embed` 保留的网页 Harvester 生成副本，只能通过 `pnpm conversation-adapters:build --update` 更新。
+- `~/.assetiweave/conversation-adapters/`：用户运行时工作区和不可变版本目录，不属于仓库源码。
 
 ## 3. 前端目录
 

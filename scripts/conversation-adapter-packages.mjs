@@ -4,17 +4,13 @@ import os from "node:os";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
-const catalogRoot = path.join(root, "parser-catalog");
+const catalogRoot = path.join(root, "builtin-assets");
 const indexPath = path.join(catalogRoot, "index.json");
 const legacyCatalogPath = path.join(catalogRoot, "catalog.json");
 const outputRoot = path.join(root, "target", "conversation-adapter-packages");
 const command = process.argv[2] ?? "check";
 const update = process.argv.includes("--update");
 const generatedCopies = [
-  ...["claude-code", "codex", "opencode"].flatMap((adapterId) => [
-    [`parser-catalog/adapters/${adapterId}/adapter.mjs`, `src-tauri/bundled/conversation-adapters/${adapterId}/adapter.mjs`],
-    [`parser-catalog/adapters/${adapterId}/conversation-adapter.json`, `src-tauri/bundled/conversation-adapters/${adapterId}/conversation-adapter.json`],
-  ]),
   ...["gemini-web", "qwen-web"].flatMap((adapterId) => [
     "adapter.js",
     "conversation-adapter.json",
@@ -23,17 +19,9 @@ const generatedCopies = [
     "requests",
     "scripts",
   ].map((relative) => [
-    `parser-catalog/adapters/${adapterId}/${relative}`,
+    `builtin-assets/adapters/${adapterId}/${relative}`,
     `cli/internal/harvesters/templates/${adapterId}/${relative}`,
   ])),
-  [
-    "parser-catalog/adapters/zcode/conversation-adapter.json",
-    "src-tauri/builtin-assets/skills/assetiweave-conversation-organizer/scripts/zcode-conversation-adapter/conversation-adapter.json",
-  ],
-  [
-    "parser-catalog/adapters/zcode/zcode_adapter.py",
-    "src-tauri/builtin-assets/skills/assetiweave-conversation-organizer/scripts/zcode-conversation-adapter/zcode_adapter.py",
-  ],
 ];
 const crc32Table = Array.from({ length: 256 }, (_, index) => {
   let value = index;
@@ -47,6 +35,7 @@ if (!['check', 'build'].includes(command)) {
   throw new Error("usage: node scripts/conversation-adapter-packages.mjs <check|build> [--update]");
 }
 
+assertCanonicalAssetLayout();
 syncOrCheckGeneratedCopies();
 selfTestGeneratedCopyDriftDetection();
 
@@ -149,13 +138,24 @@ console.log(`${verb} ${index.packages.length} conversation adapter packages${upd
 function adapterDirectoryFromHistory(history) {
   const source = history.releases[0]?.source;
   assert(source?.type === "github", `a GitHub source is required to build ${history.package_id}`);
-  const marker = "/parser-catalog/adapters/";
+  const marker = "/builtin-assets/adapters/";
   const markerIndex = source.url.indexOf(marker);
-  assert(markerIndex >= 0, `source URL must point into parser-catalog/adapters: ${history.package_id}`);
+  assert(markerIndex >= 0, `source URL must point into builtin-assets/adapters: ${history.package_id}`);
   const relative = source.url.slice(markerIndex + 1);
   const directory = path.join(root, relative);
   assert(fs.statSync(directory).isDirectory(), `adapter directory does not exist: ${directory}`);
   return directory;
+}
+
+function assertCanonicalAssetLayout() {
+  for (const relative of [
+    "parser-catalog",
+    "src-tauri/builtin-assets",
+    "src-tauri/bundled/conversation-adapters",
+    "builtin-assets/skills/assetiweave-conversation-organizer/scripts/zcode-conversation-adapter",
+  ]) {
+    assert(!fs.existsSync(path.join(root, relative)), `legacy duplicate asset path still exists: ${relative}`);
+  }
 }
 
 function releaseFromPackageManifest(history, packageManifest) {
@@ -326,7 +326,7 @@ function listFiles(directory) {
 
 function resolveCatalogPath(relativePath) {
   const resolved = path.resolve(catalogRoot, relativePath);
-  assert(resolved.startsWith(`${catalogRoot}${path.sep}`), `history path escapes parser-catalog: ${relativePath}`);
+  assert(resolved.startsWith(`${catalogRoot}${path.sep}`), `history path escapes builtin-assets: ${relativePath}`);
   return resolved;
 }
 

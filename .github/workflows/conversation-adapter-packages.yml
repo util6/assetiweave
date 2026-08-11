@@ -3,13 +3,13 @@ name: Conversation Adapter Packages
 on:
   pull_request:
     paths:
-      - "parser-catalog/**"
+      - "builtin-assets/**"
       - "scripts/conversation-adapter-packages.mjs"
       - ".github/workflows/conversation-adapter-packages.yml"
   push:
     branches: [main]
     paths:
-      - "parser-catalog/**"
+      - "builtin-assets/**"
       - "scripts/conversation-adapter-packages.mjs"
   workflow_dispatch:
 
@@ -51,10 +51,10 @@ jobs:
       - run: pnpm conversation-adapters:build --update
       - name: Persist generated index and history metadata
         run: |
-          if ! git diff --quiet -- parser-catalog/index.json parser-catalog/history parser-catalog/catalog.json; then
+          if ! git diff --quiet -- builtin-assets/index.json builtin-assets/history builtin-assets/catalog.json; then
             git config user.name github-actions[bot]
             git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git add parser-catalog/index.json parser-catalog/history parser-catalog/catalog.json
+            git add builtin-assets/index.json builtin-assets/history builtin-assets/catalog.json
             git commit -m "chore: update conversation adapter catalog metadata [skip ci]"
             git push
           fi

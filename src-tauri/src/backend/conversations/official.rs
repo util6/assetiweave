@@ -16,30 +16,30 @@ const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
     OfficialAdapterAsset {
         manifest: "codex/conversation-adapter.json",
         manifest_text: include_str!(
-            "../../../bundled/conversation-adapters/codex/conversation-adapter.json"
+            "../../../../builtin-assets/adapters/codex/conversation-adapter.json"
         ),
-        script: include_str!("../../../bundled/conversation-adapters/codex/adapter.mjs"),
+        script: include_str!("../../../../builtin-assets/adapters/codex/adapter.mjs"),
     },
     OfficialAdapterAsset {
         manifest: "claude-code/conversation-adapter.json",
         manifest_text: include_str!(
-            "../../../bundled/conversation-adapters/claude-code/conversation-adapter.json"
+            "../../../../builtin-assets/adapters/claude-code/conversation-adapter.json"
         ),
-        script: include_str!("../../../bundled/conversation-adapters/claude-code/adapter.mjs"),
+        script: include_str!("../../../../builtin-assets/adapters/claude-code/adapter.mjs"),
     },
     OfficialAdapterAsset {
         manifest: "opencode/conversation-adapter.json",
         manifest_text: include_str!(
-            "../../../bundled/conversation-adapters/opencode/conversation-adapter.json"
+            "../../../../builtin-assets/adapters/opencode/conversation-adapter.json"
         ),
-        script: include_str!("../../../bundled/conversation-adapters/opencode/adapter.mjs"),
+        script: include_str!("../../../../builtin-assets/adapters/opencode/adapter.mjs"),
     },
     OfficialAdapterAsset {
         manifest: "antigravity/conversation-adapter.json",
         manifest_text: include_str!(
-            "../../../bundled/conversation-adapters/antigravity/conversation-adapter.json"
+            "../../../../builtin-assets/adapters/antigravity/conversation-adapter.json"
         ),
-        script: include_str!("../../../bundled/conversation-adapters/antigravity/adapter.mjs"),
+        script: include_str!("../../../../builtin-assets/adapters/antigravity/adapter.mjs"),
     },
 ];
 
