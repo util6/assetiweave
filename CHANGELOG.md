@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.5.3
+
+- Move bundled adapters, catalog metadata and system Skills into the canonical `builtin-assets/` tree.
+- Add semantic conversation payload policies, command labels, independent per-file Diff cards and cleaner command-result projection.
+- Add the `aiwc` CLI alias, command shortcuts, short flags and `conversation adapter upgrade` for user, developer and explicit adapter workspaces.
+- Improve Session reading space by removing the detail toolbar and add the React Diff renderer for file changes.
+- Add payload-policy reparse state, adapter workspace promotion, generated CLI contract updates and release/build validation coverage.
+
 ## v0.5.2
 
 - Complete the conversation adapter package lifecycle with catalog views, update checks, release history, version switching and rollback, explicit register/uninstall/delete semantics, and safe local package discovery.

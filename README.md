@@ -17,7 +17,7 @@ Local-first AI asset catalog and mount manager.
 </div>
 
 > [!IMPORTANT]
-> AssetIWeave `v0.1.3` 已接入应用内自动更新，当前产品重点是 **Skill 的发现、编目、分组、备份、App 挂载与 CLI 自动化**。导航中可见的其他资产类型正在持续完善。更新包使用 Tauri updater 签名验证；当前安装包尚未接入操作系统代码签名。
+> AssetIWeave `v0.5.3` 当前覆盖 **Skill 资产管理、Conversation Session 浏览、适配器运行时管理与 CLI 自动化**。桌面端与 CLI 通过 Rust Engine 共用业务规则；更新包使用 Tauri updater 签名验证，安装包仍可能显示额外的操作系统信任提示。
 
 ## 为什么需要 AssetIWeave
 
@@ -80,6 +80,13 @@ flowchart LR
 - 桌面 App 与 CLI 共用 Rust 业务规则，自动化不会绕过挂载和安全边界；
 - CLI 的变更命令支持 `--dry-run`，破坏性命令要求 `--yes`。
 
+### 6. Conversation Session 与文件变更 Diff
+
+- 从 Codex、Claude Code、OpenCode、Antigravity 及 ChatGPT / Gemini / Qwen Web 适配器读取本地会话；Session 与 Web Record 使用独立同步任务。
+- 将命令、读取、搜索、失败诊断和文件更改转换为可折叠的内容卡片，成功命令结果默认收敛为状态信息。
+- 每个文件更改独立展示为 Diff 卡片，支持文件路径、增删统计和统一 Diff 阅读；仅命令执行壳不会占用主阅读区域。
+- 适配器源码集中在 `builtin-assets/`，用户可编辑工作区位于 `~/.assetiweave/conversation-adapters/<cli-name>`，升级成功后才提升为不可变运行副本。
+
 ## 当前支持范围
 
 | 能力 | 当前状态 |
@@ -91,6 +98,11 @@ flowchart LR
 | 单个 Skill 快捷挂载、状态刷新与部署计划 | 可用 |
 | Skill 备份库、导入与删除 | 可用 |
 | Codex / Claude / Cursor / OpenCode / Gemini / Antigravity / OpenClaw / Custom Profile | 可用 |
+| Conversation Session / Web Record 浏览、搜索、导出与增量同步 | 可用 |
+| Conversation Adapter Catalog、版本历史与运行时切换 | 可用 |
+| 独立文件 Diff 卡片与命令结果语义化展示 | 可用 |
+| `aiwc` CLI 入口、命令别名与短参数 | 可用 |
+| Conversation Adapter 工作区升级与 probe 校验 | 可用 |
 | Prompt / Rule / Custom 基础扫描与目录展示 | 基础能力可用 |
 | 应用内自动检测、下载、安装与重启更新 | 可用 |
 | MCP / Agent / Command / Workflow 专用工作流 | 规划中 |
@@ -126,18 +138,18 @@ source repo asset
 
 ## 安装
 
-前往 [GitHub Releases](https://github.com/util6/assetiweave/releases) 下载对应平台的预发布包。
+前往 [GitHub Releases](https://github.com/util6/assetiweave/releases) 下载 `v0.5.3` 或更新版本的对应平台安装包。
 
 | 平台 | 发布产物 |
 | --- | --- |
-| macOS | Apple Silicon / Intel `.app.zip`，以及构建成功时上传的 `.dmg` |
-| Windows | `.msi` 或 `.exe` 安装包 |
-| Linux | `.AppImage`、`.deb` 或 `.rpm` |
-| CLI | 对应平台的 `assetiweave-tools-*` 压缩包，内含 `assetiweave-cli` 与 `assetiweave-engine` |
+| macOS | Apple Silicon / Intel `.dmg` |
+| Windows | x64 NSIS `.exe` 安装包 |
+| Linux | x64 `.AppImage` 或 `.deb` |
+| CLI | 随桌面应用内置；可在设置中安装 `assetiweave-cli`、`aiwc` 与 `assetiweave-engine` 到 PATH |
 
 ### 未签名安装包说明
 
-当前预发布包尚未进行 macOS / Windows 代码签名，系统可能显示额外的信任提示。请只从本项目的 GitHub Releases 下载并核对来源。
+当前安装包尚未进行 macOS / Windows 操作系统代码签名，系统可能显示额外的信任提示。请只从本项目的 GitHub Releases 下载并核对来源。
 
 macOS 无法打开时，可以先在 **系统设置 -> 隐私与安全性** 中选择“仍要打开”。确认下载来源可信后，也可以执行：
 
@@ -173,6 +185,22 @@ aiwc sk um downloaded-skill -p codex
 
 完整命令、JSON 输出约定和通用 API 调用方式见 [CLI 文档](docs/cli.md)。
 
+适配器工作区升级有三种来源：
+
+```bash
+# 升级 ~/.assetiweave/conversation-adapters 下的用户工作区
+aiwc c ad upgrade
+
+# 从当前仓库的 builtin-assets/adapters 使用开发版本
+aiwc c ad upgrade -d
+
+# 只升级指定的适配器目录
+aiwc c ad upgrade ./path/to/codex
+```
+
+升级流程会先复制 prepared 快照、校验 Manifest 和运行时 probe，成功后写入
+`packages/<package_id>/versions/<version>-<content-hash>`，再通过 Engine 激活；失败时保留当前可用版本。
+
 ## 本地优先与数据安全
 
 - **无需云端账号**：核心目录、分组、挂载与备份工作流在本机完成。
@@ -187,6 +215,8 @@ aiwc sk um downloaded-skill -p codex
 | --- | --- |
 | SQLite Catalog | 系统应用数据目录下的 `AssetIWeave/app.db` |
 | Skill 备份库 | `~/.assetiweave/library/skills` |
+| Conversation Adapter 用户工作区 | `~/.assetiweave/conversation-adapters/<cli-name>` |
+| Conversation Adapter 不可变运行副本 | `~/.assetiweave/conversation-adapters/packages/<package_id>/versions/` |
 | 目标投影 | 各 Profile 配置的目标目录 |
 
 ## 架构
@@ -200,6 +230,9 @@ flowchart TB
     Service --> Scanner
     Scanner --> Catalog["SQLite catalog"]
     Service --> Catalog
+
+    Conversations["Session / Web Record adapters"] --> Normalizer["Payload policy + normalized cards"]
+    Normalizer --> Catalog
 
     Catalog --> Planner["Mount relations + deployment plan"]
     Service --> Planner
@@ -252,8 +285,10 @@ pnpm cli:run -- doctor
 ```bash
 pnpm typecheck
 pnpm test
+pnpm conversation-adapters:test
 pnpm build
-pnpm cli:test
+go vet -C cli ./...
+go test -C cli ./...
 cargo test --workspace
 ```
 

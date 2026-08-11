@@ -28,7 +28,7 @@ def success(data):
     print(json.dumps({"ok": True, "data": data}))
 
 if args == ["version"]:
-    success({"cli_version": "0.5.2", "engine_version": "0.5.2", "compatible": True})
+    success({"cli_version": "0.5.3", "engine_version": "0.5.3", "compatible": True})
 elif args[:1] == ["schema"]:
     success({"method": args[1]})
 elif args[:3] == ["conversation", "session", "list"]:
