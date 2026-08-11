@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
-const adapterPath = path.join(repositoryRoot, "src-tauri/bundled/conversation-adapters/antigravity/adapter.mjs");
+const adapterPath = path.join(repositoryRoot, "builtin-assets/adapters/antigravity/adapter.mjs");
 
 test("Antigravity classifies a VIEW_FILE result for SKILL.md as skill content", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-skill-"));
@@ -147,7 +147,7 @@ test("Antigravity removes command runner headers and terminal control sequences"
 
     const session = readFixtureSession(transcriptPath);
     const result = session.turns[0].parts[0];
-    assert.equal(result.text, "check passed");
+    assert.equal(result.text, null);
     assert.equal(result.content_card.renderer, "terminal_output");
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
@@ -184,9 +184,7 @@ test("Antigravity normalizes structured command output before applying text budg
 
     const session = readFixtureSession(transcriptPath);
     const result = session.turns[0].parts[0];
-    assert.ok(result.text.startsWith("visible output line\n"));
-    assert.equal(result.text.includes("input_text"), false);
-    assert.equal(result.text.startsWith("[{"), false);
+    assert.equal(result.text, null);
     assert.equal(result.content_card.renderer, "terminal_output");
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });

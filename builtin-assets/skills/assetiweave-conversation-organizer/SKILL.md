@@ -23,7 +23,7 @@ description: 通过 AssetIWeave CLI 整理或接入 AI App 对话记录时使用
 - 不让 AssetIWeave 调用外部 AI API。推理由当前 agent 完成，再通过 CLI 应用。
 - 有用的 tool、command、code、subagent 上下文应保留在对应 question 下。
 - 把本 Skill 和随软件发布的 adapter 视为 AssetIWeave 产品资产。只有用户明确要求产品开发时，才修改 Rust、Go、前端、内置枚举、默认 source/profile 或生成的 CLI contract。
-- 普通用户扩展的新 App adapter 应进入 AssetIWeave 管理的 adapter library；需要随软件发布的官方 adapter 应通过明确的产品开发任务进入 `parser-catalog`。
+- 普通用户扩展的新 App adapter 应进入 AssetIWeave 管理的 adapter library；需要随软件发布的官方 adapter 应通过明确的产品开发任务进入 `builtin-assets`。
 - 如果现有 CLI、Engine adapter 协议或标准化模型无法表达来源数据，停止并报告具体能力缺口。只有用户另行明确授权产品开发任务后，才能修改 AssetIWeave 源码。
 
 ## CLI 工作流

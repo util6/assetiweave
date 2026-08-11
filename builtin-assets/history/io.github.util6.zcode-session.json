@@ -7,19 +7,51 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "0.4.3",
+      "channel": "stable",
+      "released_at": "2026-08-10T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.zcode-session-0.4.3-universal.zip",
+      "artifact_size": 37417,
+      "artifact_sha256": "6565e616552437b3fe04a546355776b33a6e1c15334ac942b8492e68f05805dd",
+      "changelog_markdown": "## 0.4.3\n\n- Split multi-file unified diffs into one independent File Change card per file.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/zcode"
+      }
+    },
+    {
+      "version": "0.4.2",
+      "channel": "stable",
+      "released_at": "2026-08-09T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.zcode-session-0.4.2-universal.zip",
+      "artifact_size": 33191,
+      "artifact_sha256": "5e3f658619d96b73b871b52fe1d3970f947b47d5b3e63f3b4cf3ae36c3db76fc",
+      "changelog_markdown": "## 0.4.2\n\n- Emit file changes as independent manifest-defined File Change cards instead of command Result cards.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/zcode"
+      }
+    },
+    {
       "version": "0.4.1",
       "channel": "stable",
       "released_at": "2026-08-02T00:00:00Z",
       "core_compatibility": ">=0.5.2, <1.0.0",
       "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.zcode-session-0.4.1-universal.zip",
-      "artifact_size": 31519,
-      "artifact_sha256": "e781e6cf3007c063dd1fc9eb9766af17f0a343d67091fb8cba38814b9198433e",
+      "artifact_size": 31914,
+      "artifact_sha256": "9579a7bfc5a32c202aade7e7545b98d25eeefbea5018df1abfc6ecaa3c308b76",
       "changelog_markdown": "## 0.4.1\n\n- Decode structured execution output, remove runner noise, and render plain results as terminal output.",
       "breaking_change": false,
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/zcode"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/zcode"
       }
     },
     {
@@ -35,7 +67,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/zcode"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/zcode"
       }
     },
     {
@@ -51,7 +83,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/zcode"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/zcode"
       }
     },
     {
@@ -67,7 +99,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/zcode"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/zcode"
       }
     },
     {
@@ -83,7 +115,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/zcode"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/zcode"
       }
     },
     {
@@ -99,7 +131,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/zcode"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/zcode"
       }
     }
   ]

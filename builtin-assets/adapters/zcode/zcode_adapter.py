@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+"""ZCode 会话解析适配器 (ZCode Conversation Adapter).
+
+负责读取、解析及转换 ZCode 本地 SQLite 数据库与 JSON 会话记录为 AssetIWeave 标准会话和内容卡片。
+"""
 from __future__ import annotations
 
 import hashlib
@@ -18,18 +22,21 @@ IGNORED_PART_TYPES = {
     "step-finish",
     "step-start",
 }
-CONTENT_CARD_SCHEMA_VERSION = "zcode-content-cards-v4"
+CONTENT_CARD_SCHEMA_VERSION = "zcode-content-cards-v6"
 
 
 def emit(payload: dict[str, Any]) -> None:
+    """向 stdout 标准输出发送单行 JSON 事件对象."""
     print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), flush=True)
 
 
 def compact_json(value: Any) -> str:
+    """序列化为无多余空格的标准 JSON 字符串."""
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 def compact_object(value: dict[str, Any]) -> dict[str, Any]:
+    """过滤字典中的 None 与空字符串条目."""
     return {key: entry for key, entry in value.items() if entry not in (None, "")}
 
 
@@ -405,14 +412,19 @@ def normalize_assistant_part(data: dict[str, Any]) -> list[dict[str, Any]]:
             )
         ]
     if kind in {"file", "patch"}:
-        text = nested_string(data, ("path", "filename", "name", "text", "summary", "url"))
+        text_fields = (
+            ("patch", "diff", "text", "summary", "path", "filename", "name", "url")
+            if kind == "patch"
+            else ("path", "filename", "name", "text", "summary", "url")
+        )
+        text = nested_string(data, text_fields)
         return [
             normalized_part(
                 role="assistant",
                 kind="file_change",
                 text=text,
                 metadata_json=content_card_metadata(
-                    {"type": "result", "format": "plain"},
+                    {"type": "file-change", "format": "diff"},
                     small_metadata(data),
                 ),
             )
@@ -681,7 +693,8 @@ def normalize_execution_command_text(value: Any) -> str:
 
 def finalize_structured_content_cards(session: dict[str, Any]) -> dict[str, Any]:
     for turn in session.get("turns") or []:
-        for part in turn.get("parts") or []:
+        parts = turn.get("parts") or []
+        for part in parts:
             metadata: dict[str, Any] = {}
             raw_metadata = part.get("metadata_json")
             if isinstance(raw_metadata, str) and raw_metadata.strip():
@@ -696,13 +709,28 @@ def finalize_structured_content_cards(session: dict[str, Any]) -> dict[str, Any]
             if not isinstance(card_type, str):
                 kind = (part.get("content_card") or {}).get("kind")
                 card_type = kind.rsplit(".", 1)[-1] if isinstance(kind, str) else None
+            is_file_change = (
+                part.get("kind") == "file_change"
+                or card_type == "file-change"
+                or (isinstance(legacy_card, dict) and legacy_card.get("format") == "diff")
+                or (part.get("content_card") or {}).get("renderer") == "diff"
+            )
+            if is_file_change:
+                part["kind"] = "file_change"
+                card_type = "file-change"
             if card_type == "result" and isinstance(part.get("text"), str):
                 part["text"] = normalize_execution_result_text(part["text"]) or None
             elif card_type == "command":
                 field = "command" if isinstance(part.get("command"), str) else "text"
                 if isinstance(part.get(field), str):
                     part[field] = normalize_execution_command_text(part[field]) or None
-            if not part.get("content_card") and isinstance(legacy_card, dict) and isinstance(legacy_card.get("type"), str):
+            if is_file_change:
+                part["content_card"] = {
+                    "schema_version": 1,
+                    "kind": "zcode.file-change",
+                    "renderer": "diff",
+                }
+            elif not part.get("content_card") and isinstance(legacy_card, dict) and isinstance(legacy_card.get("type"), str):
                 card_type = legacy_card["type"]
                 part["content_card"] = {
                     "schema_version": 1,
@@ -710,11 +738,111 @@ def finalize_structured_content_cards(session: dict[str, Any]) -> dict[str, Any]
                     "renderer": structured_card_renderer(legacy_card),
                 }
             part["metadata_json"] = compact_json(metadata) if metadata else None
+        turn["parts"] = split_file_change_parts(parts)
     return session
+
+
+def split_file_change_parts(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    expanded: list[dict[str, Any]] = []
+    for part in parts:
+        if part.get("kind") != "file_change" or not isinstance(part.get("text"), str):
+            expanded.append(part)
+            continue
+        files = split_unified_diff_files(part["text"])
+        if len(files) < 2:
+            expanded.append(part)
+            continue
+        metadata: dict[str, Any] = {}
+        if isinstance(part.get("metadata_json"), str):
+            try:
+                parsed = json.loads(part["metadata_json"])
+                if isinstance(parsed, dict):
+                    metadata = parsed
+            except json.JSONDecodeError:
+                pass
+        for index, (file_path, diff_text) in enumerate(files, start=1):
+            file_part = dict(part)
+            file_part["text"] = diff_text
+            if isinstance(part.get("content_card"), dict):
+                file_part["content_card"] = dict(part["content_card"])
+            file_part["metadata_json"] = compact_json({
+                **metadata,
+                **({"file_path": file_path} if file_path else {}),
+                "file_change_index": index,
+                "file_change_count": len(files),
+            })
+            expanded.append(file_part)
+    return expanded
+
+
+def split_unified_diff_files(value: str) -> list[tuple[str | None, str]]:
+    text = value.rstrip()
+    if not text:
+        return []
+    lines = text.split("\n")
+    starts = [index for index, line in enumerate(lines) if line.startswith("diff --git ")]
+    if len(starts) < 2:
+        starts = [
+            index
+            for index, line in enumerate(lines[:-1])
+            if is_unified_file_header_pair(line, lines[index + 1])
+        ]
+    if len(starts) < 2:
+        return [(diff_file_path(text), text)]
+    if starts[0] > 0:
+        starts[0] = 0
+    files: list[tuple[str | None, str]] = []
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(lines)
+        diff_text = "\n".join(lines[start:end]).rstrip()
+        files.append((diff_file_path(diff_text), diff_text))
+    return files
+
+
+def is_unified_file_header_pair(old_line: str, new_line: str) -> bool:
+    if not old_line.startswith("--- ") or not new_line.startswith("+++ "):
+        return False
+    old_path = old_line[4:].split("\t", 1)[0].strip()
+    new_path = new_line[4:].split("\t", 1)[0].strip()
+    if old_path == "/dev/null" or new_path == "/dev/null":
+        return True
+    decoded_old = decode_diff_path(old_path)
+    decoded_new = decode_diff_path(new_path)
+    return decoded_old == decoded_new or (old_path.startswith("a/") and new_path.startswith("b/"))
+
+
+def diff_file_path(value: str) -> str | None:
+    lines = value.split("\n")
+    renamed = next((line[len("rename to "):] for line in lines if line.startswith("rename to ")), None)
+    new_path = next((line[4:] for line in lines if line.startswith("+++ ")), None)
+    old_path = next((line[4:] for line in lines if line.startswith("--- ")), None)
+    for candidate in (renamed, new_path, old_path):
+        decoded = decode_diff_path(candidate)
+        if decoded and decoded != "/dev/null":
+            return decoded
+    git_header = next((line for line in lines if line.startswith("diff --git ")), None)
+    match = re.match(r"^diff --git a/(\S+) b/(\S+)$", git_header or "")
+    return decode_diff_path(match.group(2) if match else None)
+
+
+def decode_diff_path(value: str | None) -> str | None:
+    candidate = str(value or "").split("\t", 1)[0].strip()
+    if not candidate:
+        return None
+    if candidate.startswith('"') and candidate.endswith('"'):
+        try:
+            decoded = json.loads(candidate)
+            if isinstance(decoded, str):
+                candidate = decoded
+        except json.JSONDecodeError:
+            candidate = candidate[1:-1]
+    return re.sub(r"^[ab]/", "", candidate) or None
 
 
 def structured_card_renderer(card: dict[str, Any]) -> str:
     card_type = card.get("type")
+    if card_type == "file-change":
+        return "diff"
     if card_type == "code":
         return "code"
     if card_type == "command":

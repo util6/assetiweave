@@ -1,10 +1,16 @@
 #!/usr/bin/env node
+/**
+ * @file Qwen Web (通义千问) 会话解析适配器 (Qwen Web Adapter)
+ * @description 负责读取通义千问 (Qwen Web) 导出的会话格式，转换为 AssetIWeave 标准会话与卡片。
+ */
+
 const fs = require("fs");
 const path = require("path");
 
-const CONTENT_CARD_SCHEMA = "web-content-cards-v4";
+const CONTENT_CARD_SCHEMA = "web-content-cards-v6";
 const ADAPTER_ID = "qwen-web";
 
+/** 向标准输出发送 JSON 事件消息 */
 function emit(value) {
   process.stdout.write(JSON.stringify(value) + "\n");
 }
@@ -174,6 +180,8 @@ function normalizeSessionCards(session) {
         changed = true;
       }
     }
+    turn.parts = splitFileChangeParts(parts);
+    if (turn.parts.length !== parts.length) changed = true;
   }
   if (changed && typeof session.source_fingerprint === "string" && session.source_fingerprint.trim()) {
     if (!session.source_fingerprint.includes(CONTENT_CARD_SCHEMA)) {
@@ -183,6 +191,85 @@ function normalizeSessionCards(session) {
   return session;
 }
 
+
+
+function splitFileChangeParts(parts) {
+  return parts.flatMap((part) => {
+    if (part?.kind !== "file_change" || !part.text) return [part];
+    const files = splitUnifiedDiffFiles(part.text);
+    if (files.length < 2) return [part];
+    const metadata = metadataObject(part.metadata_json);
+    return files.map(({ filePath, text: diffText }, index) => ({
+      ...part,
+      text: diffText,
+      content_card: part.content_card ? { ...part.content_card } : part.content_card,
+      metadata_json: JSON.stringify({
+        ...metadata,
+        ...(filePath ? { file_path: filePath } : {}),
+        file_change_index: index + 1,
+        file_change_count: files.length,
+      }),
+    }));
+  });
+}
+
+function splitUnifiedDiffFiles(value) {
+  const text = String(value ?? "").trimEnd();
+  if (!text) return [];
+  const lines = text.split("\n");
+  let starts = lines.flatMap((line, index) => line.startsWith("diff --git ") ? [index] : []);
+  if (starts.length < 2) {
+    starts = lines.flatMap((line, index) => (
+      isUnifiedFileHeaderPair(line, lines[index + 1]) ? [index] : []
+    ));
+  }
+  if (starts.length < 2) return [{ filePath: diffFilePath(text), text }];
+  if (starts[0] > 0) starts[0] = 0;
+  return starts.map((start, index) => {
+    const diffText = lines.slice(start, starts[index + 1] ?? lines.length).join("\n").trimEnd();
+    return { filePath: diffFilePath(diffText), text: diffText };
+  });
+}
+
+function isUnifiedFileHeaderPair(oldLine, newLine) {
+  if (!oldLine?.startsWith("--- ") || !newLine?.startsWith("+++ ")) return false;
+  const oldPath = oldLine.slice(4).split("\t", 1)[0].trim();
+  const newPath = newLine.slice(4).split("\t", 1)[0].trim();
+  if (oldPath === "/dev/null" || newPath === "/dev/null") return true;
+  const decodedOld = decodeDiffPath(oldPath);
+  const decodedNew = decodeDiffPath(newPath);
+  return decodedOld === decodedNew
+    || (oldPath.startsWith("a/") && newPath.startsWith("b/"));
+}
+
+function diffFilePath(value) {
+  const lines = String(value ?? "").split("\n");
+  const renamed = lines.find((line) => line.startsWith("rename to "))?.slice("rename to ".length);
+  const newPath = lines.find((line) => line.startsWith("+++ "))?.slice(4);
+  const oldPath = lines.find((line) => line.startsWith("--- "))?.slice(4);
+  for (const candidate of [renamed, newPath, oldPath]) {
+    const decoded = decodeDiffPath(candidate);
+    if (decoded && decoded !== "/dev/null") return decoded;
+  }
+  const gitHeader = lines.find((line) => line.startsWith("diff --git "));
+  const unquoted = gitHeader?.match(/^diff --git a\/(\S+) b\/(\S+)$/);
+  return decodeDiffPath(unquoted?.[2]);
+}
+
+function decodeDiffPath(value) {
+  let candidate = String(value ?? "").split("\t", 1)[0].trim();
+  if (!candidate) return null;
+  if (candidate.startsWith('"') && candidate.endsWith('"')) {
+    try {
+      candidate = JSON.parse(candidate);
+    } catch {
+      candidate = candidate.slice(1, -1);
+    }
+  }
+  return candidate.replace(/^[ab]\//, "") || null;
+}
+
+
 function ensurePartContentCard(part) {
   if (!part || typeof part !== "object") return false;
   const metadata = metadataObject(part.metadata_json);
@@ -190,13 +277,24 @@ function ensurePartContentCard(part) {
   const contentCard = legacyCard && typeof legacyCard === "object" && typeof legacyCard.type === "string"
     ? legacyCard
     : inferContentCard(part);
+  const isFileChange = text(part.kind) === "file_change"
+    || contentCard?.type === "file-change"
+    || contentCard?.format === "diff"
+    || part.content_card?.renderer === "diff";
+  const resolvedContentCard = isFileChange
+    ? { ...contentCard, type: "file-change", format: "diff" }
+    : contentCard;
   let changed = false;
-  if (contentCard?.type === "result" && typeof part.text === "string") {
+  if (isFileChange && part.kind !== "file_change") {
+    part.kind = "file_change";
+    changed = true;
+  }
+  if (resolvedContentCard?.type === "result" && typeof part.text === "string") {
     const normalized = normalizeExecutionResultText(part.text) || null;
     if (part.text !== normalized) changed = true;
     part.text = normalized;
   }
-  if (contentCard?.type === "command") {
+  if (resolvedContentCard?.type === "command") {
     const field = typeof part.command === "string" ? "command" : typeof part.text === "string" ? "text" : null;
     if (field) {
       const normalized = normalizeExecutionCommandText(part[field]) || null;
@@ -204,13 +302,19 @@ function ensurePartContentCard(part) {
       part[field] = normalized;
     }
   }
-  if (!part.content_card && contentCard) {
-    part.content_card = {
+  if (resolvedContentCard && (isFileChange || !part.content_card)) {
+    const nextContentCard = {
       schema_version: 1,
-      kind: `${ADAPTER_ID}.${contentCard.type}`,
-      renderer: structuredCardRenderer(contentCard),
+      kind: `${ADAPTER_ID}.${resolvedContentCard.type}`,
+      renderer: structuredCardRenderer(resolvedContentCard),
     };
-    changed = true;
+    if (!part.content_card
+      || part.content_card.schema_version !== nextContentCard.schema_version
+      || part.content_card.kind !== nextContentCard.kind
+      || part.content_card.renderer !== nextContentCard.renderer) {
+      part.content_card = nextContentCard;
+      changed = true;
+    }
   }
   if ("content_card" in metadata || "contentCard" in metadata) changed = true;
   delete metadata.content_card;
@@ -222,6 +326,7 @@ function ensurePartContentCard(part) {
 }
 
 function structuredCardRenderer(card) {
+  if (card.type === "file-change") return "diff";
   if (card.type === "code") return "code";
   if (card.type === "command") return "command";
   if (card.type === "result") {
@@ -252,7 +357,10 @@ function inferContentCard(part) {
   if (kind === "command") {
     return { type: "command" };
   }
-  if (kind === "tool" || kind === "file_change" || kind === "subagent") {
+  if (kind === "file_change") {
+    return { type: "file-change", format: "diff" };
+  }
+  if (kind === "tool" || kind === "subagent") {
     return { type: "result", format: "markdown" };
   }
   if (kind === "metadata") {

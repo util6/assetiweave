@@ -1,4 +1,14 @@
 #!/usr/bin/env node
+/**
+ * @file harvest.js — 通义千问 (Qwen) Web 会话增量抓取与归一化导出脚本
+ *
+ * 架构设计与抓取流水线：
+ * 1. 从 requests/auth-probe.json 中提取 Cookie 与 Cookie "cna" 值构造 `ut` 签名参数
+ * 2. 分页请求 `api/v1/session/list` 接口获取所有会话摘要列表
+ * 3. 比较本地 sessions.json 中的 updated_at，跳过未更新的会话
+ * 4. 对更新或新会话，调用 `api/v1/session/msg/list` 提取具体 Round 消息明细并格式化为 Turn/Part
+ * 5. 将会话导出至 output/normalized/sessions.json
+ */
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
@@ -12,6 +22,7 @@ const normalizedDir = path.join(root, "output", "normalized");
 const normalizedFile = path.join(normalizedDir, "sessions.json");
 const forceFullReparse = process.env.ASSETIWEAVE_FULL_REPARSE === "1";
 
+/** 本地已有会话缓存映射 external_id -> session */
 const existingSessions = new Map();
 try {
   if (fs.existsSync(normalizedFile)) {
@@ -24,19 +35,23 @@ try {
   }
 } catch {}
 
+/** 递归创建 0700 权限目录 */
 function mkdirp(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
 
+/** 读取解析 JSON 文件 */
 function readJSON(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
+/** 写入 0600 权限格式化 JSON */
 function writeJSON(file, value) {
   mkdirp(path.dirname(file));
   fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
 }
 
+/** 从 Cookie Header 中提取特定 Cookie 项的值 */
 function cookieValue(cookieHeader, name) {
   for (const part of String(cookieHeader || "").split(";")) {
     const index = part.indexOf("=");
@@ -46,10 +61,12 @@ function cookieValue(cookieHeader, name) {
   return "";
 }
 
+/** 文本格式化 */
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+/** 构造 Qwen API 通用 URL 查询参数 (包含 ut 追踪签名、biz_id等) */
 function commonParams(extra, ut) {
   const params = new URLSearchParams({
     biz_id: "ai_qwen",
@@ -68,6 +85,7 @@ function commonParams(extra, ut) {
   return params;
 }
 
+/** 安全的 HTTP JSON 请求包装 */
 async function requestJSON(url, headers) {
   const response = await fetch(url, { headers });
   const body = await response.text();
@@ -85,11 +103,11 @@ async function requestJSON(url, headers) {
   const authProbe = readJSON(path.join(root, "requests", "auth-probe.json"));
   const cookie = authProbe.headers && authProbe.headers.Cookie;
   if (!cookie) {
-    throw new Error("Qwen cookie login state is missing. Run: assetiweave-cli conversation web auth-detect " + root + " --domain qianwen.com --credential cookie");
+    throw new Error("Qwen Cookie 登录状态缺失。请运行: assetiweave-cli conversation web auth-detect " + root + " --domain qianwen.com --credential cookie");
   }
   const ut = cookieValue(cookie, "cna");
   if (!ut) {
-    throw new Error("Qwen cna cookie is missing; cannot build web request ut parameter.");
+    throw new Error("Qwen cna cookie 缺失，无法构造请求参数 ut。");
   }
 
   const headers = {
@@ -102,6 +120,8 @@ async function requestJSON(url, headers) {
 
   const listItems = [];
   const seenSessions = new Set();
+
+  // 1. 分页获取全部 Session 列表
   for (let page = 1; page <= 100; page++) {
     const params = commonParams({
       page,
@@ -114,7 +134,7 @@ async function requestJSON(url, headers) {
       status_code: snapshot.status_code,
       body: snapshot.body
     });
-    if (snapshot.status_code !== 200) throw new Error(`Qwen list page ${page} failed with status ${snapshot.status_code}`);
+    if (snapshot.status_code !== 200) throw new Error(`Qwen 列表第 ${page} 页请求失败，状态码 ${snapshot.status_code}`);
     const items = snapshot.json && snapshot.json.data && Array.isArray(snapshot.json.data.list) ? snapshot.json.data.list : [];
     for (const item of items) {
       const sessionID = text(item.session_id);
@@ -126,6 +146,8 @@ async function requestJSON(url, headers) {
   }
 
   const sessions = [];
+
+  // 2. 依次抓取详情与转译
   for (let index = 0; index < listItems.length; index++) {
     const item = listItems[index];
     const sessionID = text(item.session_id);
@@ -151,7 +173,7 @@ async function requestJSON(url, headers) {
         status_code: snapshot.status_code,
         body: snapshot.body
       });
-      if (snapshot.status_code !== 200) throw new Error(`Qwen detail ${sessionID} page ${page} failed with status ${snapshot.status_code}`);
+      if (snapshot.status_code !== 200) throw new Error(`Qwen 详情 ${sessionID} 第 ${page} 页请求失败，状态码 ${snapshot.status_code}`);
       const items = snapshot.json && snapshot.json.data && Array.isArray(snapshot.json.data.list) ? snapshot.json.data.list : [];
       for (const round of items) {
         const rid = text(round.req_id) || crypto.createHash("sha256").update(JSON.stringify(round)).digest("hex");
@@ -179,6 +201,7 @@ async function requestJSON(url, headers) {
     });
   }
 
+  // 3. 写入归一化文件
   writeJSON(normalizedFile, { sessions });
   const turnCount = sessions.reduce((sum, session) => sum + session.turns.length, 0);
   console.log(JSON.stringify({

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { normalizeSessionPayload } from "./payload-policy.mjs";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -335,6 +336,40 @@ function displayTurns(turns) {
     }));
 }
 
+function canonicalSummaryDiff(entries) {
+  if (!Array.isArray(entries)) return null;
+  const files = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object" || typeof entry.patch !== "string" || !entry.patch.trim()) continue;
+    const filePath = String(entry.file ?? entry.path ?? "").replace(/^[./\\]+/, "").replaceAll("\\", "/");
+    if (!filePath) continue;
+    const patch = entry.patch.replace(/\r\n?/g, "\n").trim();
+    if (patch.startsWith("diff --git ")) {
+      files.push(patch);
+      continue;
+    }
+    const status = String(entry.status ?? "modified").toLowerCase();
+    const oldPath = status === "added" || status === "new" ? "/dev/null" : `a/${filePath}`;
+    const newPath = status === "deleted" || status === "removed" ? "/dev/null" : `b/${filePath}`;
+    files.push([
+      `diff --git a/${filePath} b/${filePath}`,
+      `--- ${oldPath}`,
+      `+++ ${newPath}`,
+      patch,
+    ].join("\n"));
+  }
+  return files.length ? files.join("\n") : null;
+}
+
+function attachSummaryDiff(parts, summaryDiffs) {
+  const diff = canonicalSummaryDiff(summaryDiffs);
+  if (!diff) return false;
+  const target = parts.find((part) => part?.kind === "file_change" && !part.text);
+  if (!target) return false;
+  target.text = diff;
+  return true;
+}
+
 function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
   const turnsBySession = new Map();
   if (!sessionIds.length) return turnsBySession;
@@ -435,8 +470,10 @@ function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
     : dataCol
       ? sqlCoalesce([jsonExtract(dataCol, "$.time.created"), jsonExtract(dataCol, "$.created_at"), jsonExtract(dataCol, "$.time")])
       : "NULL";
-  const msgSql = `SELECT ${quoteIdent(msgId)} AS id, ${quoteIdent(msgSession)} AS session_id, ${roleExpr} AS role, ${timestampExpr} AS timestamp, NULL AS data FROM message WHERE ${quoteIdent(msgSession)} IN (${sessionList}) ORDER BY rowid ASC`;
+  const summaryDiffsExpr = dataCol ? jsonExtract(dataCol, "$.summary.diffs") : "NULL";
+  const msgSql = `SELECT ${quoteIdent(msgId)} AS id, ${quoteIdent(msgSession)} AS session_id, ${roleExpr} AS role, ${timestampExpr} AS timestamp, NULL AS data, ${summaryDiffsExpr} AS summary_diffs FROM message WHERE ${quoteIdent(msgSession)} IN (${sessionList}) ORDER BY rowid ASC`;
   const currentBySession = new Map();
+  const summaryDiffsBySession = new Map();
   for (const message of sqliteJson(dbPath, msgSql)) {
     const sessionId = String(message.session_id);
     const data = parseJson(message.data);
@@ -449,6 +486,10 @@ function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
       .flatMap((row) => normalizePart(row, role) ?? [])
       .filter(Boolean);
     if (String(role).toLowerCase() === "user") {
+      const summaryDiffs = parseJson(message.summary_diffs);
+      if (Array.isArray(summaryDiffs) && summaryDiffs.length > 0) {
+        summaryDiffsBySession.set(sessionId, summaryDiffs);
+      }
       const userText = parts
         .filter((part) => part.role === "user" && part.kind === "text")
         .map((part) => part.text)
@@ -469,6 +510,9 @@ function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
       });
     } else if (currentBySession.has(sessionId)) {
       const current = currentBySession.get(sessionId);
+      if (attachSummaryDiff(parts, summaryDiffsBySession.get(sessionId))) {
+        summaryDiffsBySession.delete(sessionId);
+      }
       current.parts.push(...parts);
       current.ended_at = timestamp == null ? current.ended_at : String(timestamp);
     }
@@ -666,7 +710,7 @@ function finalizeStructuredContentCards(session) {
       part.metadata_json = Object.keys(metadataValue).length > 0 ? JSON.stringify(metadataValue) : null;
     }
   }
-  return session;
+  return normalizeSessionPayload(session);
 }
 
 function parseStructuredMetadata(value) {

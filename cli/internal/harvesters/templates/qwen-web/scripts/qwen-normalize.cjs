@@ -1,7 +1,19 @@
+/**
+ * @file qwen-normalize.cjs — 通义千问 (Qwen) Web 响应格式归一化转换模块
+ *
+ * 职责：
+ * 1. 拆解 Qwen 多轮对话 Round (request_messages / response_messages / qwen_response_messages) 结构
+ * 2. 提炼 Assistant 回答、Plugin 插件调用结果与 ReferenceLink 参考链接
+ * 3. 构造标准化的 Session Turn 与 Part 结构
+ */
+"use strict";
+
+/** 辅助字符串清理函数 */
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+/** 获取消息列表中的首个有效文本内容 */
 function firstContent(messages) {
   if (!Array.isArray(messages)) return "";
   for (const message of messages) {
@@ -11,6 +23,7 @@ function firstContent(messages) {
   return "";
 }
 
+/** 构造标准化的内容卡片元数据 JSON 字符串 */
 function metadata(contentCard, extra = {}) {
   return JSON.stringify({
     ...extra,
@@ -18,6 +31,7 @@ function metadata(contentCard, extra = {}) {
   });
 }
 
+/** 构造统一的标准归一化 Part 数据结构 */
 function normalizedPart(role, kind, fields = {}) {
   return {
     role,
@@ -32,6 +46,7 @@ function normalizedPart(role, kind, fields = {}) {
   };
 }
 
+/** 解析 JSON 字符串并安全处理异常 */
 function parseJSON(value) {
   const source = text(value);
   if (!source) return null;
@@ -42,6 +57,7 @@ function parseJSON(value) {
   }
 }
 
+/** 获取引用/插件链接展示标题 */
 function linkLabel(link, index) {
   return (
     text(link && link.title) ||
@@ -51,6 +67,7 @@ function linkLabel(link, index) {
   );
 }
 
+/** 格式化搜索引用与插件结果链接为 Markdown 段落 */
 function formatLinks(label, links) {
   if (!Array.isArray(links) || links.length === 0) return "";
   const lines = [label];
@@ -68,6 +85,7 @@ function formatLinks(label, links) {
   return lines.join("\n");
 }
 
+/** 解析插件工具调用的 JSON 响应 Payload */
 function pluginResultPayload(response) {
   const payload = parseJSON(response && response.content);
   if (!payload || typeof payload !== "object") return null;
@@ -77,6 +95,7 @@ function pluginResultPayload(response) {
   return payload;
 }
 
+/** 从响应消息中提取插件结果与参考引用内容 */
 function resultContents(round) {
   const contents = [];
   const seen = new Set();
@@ -107,6 +126,7 @@ function resultContents(round) {
   return contents;
 }
 
+/** 从响应消息中提取 Assistant 文本和 iframe 内容 */
 function assistantContents(round) {
   const contents = [];
   const seen = new Set();
@@ -136,6 +156,13 @@ function assistantContents(round) {
   return contents;
 }
 
+/**
+ * 将单个 Qwen 交互 Round 转换为规范化的 Turn 对象
+ *
+ * @param {object} round - 原始 Round JSON 对象
+ * @param {number} index - 轮次序号
+ * @returns {object|null} 归一化 Turn 对象
+ */
 function normalizeRound(round, index) {
   const userText = firstContent(round && round.request_messages);
   if (!userText) return null;

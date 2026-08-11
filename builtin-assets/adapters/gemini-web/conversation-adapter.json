@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "gemini-web",
   "name": "Gemini Web",
-  "version": "0.4.1",
+  "version": "0.4.3",
   "protocol_version": 1,
   "runtime": {
     "type": "node",
@@ -70,6 +70,15 @@
         "plain",
         "markdown",
         "json"
+      ]
+    },
+    {
+      "id": "gemini-web.file-change",
+      "semantic_role": "file-change",
+      "label": "文件更改",
+      "default_renderer": "diff",
+      "allowed_renderers": [
+        "diff"
       ]
     }
   ]

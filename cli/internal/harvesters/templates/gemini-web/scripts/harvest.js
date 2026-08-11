@@ -1,4 +1,12 @@
 #!/usr/bin/env node
+/**
+ * @file harvest.js — Google Gemini Web 会话抓取与归一化导出脚本
+ *
+ * 架构设计与抓取流水线：
+ * 1. 【优先路径 - CDP Browser Mode】：优先使用 CDP 连接 Chrome 浏览器，在页面上下文中触发 Batchexecute RPC 请求
+ * 2. 【退化路径 - Direct Cookie Mode】：若 CDP 不可用，从 auth-probe.json 中提取 SNlM0e (AT Token) 与 Cookie 进行纯 HTTP Batchexecute
+ * 3. 【自动恢复 - Auth Retry】：当 401/403 失败时，触发 `assetiweave-cli auth-detect` 自动刷抓新凭据
+ */
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
@@ -6,13 +14,14 @@ const { parseDetailBody } = require("./gemini-normalize.cjs");
 const { acquireCDPTarget, tryRefreshAuth } = require("./cdp-browser.cjs");
 
 const root = process.env.ASSETIWEAVE_HARVESTER_DIR || process.cwd();
-const runID = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\\d{3}Z$/, "Z");
+const runID = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 const rawDir = path.join(root, "output", "raw", runID);
 const detailDir = path.join(rawDir, "details");
 const normalizedDir = path.join(root, "output", "normalized");
 const normalizedFile = path.join(normalizedDir, "sessions.json");
 const forceFullReparse = process.env.ASSETIWEAVE_FULL_REPARSE === "1";
 
+/** 本地已有会话缓存 Map: external_id -> session */
 const existingSessions = new Map();
 try {
   if (fs.existsSync(normalizedFile)) {
@@ -25,24 +34,29 @@ try {
   }
 } catch {}
 
+/** 递归创建 0700 权限目录 */
 function mkdirp(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
 
+/** 读取解析 JSON 文件 */
 function readJSON(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
+/** 写入 0600 权限格式化 JSON 文件 */
 function writeJSON(file, value) {
   mkdirp(path.dirname(file));
   fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
 }
 
+/** 正则匹配首个捕获组 */
 function match1(text, pattern) {
   const match = text.match(pattern);
   return match ? match[1] : null;
 }
 
+/** 深度嵌套数组读取工具 */
 function nested(value, path, fallback = undefined) {
   let current = value;
   for (const key of path) {
@@ -55,14 +69,17 @@ function nested(value, path, fallback = undefined) {
   return current == null ? fallback : current;
 }
 
+/** 文本格式化 */
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+/** 过滤安全文件名 */
 function safeName(value) {
   return String(value).replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 160) || "item";
 }
 
+/** 将秒数与纳秒数构成的 Protobuf 时间元组解析为 ISO8601 格式 */
 function timestamp(parts) {
   if (!Array.isArray(parts) || typeof parts[0] !== "number") return null;
   const nanos = typeof parts[1] === "number" ? parts[1] : 0;
@@ -70,6 +87,12 @@ function timestamp(parts) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+/**
+ * 解析 Google Batchexecute 响应格式 (前缀包含 )]}'\n 和分帧块)
+ *
+ * @param {string} body - 原始响应文本
+ * @returns {array[]} 解析后的帧对象数组
+ */
 function parseFrames(body) {
   let content = body.startsWith(")]}'") ? body.slice(4) : body;
   const frames = [];
@@ -85,6 +108,7 @@ function parseFrames(body) {
   return frames;
 }
 
+/** 从列表 Snapshot 帧中解包会话列表与翻页 Cursor 指针 */
 function parseListSnapshot(snapshot) {
   for (const frame of snapshot.frames) {
     const bodyString = nested(frame, [2], null);
@@ -103,6 +127,7 @@ function parseListSnapshot(snapshot) {
   return { cursor: null, items: [] };
 }
 
+/** 从详情 Snapshot 帧中提取并解析 Batchexecute 核心对话体 */
 function parseDetailSnapshot(cid, snapshot) {
   for (const frame of snapshot.frames) {
     const bodyString = nested(frame, [2], null);
@@ -116,7 +141,7 @@ function parseDetailSnapshot(cid, snapshot) {
 }
 
 // ---------------------------------------------------------------------------
-// Direct cookie-based collection helpers
+// 基于 Cookie 的直接抓取工具函数 (退化路径)
 // ---------------------------------------------------------------------------
 
 async function fetchAppContext(baseHeaders) {

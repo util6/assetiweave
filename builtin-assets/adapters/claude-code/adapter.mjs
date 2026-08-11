@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { normalizeSessionPayload } from "./payload-policy.mjs";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -366,23 +367,73 @@ function sourceExecutionId(value) {
   return candidate?.trim() || null;
 }
 
+function executionKindForTool(toolName) {
+  const normalized = String(toolName ?? "").trim().toLowerCase();
+  if (/^(read|view|list|ls)/.test(normalized)) return "read";
+  if (/^(grep|glob|search|find)/.test(normalized)) return "search";
+  if (/^(edit|write|patch|notebookedit)/.test(normalized)) return "file_change";
+  if (/^(bash|shell|exec|command)/.test(normalized)) return "shell";
+  return null;
+}
+
+function toolFilePath(input) {
+  return stringField(input, ["file_path", "filePath", "path", "AbsolutePath"])
+    ?? projectPathFromValue(input)
+    ?? null;
+}
+
+function toolLineRange(input) {
+  const lineStart = Number.isInteger(input?.offset)
+    ? input.offset
+    : Number.isInteger(input?.line_start)
+      ? input.line_start
+      : Number.isInteger(input?.lineStart)
+        ? input.lineStart
+        : null;
+  const limit = Number.isInteger(input?.limit) ? input.limit : null;
+  const lineEnd = Number.isInteger(input?.line_end)
+    ? input.line_end
+    : Number.isInteger(input?.lineEnd)
+      ? input.lineEnd
+      : lineStart != null && limit != null && limit > 0
+        ? lineStart + limit - 1
+        : null;
+  return { lineStart, lineEnd, limit };
+}
+
 function toolUsePart(value) {
   const toolName = stringField(value, ["tool_name", "toolName", "name"]);
   const input = toolInput(value);
   const command = stringField(input, ["command"]) ?? stringField(value, ["command", "cmd"]);
   const cwd = projectPathFromValue(input) ?? projectPathFromValue(value) ?? null;
-  if (command?.trim()) {
+  const executionKind = executionKindForTool(toolName);
+  const filePath = toolFilePath(input);
+  const range = toolLineRange(input);
+  const executionCommand = command?.trim() || filePath;
+  if (executionKind && executionCommand?.trim()) {
     return [{
       role: "tool",
       kind: "command",
       text: null,
       language: null,
-      command,
+      command: executionCommand,
       cwd,
       status: null,
       exit_code: null,
       source_execution_id: sourceExecutionId(value),
-      metadata_json: metadata(compactObject({ type: "command", cwd }), compactToolMetadata(value)),
+      command_label: toolName ?? null,
+      metadata_json: metadata(
+        compactObject({ type: "command", cwd }),
+        compactObject({
+          ...compactToolMetadata(value),
+          source_type: toolName,
+          execution_kind: executionKind,
+          file_path: filePath,
+          line_start: range.lineStart,
+          line_end: range.lineEnd,
+          line_limit: range.limit,
+        }),
+      ),
     }];
   }
 
@@ -402,8 +453,33 @@ function toolUsePart(value) {
     cwd,
     status: null,
     exit_code: null,
-    metadata_json: metadata({ type: "tool", format: input && typeof input === "object" ? "json" : "plain" }, compactToolMetadata(value)),
+    source_execution_id: sourceExecutionId(value),
+    metadata_json: metadata(
+      { type: "tool", format: input && typeof input === "object" ? "json" : "plain" },
+      compactObject({ ...compactToolMetadata(value), source_type: toolName }),
+    ),
   }];
+}
+
+function unifiedDiffFromStructuredPatch(result) {
+  const hunks = result?.structuredPatch ?? result?.structured_patch;
+  const filePath = stringField(result, ["filePath", "file_path", "path"]);
+  if (!filePath || !Array.isArray(hunks) || hunks.length === 0) return null;
+  const gitPath = filePath.replace(/^[./\\]+/, "").replaceAll("\\", "/");
+  const lines = [
+    `diff --git a/${gitPath} b/${gitPath}`,
+    `--- a/${gitPath}`,
+    `+++ b/${gitPath}`,
+  ];
+  for (const hunk of hunks) {
+    const oldStart = Number.isInteger(hunk?.oldStart) ? hunk.oldStart : 1;
+    const oldLines = Number.isInteger(hunk?.oldLines) ? hunk.oldLines : 0;
+    const newStart = Number.isInteger(hunk?.newStart) ? hunk.newStart : 1;
+    const newLines = Number.isInteger(hunk?.newLines) ? hunk.newLines : 0;
+    lines.push(`@@ -${oldStart},${oldLines} +${newStart},${newLines} @@`);
+    if (Array.isArray(hunk?.lines)) lines.push(...hunk.lines.map((line) => String(line)));
+  }
+  return lines.join("\n");
 }
 
 function toolResultText(value, parent) {
@@ -420,10 +496,13 @@ function toolResultText(value, parent) {
 }
 
 function toolResultPart(value, parent) {
-  const text = toolResultText(value, parent);
-  if (!text.trim()) return [];
   const result = parent?.toolUseResult ?? parent?.tool_use_result;
-  const status = stringField(result, ["status"]) ?? (result?.interrupted === true ? "interrupted" : null);
+  const structuredDiff = unifiedDiffFromStructuredPatch(result);
+  const text = structuredDiff ?? toolResultText(value, parent);
+  if (!text.trim()) return [];
+  const status = stringField(result, ["status"])
+    ?? (value?.is_error === true || value?.isError === true ? "failed" : null)
+    ?? (result?.interrupted === true ? "interrupted" : null);
   const exitCode = Number.isInteger(result?.exit_code)
     ? result.exit_code
     : Number.isInteger(result?.exitCode)
@@ -431,7 +510,7 @@ function toolResultPart(value, parent) {
       : null;
   return [{
     role: "tool",
-    kind: "tool",
+    kind: structuredDiff ? "file_change" : "tool",
     text,
     language: null,
     command: null,
@@ -441,7 +520,12 @@ function toolResultPart(value, parent) {
     source_execution_id: sourceExecutionId(value),
     metadata_json: metadata(
       compactObject({ type: "result", format: "plain", status, exit_code: exitCode }),
-      compactToolMetadata(value),
+      compactObject({
+        ...compactToolMetadata(value),
+        source_type: structuredDiff ? "file_change" : undefined,
+        execution_kind: structuredDiff ? "file_change" : undefined,
+        file_path: stringField(result, ["filePath", "file_path", "path"]),
+      }),
     ),
   }];
 }
@@ -496,7 +580,10 @@ function toolPart(value) {
   const exitCode = Number.isInteger(value?.exit_code) ? value.exit_code : null;
   if (kind === "command") {
     const parts = [];
-    const executionId = sourceExecutionId(value);
+    const executionId = sourceExecutionId(value)
+      ?? (command?.trim() && text.trim()
+        ? `inline-${sha256(JSON.stringify(value)).slice(0, 24)}`
+        : null);
     if (command?.trim()) {
       parts.push({
         role: "tool",
@@ -797,7 +884,7 @@ function finalizeStructuredContentCards(session) {
       part.metadata_json = Object.keys(metadataValue).length > 0 ? JSON.stringify(metadataValue) : null;
     }
   }
-  return session;
+  return normalizeSessionPayload(session);
 }
 
 function parseStructuredMetadata(value) {

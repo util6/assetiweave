@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-02T00:00:00Z",
+  "updated_at": "2026-08-11T00:00:00Z",
   "items": [
     {
       "id": "io.github.util6.codex-session",
       "name": "Codex Session Parser",
-      "version": "1.5.5",
+      "version": "1.5.10",
       "record_kind": "session",
       "provider": "codex",
       "adapter_id": "codex",
@@ -16,17 +16,17 @@
         "codex",
         "node"
       ],
-      "expected_package_hash": "8a74e6e2a5210c8c012e0383605e28d1c99576cb2445a8ef1ab8ac1c058e59dd",
+      "expected_package_hash": "5a4f4fb9945366101f1f73f1fca8cf213ac1996aaeb2b67d3d6c9d88460da4ac",
       "expected_content_hash": "5e9061c2a563479911c3e20f857628415e405eed0229fdd5e8128691d78a34dc",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
       }
     },
     {
       "id": "io.github.util6.opencode-session",
       "name": "OpenCode Session Parser",
-      "version": "1.3.2",
+      "version": "1.3.5",
       "record_kind": "session",
       "provider": "opencode",
       "adapter_id": "opencode",
@@ -38,17 +38,17 @@
         "sqlite",
         "node"
       ],
-      "expected_package_hash": "aac9b6082c6a52904115605230834b1f634bb979aea091ab52d5fb517547f29d",
+      "expected_package_hash": "e841e71371463e4d975ba693fa5a629e9575a9baa9ec258267b17341c0f8e00b",
       "expected_content_hash": "7402082acd6351b771383f98988bf0a88ae1c5093b278ecce5d946df6884bd7e",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/opencode"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/opencode"
       }
     },
     {
       "id": "io.github.util6.claude-code-session",
       "name": "Claude Code Session Parser",
-      "version": "1.3.2",
+      "version": "1.3.5",
       "record_kind": "session",
       "provider": "claude-code",
       "adapter_id": "claude-code",
@@ -59,17 +59,17 @@
         "claude-code",
         "node"
       ],
-      "expected_package_hash": "2830f5b7883138c633905c932880056be0b22e636e9429c2899c203a2e4f4801",
+      "expected_package_hash": "bfb10ce42179359976a9aa0b53617cfaf67bc63dcc32bb760e59b9520edb02b6",
       "expected_content_hash": "84768c83036672f6a6569f9b22914352f58dc677ca4764a7387788376d64a475",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/claude-code"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/claude-code"
       }
     },
     {
       "id": "io.github.util6.zcode-session",
       "name": "ZCode Session Parser",
-      "version": "0.4.1",
+      "version": "0.4.3",
       "record_kind": "session",
       "provider": "zcode",
       "adapter_id": "zcode",
@@ -81,17 +81,17 @@
         "sqlite",
         "python"
       ],
-      "expected_package_hash": "4164b29a005cd7d02f3ecb07a5f3888a9073fec5ee136df8739dc5b873821dc7",
+      "expected_package_hash": "6b6eb2bcd9a1cb2b23e15f27857500a4e5ac7c81a1541aa89b90aec49e7f0c93",
       "expected_content_hash": "5a50814a30a7894ee5243873bce8cb175ffdce9fab8d6a75324b5d446837c044",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/zcode"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/zcode"
       }
     },
     {
       "id": "io.github.util6.chatgpt-web",
       "name": "ChatGPT Web Harvester",
-      "version": "0.4.1",
+      "version": "0.4.3",
       "record_kind": "web",
       "provider": "chatgpt",
       "adapter_id": "chatgpt-web",
@@ -103,17 +103,17 @@
         "node",
         "browser-cookie-auth"
       ],
-      "expected_package_hash": "77ce32dc3ed0a423e42d392c62a2f0c86e7d876803ea7498bf2adf7a7b705135",
+      "expected_package_hash": "148dd1d498639e4bbfee1f8947fc09f692cd0db7223165df4efecb8e74f9559e",
       "expected_content_hash": "1b00dd931991ecfbe19954b4dd59cb92513fc28f43a0d8d1f129f275e737aa31",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/chatgpt-web"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/chatgpt-web"
       }
     },
     {
       "id": "io.github.util6.qwen-web",
       "name": "Qwen Web Harvester",
-      "version": "0.4.1",
+      "version": "0.4.3",
       "record_kind": "web",
       "provider": "qwen",
       "adapter_id": "qwen-web",
@@ -125,17 +125,17 @@
         "node",
         "browser-cookie-auth"
       ],
-      "expected_package_hash": "1c9bfcf617cfd5af1112a621f1078badf68e0ba6bf5a1c2047446abed2c59a38",
+      "expected_package_hash": "1f88216522667caa795a01579f21de1efbb0d08bfa70620a39dda3391d0518eb",
       "expected_content_hash": "3c485df513a682713de1a946e69c19ddf2d6ed86e68e926e7af4f81338971756",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/qwen-web"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/qwen-web"
       }
     },
     {
       "id": "io.github.util6.gemini-web",
       "name": "Gemini Web Harvester",
-      "version": "0.4.1",
+      "version": "0.4.3",
       "record_kind": "web",
       "provider": "gemini",
       "adapter_id": "gemini-web",
@@ -147,11 +147,11 @@
         "node",
         "browser-cookie-auth"
       ],
-      "expected_package_hash": "24b35776685d99b3d220d4af4caaa33ac4f469e5b421ab1ab3fc42469d088388",
+      "expected_package_hash": "2e177c4ba7caba1139c30022811db1223c473f5236ff3e0150f79831fee5efe5",
       "expected_content_hash": "20f277c789a111d06f87b30be7523905826d9cb63b7194f5bd18fcf6bc8bfd76",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/gemini-web"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/gemini-web"
       }
     }
   ]

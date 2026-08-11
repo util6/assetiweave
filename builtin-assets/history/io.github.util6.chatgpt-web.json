@@ -7,19 +7,51 @@
   "record_kind": "web",
   "releases": [
     {
+      "version": "0.4.3",
+      "channel": "stable",
+      "released_at": "2026-08-10T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.chatgpt-web-0.4.3-universal.zip",
+      "artifact_size": 75286,
+      "artifact_sha256": "c3df3070775e3cc45f17c18db423da944c1d060ba4212a53bcdef2d6d925336d",
+      "changelog_markdown": "## 0.4.3\n\n- Split multi-file unified diffs into one independent File Change card per file.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/chatgpt-web"
+      }
+    },
+    {
+      "version": "0.4.2",
+      "channel": "stable",
+      "released_at": "2026-08-09T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.chatgpt-web-0.4.2-universal.zip",
+      "artifact_size": 72020,
+      "artifact_sha256": "e0e14b9565a96184b778d7abf50400ebcd76a365b5480f9f56e127e2afc3b0dc",
+      "changelog_markdown": "## 0.4.2\n\n- Emit file changes as independent manifest-defined File Change cards instead of command Result cards.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/chatgpt-web"
+      }
+    },
+    {
       "version": "0.4.1",
       "channel": "stable",
       "released_at": "2026-08-02T00:00:00Z",
       "core_compatibility": ">=0.5.2, <1.0.0",
       "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.chatgpt-web-0.4.1-universal.zip",
-      "artifact_size": 61208,
-      "artifact_sha256": "836af9040e703634e1c8a0c87302a783cbabb357e66b257b75ce1f6338f13f20",
+      "artifact_size": 70755,
+      "artifact_sha256": "560a427299bef4917843e312f2370ccb86b071d79663ad2b2e898f3bde3ef69f",
       "changelog_markdown": "## 0.4.1\n\n- Decode structured execution output, remove runner noise, and render plain results as terminal output.",
       "breaking_change": false,
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/chatgpt-web"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/chatgpt-web"
       }
     },
     {
@@ -35,7 +67,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/chatgpt-web"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/chatgpt-web"
       }
     },
     {
@@ -51,7 +83,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/chatgpt-web"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/chatgpt-web"
       }
     },
     {
@@ -67,7 +99,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/chatgpt-web"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/chatgpt-web"
       }
     },
     {
@@ -83,7 +115,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/chatgpt-web"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/chatgpt-web"
       }
     }
   ]

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { normalizeSessionPayload } from "./payload-policy.mjs";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -200,6 +201,7 @@ function compactLowSignalToolOutput(session) {
   for (const turn of session.turns) {
     for (const part of turn.parts) {
       if (typeof part.text !== "string" || !part.text) continue;
+      if (part.content_card?.renderer === "diff") continue;
       const type = contentCardType(part);
       if (part.role !== "tool" && type !== "result" && type !== "tool") continue;
       const compacted = compactToolTextForBrowsing(part.text, MAX_COMPACTED_TOOL_TEXT_CHARS);
@@ -218,6 +220,7 @@ function applyTextBudgets(session) {
   for (const turn of session.turns) {
     for (const part of turn.parts) {
       if (typeof part.text !== "string" || !part.text) continue;
+      if (part.content_card?.renderer === "diff") continue;
       const original = part.text;
       const highPriority = isHighPriorityBrowsePart(part);
       const available = highPriority ? highPriorityRemaining : standardRemaining;
@@ -875,7 +878,7 @@ function finalizeStructuredContentCards(session) {
       part.metadata_json = Object.keys(metadataValue).length > 0 ? JSON.stringify(metadataValue) : null;
     }
   }
-  return session;
+  return normalizeSessionPayload(session);
 }
 
 function parseStructuredMetadata(value) {

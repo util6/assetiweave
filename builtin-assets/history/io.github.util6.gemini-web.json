@@ -7,19 +7,51 @@
   "record_kind": "web",
   "releases": [
     {
+      "version": "0.4.3",
+      "channel": "stable",
+      "released_at": "2026-08-10T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.gemini-web-0.4.3-universal.zip",
+      "artifact_size": 71771,
+      "artifact_sha256": "315e1198846b188368cbceee908f13ee020607450ecc39f2b76511e73a7750ac",
+      "changelog_markdown": "## 0.4.3\n\n- Split multi-file unified diffs into one independent File Change card per file.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/gemini-web"
+      }
+    },
+    {
+      "version": "0.4.2",
+      "channel": "stable",
+      "released_at": "2026-08-09T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.gemini-web-0.4.2-universal.zip",
+      "artifact_size": 68504,
+      "artifact_sha256": "22fb0fb1c66f3fffb83938ed467a17eea2b8853d3f8dfba63c4de9e19ed4b5ad",
+      "changelog_markdown": "## 0.4.2\n\n- Emit file changes as independent manifest-defined File Change cards instead of command Result cards.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/gemini-web"
+      }
+    },
+    {
       "version": "0.4.1",
       "channel": "stable",
       "released_at": "2026-08-02T00:00:00Z",
       "core_compatibility": ">=0.5.2, <1.0.0",
       "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.gemini-web-0.4.1-universal.zip",
-      "artifact_size": 63479,
-      "artifact_sha256": "1f544125f7283a75a0b06024a7ca118576db73aec02dd0e50d419719b66be6dc",
+      "artifact_size": 67240,
+      "artifact_sha256": "4bc4108af39c408c5ed6ba1071ec221d1ffc9f7d5371c0fcdc8f491842e8e742",
       "changelog_markdown": "## 0.4.1\n\n- Decode structured execution output, remove runner noise, and render plain results as terminal output.",
       "breaking_change": false,
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/gemini-web"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/gemini-web"
       }
     },
     {
@@ -35,7 +67,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/gemini-web"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/gemini-web"
       }
     },
     {
@@ -51,7 +83,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/gemini-web"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/gemini-web"
       }
     },
     {
@@ -67,7 +99,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/gemini-web"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/gemini-web"
       }
     },
     {
@@ -83,7 +115,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/gemini-web"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/gemini-web"
       }
     }
   ]

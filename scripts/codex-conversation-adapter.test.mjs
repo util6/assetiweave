@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { PAYLOAD_POLICY_VERSION } from "../builtin-assets/adapters/codex/payload-policy.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
-const adapterPath = path.join(repositoryRoot, "parser-catalog/adapters/codex/adapter.mjs");
+const adapterPath = path.join(repositoryRoot, "builtin-assets/adapters/codex/adapter.mjs");
 
 test("Codex adapter keeps Skill injection out of the user question and emits one Skill path card", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-skill-"));
@@ -106,7 +107,7 @@ test("Codex adapter separates a SKILL.md read from the command result", () => {
         text: part.text,
       })),
       [
-        { command: `cat ${skillPath}`, kind: "codex.command", renderer: "command", role: "tool", text: null },
+        { command: skillPath, kind: "codex.command", renderer: "command", role: "tool", text: null },
         { command: null, kind: "codex.skill", renderer: "path", role: "system", text: skillPath },
         { command: null, kind: "codex.answer", renderer: "markdown", role: "assistant", text: "已读取 Skill。" },
       ],
@@ -177,7 +178,7 @@ test("Codex adapter recognizes a SKILL.md read from a modern custom exec call", 
       })),
       [
         {
-          command: `cat ${skillPath}`,
+          command: skillPath,
           cwd: workdir,
           kind: "codex.command",
           renderer: "command",
@@ -276,7 +277,68 @@ test("Codex adapter preserves source execution IDs across interleaved command re
   }
 });
 
-test("Codex adapter decodes structured execution output and removes runner noise", () => {
+test("Codex adapter omits decorative printf separators from aggregated command cards", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-command-separators-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    const command = [
+      "printf '%s\\n' '--- status ---'",
+      "git status --short",
+      "printf '%s\\n' '--- staged diff stat ---'",
+      "git diff --cached --stat",
+    ].join("; ");
+    writeFileSync(rolloutPath, [
+      event("2026-08-10T00:00:00Z", "user", "检查工作区"),
+      JSON.stringify({
+        timestamp: "2026-08-10T00:00:01Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "exec",
+          call_id: "call-status",
+          status: "completed",
+          input: `const r = await tools.exec_command(${JSON.stringify({ cmd: command, workdir: "/tmp/project" })}); text(r.output);`,
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-10T00:00:02Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "call-status",
+          output: "Script completed\nWall time 0.1 seconds\nOutput:\nclean",
+        },
+      }),
+    ].join("\n"));
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('session-1', '${sqlString(rolloutPath)}', 'Fixture', '2026-08-10T00:00:02Z');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(fixtureRoot);
+    const parts = session.turns[0].parts;
+    assert.deepEqual(parts.map((part) => part.command), [
+      "git status --short",
+      "git diff --cached --stat",
+      null,
+    ]);
+    assert.deepEqual(parts.map((part) => part.command_label ?? null), [
+      "status",
+      "staged diff stat",
+      null,
+    ]);
+    assert.deepEqual(parts.map((part) => part.source_execution_id), [
+      "call-status:command:1",
+      "call-status:command:2",
+      "call-status:command:2",
+    ]);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter removes successful structured execution output", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-result-text-"));
   try {
     const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
@@ -314,14 +376,14 @@ test("Codex adapter decodes structured execution output and removes runner noise
     const session = readFixtureSession(fixtureRoot);
     const [command, result] = session.turns[0].parts;
     assert.equal(command.command, "printf '\\n'");
-    assert.equal(result.text, "check passed");
+    assert.equal(result.text, null);
     assert.equal(result.content_card?.renderer, "terminal_output");
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("Codex adapter decodes structured execution output before applying text budgets", () => {
+test("Codex adapter preserves and budgets unpaired structured output as unclassified", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-large-result-"));
   try {
     const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
@@ -352,6 +414,7 @@ test("Codex adapter decodes structured execution output before applying text bud
     assert.ok(result.text.startsWith("visible output line\n"));
     assert.equal(result.text.includes("input_text"), false);
     assert.equal(result.text.startsWith("[{"), false);
+    assert.equal(JSON.parse(result.metadata_json).execution_kind, "unclassified");
     assert.equal(result.content_card?.renderer, "terminal_output");
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
@@ -399,6 +462,234 @@ test("Codex adapter hides pending runner output and wait controls without shifti
     assert.equal(session.turns[0].parts[1].text, null);
     assert.equal(session.turns[0].parts[1].content_card, undefined);
     assert.equal(session.turns[0].parts[1].metadata_json, null);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter applies payload policy to a successful custom execution without shifting Parts", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-payload-policy-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    writeFileSync(rolloutPath, [
+      event("2026-08-04T00:00:00Z", "user", "运行测试"),
+      JSON.stringify({
+        timestamp: "2026-08-04T00:00:01Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "exec",
+          call_id: "call-tests",
+          status: "completed",
+          input: "const r = await tools.exec_command({\"cmd\":\"pnpm test\"}); text(r.output);",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-04T00:00:02Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "call-tests",
+          output: "Script completed\nWall time 0.2 seconds\nOutput:\n388 tests passed",
+        },
+      }),
+    ].join("\n"));
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('session-1', '${sqlString(rolloutPath)}', 'Fixture', '2026-08-04T00:00:02Z');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(fixtureRoot);
+    const parts = session.turns[0].parts;
+    assert.equal(parts.length, 2);
+    assert.deepEqual(parts.map((part) => part.source_execution_id), ["call-tests", "call-tests"]);
+    assert.equal(parts[0].status, "completed");
+    assert.equal(parts[0].exit_code, 0);
+    assert.equal(parts[1].text, null);
+    assert.equal(JSON.parse(parts[1].metadata_json).payload_policy_version, PAYLOAD_POLICY_VERSION);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter stores patch_apply_end changes as one file-change Part per file", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-patch-diff-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    const projectPath = "/tmp/project";
+    writeFileSync(rolloutPath, [
+      JSON.stringify({
+        timestamp: "2026-08-09T00:00:00Z",
+        type: "session_meta",
+        payload: { cwd: projectPath },
+      }),
+      event("2026-08-09T00:00:01Z", "user", "修改四个文件"),
+      JSON.stringify({
+        timestamp: "2026-08-09T00:00:02Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "apply_patch",
+          call_id: "call-patch",
+          input: [
+            "*** Begin Patch",
+            "*** Update File: /tmp/project/src/main.ts",
+            "@@ -1 +1 @@",
+            "-const oldValue = 1;",
+            "+const command = \"npm test\";",
+            "*** End Patch",
+          ].join("\n"),
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-09T00:00:03Z",
+        type: "event_msg",
+        payload: {
+          type: "patch_apply_end",
+          call_id: "call-patch",
+          success: true,
+          status: "completed",
+          changes: {
+            "/tmp/project/src/main.ts": {
+              type: "update",
+              unified_diff: "@@ -1 +1 @@\n-const oldValue = 1;\n+const command = \"npm test\";\n",
+              move_path: null,
+            },
+            "/tmp/project/src/new.ts": {
+              type: "add",
+              content: "export const created = true;\n",
+            },
+            "/tmp/project/src/old.ts": {
+              type: "delete",
+              content: "export const removed = true;\n",
+            },
+            "/tmp/project/src/from.ts": {
+              type: "update",
+              unified_diff: "@@ -1 +1 @@\n-export const name = 'from';\n+export const name = 'to';\n",
+              move_path: "/tmp/project/src/to.ts",
+            },
+          },
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-09T00:00:04Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "call-patch",
+          output: "Exit code: 0\nOutput:\nSuccess. Updated four files.",
+        },
+      }),
+    ].join("\n"));
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('session-1', '${sqlString(rolloutPath)}', 'Fixture', '2026-08-09T00:00:04Z');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(fixtureRoot);
+    const parts = session.turns[0].parts;
+    assert.equal(parts.length, 5);
+    assert.equal(parts[0].command, ["src/main.ts", "src/new.ts", "src/old.ts", "src/to.ts"].join("\n"));
+    assert.equal(parts[0].command_label, "Edit");
+    assert.equal(parts[0].source_execution_id, "call-patch");
+    const fileParts = parts.slice(1);
+    assert.deepEqual(fileParts.map((part) => part.source_execution_id), [
+      "call-patch",
+      "call-patch",
+      "call-patch",
+      "call-patch",
+    ]);
+    assert.deepEqual(fileParts.map((part) => JSON.parse(part.metadata_json).file_path), [
+      "src/main.ts",
+      "src/new.ts",
+      "src/old.ts",
+      "src/to.ts",
+    ]);
+    for (const [index, part] of fileParts.entries()) {
+      assert.equal(part.kind, "file_change");
+      assert.equal(part.content_card?.kind, "codex.file-change");
+      assert.equal(part.content_card?.renderer, "diff");
+      assert.equal(part.text.match(/^diff --git /gm)?.length, 1);
+      const metadata = JSON.parse(part.metadata_json);
+      assert.equal(metadata.file_change_index, index + 1);
+      assert.equal(metadata.file_change_count, 4);
+    }
+    assert.match(fileParts[0].text, /diff --git a\/src\/main\.ts b\/src\/main\.ts/);
+    assert.match(fileParts[1].text, /new file mode 100644[\s\S]*\+export const created = true;/);
+    assert.match(fileParts[2].text, /deleted file mode 100644[\s\S]*-export const removed = true;/);
+    assert.match(fileParts[3].text, /rename from src\/from\.ts[\s\S]*rename to src\/to\.ts/);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter correlates a nested apply_patch event with its outer exec call", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-nested-patch-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    writeFileSync(rolloutPath, [
+      JSON.stringify({
+        timestamp: "2026-08-09T00:00:00Z",
+        type: "session_meta",
+        payload: { cwd: "/tmp/project" },
+      }),
+      event("2026-08-09T00:00:01Z", "user", "修改入口文件"),
+      JSON.stringify({
+        timestamp: "2026-08-09T00:00:02Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "exec",
+          call_id: "call-outer-exec",
+          input: "const patch = `*** Begin Patch\\n*** Update File: src/main.ts\\n@@\\n-old\\n+new\\n*** End Patch`; text(await tools.apply_patch(patch));",
+          internal_chat_message_metadata_passthrough: { turn_id: "turn-runtime" },
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-09T00:00:03Z",
+        type: "event_msg",
+        payload: {
+          type: "patch_apply_end",
+          call_id: "exec-inner-patch",
+          turn_id: "turn-runtime",
+          success: true,
+          changes: {
+            "/tmp/project/src/main.ts": {
+              type: "update",
+              unified_diff: "@@ -1 +1 @@\n-old\n+new\n",
+            },
+          },
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-09T00:00:04Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "call-outer-exec",
+          output: [{ type: "input_text", text: "Script completed\nOutput:\n{}" }],
+        },
+      }),
+    ].join("\n"));
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('session-1', '${sqlString(rolloutPath)}', 'Fixture', '2026-08-09T00:00:04Z');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(fixtureRoot);
+    const parts = session.turns[0].parts;
+    assert.equal(parts.length, 2);
+    assert.equal(parts[0].command, "src/main.ts");
+    assert.equal(parts[0].command_label, "Edit");
+    assert.equal(parts[0].source_execution_id, "call-outer-exec");
+    assert.equal(parts[1].source_execution_id, "call-outer-exec");
+    assert.equal(parts[1].kind, "file_change");
+    assert.equal(parts[1].content_card?.kind, "codex.file-change");
+    assert.equal(parts[1].content_card?.renderer, "diff");
+    assert.match(parts[1].text, /^diff --git a\/src\/main\.ts b\/src\/main\.ts/m);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }

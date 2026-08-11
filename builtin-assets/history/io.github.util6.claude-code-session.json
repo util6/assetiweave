@@ -7,19 +7,67 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "1.3.5",
+      "channel": "stable",
+      "released_at": "2026-08-10T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.claude-code-session-1.3.5-universal.zip",
+      "artifact_size": 60926,
+      "artifact_sha256": "87ffbec812bab4c377b1a928a65eb453e0d77a610b5a78efbbed5cc849332f60",
+      "changelog_markdown": "## 1.3.5\n\n- Split multi-file unified diffs into one independent File Change card per file.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/claude-code"
+      }
+    },
+    {
+      "version": "1.3.4",
+      "channel": "stable",
+      "released_at": "2026-08-09T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.claude-code-session-1.3.4-universal.zip",
+      "artifact_size": 57192,
+      "artifact_sha256": "bff656b398485669277df68c1e75386879b0003acef970fbd493e59e58cfde84",
+      "changelog_markdown": "## 1.3.4\n\n- Emit canonical diffs as independent manifest-defined File Change cards instead of command Result cards.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/claude-code"
+      }
+    },
+    {
+      "version": "1.3.3",
+      "channel": "stable",
+      "released_at": "2026-08-09T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.claude-code-session-1.3.3-universal.zip",
+      "artifact_size": 53379,
+      "artifact_sha256": "05b377b2df8854e415ae8dcd405a393ff613eacf2f76eb64a29dd9ec5ca90494",
+      "changelog_markdown": "## 1.3.3\n\n- Classify Read, Search, Shell, and Edit tool pairs by exact tool-use ID, discard successful low-value output, and retain canonical structured diffs without changing Part positions.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/claude-code"
+      }
+    },
+    {
       "version": "1.3.2",
       "channel": "stable",
       "released_at": "2026-08-02T00:00:00Z",
       "core_compatibility": ">=0.5.2, <1.0.0",
       "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.claude-code-session-1.3.2-universal.zip",
-      "artifact_size": 31529,
-      "artifact_sha256": "d56b1c108e4af42b6316ce6c18de6eae456ab34db9c66337e91f101668542b24",
+      "artifact_size": 42587,
+      "artifact_sha256": "47c225076f318880310c03d7523a466fce7800d197d349192b8a9d21425fa480",
       "changelog_markdown": "## 1.3.2\n\n- Decode structured execution output, remove runner noise, and render plain results as terminal output.",
       "breaking_change": false,
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/claude-code"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/claude-code"
       }
     },
     {
@@ -35,7 +83,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/claude-code"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/claude-code"
       }
     },
     {
@@ -51,7 +99,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/claude-code"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/claude-code"
       }
     },
     {
@@ -67,7 +115,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/claude-code"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/claude-code"
       }
     },
     {
@@ -83,7 +131,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/claude-code"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/claude-code"
       }
     },
     {
@@ -99,7 +147,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/claude-code"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/claude-code"
       }
     }
   ]

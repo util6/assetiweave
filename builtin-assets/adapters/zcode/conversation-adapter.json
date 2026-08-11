@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "zcode",
   "name": "ZCode",
-  "version": "0.4.1",
+  "version": "0.4.3",
   "protocol_version": 1,
   "command": [
     "./zcode_adapter.py"
@@ -67,6 +67,15 @@
         "plain",
         "markdown",
         "json"
+      ]
+    },
+    {
+      "id": "zcode.file-change",
+      "semantic_role": "file-change",
+      "label": "文件更改",
+      "default_renderer": "diff",
+      "allowed_renderers": [
+        "diff"
       ]
     }
   ]

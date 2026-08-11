@@ -7,19 +7,99 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "1.5.10",
+      "channel": "stable",
+      "released_at": "2026-08-11T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.5.10-universal.zip",
+      "artifact_size": 106233,
+      "artifact_sha256": "44d49559868149dfd06d25bc1522db8fa8643629384e3730e6f1c41aad96b6ac",
+      "changelog_markdown": "## 1.5.10\n\n- Improve structured shell block splitting and ignore runtime-variable separator labels.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
+      }
+    },
+    {
+      "version": "1.5.9",
+      "channel": "stable",
+      "released_at": "2026-08-10T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.5.9-universal.zip",
+      "artifact_size": 99488,
+      "artifact_sha256": "c4dfaae7c7a72316ae4db2767a37c01a75d36379056d024f38072f7490608c8e",
+      "changelog_markdown": "## 1.5.9\n\n- Split multi-file unified diffs into one independent File Change card per file.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
+      }
+    },
+    {
+      "version": "1.5.8",
+      "channel": "stable",
+      "released_at": "2026-08-09T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.5.8-universal.zip",
+      "artifact_size": 95754,
+      "artifact_sha256": "05ee733c51313bd51545b2faa5a70b3aeb30558e359a8843a3c643536805b1ad",
+      "changelog_markdown": "## 1.5.8\n\n- Emit canonical diffs as independent manifest-defined File Change cards instead of command Result cards.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
+      }
+    },
+    {
+      "version": "1.5.7",
+      "channel": "stable",
+      "released_at": "2026-08-09T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.5.7-universal.zip",
+      "artifact_size": 91947,
+      "artifact_sha256": "08e39d41efb7ec3e53a6683aa9f3feb51366075d14f1d57a7a350944bc91c57e",
+      "changelog_markdown": "## 1.5.7\n\n- Extract exact add, update, delete, rename, and multi-file patches from patch_apply_end events into the original Result Part as one canonical unified diff.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
+      }
+    },
+    {
+      "version": "1.5.6",
+      "channel": "stable",
+      "released_at": "2026-08-09T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.5.6-universal.zip",
+      "artifact_size": 76892,
+      "artifact_sha256": "6f3c8347fe84a78f4c05c9c3e0268cddaec98a0a92051a8cd183787129bebded",
+      "changelog_markdown": "## 1.5.6\n\n- Apply payload policy to finalized sessions so exact execution pairs hide successful output while preserving Part identity and failure diagnostics.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
+      }
+    },
+    {
       "version": "1.5.5",
       "channel": "stable",
       "released_at": "2026-08-03T00:00:00Z",
       "core_compatibility": ">=0.5.2, <1.0.0",
       "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.5.5-universal.zip",
-      "artifact_size": 41732,
-      "artifact_sha256": "6b232710a36c385a59e8ec9111a8e0c121c579e46272cffa1211950e16804703",
+      "artifact_size": 52790,
+      "artifact_sha256": "20f2cbf0d8edefe0aa4f82c8e257b425204655d4f84dc6c98dc7ded777e7d692",
       "changelog_markdown": "## 1.5.5\n\n- Decode structured execution output before text compaction and hide pending runner and wait control records from Card projection.",
       "breaking_change": false,
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
       }
     },
     {
@@ -35,7 +115,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
       }
     },
     {
@@ -51,7 +131,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
       }
     },
     {
@@ -67,7 +147,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
       }
     },
     {
@@ -83,7 +163,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
       }
     },
     {
@@ -99,7 +179,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
       }
     },
     {
@@ -115,7 +195,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
       }
     },
     {
@@ -131,7 +211,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
       }
     },
     {
@@ -147,7 +227,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
       }
     },
     {
@@ -163,7 +243,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
       }
     },
     {
@@ -179,7 +259,7 @@
       "runtime_protocol": "stdio-ndjson-v1",
       "source": {
         "type": "github",
-        "url": "https://github.com/util6/assetiweave/tree/main/parser-catalog/adapters/codex"
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
       }
     }
   ]

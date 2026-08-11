@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package_id": "io.github.util6.chatgpt-web",
   "name": "ChatGPT Web Harvester",
-  "version": "0.4.1",
+  "version": "0.4.3",
   "min_core_version": "0.5.2",
   "record_kind": "web",
   "adapter_manifest": "conversation-adapter.json",
@@ -15,6 +15,20 @@
     "protocol": "stdio-ndjson-v1"
   },
   "changelog": [
+    {
+      "version": "0.4.3",
+      "date": "2026-08-10",
+      "notes": [
+        "Split multi-file unified diffs into one independent File Change card per file."
+      ]
+    },
+    {
+      "version": "0.4.2",
+      "date": "2026-08-09",
+      "notes": [
+        "Emit file changes as independent manifest-defined File Change cards instead of command Result cards."
+      ]
+    },
     {
       "version": "0.4.1",
       "date": "2026-08-02",
