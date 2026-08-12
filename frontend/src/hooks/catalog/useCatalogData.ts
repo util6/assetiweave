@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fallbackNavigationModel } from "../../mock/catalog";
 import type { NavigationModel } from "../../router/types";
 import {
@@ -23,31 +23,51 @@ export function useCatalogData() {
   const [profiles, setProfiles] = useState<TargetProfile[]>([]);
   const [appShortcuts, setAppShortcuts] = useState<AppShortcut[]>([]);
   const [navigationModel, setNavigationModel] = useState<NavigationModel>(fallbackNavigationModel);
+  const [loading, setLoading] = useState(true);
+  const navigationSaveSequence = useRef(0);
+  const deferredNavigationSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeAssetKind = getActiveAssetKind(navigationModel);
 
   useEffect(() => {
     void loadCatalogData();
   }, []);
 
+  useEffect(
+    () => () => {
+      if (deferredNavigationSaveTimer.current !== null) {
+        clearTimeout(deferredNavigationSaveTimer.current);
+      }
+    },
+    [],
+  );
+
   async function loadCatalogData() {
-    const appNavigationModel = await getNavigationModel();
-    const activeKind = getActiveAssetKind(appNavigationModel);
-    const [assetList, sourceList, appOverview, profileList, shortcutList, mountStatusList] =
-      await Promise.all([
-        listAssets(activeKind),
-        listSources(),
-        getOverview(),
-        listProfiles(),
-        listAppShortcutSettings(),
-        listAssetMountStatuses(),
-      ]);
-    setAssets(assetList);
-    setSources(sourceList);
-    setAssetMountStatuses(mountStatusList);
-    setOverview(appOverview);
-    setNavigationModel(appNavigationModel);
-    setProfiles(profileList);
-    setAppShortcuts(shortcutList);
+    setLoading(true);
+    try {
+      const loadNavigationSequence = navigationSaveSequence.current;
+      const appNavigationModel = await getNavigationModel();
+      const activeKind = getActiveAssetKind(appNavigationModel);
+      const [assetList, sourceList, appOverview, profileList, shortcutList, mountStatusList] =
+        await Promise.all([
+          listAssets(activeKind),
+          listSources(),
+          getOverview(),
+          listProfiles(),
+          listAppShortcutSettings(),
+          listAssetMountStatuses(),
+        ]);
+      setAssets(assetList);
+      setSources(sourceList);
+      setAssetMountStatuses(mountStatusList);
+      setOverview(appOverview);
+      if (navigationSaveSequence.current === loadNavigationSequence) {
+        setNavigationModel(appNavigationModel);
+      }
+      setProfiles(profileList);
+      setAppShortcuts(shortcutList);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function refreshOverview(nextAssets?: Asset[]) {
@@ -117,11 +137,40 @@ export function useCatalogData() {
     );
   }
 
+  function cancelDeferredNavigationSave() {
+    if (deferredNavigationSaveTimer.current !== null) {
+      clearTimeout(deferredNavigationSaveTimer.current);
+      deferredNavigationSaveTimer.current = null;
+    }
+  }
+
   async function saveNavigationModel(nextNavigationModel: NavigationModel) {
+    cancelDeferredNavigationSave();
+    const sequence = navigationSaveSequence.current + 1;
+    navigationSaveSequence.current = sequence;
     setNavigationModel(nextNavigationModel);
     const savedNavigationModel = await updateNavigationModel(nextNavigationModel);
-    setNavigationModel(savedNavigationModel);
+    if (navigationSaveSequence.current === sequence) {
+      setNavigationModel(savedNavigationModel);
+    }
     return savedNavigationModel;
+  }
+
+  function deferNavigationModelSave(nextNavigationModel: NavigationModel) {
+    const sequence = navigationSaveSequence.current + 1;
+    navigationSaveSequence.current = sequence;
+    setNavigationModel(nextNavigationModel);
+    cancelDeferredNavigationSave();
+    deferredNavigationSaveTimer.current = setTimeout(() => {
+      deferredNavigationSaveTimer.current = null;
+      void updateNavigationModel(nextNavigationModel)
+        .then((savedNavigationModel) => {
+          if (navigationSaveSequence.current === sequence) {
+            setNavigationModel(savedNavigationModel);
+          }
+        })
+        .catch(() => undefined);
+    }, 120);
   }
 
   async function saveAppShortcuts(nextAppShortcuts: AppShortcut[]) {
@@ -139,6 +188,7 @@ export function useCatalogData() {
     assetMountStatuses,
     assets,
     navigationModel,
+    loading,
     overview,
     profiles,
     reloadCatalogData: loadCatalogData,
@@ -147,6 +197,7 @@ export function useCatalogData() {
     refreshOverview,
     refreshProfiles,
     removeAsset,
+    deferNavigationModelSave,
     saveAppShortcuts,
     saveNavigationModel,
     sources,

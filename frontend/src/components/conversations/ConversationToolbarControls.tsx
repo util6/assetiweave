@@ -55,10 +55,10 @@ export function ConversationBackgroundTaskIndicator({
   return (
     <section
       aria-live="polite"
-      className="pointer-events-auto flex w-[min(24rem,calc(100vw-2.5rem))] items-center gap-3 rounded-xl border border-status-update/40 bg-theme-card/95 px-4 py-3 text-on-surface shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.28)] backdrop-blur"
+      className="aurora-task-indicator pointer-events-auto flex w-[min(24rem,calc(100vw-2.5rem))] items-center gap-3 rounded-xl border px-4 py-3 text-on-surface"
       role="status"
     >
-      <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-status-update/15 text-status-update">
+      <span className="aurora-task-indicator-icon grid size-9 shrink-0 place-items-center rounded-lg text-status-update">
         <RefreshCw className="animate-spin" size={17} />
       </span>
       <span className="min-w-0">

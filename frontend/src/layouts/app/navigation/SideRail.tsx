@@ -24,6 +24,7 @@ export function SideRail({
   headerTabs,
   items,
   onExpandedChange,
+  onHeaderTabPrefetch,
   onHeaderTabSelect,
   onItemSelect,
   primaryAction,
@@ -35,6 +36,7 @@ export function SideRail({
   headerTabs: HeaderTabItem[];
   items: RailMenuItem[];
   onExpandedChange: (expanded: boolean) => void;
+  onHeaderTabPrefetch?: (tab: HeaderTabItem) => void;
   onHeaderTabSelect: (tab: HeaderTabItem) => void;
   onItemSelect?: (item: RailMenuItem) => void;
   primaryAction?: ReactNode;
@@ -69,7 +71,13 @@ export function SideRail({
             <ToggleIcon size={18} />
           </button>
         </div>
-        <HeaderTabRailGroup activeId={activeHeaderTabId} expanded={expanded} tabs={enabledHeaderTabs} onSelect={onHeaderTabSelect} />
+        <HeaderTabRailGroup
+          activeId={activeHeaderTabId}
+          expanded={expanded}
+          onPrefetch={onHeaderTabPrefetch}
+          tabs={enabledHeaderTabs}
+          onSelect={onHeaderTabSelect}
+        />
       </div>
 
       <div className={clsx("flex w-full flex-col gap-2", expanded ? "items-stretch" : "items-center")}>
@@ -181,11 +189,13 @@ function getBrandActionIconToneClassName(tone: SideRailBrandAction["tone"] | und
 function HeaderTabRailGroup({
   activeId,
   expanded,
+  onPrefetch,
   onSelect,
   tabs,
 }: {
   activeId: string;
   expanded: boolean;
+  onPrefetch?: (tab: HeaderTabItem) => void;
   onSelect: (tab: HeaderTabItem) => void;
   tabs: HeaderTabItem[];
 }) {
@@ -204,6 +214,7 @@ function HeaderTabRailGroup({
             icon={headerTabIcon(tab)}
             key={tab.id}
             label={label}
+            onPrefetch={() => onPrefetch?.(tab)}
             onClick={() => onSelect(tab)}
           />
         );
@@ -250,12 +261,14 @@ function RailButton({
   expanded,
   icon,
   label,
+  onPrefetch,
   onClick,
 }: {
   active: boolean;
   expanded: boolean;
   icon: NavigationIcon;
   label: string;
+  onPrefetch?: () => void;
   onClick: () => void;
 }) {
   return (
@@ -271,6 +284,8 @@ function RailButton({
       aria-current={active ? "page" : undefined}
       data-active={active || undefined}
       onClick={onClick}
+      onFocus={onPrefetch}
+      onPointerEnter={onPrefetch}
       title={label}
       type="button"
     >

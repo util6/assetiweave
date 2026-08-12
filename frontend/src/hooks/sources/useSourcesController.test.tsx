@@ -2,6 +2,7 @@
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { clearSharedResourceCache } from "../../lib/asyncCache";
 import type { Asset, Source } from "../../types";
 
 const catalogService = vi.hoisted(() => ({
@@ -21,6 +22,7 @@ import { useSourcesController } from "./useSourcesController";
 describe("useSourcesController", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearSharedResourceCache();
   });
 
   it("keeps duplicate source copies visible after a scan refreshes the global catalog", async () => {

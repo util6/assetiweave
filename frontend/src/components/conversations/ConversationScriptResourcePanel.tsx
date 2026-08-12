@@ -531,16 +531,15 @@ export function ConversationScriptResourcePanel({
         </div>
       </div>
 
-      <div className="mt-3 flex items-center gap-1 border-b border-theme-card-border" role="tablist">
+      <div className="conversation-pill-tabs mt-3 flex items-center gap-1" role="tablist">
         {(["connected", "updates", "discover"] as const).map((view) => (
           <button
             aria-selected={activeView === view}
             className={clsx(
-              "border-b-2 px-3 py-2 text-body-sm transition-colors",
-              activeView === view
-                ? "border-primary text-on-surface"
-                : "border-transparent text-on-surface-variant hover:text-on-surface",
+              "rounded-lg px-3 py-2 text-body-sm transition-colors",
+              activeView === view ? "text-on-surface" : "text-on-surface-variant hover:bg-theme-control-hover/70 hover:text-on-surface",
             )}
+            data-active={activeView === view}
             key={view}
             onClick={() => setActiveView(view)}
             role="tab"

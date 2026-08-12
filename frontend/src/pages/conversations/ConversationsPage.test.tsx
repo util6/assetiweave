@@ -1127,6 +1127,70 @@ describe("MarkdownContent", () => {
     expect(html).toContain("line-clamp-2 min-w-0 break-words");
   });
 
+  it("renders structured loading surfaces before a session detail arrives", () => {
+    const html = renderToStaticMarkup(
+      <SessionQuestionWorkspace
+        contentCardColors={DEFAULT_CONVERSATION_CONTENT_CARD_COLORS}
+        onExport={vi.fn()}
+        onPickOutputRoot={async () => null}
+        onQuestionSelect={vi.fn()}
+        onQuestionSelectionChange={vi.fn()}
+        outputRoot="/tmp/conversation-export"
+        question={null}
+        questions={[]}
+        selectedQuestionId={null}
+        selectedQuestionIds={new Set()}
+        session={null}
+        setOutputRoot={vi.fn()}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    expect(html).toContain('aria-busy="true"');
+    expect(html).toContain("conversation-loading-state");
+    expect(html).toContain("conversation-preview-loading");
+    expect(html).toContain("正在准备 Markdown 预览...");
+    expect(html).not.toContain("border-dashed");
+  });
+
+  it("uses a calm selection state after the session is ready", () => {
+    const html = renderToStaticMarkup(
+      <SessionQuestionWorkspace
+        contentCardColors={DEFAULT_CONVERSATION_CONTENT_CARD_COLORS}
+        onExport={vi.fn()}
+        onPickOutputRoot={async () => null}
+        onQuestionSelect={vi.fn()}
+        onQuestionSelectionChange={vi.fn()}
+        outputRoot="/tmp/conversation-export"
+        question={null}
+        questions={[]}
+        selectedQuestionId={null}
+        selectedQuestionIds={new Set()}
+        session={{ ...sessionDetail, questions: [] }}
+        setOutputRoot={vi.fn()}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    expect(html).toContain("conversation-selection-state");
+    expect(html).toContain("选择一个问题以查看 Markdown 预览。");
+    expect(html).not.toContain("conversation-preview-loading");
+  });
+
   it("collapses the question list so the selected question preview can use the full width", () => {
     vi.stubGlobal("ResizeObserver", class {
       disconnect() {}

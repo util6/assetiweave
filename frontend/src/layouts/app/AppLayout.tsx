@@ -27,11 +27,13 @@ export function AppLayout({
   onDismissNotification,
   onLogViewerOpen,
   onHeaderTabSelect,
+  onHeaderTabPrefetch,
   onNavigationModelChange,
   onSkillBackupLibraryChange,
   onSettingsClose,
   onSettingsOpen,
   onSubNavSelect,
+  onSubNavPrefetch,
   logViewerOpen,
   settingsPanel,
   settingsOpen,
@@ -47,11 +49,13 @@ export function AppLayout({
   onDismissNotification: (id: string) => void;
   onLogViewerOpen: () => void;
   onHeaderTabSelect: (tab: HeaderTabItem) => void;
+  onHeaderTabPrefetch?: (tab: HeaderTabItem) => void;
   onNavigationModelChange: (navigationModel: NavigationModel) => void;
   onSkillBackupLibraryChange?: () => Promise<void> | void;
   onSettingsClose: () => void;
   onSettingsOpen: () => void;
   onSubNavSelect: (id: string) => void;
+  onSubNavPrefetch?: (id: string) => void;
   settingsPanel: SettingsPanelId;
   settingsOpen: boolean;
   tenantControls: {
@@ -73,7 +77,6 @@ export function AppLayout({
   const updateBrandAction = getUpdateBrandAction(updateState, openUpdateDialog, t);
   const layoutStyle = {
     "--app-sidebar-width": sideRailExpanded ? "216px" : "64px",
-    "--app-notification-offset": notification ? "78px" : "0px",
   } as CSSProperties;
 
   function handleRailItemSelect(item: RailMenuItem) {
@@ -99,6 +102,7 @@ export function AppLayout({
           headerTabs={navigationModel.headerTabs}
           items={railItems}
           onExpandedChange={setSideRailExpanded}
+          onHeaderTabPrefetch={onHeaderTabPrefetch}
           onHeaderTabSelect={onHeaderTabSelect}
           onItemSelect={handleRailItemSelect}
           primaryAction={
@@ -112,11 +116,12 @@ export function AppLayout({
           }
         />
 
-        <main className="ml-[var(--app-sidebar-width)] flex min-h-[calc(100vh-var(--app-window-titlebar-height))] w-[calc(100%-var(--app-sidebar-width))] flex-1 flex-col transition-[margin,width] duration-200">
+        <main className="relative ml-[var(--app-sidebar-width)] flex min-h-[calc(100vh-var(--app-window-titlebar-height))] w-[calc(100%-var(--app-sidebar-width))] flex-1 flex-col transition-[margin,width] duration-200">
           <SubNavigation
             activeId={activeSubNavId}
             items={activeSubNavItems}
             onSelect={(item) => onSubNavSelect(item.id)}
+            onPrefetch={onSubNavPrefetch}
           />
           <NotificationBanner notification={notification} onDismiss={onDismissNotification} />
           {children}

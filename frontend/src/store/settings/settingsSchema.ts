@@ -51,7 +51,7 @@ export const fontFamilyCss: Record<BuiltInFontFamilyPresetId, string> = {
 };
 
 export const fontFamilyOptions: FontFamilyOption[] = [
-  { fallback: "sans", id: "system", labelKey: "settings.font.system", value: "JetBrains Mono" },
+  { fallback: "sans", id: "system", labelKey: "settings.font.system", value: "System UI" },
   { fallback: "sans", id: "jetbrains", labelKey: "settings.font.jetbrains", value: "JetBrains Mono" },
   { fallback: "serif", id: "serif", labelKey: "settings.font.serif", value: "Georgia" },
   { fallback: "mono", id: "mono", labelKey: "settings.font.mono", value: "JetBrains Mono" },

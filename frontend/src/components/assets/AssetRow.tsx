@@ -48,9 +48,10 @@ export function AssetRow({
   return (
     <article
       className={clsx(
-        "group cursor-pointer border-b border-theme-card-border/55 transition-all last:border-b-0 hover:bg-theme-card-header/55",
-        expanded && "asset-expanded bg-theme-card-header/62 shadow-[inset_3px_0_0_rgb(var(--theme-nav-indicator)/0.72),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.12)]",
+        "aurora-list-row group cursor-pointer",
+        expanded && "asset-expanded",
       )}
+      data-expanded={expanded}
       onClick={onToggleExpanded}
     >
       <div className="grid min-h-[116px] grid-cols-[minmax(0,1fr)_auto] items-start gap-5 px-5 py-4 max-[980px]:grid-cols-1 max-[980px]:gap-3">

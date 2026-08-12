@@ -121,9 +121,9 @@ export const surfaceButtonRecipe = cva(
 );
 
 export const switchRecipe = cva(
-  "peer inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full border border-theme-control-border bg-theme-switch p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/55 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-primary-strong/70 data-[state=checked]:bg-theme-switch-checked",
+  "peer inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full border border-theme-control-border/70 bg-theme-switch p-0.5 shadow-[var(--theme-shadow-control-inset)] transition-[background,border-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/55 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-primary-strong/70 data-[state=checked]:bg-theme-switch-checked",
 );
 
 export const switchThumbRecipe = cva(
-  "pointer-events-none grid size-5 place-items-center rounded-full bg-theme-switch-thumb transition-transform data-[state=checked]:translate-x-5 data-[state=checked]:bg-theme-switch-checked-thumb",
+  "pointer-events-none grid size-5 place-items-center rounded-full bg-theme-switch-thumb shadow-[0_2px_8px_rgb(var(--theme-panel-shadow)/0.3),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.5)] transition-[transform,background-color,box-shadow] data-[state=checked]:translate-x-5 data-[state=checked]:bg-theme-switch-checked-thumb",
 );

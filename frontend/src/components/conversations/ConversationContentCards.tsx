@@ -344,11 +344,11 @@ export function ConversationContentCards({
         const executionKey = `${node.turnId}:${node.sourceExecutionId}`;
         return (
           <section
-            className="overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/35"
+            className="conversation-surface overflow-hidden rounded-xl"
             data-conversation-execution-id={node.sourceExecutionId}
             key={executionKey}
           >
-            <header className="flex flex-wrap items-center gap-2 border-b border-theme-card-border bg-theme-card/55 px-4 py-2.5">
+            <header className="conversation-content-header flex flex-wrap items-center gap-2 px-4 py-2.5">
               <span className="text-label-caps text-on-surface-variant">
                 {t("conversation.content.execution")}
               </span>
@@ -472,7 +472,7 @@ function ConversationContentCard({
         borderColor: withAlpha(accentColor, "66"),
       }}
     >
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-inherit px-4 py-2.5">
+      <header className="conversation-content-header flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
         <div className="flex min-w-0 flex-wrap items-center gap-2 text-label-caps" style={{ color: accentColor }}>
           {isSuccessfulCommand(block) ? (
             <CheckCircle2 aria-hidden="true" size={15} />
@@ -768,9 +768,9 @@ function FileChangeResultSummary({
         </span>
       </div>
       {summary.files.length > 0 ? (
-        <div className="divide-y divide-theme-card-border overflow-hidden rounded-lg border border-theme-card-border bg-theme-card/45">
+        <div className="grid gap-1.5 overflow-hidden rounded-lg border border-theme-card-border/55 bg-theme-card/35 p-1.5">
           {summary.files.map((file) => (
-            <div className="flex items-center gap-3 px-3 py-2 font-mono text-code-sm" data-diff-summary-file={file.path} key={file.path}>
+            <div className="flex items-center gap-3 rounded-md bg-theme-card-header/35 px-3 py-2 font-mono text-code-sm" data-diff-summary-file={file.path} key={file.path}>
               <span className="w-4 shrink-0 text-center text-on-surface-muted">{fileStatusMark(file.status, file.binary)}</span>
               <span className="min-w-0 flex-1 truncate text-on-surface" title={file.path}>{file.path}</span>
               <span className="shrink-0 text-status-create">+{file.additions}</span>
@@ -971,7 +971,7 @@ function BlockMetadata({
   if (details.length === 0) return null;
 
   return (
-    <div className="mt-3 flex flex-wrap gap-2 border-t border-inherit pt-3">
+    <div className="conversation-meta-row mt-3 flex flex-wrap gap-2 pt-3">
       {details.map((detail) => (
         <span
           className="rounded-full border border-inherit bg-theme-card/45 px-2 py-1 font-mono text-code-sm text-on-surface-variant"

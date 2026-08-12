@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { loadSharedResource, readSharedResource } from "../../lib/asyncCache";
 import {
   createSource,
   deleteSource as deleteSourceById,
@@ -10,14 +11,24 @@ import {
 } from "../../services/catalog";
 import type { Asset, Source, SourceInput } from "../../types";
 
+const SKILL_SOURCES_CACHE_KEY = "catalog.skill-sources";
+const SKILL_SOURCE_ASSETS_CACHE_KEY = "catalog.skill-source-assets";
+
 export function useSourcesController(onCatalogRefresh?: (assets?: Asset[]) => Promise<void>) {
-  const [sources, setSources] = useState<Source[]>([]);
-  const [sourceAssets, setSourceAssets] = useState<Asset[]>([]);
+  const [sources, setSources] = useState<Source[]>(() => readSharedResource<Source[]>(SKILL_SOURCES_CACHE_KEY) ?? []);
+  const [sourceAssets, setSourceAssets] = useState<Asset[]>(
+    () => readSharedResource<Asset[]>(SKILL_SOURCE_ASSETS_CACHE_KEY) ?? [],
+  );
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(
+    () =>
+      readSharedResource<Source[]>(SKILL_SOURCES_CACHE_KEY) === undefined ||
+      readSharedResource<Asset[]>(SKILL_SOURCE_ASSETS_CACHE_KEY) === undefined,
+  );
 
   useEffect(() => {
-    void Promise.all([refreshSources(), refreshSourceAssets()]);
+    void Promise.all([refreshSources(), refreshSourceAssets()]).finally(() => setLoading(false));
   }, []);
 
   const assetCounts = useMemo(() => {
@@ -60,11 +71,19 @@ export function useSourcesController(onCatalogRefresh?: (assets?: Asset[]) => Pr
   const nextPriority = useMemo(() => sources.reduce((highest, source) => Math.max(highest, source.priority), -10) + 10, [sources]);
 
   async function refreshSources() {
-    setSources(await listSkillSources());
+    const nextSources = await loadSharedResource(SKILL_SOURCES_CACHE_KEY, listSkillSources, { force: true });
+    setSources(nextSources);
+    return nextSources;
   }
 
   async function refreshSourceAssets() {
-    setSourceAssets(await listSourceAssets("skill"));
+    const nextAssets = await loadSharedResource(
+      SKILL_SOURCE_ASSETS_CACHE_KEY,
+      () => listSourceAssets("skill"),
+      { force: true },
+    );
+    setSourceAssets(nextAssets);
+    return nextAssets;
   }
 
   async function toggleSource(source: Source) {
@@ -141,6 +160,7 @@ export function useSourcesController(onCatalogRefresh?: (assets?: Asset[]) => Pr
     busy,
     filteredSources,
     importSource,
+    loading,
     nextPriority,
     query,
     revealPath,

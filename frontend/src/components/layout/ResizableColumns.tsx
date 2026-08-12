@@ -329,8 +329,8 @@ export function ResizableColumns({
                 aria-orientation="vertical"
                 className={cn(
                   "absolute inset-y-0 z-10 w-3 -translate-x-1/2 cursor-col-resize touch-none outline-none",
-                  "before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-theme-card-border",
-                  "after:absolute after:left-1/2 after:top-1/2 after:h-10 after:w-1 after:-translate-x-1/2 after:-translate-y-1/2 after:rounded-full after:bg-theme-control-border after:opacity-0 after:transition-opacity",
+                  "aurora-resize-handle before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-theme-card-border",
+                  "after:absolute after:left-1/2 after:top-1/2 after:h-10 after:w-1.5 after:-translate-x-1/2 after:-translate-y-1/2 after:rounded-full after:bg-theme-control-border after:opacity-0 after:transition-opacity",
                   "hover:after:opacity-100 focus-visible:after:opacity-100 focus-visible:ring-2 focus-visible:ring-primary-strong/55",
                   columnDragState?.handleIndex === index && "after:opacity-100",
                   handleClassName,
@@ -380,7 +380,7 @@ export function ResizableColumns({
             aria-valuemin={0}
             aria-valuenow={Math.round(scrollMetrics.scrollLeft)}
             className={cn(
-              "absolute top-1/2 h-2.5 -translate-y-1/2 rounded-full border border-theme-nav-active-border/70 bg-theme-control-fg/75 shadow-[0_1px_3px_rgb(var(--theme-panel-shadow)/0.35)] outline-none",
+              "aurora-scroll-thumb absolute top-1/2 h-2.5 -translate-y-1/2 rounded-full border border-theme-nav-active-border/70 bg-theme-control-fg/75 shadow-[0_1px_3px_rgb(var(--theme-panel-shadow)/0.35)] outline-none",
               maxScroll > 0
                 ? "cursor-grab hover:bg-primary active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-primary-strong/55"
                 : "cursor-default opacity-55",

@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { loadSharedResource, readSharedResource } from "../../lib/asyncCache";
 import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
 import { AssetToolbar, type AssetToolbarViewMode } from "../../components/assets/AssetToolbar";
 import { MountStatePill } from "../../components/assets/MountStatePill";
@@ -36,6 +37,7 @@ import { PathPickerInput } from "../../components/common/PathPickerInput";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { EmptyState as FoundationEmptyState } from "../../components/foundation/EmptyState";
 import { PageHeader } from "../../components/foundation/PageHeader";
+import { WorkbenchContentSkeleton } from "../../components/foundation/Skeleton";
 import { Panel as FoundationPanel } from "../../components/foundation/Panel";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { Button } from "../../components/ui/button";
@@ -77,6 +79,8 @@ type MountScopeKind = "source" | "group";
 type ProfileStatusFilter = "enabled" | "disabled";
 type ProfileSortBy = "name" | "app-kind" | "mounted-count";
 
+const SKILL_GROUPS_CACHE_KEY = "catalog.skill-groups";
+
 interface MountScope {
   assetIds: string[];
   blockedReason?: string;
@@ -94,6 +98,7 @@ interface SkillMountsPageProps {
   onCatalogRefresh: () => Promise<void>;
   onManualOpen: () => void;
   onOpenSettings: () => void;
+  onReady?: () => void;
   onRefreshMountStatus: () => Promise<void>;
   onRefreshProfiles: () => Promise<void>;
   onRevealPath: (path: string) => void;
@@ -120,6 +125,7 @@ export function SkillMountsPage({
   onCatalogRefresh,
   onManualOpen,
   onOpenSettings,
+  onReady,
   onRefreshMountStatus,
   onRefreshProfiles,
   onRevealPath,
@@ -138,7 +144,9 @@ export function SkillMountsPage({
   const [statusFilters, setStatusFilters] = useState<ProfileStatusFilter[]>([]);
   const [sortBy, setSortBy] = useState<ProfileSortBy>("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
-  const [groups, setGroups] = useState<AssetGroupDetail[]>([]);
+  const [groups, setGroups] = useState<AssetGroupDetail[]>(
+    () => readSharedResource<AssetGroupDetail[]>(SKILL_GROUPS_CACHE_KEY) ?? [],
+  );
   const [expandedProfileIds, setExpandedProfileIds] = useState<Set<string>>(new Set());
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [selectedScopeId, setSelectedScopeId] = useState<string | null>(null);
@@ -148,6 +156,9 @@ export function SkillMountsPage({
   const [deletingProfile, setDeletingProfile] = useState<TargetProfile | null>(null);
   const [pendingDefaultPathChange, setPendingDefaultPathChange] = useState<PendingDefaultPathChange | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(
+    () => readSharedResource<AssetGroupDetail[]>(SKILL_GROUPS_CACHE_KEY) === undefined,
+  );
 
   const skillAssets = useMemo(() => assets.filter((asset) => asset.kind === "skill"), [assets]);
   const skillAssetById = useMemo(() => new Map(skillAssets.map((asset) => [asset.id, asset])), [skillAssets]);
@@ -203,14 +214,21 @@ export function SkillMountsPage({
     void refreshGroups();
   }, []);
 
+  useEffect(() => {
+    if (!loading) {
+      onReady?.();
+    }
+  }, [loading]);
+
   async function refreshGroups() {
     setBusy(true);
     try {
-      setGroups(await listSkillGroups());
+      setGroups(await loadSharedResource(SKILL_GROUPS_CACHE_KEY, listSkillGroups, { force: true }));
     } catch (error) {
       onNotifyError(errorMessage(error));
     } finally {
       setBusy(false);
+      setLoading(false);
     }
   }
 
@@ -416,8 +434,10 @@ export function SkillMountsPage({
         ]}
       />
 
-      {filteredProfiles.length === 0 ? (
-        <EmptyState>{t("appMount.empty")}</EmptyState>
+      {loading ? (
+        <WorkbenchContentSkeleton columns={3} label={t("common.loading")} />
+      ) : filteredProfiles.length === 0 ? (
+        <EmptyState className="aurora-empty-surface">{t("appMount.empty")}</EmptyState>
       ) : viewMode === "columns" && selectedProfile && selectedScope ? (
         <AppMountColumnView
           appShortcuts={appShortcuts}
@@ -444,7 +464,7 @@ export function SkillMountsPage({
         />
       ) : (
         <FoundationPanel
-          className="overflow-hidden"
+          className="aurora-list-surface !gap-2 !p-2"
           padding="none"
           aria-label={t("appMount.page.title")}
         >
@@ -586,7 +606,7 @@ function AppMountRow({
   const defaultApp = isDefaultAppProfileId(profile.id);
 
   return (
-    <article className={clsx("border-b border-theme-card-border last:border-b-0", expanded && "bg-theme-card-header/45")}>
+    <article className={clsx("aurora-list-row", expanded && "mount-expanded")} data-expanded={expanded}>
       <div className="grid min-h-20 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5 hover:bg-theme-card-header/70 max-[860px]:grid-cols-1">
         <div className="flex min-w-0 items-start gap-3">
           <span
@@ -647,7 +667,7 @@ function AppMountRow({
       </div>
 
       {expanded && (
-        <div className="border-t border-theme-card-border bg-theme-card-header/35 p-4">
+        <div className="aurora-list-row-detail p-4">
           <AppMountWorkbench
             appShortcuts={appShortcuts}
             backupTask={backupTask}
@@ -716,10 +736,10 @@ function AppMountColumnView({
   const defaultSelectedApp = isDefaultAppProfileId(selectedProfile.id);
 
   return (
-    <FoundationPanel className="overflow-visible" padding="none">
+    <FoundationPanel className="aurora-workbench-surface overflow-visible" padding="none">
       <ResizableColumns
         ariaLabel={t("layout.resizeColumns")}
-        className="min-h-[560px]"
+        className="aurora-workbench-surface min-h-[560px]"
         columns={[
           { defaultWeight: 0.7 },
           { defaultWeight: 0.85, minWidthScale: 1.1 },
@@ -733,7 +753,7 @@ function AppMountColumnView({
         scrollRightLabel={t("layout.scrollColumnsRight")}
         storageKey="assetiweave.mountColumns.v2"
       >
-        <section className="flex min-h-0 flex-col border-r border-theme-card-border bg-theme-card-header/35">
+        <section className="aurora-workbench-column flex min-h-0 flex-col">
           <ColumnHeader meta={t("appMount.metric.appsWithCount", { count: profiles.length })} title={t("appMount.column.apps")} />
           <div className="min-h-0 overflow-y-auto py-1" role="listbox" aria-label={t("appMount.column.apps")}>
             {profiles.map((profile) => {
@@ -744,11 +764,12 @@ function AppMountColumnView({
                   aria-label={t("appMount.column.selectApp", { name: profile.name })}
                   aria-selected={active}
                   className={clsx(
-                    "flex min-h-[72px] w-full items-start gap-3 border-l-2 px-3 py-3 text-left transition-colors",
+                    "aurora-workbench-item flex min-h-[72px] w-[calc(100%-0.7rem)] items-start gap-3 px-3 py-3 text-left",
                     active
-                      ? "border-primary bg-primary/10 text-on-surface"
-                      : "border-transparent text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
+                      ? "text-on-surface"
+                      : "text-on-surface-variant",
                   )}
+                  data-selected={active}
                   key={profile.id}
                   onClick={() => onSelectProfile(profile.id)}
                   role="option"
@@ -778,7 +799,7 @@ function AppMountColumnView({
           </div>
         </section>
 
-        <section className="flex min-h-0 flex-col border-r border-theme-card-border max-[1120px]:border-r-0">
+        <section className="aurora-workbench-column flex min-h-0 flex-col">
           <ColumnHeader
             actionIcon={<Pencil size={16} />}
             actionLabel={t("appMount.action.edit")}
@@ -800,7 +821,7 @@ function AppMountColumnView({
           />
         </section>
 
-        <section className="flex min-h-0 flex-col bg-theme-card-header/35 max-[1120px]:col-span-2 max-[1120px]:border-t max-[1120px]:border-theme-card-border">
+        <section className="aurora-workbench-column flex min-h-0 flex-col max-[1120px]:col-span-2">
           <ColumnHeader
             actionLabel={t("appMount.action.reveal")}
             actionIcon={<FolderOpen size={16} />}
@@ -808,7 +829,7 @@ function AppMountColumnView({
             onAction={() => onRevealPath(selectedProfile.target_paths[0] ?? "")}
             title={selectedScope.name}
           />
-          <div className="border-b border-theme-card-border p-3">
+          <div className="p-3">
             <ScopeBatchActions
               busy={busy}
               mountStatusesByAssetId={mountStatusesByAssetId}
@@ -876,7 +897,7 @@ function AppMountWorkbench({
   }
 
   return (
-    <FoundationPanel className="overflow-visible" padding="none" variant="muted">
+    <FoundationPanel className="aurora-workbench-surface overflow-visible" padding="none" variant="muted">
       <ResizableColumns
         ariaLabel={t("layout.resizeColumns")}
         className="min-h-[420px]"
@@ -892,7 +913,7 @@ function AppMountWorkbench({
         scrollRightLabel={t("layout.scrollColumnsRight")}
         storageKey="assetiweave.mountWorkbenchColumns.v2"
       >
-        <section className="flex min-h-0 flex-col border-r border-theme-card-border max-[960px]:border-r-0 max-[960px]:border-b">
+        <section className="aurora-workbench-column flex min-h-0 flex-col">
           <ColumnHeader meta={t("appMount.scope.count", { count: scopes.length })} title={t("appMount.column.scopes")} />
           <ScopeList
             mountStatusesByAssetId={mountStatusesByAssetId}
@@ -905,7 +926,7 @@ function AppMountWorkbench({
         </section>
         <section className="flex min-h-0 flex-col">
           <ColumnHeader meta={t("appMount.scope.assetCount", { count: scopeAssets.length })} title={selectedScope.name} />
-          <div className="border-b border-theme-card-border p-3">
+          <div className="p-3">
             <ScopeBatchActions
               busy={busy}
               mountStatusesByAssetId={mountStatusesByAssetId}
@@ -1067,7 +1088,7 @@ function SkillScopeAssetList({
   }
 
   return (
-    <div className="min-h-0 overflow-y-auto">
+    <div className="aurora-list-surface min-h-0 overflow-y-auto !gap-2 !p-2">
       {skillAssets.map((asset) => {
         const source = sourceById.get(asset.source_id);
         const mountStatuses = mountStatusesByAssetId.get(asset.id) ?? [];
@@ -1076,7 +1097,7 @@ function SkillScopeAssetList({
         const mountBlockedReason = mountBlocked ? t("mount.blocked") : undefined;
         return (
           <article
-            className="grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-theme-card-border px-4 py-3 last:border-b-0 hover:bg-theme-card-header/70 max-[760px]:grid-cols-1"
+            className="aurora-workbench-item m-0 grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 max-[760px]:grid-cols-1"
             key={asset.id}
           >
             <div className="min-w-0">
@@ -1507,7 +1528,7 @@ function ColumnHeader({
   title: string;
 }) {
   return (
-    <header className="flex min-h-14 items-center justify-between gap-3 border-b border-theme-card-border bg-theme-card-header/70 px-4 py-3">
+    <header className="aurora-workbench-header flex min-h-14 items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
         <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">{title}</h3>
         <p className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">{meta}</p>
@@ -1602,9 +1623,9 @@ function Field({ children, label, required = false }: { children: ReactNode; lab
   );
 }
 
-function EmptyState({ children }: { children: ReactNode }) {
+function EmptyState({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <FoundationEmptyState className="min-h-0 px-4 py-10 text-body-md" title={children} />
+    <FoundationEmptyState className={clsx("min-h-0 px-4 py-10 text-body-md", className)} title={children} />
   );
 }
 

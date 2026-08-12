@@ -7,6 +7,7 @@ import { AssetToolbar, type AssetViewMode } from "../../components/assets/AssetT
 import { ToolbarMultiSelectDropdown, ToolbarSingleSelectDropdown, ToolbarSortDirectionButton } from "../../components/common/DataToolbar";
 import { PageMetrics } from "../../components/common/PageMetrics";
 import { PageHeader } from "../../components/foundation/PageHeader";
+import { ListContentSkeleton } from "../../components/foundation/Skeleton";
 import { DeploymentPlanPanel } from "../../components/plans/DeploymentPlanPanel";
 import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
 import type { CatalogController } from "../../hooks/catalog/useCatalogController";
@@ -27,10 +28,12 @@ export function CatalogPage({
   catalog,
   onManualOpen,
   onOpenSettings,
+  onReady,
 }: {
   catalog: CatalogController;
   onManualOpen: () => void;
   onOpenSettings: () => void;
+  onReady?: () => void;
 }) {
   const { t } = useI18n();
   const { startBackup, task: backupTask } = useSkillBackup();
@@ -78,6 +81,12 @@ export function CatalogPage({
   const currentEditingAsset = editingAsset
     ? (catalog.assets.find((asset) => asset.id === editingAsset.id) ?? editingAsset)
     : null;
+
+  useEffect(() => {
+    if (!catalog.loading) {
+      onReady?.();
+    }
+  }, [catalog.loading]);
 
   useEffect(() => {
     if (!editingAsset) {
@@ -308,21 +317,27 @@ export function CatalogPage({
         ]}
       />
 
-      <DeploymentPlanPanel plan={catalog.plan} />
-      <AssetList
-        appShortcuts={catalog.appShortcuts}
-        assetMountStatuses={catalog.assetMountStatuses}
-        assets={visibleAssets}
-        expandedIds={catalog.expandedIds}
-        onDeleteAsset={setDeletingAsset}
-        onEditAsset={setEditingAsset}
-        onRevealPath={(path) => void catalog.revealPath(path)}
-        onToggleAsset={catalog.toggleAsset}
-        onToggleMount={catalog.toggleMountProfile}
-        profiles={catalog.profiles}
-        sources={catalog.sources}
-        viewMode={assetViewMode}
-      />
+      {catalog.loading ? (
+        <ListContentSkeleton label={t("common.loading")} rows={8} variant="asset" />
+      ) : (
+        <>
+          <DeploymentPlanPanel plan={catalog.plan} />
+          <AssetList
+            appShortcuts={catalog.appShortcuts}
+            assetMountStatuses={catalog.assetMountStatuses}
+            assets={visibleAssets}
+            expandedIds={catalog.expandedIds}
+            onDeleteAsset={setDeletingAsset}
+            onEditAsset={setEditingAsset}
+            onRevealPath={(path) => void catalog.revealPath(path)}
+            onToggleAsset={catalog.toggleAsset}
+            onToggleMount={catalog.toggleMountProfile}
+            profiles={catalog.profiles}
+            sources={catalog.sources}
+            viewMode={assetViewMode}
+          />
+        </>
+      )}
       <AssetEditDialog
         asset={currentEditingAsset}
         backupTask={backupTask}

@@ -7,6 +7,7 @@ import { AssetToolbar, type AssetToolbarViewMode } from "../../components/assets
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
 import { ToolbarMultiSelectDropdown, ToolbarSingleSelectDropdown, ToolbarSortDirectionButton } from "../../components/common/DataToolbar";
 import { PageHeader } from "../../components/foundation/PageHeader";
+import { ListContentSkeleton } from "../../components/foundation/Skeleton";
 import { SourceEditDialog } from "../../components/sources/SourceEditDialog";
 import { SkillAcquireDialog } from "../../components/sources/SkillAcquireDialog";
 import { SourceList } from "../../components/sources/SourceList";
@@ -45,6 +46,7 @@ export function SourcesPage({
   onOpenSettings,
   onRefreshMountStatus,
   onRemoveAsset,
+  onReady,
   onSetSourceMountProfile,
   onToggleAsset,
   onToggleMount,
@@ -64,6 +66,7 @@ export function SourcesPage({
   onOpenSettings: () => void;
   onRefreshMountStatus: () => Promise<void>;
   onRemoveAsset: (assetId: string) => void;
+  onReady?: () => void;
   onSetSourceMountProfile: (assetIds: string[], profileId: string, enabled: boolean) => Promise<void>;
   onToggleAsset: (assetId: string) => void;
   onToggleMount: (assetId: string, profileId: string) => void;
@@ -89,6 +92,12 @@ export function SourcesPage({
   const currentEditingAsset = editingAsset
     ? (sources.sourceAssets.find((asset) => asset.id === editingAsset.id) ?? assets.find((asset) => asset.id === editingAsset.id) ?? editingAsset)
     : null;
+
+  useEffect(() => {
+    if (!sources.loading) {
+      onReady?.();
+    }
+  }, [sources.loading]);
   const visibleSources = useMemo(
     () =>
       filterAndSortSources({
@@ -393,27 +402,31 @@ export function SourcesPage({
         ]}
       />
 
-      <SourceList
-        appShortcuts={appShortcuts}
-        assetMountStatuses={assetMountStatuses}
-        assets={sources.sourceAssets}
-        busy={sources.busy}
-        expandedAssetIds={expandedAssetIds}
-        onDelete={setDeletingSource}
-        onDeleteAsset={setDeletingAsset}
-        onEdit={setEditingSource}
-        onEditAsset={setEditingAsset}
-        onAssetReveal={onAssetReveal}
-        onReveal={(path) => void sources.revealPath(path)}
-        onSetSourceMountProfile={(assetIds, profileId, enabled) =>
-          void onSetSourceMountProfile(assetIds, profileId, enabled)
-        }
-        onToggleAsset={onToggleAsset}
-        onToggleMount={onToggleMount}
-        profiles={profiles}
-        sources={visibleSources}
-        viewMode={viewMode}
-      />
+      {sources.loading ? (
+        <ListContentSkeleton label={t("common.loading")} rows={6} variant="source" />
+      ) : (
+        <SourceList
+          appShortcuts={appShortcuts}
+          assetMountStatuses={assetMountStatuses}
+          assets={sources.sourceAssets}
+          busy={sources.busy}
+          expandedAssetIds={expandedAssetIds}
+          onDelete={setDeletingSource}
+          onDeleteAsset={setDeletingAsset}
+          onEdit={setEditingSource}
+          onEditAsset={setEditingAsset}
+          onAssetReveal={onAssetReveal}
+          onReveal={(path) => void sources.revealPath(path)}
+          onSetSourceMountProfile={(assetIds, profileId, enabled) =>
+            void onSetSourceMountProfile(assetIds, profileId, enabled)
+          }
+          onToggleAsset={onToggleAsset}
+          onToggleMount={onToggleMount}
+          profiles={profiles}
+          sources={visibleSources}
+          viewMode={viewMode}
+        />
+      )}
 
       <SourceImportDialog
         busy={sources.busy}

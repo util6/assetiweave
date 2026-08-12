@@ -354,7 +354,7 @@ export function ToolbarActionButton({
       className={clsx(
         "inline-flex h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-55",
         text ? "min-w-[5.25rem] px-2.5 text-body-sm font-semibold" : "w-9",
-          primary
+        primary
           ? "theme-primary-gradient border border-primary/30 text-theme-button-primary-fg shadow-[0_10px_24px_rgb(var(--theme-glow)/0.18),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.24)] hover:-translate-y-0.5"
           : "border border-theme-control-border/70 bg-theme-control/68 text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md hover:bg-theme-control-hover hover:text-on-surface",
       )}
@@ -383,7 +383,7 @@ export function ToolbarTextButton({
 }) {
   return (
     <button
-      className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-theme-control-border bg-theme-control/95 px-2.5 text-body-sm text-theme-control-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-55"
+      className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-2xl border border-theme-control-border/70 bg-theme-control/68 px-2.5 text-body-sm text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md transition-all hover:-translate-y-0.5 hover:bg-theme-control-hover hover:text-on-surface active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-55"
       disabled={disabled}
       data-toolbar-control="text"
       onClick={onClick}
@@ -540,7 +540,7 @@ export function ToolbarSortDirectionButton({
   return (
     <button
       aria-label={label}
-      className="inline-flex h-10 w-9 shrink-0 items-center justify-center rounded-xl border border-theme-control-border bg-theme-control/95 text-body-sm font-semibold text-theme-control-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors hover:bg-theme-control-hover hover:text-on-surface"
+      className="inline-flex h-10 w-9 shrink-0 items-center justify-center rounded-2xl border border-theme-control-border/70 bg-theme-control/68 text-body-sm font-semibold text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md transition-colors hover:bg-theme-control-hover hover:text-on-surface"
       data-toolbar-control="sort-direction"
       onClick={onClick}
       title={title}
@@ -568,10 +568,10 @@ const ToolbarDropdownButton = forwardRef<HTMLButtonElement, ToolbarDropdownButto
       {...buttonProps}
       aria-label={ariaLabel}
       className={clsx(
-        "inline-flex h-10 max-w-[11.5rem] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border px-2.5 text-body-sm shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors",
+        "inline-flex h-10 max-w-[11.5rem] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-2xl border px-2.5 text-body-sm shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md transition-colors",
         active
           ? "border-primary/45 bg-theme-control-hover text-primary"
-          : "border-theme-control-border bg-theme-control/95 text-theme-control-fg hover:bg-theme-control-hover hover:text-on-surface",
+          : "border-theme-control-border/70 bg-theme-control/68 text-theme-control-fg hover:bg-theme-control-hover hover:text-on-surface",
         buttonProps.className,
       )}
       data-toolbar-control="dropdown"
@@ -601,7 +601,7 @@ function ToolbarDropdownContent({
   return (
     <DropdownMenuPrimitive.Content
       align="start"
-      className="z-30 w-64 rounded-xl border border-theme-card-border bg-theme-card/98 p-2 text-theme-control-fg shadow-[0_18px_44px_rgb(var(--theme-panel-shadow)/0.26)] backdrop-blur"
+      className="aurora-menu z-30 w-64 rounded-2xl border border-theme-card-border/75 bg-theme-card/84 p-2 text-theme-control-fg shadow-[var(--theme-shadow-panel)] backdrop-blur-xl"
       collisionPadding={12}
       sideOffset={8}
     >
@@ -625,8 +625,8 @@ function ToolbarDropdownCheckItem({
     <DropdownMenuPrimitive.CheckboxItem
       checked={checked}
       className={clsx(
-        "grid h-9 cursor-default grid-cols-[1rem_minmax(0,1fr)] items-center gap-3 rounded-lg px-2 text-body-sm outline-none transition-colors",
-        checked ? "bg-theme-control-hover text-primary" : "text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
+        "grid h-9 cursor-default grid-cols-[1rem_minmax(0,1fr)] items-center gap-3 rounded-xl px-2 text-body-sm outline-none transition-colors",
+        checked ? "bg-theme-control-hover text-primary shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.16)]" : "text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
       )}
       onCheckedChange={onChange}
       onSelect={(event) => event.preventDefault()}

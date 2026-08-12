@@ -140,10 +140,12 @@ const PROMPT_SEARCH_COMMIT_DELAY_MS = 700;
 export function PromptOverviewPage({
   availabilityChecker,
   onManualOpen,
+  onReady,
   translator = translateConversationCardContent,
 }: {
   availabilityChecker?: () => Promise<OpencodeTranslationAvailability>;
   onManualOpen: () => void;
+  onReady?: () => void;
   translator?: (request: ConversationCardTranslationRequest) => Promise<OpencodeTranslationResult>;
 }) {
   const { t } = useI18n();
@@ -161,6 +163,10 @@ export function PromptOverviewPage({
   const [availability, setAvailability] = useState<TranslationAvailabilityStatus>("idle");
   const [actionError, setActionError] = useState<string | null>(null);
   const copiedResetTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    onReady?.();
+  }, []);
 
   useEffect(() => {
     writePromptNotes(notes);

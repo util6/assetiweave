@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
+import { clearSharedResourceCache } from "../../lib/asyncCache";
 import { defaultSettings } from "../../store/settings/settingsSchema";
 import type { ConversationNavigationTarget } from "../../router/navigationTargets";
 import type { ConversationAdapter, ConversationSessionDetail, ConversationSessionListItem } from "../../types";
@@ -75,6 +76,7 @@ vi.mock("../../services/conversations", async () => {
 
 describe("ConversationsPage sync scope", () => {
   beforeEach(() => {
+    clearSharedResourceCache();
     conversationSyncTaskMock.current = null;
     window.scrollTo = vi.fn();
     vi.stubGlobal("ResizeObserver", class {
@@ -238,6 +240,58 @@ describe("ConversationsPage sync scope", () => {
     expect(screen.queryByRole("region", { name: "对话记录操作栏" })).toBeNull();
     expect(screen.queryByPlaceholderText("搜索当前 Session 的问题...")).toBeNull();
     expect(screen.queryByRole("button", { name: "同步" })).toBeNull();
+  });
+
+  it("clears the previous preview and shows the detail skeleton while opening another session", async () => {
+    let resolveSecondSession!: (detail: ConversationSessionDetail) => void;
+    const secondSessionPromise = new Promise<ConversationSessionDetail>((resolve) => {
+      resolveSecondSession = resolve;
+    });
+    listConversationAdaptersMock.mockResolvedValue([conversationAdapter]);
+    listConversationSessionsMock.mockResolvedValue([conversationSession, secondConversationSession]);
+    getConversationSessionMock.mockImplementation((sessionId: string) =>
+      sessionId === secondConversationSession.id
+        ? secondSessionPromise
+        : Promise.resolve(conversationSessionDetail),
+    );
+
+    renderConversationsPage("session");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open session Export target" }));
+    expect((await screen.findAllByText("Export question")).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to apps / sessions" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open session Second target" }));
+
+    expect(screen.queryByText("Export question")).toBeNull();
+    expect(screen.getByText("Loading session...")).toBeTruthy();
+    expect(document.querySelector(".conversation-loading-state")).toBeTruthy();
+
+    resolveSecondSession(secondConversationSessionDetail);
+    await waitFor(() => expect(screen.getAllByText("Second question").length).toBeGreaterThan(0));
+  });
+
+  it("ignores an older session response after switching to a newer session", async () => {
+    const firstSessionLoad = createDeferred<ConversationSessionDetail>();
+    const secondSessionLoad = createDeferred<ConversationSessionDetail>();
+    listConversationAdaptersMock.mockResolvedValue([conversationAdapter]);
+    listConversationSessionsMock.mockResolvedValue([conversationSession, secondConversationSession]);
+    getConversationSessionMock.mockImplementation((sessionId: string) =>
+      sessionId === conversationSession.id ? firstSessionLoad.promise : secondSessionLoad.promise,
+    );
+
+    renderConversationsPage("session");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open session Export target" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to apps / sessions" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open session Second target" }));
+
+    firstSessionLoad.resolve(conversationSessionDetail);
+    await act(async () => undefined);
+    expect(screen.queryByText("Export question")).toBeNull();
+
+    secondSessionLoad.resolve(secondConversationSessionDetail);
+    await waitFor(() => expect(screen.getAllByText("Second question").length).toBeGreaterThan(0));
   });
 
   it.each(["session", "web"] as const)(
@@ -1007,6 +1061,14 @@ function renderConversationsPage(
   );
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function searchScope(
   query: string,
   contentTypes: string[],
@@ -1139,4 +1201,41 @@ const conversationSessionDetail: ConversationSessionDetail = {
     },
   ],
   session: conversationSession,
+};
+
+const secondConversationSession: ConversationSessionListItem = {
+  ...conversationSession,
+  id: "session-second-target",
+  title: "Second target",
+};
+
+const secondConversationSessionDetail: ConversationSessionDetail = {
+  ...conversationSessionDetail,
+  questions: conversationSessionDetail.questions.map((question) => ({
+    ...question,
+    parts: question.parts.map((part) => ({
+      ...part,
+      id: "part-second-target-answer",
+      text: "Second answer.",
+      turn_id: "turn-second-target",
+    })),
+    question: {
+      ...question.question,
+      answer_text: "Second answer.",
+      id: "question-second-target",
+      question_index: 0,
+      question_text: "What is the second session?",
+      session_id: "session-second-target",
+      title: "Second question",
+    },
+    turns: question.turns.map((turn) => ({
+      ...turn,
+      external_id: "turn-second-target-external",
+      fingerprint: "turn-second-target",
+      id: "turn-second-target",
+      session_id: "session-second-target",
+      user_text: "What is the second session?",
+    })),
+  })),
+  session: secondConversationSession,
 };

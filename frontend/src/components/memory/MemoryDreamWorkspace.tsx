@@ -2,6 +2,7 @@ import { Archive, CheckCircle2, Eye, LoaderCircle, Play, RefreshCw, ShieldAlert,
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMemoryTasks } from "../../app/backgroundTasks/MemoryTaskProvider";
 import { EmptyState } from "../foundation/EmptyState";
+import { MemoryDreamSkeleton } from "../foundation/Skeleton";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import {
@@ -91,6 +92,9 @@ export function MemoryDreamWorkspace({
 
   if (notes === null && typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) {
     return <EmptyState description={t("memory.dreams.browserDescription")} icon={<Sparkles size={20} />} title={t("memory.dreams.browserTitle")} />;
+  }
+  if (notes === null) {
+    return <MemoryDreamSkeleton />;
   }
 
   return (

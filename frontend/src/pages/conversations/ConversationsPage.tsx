@@ -58,6 +58,7 @@ import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { PageHeader } from "../../components/foundation/PageHeader";
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
+import { loadSharedResource, readSharedResource } from "../../lib/asyncCache";
 import type { TranslationKey } from "../../i18n/messages";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import { DEFAULT_COLUMN_MIN_WIDTH } from "../../store/settings/settingsSchema";
@@ -163,6 +164,14 @@ export async function loadAllConversationSessionPages(
   }
 }
 
+function conversationAdapterCacheKey(recordKind: ConversationRecordKind) {
+  return `conversation.adapters.${recordKind}`;
+}
+
+function conversationSessionCacheKey(recordKind: ConversationRecordKind, query: string) {
+  return `conversation.sessions.${recordKind}.${query}`;
+}
+
 export function ConversationsPage({
   appShortcuts,
   navigationTarget,
@@ -171,6 +180,7 @@ export function ConversationsPage({
   onNotify,
   onNotifyError,
   onOpenSettings,
+  onReady,
   recordKind = "session",
 }: {
   activeSubNavId?: string;
@@ -181,6 +191,7 @@ export function ConversationsPage({
   onNotify: (notification: ConversationPageNotification) => void;
   onNotifyError: (message: string) => void;
   onOpenSettings: (panel?: SettingsPanelId) => void;
+  onReady?: () => void;
   recordKind?: "session" | "web";
 }) {
   const { t } = useI18n();
@@ -190,8 +201,12 @@ export function ConversationsPage({
   const currentRecordKind: ConversationRecordKind = recordKind;
   const syncTask = taskFor(currentRecordKind);
   const webRecordMode = currentRecordKind === "web";
-  const [adapters, setAdapters] = useState<ConversationAdapter[]>([]);
-  const [sessions, setSessions] = useState<ConversationSessionListItem[]>([]);
+  const [adapters, setAdapters] = useState<ConversationAdapter[]>(
+    () => readSharedResource<ConversationAdapter[]>(conversationAdapterCacheKey(currentRecordKind)) ?? [],
+  );
+  const [sessions, setSessions] = useState<ConversationSessionListItem[]>(
+    () => readSharedResource<ConversationSessionListItem[]>(conversationSessionCacheKey(currentRecordKind, "")) ?? [],
+  );
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -228,10 +243,21 @@ export function ConversationsPage({
   const [contentSearchResult, setContentSearchResult] = useState<ConversationSearchResultState | null>(null);
   const [contentSearchLoading, setContentSearchLoading] = useState(false);
   const [activeSearchTarget, setActiveSearchTarget] = useState<ConversationSearchTarget | null>(null);
-  const [sessionCatalogReady, setSessionCatalogReady] = useState(false);
+  const sessionDetailRequestIdRef = useRef(0);
+  const [sessionCatalogReady, setSessionCatalogReady] = useState(
+    () => readSharedResource<ConversationSessionListItem[]>(conversationSessionCacheKey(currentRecordKind, "")) !== undefined,
+  );
   const importedSourceNamesRef = useRef<Map<string, string>>(new Map());
   const startedNavigationNonceRef = useRef<string | null>(null);
   const consumedNavigationNonceRef = useRef<string | null>(null);
+  const previousQueryRef = useRef(query);
+
+  function clearSessionDetail() {
+    sessionDetailRequestIdRef.current += 1;
+    setSessionDetail(null);
+    setSelectedQuestionId(null);
+    setSelectedQuestionIds(new Set());
+  }
 
   const sessionQuestionCount = useMemo(() => sessions.reduce((total, session) => total + session.question_count, 0), [sessions]);
   const sortedSessions = useMemo(
@@ -315,6 +341,7 @@ export function ConversationsPage({
     setSyncProgress(null);
     setSyncProgressDismissed(false);
     setSessionCatalogReady(false);
+    sessionDetailRequestIdRef.current += 1;
     handledSyncTaskIdRef.current = null;
     setOutputRoot(
       webRecordMode ? "~/Desktop/assetiweave-web-records" : "~/Desktop/assetiweave-conversations",
@@ -322,9 +349,23 @@ export function ConversationsPage({
     void refreshCatalog();
   }, [currentRecordKind]);
 
+  useEffect(() => () => {
+    sessionDetailRequestIdRef.current += 1;
+  }, []);
+
   useEffect(() => {
+    if (sessionCatalogReady) {
+      onReady?.();
+    }
+  }, [sessionCatalogReady]);
+
+  useEffect(() => {
+    if (previousQueryRef.current === query) {
+      return;
+    }
+    previousQueryRef.current = query;
     void refreshSessions();
-  }, [query, currentRecordKind]);
+  }, [query]);
 
   useEffect(() => {
     const kinds = sessionDetail?.questions.flatMap((question) =>
@@ -421,7 +462,7 @@ export function ConversationsPage({
     if (!selectedAppGroup || !selectedSessionId) return;
     if (!selectedAppGroup.sessions.some((session) => session.id === selectedSessionId)) {
       setSelectedSessionId(null);
-      setSessionDetail(null);
+      clearSessionDetail();
       setSessionView("browser");
     }
   }, [selectedAppGroup, selectedSessionId]);
@@ -444,7 +485,7 @@ export function ConversationsPage({
 
   useEffect(() => {
     if (!selectedSessionId) {
-      setSessionDetail(null);
+      clearSessionDetail();
       return;
     }
     void loadSession(selectedSessionId);
@@ -507,6 +548,7 @@ export function ConversationsPage({
     }
 
     startedNavigationNonceRef.current = navigationTarget.nonce;
+    clearSessionDetail();
     setSelectedAppId(targetSession.adapter_id);
     setSelectedProjectKey(
       currentRecordKind === "web" ? null : normalizedProjectPath(targetSession) ?? NO_PROJECT_GROUP_KEY,
@@ -648,8 +690,13 @@ export function ConversationsPage({
 
   async function refreshCatalog(options: { rethrow?: boolean } = {}) {
     try {
-      const nextAdapters = (await listConversationAdapters()).filter(
-        (adapter) => isWebRecordAdapter(adapter) === webRecordMode,
+      const nextAdapters = await loadSharedResource(
+        conversationAdapterCacheKey(currentRecordKind),
+        async () =>
+          (await listConversationAdapters()).filter(
+            (adapter) => isWebRecordAdapter(adapter) === webRecordMode,
+          ),
+        { force: true },
       );
       setAdapters(nextAdapters);
       await refreshSessions({ rethrow: true });
@@ -665,7 +712,11 @@ export function ConversationsPage({
     setSessionSearchLoading(true);
     try {
       const listSessions = webRecordMode ? listWebRecordSessions : listConversationSessions;
-      const nextSessions = await loadAllConversationSessionPages(listSessions, query || null);
+      const nextSessions = await loadSharedResource(
+        conversationSessionCacheKey(currentRecordKind, query),
+        () => loadAllConversationSessionPages(listSessions, query || null),
+        { force: true },
+      );
       if (sessionSearchRequestIdRef.current !== requestId) return;
       setSessions(nextSessions);
       setSelectedSessionId((current) => current && nextSessions.some((session) => session.id === current) ? current : null);
@@ -683,11 +734,21 @@ export function ConversationsPage({
   }
 
   async function loadSession(sessionId: string) {
+    const requestId = sessionDetailRequestIdRef.current + 1;
+    sessionDetailRequestIdRef.current = requestId;
+    setSessionDetail(null);
+    setSelectedQuestionId(null);
+    setSelectedQuestionIds(new Set());
+
     try {
       const getSession = webRecordMode ? getWebRecordSession : getConversationSession;
-      setSessionDetail(await getSession(sessionId));
+      const detail = await getSession(sessionId);
+      if (sessionDetailRequestIdRef.current !== requestId) return;
+      setSessionDetail(detail);
     } catch (error) {
-      onNotifyError(errorMessage(error));
+      if (sessionDetailRequestIdRef.current === requestId) {
+        onNotifyError(errorMessage(error));
+      }
     }
   }
 
@@ -803,11 +864,14 @@ export function ConversationsPage({
   }
 
   const handleOpenSession = useCallback((sessionId: string) => {
+    clearSessionDetail();
     setSelectedSessionId(sessionId);
     setActiveSearchTarget(null);
-    setSelectedQuestionIds(new Set());
     setSessionView("detail");
-  }, []);
+    if (sessionId === selectedSessionId) {
+      void loadSession(sessionId);
+    }
+  }, [selectedSessionId]);
 
   const handleAppSelect = useCallback((appId: string) => {
     setSelectedAppId(appId);
@@ -815,13 +879,13 @@ export function ConversationsPage({
   }, []);
 
   const handleOpenSearchHit = useCallback((hit: ConversationSearchHit) => {
+    clearSessionDetail();
     setSelectedAppId(hit.session.adapter_id);
     setSelectedProjectKey(
       currentRecordKind === "web" ? null : normalizedProjectPath(hit.session) ?? NO_PROJECT_GROUP_KEY,
     );
     setSelectedSessionId(hit.session.id);
     setSelectedQuestionId(hit.question_id);
-    setSelectedQuestionIds(new Set());
     setSessionView("detail");
     setActiveSearchTarget({
       blockId: hit.block_id,
@@ -832,7 +896,10 @@ export function ConversationsPage({
     if (hit.card_type !== "question") {
       setContentVisibility((current) => ({ ...current, [hit.card_type]: true }));
     }
-  }, [currentRecordKind]);
+    if (hit.session.id === selectedSessionId) {
+      void loadSession(hit.session.id);
+    }
+  }, [currentRecordKind, selectedSessionId]);
 
   function handleQuestionSelectionChange(questionId: string, checked: boolean) {
     setSelectedQuestionIds((current) => {
@@ -978,15 +1045,18 @@ export function ConversationsPage({
           stickyBleed
         />
       ) : (
-        <div className="sticky top-[calc(var(--app-toolbar-top)+var(--app-notification-offset,0px))] z-10 -mx-[var(--app-page-x)] border-b border-theme-card-border bg-theme-toolbar/85 shadow-[0_12px_28px_rgb(var(--theme-panel-shadow)/0.18)] backdrop-blur">
+        <div className="sticky top-[calc(var(--app-toolbar-top)+var(--app-notification-offset,0px))] z-10 -mx-[var(--app-page-x)] bg-theme-toolbar/78 shadow-[0_12px_28px_rgb(var(--theme-panel-shadow)/0.18)] backdrop-blur-xl">
           <section
             aria-label={t("conversation.content.filterAria")}
-            className="flex min-w-0 flex-nowrap items-center gap-3 overflow-x-auto border-b border-theme-card-border/70 px-[var(--app-page-x)] py-3"
+            className="conversation-section-header flex min-w-0 flex-nowrap items-center gap-3 overflow-x-auto px-[var(--app-page-x)] py-3"
           >
             <ToolbarTextButton
               icon={<ArrowLeft size={16} />}
               label={t("conversation.session.backToBrowser")}
-              onClick={() => setSessionView("browser")}
+              onClick={() => {
+                clearSessionDetail();
+                setSessionView("browser");
+              }}
             />
             <ConversationContentFilter
               availableTypes={availableContentTypes}
@@ -1193,15 +1263,15 @@ function ColumnPanel({
   title: string;
 }) {
   return (
-    <section className={`flex min-h-0 flex-col border-r border-theme-card-border last:border-r-0 max-[860px]:border-r-0 max-[860px]:border-b ${className}`}>
-      <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-theme-card-border bg-theme-card-header/72 px-4">
+    <section className={`conversation-column flex min-h-0 flex-col ${className}`}>
+      <header className="conversation-column-header flex h-12 shrink-0 items-center justify-between gap-2 px-4">
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-primary">{icon}</span>
           <h2 className="truncate text-label-caps text-on-surface-variant">{title}</h2>
         </div>
         {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
       </header>
-      <div className="min-h-0 flex-1 overflow-auto">{children}</div>
+      <div className="conversation-column-scroll min-h-0 flex-1 overflow-auto">{children}</div>
     </section>
   );
 }
@@ -1557,7 +1627,7 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
   return (
     <ResizableColumns
       ariaLabel={t("layout.resizeColumns")}
-      className="conversation-session-browser mt-5 min-h-[620px] rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
+      className="conversation-session-browser conversation-surface mt-5 min-h-[620px] rounded-2xl shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
       columns={browserColumns}
       handleClassName="max-[1040px]:hidden"
       minimumWidth={columnMinWidth}
@@ -1602,8 +1672,8 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
           )}
         </ColumnPanel>
       ) : null}
-      <section className="flex min-h-0 flex-col">
-        <header className="flex min-h-16 shrink-0 items-center justify-between gap-4 border-b border-theme-card-border bg-theme-card-header/72 px-5 py-3">
+      <section className="conversation-column flex min-h-0 flex-col">
+        <header className="conversation-column-header flex min-h-16 shrink-0 items-center justify-between gap-4 px-5 py-3">
           <div className="flex min-w-0 items-center gap-3">
             {selectedGroup ? <ConversationAppIcon appName={selectedGroup.app.name} shortcut={selectedShortcut} /> : null}
             <div className="min-w-0">
@@ -1666,9 +1736,8 @@ function ProjectListItem({
     <button
       aria-label={t("conversation.project.selectNamed", { path: label })}
       aria-pressed={selected}
-      className={`grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 border-l-2 border-b border-theme-card-border px-4 py-3 text-left transition-colors ${
-        selected ? "border-l-primary bg-primary/10" : "border-l-transparent hover:bg-theme-card-header/70"
-      }`}
+      className={`conversation-row grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-3 py-3 text-left ${selected ? "text-on-surface" : ""}`}
+      data-selected={selected}
       onClick={onSelect}
       type="button"
     >
@@ -1780,9 +1849,9 @@ export function ConversationContentSearchResults({
   return (
     <section
       aria-live="polite"
-      className="mt-4 overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/72 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.14)]"
+      className="conversation-surface mt-4 overflow-hidden rounded-2xl shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.14)]"
     >
-      <header className="grid gap-3 border-b border-theme-card-border bg-theme-card-header/72 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+      <header className="conversation-section-header grid gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
         <div className="min-w-0">
           <h2 className="text-label-caps text-on-surface-variant">{t("conversation.search.resultsTitle")}</h2>
           <p className="mt-1 truncate text-body-sm text-on-surface">
@@ -1853,16 +1922,16 @@ export function ConversationContentSearchResults({
           {loading ? t("conversation.search.loading") : t("conversation.search.empty")}
         </div>
       ) : (
-        <div className="grid divide-y divide-theme-card-border">
+        <div className="grid gap-2">
           {groupedHits.map((group) => (
-            <section className="grid" key={group.cardType}>
+            <section className="conversation-search-group" key={group.cardType}>
               <header className="flex min-w-0 flex-wrap items-center justify-between gap-2 bg-theme-card-header/35 px-4 py-2">
                 <SearchCardTypeBadge cardType={group.cardType} colors={contentCardColors} t={t} />
                 <span className="text-code-sm text-on-surface-muted">
                   {t("conversation.search.groupCount", { count: group.hits.length })}
                 </span>
               </header>
-              <div className="grid divide-y divide-theme-card-border/70">
+              <div className="grid gap-2">
                 {group.hits.map((hit) => {
                   const appMeta = appMetaById?.get(hit.session.adapter_id);
                   const appName = appMeta?.name ?? hit.session.adapter_id;
@@ -1878,7 +1947,7 @@ export function ConversationContentSearchResults({
                           t,
                         ),
                       })}
-                      className="grid gap-2 px-4 py-3 text-left transition-colors hover:bg-theme-card-header/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                      className="conversation-search-hit grid gap-2 px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                       key={`${hit.session.id}-${hit.block_id}-${hit.question_id}`}
                       onClick={() => onOpenHit(hit)}
                       type="button"
@@ -2093,9 +2162,8 @@ function AppListItem({
     <button
       aria-label={t("conversation.app.selectNamed", { name: group.app.name })}
       aria-pressed={selected}
-      className={`grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-l-2 border-b border-theme-card-border px-4 py-3 text-left transition-colors ${
-        selected ? "border-l-primary bg-primary/10" : "border-l-transparent hover:bg-theme-card-header/70"
-      }`}
+      className={`conversation-row grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-3 py-3 text-left ${selected ? "text-on-surface" : ""}`}
+      data-selected={selected}
       onClick={onSelect}
       type="button"
     >
@@ -2179,7 +2247,7 @@ function SessionCard({
   const idFragment = conversationIdFragment(session.id);
 
   return (
-    <article className="group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-xl border border-theme-card-border bg-theme-card/75 px-4 py-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/45 hover:bg-theme-card">
+    <article className="conversation-session-card group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-xl border px-4 py-4 text-left transition-all hover:-translate-y-0.5">
       <span className="min-w-0 select-text">
         <span className="block truncate text-body-sm font-semibold text-on-surface">{session.title}</span>
         {showProjectPath ? (
@@ -2304,9 +2372,10 @@ export function SessionQuestionWorkspace({
     />
   );
   const previewPanel = (
-    <section className="min-h-0 min-w-0">
+    <section className="h-full min-h-0 min-w-0">
       {session && question ? (
         <QuestionPreview
+          key={`${session.session.id}:${question.question.id}`}
           activeSearchTarget={activeSearchTarget}
           contentCardColors={contentCardColors}
           onExport={onExport}
@@ -2324,15 +2393,17 @@ export function SessionQuestionWorkspace({
           translationSettings={translationSettings}
           visibility={visibility}
         />
+      ) : session ? (
+        <ConversationSelectionState label={t("conversation.question.noSelection")} />
       ) : (
-        <EmptyPanel>{t("conversation.question.noSelection")}</EmptyPanel>
+        <ConversationPreviewLoadingState label={t("conversation.question.previewLoading")} />
       )}
     </section>
   );
 
   if (questionListCollapsed) {
     return (
-      <section className="conversation-readable mt-5 min-h-[680px] overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]">
+      <section className="conversation-readable conversation-surface mt-5 min-h-[680px] overflow-hidden rounded-2xl shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]">
         {previewPanel}
       </section>
     );
@@ -2341,7 +2412,7 @@ export function SessionQuestionWorkspace({
   return (
     <ResizableColumns
       ariaLabel={t("layout.resizeColumns")}
-      className="conversation-readable mt-5 min-h-[680px] rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
+      className="conversation-readable conversation-surface mt-5 min-h-[680px] rounded-2xl shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
       columns={[
         { defaultWeight: 0.42 },
         { defaultWeight: 1.58, minWidthScale: 1.35 },
@@ -2361,7 +2432,7 @@ export function SessionQuestionWorkspace({
         icon={<Layers3 size={16} />}
       >
         {!session ? (
-          <EmptyPanel>{t("conversation.session.loading")}</EmptyPanel>
+          <ConversationLoadingState label={t("conversation.session.loading")} />
         ) : session.questions.length === 0 ? (
           <EmptyPanel>{t("conversation.question.empty")}</EmptyPanel>
         ) : questions.length === 0 ? (
@@ -2393,6 +2464,70 @@ export function SessionQuestionWorkspace({
       </ColumnPanel>
       {previewPanel}
     </ResizableColumns>
+  );
+}
+
+export function ConversationLoadingState({ label }: { label: string }) {
+  return (
+    <div aria-busy="true" className="conversation-loading-state" role="status">
+      <div className="conversation-loading-status">
+        <span aria-hidden="true" className="conversation-loading-status-icon">
+          <RefreshCw size={15} />
+        </span>
+        <span className="text-body-sm font-semibold text-on-surface">{label}</span>
+      </div>
+      <div aria-hidden="true" className="conversation-loading-stack">
+        {Array.from({ length: 4 }, (_, index) => (
+          <div className="conversation-loading-card" key={index}>
+            <div className="flex items-center justify-between gap-3">
+              <span className="aurora-skeleton conversation-loading-line conversation-loading-line-title" />
+              <span className="aurora-skeleton conversation-loading-line conversation-loading-line-badge" />
+            </div>
+            <span className="aurora-skeleton conversation-loading-line conversation-loading-line-wide" />
+            <span className="aurora-skeleton conversation-loading-line conversation-loading-line-medium" />
+            <span className="aurora-skeleton conversation-loading-line conversation-loading-line-meta" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function ConversationPreviewLoadingState({ label }: { label: string }) {
+  return (
+    <div aria-busy="true" className="conversation-preview-loading" role="status">
+      <div className="conversation-preview-loading-shell">
+        <div className="conversation-preview-loading-head">
+          <span aria-hidden="true" className="conversation-preview-loading-icon">
+            <RefreshCw size={18} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-label-caps text-primary">Markdown</p>
+            <p className="mt-1 text-body-sm font-semibold text-on-surface">{label}</p>
+          </div>
+        </div>
+        <div aria-hidden="true" className="conversation-preview-loading-content">
+          <span className="aurora-skeleton conversation-loading-line conversation-preview-loading-title" />
+          <span className="aurora-skeleton conversation-loading-line conversation-preview-loading-line-wide" />
+          <span className="aurora-skeleton conversation-loading-line conversation-preview-loading-line-medium" />
+          <span className="aurora-skeleton conversation-loading-line conversation-preview-loading-line-short" />
+          <span className="aurora-skeleton conversation-loading-line conversation-preview-loading-block" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function ConversationSelectionState({ label }: { label: string }) {
+  return (
+    <div aria-live="polite" className="conversation-selection-state">
+      <div className="conversation-selection-state-content">
+        <span aria-hidden="true" className="conversation-selection-orb">
+          <Layers3 size={25} />
+        </span>
+        <p className="max-w-sm text-center text-body-sm font-semibold leading-6 text-on-surface">{label}</p>
+      </div>
+    </div>
   );
 }
 
@@ -2442,7 +2577,7 @@ function QuestionListItem({
   const answerPreview = firstLine(question.question.answer_text || question.question.command_text || question.question.code_text, t);
 
   return (
-    <article className={`flex h-48 flex-col overflow-hidden border-b border-theme-card-border ${selected ? "bg-primary/10" : "hover:bg-theme-card-header/70"}`}>
+    <article className={`conversation-row flex h-48 flex-col overflow-hidden ${selected ? "text-on-surface" : ""}`} data-selected={selected}>
       <div className="grid min-h-0 flex-1 grid-cols-[auto_minmax(0,1fr)]">
         <label className="flex px-4 py-3 pr-3">
           <input
@@ -2567,7 +2702,7 @@ export function QuestionPreview({
 
   return (
     <div className="conversation-readable flex min-h-full flex-col">
-      <header className="border-b border-theme-card-border bg-theme-card/74 px-5 py-4">
+      <header className="conversation-section-header px-5 py-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-start gap-3">
             {questionListToggle}
@@ -2619,7 +2754,7 @@ export function QuestionPreview({
           return (
             <section className="mb-6" key={turn.id}>
               <div
-                className={`scroll-mt-32 rounded-xl border border-primary/30 bg-primary/[0.055] px-4 py-3 transition-shadow ${
+                className={`conversation-prompt-block scroll-mt-32 rounded-xl border border-primary/30 bg-primary/[0.055] px-4 py-3 transition-shadow ${
                   promptHighlighted ? "ring-2 ring-primary/70 shadow-[0_0_0_4px_rgb(var(--color-primary)/0.16)]" : ""
                 }`}
                 data-conversation-card-id={promptBlockId}
@@ -2703,7 +2838,7 @@ function PromptCopyButton({
 }
 
 function EmptyPanel({ children }: { children: ReactNode }) {
-  return <div className="m-4 rounded-xl border border-dashed border-theme-card-border p-6 text-center text-body-sm text-on-surface-variant">{children}</div>;
+  return <div className="conversation-empty-state m-2 rounded-xl p-6 text-center text-body-sm text-on-surface-variant">{children}</div>;
 }
 
 function questionOriginLabel(origin: string, t: Translator) {

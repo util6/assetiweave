@@ -59,7 +59,7 @@ export function SourceColumnView({
   return (
     <ResizableColumns
       ariaLabel={t("layout.resizeColumns")}
-      className="min-h-[560px] overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
+      className="aurora-workbench-surface min-h-[560px]"
       columns={[
         { defaultWeight: 0.72 },
         { defaultWeight: 0.9, minWidthScale: 1.1 },
@@ -73,7 +73,7 @@ export function SourceColumnView({
       scrollRightLabel={t("layout.scrollColumnsRight")}
       storageKey="assetiweave.sourceColumns.v2"
     >
-      <section className="flex min-h-0 flex-col border-r border-theme-card-border bg-theme-card-header/35">
+      <section className="aurora-workbench-column flex min-h-0 flex-col">
         <ColumnHeader title={t("source.column.sources")} meta={t("source.column.sourceCount", { count: sources.length })} />
         <div className="min-h-0 overflow-y-auto py-1" role="listbox" aria-label={t("source.column.sources")}>
           {sources.map((source) => {
@@ -84,11 +84,12 @@ export function SourceColumnView({
                 aria-label={t("source.column.selectSource", { name: source.name })}
                 aria-selected={active}
                 className={clsx(
-                  "flex min-h-[68px] w-full items-start gap-3 border-l-2 px-3 py-3 text-left transition-colors",
+                  "aurora-workbench-item flex min-h-[68px] w-[calc(100%-0.7rem)] items-start gap-3 px-3 py-3 text-left",
                   active
-                    ? "border-theme-nav-active-border bg-theme-nav-active/55 text-on-surface"
-                    : "border-transparent text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
+                    ? "text-on-surface"
+                    : "text-on-surface-variant",
                 )}
+                data-selected={active}
                 key={source.id}
                 onClick={() => onSelectSource(source.id)}
                 role="option"
@@ -113,7 +114,7 @@ export function SourceColumnView({
         </div>
       </section>
 
-      <section className="flex min-h-0 flex-col border-r border-theme-card-border max-[1120px]:border-r-0">
+      <section className="aurora-workbench-column flex min-h-0 flex-col">
         <ColumnHeader
           title={selectedSource.name}
           meta={t("source.assetCount", { count: selectedAssets.length })}
@@ -128,7 +129,7 @@ export function SourceColumnView({
               const mountStatuses = mountStatusesByAssetId.get(asset.id) ?? [];
               return (
                 <article
-                  className="grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-theme-card-border px-4 py-3 last:border-b-0 hover:bg-theme-card-header/70"
+                  className="aurora-workbench-item grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3"
                   key={asset.id}
                 >
                   <div className="min-w-0">
@@ -173,7 +174,7 @@ export function SourceColumnView({
         </div>
       </section>
 
-      <section className="flex min-h-0 flex-col bg-theme-card-header/35 max-[1120px]:col-span-2 max-[1120px]:border-t max-[1120px]:border-theme-card-border">
+      <section className="aurora-workbench-column flex min-h-0 flex-col max-[1120px]:col-span-2">
         <ColumnHeader title={t("source.column.mountTargets")} meta={translateScanStatus(selectedSource.last_scan_status, t)} />
         <div className="min-h-0 overflow-y-auto p-4">
           <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -208,7 +209,7 @@ export function SourceColumnView({
             variant="panel"
           />
 
-          <div className="mt-4 space-y-3 rounded-xl border border-theme-card-border bg-theme-card/65 p-3">
+          <div className="aurora-detail-surface mt-4 space-y-3 p-3">
             <SourceDetailRow label={t("source.field.kind")} value={sourceKindLabel(selectedSource.kind, t)} />
             <SourceDetailRow label={t("source.field.rootPath")} value={abbreviateHomePath(selectedSource.root_path)} mono />
             <SourceDetailRow label={t("source.field.origin")} value={sourceOriginLabel(selectedSource.source_origin, t)} />
@@ -264,7 +265,7 @@ function ColumnHeader({
   title: string;
 }) {
   return (
-    <header className="flex min-h-14 items-center justify-between gap-3 border-b border-theme-card-border bg-theme-card-header/70 px-4 py-3">
+    <header className="aurora-workbench-header flex min-h-14 items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
         <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">{title}</h3>
         <p className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">{meta}</p>

@@ -12,6 +12,7 @@ import {
 import { Badge } from "../foundation/Badge";
 import { EmptyState } from "../foundation/EmptyState";
 import { Panel } from "../foundation/Panel";
+import { MemoryDetailSkeleton } from "../foundation/Skeleton";
 import { Button } from "../ui/button";
 import { useI18n } from "../../i18n/I18nProvider";
 import type {
@@ -211,9 +212,7 @@ function MemoryDetailPanel({
       );
     }
     return (
-      <div className="grid min-h-[18rem] place-items-center text-body-sm text-on-surface-variant" role="status">
-        {t("memory.detail.loading")}
-      </div>
+      <MemoryDetailSkeleton />
     );
   }
 

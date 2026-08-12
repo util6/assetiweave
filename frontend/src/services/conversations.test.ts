@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import repositoryConversationCatalog from "../../../builtin-assets/catalog.json";
 import {
   checkConversationAdapterPackageUpdates,
   getConversationAdapterPackageTask,
@@ -167,7 +168,8 @@ describe("conversation services", () => {
     const entries = await listConversationAdapterPackages();
     const codexEntry = entries.find((entry) => entry.item.adapter_id === "codex");
 
-    expect(codexEntry?.item.version).toBe("1.5.9");
+    const repositoryCodexEntry = repositoryConversationCatalog.items.find((item) => item.adapter_id === "codex");
+    expect(codexEntry?.item.version).toBe(repositoryCodexEntry?.version);
   });
 
   it("routes installed-version lifecycle operations through the shared package API", async () => {

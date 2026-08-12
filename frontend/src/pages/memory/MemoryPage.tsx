@@ -24,6 +24,7 @@ import {
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
 import { EmptyState } from "../../components/foundation/EmptyState";
 import { PageHeader } from "../../components/foundation/PageHeader";
+import { MemoryLibraryContentSkeleton } from "../../components/foundation/Skeleton";
 import {
   MemoryItemEditorDialog,
   type MemoryEditorMode,
@@ -375,8 +376,9 @@ function MemoryLibraryPage({ onEvidenceOpen }: { onEvidenceOpen?: (evidence: Mem
       />
 
       {loading ? (
-        <div className="grid min-h-0 flex-1 place-items-center text-body-sm text-on-surface-variant" role="status">
-          {t("memory.library.loading")}
+        <div aria-busy="true" className="min-h-0 flex-1" role="status">
+          <MemoryLibraryContentSkeleton />
+          <span className="sr-only">{t("memory.library.loading")}</span>
         </div>
       ) : error ? (
         <EmptyState

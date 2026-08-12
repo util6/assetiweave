@@ -38,7 +38,7 @@ export function AssetGridView({
 
   if (assets.length === 0) {
     return (
-      <div className="rounded-xl border border-theme-card-border bg-theme-card/70 px-4 py-10 text-center text-body-md text-on-surface-variant">
+      <div className="aurora-empty-surface px-4 py-10 text-center text-body-md text-on-surface-variant">
         {t("asset.empty")}
       </div>
     );
@@ -57,7 +57,7 @@ export function AssetGridView({
 
         return (
           <article
-            className="group flex min-h-[236px] flex-col rounded-xl border border-theme-card-border bg-theme-card/78 p-4 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.16)] transition-colors hover:border-theme-nav-active-border hover:bg-theme-card"
+            className="aurora-list-row group flex min-h-[236px] flex-col p-4"
             key={asset.id}
           >
             <div className="flex min-w-0 items-start justify-between gap-3">

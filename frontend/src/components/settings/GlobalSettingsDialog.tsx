@@ -46,7 +46,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -2089,15 +2089,16 @@ function RangeSettingControl({
       <input
         aria-label={label}
         aria-valuetext={`${value}${unit}`}
-        className="h-2 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-theme-control-border accent-primary"
+        className="aurora-range h-2 min-w-0 flex-1 cursor-pointer appearance-none rounded-full"
         max={max}
         min={min}
         onChange={(event) => onChange(Number(event.target.value))}
         step={step}
         type="range"
         value={value}
+        style={{ "--range-progress": `${((value - min) / (max - min)) * 100}%` } as CSSProperties}
       />
-      <output className="w-16 rounded-lg border border-theme-control-border bg-theme-control px-2 py-1 text-center font-mono text-body-sm text-on-surface">
+      <output className="w-16 rounded-xl border border-theme-control-border/70 bg-theme-control/70 px-2 py-1 text-center font-mono text-body-sm text-on-surface shadow-[var(--theme-shadow-control-inset)]">
         {value}{unit}
       </output>
     </div>
@@ -2620,13 +2621,13 @@ function SegmentedControl({
   value: string;
 }) {
   return (
-    <div className="flex h-9 items-center gap-1 rounded-xl border border-theme-control-border bg-theme-control p-1" aria-label={label} role="group">
+    <div className="aurora-segmented-control flex h-9 items-center gap-1 rounded-2xl border border-theme-control-border/70 bg-theme-control/68 p-1 shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md" aria-label={label} role="group">
       {options.map((option) => (
         <Button
           className={clsx(
-            "h-7 rounded-lg px-3",
+            "h-7 rounded-xl px-3",
             value === option.value
-              ? "bg-theme-control-hover text-primary hover:bg-theme-control-hover hover:text-primary"
+              ? "bg-theme-control-hover text-primary shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.2)] hover:bg-theme-control-hover hover:text-primary"
               : "text-theme-control-fg hover:bg-transparent hover:text-on-surface",
           )}
           key={option.value}

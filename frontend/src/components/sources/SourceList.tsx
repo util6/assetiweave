@@ -63,7 +63,7 @@ export function SourceList({
 
   if (sources.length === 0) {
     return (
-      <div className="rounded-2xl border border-theme-card-border/70 bg-theme-card/55 px-4 py-10 text-center text-body-md text-on-surface-variant shadow-[var(--theme-shadow-card)] backdrop-blur-xl">
+      <div className="aurora-empty-surface px-4 py-10 text-center text-body-md text-on-surface-variant">
         {t("source.empty")}
       </div>
     );
@@ -96,7 +96,7 @@ export function SourceList({
 
   return (
     <div
-      className="overflow-hidden rounded-2xl border border-theme-card-border/70 bg-theme-card/55 shadow-[var(--theme-shadow-card)] backdrop-blur-xl"
+      className="aurora-list-surface"
       aria-label={t("source.page.title")}
     >
       {sources.map((source) => (

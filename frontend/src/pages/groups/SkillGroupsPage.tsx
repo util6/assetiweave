@@ -15,6 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { loadSharedResource, readSharedResource } from "../../lib/asyncCache";
 import { assetKindLabel } from "../../i18n/domain";
 import { AssetRow } from "../../components/assets/AssetRow";
 import { AssetToolbar } from "../../components/assets/AssetToolbar";
@@ -26,6 +27,7 @@ import { QuickMountButtons } from "../../components/assets/QuickMountButtons";
 import { GroupBulkMountControls } from "../../components/groups/GroupBulkMountControls";
 import { GroupExclusiveMountControls, type GroupMountMode } from "../../components/groups/GroupExclusiveMountControls";
 import { PageHeader } from "../../components/foundation/PageHeader";
+import { WorkbenchContentSkeleton } from "../../components/foundation/Skeleton";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { SkillGroupCreateDialog } from "../../components/groups/SkillGroupCreateDialog";
 import { SkillGroupExclusiveMountDialog } from "../../components/groups/SkillGroupExclusiveMountDialog";
@@ -72,6 +74,7 @@ interface SkillGroupsPageProps {
   onManualOpen: () => void;
   onNotifyError: (message: string) => void;
   onOpenSettings: () => void;
+  onReady?: () => void;
   onApplyGroupExclusiveMount: (groupIds: string[], profileId: string) => Promise<ApplySkillGroupExclusiveMountResult>;
   onPreviewGroupExclusiveMount: (groupIds: string[], profileId: string) => Promise<SkillGroupExclusiveMountPreview>;
   onRefreshMountStatus: () => Promise<void>;
@@ -89,6 +92,8 @@ type GroupViewMode = "list" | "columns";
 type GroupStatusFilter = "enabled" | "disabled";
 type GroupSortBy = "sort-order" | "name" | "member-count" | "updated";
 
+const SKILL_GROUPS_CACHE_KEY = "catalog.skill-groups";
+
 export function SkillGroupsPage({
   appShortcuts,
   assetMountStatuses,
@@ -97,6 +102,7 @@ export function SkillGroupsPage({
   onManualOpen,
   onNotifyError,
   onOpenSettings,
+  onReady,
   onApplyGroupExclusiveMount,
   onPreviewGroupExclusiveMount,
   onRefreshMountStatus,
@@ -111,7 +117,9 @@ export function SkillGroupsPage({
 }: SkillGroupsPageProps) {
   const { t } = useI18n();
   const { startBackup, task: backupTask } = useSkillBackup();
-  const [groups, setGroups] = useState<AssetGroupDetail[]>([]);
+  const [groups, setGroups] = useState<AssetGroupDetail[]>(
+    () => readSharedResource<AssetGroupDetail[]>(SKILL_GROUPS_CACHE_KEY) ?? [],
+  );
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set());
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [groupQuery, setGroupQuery] = useState("");
@@ -129,6 +137,9 @@ export function SkillGroupsPage({
   const [groupMountMode, setGroupMountMode] = useState<GroupMountMode>("exclusive");
   const [exclusiveBusy, setExclusiveBusy] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(
+    () => readSharedResource<AssetGroupDetail[]>(SKILL_GROUPS_CACHE_KEY) === undefined,
+  );
 
   const skillAssetsById = useMemo(() => {
     return new Map(assets.filter((asset) => asset.kind === "skill").map((asset) => [asset.id, asset]));
@@ -164,6 +175,12 @@ export function SkillGroupsPage({
   useEffect(() => {
     void refreshGroups();
   }, []);
+
+  useEffect(() => {
+    if (!loading) {
+      onReady?.();
+    }
+  }, [loading]);
 
   useEffect(() => {
     setSelectedGroupIds((current) => {
@@ -214,11 +231,12 @@ export function SkillGroupsPage({
   async function refreshGroups() {
     setBusy(true);
     try {
-      setGroups(await listSkillGroups());
+      setGroups(await loadSharedResource(SKILL_GROUPS_CACHE_KEY, listSkillGroups, { force: true }));
     } catch (loadError) {
       onNotifyError(errorMessage(loadError));
     } finally {
       setBusy(false);
+      setLoading(false);
     }
   }
 
@@ -543,12 +561,10 @@ export function SkillGroupsPage({
         />
       )}
 
-      {busy && groups.length === 0 ? (
-        <div className="rounded-xl border border-theme-card-border bg-theme-card/70 px-4 py-10 text-center text-body-md text-on-surface-variant shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.16)]">
-          {t("status.loading")}
-        </div>
+      {loading ? (
+        <WorkbenchContentSkeleton columns={3} label={t("common.loading")} />
       ) : filteredGroups.length === 0 ? (
-        <div className="rounded-xl border border-theme-card-border bg-theme-card/70 px-4 py-10 text-center text-body-md text-on-surface-variant shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.16)]">
+        <div className="aurora-empty-surface px-4 py-10 text-center text-body-md text-on-surface-variant">
           {t("group.empty")}
         </div>
       ) : viewMode === "columns" && selectedColumnGroup ? (
@@ -575,7 +591,7 @@ export function SkillGroupsPage({
       ) : (
         <div
           aria-label={t("group.page.title")}
-          className="overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
+          className="aurora-list-surface"
         >
           {filteredGroups.map((detail) => {
             const groupAssets = resolveGroupAssets(detail, skillAssetsById);
@@ -702,7 +718,7 @@ function GroupColumnView({
   return (
     <ResizableColumns
       ariaLabel={t("layout.resizeColumns")}
-      className="min-h-[560px] overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/70 shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
+      className="aurora-workbench-surface min-h-[560px]"
       columns={[
         { defaultWeight: 0.72 },
         { defaultWeight: 0.9, minWidthScale: 1.1 },
@@ -716,7 +732,7 @@ function GroupColumnView({
       scrollRightLabel={t("layout.scrollColumnsRight")}
       storageKey="assetiweave.groupColumns.v2"
     >
-      <section className="flex min-h-0 flex-col border-r border-theme-card-border bg-theme-card-header/35">
+      <section className="aurora-workbench-column flex min-h-0 flex-col">
         <GroupColumnHeader title={t("group.column.groups")} meta={t("group.metric.groupsWithCount", { count: groups.length })} />
         <div className="min-h-0 overflow-y-auto py-1" role="listbox" aria-label={t("group.column.groups")}>
           {groups.map((detail) => {
@@ -727,11 +743,12 @@ function GroupColumnView({
               <div
                 aria-selected={active}
                 className={clsx(
-                  "grid min-h-[72px] w-full grid-cols-[auto_minmax(0,1fr)] items-start gap-3 border-l-2 px-3 py-3 text-left transition-colors",
+                  "aurora-workbench-item grid min-h-[72px] w-[calc(100%-0.7rem)] grid-cols-[auto_minmax(0,1fr)] items-start gap-3 px-3 py-3 text-left",
                   active
-                    ? "border-primary bg-primary/10 text-on-surface"
-                    : "border-transparent text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
+                    ? "text-on-surface"
+                    : "text-on-surface-variant",
                 )}
+                data-selected={active}
                 key={detail.group.id}
                 role="option"
               >
@@ -766,7 +783,7 @@ function GroupColumnView({
         </div>
       </section>
 
-      <section className="flex min-h-0 flex-col border-r border-theme-card-border max-[1120px]:border-r-0">
+      <section className="aurora-workbench-column flex min-h-0 flex-col">
         <GroupColumnHeader
           title={selectedGroup.group.name}
           meta={t("group.memberCount", { count: selectedGroupAssets.length })}
@@ -781,7 +798,7 @@ function GroupColumnView({
               const mountBlockedReason = isDirectMountBlockedSource(source) ? t("mount.blocked") : undefined;
               return (
                 <article
-                  className="grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-theme-card-border px-4 py-3 last:border-b-0 hover:bg-theme-card-header/70 max-[760px]:grid-cols-1"
+                  className="aurora-workbench-item grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 max-[760px]:grid-cols-1"
                   key={asset.id}
                 >
                   <div className="min-w-0">
@@ -816,7 +833,7 @@ function GroupColumnView({
         </div>
       </section>
 
-      <section className="flex min-h-0 flex-col bg-theme-card-header/35 max-[1120px]:col-span-2 max-[1120px]:border-t max-[1120px]:border-theme-card-border">
+      <section className="aurora-workbench-column flex min-h-0 flex-col max-[1120px]:col-span-2">
         <GroupColumnHeader
           title={t("group.column.details")}
           meta={selectedGroup.group.enabled ? t("group.status.enabled") : t("group.status.disabled")}
@@ -856,7 +873,7 @@ function GroupColumnView({
             />
           </div>
 
-          <div className="mt-4 space-y-3 rounded-xl border border-theme-card-border bg-theme-card/65 p-3">
+          <div className="aurora-detail-surface mt-4 space-y-3 p-3">
             <GroupDetailRow label={t("group.field.description")} value={selectedGroup.group.description ?? t("group.noDescription")} />
             <GroupDetailRow label={t("group.metric.members")} value={String(selectedMemberIds.length)} mono />
             <GroupDetailRow label={t("group.detail.manualMembers")} value={String(manualMemberCount)} mono />
@@ -886,7 +903,7 @@ function GroupColumnHeader({
   title: string;
 }) {
   return (
-    <header className="flex min-h-14 items-center justify-between gap-3 border-b border-theme-card-border bg-theme-card-header/70 px-4 py-3">
+    <header className="aurora-workbench-header flex min-h-14 items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
         <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">{title}</h3>
         <p className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">{meta}</p>
@@ -1036,13 +1053,7 @@ function GroupRow({
   const ruleSummary = summarizeRules(detail, sourceById, t);
 
   return (
-    <article
-      className={clsx(
-        "border-theme-card-border transition-colors",
-        "border-b last:border-b-0",
-        expanded && "bg-theme-card-header/45",
-      )}
-    >
+    <article className="aurora-list-row" data-expanded={expanded}>
       <div className="grid min-h-20 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5 hover:bg-theme-card-header/70 max-[760px]:grid-cols-[auto_minmax(0,1fr)]">
         <input
           aria-label={t("group.exclusive.selectGroup", { name: detail.group.name })}
@@ -1099,12 +1110,12 @@ function GroupRow({
       </div>
 
       {expanded && (
-        <div className="border-t border-theme-card-border bg-theme-card-header/35 py-2 pl-8 pr-3">
-          <div className="border-l border-outline-variant/70 pl-3">
+        <div className="aurora-list-row-detail py-2 pl-4 pr-3">
+          <div className="pl-3">
             {assets.length === 0 ? (
               <div className="px-4 py-4 text-body-sm text-on-surface-variant">{t("group.emptyMembers")}</div>
             ) : (
-              <div className="overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/45">
+              <div className="aurora-list-surface !gap-2 !p-2">
                 {assets.map((asset) => (
                   <AssetRow
                     appShortcuts={appShortcuts}
