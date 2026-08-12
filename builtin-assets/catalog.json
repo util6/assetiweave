@@ -5,7 +5,7 @@
     {
       "id": "io.github.util6.codex-session",
       "name": "Codex Session Parser",
-      "version": "1.5.11",
+      "version": "1.5.12",
       "record_kind": "session",
       "provider": "codex",
       "adapter_id": "codex",
@@ -16,7 +16,7 @@
         "codex",
         "node"
       ],
-      "expected_package_hash": "974251e2b0f9419c79b41cae12dca0cc2bbde2f4b523616c8ba057d2f58a17c5",
+      "expected_package_hash": "1fc34e82dbdd84f2e721a7fe6b24191a56446a317d6dbf051241874bcd4bccae",
       "expected_content_hash": "5e9061c2a563479911c3e20f857628415e405eed0229fdd5e8128691d78a34dc",
       "source": {
         "type": "github",

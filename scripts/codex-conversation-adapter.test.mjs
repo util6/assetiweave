@@ -61,6 +61,44 @@ test("Codex adapter keeps Skill injection out of the user question and emits one
   }
 });
 
+test("Codex adapter keeps fenced code inside the assistant Markdown answer", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-markdown-code-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    const answer = [
+      "实现方式如下：",
+      "",
+      "```ts",
+      "const result = await runTask();",
+      "console.log(result);",
+      "```",
+      "",
+      "代码块属于回答内容的一部分。",
+    ].join("\n");
+    writeFileSync(rolloutPath, [
+      event("2026-08-02T00:00:00Z", "user", "解释实现方式"),
+      event("2026-08-02T00:00:01Z", "assistant", answer),
+    ].join("\n"));
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('session-1', '${sqlString(rolloutPath)}', 'Fixture', '2026-08-02T00:00:01Z');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(fixtureRoot);
+    assert.deepEqual(
+      session.turns[0].parts.map((part) => ({
+        kind: part.content_card?.kind,
+        renderer: part.content_card?.renderer,
+        text: part.text,
+      })),
+      [{ kind: "codex.answer", renderer: "markdown", text: answer }],
+    );
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 test("Codex adapter separates a SKILL.md read from the command result", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-skill-read-"));
   try {

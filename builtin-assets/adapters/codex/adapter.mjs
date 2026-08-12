@@ -2,7 +2,7 @@
 /**
  * @file OpenAI Codex / Codex App 会话日志解析适配器 (Codex Conversation Adapter)
  * @description 负责读取与解析 Codex 本地 SQLite 数据库 (`state_5.sqlite`) 及 JSONL (`rollout.jsonl`) 会话日志，
- *              提取消息、命令行指令执行（Tool Exec）、代码块、Skill 软链接依赖与终端输出，并归一化为标准的 Card Schema v1 结构。
+ *              提取消息、命令行指令执行（Tool Exec）、Skill 软链接依赖与终端输出，并归一化为标准的 Card Schema v1 结构。
  */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -19,7 +19,7 @@ import { normalizeSessionPayload } from "./payload-policy.mjs";
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
 
 /** 标识当前 Codex 内容卡片的 Schema 版本号，用于增量 Token 生成与缓存失效判定 */
-const CONTENT_CARD_SCHEMA_VERSION = "codex-content-cards-v14";
+const CONTENT_CARD_SCHEMA_VERSION = "codex-content-cards-v15";
 
 /** 单条 Part 节点的文本最大字符数上限 (96KB)，超长则触发截断规则 */
 const MAX_PART_TEXT_CHARS = 96 * 1024;
@@ -756,53 +756,6 @@ function skillDocumentFromText(value) {
 }
 
 /**
- * 将 Assistant 的 Markdown 回复切分为普通文本 Part 与带有语言高亮标示的代码块 (Code Block) Part
- * @param {string} role - 角色标识 (如 "assistant")
- * @param {string} text - 原始 Markdown 文本
- * @returns {Array<object>} 切分好的 Part 对象数组
- */
-function splitMarkdownParts(role, text) {
-  const parts = [];
-  let remaining = String(text ?? "");
-  while (remaining.includes("```")) {
-    const start = remaining.indexOf("```");
-    const before = remaining.slice(0, start);
-    const beforePart = textPart(role, before);
-    if (beforePart) parts.push(beforePart);
-
-    const fenceBody = remaining.slice(start + 3);
-    const end = fenceBody.indexOf("```");
-    if (end < 0) {
-      const trailing = textPart(role, fenceBody);
-      if (trailing) parts.push(trailing);
-      return parts;
-    }
-
-    const fenced = fenceBody.slice(0, end);
-    const firstNewline = fenced.indexOf("\n");
-    const language = firstNewline < 0 ? null : fenced.slice(0, firstNewline).trim() || null;
-    const code = (firstNewline < 0 ? fenced : fenced.slice(firstNewline + 1)).trimEnd();
-    if (code.trim()) {
-      parts.push({
-        role,
-        kind: "code_block",
-        text: code,
-        language,
-        command: null,
-        cwd: null,
-        status: null,
-        exit_code: null,
-        metadata_json: metadata({ type: "code", ...(language ? { language } : {}) }),
-      });
-    }
-    remaining = fenceBody.slice(end + 3);
-  }
-  const tail = textPart(role, remaining);
-  if (tail) parts.push(tail);
-  return parts;
-}
-
-/**
  * 直接从对象的指定候选字段列表中获取非空字符串
  * @param {object} value - 目标对象
  * @param {Array<string>} names - 字段候选名数组
@@ -1188,8 +1141,8 @@ function inferProjectPath(turns) {
 /**
  * 【JSONL 会话日志解析核心引擎】：
  * 1. 逐行读取与解析 Codex `rollout.jsonl` 中的日志条目；
- * 2. 识别并匹配 `user` 提问、`assistant` Markdown 回复以及 `tool` / `exec` 指令执行事件；
- * 3. 关联并切分代码块、解析 Skill 注入依赖、对齐异步 Tool 执行结果并提取项目工作目录 CWD；
+ * 2. 识别并匹配 `user` 提问、完整的 `assistant` Markdown 回复以及 `tool` / `exec` 指令执行事件；
+ * 3. 解析 Skill 注入依赖、对齐异步 Tool 执行结果并提取项目工作目录 CWD；
  * 4. 组装并返回标准化 Turn 列表以及推导出的项目路径。
  *
  * @param {string} text - JSONL 日志文件的完整文本内容
@@ -1238,7 +1191,8 @@ function normalizeTurns(text) {
     } else if (current && type === "message" && role === "assistant") {
       const text = contentText(payload.content);
       if (text.trim()) {
-        current.parts.push(...splitMarkdownParts("assistant", text));
+        const answer = textPart("assistant", text);
+        if (answer) current.parts.push(answer);
       }
       current.ended_at = parsed.timestamp ?? payload.timestamp ?? current.ended_at;
     } else if (current && isToolEvent(payload)) {
