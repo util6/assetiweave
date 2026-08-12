@@ -191,6 +191,165 @@ test("Antigravity normalizes structured command output before applying text budg
   }
 });
 
+test("Antigravity reconstructs a concrete diff for a created file from the write tool call", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-created-file-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript_full.jsonl");
+    const targetFile = "/tmp/project/created.py";
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-08-04T00:00:00Z",
+        content: "<USER_REQUEST>Create a script</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-08-04T00:00:01Z",
+        tool_calls: [{
+          name: "write_to_file",
+          args: {
+            CodeContent: "print(\"hello\")\n",
+            Overwrite: true,
+            TargetFile: targetFile,
+            toolSummary: "Create a Python script",
+          },
+        }],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "CODE_ACTION",
+        status: "DONE",
+        created_at: "2026-08-04T00:00:02Z",
+        content: `Created file file://${targetFile} with requested content.`,
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    const fileChange = session.turns[0].parts.find((part) => part.kind === "file_change");
+    assert.ok(fileChange);
+    assert.equal(fileChange.content_card.kind, "antigravity.file-change");
+    assert.equal(fileChange.content_card.renderer, "diff");
+    assert.match(fileChange.text, /^diff --git a\/tmp\/project\/created\.py b\/tmp\/project\/created\.py/m);
+    assert.match(fileChange.text, /--- \/dev\/null\n\+\+\+ b\/tmp\/project\/created\.py/);
+    assert.match(fileChange.text, /@@ -0,0 \+1,1 @@\n\+print\("hello"\)/);
+    assert.doesNotMatch(fileChange.text, /Created file file:\/\//);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity reconstructs a concrete diff for a replaced file from the replace tool call", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-replaced-file-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript_full.jsonl");
+    const targetFile = "/tmp/project/main.py";
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-08-04T00:00:00Z",
+        content: "<USER_REQUEST>Update the script</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-08-04T00:00:01Z",
+        tool_calls: [{
+          name: "replace_file_content",
+          args: {
+            TargetFile: targetFile,
+            TargetContent: "old\n",
+            ReplacementContent: "new\n",
+            toolSummary: "Update the Python script",
+          },
+        }],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "CODE_ACTION",
+        status: "DONE",
+        created_at: "2026-08-04T00:00:02Z",
+        content: `Updated file file://${targetFile} with requested content.`,
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    const fileChange = session.turns[0].parts.find((part) => part.kind === "file_change");
+    assert.ok(fileChange);
+    assert.match(fileChange.text, /^diff --git a\/tmp\/project\/main\.py b\/tmp\/project\/main\.py/m);
+    assert.match(fileChange.text, /--- a\/tmp\/project\/main\.py\n\+\+\+ b\/tmp\/project\/main\.py/);
+    assert.match(fileChange.text, /@@ -1,1 \+1,1 @@\n-old\n\+new/);
+    assert.doesNotMatch(fileChange.text, /Updated file file:\/\//);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity treats a repeated write as an update instead of a new file", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-repeated-write-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript_full.jsonl");
+    const targetFile = "/tmp/project/repeated.py";
+    const steps = [
+      {
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-08-04T00:00:00Z",
+        content: "<USER_REQUEST>Create and refine the script</USER_REQUEST>",
+      },
+      {
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-08-04T00:00:01Z",
+        tool_calls: [{
+          name: "write_to_file",
+          args: { CodeContent: "print(1)\n", Overwrite: true, TargetFile: targetFile },
+        }],
+      },
+      {
+        source: "MODEL",
+        type: "CODE_ACTION",
+        status: "DONE",
+        created_at: "2026-08-04T00:00:02Z",
+        content: `Created file file://${targetFile} with requested content.`,
+      },
+      {
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-08-04T00:00:03Z",
+        tool_calls: [{
+          name: "write_to_file",
+          args: { CodeContent: "print(2)\n", Overwrite: true, TargetFile: targetFile },
+        }],
+      },
+      {
+        source: "MODEL",
+        type: "CODE_ACTION",
+        status: "DONE",
+        created_at: "2026-08-04T00:00:04Z",
+        content: `Updated file file://${targetFile} with requested content.`,
+      },
+    ];
+    writeFileSync(transcriptPath, steps.map((step) => JSON.stringify(step)).join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    const fileChanges = session.turns[0].parts.filter((part) => part.kind === "file_change");
+    assert.equal(fileChanges.length, 2);
+    assert.match(fileChanges[0].text, /new file mode 100644/);
+    assert.match(fileChanges[1].text, /--- a\/tmp\/project\/repeated\.py\n\+\+\+ b\/tmp\/project\/repeated\.py/);
+    assert.match(fileChanges[1].text, /-print\(1\)\n\+print\(2\)/);
+    assert.doesNotMatch(fileChanges[1].text, /new file mode 100644/);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 function readFixtureSession(transcriptPath) {
   const result = spawnSync(process.execPath, [adapterPath], {
     encoding: "utf8",

@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
-const CONTENT_CARD_SCHEMA_VERSION = "antigravity-content-cards-v6";
+const CONTENT_CARD_SCHEMA_VERSION = "antigravity-content-cards-v7";
 const MAX_PART_TEXT_CHARS = 96 * 1024;
 const MAX_SESSION_TEXT_CHARS = 384 * 1024;
 const MAX_COMPACTED_TOOL_TEXT_CHARS = 24 * 1024;
@@ -416,7 +416,7 @@ function toolCallParts(toolCalls) {
 // Antigravity-specific: build tool result parts from step output
 // ---------------------------------------------------------------------------
 
-function toolResultPart(step) {
+function toolResultPart(step, fileOperation = null) {
   const type = step.type ?? "";
   const content = String(step.content ?? "").trim();
   if (!content) return [];
@@ -461,7 +461,7 @@ function toolResultPart(step) {
     return [{
       role: "tool",
       kind: "file_change",
-      text: content,
+      text: materializeFileChangeText(content, fileOperation),
       language: null,
       command: null,
       cwd: null,
@@ -507,6 +507,117 @@ function toolResultPart(step) {
       { source_type: type },
     ),
   }];
+}
+
+function fileOperationFromToolCall(call, knownFileContents) {
+  const name = String(call?.name ?? "").toLowerCase();
+  const args = call?.args;
+  if (!args || typeof args !== "object") return null;
+  if (!["write_to_file", "replace_file_content", "delete_file", "move_file"].includes(name)) {
+    return null;
+  }
+
+  const targetFile = firstString(args.TargetFile, args.targetFile, args.Path, args.path);
+  if (!targetFile) return null;
+  const content = firstString(args.CodeContent, args.codeContent, args.ReplacementContent, args.replacementContent);
+  const oldContent = firstString(
+    args.TargetContent,
+    args.targetContent,
+    name === "write_to_file" ? knownFileContents.get(targetFile) : null,
+  );
+  const operation = {
+    name,
+    targetFile,
+    content,
+    oldContent,
+  };
+  if (name === "write_to_file" && content != null) knownFileContents.set(targetFile, content);
+  return operation;
+}
+
+function firstString(...values) {
+  return values.find((value) => typeof value === "string") ?? null;
+}
+
+function matchPendingFileOperation(operations, resultText) {
+  if (operations.length === 0) return null;
+  const normalizedResult = String(resultText ?? "").toLowerCase();
+  const matchIndex = operations.findIndex((operation) => {
+    const target = operation.targetFile.toLowerCase();
+    return normalizedResult.includes(target)
+      || normalizedResult.includes(encodeURI(operation.targetFile).toLowerCase());
+  });
+  if (matchIndex < 0 && operations.length !== 1) return null;
+  return operations.splice(matchIndex >= 0 ? matchIndex : 0, 1)[0] ?? null;
+}
+
+function materializeFileChangeText(resultText, operation) {
+  if (!operation || hasConcreteDiff(resultText)) return resultText;
+  if (operation.name === "write_to_file" && operation.content != null) {
+    return operation.oldContent != null
+      ? replaceFileDiff(operation.targetFile, operation.oldContent, operation.content)
+      : createFileDiff(operation.targetFile, operation.content);
+  }
+  if (operation.name === "replace_file_content" && operation.content != null && operation.oldContent != null) {
+    return replaceFileDiff(operation.targetFile, operation.oldContent, operation.content);
+  }
+  return resultText;
+}
+
+function hasConcreteDiff(value) {
+  const text = String(value ?? "");
+  return text.includes("[diff_block_start]")
+    || /^diff --git /m.test(text)
+    || (/^--- .+/m.test(text) && /^\+\+\+ .+/m.test(text) && /^@@ /m.test(text));
+}
+
+function diffPath(value) {
+  let filePath = String(value ?? "").trim().replace(/^file:\/\//i, "");
+  try {
+    filePath = decodeURIComponent(filePath);
+  } catch {
+    // Keep the original path when the URI contains malformed escaping.
+  }
+  const normalized = filePath.replaceAll("\\", "/").replace(/^\/+/, "");
+  return { old: `a/${normalized}`, next: `b/${normalized}` };
+}
+
+function diffLines(value) {
+  const text = String(value ?? "").replace(/\r\n?/g, "\n");
+  const hasTrailingNewline = text.endsWith("\n");
+  const lines = text.split("\n");
+  if (hasTrailingNewline) lines.pop();
+  return { lines, hasTrailingNewline };
+}
+
+function createFileDiff(targetFile, content) {
+  const paths = diffPath(targetFile);
+  const { lines, hasTrailingNewline } = diffLines(content);
+  const additions = lines.map((line) => `+${line}`);
+  if (!hasTrailingNewline && lines.length > 0) additions.push("\\ No newline at end of file");
+  const count = lines.length;
+  return [
+    `diff --git ${paths.old} ${paths.next}`,
+    "new file mode 100644",
+    "--- /dev/null",
+    `+++ ${paths.next}`,
+    `@@ -0,0 +1,${count} @@`,
+    ...additions,
+  ].join("\n");
+}
+
+function replaceFileDiff(targetFile, oldContent, newContent) {
+  const paths = diffPath(targetFile);
+  const oldLines = diffLines(oldContent).lines;
+  const newLines = diffLines(newContent).lines;
+  return [
+    `diff --git ${paths.old} ${paths.next}`,
+    `--- ${paths.old}`,
+    `+++ ${paths.next}`,
+    `@@ -1,${oldLines.length} +1,${newLines.length} @@`,
+    ...oldLines.map((line) => `-${line}`),
+    ...newLines.map((line) => `+${line}`),
+  ].join("\n");
 }
 
 function skillContentFromViewFile(step, content) {
@@ -558,6 +669,8 @@ function parseTranscript(text) {
   const turns = [];
   let current = null;
   let projectPath = null;
+  const pendingFileOperations = [];
+  const knownFileContents = new Map();
 
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
@@ -580,6 +693,7 @@ function parseTranscript(text) {
       const userText = extractUserRequestText(step.content);
       if (!userText) continue;
       if (current) turns.push(current);
+      pendingFileOperations.length = 0;
       current = {
         external_id: `turn-${turns.length}`,
         turn_index: turns.length,
@@ -602,6 +716,9 @@ function parseTranscript(text) {
       }
       // Extract tool call parts
       if (Array.isArray(step.tool_calls) && step.tool_calls.length > 0) {
+        pendingFileOperations.push(
+          ...step.tool_calls.map((call) => fileOperationFromToolCall(call, knownFileContents)).filter(Boolean),
+        );
         current.parts.push(...toolCallParts(step.tool_calls));
         projectPath ??= inferProjectPathFromToolCalls(step.tool_calls);
       }
@@ -616,7 +733,10 @@ function parseTranscript(text) {
         "GREP_SEARCH", "LIST_DIRECTORY", "ERROR_MESSAGE", "GENERIC",
       ];
       if (resultTypes.includes(type)) {
-        current.parts.push(...toolResultPart(step));
+        const fileOperation = type === "CODE_ACTION"
+          ? matchPendingFileOperation(pendingFileOperations, step.content)
+          : null;
+        current.parts.push(...toolResultPart(step, fileOperation));
         current.ended_at = timestamp;
       }
     }
