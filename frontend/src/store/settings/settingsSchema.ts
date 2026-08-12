@@ -38,13 +38,13 @@ export interface FontFamilyOption {
 }
 
 const fontFallbackCss: Record<FontFallbackKind, string> = {
-  sans: '"JetBrains Mono", "SFMono-Regular", Consolas, monospace',
+  sans: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", "Segoe UI", sans-serif',
   serif: 'Georgia, "Times New Roman", Times, serif',
   mono: '"JetBrains Mono", "SFMono-Regular", Consolas, monospace',
 };
 
 export const fontFamilyCss: Record<BuiltInFontFamilyPresetId, string> = {
-  system: `"JetBrains Mono", ${fontFallbackCss.sans}`,
+  system: fontFallbackCss.sans,
   jetbrains: `"JetBrains Mono", ${fontFallbackCss.sans}`,
   serif: fontFallbackCss.serif,
   mono: fontFallbackCss.mono,
@@ -204,17 +204,17 @@ export const defaultSettings: AppSettings = {
     baseFontSize: 14,
     codeFontFamily: createFontFamilySetting("mono"),
     codeFontSize: 13,
-    contentFontFamily: createFontFamilySetting("mono"),
+    contentFontFamily: createFontFamilySetting("system"),
     contentFontSize: 14,
-    interfaceFontFamily: createFontFamilySetting("jetbrains"),
+    interfaceFontFamily: createFontFamilySetting("system"),
   },
   conversations: {
     codeFontSize: 13,
     contentCardColors: DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
-    contentFontFamily: createFontFamilySetting("mono"),
+    contentFontFamily: createFontFamilySetting("system"),
     contentFontSize: 14,
     resultPreviewLineLimit: DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
-    sessionBrowserFontFamily: createFontFamilySetting("mono"),
+    sessionBrowserFontFamily: createFontFamilySetting("system"),
     sessionBrowserFontSize: 13,
     sessionToolbarCompact: true,
   },

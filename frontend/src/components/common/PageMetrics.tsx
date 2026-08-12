@@ -20,7 +20,7 @@ export function PageMetrics({
     <div className={clsx("ml-auto flex max-w-full flex-nowrap justify-end gap-2 overflow-hidden", className)}>
       {metrics.map((metric) => (
         <div
-          className="inline-flex h-10 min-w-[5.75rem] max-w-[10rem] shrink items-center justify-between gap-2 whitespace-nowrap rounded-xl border border-theme-control-border bg-theme-control/80 px-3 text-body-sm shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)]"
+          className="aurora-metric inline-flex h-10 min-w-[5.75rem] max-w-[10rem] shrink items-center justify-between gap-2 whitespace-nowrap rounded-2xl border border-theme-control-border/70 bg-theme-control/65 px-3 text-body-sm shadow-[var(--theme-shadow-card),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.18)] backdrop-blur-md"
           data-page-metric=""
           key={metric.label}
         >

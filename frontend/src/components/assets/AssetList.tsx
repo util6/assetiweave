@@ -54,7 +54,7 @@ export function AssetList({
 
   return (
     <div
-      className="asset-list-surface overflow-hidden rounded-xl border border-theme-card-border shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.22)]"
+      className="asset-list-surface overflow-hidden rounded-2xl border border-theme-card-border/70 shadow-[var(--theme-shadow-card)] backdrop-blur-xl"
       aria-label={t("asset.list.aria")}
     >
       {assets.map((asset) => {

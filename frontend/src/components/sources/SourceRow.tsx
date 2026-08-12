@@ -55,8 +55,8 @@ export function SourceRow({
       : "idle";
 
   return (
-    <article className={clsx("border-b border-theme-card-border last:border-b-0", expanded && "bg-theme-card-header/45")}>
-      <div className="grid min-h-20 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5 hover:bg-theme-card-header/70">
+    <article className={clsx("group border-b border-theme-card-border/55 last:border-b-0", expanded && "bg-theme-card-header/45")}>
+      <div className="grid min-h-20 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5 transition-colors hover:bg-theme-card-header/55">
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <span
@@ -67,12 +67,12 @@ export function SourceRow({
               aria-hidden="true"
             />
             <h3 className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md text-on-surface">{source.name}</h3>
-            <span className="rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 text-label-caps uppercase text-on-surface-variant">
+            <span className="rounded-full border border-theme-control-border/65 bg-theme-control/65 px-2.5 py-1 text-label-caps uppercase text-on-surface-variant">
               {sourceKindLabel(source.kind, t)}
             </span>
             <span
               className={clsx(
-                "rounded-md border px-2 py-0.5 text-label-caps uppercase",
+                "rounded-full border px-2.5 py-1 text-label-caps uppercase",
                 source.source_origin === "app_target" || source.source_origin === "app_local"
                   ? "border-status-conflict/30 bg-status-conflict/10 text-status-conflict"
                   : "border-theme-control-border bg-theme-control text-on-surface-variant",
@@ -82,7 +82,7 @@ export function SourceRow({
             </span>
             <span
               className={clsx(
-                "rounded-md px-2 py-0.5 text-label-caps uppercase",
+                "rounded-full border border-transparent px-2.5 py-1 text-label-caps uppercase",
                 statusTone === "create" && "bg-status-create/15 text-status-create",
                 statusTone === "conflict" && "bg-status-conflict/15 text-status-conflict",
                 statusTone === "idle" && "bg-theme-control-hover text-outline",
@@ -135,12 +135,12 @@ export function SourceRow({
       </div>
 
       {expanded && (
-        <div className="border-t border-theme-card-border bg-theme-card-header/35 py-2 pl-8 pr-3">
+        <div className="border-t border-theme-card-border/55 bg-theme-card-header/28 py-2 pl-8 pr-3">
           <div className="border-l border-outline-variant/70 pl-3">
             {assets.length === 0 ? (
               <div className="px-4 py-4 text-body-sm text-on-surface-variant">{t("source.emptySkills")}</div>
             ) : (
-              <div className="overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/45">
+              <div className="overflow-hidden rounded-2xl border border-theme-card-border/55 bg-theme-card/35 shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.08)]">
                 {assets.map((asset) => {
                   const mountStatuses = mountStatusesByAssetId.get(asset.id) ?? [];
                   return (

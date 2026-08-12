@@ -54,7 +54,7 @@ export function DataToolbar({
         "grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 overflow-hidden",
         compact && "gap-2",
         sticky &&
-          "sticky top-[calc(var(--app-toolbar-top)+var(--app-notification-offset,0px))] z-10 border-b border-theme-card-border bg-theme-toolbar/85 px-[var(--app-page-x)] py-[var(--app-toolbar-y)] shadow-[0_12px_28px_rgb(var(--theme-panel-shadow)/0.18)] backdrop-blur",
+          "sticky top-[calc(var(--app-toolbar-top)+var(--app-notification-offset,0px))] z-10 border-b border-theme-card-border/45 bg-theme-toolbar/70 px-[var(--app-page-x)] py-[var(--app-toolbar-y)] shadow-[var(--theme-shadow-toolbar)] backdrop-blur-xl",
         sticky && stickyBleed && "toolbar-bleed -mx-[var(--app-page-x)]",
         className,
       )}
@@ -86,7 +86,7 @@ export function ToolbarCluster({
     <div
       aria-label={ariaLabel}
       className={clsx(
-        "toolbar-overflow-viewport inline-flex min-h-10 min-w-0 max-w-full flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-hidden rounded-xl border border-theme-control-border bg-theme-control/95 px-2.5 py-1.5 text-body-sm text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] [&>*]:shrink-0 [&>*]:whitespace-nowrap",
+        "toolbar-overflow-viewport inline-flex min-h-10 min-w-0 max-w-full flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-hidden rounded-2xl border border-theme-control-border/70 bg-theme-control/68 px-2.5 py-1.5 text-body-sm text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md [&>*]:shrink-0 [&>*]:whitespace-nowrap",
         className,
       )}
       role="group"
@@ -124,7 +124,7 @@ export function ToolbarSearch({
   return (
     <div
       className={clsx(
-        "flex h-10 min-w-[16rem] shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-theme-control-border bg-theme-control/95 px-3 text-outline shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors focus-within:border-primary/60 focus-within:text-primary",
+        "flex h-10 min-w-[16rem] shrink-0 items-center gap-2 whitespace-nowrap rounded-2xl border border-theme-control-border/70 bg-theme-control/68 px-3 text-outline shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md transition-colors focus-within:border-primary/60 focus-within:text-primary focus-within:shadow-[0_0_20px_rgb(var(--theme-glow)/0.13)]",
         className,
       )}
       data-toolbar-control="search"
@@ -312,14 +312,14 @@ export function ToolbarViewToggle<Value extends ToolbarViewMode>({
   value: Value;
 }) {
   return (
-    <div aria-label={ariaLabel} className="flex h-10 shrink-0 items-center rounded-xl border border-theme-control-border bg-theme-control/95 p-1" role="group">
+    <div aria-label={ariaLabel} className="flex h-10 shrink-0 items-center rounded-2xl border border-theme-control-border/70 bg-theme-control/68 p-1 shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md" role="group">
       {options.map((option) => (
         <button
           aria-label={option.label}
           aria-pressed={value === option.value}
           className={clsx(
             "grid size-8 place-items-center rounded-lg text-on-surface-variant transition-colors hover:text-on-surface",
-            value === option.value ? "bg-theme-control-hover text-primary" : "hover:bg-theme-control-hover/70",
+            value === option.value ? "bg-theme-control-hover text-primary shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.18)]" : "hover:bg-theme-control-hover/70",
           )}
           key={option.value}
           onClick={() => onChange(option.value)}
@@ -354,9 +354,9 @@ export function ToolbarActionButton({
       className={clsx(
         "inline-flex h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-55",
         text ? "min-w-[5.25rem] px-2.5 text-body-sm font-semibold" : "w-9",
-        primary
-          ? "theme-primary-gradient text-theme-button-primary-fg hover:-translate-y-0.5"
-          : "border border-theme-control-border bg-theme-control/95 text-theme-control-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] hover:bg-theme-control-hover hover:text-on-surface",
+          primary
+          ? "theme-primary-gradient border border-primary/30 text-theme-button-primary-fg shadow-[0_10px_24px_rgb(var(--theme-glow)/0.18),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.24)] hover:-translate-y-0.5"
+          : "border border-theme-control-border/70 bg-theme-control/68 text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md hover:bg-theme-control-hover hover:text-on-surface",
       )}
       disabled={disabled}
       data-toolbar-control="action"

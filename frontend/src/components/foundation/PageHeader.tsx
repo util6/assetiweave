@@ -21,7 +21,7 @@ export function PageHeader({
   titleAction?: ReactNode;
 }) {
   return (
-    <header className={cn("flex min-w-0 flex-nowrap items-start justify-between gap-4 overflow-hidden", className)}>
+    <header className={cn("aurora-page-header flex min-w-0 flex-nowrap items-start justify-between gap-4 overflow-hidden", className)}>
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {eyebrow ? (
           <div className="flex min-w-0 items-center gap-2 text-status-update">

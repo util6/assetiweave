@@ -48,8 +48,8 @@ export function AssetRow({
   return (
     <article
       className={clsx(
-        "group cursor-pointer border-b border-theme-card-border/80 transition-all last:border-b-0 hover:bg-theme-card-header/70",
-        expanded && "asset-expanded bg-theme-card-header shadow-[inset_3px_0_0_rgb(var(--theme-nav-indicator)/0.62)]",
+        "group cursor-pointer border-b border-theme-card-border/55 transition-all last:border-b-0 hover:bg-theme-card-header/55",
+        expanded && "asset-expanded bg-theme-card-header/62 shadow-[inset_3px_0_0_rgb(var(--theme-nav-indicator)/0.72),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.12)]",
       )}
       onClick={onToggleExpanded}
     >
@@ -59,10 +59,10 @@ export function AssetRow({
             <span className="min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[14px] font-semibold leading-5 text-on-surface">
               {asset.name}
             </span>
-            <span className={kindBadgeClass(asset.kind)}>{assetKindLabel(asset.kind, t)}</span>
+            <span className={clsx("rounded-full border px-2.5 py-1 text-label-caps uppercase shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.14)]", kindBadgeClass(asset.kind))}>{assetKindLabel(asset.kind, t)}</span>
             <SkillBackupBadge asset={asset} />
             <MountStatePill state={mountSummaryState} />
-            <span className="rounded-md border border-theme-control-border bg-theme-control-hover/70 px-2 py-0.5 text-[10px] font-bold text-on-surface-variant">
+            <span className="rounded-full border border-theme-control-border/65 bg-theme-control-hover/55 px-2.5 py-1 text-[10px] font-bold text-on-surface-variant">
               {t("asset.origin.local")}
             </span>
           </div>
@@ -83,7 +83,7 @@ export function AssetRow({
           </div>
         </div>
         <div
-          className="inline-flex w-fit max-w-full shrink-0 flex-wrap items-center justify-end gap-2 rounded-xl border border-theme-control-border bg-theme-control/55 p-1.5 shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.38)] max-[980px]:justify-start"
+          className="inline-flex w-fit max-w-full shrink-0 flex-wrap items-center justify-end gap-2 rounded-2xl border border-theme-control-border/65 bg-theme-control/48 p-1.5 shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md max-[980px]:justify-start"
           onClick={(event) => event.stopPropagation()}
         >
           <QuickMountButtons

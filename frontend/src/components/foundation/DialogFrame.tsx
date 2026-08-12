@@ -120,7 +120,7 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
               <section
                 className={cn(
                   panelRecipe({ padding: "none", variant: "default" }),
-                  "flex max-h-[92vh] w-full flex-col overflow-hidden shadow-[var(--theme-shadow-dialog)]",
+                  "aurora-dialog flex max-h-[92vh] w-full flex-col overflow-hidden shadow-[var(--theme-shadow-dialog)]",
                   dialogSizeClasses[size],
                   className,
                 )}
@@ -128,7 +128,7 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
                 {...props}
               >
                 {hasHeader && (
-                  <header className={cn("flex min-h-14 shrink-0 items-center gap-3 border-b border-theme-card-border bg-theme-card-header/70 px-5 py-3", headerClassName)}>
+                  <header className={cn("aurora-dialog-header flex min-h-14 shrink-0 items-center gap-3 border-b border-theme-card-border/55 bg-theme-card-header/55 px-5 py-3", headerClassName)}>
                     {icon && (
                       <span className={cn("grid size-10 shrink-0 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-primary", iconClassName)}>
                         {icon}
@@ -168,7 +168,7 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
                 {footer && (
                   <footer
                     className={cn(
-                      "flex shrink-0 items-center justify-end gap-2 border-t border-theme-card-border bg-theme-card px-5 py-4",
+                      "aurora-dialog-footer flex shrink-0 items-center justify-end gap-2 border-t border-theme-card-border/55 bg-theme-card/55 px-5 py-4",
                       footerClassName,
                     )}
                   >
