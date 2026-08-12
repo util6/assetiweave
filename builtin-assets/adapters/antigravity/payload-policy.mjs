@@ -1,6 +1,6 @@
 import path from "node:path";
 
-export const PAYLOAD_POLICY_VERSION = 9;
+export const PAYLOAD_POLICY_VERSION = 10;
 
 const SUCCESS_STATUSES = new Set(["success", "succeeded", "completed", "complete", "done", "ok"]);
 const FAILURE_STATUS = /^(error|failed|failure|cancelled|canceled|interrupted|timeout|timed_out)$/i;
@@ -76,7 +76,7 @@ export function normalizeSessionPayload(session) {
         setExecutionMetadata(part, metadata, executionKind, null);
       }
     }
-    turn.parts = splitFileChangeParts(parts);
+    turn.parts = splitFileChangeParts(parts).filter((part) => !isEmptySuccessfulShellResult(part));
   }
   return session;
 }
@@ -566,6 +566,13 @@ function setEmptyFileChangeResultCard(part, metadata) {
 
 function isSuccessful(part) {
   return part?.exit_code === 0 || SUCCESS_STATUSES.has(String(part?.status ?? "").toLowerCase());
+}
+
+function isEmptySuccessfulShellResult(part) {
+  if (!part || typeof part !== "object" || isCommandPart(part) || !isResultPart(part)) return false;
+  const metadata = parseMetadata(part.metadata_json);
+  const executionKind = metadata.execution_kind ?? metadata.executionKind;
+  return executionKind === "shell" && !cleanText(part.text) && isSuccessful(part);
 }
 
 function isFailure(part) {

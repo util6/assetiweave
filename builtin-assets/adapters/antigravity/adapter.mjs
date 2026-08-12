@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
-const CONTENT_CARD_SCHEMA_VERSION = "antigravity-content-cards-v7";
+const CONTENT_CARD_SCHEMA_VERSION = "antigravity-content-cards-v8";
 const MAX_PART_TEXT_CHARS = 96 * 1024;
 const MAX_SESSION_TEXT_CHARS = 384 * 1024;
 const MAX_COMPACTED_TOOL_TEXT_CHARS = 24 * 1024;

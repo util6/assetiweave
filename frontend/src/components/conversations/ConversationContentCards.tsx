@@ -196,7 +196,9 @@ export function ConversationContentCards({
     ?? blocks.map((block) => ({ type: "card", turnId: "", block }));
   const visibleNodes = displayNodes.flatMap((node): ConversationDisplayNode[] => {
     if (node.type === "card") {
-      return visibility[node.block.type] ?? true ? [node] : [];
+      return (visibility[node.block.type] ?? true) && shouldDisplayContentBlock(node.block)
+        ? [node]
+        : [];
     }
     const command = node.command && (visibility[node.command.type] ?? true)
       ? node.command

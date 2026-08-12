@@ -85,7 +85,7 @@ describe("ConversationContentCards", () => {
     expect(html).toContain("Declared result");
   });
 
-  it("keeps a status-only result part for semantic rendering", () => {
+  it("hides a standalone status-only successful result part", () => {
     const blocks = buildConversationContentBlocks([{
       id: "part-status-only-result",
       turn_id: "turn-1",
@@ -114,7 +114,8 @@ describe("ConversationContentCards", () => {
       />,
     );
 
-    expect(html).toContain('data-result-summary="success"');
+    expect(html).not.toContain('data-content-type="result"');
+    expect(html).not.toContain('data-result-summary="success"');
     expect(html).not.toContain("stdout");
   });
 

@@ -146,9 +146,51 @@ test("Antigravity removes command runner headers and terminal control sequences"
     ].join("\n"));
 
     const session = readFixtureSession(transcriptPath);
-    const result = session.turns[0].parts[0];
-    assert.equal(result.text, null);
-    assert.equal(result.content_card.renderer, "terminal_output");
+    assert.equal(session.turns[0].parts.length, 0);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity omits successful command results with no useful payload", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-empty-command-result-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript_full.jsonl");
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-08-02T00:00:00Z",
+        content: "<USER_REQUEST>Run a silent check</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        created_at: "2026-08-02T00:00:01Z",
+        content: "",
+        tool_calls: [{
+          name: "run_command",
+          args: { CommandLine: "true" },
+        }],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "RUN_COMMAND",
+        status: "DONE",
+        created_at: "2026-08-02T00:00:02Z",
+        content: [
+          "Script completed",
+          "Process exited with code 0",
+          "Output:",
+        ].join("\n"),
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    assert.deepEqual(
+      session.turns[0].parts.map((part) => part.content_card?.kind),
+      ["antigravity.command"],
+    );
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -183,9 +225,7 @@ test("Antigravity normalizes structured command output before applying text budg
     ].join("\n"));
 
     const session = readFixtureSession(transcriptPath);
-    const result = session.turns[0].parts[0];
-    assert.equal(result.text, null);
-    assert.equal(result.content_card.renderer, "terminal_output");
+    assert.equal(session.turns[0].parts.length, 0);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
