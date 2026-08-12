@@ -1011,8 +1011,10 @@ function isFailedResult(block: ConversationContentBlock) {
 function shouldDisplayContentBlock(block: ConversationContentBlock) {
   if (block.type !== "result") return true;
   const renderer = block.renderer ?? legacyRenderer(block.type, block.format);
-  if (renderer === "diff") return block.text.trim().length > 0;
-  return block.text.trim().length > 0 || !isSuccessfulResult(block);
+  const text = block.text.trim();
+  if (renderer === "diff") return text.length > 0;
+  if (/^(?:\{\}|\[\]|null|undefined)$/i.test(text)) return false;
+  return text.length > 0 || !isSuccessfulResult(block);
 }
 
 function createBlock(

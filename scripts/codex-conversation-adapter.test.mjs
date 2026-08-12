@@ -240,7 +240,7 @@ test("Codex adapter preserves source execution IDs across interleaved command re
         payload: {
           type: "custom_tool_call_output",
           call_id: "call-test",
-          output: [{ type: "input_text", text: "tests passed" }],
+          output: [{ type: "input_text", text: "Error: tests failed" }],
         },
       }),
       JSON.stringify({
@@ -249,7 +249,7 @@ test("Codex adapter preserves source execution IDs across interleaved command re
         payload: {
           type: "custom_tool_call_output",
           call_id: "call-typecheck",
-          output: [{ type: "input_text", text: "typecheck passed" }],
+          output: [{ type: "input_text", text: "Error: typecheck failed" }],
         },
       }),
     ].join("\n"));
@@ -321,16 +321,13 @@ test("Codex adapter omits decorative printf separators from aggregated command c
     assert.deepEqual(parts.map((part) => part.command), [
       "git status --short",
       "git diff --cached --stat",
-      null,
     ]);
     assert.deepEqual(parts.map((part) => part.command_label ?? null), [
       "status",
       "staged diff stat",
-      null,
     ]);
     assert.deepEqual(parts.map((part) => part.source_execution_id), [
       "call-status:command:1",
-      "call-status:command:2",
       "call-status:command:2",
     ]);
   } finally {
@@ -374,10 +371,98 @@ test("Codex adapter removes successful structured execution output", () => {
     ].join("\n"));
 
     const session = readFixtureSession(fixtureRoot);
-    const [command, result] = session.turns[0].parts;
+    const [command] = session.turns[0].parts;
     assert.equal(command.command, "printf '\\n'");
-    assert.equal(result.text, null);
-    assert.equal(result.content_card?.renderer, "terminal_output");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter omits successful command results whose payload is an empty object", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-empty-result-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    writeFileSync(rolloutPath, [
+      event("2026-08-02T00:00:00Z", "user", "运行无输出检查"),
+      JSON.stringify({
+        timestamp: "2026-08-02T00:00:01Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "exec",
+          call_id: "call-empty-result",
+          input: "const r = await tools.exec_command({\"cmd\":\"true\"}); text(r.output);",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-02T00:00:02Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "call-empty-result",
+          output: [
+            { type: "input_text", text: "Script completed\nWall time 0.1 seconds\nOutput:\n" },
+            { type: "input_text", text: "{}" },
+          ],
+        },
+      }),
+    ].join("\n"));
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('session-1', '${sqlString(rolloutPath)}', 'Fixture', '2026-08-02T00:00:02Z');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(fixtureRoot);
+    assert.deepEqual(
+      session.turns[0].parts.map((part) => part.content_card?.kind),
+      ["codex.command"],
+    );
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter omits unpaired script results whose payload is an empty object", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-empty-script-result-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    writeFileSync(rolloutPath, [
+      event("2026-08-02T00:00:00Z", "user", "更新执行计划"),
+      JSON.stringify({
+        timestamp: "2026-08-02T00:00:01Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "exec",
+          call_id: "call-empty-script-result",
+          input: "const r = await tools.update_plan({plan: []}); text(r);",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-02T00:00:02Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "call-empty-script-result",
+          output: [
+            { type: "input_text", text: "Script completed\nWall time 0.1 seconds\nOutput:\n" },
+            { type: "input_text", text: "{}" },
+          ],
+        },
+      }),
+    ].join("\n"));
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('session-1', '${sqlString(rolloutPath)}', 'Fixture', '2026-08-02T00:00:02Z');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(fixtureRoot);
+    assert.deepEqual(
+      session.turns[0].parts.filter((part) => part.content_card?.kind === "codex.result"),
+      [],
+    );
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -467,7 +552,7 @@ test("Codex adapter hides pending runner output and wait controls without shifti
   }
 });
 
-test("Codex adapter applies payload policy to a successful custom execution without shifting Parts", () => {
+test("Codex adapter hides successful result cards while retaining command state", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-payload-policy-"));
   try {
     const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
@@ -502,12 +587,11 @@ test("Codex adapter applies payload policy to a successful custom execution with
 
     const session = readFixtureSession(fixtureRoot);
     const parts = session.turns[0].parts;
-    assert.equal(parts.length, 2);
-    assert.deepEqual(parts.map((part) => part.source_execution_id), ["call-tests", "call-tests"]);
+    assert.equal(parts.length, 1);
+    assert.deepEqual(parts.map((part) => part.source_execution_id), ["call-tests"]);
     assert.equal(parts[0].status, "completed");
     assert.equal(parts[0].exit_code, 0);
-    assert.equal(parts[1].text, null);
-    assert.equal(JSON.parse(parts[1].metadata_json).payload_policy_version, PAYLOAD_POLICY_VERSION);
+    assert.equal(JSON.parse(parts[0].metadata_json).payload_policy_version, PAYLOAD_POLICY_VERSION);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }

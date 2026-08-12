@@ -845,6 +845,31 @@ describe("ConversationContentCards", () => {
     expect(html).not.toContain("large stdout");
   });
 
+  it("hides placeholder-only successful result cards", () => {
+    const html = renderToStaticMarkup(
+      <ConversationContentCards
+        blocks={buildConversationContentBlocks([], [{
+          card_id: "conversation-part-empty-object-result",
+          part_id: "conversation-part-empty-object-result",
+          adapter_id: "codex",
+          kind: "codex.result",
+          semantic_role: "result",
+          renderer: "terminal_output",
+          role: "tool",
+          body: "{}",
+          status: "completed",
+          exit_code: 0,
+          legacy_anchor_ids: [],
+        }])}
+        t={t}
+        visibility={{ result: true }}
+      />,
+    );
+
+    expect(html).not.toContain('data-content-type="result"');
+    expect(html).not.toContain('data-result-summary="success"');
+  });
+
   it("shows successful execution state on the Command card and hides its empty Result", () => {
     const html = renderToStaticMarkup(
       <ConversationContentCards

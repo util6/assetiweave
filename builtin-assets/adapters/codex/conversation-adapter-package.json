@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package_id": "io.github.util6.codex-session",
   "name": "Codex Session Parser",
-  "version": "1.5.10",
+  "version": "1.5.11",
   "min_core_version": "0.5.2",
   "record_kind": "session",
   "adapter_manifest": "conversation-adapter.json",
@@ -13,6 +13,13 @@
     "protocol": "stdio-ndjson-v1"
   },
   "changelog": [
+    {
+      "version": "1.5.11",
+      "date": "2026-08-12",
+      "notes": [
+        "Hide successful command result cards when normalized output contains only an empty object."
+      ]
+    },
     {
       "version": "1.5.10",
       "date": "2026-08-11",

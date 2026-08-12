@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "codex",
   "name": "Codex",
-  "version": "1.5.10",
+  "version": "1.5.11",
   "protocol_version": 1,
   "runtime": {
     "type": "node",

@@ -7,6 +7,22 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "1.5.11",
+      "channel": "stable",
+      "released_at": "2026-08-12T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.5.11-universal.zip",
+      "artifact_size": 107087,
+      "artifact_sha256": "d9a3933c7e721be1a9720d026ed119d18688a4d20161a3c334378a2fe2a9bac3",
+      "changelog_markdown": "## 1.5.11\n\n- Hide successful command result cards when normalized output contains only an empty object.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
+      }
+    },
+    {
       "version": "1.5.10",
       "channel": "stable",
       "released_at": "2026-08-11T00:00:00Z",
