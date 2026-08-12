@@ -21,6 +21,7 @@
     "cli:build": "node scripts/build-cli.js",
     "postcli:build": "pnpm artifacts:check",
     "cli:install": "node scripts/install.js",
+    "cli:install:test": "node --test scripts/install.test.mjs",
     "cli:release-audit": "node scripts/release-audit.js",
     "cli:run": "node scripts/run.js",
     "precli:test": "pnpm artifacts:guard",

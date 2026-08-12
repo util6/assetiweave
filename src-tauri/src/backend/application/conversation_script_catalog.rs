@@ -1083,6 +1083,28 @@ fn promote_conversation_adapter_workspace_package(
             source_validation.adapter_validation.manifest.version
         ));
     }
+    let version = validated_package_version(&source_validation.manifest.version)?;
+    let source_version = semver::Version::parse(&version)
+        .map_err(|error| format!("conversation adapter package version must be SemVer: {error}"))?;
+    if let Some(active_package) =
+        service.load_conversation_adapter_package_by_adapter(adapter_id)?
+    {
+        if let Ok(active_version) = semver::Version::parse(active_package.version.trim()) {
+            if active_version > source_version {
+                return Ok(json!({
+                    "dry_run": dry_run,
+                    "upgraded": false,
+                    "skipped": true,
+                    "reason": "active_version_newer",
+                    "source_dir": source_dir,
+                    "package_id": source_validation.manifest.package_id,
+                    "adapter_id": adapter_id,
+                    "version": version,
+                    "active_version": active_version.to_string(),
+                }));
+            }
+        }
+    }
     let preflight = service.prepare_conversation_adapter_package_change(
         ConversationAdapterPackageChangeParams {
             action: ConversationAdapterPackageChangeAction::Register,
@@ -1092,7 +1114,6 @@ fn promote_conversation_adapter_workspace_package(
     )?;
     reject_conversation_package_task_conflicts(&preflight)?;
 
-    let version = validated_package_version(&source_validation.manifest.version)?;
     let revision = format!(
         "{}-{}",
         version,
@@ -3509,6 +3530,43 @@ mod tests {
             .expect("retained package");
         assert_eq!(PathBuf::from(retained.install_dir), second_install);
         assert!(second_install.is_dir());
+
+        fs::write(
+            package_dir.join("conversation-adapter-package.json"),
+            fs::read_to_string(package_dir.join("conversation-adapter-package.json"))
+                .expect("read package manifest")
+                .replace("\"version\": \"1.0.0\"", "\"version\": \"0.9.0\""),
+        )
+        .expect("write older package manifest");
+        fs::write(
+            package_dir.join("conversation-adapter.json"),
+            fs::read_to_string(package_dir.join("conversation-adapter.json"))
+                .expect("read adapter manifest")
+                .replace("\"version\": \"1.0.0\"", "\"version\": \"0.9.0\""),
+        )
+        .expect("write older adapter manifest");
+        write_executable(
+            "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"revision\":3}}'\n",
+        );
+        let skipped = promote_conversation_adapter_workspace_package(
+            &service,
+            &package_dir,
+            &managed_root,
+            false,
+        )
+        .expect("skip older workspace revision");
+        assert_eq!(skipped["upgraded"], false);
+        assert_eq!(skipped["skipped"], true);
+        assert_eq!(skipped["reason"], "active_version_newer");
+        assert_eq!(skipped["active_version"], "1.0.0");
+        let retained_after_skip = service
+            .load_conversation_adapter_package("com.util6.external-test")
+            .expect("load package after skipped downgrade")
+            .expect("retained package after skipped downgrade");
+        assert_eq!(
+            PathBuf::from(retained_after_skip.install_dir),
+            second_install
+        );
 
         drop(service);
         let _ = fs::remove_dir_all(root);
