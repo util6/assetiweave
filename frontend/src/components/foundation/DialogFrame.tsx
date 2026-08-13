@@ -130,7 +130,7 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
                 {hasHeader && (
                   <header className={cn("aurora-dialog-header flex min-h-14 shrink-0 items-center gap-3 border-b border-theme-card-border/55 bg-theme-card-header/55 px-5 py-3", headerClassName)}>
                     {icon && (
-                      <span className={cn("grid size-10 shrink-0 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-primary", iconClassName)}>
+                      <span className={cn("grid size-10 shrink-0 place-items-center rounded-xl border border-theme-control-border bg-theme-control text-primary", iconClassName)}>
                         {icon}
                       </span>
                     )}

@@ -109,7 +109,7 @@ export function AssetGridView({
             </p>
 
             <button
-              className="mt-3 block max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-lg border border-theme-control-border bg-theme-control/55 px-3 py-2 text-left font-mono text-body-sm text-on-surface-variant transition-colors hover:border-theme-nav-active-border hover:text-primary"
+              className="mt-3 block max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-theme-control-border bg-theme-control/55 px-3 py-2 text-left font-mono text-body-sm text-on-surface-variant transition-[transform,background-color,border-color,color] duration-200 hover:-translate-y-px hover:border-theme-nav-active-border hover:text-primary active:translate-y-0"
               onClick={() => onRevealPath(asset.absolute_path)}
               title={t("asset.revealPath")}
               type="button"
@@ -166,7 +166,7 @@ function GridIconButton({
     <button
       aria-label={label}
       className={clsx(
-        "grid size-8 place-items-center rounded-lg text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-primary",
+        "grid size-8 place-items-center rounded-xl text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-primary",
         danger && "hover:text-status-remove",
       )}
       onClick={onClick}

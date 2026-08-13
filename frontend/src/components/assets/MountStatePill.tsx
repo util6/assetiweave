@@ -29,7 +29,7 @@ export function MountStatePill({
       <button
         aria-label={t("mount.stateHelp.openAria", { status: t(`mount.display.${state}` as TranslationKey) })}
         className={clsx(
-          "inline-flex shrink-0 items-center gap-1.5 rounded-md border font-bold transition-colors hover:border-current focus:outline-none focus:ring-2 focus:ring-primary/45 focus:ring-offset-2 focus:ring-offset-background",
+          "inline-flex shrink-0 items-center gap-1.5 rounded-full border font-bold transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:-translate-y-px hover:border-current active:translate-y-0 focus:outline-none focus:ring-2 focus:ring-primary/45 focus:ring-offset-2 focus:ring-offset-background",
           compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-0.5 text-[10px]",
           mountStatePillClass(state),
         )}
@@ -97,7 +97,7 @@ function MountStateHelpDialog({
           return (
             <article
               className={clsx(
-                "rounded-xl border bg-theme-control/65 p-3 transition-colors",
+                "rounded-xl border bg-theme-control/65 p-3 transition-[background-color,border-color,box-shadow] duration-200",
                 active ? "border-primary/60 ring-1 ring-primary/20" : "border-theme-control-border",
               )}
               key={state}

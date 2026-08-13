@@ -14,7 +14,7 @@ export function ManualHelpButton({
   return (
     <button
       aria-label={label}
-      className="grid size-8 place-items-center rounded-lg border border-theme-control-border bg-theme-control/95 text-theme-control-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-55"
+      className="grid size-8 place-items-center rounded-xl border border-theme-control-border bg-theme-control/95 text-theme-control-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-55"
       disabled={disabled}
       onClick={onOpen}
       title={label}

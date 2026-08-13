@@ -443,8 +443,8 @@ describe("MarkdownContent", () => {
     const hashId = screen.getByText("abcdef12");
 
     expect(hashId.className).toContain("font-mono");
-    expect(screen.getByText("1 个问题").className).toContain("rounded-md");
-    expect(screen.getByText("2 个 Turn").className).toContain("rounded-md");
+    expect(screen.getByText("1 个问题").className).toContain("rounded-xl");
+    expect(screen.getByText("2 个 Turn").className).toContain("rounded-xl");
     expect(hashId.parentElement?.getAttribute("aria-label")).toBe("1 个问题 · 2 个 Turn");
     expect(screen.queryByText(/Hash ID/)).toBeNull();
     expect(screen.queryByText(/abcdef123/)).toBeNull();

@@ -43,7 +43,7 @@ const UnderConstructionState = React.forwardRef<HTMLElement, UnderConstructionSt
           variant="muted"
         >
           {icon && (
-            <div className="mb-4 grid size-12 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-primary shadow-[var(--theme-shadow-control-inset)]">
+            <div className="mb-4 grid size-12 place-items-center rounded-2xl border border-theme-control-border bg-theme-control text-primary shadow-[var(--theme-shadow-control-inset)]">
               {icon}
             </div>
           )}

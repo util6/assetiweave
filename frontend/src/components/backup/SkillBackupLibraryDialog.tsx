@@ -127,7 +127,7 @@ export function SkillBackupLibraryDialog({
           </Field>
 
           {settings && (
-            <div className="grid gap-2 rounded-lg border border-theme-control-border bg-theme-control/65 p-3">
+            <div className="grid gap-2 rounded-xl border border-theme-control-border bg-theme-control/65 p-3">
               <ReadonlyRow label={t("backup.field.currentPath")} value={settings.display_root_path ?? abbreviateHomePath(settings.expanded_root_path)} />
               <ReadonlyRow label={t("backup.field.defaultPath")} value={settings.display_default_root_path ?? abbreviateHomePath(settings.default_root_path)} />
               <ReadonlyRow label={t("backup.field.mode")} value={settings.is_default_root ? t("backup.mode.default") : t("backup.mode.custom")} />

@@ -98,7 +98,7 @@ export function AssetRow({
           {hasVisibleMountShortcuts && (onEdit || onDelete) && <span className="h-6 w-px bg-theme-control-border/80" aria-hidden="true" />}
           {onEdit && (
             <button
-              className="grid size-8 place-items-center rounded-lg text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-primary"
+              className="grid size-8 place-items-center rounded-xl text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-primary"
               aria-label={t("asset.edit")}
               onClick={onEdit}
               type="button"
@@ -108,7 +108,7 @@ export function AssetRow({
           )}
           {onDelete && (
             <button
-              className="grid size-8 place-items-center rounded-lg text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-status-remove"
+              className="grid size-8 place-items-center rounded-xl text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-status-remove"
               aria-label={t("asset.delete")}
               onClick={onDelete}
               type="button"

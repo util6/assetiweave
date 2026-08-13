@@ -841,7 +841,7 @@ function GroupColumnView({
         <div className="min-h-0 overflow-y-auto p-4">
           <div className="flex flex-wrap items-center gap-2">
             <button
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm font-semibold text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-primary"
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-theme-control-border bg-theme-control px-3 text-body-sm font-semibold text-on-surface-variant transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-primary"
               onClick={() => onEdit(selectedGroup)}
               type="button"
             >
@@ -849,7 +849,7 @@ function GroupColumnView({
               {t("group.action.edit")}
             </button>
             <button
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-status-remove/45 bg-status-remove/10 px-3 text-body-sm font-semibold text-status-remove transition-colors hover:bg-status-remove/15"
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-status-remove/45 bg-status-remove/10 px-3 text-body-sm font-semibold text-status-remove transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-status-remove/15"
               onClick={() => onDelete(selectedGroup)}
               type="button"
             >
@@ -965,7 +965,7 @@ function GroupAvatar({
   return (
     <span
       className={clsx(
-        "relative grid shrink-0 place-items-center rounded-lg border shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.28)]",
+        "relative grid shrink-0 place-items-center rounded-xl border shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.28)]",
         compact ? "mt-0.5 size-8" : "size-10",
         !enabled && "grayscale",
       )}
@@ -1156,7 +1156,7 @@ function GroupIconButton({
     <button
       aria-label={label}
       className={clsx(
-        "grid size-8 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-primary disabled:cursor-not-allowed disabled:opacity-45",
+        "grid size-8 place-items-center rounded-xl text-on-surface-variant transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-primary disabled:cursor-not-allowed disabled:opacity-45",
         danger && "hover:text-status-remove",
       )}
       disabled={disabled}

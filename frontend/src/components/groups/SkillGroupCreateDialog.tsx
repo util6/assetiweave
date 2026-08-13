@@ -223,7 +223,7 @@ export function SkillGroupCreateDialog({
 
             <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-end gap-3 max-[720px]:grid-cols-1">
               <GroupField label={t("group.field.colorCode")}>
-                <div className="flex h-10 items-center gap-2 rounded-lg border border-theme-control-border bg-theme-control px-2 transition-colors focus-within:border-primary-strong/60">
+                <div className="flex h-10 items-center gap-2 rounded-xl border border-theme-control-border bg-theme-control px-2 transition-[background-color,border-color,box-shadow,color] duration-200 focus-within:border-primary-strong/60">
                   <input
                     aria-label={t("group.field.color")}
                     className="size-5 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
@@ -262,7 +262,7 @@ export function SkillGroupCreateDialog({
                 <div className="flex h-10 items-center gap-2">
                   <span
                     aria-hidden="true"
-                    className="grid size-9 shrink-0 place-items-center rounded-lg border text-[13px] font-bold"
+                    className="grid size-9 shrink-0 place-items-center rounded-xl border text-[13px] font-bold"
                     style={{
                       borderColor: `${color}66`,
                       backgroundColor: `${color}18`,
@@ -314,7 +314,7 @@ export function SkillGroupCreateDialog({
                 </div>
               </GroupField>
 
-              <label className="flex h-10 items-center gap-2 self-end rounded-lg border border-theme-control-border bg-theme-control px-3">
+              <label className="flex h-10 items-center gap-2 self-end rounded-xl border border-theme-control-border bg-theme-control px-3">
                 <Switch checked={enabled} disabled={busy} onCheckedChange={setEnabled} />
                 <span className="text-body-sm text-on-surface-variant">{t("group.field.enabled")}</span>
               </label>
@@ -392,7 +392,7 @@ export function SkillGroupCreateDialog({
               <span className="text-label-caps uppercase text-outline">{t("group.icon.svgInput")}</span>
               <textarea
                 aria-label={t("group.icon.svgInput")}
-                className="min-h-80 resize-y rounded-lg border border-theme-control-border bg-theme-control px-3 py-3 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60"
+                className="min-h-80 resize-y rounded-xl border border-theme-control-border bg-theme-control px-3 py-3 font-mono text-code-md text-on-surface outline-none transition-[background-color,border-color,box-shadow,color] duration-200 placeholder:text-outline focus:border-primary-strong/60"
                 onChange={(event) => setSvgDraft(event.target.value)}
                 placeholder={t("group.icon.svgPlaceholder")}
                 spellCheck={false}

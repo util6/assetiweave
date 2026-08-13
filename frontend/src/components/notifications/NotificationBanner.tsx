@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckCircle2, Info, X, XCircle } from "lucide-react";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { TranslationKey, TranslationParams } from "../../i18n/messages";
+import { iconButtonRecipe } from "../../theme/recipes";
 
 export type NotificationTone = "success" | "info" | "warning" | "error";
 
@@ -59,7 +60,7 @@ export function NotificationBanner({
         </span>
         <p className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-medium">{message}</p>
         <button
-          className="ml-4 grid size-8 shrink-0 place-items-center rounded-lg transition-colors hover:bg-theme-control-hover/70"
+          className={iconButtonRecipe({ className: "ml-4 shrink-0" })}
           onClick={() => onDismiss(notification.id)}
           aria-label={t("notification.close")}
           type="button"

@@ -57,7 +57,7 @@ export function AssetPickerHeader({
         </div>
         {onToggleAll && (
           <button
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm font-semibold text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-on-surface"
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-theme-control-border bg-theme-control px-3 text-body-sm font-semibold text-on-surface-variant transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-on-surface"
             onClick={onToggleAll}
             type="button"
           >

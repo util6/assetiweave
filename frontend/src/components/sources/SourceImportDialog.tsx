@@ -165,7 +165,7 @@ export function SourceImportDialog({
             <div className="grid grid-cols-2 gap-3 max-[720px]:grid-cols-1">
               <Field label={t("source.field.includeGlobs")}>
                 <textarea
-                  className="min-h-28 w-full resize-y rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="min-h-28 w-full resize-y rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-[background-color,border-color,box-shadow,color] duration-200 placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={busy}
                   onChange={(event) => updateValue("includeGlobsText", event.target.value)}
                   placeholder={t("source.form.includePlaceholder")}
@@ -174,7 +174,7 @@ export function SourceImportDialog({
               </Field>
               <Field label={t("source.field.excludeGlobs")}>
                 <textarea
-                  className="min-h-28 w-full resize-y rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="min-h-28 w-full resize-y rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-[background-color,border-color,box-shadow,color] duration-200 placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={busy}
                   onChange={(event) => updateValue("excludeGlobsText", event.target.value)}
                   placeholder={t("source.form.excludePlaceholder")}

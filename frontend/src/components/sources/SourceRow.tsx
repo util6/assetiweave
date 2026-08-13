@@ -190,7 +190,7 @@ function SourceIconButton({
     <button
       aria-label={label}
       className={clsx(
-        "grid size-8 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-primary disabled:cursor-not-allowed disabled:opacity-45",
+        "grid size-8 place-items-center rounded-xl text-on-surface-variant transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-primary disabled:cursor-not-allowed disabled:opacity-45",
         danger && "hover:text-status-remove",
       )}
       disabled={disabled}

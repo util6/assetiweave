@@ -179,7 +179,7 @@ export function SourceColumnView({
         <div className="min-h-0 overflow-y-auto p-4">
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <button
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm font-semibold text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-theme-control-border bg-theme-control px-3 text-body-sm font-semibold text-on-surface-variant transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
               disabled={busy}
               onClick={() => onEdit(selectedSource)}
               type="button"
@@ -188,7 +188,7 @@ export function SourceColumnView({
               {t("source.action.edit")}
             </button>
             <button
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-status-remove/45 bg-status-remove/10 px-3 text-body-sm font-semibold text-status-remove transition-colors hover:bg-status-remove/15 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-status-remove/45 bg-status-remove/10 px-3 text-body-sm font-semibold text-status-remove transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-status-remove/15 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={busy || isProtectedSource(selectedSource)}
               onClick={() => onDelete(selectedSource)}
               type="button"
@@ -237,7 +237,7 @@ function ColumnAssetIconButton({
     <button
       aria-label={label}
       className={clsx(
-        "grid size-8 place-items-center rounded-lg text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-primary",
+        "grid size-8 place-items-center rounded-xl text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-primary",
         danger && "hover:text-status-remove",
       )}
       onClick={onClick}
@@ -273,7 +273,7 @@ function ColumnHeader({
       {onAction && actionLabel && (
         <button
           aria-label={actionLabel}
-          className="grid size-8 shrink-0 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-primary"
+          className="grid size-8 shrink-0 place-items-center rounded-xl text-on-surface-variant transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-primary"
           onClick={onAction}
           title={actionLabel}
           type="button"

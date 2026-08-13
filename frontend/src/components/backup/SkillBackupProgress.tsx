@@ -21,7 +21,7 @@ export function SkillBackupBackgroundTaskIndicator({
       role="status"
     >
       <div className="flex items-center gap-3">
-        <span className="aurora-task-indicator-icon grid size-9 shrink-0 place-items-center rounded-lg text-status-update">
+        <span className="aurora-task-indicator-icon grid size-9 shrink-0 place-items-center rounded-xl text-status-update">
           <RefreshCw className="animate-spin" size={17} />
         </span>
         <span className="min-w-0 flex-1">

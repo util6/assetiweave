@@ -105,6 +105,8 @@ describe("DataToolbar", () => {
     expect(html).toContain('data-toolbar-control="action"');
     expect(html).toContain('data-toolbar-control="text"');
     expect(html).toContain('data-toolbar-control="search"');
+    expect(html).toContain("rounded-2xl");
+    expect(html).toContain("duration-200");
   });
 
   it("coalesces debounced toolbar search typing and supports immediate submit", async () => {

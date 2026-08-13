@@ -23,7 +23,7 @@ export function ConversationDiff({
         const deletions = fileSummary?.deletions ?? countChanges(file, "delete");
         return (
           <section
-          className="overflow-hidden rounded-lg border border-theme-card-border bg-theme-control/55"
+          className="overflow-hidden rounded-xl border border-theme-card-border bg-theme-control/55"
           data-diff-file={displayPath(file)}
           key={`${displayPath(file)}-${index}`}
         >

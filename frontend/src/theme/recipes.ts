@@ -66,7 +66,7 @@ export const dialogRecipe = cva(
 );
 
 export const iconButtonRecipe = cva(
-  "grid place-items-center rounded-lg text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/55 disabled:cursor-not-allowed disabled:opacity-50",
+  "grid place-items-center rounded-xl text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:-translate-y-px hover:bg-theme-control-hover hover:text-on-surface active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/55 disabled:cursor-not-allowed disabled:opacity-50",
   {
     variants: {
       size: {
@@ -91,17 +91,17 @@ export const iconButtonRecipe = cva(
 );
 
 export const surfaceButtonRecipe = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl text-body-sm font-semibold transition-[transform,background,box-shadow,border-color] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/55 disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl text-body-sm font-semibold transition-[transform,background,box-shadow,border-color,color] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/55 disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
         default:
           "theme-primary-gradient border border-primary/30 text-theme-button-primary-fg shadow-[0_10px_26px_rgb(var(--theme-glow)/0.2),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.28)] hover:-translate-y-px hover:shadow-[0_14px_32px_rgb(var(--theme-glow)/0.28)] active:translate-y-0",
         destructive:
-          "theme-danger-gradient text-theme-button-primary-fg",
+          "theme-danger-gradient text-theme-button-primary-fg hover:-translate-y-px active:translate-y-0",
         outline:
-          "border border-theme-control-border/80 bg-theme-control/70 text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md hover:border-primary-strong/45 hover:bg-theme-control-hover hover:text-on-surface",
-        secondary: "border border-theme-control-border/40 bg-theme-control-hover/75 text-on-surface shadow-[var(--theme-shadow-control-inset)] hover:bg-theme-card-header",
+          "border border-theme-control-border/80 bg-theme-control/70 text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md hover:-translate-y-px hover:border-primary-strong/45 hover:bg-theme-control-hover hover:text-on-surface active:translate-y-0",
+        secondary: "border border-theme-control-border/40 bg-theme-control-hover/75 text-on-surface shadow-[var(--theme-shadow-control-inset)] hover:-translate-y-px hover:bg-theme-card-header active:translate-y-0",
         ghost: "text-theme-control-fg hover:bg-theme-control-hover/70 hover:text-on-surface",
         link: "text-primary underline-offset-4 hover:underline",
       },
@@ -116,6 +116,39 @@ export const surfaceButtonRecipe = cva(
     defaultVariants: {
       variant: "default",
       size: "default",
+    },
+  },
+);
+
+export const toolbarSurfaceRecipe = cva(
+  "rounded-2xl border border-theme-control-border/70 bg-theme-control/68 text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md transition-[transform,background-color,border-color,box-shadow,color] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/55 disabled:cursor-not-allowed disabled:opacity-55",
+  {
+    variants: {
+      tone: {
+        container: "",
+        neutral: "hover:-translate-y-px hover:bg-theme-control-hover hover:text-on-surface active:translate-y-0",
+        active: "border-primary/45 bg-theme-control-hover text-primary hover:-translate-y-px active:translate-y-0",
+        primary:
+          "theme-primary-gradient border-primary/30 text-theme-button-primary-fg shadow-[0_10px_24px_rgb(var(--theme-glow)/0.18),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.24)] hover:-translate-y-px hover:shadow-[0_14px_32px_rgb(var(--theme-glow)/0.28)] active:translate-y-0",
+      },
+    },
+    defaultVariants: {
+      tone: "neutral",
+    },
+  },
+);
+
+export const toolbarIconRecipe = cva(
+  "grid place-items-center rounded-xl text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/55 disabled:cursor-not-allowed disabled:opacity-55",
+  {
+    variants: {
+      active: {
+        true: "bg-theme-control-hover text-primary shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.18)]",
+        false: "hover:-translate-y-px hover:bg-theme-control-hover/70 hover:text-on-surface active:translate-y-0",
+      },
+    },
+    defaultVariants: {
+      active: false,
     },
   },
 );

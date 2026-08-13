@@ -37,7 +37,7 @@ export function AssetMountPanel({
       </div>
 
       {enabledProfiles.length === 0 ? (
-        <div className="rounded-lg border border-theme-control-border bg-theme-control px-3 py-3 text-body-sm text-on-surface-variant">{t("mount.empty")}</div>
+        <div className="rounded-xl border border-theme-control-border bg-theme-control px-3 py-3 text-body-sm text-on-surface-variant">{t("mount.empty")}</div>
       ) : (
         <div className="grid grid-cols-4 gap-2.5 max-[980px]:grid-cols-2 max-[720px]:grid-cols-1">
           {enabledProfiles.map((profile) => (

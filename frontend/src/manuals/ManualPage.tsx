@@ -154,7 +154,7 @@ export function ManualPage({
         />
         <div>
           <button
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface"
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-theme-control-border bg-theme-control px-3 text-body-sm font-semibold text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-on-surface"
             onClick={toggleAllVisibleSections}
             type="button"
           >
@@ -213,7 +213,7 @@ export function ManualPage({
                     type="button"
                   >
                     <span className="flex min-w-0 items-start gap-3">
-                      <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-primary">
+                      <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-xl border border-theme-control-border bg-theme-control text-primary">
                         <CheckCircle2 size={17} />
                       </span>
                       <span className="min-w-0">

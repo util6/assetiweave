@@ -121,7 +121,7 @@ function SummaryItem({
             : "text-on-surface";
 
   return (
-    <div className="min-w-0 rounded-lg border border-theme-control-border bg-theme-control px-3 py-2">
+    <div className="min-w-0 rounded-xl border border-theme-control-border bg-theme-control px-3 py-2">
       <div className="text-label-caps uppercase text-outline">{label}</div>
       <div className={`mt-1 min-w-0 font-mono text-body-sm font-semibold ${valueClass}`}>{value}</div>
     </div>
@@ -142,7 +142,7 @@ function ExclusiveDetailSection({
   const { t } = useI18n();
 
   return (
-    <details className="group rounded-lg border border-theme-control-border bg-theme-control/80">
+    <details className="group rounded-xl border border-theme-control-border bg-theme-control/80">
       <summary className="flex min-h-10 cursor-pointer items-center justify-between gap-3 px-3 py-2 text-body-sm font-semibold text-on-surface-variant marker:text-outline hover:text-on-surface">
         <span>{title}</span>
         <span className="rounded-md border border-theme-card-border bg-theme-card px-2 py-0.5 font-mono text-body-sm text-primary">

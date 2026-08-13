@@ -496,7 +496,7 @@ export function ConversationScriptResourcePanel({
   }
 
   return (
-    <section className="rounded-lg border border-theme-card-border bg-theme-card/55 p-3">
+    <section className="rounded-2xl border border-theme-card-border bg-theme-card/55 p-3">
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <h3 className="flex min-w-0 items-center gap-2 text-body-sm font-semibold text-on-surface">
@@ -509,7 +509,7 @@ export function ConversationScriptResourcePanel({
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
           <button
-            className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-55"
+            className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-theme-control-border bg-theme-control px-3 text-body-sm text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-55"
             disabled={disabled || loading || refreshing || checkingUpdates}
             onClick={() => void loadCatalog("refresh")}
             type="button"
@@ -536,7 +536,7 @@ export function ConversationScriptResourcePanel({
           <button
             aria-selected={activeView === view}
             className={clsx(
-              "rounded-lg px-3 py-2 text-body-sm transition-colors",
+              "rounded-xl px-3 py-2 text-body-sm transition-[transform,background-color,color] duration-200 hover:-translate-y-px active:translate-y-0",
               activeView === view ? "text-on-surface" : "text-on-surface-variant hover:bg-theme-control-hover/70 hover:text-on-surface",
             )}
             data-active={activeView === view}
@@ -551,7 +551,7 @@ export function ConversationScriptResourcePanel({
       </div>
 
       {installRunning ? (
-        <div className="mt-3 flex items-center gap-2 rounded-lg border border-status-update/35 bg-status-update/10 px-3 py-2 text-body-sm text-status-update">
+        <div className="mt-3 flex items-center gap-2 rounded-xl border border-status-update/35 bg-status-update/10 px-3 py-2 text-body-sm text-status-update">
           <Loader2 className="shrink-0 animate-spin" size={15} />
           <span className="truncate">
             {t(packageTaskRunningLabel(installTask.action))} - {installTask.package_id ?? installTask.item_id}
@@ -560,7 +560,7 @@ export function ConversationScriptResourcePanel({
       ) : null}
 
       {error ? (
-        <div className="mt-3 flex items-start gap-2 rounded-lg border border-status-remove/35 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove">
+        <div className="mt-3 flex items-start gap-2 rounded-xl border border-status-remove/35 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove">
           <CircleAlert className="mt-0.5 shrink-0" size={15} />
           <span>{error}</span>
         </div>
@@ -568,21 +568,21 @@ export function ConversationScriptResourcePanel({
         <div className="mt-3 grid gap-2" aria-busy="true">
           <div
             aria-live="polite"
-            className="flex items-center gap-2 rounded-lg border border-status-update/30 bg-status-update/10 px-3 py-2 text-body-sm text-status-update"
+            className="flex items-center gap-2 rounded-xl border border-status-update/30 bg-status-update/10 px-3 py-2 text-body-sm text-status-update"
             role="status"
           >
             <Loader2 className="shrink-0 animate-spin" size={15} />
             <span>{t("conversation.scriptMarket.loading")}</span>
           </div>
           {Array.from({ length: 2 }).map((_, index) => (
-            <div className="rounded-lg border border-theme-card-border bg-theme-control/40 p-3" key={index}>
+            <div className="rounded-xl border border-theme-card-border bg-theme-control/40 p-3" key={index}>
               <div className="h-4 w-48 max-w-full animate-pulse rounded bg-theme-control" />
               <div className="mt-2 h-3 w-full max-w-lg animate-pulse rounded bg-theme-control" />
             </div>
           ))}
         </div>
       ) : visibleEntries.length === 0 ? (
-        <div className="mt-3 rounded-lg border border-theme-card-border bg-theme-control/40 px-3 py-2 text-body-sm text-on-surface-variant">
+        <div className="mt-3 rounded-xl border border-theme-card-border bg-theme-control/40 px-3 py-2 text-body-sm text-on-surface-variant">
           {t("conversation.scriptMarket.emptyForKind")}
         </div>
       ) : (
@@ -648,12 +648,12 @@ export function ConversationScriptResourcePanel({
               <div className="h-32 animate-pulse rounded bg-theme-control" />
             </div>
           ) : detailError ? (
-            <div className="rounded-lg border border-status-remove/35 bg-status-remove/10 p-3 text-body-sm text-status-remove">
+            <div className="rounded-xl border border-status-remove/35 bg-status-remove/10 p-3 text-body-sm text-status-remove">
               {detailError}
             </div>
           ) : (
             <>
-              <div className="grid gap-2 rounded-lg border border-theme-card-border bg-theme-card/65 p-3 sm:grid-cols-2">
+              <div className="grid gap-2 rounded-xl border border-theme-card-border bg-theme-card/65 p-3 sm:grid-cols-2">
                 <DetailField label={t("conversation.scriptMarket.packageId")} value={detailEntry.installed_package?.package_id ?? detailEntry.item.id} />
                 <DetailField label={t("conversation.scriptMarket.adapterId")} value={detailEntry.installed_adapter?.id ?? detailEntry.item.adapter_id ?? "-"} />
                 <DetailField label={t("conversation.scriptMarket.origin")} value={detailInspection?.origin ?? detailEntry.installed_package?.origin ?? detailEntry.item.provider ?? "-"} />
@@ -669,7 +669,7 @@ export function ConversationScriptResourcePanel({
               </div>
 
               {detailEntry.installed_package?.origin === "dev_override" ? (
-                <div className="rounded-lg border border-status-update/35 bg-status-update/10 p-3 text-body-sm text-status-update">
+                <div className="rounded-xl border border-status-update/35 bg-status-update/10 p-3 text-body-sm text-status-update">
                   {t("conversation.scriptMarket.devOverrideNotice")}
                 </div>
               ) : null}
@@ -691,12 +691,12 @@ export function ConversationScriptResourcePanel({
 
               {detailEntry.installed_package?.origin === "managed_release" ? (
                 <section>
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-theme-card-border bg-theme-control/40 p-3">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-theme-card-border bg-theme-control/40 p-3">
                     <label className="text-body-sm font-medium text-on-surface" htmlFor="conversation-package-update-policy">
                       {t("conversation.scriptMarket.updatePolicy")}
                     </label>
                     <select
-                      className="h-9 rounded-md border border-theme-control-border bg-theme-control px-2 text-body-sm text-theme-control-fg"
+                      className="h-9 rounded-xl border border-theme-control-border bg-theme-control px-2 text-body-sm text-theme-control-fg transition-[background-color,border-color,box-shadow] duration-200 focus:border-primary-strong/60"
                       disabled={policySaving}
                       id="conversation-package-update-policy"
                       onChange={(event) => void changeUpdatePolicy(event.target.value as ConversationPackageUpdatePolicy)}
@@ -733,7 +733,7 @@ export function ConversationScriptResourcePanel({
                       const active = detailEntry.runtime_ready
                         && version.version === detailEntry.installed_package?.version;
                       return (
-                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-theme-card-border bg-theme-card/55 p-3" key={version.version}>
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-theme-card-border bg-theme-card/55 p-3" key={version.version}>
                           <div className="flex items-center gap-2">
                             <span className="font-mono text-body-sm font-semibold text-on-surface">{version.version}</span>
                             {active ? <Badge tone="primary">{t("conversation.scriptMarket.activeVersion")}</Badge> : null}
@@ -759,7 +759,7 @@ export function ConversationScriptResourcePanel({
                   </div>
                 </section>
               ) : detailEntry.installed ? (
-                <section className="rounded-lg border border-theme-card-border bg-theme-control/40 p-3">
+                <section className="rounded-xl border border-theme-card-border bg-theme-control/40 p-3">
                   <h4 className="text-body-sm font-semibold text-on-surface">
                     {t("conversation.scriptMarket.installedVersions")}
                   </h4>
@@ -786,7 +786,7 @@ export function ConversationScriptResourcePanel({
                   {detailReleases.length > 0 ? (
                     <select
                       aria-label={t("conversation.scriptMarket.selectVersion")}
-                      className="h-9 rounded-md border border-theme-control-border bg-theme-control px-2 text-body-sm text-theme-control-fg"
+                      className="h-9 rounded-xl border border-theme-control-border bg-theme-control px-2 text-body-sm text-theme-control-fg transition-[background-color,border-color,box-shadow] duration-200 focus:border-primary-strong/60"
                       onChange={(event) => setSelectedVersion(event.target.value)}
                       value={selectedVersion}
                     >
@@ -805,7 +805,7 @@ export function ConversationScriptResourcePanel({
                 ) : (
                   <div className="mt-2 grid gap-2">
                     {detailReleases.map((release) => (
-                      <article className="rounded-lg border border-theme-card-border bg-theme-card/55 p-3" key={release.version}>
+                      <article className="rounded-xl border border-theme-card-border bg-theme-card/55 p-3" key={release.version}>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-mono text-body-sm font-semibold text-on-surface">{release.version}</span>
                           <Badge tone={release.breaking_change ? "remove" : "primary"}>{release.channel}</Badge>
@@ -839,7 +839,7 @@ export function ConversationScriptResourcePanel({
         title={t("conversation.scriptMarket.confirmTitle")}
       >
         {pendingChange ? (
-          <div className="grid gap-2 rounded-lg border border-theme-card-border bg-theme-control/45 p-3 text-body-xs text-on-surface-variant">
+          <div className="grid gap-2 rounded-xl border border-theme-card-border bg-theme-control/45 p-3 text-body-xs text-on-surface-variant">
             <p>{t("conversation.scriptMarket.recordsPreserved")}</p>
             {pendingChange.preflight.affected_sources.length > 0 ? (
               <div>
@@ -893,7 +893,7 @@ function ScriptResourceRow({
   const lifecycleAction = packageLifecycleAction(entry);
 
   return (
-    <article className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-theme-card-border bg-theme-card px-3 py-2 max-[640px]:grid-cols-1">
+    <article className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-theme-card-border bg-theme-card px-3 py-2 max-[640px]:grid-cols-1">
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <h4 className="min-w-0 truncate text-body-sm font-semibold text-on-surface">{entry.item.name}</h4>

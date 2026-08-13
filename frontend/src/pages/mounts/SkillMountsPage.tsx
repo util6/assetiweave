@@ -776,7 +776,7 @@ function AppMountColumnView({
                   type="button"
                 >
                   <span
-                    className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg border"
+                    className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-xl border"
                     style={{
                       backgroundColor: `${profileShortcut.accentColor}18`,
                       borderColor: `${profileShortcut.accentColor}66`,
@@ -1252,7 +1252,7 @@ function AppProfileDialog({
               </Field>
               <Field label={t("appMount.field.appKind")}>
                 <select
-                  className="h-9 rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm text-on-surface outline-none focus:border-primary-strong/60 disabled:opacity-50"
+                  className="h-9 rounded-xl border border-theme-control-border bg-theme-control px-3 text-body-sm text-on-surface outline-none transition-[background-color,border-color,box-shadow] duration-200 focus:border-primary-strong/60 disabled:opacity-50"
                   disabled={busy}
                   onChange={(event) => updateValue("appKind", event.target.value as AppKind)}
                   value={values.appKind}
@@ -1497,7 +1497,7 @@ function shortcutForProfile(profile: TargetProfile, shortcuts: AppShortcut[]) {
 
 function MountCountBadge({ count, label, total }: { count: number; label: string; total: number }) {
   return (
-    <span className="inline-flex h-9 items-center gap-2 rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm text-on-surface-variant">
+    <span className="inline-flex h-9 items-center gap-2 rounded-xl border border-theme-control-border bg-theme-control px-3 text-body-sm text-on-surface-variant">
       <span>{label}</span>
       <strong className="font-mono text-code-md text-primary">
         {count}/{total}
@@ -1537,7 +1537,7 @@ function ColumnHeader({
         <div className="flex shrink-0 items-center gap-1.5">
           <button
             aria-label={actionLabel}
-            className="grid size-8 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-primary"
+            className="grid size-8 place-items-center rounded-xl text-on-surface-variant transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-primary"
             onClick={onAction}
             title={actionLabel}
             type="button"
@@ -1547,7 +1547,7 @@ function ColumnHeader({
           {onDangerAction && dangerActionLabel && (
             <button
               aria-label={dangerActionLabel}
-              className="grid size-8 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-status-remove disabled:cursor-not-allowed disabled:opacity-45"
+              className="grid size-8 place-items-center rounded-xl text-on-surface-variant transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-status-remove disabled:cursor-not-allowed disabled:opacity-45"
               disabled={dangerActionDisabled}
               onClick={onDangerAction}
               title={dangerActionLabel}
@@ -1579,7 +1579,7 @@ function IconAction({
     <button
       aria-label={label}
       className={clsx(
-        "grid size-8 place-items-center rounded-lg text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-primary disabled:cursor-not-allowed disabled:opacity-45",
+        "grid size-8 place-items-center rounded-xl text-on-surface-variant transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-primary disabled:cursor-not-allowed disabled:opacity-45",
         danger && "hover:text-status-remove",
       )}
       disabled={disabled}

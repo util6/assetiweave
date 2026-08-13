@@ -88,6 +88,7 @@ import {
 import { selectTargetDirectory } from "../../services/catalog";
 import { useConversationSync } from "../../app/backgroundTasks/ConversationSyncProvider";
 import { useSearchIndex } from "../../app/backgroundTasks/SearchIndexProvider";
+import { iconButtonRecipe } from "../../theme/recipes";
 import type {
   AppKind,
   AppShortcut,
@@ -1538,7 +1539,7 @@ export function ConversationExportDialog({
       title={t("conversation.export.title")}
     >
       <div className="grid gap-4">
-        <div className="grid gap-2 rounded-lg border border-theme-card-border bg-theme-control/55 px-3 py-3">
+        <div className="grid gap-2 rounded-xl border border-theme-card-border bg-theme-control/55 px-3 py-3">
           <span className="text-label-caps text-on-surface-muted">{t("conversation.export.scope")}</span>
           <strong className="text-body-sm text-on-surface">{scopeLabel}</strong>
         </div>
@@ -1741,7 +1742,7 @@ function ProjectListItem({
       onClick={onSelect}
       type="button"
     >
-      <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-primary">
+      <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-xl border border-theme-control-border bg-theme-control text-primary">
         <Folder size={16} />
       </span>
       <span className="min-w-0">
@@ -1869,7 +1870,7 @@ export function ConversationContentSearchResults({
         >
           <button
             aria-pressed={allCardTypesSelected}
-            className={`inline-flex h-8 shrink-0 items-center rounded-lg border px-2.5 text-label-caps transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 ${
+            className={`inline-flex h-8 shrink-0 items-center rounded-xl border px-2.5 text-label-caps transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:-translate-y-px active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 ${
               allCardTypesSelected
                 ? "border-primary/50 bg-primary/12 text-primary"
                 : "border-theme-control-border bg-theme-control/80 text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface"
@@ -2036,7 +2037,7 @@ function SearchCardTypeFilterButton({
   return (
     <button
       aria-pressed={active}
-      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-theme-control-border px-2.5 text-label-caps text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-on-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 disabled:cursor-default disabled:hover:bg-transparent"
+      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl border border-theme-control-border px-2.5 text-label-caps text-on-surface-variant transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:-translate-y-px hover:bg-theme-control-hover hover:text-on-surface active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 disabled:cursor-default disabled:hover:bg-transparent"
       disabled={disabled}
       onClick={onClick}
       style={{
@@ -2073,7 +2074,7 @@ function SemanticRoleFilterButton({
   return (
     <button
       aria-pressed={active}
-      className={`inline-flex h-8 shrink-0 items-center rounded-lg border px-2.5 text-label-caps transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 ${
+      className={`inline-flex h-8 shrink-0 items-center rounded-xl border px-2.5 text-label-caps transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:-translate-y-px active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 ${
         active
           ? "border-primary/50 bg-primary/12 text-primary"
           : "border-theme-control-border bg-theme-control/80 text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface"
@@ -2188,7 +2189,7 @@ function ConversationAppIcon({
 }) {
   if (!shortcut) {
     return (
-      <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-primary">
+      <span className="grid size-9 shrink-0 place-items-center rounded-xl border border-theme-control-border bg-theme-control text-primary">
         <AppWindow size={17} />
       </span>
     );
@@ -2197,7 +2198,7 @@ function ConversationAppIcon({
   return (
     <span
       aria-label={appName}
-      className="grid size-9 shrink-0 place-items-center rounded-lg border text-[13px] font-bold"
+      className="grid size-9 shrink-0 place-items-center rounded-xl border text-[13px] font-bold"
       style={{
         borderColor: `${shortcut.accentColor}66`,
         backgroundColor: `${shortcut.accentColor}1f`,
@@ -2247,7 +2248,7 @@ function SessionCard({
   const idFragment = conversationIdFragment(session.id);
 
   return (
-    <article className="conversation-session-card group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-xl border px-4 py-4 text-left transition-all hover:-translate-y-0.5">
+    <article className="conversation-session-card group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border px-4 py-4 text-left">
       <span className="min-w-0 select-text">
         <span className="block truncate text-body-sm font-semibold text-on-surface">{session.title}</span>
         {showProjectPath ? (
@@ -2264,7 +2265,7 @@ function SessionCard({
       </span>
       <button
         aria-label={t("conversation.session.open", { title: session.title })}
-        className="grid size-9 shrink-0 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 group-hover:text-primary"
+        className={iconButtonRecipe({ className: "size-9 shrink-0 border border-theme-control-border bg-theme-control text-on-surface-variant group-hover:text-primary" })}
         onClick={onOpen}
         type="button"
       >
@@ -2306,7 +2307,7 @@ function SessionMetaChip({
 }) {
   return (
     <span
-      className={`inline-flex h-7 max-w-full items-center rounded-md border border-theme-control-border bg-theme-control/80 px-2.5 text-code-sm font-medium text-on-surface-variant shadow-[var(--theme-shadow-control-inset)] ${className}`}
+      className={`inline-flex h-7 max-w-full items-center rounded-xl border border-theme-control-border bg-theme-control/80 px-2.5 text-code-sm font-medium text-on-surface-variant shadow-[var(--theme-shadow-control-inset)] ${className}`}
     >
       {label}
     </span>
@@ -2546,7 +2547,7 @@ function QuestionListToggleButton({
     <button
       aria-expanded={!collapsed}
       aria-label={label}
-      className="grid size-8 shrink-0 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-on-surface-variant shadow-[var(--theme-shadow-control-inset)] transition-colors hover:bg-theme-control-hover hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
+      className={iconButtonRecipe({ className: "size-8 shrink-0 border border-theme-control-border bg-theme-control text-on-surface-variant shadow-[var(--theme-shadow-control-inset)]" })}
       onClick={onClick}
       title={label}
       type="button"
@@ -2838,7 +2839,7 @@ function PromptCopyButton({
 }
 
 function EmptyPanel({ children }: { children: ReactNode }) {
-  return <div className="conversation-empty-state m-2 rounded-xl p-6 text-center text-body-sm text-on-surface-variant">{children}</div>;
+  return <div className="conversation-empty-state m-2 rounded-2xl p-6 text-center text-body-sm text-on-surface-variant">{children}</div>;
 }
 
 function questionOriginLabel(origin: string, t: Translator) {

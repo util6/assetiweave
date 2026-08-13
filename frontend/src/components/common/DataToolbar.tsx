@@ -15,6 +15,7 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
+import { toolbarIconRecipe, toolbarSurfaceRecipe } from "../../theme/recipes";
 
 export type ToolbarViewMode = "list" | "columns" | "grid";
 
@@ -86,7 +87,8 @@ export function ToolbarCluster({
     <div
       aria-label={ariaLabel}
       className={clsx(
-        "toolbar-overflow-viewport inline-flex min-h-10 min-w-0 max-w-full flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-hidden rounded-2xl border border-theme-control-border/70 bg-theme-control/68 px-2.5 py-1.5 text-body-sm text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md [&>*]:shrink-0 [&>*]:whitespace-nowrap",
+        "toolbar-overflow-viewport inline-flex min-h-10 min-w-0 max-w-full flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-hidden px-2.5 py-1.5 text-body-sm [&>*]:shrink-0 [&>*]:whitespace-nowrap",
+        toolbarSurfaceRecipe({ tone: "container", className: "" }),
         className,
       )}
       role="group"
@@ -124,7 +126,8 @@ export function ToolbarSearch({
   return (
     <div
       className={clsx(
-        "flex h-10 min-w-[16rem] shrink-0 items-center gap-2 whitespace-nowrap rounded-2xl border border-theme-control-border/70 bg-theme-control/68 px-3 text-outline shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md transition-colors focus-within:border-primary/60 focus-within:text-primary focus-within:shadow-[0_0_20px_rgb(var(--theme-glow)/0.13)]",
+        "flex h-10 min-w-[16rem] shrink-0 items-center gap-2 whitespace-nowrap px-3 text-outline focus-within:border-primary/60 focus-within:text-primary focus-within:shadow-[0_0_20px_rgb(var(--theme-glow)/0.13)]",
+        toolbarSurfaceRecipe({ tone: "container", className: "" }),
         className,
       )}
       data-toolbar-control="search"
@@ -276,7 +279,7 @@ export function DebouncedToolbarSearch({
         submitLabel ? (
           <button
             aria-label={submitLabel}
-            className="grid size-7 shrink-0 place-items-center rounded-lg text-on-surface-muted transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-wait disabled:opacity-70"
+            className={toolbarIconRecipe({ className: "size-7 shrink-0 text-on-surface-muted disabled:cursor-wait" })}
             disabled={searching}
             onClick={commitCurrentDraft}
             title={submitLabel}
@@ -312,15 +315,15 @@ export function ToolbarViewToggle<Value extends ToolbarViewMode>({
   value: Value;
 }) {
   return (
-    <div aria-label={ariaLabel} className="flex h-10 shrink-0 items-center rounded-2xl border border-theme-control-border/70 bg-theme-control/68 p-1 shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md" role="group">
+    <div aria-label={ariaLabel} className={toolbarSurfaceRecipe({ tone: "container", className: "flex h-10 shrink-0 items-center gap-0.5 p-1" })} role="group">
       {options.map((option) => (
         <button
           aria-label={option.label}
           aria-pressed={value === option.value}
-          className={clsx(
-            "grid size-8 place-items-center rounded-lg text-on-surface-variant transition-colors hover:text-on-surface",
-            value === option.value ? "bg-theme-control-hover text-primary shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.18)]" : "hover:bg-theme-control-hover/70",
-          )}
+          className={toolbarIconRecipe({
+            active: value === option.value,
+            className: "size-8 text-on-surface-variant",
+          })}
           key={option.value}
           onClick={() => onChange(option.value)}
           title={option.label}
@@ -351,13 +354,13 @@ export function ToolbarActionButton({
   return (
     <button
       aria-label={label}
-      className={clsx(
-        "inline-flex h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-55",
-        text ? "min-w-[5.25rem] px-2.5 text-body-sm font-semibold" : "w-9",
-        primary
-          ? "theme-primary-gradient border border-primary/30 text-theme-button-primary-fg shadow-[0_10px_24px_rgb(var(--theme-glow)/0.18),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.24)] hover:-translate-y-0.5"
-          : "border border-theme-control-border/70 bg-theme-control/68 text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md hover:bg-theme-control-hover hover:text-on-surface",
-      )}
+      className={toolbarSurfaceRecipe({
+        tone: primary ? "primary" : "neutral",
+        className: clsx(
+          "h-10",
+          text ? "min-w-[5.25rem] px-2.5 text-body-sm font-semibold" : "w-9",
+        ),
+      })}
       disabled={disabled}
       data-toolbar-control="action"
       onClick={onClick}
@@ -383,7 +386,7 @@ export function ToolbarTextButton({
 }) {
   return (
     <button
-      className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-2xl border border-theme-control-border/70 bg-theme-control/68 px-2.5 text-body-sm text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md transition-all hover:-translate-y-0.5 hover:bg-theme-control-hover hover:text-on-surface active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-55"
+      className={toolbarSurfaceRecipe({ className: "h-10 gap-1.5 px-2.5" })}
       disabled={disabled}
       data-toolbar-control="text"
       onClick={onClick}
@@ -455,7 +458,7 @@ export function ToolbarMultiSelectDropdown<Value extends string>({
             <>
               <DropdownMenuPrimitive.Separator className="my-2 h-px bg-theme-control-border" />
               <button
-                className="h-8 w-full rounded-lg px-2 text-left text-body-sm text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-on-surface"
+                className="h-8 w-full rounded-xl px-2 text-left text-body-sm text-on-surface-variant transition-[background-color,color] duration-200 hover:bg-theme-control-hover hover:text-on-surface"
                 onClick={onClear}
                 type="button"
               >
@@ -504,7 +507,7 @@ export function ToolbarSingleSelectDropdown<Value extends string>({
               return (
                 <DropdownMenuPrimitive.Item
                   className={clsx(
-                    "grid h-9 cursor-default grid-cols-[minmax(0,1fr)_1rem] items-center gap-3 rounded-lg px-2 text-left text-body-sm outline-none transition-colors",
+                    "grid h-9 cursor-default grid-cols-[minmax(0,1fr)_1rem] items-center gap-3 rounded-xl px-2 text-left text-body-sm outline-none transition-[background-color,color] duration-200",
                     selected
                       ? "bg-theme-control-hover text-primary"
                       : "text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
@@ -540,7 +543,7 @@ export function ToolbarSortDirectionButton({
   return (
     <button
       aria-label={label}
-      className="inline-flex h-10 w-9 shrink-0 items-center justify-center rounded-2xl border border-theme-control-border/70 bg-theme-control/68 text-body-sm font-semibold text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md transition-colors hover:bg-theme-control-hover hover:text-on-surface"
+      className={toolbarSurfaceRecipe({ className: "h-10 w-9 px-0 text-body-sm font-semibold" })}
       data-toolbar-control="sort-direction"
       onClick={onClick}
       title={title}
@@ -567,13 +570,10 @@ const ToolbarDropdownButton = forwardRef<HTMLButtonElement, ToolbarDropdownButto
     <button
       {...buttonProps}
       aria-label={ariaLabel}
-      className={clsx(
-        "inline-flex h-10 max-w-[11.5rem] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-2xl border px-2.5 text-body-sm shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md transition-colors",
-        active
-          ? "border-primary/45 bg-theme-control-hover text-primary"
-          : "border-theme-control-border/70 bg-theme-control/68 text-theme-control-fg hover:bg-theme-control-hover hover:text-on-surface",
-        buttonProps.className,
-      )}
+      className={toolbarSurfaceRecipe({
+        tone: active ? "active" : "neutral",
+        className: clsx("h-10 max-w-[11.5rem] gap-1.5 px-2.5", buttonProps.className),
+      })}
       data-toolbar-control="dropdown"
       ref={ref}
       type="button"
@@ -625,7 +625,7 @@ function ToolbarDropdownCheckItem({
     <DropdownMenuPrimitive.CheckboxItem
       checked={checked}
       className={clsx(
-        "grid h-9 cursor-default grid-cols-[1rem_minmax(0,1fr)] items-center gap-3 rounded-xl px-2 text-body-sm outline-none transition-colors",
+        "grid h-9 cursor-default grid-cols-[1rem_minmax(0,1fr)] items-center gap-3 rounded-xl px-2 text-body-sm outline-none transition-[background-color,color] duration-200",
         checked ? "bg-theme-control-hover text-primary shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.16)]" : "text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
       )}
       onCheckedChange={onChange}

@@ -93,7 +93,7 @@ export function SourceBulkMountControls({
               aria-label={label}
               aria-pressed={allMounted}
               className={clsx(
-                "inline-flex min-w-0 items-center rounded-lg border text-left transition-all hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45",
+                "inline-flex min-w-0 items-center rounded-xl border text-left transition-[transform,opacity,box-shadow] duration-200 hover:-translate-y-px hover:opacity-90 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-45",
                 variant === "panel" ? "h-12 gap-2 px-2.5" : "h-8 gap-1.5 px-2",
                 allMounted && "shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.28)]",
               )}

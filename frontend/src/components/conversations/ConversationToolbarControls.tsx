@@ -18,6 +18,7 @@ import {
   isRedundantConversationCardKind,
   useConversationCardKindRegistry,
 } from "./ConversationCardKindRegistry";
+import { iconButtonRecipe } from "../../theme/recipes";
 
 export type ConversationSyncPhase =
   | "preparing"
@@ -55,10 +56,10 @@ export function ConversationBackgroundTaskIndicator({
   return (
     <section
       aria-live="polite"
-      className="aurora-task-indicator pointer-events-auto flex w-[min(24rem,calc(100vw-2.5rem))] items-center gap-3 rounded-xl border px-4 py-3 text-on-surface"
+      className="aurora-task-indicator pointer-events-auto flex w-[min(24rem,calc(100vw-2.5rem))] items-center gap-3 rounded-2xl border px-4 py-3 text-on-surface"
       role="status"
     >
-      <span className="aurora-task-indicator-icon grid size-9 shrink-0 place-items-center rounded-lg text-status-update">
+      <span className="aurora-task-indicator-icon grid size-9 shrink-0 place-items-center rounded-xl text-status-update">
         <RefreshCw className="animate-spin" size={17} />
       </span>
       <span className="min-w-0">
@@ -105,7 +106,7 @@ export function ConversationContentFilter({
         const label = definitions.get(type)?.label ?? conversationCardLabel(type, t);
         return (
           <label
-            className="inline-flex min-h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-1.5 text-body-sm text-on-surface-variant transition-colors hover:bg-theme-control-hover/70"
+            className="inline-flex min-h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-1.5 text-body-sm text-on-surface-variant transition-[background-color,color] duration-200 hover:bg-theme-control-hover/70"
             key={type}
           >
             <span className="size-2 rounded-full" style={{ backgroundColor: conversationCardColor(type, colors) }} />
@@ -158,7 +159,7 @@ export function ConversationSyncProgress({
   return (
     <section
       aria-live="polite"
-      className={`mt-4 rounded-xl border px-4 py-3 ${
+      className={`mt-4 rounded-2xl border px-4 py-3 ${
         failed
           ? "border-status-remove/40 bg-status-remove/10"
           : completedWithAdvice
@@ -220,7 +221,7 @@ export function ConversationSyncProgress({
           {onDismiss ? (
             <button
               aria-label={t("conversation.sync.dismiss")}
-              className="grid size-7 place-items-center rounded-lg text-on-surface-muted transition-colors hover:bg-theme-control-hover hover:text-on-surface"
+              className={iconButtonRecipe({ className: "size-7 text-on-surface-muted" })}
               onClick={onDismiss}
               title={t("conversation.sync.dismiss")}
               type="button"

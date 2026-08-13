@@ -535,7 +535,7 @@ function ConversationContentCard({
           t={t}
         />
         {canExpandResult ? (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-inherit bg-theme-card/35 px-3 py-2">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-inherit bg-theme-card/35 px-3 py-2">
             {canExpandDiff ? (
               <span className="text-code-sm text-on-surface-muted">
                 {t("conversation.content.diffSummaryFiles", { count: resultPresentation.summary.files.length })}
@@ -550,7 +550,7 @@ function ConversationContentCard({
             )}
             <button
               aria-expanded={expanded}
-              className="rounded-lg border border-theme-control-border bg-theme-control/80 px-2.5 py-1 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface"
+              className="rounded-xl border border-theme-control-border bg-theme-control/80 px-2.5 py-1 text-body-sm font-semibold text-theme-control-fg transition-[transform,background-color,border-color,color] duration-200 hover:-translate-y-px hover:bg-theme-control-hover hover:text-on-surface active:translate-y-0"
               onClick={() => setExpanded((current) => !current)}
               type="button"
             >
@@ -563,7 +563,7 @@ function ConversationContentCard({
           </div>
         ) : null}
         {translatedText ? (
-          <div className="mt-3 rounded-lg border border-inherit bg-theme-card/45 px-3 py-3">
+          <div className="mt-3 rounded-xl border border-inherit bg-theme-card/45 px-3 py-3">
             <div className="mb-2 text-label-caps text-on-surface-muted">
               {t("conversation.content.translation", { language: translationTargetLabel })}
             </div>
@@ -571,7 +571,7 @@ function ConversationContentCard({
           </div>
         ) : null}
         {translationError ? (
-          <div className="mt-3 rounded-lg border border-status-remove/35 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove" role="alert">
+          <div className="mt-3 rounded-xl border border-status-remove/35 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove" role="alert">
             {t("conversation.content.translationFailed", { message: translationError })}
           </div>
         ) : null}
@@ -648,7 +648,7 @@ function ConversationStandardCardBody({
       if (block.format === "markdown") {
         return (
           <div
-            className="rounded-lg border border-inherit bg-theme-card/45 px-3 py-3"
+            className="rounded-xl border border-inherit bg-theme-card/45 px-3 py-3"
             data-result-format="markdown"
           >
             <MarkdownContent value={text} />
@@ -656,7 +656,7 @@ function ConversationStandardCardBody({
         );
       }
       return (
-        <pre className="max-h-[38rem] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-inherit bg-theme-card/45 p-3 text-code-sm leading-6 text-on-surface">
+        <pre className="max-h-[38rem] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-inherit bg-theme-card/45 p-3 text-code-sm leading-6 text-on-surface">
           <code>{text}</code>
         </pre>
       );
@@ -726,7 +726,7 @@ function ConversationResultBody({
 
   if (presentation.type === "success") {
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-status-create/30 bg-status-create/10 px-3 py-2.5 text-body-sm text-status-create" data-result-summary="success">
+      <div className="flex items-center gap-2 rounded-xl border border-status-create/30 bg-status-create/10 px-3 py-2.5 text-body-sm text-status-create" data-result-summary="success">
         <CheckCircle2 aria-hidden="true" size={16} />
         <span>{t("conversation.content.resultSuccess")}</span>
         {block.exitCode != null ? <span>· {t("conversation.content.exitCode", { code: block.exitCode })}</span> : null}
@@ -736,13 +736,13 @@ function ConversationResultBody({
 
   return (
     <div className="grid gap-2" data-result-summary="failure">
-      <div className="flex items-center gap-2 rounded-lg border border-status-remove/30 bg-status-remove/10 px-3 py-2.5 text-body-sm text-status-remove">
+      <div className="flex items-center gap-2 rounded-xl border border-status-remove/30 bg-status-remove/10 px-3 py-2.5 text-body-sm text-status-remove">
         <XCircle aria-hidden="true" size={16} />
         <span>{t("conversation.content.resultFailed")}</span>
         {block.exitCode != null ? <span>· {t("conversation.content.exitCode", { code: block.exitCode })}</span> : null}
       </div>
       {text ? (
-        <pre className="max-h-[24rem] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-status-remove/20 bg-status-remove/[0.06] p-3 text-code-sm leading-6 text-on-surface">
+        <pre className="max-h-[24rem] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-status-remove/20 bg-status-remove/[0.06] p-3 text-code-sm leading-6 text-on-surface">
           <code>{text}</code>
         </pre>
       ) : null}
@@ -768,7 +768,7 @@ function FileChangeResultSummary({
         </span>
       </div>
       {summary.files.length > 0 ? (
-        <div className="grid gap-1.5 overflow-hidden rounded-lg border border-theme-card-border/55 bg-theme-card/35 p-1.5">
+        <div className="grid gap-1.5 overflow-hidden rounded-xl border border-theme-card-border/55 bg-theme-card/35 p-1.5">
           {summary.files.map((file) => (
             <div className="flex items-center gap-3 rounded-md bg-theme-card-header/35 px-3 py-2 font-mono text-code-sm" data-diff-summary-file={file.path} key={file.path}>
               <span className="w-4 shrink-0 text-center text-on-surface-muted">{fileStatusMark(file.status, file.binary)}</span>
@@ -779,7 +779,7 @@ function FileChangeResultSummary({
           ))}
         </div>
       ) : (
-        <div className="rounded-lg border border-theme-card-border bg-theme-card/45 px-3 py-2 text-code-sm text-on-surface-muted">
+        <div className="rounded-xl border border-theme-card-border bg-theme-card/45 px-3 py-2 text-code-sm text-on-surface-muted">
           {t("conversation.content.diffSummaryUnavailable")}
         </div>
       )}
@@ -812,7 +812,7 @@ function LocalPathCardBody({ label, path, t }: { label: string; path: string; t:
     <div className="grid gap-2">
       <button
         aria-label={revealLabel}
-        className="flex min-w-0 items-center rounded-lg border border-inherit bg-theme-card/45 px-3 py-2.5 text-left font-mono text-code-sm text-primary transition-colors hover:bg-theme-control hover:text-primary-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
+        className="flex min-w-0 items-center rounded-xl border border-inherit bg-theme-card/45 px-3 py-2.5 text-left font-mono text-code-sm text-primary transition-[transform,background-color,border-color,color] duration-200 hover:-translate-y-px hover:bg-theme-control hover:text-primary-strong active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
         onClick={() => void handleReveal()}
         title={path}
         type="button"

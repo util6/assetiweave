@@ -446,7 +446,7 @@ export function PromptOverviewPage({
       />
 
       {actionError ? (
-        <div className="rounded-lg border border-status-remove/35 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove" role="alert">
+        <div className="rounded-xl border border-status-remove/35 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove" role="alert">
           {actionError}
         </div>
       ) : null}
@@ -915,7 +915,7 @@ function PromptStageCard({
           {editable && activeSurface ? (
             <textarea
               aria-label={face === "back" ? t("prompt.optimized.label") : t("prompt.composer.eyebrow")}
-              className="min-h-0 flex-1 resize-none rounded-lg border border-theme-control-border bg-theme-control/45 px-3 py-2 font-mono text-[0.95rem] leading-7 text-on-surface outline-none placeholder:text-outline focus:border-primary/60"
+              className="min-h-0 flex-1 resize-none rounded-xl border border-theme-control-border bg-theme-control/45 px-3 py-2 font-mono text-[0.95rem] leading-7 text-on-surface outline-none placeholder:text-outline focus:border-primary/60"
               onChange={(event) => handleDraftContentChange(event.currentTarget.value)}
               onPaste={(event) => {
                 void handlePromptImagePaste(event);
@@ -929,7 +929,7 @@ function PromptStageCard({
             </pre>
           ) : (
             <button
-              className="grid min-h-0 flex-1 place-items-center rounded-xl border border-dashed border-theme-card-border bg-theme-control/35 px-4 text-center text-body-sm text-on-surface-muted transition-colors hover:border-primary/45 hover:bg-theme-control/60 hover:text-on-surface disabled:pointer-events-none"
+              className="grid min-h-0 flex-1 place-items-center rounded-xl border border-dashed border-theme-card-border bg-theme-control/35 px-4 text-center text-body-sm text-on-surface-muted transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:-translate-y-px hover:border-primary/45 hover:bg-theme-control/60 hover:text-on-surface active:translate-y-0 disabled:pointer-events-none"
               disabled={!activeSurface}
               onClick={() => setEditable(true)}
               type="button"
@@ -947,7 +947,7 @@ function PromptStageCard({
             />
           ) : null}
           {face === "front" && activeNote?.translatedText ? (
-            <div className="max-h-24 overflow-auto rounded-lg border border-theme-control-border bg-theme-control/70 px-3 py-2">
+            <div className="max-h-24 overflow-auto rounded-xl border border-theme-control-border bg-theme-control/70 px-3 py-2">
               <div className="mb-1 text-label-caps uppercase text-outline">
                 {t("prompt.translation.result", { language: translationTarget })}
               </div>
@@ -972,7 +972,7 @@ function PromptStageCard({
           {faceAttachments.length > 0 ? (
             <button
               aria-label={copyImagesLabel}
-              className="inline-flex h-12 min-w-0 items-center justify-center gap-2 border-r border-theme-card-border px-2 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45"
+              className="inline-flex h-12 min-w-0 items-center justify-center gap-2 border-r border-theme-card-border px-2 text-body-sm font-semibold text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45"
               disabled={!activeSurface || !activeNote}
               onClick={() => onCopyActive("images", faceDisplayContent, faceAttachments)}
               type="button"
@@ -986,7 +986,7 @@ function PromptStageCard({
           ) : null}
           <button
             aria-label={copyTextLabel}
-            className="inline-flex h-12 items-center justify-center gap-2 border-r border-theme-card-border text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45"
+            className="inline-flex h-12 items-center justify-center gap-2 border-r border-theme-card-border text-body-sm font-semibold text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45"
             disabled={!activeSurface || !activeNote || !faceDisplayContent}
             onClick={() => onCopyActive("text", faceDisplayContent, faceAttachments)}
             type="button"
@@ -1002,7 +1002,7 @@ function PromptStageCard({
           <button
             aria-label={saveLabel}
             aria-pressed={editable && activeSurface}
-            className="inline-flex h-12 min-w-0 items-center justify-center gap-2 px-2 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45"
+            className="inline-flex h-12 min-w-0 items-center justify-center gap-2 px-2 text-body-sm font-semibold text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45"
             disabled={!activeSurface || (editable && !canSave)}
             onClick={handleSaveToggle}
             type="button"
@@ -1101,10 +1101,10 @@ function PromptStageCard({
               <Clock size={14} />
               <span className="truncate">{formatDateTime(updatedAt)}</span>
             </span>
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-theme-control-border bg-theme-control/92 p-1 shadow-[0_10px_26px_rgb(var(--theme-panel-shadow)/0.2)]">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-theme-control-border bg-theme-control/92 p-1 shadow-[0_10px_26px_rgb(var(--theme-panel-shadow)/0.2)]">
               <button
                 aria-label="Previous prompt card"
-                className="grid size-7 place-items-center rounded-md text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-35"
+                className="grid size-7 place-items-center rounded-md text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-35"
                 disabled={!canSwitchNotes}
                 onClick={handlePreviousNote}
                 type="button"
@@ -1116,7 +1116,7 @@ function PromptStageCard({
               </span>
               <button
                 aria-label="Next prompt card"
-                className="grid size-7 place-items-center rounded-md text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-35"
+                className="grid size-7 place-items-center rounded-md text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-35"
                 disabled={!canSwitchNotes}
                 onClick={handleNextNote}
                 type="button"
@@ -1239,7 +1239,7 @@ function PromptInfoDialog({
       title={t("prompt.editDialog.title")}
       footer={
         <button
-          className="inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-body-sm font-semibold text-theme-button-primary-fg transition-all theme-primary-gradient"
+          className="inline-flex h-9 items-center justify-center gap-2 rounded-xl px-3 text-body-sm font-semibold text-theme-button-primary-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:-translate-y-px active:translate-y-0 theme-primary-gradient"
           onClick={() =>
             onSubmit({
               attachments: note.attachments,
@@ -1277,7 +1277,7 @@ function PromptInfoDialog({
           <label className="grid min-w-0 gap-1.5">
             <span className="text-label-caps uppercase text-outline">{t("prompt.field.session")}</span>
             <input
-              className="h-9 min-w-0 rounded-lg border border-theme-control-border bg-theme-control/70 px-3 text-code-sm text-on-surface outline-none placeholder:text-outline focus:border-primary/60"
+              className="h-9 min-w-0 rounded-xl border border-theme-control-border bg-theme-control/70 px-3 text-code-sm text-on-surface outline-none placeholder:text-outline focus:border-primary/60"
               onChange={(event) => updateDraft("sessionName", event.currentTarget.value)}
               placeholder={t("prompt.composer.sessionPlaceholder")}
               value={draft.sessionName}
@@ -1352,7 +1352,7 @@ function PromptInfoDialog({
               value={tagInput}
             />
             <button
-              className="inline-flex h-11 min-w-[5.75rem] items-center justify-center gap-2 rounded-xl border border-theme-control-border bg-theme-control/45 px-4 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45"
+              className="inline-flex h-11 min-w-[5.75rem] items-center justify-center gap-2 rounded-xl border border-theme-control-border bg-theme-control/45 px-4 text-body-sm font-semibold text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45"
               disabled={!canAddTag}
               onClick={addDraftTag}
               type="button"
@@ -1383,7 +1383,7 @@ function PromptImageAttachmentStrip({
   return (
     <div
       aria-label={label}
-      className="flex max-h-16 gap-1.5 overflow-x-auto overflow-y-hidden rounded-lg border border-theme-control-border bg-theme-control/35 p-1.5"
+      className="flex max-h-16 gap-1.5 overflow-x-auto overflow-y-hidden rounded-xl border border-theme-control-border bg-theme-control/35 p-1.5"
     >
       {attachments.map((attachment) => (
         <figure
@@ -1598,7 +1598,7 @@ function PromptCardActionButton({
     <button
       aria-label={label}
       className={clsx(
-        "inline-flex h-8 items-center justify-center rounded-lg border text-body-sm transition-colors disabled:cursor-not-allowed disabled:opacity-45",
+        "inline-flex h-8 items-center justify-center rounded-xl border text-body-sm transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:-translate-y-px active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-45",
         showLabel ? "gap-1.5 px-2" : "w-8 px-0",
         tone === "danger"
           ? "border-status-remove/35 bg-status-remove/10 text-status-remove hover:bg-status-remove/15"

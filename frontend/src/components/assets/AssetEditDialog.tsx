@@ -128,7 +128,7 @@ export function AssetEditDialog({
           <label className="grid gap-1.5">
             <span className="text-body-sm font-medium text-on-surface-variant">{t("asset.description")}</span>
             <textarea
-              className="min-h-28 resize-y rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 text-body-sm text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-h-28 resize-y rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 text-body-sm text-on-surface outline-none transition-[background-color,border-color,box-shadow,color] duration-200 placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={busy}
               onChange={(event) => setDescription(event.target.value)}
               placeholder={t("asset.editDialog.descriptionPlaceholder")}
@@ -142,7 +142,7 @@ export function AssetEditDialog({
               <p className="mt-1 text-body-sm text-on-surface-variant">{t("asset.editDialog.groupsHelp")}</p>
             </div>
             {groups.length === 0 ? (
-              <div className="rounded-lg border border-theme-card-border bg-theme-card/70 px-3 py-4 text-body-sm text-on-surface-variant">
+              <div className="rounded-xl border border-theme-card-border bg-theme-card/70 px-3 py-4 text-body-sm text-on-surface-variant">
                 {t("asset.editDialog.noGroups")}
               </div>
             ) : (
@@ -166,7 +166,7 @@ export function AssetEditDialog({
               <p className="mt-1 text-body-sm text-on-surface-variant">{t("asset.editDialog.mountsHelp")}</p>
             </div>
             {profiles.length === 0 ? (
-              <div className="rounded-lg border border-theme-card-border bg-theme-card/70 px-3 py-4 text-body-sm text-on-surface-variant">
+              <div className="rounded-xl border border-theme-card-border bg-theme-card/70 px-3 py-4 text-body-sm text-on-surface-variant">
                 {t("asset.editDialog.noProfiles")}
               </div>
             ) : (
@@ -212,7 +212,7 @@ function AssetGroupMembershipRow({
   const canAddManual = !manualMember && !ruleMatched;
 
   return (
-    <div className="grid min-h-[72px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-theme-card-border bg-theme-card/70 px-3 py-2 max-[720px]:grid-cols-1">
+    <div className="grid min-h-[72px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-theme-card-border bg-theme-card/70 px-3 py-2 max-[720px]:grid-cols-1">
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="truncate font-mono text-code-md font-semibold text-on-surface">{group.group.name}</span>
@@ -254,7 +254,7 @@ function AssetProfileMountRow({
   const issue = displayState === "conflict" || displayState === "broken";
 
   return (
-    <div className="grid min-h-[72px] grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 rounded-lg border border-theme-card-border bg-theme-card/70 px-3 py-2 max-[720px]:grid-cols-1">
+    <div className="grid min-h-[72px] grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 rounded-xl border border-theme-card-border bg-theme-card/70 px-3 py-2 max-[720px]:grid-cols-1">
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="truncate font-mono text-code-md font-semibold text-on-surface">{profile.name}</span>

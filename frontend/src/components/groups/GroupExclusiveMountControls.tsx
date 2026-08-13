@@ -53,7 +53,7 @@ export function GroupExclusiveMountControls({
             aria-label={allSelected ? t("group.exclusive.clearAll") : t("group.exclusive.selectAll")}
             aria-pressed={allSelected}
             className={clsx(
-              "grid size-9 place-items-center rounded-lg border text-primary transition-colors disabled:cursor-not-allowed disabled:opacity-45",
+              "grid size-9 place-items-center rounded-xl border text-primary transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:-translate-y-px active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-45",
               allSelected || partiallySelected
                 ? "border-primary/55 bg-primary/15"
                 : "border-theme-control-border bg-theme-control hover:border-theme-nav-active-border hover:bg-theme-control-hover",
@@ -71,7 +71,7 @@ export function GroupExclusiveMountControls({
           <span className="rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 font-mono text-body-sm text-primary">
             {t("group.exclusive.selectedSkills", { count: selectedSkillCount })}
           </span>
-          <div className="flex items-center gap-1 rounded-lg border border-theme-control-border bg-theme-control p-1">
+          <div className="flex items-center gap-1 rounded-xl border border-theme-control-border bg-theme-control p-1">
             <ModeChoice
               checked={mode === "exclusive"}
               disabled={busy}
@@ -97,7 +97,7 @@ export function GroupExclusiveMountControls({
               <button
                 aria-label={targetActionLabel(mode, shortcut.profileName, t)}
                 className={clsx(
-                  "relative grid size-9 place-items-center overflow-hidden rounded-lg border text-[13px] font-bold transition-all hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40",
+                  "relative grid size-9 place-items-center overflow-hidden rounded-xl border text-[13px] font-bold transition-[transform,opacity,box-shadow] duration-200 hover:-translate-y-px hover:opacity-100 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-40",
                 )}
                 disabled={busy || selectedSkillCount === 0}
                 key={shortcut.profileId}
@@ -136,7 +136,7 @@ function ModeChoice({
   return (
     <label
       className={clsx(
-        "inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-body-sm font-semibold transition-colors",
+        "inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-body-sm font-semibold transition-[background-color,color,box-shadow] duration-200",
         checked ? "bg-primary/15 text-primary" : "text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
         disabled && "cursor-not-allowed opacity-45",
       )}

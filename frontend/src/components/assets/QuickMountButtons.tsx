@@ -39,7 +39,7 @@ export function QuickMountButtons({
         const button = (
           <button
             className={clsx(
-              "relative grid size-8 place-items-center overflow-hidden rounded-lg border text-[13px] font-bold transition-all",
+              "relative grid size-8 place-items-center overflow-hidden rounded-xl border text-[13px] font-bold transition-[transform,opacity,box-shadow,background-color,border-color] duration-200 hover:-translate-y-px active:translate-y-0",
               mounted ? "shadow-glow ring-1 ring-theme-nav-active-border/30" : "opacity-60 hover:opacity-100",
               (mountState === "conflict" || mountState === "broken") && "opacity-90",
               disabled && "pointer-events-none cursor-not-allowed opacity-40 hover:opacity-40",

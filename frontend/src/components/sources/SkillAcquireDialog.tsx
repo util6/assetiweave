@@ -191,7 +191,7 @@ export function SkillAcquireDialog({
             </span>
           )}
           {searchWarnings.length > 0 && (
-            <div className="mt-3 rounded-lg border border-status-conflict/30 bg-status-conflict/10 p-3 text-body-sm text-on-surface-variant">
+            <div className="mt-3 rounded-xl border border-status-conflict/30 bg-status-conflict/10 p-3 text-body-sm text-on-surface-variant">
               <div className="flex items-center gap-2 font-medium text-on-surface">
                 <AlertTriangle size={15} />
                 <span>{t("skillAcquire.warning.title")}</span>
@@ -283,7 +283,7 @@ export function SkillAcquireDialog({
               />
             </Field>
 
-            <div className="rounded-lg border border-status-conflict/30 bg-status-conflict/10 p-3 text-body-sm text-on-surface-variant">
+            <div className="rounded-xl border border-status-conflict/30 bg-status-conflict/10 p-3 text-body-sm text-on-surface-variant">
               <div className="flex items-center gap-2 font-medium text-on-surface">
                 <AlertTriangle size={15} />
                 <span>{t("skillAcquire.security.title")}</span>
@@ -313,7 +313,7 @@ function CandidateRow({
   const { t } = useI18n();
 
   return (
-    <article className="grid gap-2 rounded-lg border border-theme-control-border bg-theme-control/75 p-3">
+    <article className="grid gap-2 rounded-xl border border-theme-control-border bg-theme-control/75 p-3">
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm font-semibold text-on-surface">
@@ -351,14 +351,14 @@ function AcquirePlan({ plan }: { plan: SkillAcquireResult | null }) {
 
   if (!plan) {
     return (
-      <div className="rounded-lg border border-dashed border-theme-card-border bg-theme-card/40 p-4 text-body-sm text-on-surface-variant">
+      <div className="rounded-xl border border-dashed border-theme-card-border bg-theme-card/40 p-4 text-body-sm text-on-surface-variant">
         {t("skillAcquire.preview.empty")}
       </div>
     );
   }
 
   return (
-    <section className="grid gap-2 rounded-lg border border-theme-card-border bg-theme-card/65 p-3">
+    <section className="grid gap-2 rounded-xl border border-theme-card-border bg-theme-card/65 p-3">
       <div className="flex items-center gap-2 text-label-caps uppercase text-outline">
         <CheckCircle2 size={15} />
         <span>{t("skillAcquire.preview.title")}</span>

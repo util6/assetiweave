@@ -36,7 +36,7 @@ export function AssetMountCard({
     <button
       aria-pressed={mounted}
       className={clsx(
-        "group relative min-h-[76px] overflow-hidden rounded-xl border px-3 py-2.5 text-left transition-all",
+        "group relative min-h-[76px] overflow-hidden rounded-xl border px-3 py-2.5 text-left transition-[transform,background-color,border-color,box-shadow] duration-200",
         "bg-theme-control/80 hover:-translate-y-px hover:bg-theme-control-hover/80",
         mounted ? "hover:brightness-[1.03]" : mountCardStateClass(displayState),
         !supported && "opacity-60",

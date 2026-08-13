@@ -358,7 +358,7 @@ export function ResizableColumns({
       >
         <button
           aria-label={scrollLeftLabel}
-          className="grid size-6 shrink-0 place-items-center rounded-md text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-default disabled:opacity-35"
+          className="grid size-6 shrink-0 place-items-center rounded-xl text-on-surface-variant transition-[transform,background-color,color] duration-200 hover:-translate-y-px hover:bg-theme-control-hover hover:text-on-surface active:translate-y-0 disabled:cursor-default disabled:opacity-35"
           disabled={scrollMetrics.scrollLeft <= 0}
           onClick={() => scrollColumns(-SCROLL_BUTTON_STEP)}
           title={scrollLeftLabel}
@@ -397,7 +397,7 @@ export function ResizableColumns({
         </div>
         <button
           aria-label={scrollRightLabel}
-          className="grid size-6 shrink-0 place-items-center rounded-md text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-default disabled:opacity-35"
+          className="grid size-6 shrink-0 place-items-center rounded-xl text-on-surface-variant transition-[transform,background-color,color] duration-200 hover:-translate-y-px hover:bg-theme-control-hover hover:text-on-surface active:translate-y-0 disabled:cursor-default disabled:opacity-35"
           disabled={scrollMetrics.scrollLeft >= maxScroll}
           onClick={() => scrollColumns(SCROLL_BUTTON_STEP)}
           title={scrollRightLabel}
