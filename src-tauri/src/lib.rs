@@ -12,14 +12,24 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+const APP_CLOSE_REQUESTED_EVENT: &str = "app-close-requested";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     backend::builtin_skills::install_builtin_skills()
         .expect("failed to install AssetIWeave system Skills");
     let db_path = app_db_path().expect("failed to resolve AssetIWeave database path");
+    let conversation_full_sync_on_startup_enabled =
+        match backend::app_settings::conversation_full_sync_on_startup_enabled() {
+            Ok(enabled) => enabled,
+            Err(error) => {
+                eprintln!("failed to read Conversation startup sync setting: {error}");
+                true
+            }
+        };
     let conversation_payload_policy_reparse_required = {
         let service = AppService::open_with_db_path(db_path.clone())
             .expect("failed to initialize AssetIWeave database");
@@ -43,9 +53,6 @@ pub fn run() {
     if let Err(error) = write_startup_log() {
         eprintln!("failed to write AssetIWeave startup log: {error}");
     }
-    let window_shutdown_db_path = db_path.clone();
-    let app_shutdown_db_path = db_path.clone();
-
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -95,11 +102,23 @@ pub fn run() {
                                     eprintln!("failed to close AssetIWeave after confirmation: {error}");
                                 }
                             }
-                        });
+                    });
                     return;
                 }
 
-                sync_before_close_once(&window_shutdown_db_path, &state.shutdown_sync_done);
+                api.prevent_close();
+                if state.exit_prompt_open.swap(true, Ordering::SeqCst) {
+                    return;
+                }
+                if let Err(error) = window.emit(APP_CLOSE_REQUESTED_EVENT, ()) {
+                    eprintln!("failed to notify frontend about close request: {error}");
+                    state.exit_prompt_open.store(false, Ordering::SeqCst);
+                    state.allow_close.store(true, Ordering::SeqCst);
+                    state.allow_exit.store(true, Ordering::SeqCst);
+                    if let Err(close_error) = window.close() {
+                        eprintln!("failed to close AssetIWeave after close prompt notification error: {close_error}");
+                    }
+                }
             }
         })
         .manage(AppState {
@@ -114,7 +133,7 @@ pub fn run() {
         .invoke_handler(adapters::tauri::command_handler())
         .build(tauri::generate_context!())
         .expect("error while running AssetIWeave");
-    if conversation_payload_policy_reparse_required {
+    if conversation_full_sync_on_startup_enabled && conversation_payload_policy_reparse_required {
         let state = app.state::<AppState>();
         let params = backend::application::ConversationSyncParams {
             source_id: None,
@@ -169,20 +188,21 @@ pub fn run() {
                 return;
             }
 
-            sync_before_close_once(&app_shutdown_db_path, &state.shutdown_sync_done);
+            api.prevent_exit();
+            if state.exit_prompt_open.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            if let Err(error) = app_handle.emit(APP_CLOSE_REQUESTED_EVENT, ()) {
+                eprintln!("failed to notify frontend about app exit request: {error}");
+                state.exit_prompt_open.store(false, Ordering::SeqCst);
+                state.allow_exit.store(true, Ordering::SeqCst);
+                app_handle.exit(0);
+            }
         }
     });
 }
 
-fn sync_before_close_once(db_path: &std::path::Path, shutdown_sync_done: &AtomicBool) {
-    if shutdown_sync_done.swap(true, Ordering::SeqCst) {
-        return;
-    }
-
-    sync_before_close(db_path);
-}
-
-fn sync_before_close(db_path: &std::path::Path) {
+pub(crate) fn sync_before_close(db_path: &std::path::Path, backup_database: bool) {
     match AppService::open_with_db_path(db_path.to_path_buf()) {
         Ok(service) => {
             if let Err(error) = service.refresh_asset_mount_statuses(None) {
@@ -194,20 +214,22 @@ fn sync_before_close(db_path: &std::path::Path) {
         }
     }
 
-    match backup_database_from_settings(db_path) {
-        Ok(report) => {
-            if !report.errors.is_empty() {
-                let errors = report
-                    .errors
-                    .iter()
-                    .map(|error| format!("{}: {}", error.directory, error.message))
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                eprintln!("AssetIWeave database backup completed with warnings: {errors}");
+    if backup_database {
+        match backup_database_from_settings(db_path) {
+            Ok(report) => {
+                if !report.errors.is_empty() {
+                    let errors = report
+                        .errors
+                        .iter()
+                        .map(|error| format!("{}: {}", error.directory, error.message))
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    eprintln!("AssetIWeave database backup completed with warnings: {errors}");
+                }
             }
-        }
-        Err(error) => {
-            eprintln!("failed to back up AssetIWeave database before close: {error}");
+            Err(error) => {
+                eprintln!("failed to back up AssetIWeave database before close: {error}");
+            }
         }
     }
 }

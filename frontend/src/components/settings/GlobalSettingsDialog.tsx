@@ -1233,6 +1233,23 @@ export function GlobalSettingsDialog({
 
             {activePanel === "conversations.sessions" && (
               <SettingsGroup>
+                <SettingRow icon={<RefreshCw size={18} />} label={t("settings.conversation.autoFullSyncOnStartup")}>
+                  <div className="flex w-[min(38rem,52vw)] items-center justify-between gap-4">
+                    <p className="text-body-sm text-on-surface-variant">
+                      {t("settings.conversation.autoFullSyncOnStartupHint")}
+                    </p>
+                    <SwitchControl
+                      checked={settings.conversations.autoFullSyncOnStartup}
+                      label={t("settings.conversation.autoFullSyncOnStartup")}
+                      onChange={(checked) =>
+                        updateSetting("conversations", {
+                          ...settings.conversations,
+                          autoFullSyncOnStartup: checked,
+                        })
+                      }
+                    />
+                  </div>
+                </SettingRow>
                 <SettingRow icon={<RefreshCw size={18} />} label={t("settings.conversation.fullSyncTitle")}>
                   <div className="flex w-[min(38rem,52vw)] flex-col gap-2 py-1">
                     <p className="text-body-sm leading-6 text-on-surface-variant">

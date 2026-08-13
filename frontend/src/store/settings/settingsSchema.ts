@@ -70,6 +70,7 @@ export const RESULT_PREVIEW_LINE_LIMIT_MIN = 5;
 export const RESULT_PREVIEW_LINE_LIMIT_MAX = 20;
 export const RESULT_PREVIEW_LINE_LIMIT_STEP = 1;
 export const DEFAULT_RESULT_PREVIEW_LINE_LIMIT = 10;
+export const DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP = true;
 export const TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH = 80;
 export const TRANSLATION_MODEL_MAX_LENGTH = 120;
 export const TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH = 4000;
@@ -103,6 +104,7 @@ export interface TypographySettings {
 }
 
 export interface ConversationPageSettings {
+  autoFullSyncOnStartup: boolean;
   contentFontFamily: FontFamilySetting;
   contentCardColors: ConversationContentCardColorSettings;
   contentFontSize: number;
@@ -209,6 +211,7 @@ export const defaultSettings: AppSettings = {
     interfaceFontFamily: createFontFamilySetting("system"),
   },
   conversations: {
+    autoFullSyncOnStartup: DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP,
     codeFontSize: 13,
     contentCardColors: DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
     contentFontFamily: createFontFamilySetting("system"),
@@ -323,6 +326,10 @@ function normalizeConversationPageSettings(
 ): ConversationPageSettings {
   const stored = isRecord(value) ? (value as Partial<ConversationPageSettings>) : {};
   return {
+    autoFullSyncOnStartup:
+      typeof stored.autoFullSyncOnStartup === "boolean"
+        ? stored.autoFullSyncOnStartup
+        : defaultSettings.conversations.autoFullSyncOnStartup,
     codeFontSize: normalizeFontSize(stored.codeFontSize, typography.codeFontSize),
     contentCardColors: normalizeContentCardColors(stored.contentCardColors),
     contentFontFamily: normalizeFontFamilySetting(

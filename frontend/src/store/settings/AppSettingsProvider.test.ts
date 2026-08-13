@@ -3,6 +3,7 @@ import {
   COLUMN_MIN_WIDTH_MAX,
   COLUMN_MIN_WIDTH_MIN,
   DEFAULT_COLUMN_MIN_WIDTH,
+  DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
   RESULT_PREVIEW_LINE_LIMIT_MAX,
@@ -16,6 +17,17 @@ import {
 } from "./settingsSchema";
 
 describe("AppSettingsProvider", () => {
+  it("enables startup full conversation sync for older stored settings", () => {
+    expect(defaultSettings.conversations.autoFullSyncOnStartup).toBe(DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP);
+    expect(normalizeStoredSettings({}).conversations.autoFullSyncOnStartup).toBe(true);
+  });
+
+  it("preserves an explicit startup full conversation sync preference", () => {
+    expect(normalizeStoredSettings({
+      conversations: { autoFullSyncOnStartup: false },
+    }).conversations.autoFullSyncOnStartup).toBe(false);
+  });
+
   it("uses the default column minimum width for older stored settings", () => {
     expect(normalizeStoredSettings({ density: "compact" }).columnMinWidth).toBe(DEFAULT_COLUMN_MIN_WIDTH);
   });

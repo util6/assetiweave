@@ -32,6 +32,12 @@ const zh = {
   "common.delete": "删除",
   "common.saving": "保存中...",
 
+  "app.close.title": "关闭 AssetIWeave",
+  "app.close.message": "请选择关闭应用，或将应用最小化到后台。",
+  "app.close.backupDatabase": "关闭前备份数据库",
+  "app.close.minimize": "最小化",
+  "app.close.confirm": "确认关闭",
+
   "layout.resizeColumns": "调整分栏宽度",
   "layout.scrollColumns": "水平浏览分栏",
   "layout.scrollColumnsLeft": "向左浏览分栏",
@@ -556,6 +562,8 @@ const zh = {
   "settings.cli.repair": "修复",
   "settings.cli.installing": "安装中...",
   "settings.conversation.sessionBrowserFont": "Session 浏览字体",
+  "settings.conversation.autoFullSyncOnStartup": "启动时自动全量同步",
+  "settings.conversation.autoFullSyncOnStartupHint": "应用启动时自动重新解析可发现的对话记录；关闭后仍可在此处手动执行全量同步。",
   "settings.conversation.fullSyncTitle": "全量重新解析",
   "settings.conversation.fullSyncDescription": "使用当前解析器重新读取所有来源中仍可发现的 Session 与网页记录。来源已删除或归档的本地历史不会被清除。日常同步仍使用增量模式。",
   "settings.conversation.fullSyncAction": "开始全量同步",
@@ -1482,6 +1490,12 @@ const en: Record<TranslationKey, string> = {
   "common.delete": "Delete",
   "common.saving": "Saving...",
 
+  "app.close.title": "Close AssetIWeave",
+  "app.close.message": "Choose whether to close the app or minimize it to the background.",
+  "app.close.backupDatabase": "Back up the database before closing",
+  "app.close.minimize": "Minimize",
+  "app.close.confirm": "Confirm close",
+
   "layout.resizeColumns": "Resize columns",
   "layout.scrollColumns": "Scroll columns horizontally",
   "layout.scrollColumnsLeft": "Scroll columns left",
@@ -2006,6 +2020,8 @@ const en: Record<TranslationKey, string> = {
   "settings.cli.repair": "Repair",
   "settings.cli.installing": "Installing...",
   "settings.conversation.sessionBrowserFont": "Session browser font",
+  "settings.conversation.autoFullSyncOnStartup": "Automatic full sync on startup",
+  "settings.conversation.autoFullSyncOnStartupHint": "Automatically reparse discoverable conversations when the app starts. You can still run a full sync manually when this is off.",
   "settings.conversation.fullSyncTitle": "Full reparse",
   "settings.conversation.fullSyncDescription": "Use the current parsers to reread every session and web record still discoverable at its source. Local history whose source was deleted or archived remains intact. Routine sync continues to use incremental mode.",
   "settings.conversation.fullSyncAction": "Start full sync",

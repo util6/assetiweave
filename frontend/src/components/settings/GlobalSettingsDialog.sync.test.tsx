@@ -7,6 +7,7 @@ import { defaultSettings } from "../../store/settings/settingsSchema";
 import { GlobalSettingsDialog } from "./GlobalSettingsDialog";
 
 const startSyncMock = vi.hoisted(() => vi.fn());
+const updateSettingMock = vi.hoisted(() => vi.fn());
 const conversationSyncState = vi.hoisted(() => ({ tasks: [] as Array<Record<string, unknown>> }));
 
 vi.mock("../../app/backgroundTasks/ConversationSyncProvider", () => ({
@@ -35,7 +36,7 @@ vi.mock("../../store/settings/AppSettingsProvider", async (importOriginal) => {
         conversationAdapterDir: "/tmp/adapters",
         defaultDataBackupDir: "/tmp/backups",
       },
-      updateSetting: vi.fn(),
+      updateSetting: updateSettingMock,
     }),
   };
 });
@@ -63,6 +64,7 @@ vi.mock("../../services/cardTranslation", () => ({
 describe("GlobalSettingsDialog full conversation sync", () => {
   beforeEach(() => {
     conversationSyncState.tasks = [];
+    updateSettingMock.mockReset();
     startSyncMock.mockReset().mockResolvedValue({
       id: "sync-full",
       status: "running",
@@ -149,5 +151,28 @@ describe("GlobalSettingsDialog full conversation sync", () => {
     });
     expect(runningButton.className).toContain("disabled:opacity-100");
     expect(runningButton.querySelector("svg")?.getAttribute("class")).toContain("motion-safe:animate-spin");
+  });
+
+  it("updates the startup full sync preference from the conversation settings", () => {
+    render(
+      <GlobalSettingsDialog
+        appShortcuts={[]}
+        initialPanel="conversations.sessions"
+        navigationModel={navigationModel}
+        onAppShortcutsChange={vi.fn()}
+        onClose={vi.fn()}
+        onNavigationModelChange={vi.fn()}
+        open
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("switch", {
+      name: "settings.conversation.autoFullSyncOnStartup",
+    }));
+
+    expect(updateSettingMock).toHaveBeenCalledWith("conversations", {
+      ...defaultSettings.conversations,
+      autoFullSyncOnStartup: false,
+    });
   });
 });

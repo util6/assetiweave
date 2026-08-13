@@ -156,6 +156,41 @@ pub(crate) fn save_app_settings(
 }
 
 #[tauri::command]
+pub(crate) fn cancel_app_close_prompt(state: State<'_, AppState>) -> AppResult<()> {
+    state
+        .exit_prompt_open
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn complete_app_close(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    backup_database: bool,
+) -> AppResult<()> {
+    let shutdown_sync_done = state.shutdown_sync_done.clone();
+    let exit_prompt_open = state.exit_prompt_open.clone();
+    let allow_close = state.allow_close.clone();
+    let allow_exit = state.allow_exit.clone();
+    let db_path = state.db_path.clone();
+
+    if !shutdown_sync_done.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::sync_before_close(&db_path, backup_database);
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+
+    exit_prompt_open.store(false, std::sync::atomic::Ordering::SeqCst);
+    allow_close.store(true, std::sync::atomic::Ordering::SeqCst);
+    allow_exit.store(true, std::sync::atomic::Ordering::SeqCst);
+    app.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
 pub(crate) fn list_assets(
     state: State<'_, AppState>,
     kind: Option<AssetKind>,
@@ -2598,6 +2633,8 @@ pub(crate) fn command_handler(
         switch_tenant,
         get_app_settings,
         save_app_settings,
+        cancel_app_close_prompt,
+        complete_app_close,
         list_assets,
         list_source_assets,
         list_memory_items,

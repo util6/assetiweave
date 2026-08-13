@@ -13,6 +13,7 @@ const SETTINGS_SCHEMA_VERSION: u32 = 2;
 const DEFAULT_AI_RUNTIME_CLI: &str = "opencode";
 const DEFAULT_AUTO_DREAM_MIN_HOURS: i64 = 12;
 const DEFAULT_AUTO_DREAM_MIN_SESSIONS: i64 = 3;
+const DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP: bool = true;
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct AppSettingsFile {
@@ -56,6 +57,12 @@ pub(crate) fn read_app_settings_value() -> AppResult<Value> {
         return Ok(json!({}));
     }
     Ok(read_normalized_settings_document(&paths.config_path)?.settings)
+}
+
+pub(crate) fn conversation_full_sync_on_startup_enabled() -> AppResult<bool> {
+    Ok(conversation_full_sync_on_startup_enabled_from_value(
+        &read_app_settings_value()?,
+    ))
 }
 
 pub(crate) fn conversation_adapter_dir() -> AppResult<PathBuf> {
@@ -148,6 +155,15 @@ fn normalize_settings_paths(mut settings: Value) -> AppResult<Value> {
         normalize_json_path_setting(&mut settings, path)?;
     }
     Ok(settings)
+}
+
+fn conversation_full_sync_on_startup_enabled_from_value(settings: &Value) -> bool {
+    settings
+        .get("conversations")
+        .and_then(Value::as_object)
+        .and_then(|conversations| conversations.get("autoFullSyncOnStartup"))
+        .and_then(Value::as_bool)
+        .unwrap_or(DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP)
 }
 
 fn normalize_shared_ai_settings(settings: &mut Value) {
@@ -375,6 +391,32 @@ mod tests {
             settings["conversationRuntimeOverrides"]["bash"],
             "/opt/homebrew/bin/bash"
         );
+    }
+
+    #[test]
+    fn startup_full_conversation_sync_is_enabled_by_default() {
+        assert!(conversation_full_sync_on_startup_enabled_from_value(
+            &json!({})
+        ));
+        assert!(conversation_full_sync_on_startup_enabled_from_value(
+            &json!({
+                "conversations": {}
+            })
+        ));
+    }
+
+    #[test]
+    fn startup_full_conversation_sync_respects_an_explicit_disabled_setting() {
+        assert!(!conversation_full_sync_on_startup_enabled_from_value(
+            &json!({
+                "conversations": { "autoFullSyncOnStartup": false }
+            })
+        ));
+        assert!(conversation_full_sync_on_startup_enabled_from_value(
+            &json!({
+                "conversations": { "autoFullSyncOnStartup": "false" }
+            })
+        ));
     }
 
     #[test]
