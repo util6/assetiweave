@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { I18nProvider } from "../i18n/I18nProvider";
 import { AppSettingsProvider } from "../store/settings/AppSettingsProvider";
 import { ConversationSyncProvider } from "./backgroundTasks/ConversationSyncProvider";
+import { AiExecutionTaskProvider } from "./backgroundTasks/AiExecutionTaskProvider";
 import { SearchIndexProvider } from "./backgroundTasks/SearchIndexProvider";
 import { SkillBackupProvider } from "./backgroundTasks/SkillBackupProvider";
 import { MemoryTaskProvider } from "./backgroundTasks/MemoryTaskProvider";
@@ -14,13 +15,15 @@ export function AppProviders({ children }: { children: ReactNode }) {
       <AppSettingsProvider>
         <ConversationCardKindRegistryProvider>
           <ConversationSyncProvider>
-            <MemoryTaskProvider>
-              <SearchIndexProvider>
-                <SkillBackupProvider>
-                  <AppUpdateProvider>{children}</AppUpdateProvider>
-                </SkillBackupProvider>
-              </SearchIndexProvider>
-            </MemoryTaskProvider>
+            <AiExecutionTaskProvider>
+              <MemoryTaskProvider>
+                <SearchIndexProvider>
+                  <SkillBackupProvider>
+                    <AppUpdateProvider>{children}</AppUpdateProvider>
+                  </SkillBackupProvider>
+                </SearchIndexProvider>
+              </MemoryTaskProvider>
+            </AiExecutionTaskProvider>
           </ConversationSyncProvider>
         </ConversationCardKindRegistryProvider>
       </AppSettingsProvider>

@@ -2842,6 +2842,23 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "conversation.card.translation.run",
+        "conversation.card.translation.run",
+        "Translate a conversation content card with the configured translation provider",
+        Write,
+        Friendly,
+        false,
+        crate::backend::card_translation::ConversationTranslationRequest,
+        Service => |service, params| service.translate_conversation_card(params),
+        &[
+            param!("provider", "Translation provider family"),
+            param!("cli", "CLI translator when provider is cli"),
+            param!("model", "Optional model identifier"),
+            param!("prompt", "Rendered translation prompt")
+        ],
+        None
+    ),
+    command!(
         "check_opencode_translation_availability",
         "conversation.card.translation.opencode-status",
         "Check whether opencode is available for content card translation",
@@ -2862,7 +2879,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         false,
         crate::backend::card_translation::OpencodeTranslationRequest,
         Service => |service, params| service.translate_conversation_card_with_opencode(params),
-        &[param!("prompt", "Translation prompt passed to opencode run")],
+        &[param!("prompt", "Rendered translation prompt passed to the OpenCode ACP agent")],
         None
     ),
     command!(
@@ -4285,6 +4302,24 @@ mod tests {
         )
         .expect("itemId alias should validate");
         assert_eq!(normalized["item_id"], json!("memory-id"));
+    }
+
+    #[test]
+    fn canonical_translation_method_keeps_request_contract_and_shared_handler() {
+        let spec = find("conversation.card.translation.run").expect("translation method");
+        assert_eq!(spec.canonical_method, "conversation.card.translation.run");
+        assert_eq!(spec.risk, CommandRisk::Write);
+        let contract = schema_get("conversation.card.translation.run");
+        let required = contract["params_schema"]["required"]
+            .as_array()
+            .expect("translation required fields");
+        for field in ["provider", "cli", "model", "prompt"] {
+            assert!(required.contains(&json!(field)), "missing field {field}");
+        }
+        assert_eq!(
+            contract["params_schema"]["properties"]["cli"]["enum"],
+            json!(["opencode", "gemini"])
+        );
     }
 
     #[test]

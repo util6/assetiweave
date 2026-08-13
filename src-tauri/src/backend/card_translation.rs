@@ -1,22 +1,25 @@
 #[cfg(test)]
-use crate::backend::ai_execution::{
-    cli_search_candidates, executable_name, resolve_cli_executable_from_sources,
+use crate::backend::host_process::{
+    host_executable_name, host_executable_search_candidates,
+    resolve_host_executable_from_sources as resolve_cli_executable_from_sources,
 };
 use crate::backend::{
+    agents::types::AgentId,
     ai_execution::{
-        execute_structured_text, run_cli_command, AiCliRuntime, AiCommandOptions, AiCommandOutput,
-        AiExecutionError, AiStructuredTextRequest,
+        execute_agent_blocking, legacy_gemini, AgentExecutionRuntime, AiCommandOptions,
+        AiCommandOutput, AiExecutionCancellation, AiExecutionError, AiExecutionLimits,
+        AiExecutionPurpose, AiExecutionRequest,
     },
     dto::AppResult,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 #[cfg(test)]
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
 };
+use std::{sync::Arc, time::Duration};
 
 #[cfg(test)]
 const OPENCODE_COMMAND: &str = "opencode";
@@ -85,40 +88,48 @@ pub(crate) struct ConversationTranslationModelsResult {
     pub(crate) error: Option<String>,
 }
 
-pub(crate) fn check_opencode_translation_availability() -> OpencodeTranslationAvailability {
-    match run_translation_cli_command(
-        AiCliRuntime::Opencode,
-        &["--version"],
-        Duration::from_secs(8),
-    ) {
-        Ok(output) if output.status.success() => OpencodeTranslationAvailability {
-            available: true,
-            version: first_nonempty_line(&output.stdout)
-                .or_else(|| first_nonempty_line(&output.stderr)),
-            error: None,
-        },
-        Ok(output) => OpencodeTranslationAvailability {
-            available: false,
-            version: None,
-            error: Some(command_failure_message("opencode --version", &output)),
-        },
-        Err(error) => OpencodeTranslationAvailability {
-            available: false,
-            version: None,
-            error: Some(error),
-        },
+pub(crate) fn check_opencode_translation_availability(
+    runtime: &dyn AgentExecutionRuntime,
+) -> OpencodeTranslationAvailability {
+    let availability = runtime.check_availability(&opencode_agent_id());
+    OpencodeTranslationAvailability {
+        available: availability.available,
+        version: availability.version,
+        error: availability.error.map(|error| error.to_string()),
     }
 }
 
 pub(crate) fn test_conversation_translation_connection(
+    runtime: Arc<dyn AgentExecutionRuntime>,
     params: ConversationTranslationConnectionRequest,
 ) -> OpencodeTranslationAvailability {
-    match translate_conversation_card(ConversationTranslationRequest {
-        provider: params.provider,
-        cli: params.cli,
-        model: params.model,
-        prompt: params.prompt,
-    }) {
+    let result = match params.provider {
+        ConversationTranslationProvider::Cli
+            if matches!(params.cli, ConversationTranslationCli::Opencode) =>
+        {
+            let model = normalize_model(&params.model);
+            model.and_then(|model| {
+                execute_opencode_translation(
+                    runtime,
+                    params.prompt,
+                    model,
+                    AiExecutionPurpose::ConnectionTest,
+                    connection_test_limits(),
+                )
+            })
+        }
+        provider => translate_conversation_card(
+            runtime,
+            ConversationTranslationRequest {
+                provider,
+                cli: params.cli,
+                model: params.model,
+                prompt: params.prompt,
+            },
+        ),
+    };
+
+    match result {
         Ok(_) => OpencodeTranslationAvailability {
             available: true,
             version: None,
@@ -133,6 +144,7 @@ pub(crate) fn test_conversation_translation_connection(
 }
 
 pub(crate) fn list_conversation_translation_models(
+    runtime: &dyn AgentExecutionRuntime,
     params: ConversationTranslationModelsRequest,
 ) -> ConversationTranslationModelsResult {
     let ConversationTranslationProvider::Cli = params.provider else {
@@ -146,22 +158,14 @@ pub(crate) fn list_conversation_translation_models(
 
     match params.cli {
         ConversationTranslationCli::Opencode => {
-            match run_translation_cli_command(
-                AiCliRuntime::Opencode,
-                &["models"],
-                Duration::from_secs(20),
-            ) {
-                Ok(output) if output.status.success() => ConversationTranslationModelsResult {
-                    models: parse_model_lines(&output.stdout),
-                    error: None,
-                },
+            match runtime.discover_models(&opencode_agent_id(), Duration::from_secs(20)) {
                 Ok(output) => ConversationTranslationModelsResult {
-                    models: Vec::new(),
-                    error: Some(command_failure_message("opencode models", &output)),
+                    models: parse_model_lines(&output),
+                    error: None,
                 },
                 Err(error) => ConversationTranslationModelsResult {
                     models: Vec::new(),
-                    error: Some(error),
+                    error: Some(error.to_string()),
                 },
             }
         }
@@ -176,6 +180,7 @@ pub(crate) fn list_conversation_translation_models(
 }
 
 pub(crate) fn translate_conversation_card(
+    runtime: Arc<dyn AgentExecutionRuntime>,
     params: ConversationTranslationRequest,
 ) -> AppResult<OpencodeTranslationResult> {
     validate_translation_prompt(&params.prompt)?;
@@ -183,7 +188,7 @@ pub(crate) fn translate_conversation_card(
 
     match params.provider {
         ConversationTranslationProvider::Cli => {
-            translate_with_cli(params.cli, model, params.prompt)
+            translate_with_cli(runtime, params.cli, model, params.prompt)
         }
         ConversationTranslationProvider::Google => {
             Err("Google Translate provider is reserved but not implemented yet".to_string())
@@ -194,50 +199,96 @@ pub(crate) fn translate_conversation_card(
     }
 }
 
+pub(crate) fn prepare_opencode_agent_translation(
+    params: ConversationTranslationRequest,
+) -> AppResult<(String, Option<String>)> {
+    let ConversationTranslationProvider::Cli = params.provider else {
+        return Err("AI execution tasks require a CLI translation provider".to_string());
+    };
+    if !matches!(params.cli, ConversationTranslationCli::Opencode) {
+        return Err("AI execution tasks currently support OpenCode only".to_string());
+    }
+    validate_translation_prompt(&params.prompt)?;
+    let model = normalize_model(&params.model)?;
+    Ok((params.prompt.trim().to_string(), model))
+}
+
 pub(crate) fn translate_conversation_card_with_opencode(
+    runtime: Arc<dyn AgentExecutionRuntime>,
     params: OpencodeTranslationRequest,
 ) -> AppResult<OpencodeTranslationResult> {
     validate_translation_prompt(&params.prompt)?;
-    let translated_text =
-        execute_translation_text(AiCliRuntime::Opencode, None, params.prompt, "opencode run")?;
-
-    Ok(OpencodeTranslationResult { translated_text })
+    execute_opencode_translation(
+        runtime,
+        params.prompt,
+        None,
+        AiExecutionPurpose::Translation,
+        AiExecutionLimits::default(),
+    )
 }
 
 fn translate_with_cli(
+    runtime: Arc<dyn AgentExecutionRuntime>,
     cli: ConversationTranslationCli,
     model: Option<String>,
     prompt: String,
 ) -> AppResult<OpencodeTranslationResult> {
-    let runtime = translation_runtime(cli);
-    let program = runtime.command_name();
-    let translated_text =
-        execute_translation_text(runtime, model, prompt, &format!("{program} translation"))?;
-
-    Ok(OpencodeTranslationResult { translated_text })
-}
-
-fn execute_translation_text(
-    runtime: AiCliRuntime,
-    model: Option<String>,
-    prompt: String,
-    failure_label: &str,
-) -> AppResult<String> {
-    let program = runtime.command_name();
-    let result = execute_structured_text(AiStructuredTextRequest {
-        runtime,
-        model,
-        prompt,
-        options: translation_command_options(Duration::from_secs(180)),
-    })
-    .map_err(|error| translation_execution_error_message(program, failure_label, error))?;
-    Ok(result.text)
-}
-
-fn translation_runtime(cli: ConversationTranslationCli) -> AiCliRuntime {
     match cli {
-        ConversationTranslationCli::Opencode => AiCliRuntime::Opencode,
-        ConversationTranslationCli::Gemini => AiCliRuntime::Gemini,
+        ConversationTranslationCli::Opencode => execute_opencode_translation(
+            runtime,
+            prompt,
+            model,
+            AiExecutionPurpose::Translation,
+            AiExecutionLimits::default(),
+        ),
+        ConversationTranslationCli::Gemini => {
+            let translated_text = legacy_gemini::execute_translation(
+                model,
+                prompt,
+                translation_command_options(Duration::from_secs(180)),
+            )
+            .map_err(|error| {
+                translation_execution_error_message("gemini", "gemini translation", error)
+            })?;
+            Ok(OpencodeTranslationResult { translated_text })
+        }
+    }
+}
+
+fn execute_opencode_translation(
+    runtime: Arc<dyn AgentExecutionRuntime>,
+    prompt: String,
+    model: Option<String>,
+    purpose: AiExecutionPurpose,
+    limits: AiExecutionLimits,
+) -> AppResult<OpencodeTranslationResult> {
+    validate_translation_prompt(&prompt)?;
+    let prompt = prompt.trim().to_string();
+    let request = AiExecutionRequest {
+        execution_id: uuid::Uuid::new_v4().to_string(),
+        agent_id: opencode_agent_id(),
+        purpose,
+        prompt,
+        model,
+        limits,
+        cancellation: AiExecutionCancellation::default(),
+        progress: None,
+    };
+    request.validate().map_err(agent_execution_error_message)?;
+    let result = execute_agent_blocking(runtime, request).map_err(agent_execution_error_message)?;
+    Ok(OpencodeTranslationResult {
+        translated_text: result.text,
+    })
+}
+
+fn opencode_agent_id() -> AgentId {
+    AgentId::parse("opencode").expect("builtin OpenCode agent id must be valid")
+}
+
+fn connection_test_limits() -> AiExecutionLimits {
+    AiExecutionLimits {
+        total_timeout: Duration::from_secs(30),
+        ..AiExecutionLimits::default()
     }
 }
 
@@ -263,26 +314,6 @@ fn normalize_model(model: &str) -> AppResult<Option<String>> {
     Ok(Some(model.to_string()))
 }
 
-fn run_translation_cli_command(
-    runtime: AiCliRuntime,
-    args: &[&str],
-    timeout: Duration,
-) -> AppResult<AiCommandOutput> {
-    let args = args
-        .iter()
-        .map(|arg| (*arg).to_string())
-        .collect::<Vec<_>>();
-    let output = run_cli_command(runtime, &args, translation_command_options(timeout))
-        .map_err(|error| error.to_string())?;
-    if output.status.success() && output.stdout_truncated {
-        return Err(format!(
-            "{} exceeded the configured output limit",
-            output.program.display()
-        ));
-    }
-    Ok(output)
-}
-
 fn translation_command_options(timeout: Duration) -> AiCommandOptions {
     AiCommandOptions::new(timeout, TRANSLATION_STDOUT_CAP, TRANSLATION_STDERR_CAP)
 }
@@ -301,14 +332,19 @@ fn translation_execution_error_message(
     }
 }
 
+fn agent_execution_error_message(error: AiExecutionError) -> String {
+    let view = error.to_view();
+    format!("{}: {}", view.code, view.message)
+}
+
 #[cfg(test)]
 fn opencode_executable_name() -> OsString {
-    executable_name(OPENCODE_COMMAND)
+    host_executable_name(OPENCODE_COMMAND)
 }
 
 #[cfg(test)]
 fn opencode_search_candidates(home_dir: Option<&Path>) -> Vec<PathBuf> {
-    cli_search_candidates(OPENCODE_COMMAND, home_dir)
+    host_executable_search_candidates(OPENCODE_COMMAND, home_dir)
 }
 
 fn first_nonempty_line(bytes: &[u8]) -> Option<String> {
@@ -320,14 +356,17 @@ fn first_nonempty_line(bytes: &[u8]) -> Option<String> {
 }
 
 fn parse_model_lines(bytes: &[u8]) -> Vec<String> {
-    String::from_utf8_lossy(bytes)
+    let mut models = String::from_utf8_lossy(bytes)
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .filter(|line| !line.starts_with("opencode models"))
-        .take(500)
         .map(str::to_string)
-        .collect()
+        .collect::<Vec<_>>();
+    models.sort();
+    models.dedup();
+    models.truncate(500);
+    models
 }
 
 fn command_failure_message(command_name: &str, output: &AiCommandOutput) -> String {
@@ -340,7 +379,66 @@ fn command_failure_message(command_name: &str, output: &AiCommandOutput) -> Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{env, fs, path::Path};
+    use crate::backend::{
+        agents::{
+            registry::{AgentAvailability, AgentProbeError},
+            types::AgentProtocol,
+        },
+        ai_execution::{executor::BackendFuture, AiExecutionResult},
+    };
+    use std::{
+        env, fs,
+        path::Path,
+        sync::{Arc, Mutex},
+    };
+
+    struct FakeRuntime {
+        requests: Mutex<Vec<AiExecutionRequest>>,
+        result_text: String,
+    }
+
+    impl FakeRuntime {
+        fn new(result_text: &str) -> Arc<Self> {
+            Arc::new(Self {
+                requests: Mutex::new(Vec::new()),
+                result_text: result_text.to_string(),
+            })
+        }
+    }
+
+    impl AgentExecutionRuntime for FakeRuntime {
+        fn execute<'a>(&'a self, request: AiExecutionRequest) -> BackendFuture<'a> {
+            Box::pin(async move {
+                self.requests.lock().unwrap().push(request.clone());
+                Ok(AiExecutionResult {
+                    text: self.result_text.clone(),
+                    agent_id: request.agent_id,
+                    protocol: AgentProtocol::Acp,
+                    requested_model: request.model,
+                    elapsed_ms: 1,
+                })
+            })
+        }
+
+        fn check_availability(&self, agent_id: &AgentId) -> AgentAvailability {
+            assert_eq!(agent_id.as_str(), "opencode");
+            AgentAvailability {
+                available: true,
+                version: Some("opencode-test 1.0".to_string()),
+                error: None,
+            }
+        }
+
+        fn discover_models(
+            &self,
+            agent_id: &AgentId,
+            timeout: Duration,
+        ) -> Result<Vec<u8>, AgentProbeError> {
+            assert_eq!(agent_id.as_str(), "opencode");
+            assert_eq!(timeout, Duration::from_secs(20));
+            Ok(b"model/z\nmodel/a\nmodel/z\n".to_vec())
+        }
+    }
 
     struct TempDir {
         path: std::path::PathBuf,
@@ -362,6 +460,169 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
+    }
+
+    #[test]
+    fn tr_01_02_03_opencode_translation_maps_to_agent_runtime_without_legacy_run() {
+        let runtime = FakeRuntime::new("译文");
+
+        let result = translate_conversation_card(
+            runtime.clone(),
+            ConversationTranslationRequest {
+                provider: ConversationTranslationProvider::Cli,
+                cli: ConversationTranslationCli::Opencode,
+                model: " model/a ".to_string(),
+                prompt: "  translate this  ".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.translated_text, "译文");
+        let requests = runtime.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].agent_id.as_str(), "opencode");
+        assert_eq!(requests[0].purpose, AiExecutionPurpose::Translation);
+        assert_eq!(requests[0].model.as_deref(), Some("model/a"));
+        assert_eq!(requests[0].prompt, "translate this");
+    }
+
+    #[test]
+    fn tr_03_compatibility_opencode_request_maps_runtime_text() {
+        let runtime = FakeRuntime::new("compat result");
+
+        let result = translate_conversation_card_with_opencode(
+            runtime.clone(),
+            OpencodeTranslationRequest {
+                prompt: "translate".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.translated_text, "compat result");
+        let requests = runtime.requests.lock().unwrap();
+        assert_eq!(requests[0].agent_id.as_str(), "opencode");
+        assert_eq!(requests[0].model, None);
+    }
+
+    #[test]
+    fn tr_04_05_invalid_prompt_and_model_fail_before_runtime() {
+        let runtime = FakeRuntime::new("unused");
+
+        let oversized = translate_conversation_card(
+            runtime.clone(),
+            ConversationTranslationRequest {
+                provider: ConversationTranslationProvider::Cli,
+                cli: ConversationTranslationCli::Opencode,
+                model: String::new(),
+                prompt: "x".repeat(200_001),
+            },
+        );
+        let invalid_model = translate_conversation_card(
+            runtime.clone(),
+            ConversationTranslationRequest {
+                provider: ConversationTranslationProvider::Cli,
+                cli: ConversationTranslationCli::Opencode,
+                model: "bad\nmodel".to_string(),
+                prompt: "translate".to_string(),
+            },
+        );
+
+        assert_eq!(oversized.unwrap_err(), "translation prompt is too large");
+        assert_eq!(invalid_model.unwrap_err(), "translation model is invalid");
+        assert!(runtime.requests.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn tr_06_connection_test_uses_agent_runtime_and_shorter_limit() {
+        let runtime = FakeRuntime::new("OK");
+
+        let availability = test_conversation_translation_connection(
+            runtime.clone(),
+            ConversationTranslationConnectionRequest {
+                provider: ConversationTranslationProvider::Cli,
+                cli: ConversationTranslationCli::Opencode,
+                model: "model/a".to_string(),
+                prompt: "Reply with OK only.".to_string(),
+            },
+        );
+
+        assert!(availability.available);
+        let requests = runtime.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].purpose, AiExecutionPurpose::ConnectionTest);
+        assert_eq!(requests[0].limits.total_timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn tr_07_availability_maps_the_runtime_registry_probe() {
+        let runtime = FakeRuntime::new("unused");
+
+        let availability = check_opencode_translation_availability(runtime.as_ref());
+
+        assert!(availability.available);
+        assert_eq!(availability.version.as_deref(), Some("opencode-test 1.0"));
+        assert_eq!(availability.error, None);
+    }
+
+    #[test]
+    fn tr_08_model_list_uses_runtime_discovery_and_returns_stable_unique_models() {
+        let runtime = FakeRuntime::new("unused");
+
+        let result = list_conversation_translation_models(
+            runtime.as_ref(),
+            ConversationTranslationModelsRequest {
+                provider: ConversationTranslationProvider::Cli,
+                cli: ConversationTranslationCli::Opencode,
+            },
+        );
+
+        assert_eq!(result.models, ["model/a", "model/z"]);
+        assert_eq!(result.error, None);
+
+        let over_limit = (0..501)
+            .rev()
+            .map(|index| format!("model/{index:03}\n"))
+            .collect::<String>();
+        let parsed = parse_model_lines(over_limit.as_bytes());
+        assert_eq!(parsed.len(), 500);
+        assert_eq!(parsed.first().map(String::as_str), Some("model/000"));
+        assert_eq!(parsed.last().map(String::as_str), Some("model/499"));
+    }
+
+    #[test]
+    fn tr_10_reserved_providers_keep_existing_errors_without_execution() {
+        let runtime = FakeRuntime::new("unused");
+
+        let google = translate_conversation_card(
+            runtime.clone(),
+            ConversationTranslationRequest {
+                provider: ConversationTranslationProvider::Google,
+                cli: ConversationTranslationCli::Opencode,
+                model: String::new(),
+                prompt: "translate".to_string(),
+            },
+        )
+        .unwrap_err();
+        let apple = translate_conversation_card(
+            runtime.clone(),
+            ConversationTranslationRequest {
+                provider: ConversationTranslationProvider::Apple,
+                cli: ConversationTranslationCli::Opencode,
+                model: String::new(),
+                prompt: "translate".to_string(),
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            google,
+            "Google Translate provider is reserved but not implemented yet"
+        );
+        assert_eq!(
+            apple,
+            "Apple Translate provider is reserved but not implemented yet"
+        );
+        assert!(runtime.requests.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -443,7 +704,7 @@ mod tests {
     #[test]
     fn resolves_gemini_from_path_without_opencode_name() {
         let dir = TempDir::new("assetiweave-gemini-path");
-        let executable = dir.path().join(executable_name(GEMINI_COMMAND));
+        let executable = dir.path().join(host_executable_name(GEMINI_COMMAND));
         write_executable(&executable);
         let path_env = env::join_paths([dir.path()]).unwrap();
 

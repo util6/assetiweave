@@ -1,8 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildConversationCardTranslationPrompt,
+  cancelAiExecutionTask,
   checkOpencodeTranslationAvailability,
+  getAiExecutionTask,
+  listAiExecutionTasks,
   listConversationTranslationModels,
+  startConversationCardTranslation,
   testConversationTranslationConnection,
   translateConversationCardContent,
 } from "./cardTranslation";
@@ -13,6 +17,10 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 describe("cardTranslation", () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
   it("builds prompts with the configured target language", () => {
     const prompt = buildConversationCardTranslationPrompt({
       promptTemplate: undefined,
@@ -98,4 +106,66 @@ describe("cardTranslation", () => {
       provider: "cli",
     })).resolves.toEqual({ error: null, models: ["cliproxy/gpt-5"] });
   });
+
+  it("starts translation tasks with the rendered prompt", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    vi.mocked(invoke).mockResolvedValueOnce(taskSnapshot("queued"));
+
+    await expect(startConversationCardTranslation({
+      cli: "opencode",
+      model: "cliproxy/gpt-5.1-codex",
+      promptTemplate: undefined,
+      provider: "cli",
+      targetLanguage: "zh-CN",
+      text: "Run tests.",
+    })).resolves.toMatchObject({ id: "ai-task-1", state: "queued" });
+
+    expect(invoke).toHaveBeenCalledWith("start_conversation_card_translation", {
+      params: {
+        cli: "opencode",
+        model: "cliproxy/gpt-5.1-codex",
+        prompt: expect.stringContaining('Target language JSON: "简体中文"'),
+        provider: "cli",
+      },
+    });
+  });
+
+  it("gets, lists, and cancels typed AI execution task snapshots", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    const snapshot = taskSnapshot("running");
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(snapshot)
+      .mockResolvedValueOnce([snapshot])
+      .mockResolvedValueOnce({ ...snapshot, phase: "cancelling" });
+
+    await expect(getAiExecutionTask("ai-task-1")).resolves.toEqual(snapshot);
+    await expect(listAiExecutionTasks()).resolves.toEqual([snapshot]);
+    await expect(cancelAiExecutionTask("ai-task-1")).resolves.toMatchObject({
+      id: "ai-task-1",
+      phase: "cancelling",
+    });
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "get_ai_execution_task", {
+      params: { task_id: "ai-task-1" },
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "list_ai_execution_tasks");
+    expect(invoke).toHaveBeenNthCalledWith(3, "cancel_ai_execution_task", {
+      params: { task_id: "ai-task-1" },
+    });
+  });
 });
+
+function taskSnapshot(state: "queued" | "running") {
+  return {
+    id: "ai-task-1",
+    purpose: "translation",
+    agent_id: "opencode",
+    state,
+    phase: state === "queued" ? "queued" : "prompting",
+    created_at: "2026-08-13T00:00:00Z",
+    updated_at: "2026-08-13T00:00:01Z",
+    finished_at: null,
+    result: null,
+    error: null,
+  } as const;
+}

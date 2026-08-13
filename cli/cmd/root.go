@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/util6/assetiweave/errs"
@@ -32,7 +34,8 @@ const hideProfilesEnv = "ASSETIWEAVE_CLI_HIDE_PROFILES"
 
 func Execute() int {
 	f := cmdutil.NewDefault(cmdutil.SystemIO())
-	ctx := context.Background()
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 	completionCommand := isCompletionCommandArgs(os.Args[1:])
 	options, err := parseBootstrapOptions(os.Args[1:])
 	if err != nil {

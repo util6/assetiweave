@@ -4,8 +4,12 @@ mod backend;
 use crate::{
     adapters::{app_state::AppState, tauri::background_tasks::BackgroundTaskRegistry},
     backend::{
-        application::AppService, data_backup::backup_database_from_settings,
-        logs::write_startup_log, path_utils::app_db_path,
+        ai_execution::shared_agent_execution_runtime,
+        application::AppService,
+        data_backup::backup_database_from_settings,
+        logs::write_startup_log,
+        operation_log::{log_error, log_warn},
+        path_utils::app_db_path,
     },
 };
 use std::sync::{
@@ -16,12 +20,41 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 const APP_CLOSE_REQUESTED_EVENT: &str = "app-close-requested";
+const AI_EXECUTION_CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const AI_EXECUTION_CLOSE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(25);
+
+pub(crate) async fn converge_ai_executions_before_close(
+    background_tasks: Arc<BackgroundTaskRegistry>,
+) {
+    match background_tasks
+        .cancel_ai_executions_and_wait(AI_EXECUTION_CLOSE_TIMEOUT, AI_EXECUTION_CLOSE_POLL_INTERVAL)
+        .await
+    {
+        Ok(report) if !report.converged => log_warn(
+            "app.close.ai_execution",
+            "HIGH PRIORITY: AI execution cleanup did not converge before app close",
+            &[
+                ("cancelled_count", report.cancelled_count.to_string()),
+                ("remaining_count", report.remaining_count.to_string()),
+            ],
+        ),
+        Ok(_) => {}
+        Err(error) => log_error(
+            "app.close.ai_execution",
+            "HIGH PRIORITY: failed to cancel AI executions before app close",
+            &error,
+            &[],
+        ),
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     backend::builtin_skills::install_builtin_skills()
         .expect("failed to install AssetIWeave system Skills");
     let db_path = app_db_path().expect("failed to resolve AssetIWeave database path");
+    let agent_runtime = shared_agent_execution_runtime(&db_path)
+        .expect("failed to initialize AssetIWeave agent execution runtime");
     let conversation_full_sync_on_startup_enabled =
         match backend::app_settings::conversation_full_sync_on_startup_enabled() {
             Ok(enabled) => enabled,
@@ -82,6 +115,7 @@ pub fn run() {
                     let allow_close = state.allow_close.clone();
                     let allow_exit = state.allow_exit.clone();
                     let exit_prompt_open = state.exit_prompt_open.clone();
+                    let background_tasks = state.background_tasks.clone();
                     prompt_window
                         .dialog()
                         .message(
@@ -96,13 +130,16 @@ pub fn run() {
                         .show(move |quit_anyway| {
                             exit_prompt_open.store(false, Ordering::SeqCst);
                             if quit_anyway {
-                                allow_close.store(true, Ordering::SeqCst);
-                                allow_exit.store(true, Ordering::SeqCst);
-                                if let Err(error) = close_window.close() {
-                                    eprintln!("failed to close AssetIWeave after confirmation: {error}");
-                                }
+                                tauri::async_runtime::spawn(async move {
+                                    converge_ai_executions_before_close(background_tasks).await;
+                                    allow_close.store(true, Ordering::SeqCst);
+                                    allow_exit.store(true, Ordering::SeqCst);
+                                    if let Err(error) = close_window.close() {
+                                        eprintln!("failed to close AssetIWeave after confirmation: {error}");
+                                    }
+                                });
                             }
-                    });
+                        });
                     return;
                 }
 
@@ -125,6 +162,7 @@ pub fn run() {
             db_path,
             lock: Arc::new(Mutex::new(())),
             background_tasks: Arc::new(BackgroundTaskRegistry::default()),
+            agent_runtime,
             allow_close: Arc::new(AtomicBool::new(false)),
             allow_exit: Arc::new(AtomicBool::new(false)),
             exit_prompt_open: Arc::new(AtomicBool::new(false)),
@@ -167,6 +205,7 @@ pub fn run() {
                 let exit_app = app_handle.clone();
                 let allow_exit = state.allow_exit.clone();
                 let exit_prompt_open = state.exit_prompt_open.clone();
+                let background_tasks = state.background_tasks.clone();
                 prompt_app
                     .dialog()
                     .message(
@@ -181,8 +220,11 @@ pub fn run() {
                     .show(move |quit_anyway| {
                         exit_prompt_open.store(false, Ordering::SeqCst);
                         if quit_anyway {
-                            allow_exit.store(true, Ordering::SeqCst);
-                            exit_app.exit(0);
+                            tauri::async_runtime::spawn(async move {
+                                converge_ai_executions_before_close(background_tasks).await;
+                                allow_exit.store(true, Ordering::SeqCst);
+                                exit_app.exit(0);
+                            });
                         }
                     });
                 return;
@@ -239,8 +281,47 @@ pub fn run_engine_stdio() {
         eprintln!("failed to install AssetIWeave system Skills: {error}");
         std::process::exit(1);
     }
+    let engine_db_path = std::env::var("ASSETIWEAVE_DB_PATH")
+        .ok()
+        .filter(|path| !path.trim().is_empty())
+        .map(std::path::PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(backend::path_utils::app_db_path);
+    let runtime = match engine_db_path
+        .and_then(|path| shared_agent_execution_runtime(&path).map_err(|error| error.to_string()))
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("failed to initialize Engine agent runtime: {error}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(error) = install_engine_termination_handlers(runtime) {
+        eprintln!("failed to install Engine termination handlers: {error}");
+        std::process::exit(1);
+    }
     if let Err(error) = adapters::engine::run_stdio() {
         eprintln!("{error}");
         std::process::exit(1);
     }
+}
+
+fn install_engine_termination_handlers(
+    runtime: Arc<dyn backend::ai_execution::AgentExecutionRuntime>,
+) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let termination_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
+            signal_hook::flag::register(signal, termination_requested.clone())
+                .map_err(|error| error.to_string())?;
+        }
+        std::thread::spawn(move || {
+            while !termination_requested.load(Ordering::Acquire) {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            runtime.cancel_all();
+        });
+    }
+    Ok(())
 }

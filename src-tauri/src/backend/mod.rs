@@ -1,3 +1,4 @@
+pub(crate) mod agents;
 pub(crate) mod ai_execution;
 pub(crate) mod app_paths;
 pub(crate) mod app_settings;
