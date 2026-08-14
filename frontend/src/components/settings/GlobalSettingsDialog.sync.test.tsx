@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { navigationModel } from "../../router/menu";
 import { defaultSettings } from "../../store/settings/settingsSchema";
@@ -57,11 +57,16 @@ vi.mock("../../services/conversations", () => ({
 }));
 
 vi.mock("../../services/cardTranslation", () => ({
+  checkOpencodeTranslationAvailability: vi.fn().mockResolvedValue({
+    available: true,
+    error: null,
+    version: "opencode 1.0.0",
+  }),
   listConversationTranslationModels: vi.fn().mockResolvedValue([]),
   testConversationTranslationConnection: vi.fn(),
 }));
 
-describe("GlobalSettingsDialog full conversation sync", () => {
+describe("GlobalSettingsDialog", () => {
   beforeEach(() => {
     conversationSyncState.tasks = [];
     updateSettingMock.mockReset();
@@ -81,6 +86,161 @@ describe("GlobalSettingsDialog full conversation sync", () => {
   });
 
   afterEach(() => cleanup());
+
+  it("exposes the Agent settings panel through the settings navigation", async () => {
+    render(
+      <GlobalSettingsDialog
+        appShortcuts={[]}
+        initialPanel="general.agents"
+        navigationModel={navigationModel}
+        onAppShortcutsChange={vi.fn()}
+        onClose={vi.fn()}
+        onNavigationModelChange={vi.fn()}
+        open
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "settings.agents.title" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "settings.agents.addCustom" })).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("heading", { name: "OpenCode" })).toBeTruthy());
+  });
+
+  it("keeps the Memory panel focused on Memory controls", () => {
+    render(
+      <GlobalSettingsDialog
+        appShortcuts={[]}
+        initialPanel="general.memory"
+        navigationModel={navigationModel}
+        onAppShortcutsChange={vi.fn()}
+        onClose={vi.fn()}
+        onNavigationModelChange={vi.fn()}
+        open
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "settings.section.memory" })).toBeTruthy();
+    expect(screen.queryByText("settings.conversation.translationCli")).toBeNull();
+    expect(screen.queryByText("settings.conversation.translationModel")).toBeNull();
+    expect(screen.queryByText("settings.conversation.translationConnection")).toBeNull();
+    expect(screen.queryByText("settings.ai.executionBoundary")).toBeNull();
+    expect(screen.getByText("settings.ai.autoDream")).toBeTruthy();
+  });
+
+  it("assigns a service Agent from the brief capability picker", async () => {
+    render(
+      <GlobalSettingsDialog
+        appShortcuts={[]}
+        initialPanel="general.memory"
+        navigationModel={navigationModel}
+        onAppShortcutsChange={vi.fn()}
+        onClose={vi.fn()}
+        onNavigationModelChange={vi.fn()}
+        open
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /OpenCode/ }));
+    expect(screen.getByRole("heading", { name: "settings.agentCapabilities.dialogTitle" })).toBeTruthy();
+    expect(screen.getByText("settings.agentCapabilities.selectedLabel")).toBeTruthy();
+    expect(screen.getAllByText("settings.agentCapabilities.usingDefaultModel").length).toBeGreaterThan(0);
+    expect(screen.getByRole("list", { name: "settings.agentCapabilities.dialogTitle" })).toBeTruthy();
+
+    const geminiOptions = screen.getAllByRole("button", { name: /Gemini CLI/ });
+    fireEvent.click(geminiOptions[0]);
+
+    expect(updateSettingMock).toHaveBeenCalledWith("agentCapabilityAssignments", {
+      ...defaultSettings.agentCapabilityAssignments,
+      memory: "gemini",
+    });
+  });
+
+  it("opens the capability list as a separate modal above the settings surface", () => {
+    render(
+      <GlobalSettingsDialog
+        appShortcuts={[]}
+        initialPanel="general.memory"
+        navigationModel={navigationModel}
+        onAppShortcutsChange={vi.fn()}
+        onClose={vi.fn()}
+        onNavigationModelChange={vi.fn()}
+        open
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /OpenCode/ }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("list", { name: "settings.agentCapabilities.dialogTitle" })).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "common.close" })).toBeTruthy();
+  });
+
+  it("keeps settings navigation and modal content in independent scroll containers", () => {
+    render(
+      <GlobalSettingsDialog
+        appShortcuts={[]}
+        initialPanel="general.memory"
+        navigationModel={navigationModel}
+        onAppShortcutsChange={vi.fn()}
+        onClose={vi.fn()}
+        onNavigationModelChange={vi.fn()}
+        open
+      />,
+    );
+
+    const navigation = screen.getByRole("navigation", { name: "settings.navAria" });
+    expect(navigation.className).toContain("overflow-y-auto");
+    expect(navigation.className).toContain("min-h-0");
+
+    fireEvent.click(screen.getByRole("button", { name: /OpenCode/ }));
+    const dialogList = screen.getByRole("list", { name: "settings.agentCapabilities.dialogTitle" });
+    expect(dialogList.className).not.toContain("overflow-y-auto");
+    expect(dialogList.parentElement?.parentElement?.className).toContain("overflow-y-auto");
+  });
+
+  it("jumps from the capability picker to the focused Agent settings row", () => {
+    render(
+      <GlobalSettingsDialog
+        appShortcuts={[]}
+        initialPanel="general.memory"
+        navigationModel={navigationModel}
+        onAppShortcutsChange={vi.fn()}
+        onClose={vi.fn()}
+        onNavigationModelChange={vi.fn()}
+        open
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /OpenCode/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /settings\.agentCapabilities\.openAgentSettings Codex CLI/ })[0]);
+
+    expect(screen.getByRole("heading", { name: "settings.agents.title" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Codex CLI" })).toBeTruthy();
+  });
+
+  it.each([
+    ["conversations.translation", "cardTranslation", "codex"],
+    ["general.promptOptimization", "promptOptimization", "claude"],
+  ] as const)("stores the Agent assignment for %s", (initialPanel, serviceId, agentId) => {
+    render(
+      <GlobalSettingsDialog
+        appShortcuts={[]}
+        initialPanel={initialPanel}
+        navigationModel={navigationModel}
+        onAppShortcutsChange={vi.fn()}
+        onClose={vi.fn()}
+        onNavigationModelChange={vi.fn()}
+        open
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /OpenCode/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: new RegExp(agentId === "codex" ? "Codex CLI" : "Claude Code") })[0]);
+
+    expect(updateSettingMock).toHaveBeenCalledWith("agentCapabilityAssignments", {
+      ...defaultSettings.agentCapabilityAssignments,
+      [serviceId]: agentId,
+    });
+  });
 
   it("starts an all-record full reparse only after explicit confirmation", async () => {
     render(

@@ -1888,7 +1888,7 @@ fn first_party_adapter_manifests_declare_namespaced_card_contracts() {
 
 #[cfg(unix)]
 #[test]
-fn official_codex_adapter_separates_skill_context_and_splits_command_result_cards() {
+fn official_codex_adapter_separates_skill_context_and_splits_aggregated_commands() {
     if !command_available("node") || !command_available("sqlite3") {
         return;
     }
@@ -1955,11 +1955,9 @@ fn official_codex_adapter_separates_skill_context_and_splits_command_result_card
         vec![
             "skill".to_string(),
             "answer".to_string(),
-            "code".to_string(),
             "tool".to_string(),
             "command".to_string(),
             "command".to_string(),
-            "result".to_string(),
             "command".to_string(),
             "skill".to_string(),
         ]
@@ -1973,19 +1971,21 @@ fn official_codex_adapter_separates_skill_context_and_splits_command_result_card
             .and_then(|card| card.renderer.as_deref()),
         Some("path")
     );
-    assert_eq!(parts[3].text.as_deref(), Some("function_call: update_plan"));
-    assert_eq!(parts[4].command.as_deref(), Some("cargo fmt --check"));
-    assert_eq!(parts[5].command.as_deref(), Some("cargo test"));
-    assert_eq!(parts[6].text, None);
-    assert_ne!(parts[4].source_execution_id, parts[5].source_execution_id);
-    assert_eq!(parts[5].source_execution_id, parts[6].source_execution_id);
+    assert!(parts[1]
+        .text
+        .as_deref()
+        .is_some_and(|text| text.contains("```sh\ncargo test\n```")));
+    assert_eq!(parts[2].text.as_deref(), Some("function_call: update_plan"));
+    assert_eq!(parts[3].command.as_deref(), Some("cargo fmt --check"));
+    assert_eq!(parts[4].command.as_deref(), Some("cargo test"));
+    assert_ne!(parts[3].source_execution_id, parts[4].source_execution_id);
     assert_eq!(
-        parts[7].command.as_deref(),
+        parts[5].command.as_deref(),
         Some("/tmp/test-skill/SKILL.md")
     );
-    assert_eq!(parts[7].cwd.as_deref(), Some("/tmp"));
-    assert_eq!(parts[8].role, ConversationPartRole::System);
-    assert_eq!(parts[8].text.as_deref(), Some("/tmp/test-skill/SKILL.md"));
+    assert_eq!(parts[5].cwd.as_deref(), Some("/tmp"));
+    assert_eq!(parts[6].role, ConversationPartRole::System);
+    assert_eq!(parts[6].text.as_deref(), Some("/tmp/test-skill/SKILL.md"));
 }
 
 #[cfg(unix)]
@@ -2194,9 +2194,8 @@ fn official_codex_adapter_does_not_embed_raw_tool_payload_metadata() {
 
     assert_eq!(sessions.len(), 1);
     let parts = &sessions[0].turns[0].parts;
-    assert_content_card_types(parts, &["command", "result"]);
+    assert_content_card_types(parts, &["command"]);
     assert_eq!(parts[0].command.as_deref(), Some("cargo test"));
-    assert_eq!(parts[1].text, None);
     let metadata = parts
         .iter()
         .filter_map(|part| part.metadata_json.as_deref())
@@ -2207,7 +2206,7 @@ fn official_codex_adapter_does_not_embed_raw_tool_payload_metadata() {
 
 #[cfg(unix)]
 #[test]
-fn official_codex_adapter_truncates_large_browse_text() {
+fn official_codex_adapter_omits_large_success_payload_after_browse_policy() {
     if !command_available("node") || !command_available("sqlite3") {
         return;
     }
@@ -2265,14 +2264,11 @@ fn official_codex_adapter_truncates_large_browse_text() {
 
     let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
 
-    let result_part = &sessions[0].turns[0].parts[1];
-    assert_eq!(result_part.command.as_deref(), None);
-    assert_eq!(result_part.text, None);
-    let metadata: Value = serde_json::from_str(result_part.metadata_json.as_deref().unwrap())
-        .expect("result metadata");
-    assert_eq!(metadata.get("truncated").and_then(Value::as_bool), None);
-    assert!(metadata.get("content_card").is_none());
-    assert_eq!(content_card_type(result_part).as_deref(), Some("result"));
+    let parts = &sessions[0].turns[0].parts;
+    assert_content_card_types(parts, &["command"]);
+    assert_eq!(parts[0].command.as_deref(), Some("cargo test"));
+    assert_eq!(parts[0].status.as_deref(), Some("completed"));
+    assert_eq!(parts[0].exit_code, Some(0));
 }
 
 #[cfg(unix)]

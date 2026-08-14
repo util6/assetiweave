@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { StrictMode } from "react";
+import { StrictMode, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -9,9 +9,15 @@ import {
   buildConversationContentBlocks,
   buildConversationDisplayNodes,
   conversationCardColor,
+  type ConversationTranslationTaskController,
 } from "./ConversationContentCards";
 import type { Translator } from "../../i18n/I18nProvider";
 import { messages, type TranslationParams } from "../../i18n/messages";
+import type {
+  AiExecutionTaskSnapshot,
+  ConversationCardTranslationRequest,
+  ConversationPartTranslationUpdateRequest,
+} from "../../services/cardTranslation";
 import type { ConversationCard, ConversationContentNode, ConversationPart } from "../../types";
 
 const revealPath = vi.hoisted(() => vi.fn());
@@ -968,6 +974,110 @@ describe("ConversationContentCards", () => {
     expect(await screen.findByText(/Ejecuta/)).toBeTruthy();
   });
 
+  it("starts a task, shows phase progress, keeps unrelated controls enabled, and cancels", async () => {
+    const startTask = vi.fn();
+    const cancelTask = vi.fn();
+    render(
+      <TaskTranslationHarness
+        cancelTask={cancelTask}
+        startTask={startTask}
+        translationSaver={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "翻译回答文字为简体中文" }));
+    await waitFor(() => expect(startTask).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("translation-progress-part-answer-answer").textContent).toContain("等待执行");
+    expect((screen.getByRole("button", { name: "其他操作" }) as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "模拟翻译中" }));
+    expect(screen.getByTestId("translation-progress-part-answer-answer").textContent).toContain("正在翻译");
+    fireEvent.click(screen.getByRole("button", { name: "取消当前翻译" }));
+
+    await waitFor(() => expect(cancelTask).toHaveBeenCalledWith("ai-task-1"));
+    expect(screen.getByTestId("translation-progress-part-answer-answer").textContent).toContain("正在取消");
+  });
+
+  it("persists a successful task result and renders the translation", async () => {
+    const translationSaver = vi.fn().mockResolvedValue(undefined);
+    render(
+      <TaskTranslationHarness
+        cancelTask={vi.fn()}
+        startTask={vi.fn()}
+        translationSaver={translationSaver}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "翻译回答文字为简体中文" }));
+    await screen.findByTestId("translation-progress-part-answer-answer");
+    fireEvent.click(screen.getByRole("button", { name: "完成任务" }));
+
+    expect(await screen.findByText(/运行测试/)).toBeTruthy();
+    await waitFor(() => expect(translationSaver).toHaveBeenCalledWith({
+      partId: "part-answer",
+      recordKind: "session",
+      translatedText: "运行测试。",
+    }));
+  });
+
+  it("keeps a successful AI result visible when persistence fails", async () => {
+    const onTranslationError = vi.fn();
+    const translationSaver = vi.fn().mockRejectedValue(new Error("disk full"));
+    render(
+      <TaskTranslationHarness
+        cancelTask={vi.fn()}
+        onTranslationError={onTranslationError}
+        startTask={vi.fn()}
+        translationSaver={translationSaver}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "翻译回答文字为简体中文" }));
+    await screen.findByTestId("translation-progress-part-answer-answer");
+    fireEvent.click(screen.getByRole("button", { name: "完成任务" }));
+
+    expect(await screen.findByText(/运行测试/)).toBeTruthy();
+    expect((await screen.findByRole("alert")).textContent).toContain("保存译文失败：disk full");
+    expect(onTranslationError).toHaveBeenCalledWith("保存译文失败：disk full");
+  });
+
+  it("treats cancellation as a neutral terminal state", async () => {
+    render(
+      <TaskTranslationHarness
+        cancelTask={vi.fn()}
+        startTask={vi.fn()}
+        translationSaver={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "翻译回答文字为简体中文" }));
+    await screen.findByTestId("translation-progress-part-answer-answer");
+    fireEvent.click(screen.getByRole("button", { name: "任务已取消" }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("translation-progress-part-answer-answer")).toBeNull();
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect((screen.getByRole("button", { name: "翻译回答文字为简体中文" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("does not cancel a running task when the card page unmounts", async () => {
+    const cancelTask = vi.fn();
+    const view = render(
+      <TaskTranslationHarness
+        cancelTask={cancelTask}
+        startTask={vi.fn()}
+        translationSaver={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "翻译回答文字为简体中文" }));
+    await screen.findByTestId("translation-progress-part-answer-answer");
+    view.unmount();
+
+    expect(cancelTask).not.toHaveBeenCalled();
+  });
+
   it("renders saved translated text from the content part", () => {
     const blocks = buildConversationContentBlocks([
       {
@@ -1158,5 +1268,98 @@ function projectedCard(
     body,
     command_label: commandLabel,
     legacy_anchor_ids: [],
+  };
+}
+
+function TaskTranslationHarness({
+  cancelTask,
+  onTranslationError,
+  startTask,
+  translationSaver,
+}: {
+  cancelTask: (taskId: string) => unknown;
+  onTranslationError?: (message: string) => void;
+  startTask: (request: ConversationCardTranslationRequest) => unknown;
+  translationSaver: (request: ConversationPartTranslationUpdateRequest) => Promise<void>;
+}) {
+  const [tasks, setTasks] = useState<AiExecutionTaskSnapshot[]>([]);
+  const controller: ConversationTranslationTaskController = {
+    tasks,
+    startTranslation: async (request: ConversationCardTranslationRequest) => {
+      startTask(request);
+      const snapshot = aiTask("queued", "queued", null);
+      setTasks([snapshot]);
+      return snapshot;
+    },
+    cancelTask: async (taskId: string) => {
+      cancelTask(taskId);
+      const snapshot = aiTask("running", "cancelling", null);
+      setTasks([snapshot]);
+      return snapshot;
+    },
+  };
+
+  return (
+    <>
+      <button
+        onClick={() => setTasks([aiTask("running", "prompting", null)])}
+        type="button"
+      >
+        模拟翻译中
+      </button>
+      <button
+        onClick={() => setTasks([aiTask("succeeded", "cleaning_up", "运行测试。")])}
+        type="button"
+      >
+        完成任务
+      </button>
+      <button
+        onClick={() => setTasks([aiTask("cancelled", "cleaning_up", null)])}
+        type="button"
+      >
+        任务已取消
+      </button>
+      <button type="button">其他操作</button>
+      <ConversationContentCards
+        blocks={[{
+          id: "part-answer-answer",
+          partId: "part-answer",
+          role: "assistant",
+          text: "Run tests.",
+          type: "answer",
+        }]}
+        onTranslationError={onTranslationError}
+        t={t}
+        translationAvailabilityChecker={async () => ({
+          available: true,
+          error: null,
+          version: "opencode 1.0.0",
+        })}
+        translationSaver={translationSaver}
+        translationTaskController={controller}
+        visibility={{ answer: true }}
+      />
+    </>
+  );
+}
+
+function aiTask(
+  state: AiExecutionTaskSnapshot["state"],
+  phase: AiExecutionTaskSnapshot["phase"],
+  text: string | null,
+): AiExecutionTaskSnapshot {
+  return {
+    id: "ai-task-1",
+    purpose: "translation",
+    agent_id: "opencode",
+    state,
+    phase,
+    created_at: "2026-08-13T00:00:00Z",
+    updated_at: `2026-08-13T00:00:0${state === "queued" ? "1" : "2"}Z`,
+    finished_at: ["succeeded", "failed", "cancelled"].includes(state)
+      ? "2026-08-13T00:00:02Z"
+      : null,
+    result: text ? { text } : null,
+    error: null,
   };
 }

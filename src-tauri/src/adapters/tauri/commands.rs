@@ -8,6 +8,7 @@ use crate::adapters::prompt_clipboard::{
     copy_prompt_card_to_clipboard as copy_prompt_card_to_clipboard_impl, PromptClipboardParams,
 };
 use crate::adapters::tauri::background_tasks::{
+    AiExecutionTaskGetParams, AiExecutionTaskSnapshot, BackgroundTaskRegistry,
     BackgroundTaskStatus, ConversationScriptInstallTaskSnapshot,
     ConversationSearchIndexTaskSnapshot, ConversationSyncTaskSnapshot, MemoryTaskSnapshot,
     SkillBackupTaskSnapshot,
@@ -22,6 +23,14 @@ use crate::backend::capabilities::{
     sync_asset_mount_observations, target_profile_from_input, unmount_asset_mount_record,
 };
 use crate::{
+    backend::agents::types::{
+        AgentCatalogEntry, AgentConnectionCheckRequest, AgentConnectionResult, AgentModelsRequest,
+        AgentModelsResult,
+    },
+    backend::ai_execution::{
+        AgentExecutionRuntime, AiExecutionError, AiExecutionLimits, AiExecutionPhase,
+        AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
+    },
     backend::application::{
         AppService, ConversationAdapterCatalogRefreshParams,
         ConversationAdapterLocalRegisterParams, ConversationAdapterPackageCatalogParams,
@@ -47,14 +56,10 @@ use crate::{
         TenantCreateParams, UpdateSkillBackupSettingsParams,
     },
     backend::card_translation::{
-        check_opencode_translation_availability as check_opencode_translation_availability_impl,
-        list_conversation_translation_models as list_conversation_translation_models_impl,
-        test_conversation_translation_connection as test_conversation_translation_connection_impl,
-        translate_conversation_card as translate_conversation_card_impl,
-        translate_conversation_card_with_opencode as translate_conversation_card_with_opencode_impl,
-        ConversationTranslationConnectionRequest, ConversationTranslationModelsRequest,
-        ConversationTranslationModelsResult, ConversationTranslationRequest,
-        OpencodeTranslationAvailability, OpencodeTranslationRequest, OpencodeTranslationResult,
+        prepare_opencode_agent_translation, ConversationTranslationConnectionRequest,
+        ConversationTranslationModelsRequest, ConversationTranslationModelsResult,
+        ConversationTranslationRequest, OpencodeTranslationAvailability,
+        OpencodeTranslationRequest, OpencodeTranslationResult,
     },
     backend::conversations::{
         ExternalAdapterRegisterParams, ExternalAdapterScaffoldParams, ExternalAdapterTryRunParams,
@@ -78,8 +83,10 @@ use crate::{
     },
 };
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 use tauri::{AppHandle, Emitter, State};
+
+pub(crate) const AI_EXECUTION_TASK_UPDATED_EVENT: &str = "ai-execution://task-updated";
 
 #[tauri::command]
 pub(crate) fn get_app_overview(state: State<'_, AppState>) -> AppResult<AppOverview> {
@@ -174,6 +181,9 @@ pub(crate) async fn complete_app_close(
     let allow_close = state.allow_close.clone();
     let allow_exit = state.allow_exit.clone();
     let db_path = state.db_path.clone();
+    let background_tasks = state.background_tasks.clone();
+
+    crate::converge_ai_executions_before_close(background_tasks).await;
 
     if !shutdown_sync_done.swap(true, std::sync::atomic::Ordering::SeqCst) {
         tauri::async_runtime::spawn_blocking(move || {
@@ -1657,17 +1667,71 @@ pub(crate) fn list_conversation_adapter_runtime_statuses(
 }
 
 #[tauri::command]
-pub(crate) fn check_opencode_translation_availability() -> AppResult<OpencodeTranslationAvailability>
-{
-    Ok(check_opencode_translation_availability_impl())
+pub(crate) async fn list_agent_catalog(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<AgentCatalogEntry>> {
+    let db_path = state.db_path.clone();
+    let agent_runtime = state.agent_runtime.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?.list_agent_catalog()
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn check_agent_connection(
+    state: State<'_, AppState>,
+    params: AgentConnectionCheckRequest,
+) -> AppResult<AgentConnectionResult> {
+    let db_path = state.db_path.clone();
+    let agent_runtime = state.agent_runtime.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?
+            .check_agent_connection(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn list_agent_models(
+    state: State<'_, AppState>,
+    params: AgentModelsRequest,
+) -> AppResult<AgentModelsResult> {
+    let db_path = state.db_path.clone();
+    let agent_runtime = state.agent_runtime.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?.list_agent_models(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn check_opencode_translation_availability(
+    state: State<'_, AppState>,
+) -> AppResult<OpencodeTranslationAvailability> {
+    let db_path = state.db_path.clone();
+    let agent_runtime = state.agent_runtime.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?
+            .check_opencode_translation_availability()
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 pub(crate) async fn translate_conversation_card_with_opencode(
+    state: State<'_, AppState>,
     params: OpencodeTranslationRequest,
 ) -> AppResult<OpencodeTranslationResult> {
+    let db_path = state.db_path.clone();
+    let agent_runtime = state.agent_runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        translate_conversation_card_with_opencode_impl(params)
+        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?
+            .translate_conversation_card_with_opencode(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1675,19 +1739,29 @@ pub(crate) async fn translate_conversation_card_with_opencode(
 
 #[tauri::command]
 pub(crate) async fn translate_conversation_card(
+    state: State<'_, AppState>,
     params: ConversationTranslationRequest,
 ) -> AppResult<OpencodeTranslationResult> {
-    tauri::async_runtime::spawn_blocking(move || translate_conversation_card_impl(params))
-        .await
-        .map_err(|error| error.to_string())?
+    let db_path = state.db_path.clone();
+    let agent_runtime = state.agent_runtime.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?
+            .translate_conversation_card(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 pub(crate) async fn test_conversation_translation_connection(
+    state: State<'_, AppState>,
     params: ConversationTranslationConnectionRequest,
 ) -> AppResult<OpencodeTranslationAvailability> {
+    let db_path = state.db_path.clone();
+    let agent_runtime = state.agent_runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        Ok(test_conversation_translation_connection_impl(params))
+        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?
+            .test_conversation_translation_connection(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1695,13 +1769,157 @@ pub(crate) async fn test_conversation_translation_connection(
 
 #[tauri::command]
 pub(crate) async fn list_conversation_translation_models(
+    state: State<'_, AppState>,
     params: ConversationTranslationModelsRequest,
 ) -> AppResult<ConversationTranslationModelsResult> {
+    let db_path = state.db_path.clone();
+    let agent_runtime = state.agent_runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        Ok(list_conversation_translation_models_impl(params))
+        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?
+            .list_conversation_translation_models(params)
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+trait AiExecutionTaskEmitter: Send + Sync {
+    fn emit(&self, snapshot: &AiExecutionTaskSnapshot);
+}
+
+struct TauriAiExecutionTaskEmitter {
+    app: AppHandle,
+}
+
+impl AiExecutionTaskEmitter for TauriAiExecutionTaskEmitter {
+    fn emit(&self, snapshot: &AiExecutionTaskSnapshot) {
+        if let Err(error) = self.app.emit(AI_EXECUTION_TASK_UPDATED_EVENT, snapshot) {
+            log_error(
+                "ai_execution.task",
+                "推送 AI 执行任务状态失败",
+                &error.to_string(),
+                &[("task_id", snapshot.id.clone())],
+            );
+        }
+    }
+}
+
+struct RegistryAiExecutionProgressSink {
+    tasks: Arc<BackgroundTaskRegistry>,
+    task_id: String,
+    emitter: Arc<dyn AiExecutionTaskEmitter>,
+}
+
+impl AiExecutionProgressSink for RegistryAiExecutionProgressSink {
+    fn set_phase(&self, phase: AiExecutionPhase) {
+        match self.tasks.update_ai_execution_phase(&self.task_id, phase) {
+            Ok(snapshot) => self.emitter.emit(&snapshot),
+            Err(error) => log_error(
+                "ai_execution.task",
+                "更新 AI 执行任务阶段失败",
+                &error,
+                &[("task_id", self.task_id.clone())],
+            ),
+        }
+    }
+}
+
+fn prepare_ai_execution_task(
+    tasks: Arc<BackgroundTaskRegistry>,
+    params: ConversationTranslationRequest,
+    emitter: Arc<dyn AiExecutionTaskEmitter>,
+) -> AppResult<(AiExecutionTaskSnapshot, AiExecutionRequest)> {
+    let (agent_id, prompt, model) = prepare_opencode_agent_translation(params)?;
+    let (snapshot, cancellation) =
+        tasks.begin_ai_execution(AiExecutionPurpose::Translation, &agent_id)?;
+    let progress = Arc::new(RegistryAiExecutionProgressSink {
+        tasks,
+        task_id: snapshot.id.clone(),
+        emitter: emitter.clone(),
+    });
+    let request = AiExecutionRequest {
+        execution_id: snapshot.id.clone(),
+        agent_id,
+        purpose: AiExecutionPurpose::Translation,
+        prompt,
+        model,
+        limits: AiExecutionLimits::default(),
+        cancellation,
+        progress: Some(progress),
+    };
+    emitter.emit(&snapshot);
+    Ok((snapshot, request))
+}
+
+async fn run_ai_execution_task(
+    tasks: Arc<BackgroundTaskRegistry>,
+    runtime: Arc<dyn AgentExecutionRuntime>,
+    task_id: String,
+    request: AiExecutionRequest,
+    emitter: Arc<dyn AiExecutionTaskEmitter>,
+) {
+    let execution = tokio::spawn(async move { runtime.execute(request).await });
+    let result = match execution.await {
+        Ok(result) => result,
+        Err(_) => Err(AiExecutionError::Protocol {
+            operation: "execution_task_panicked",
+        }),
+    };
+    match tasks.finish_ai_execution(&task_id, result) {
+        Ok(snapshot) => emitter.emit(&snapshot),
+        Err(error) => log_error(
+            "ai_execution.task",
+            "收敛 AI 执行任务状态失败",
+            &error,
+            &[("task_id", task_id)],
+        ),
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn start_conversation_card_translation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: ConversationTranslationRequest,
+) -> AppResult<AiExecutionTaskSnapshot> {
+    let emitter: Arc<dyn AiExecutionTaskEmitter> = Arc::new(TauriAiExecutionTaskEmitter { app });
+    let tasks = state.background_tasks.clone();
+    let (snapshot, request) = prepare_ai_execution_task(tasks.clone(), params, emitter.clone())?;
+    let runtime = state.agent_runtime.clone();
+    let task_id = snapshot.id.clone();
+    tauri::async_runtime::spawn(run_ai_execution_task(
+        tasks, runtime, task_id, request, emitter,
+    ));
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub(crate) fn get_ai_execution_task(
+    state: State<'_, AppState>,
+    params: AiExecutionTaskGetParams,
+) -> AppResult<Option<AiExecutionTaskSnapshot>> {
+    state
+        .background_tasks
+        .ai_execution_snapshot(&params.task_id)
+}
+
+#[tauri::command]
+pub(crate) fn list_ai_execution_tasks(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<AiExecutionTaskSnapshot>> {
+    state.background_tasks.ai_execution_snapshots()
+}
+
+#[tauri::command]
+pub(crate) fn cancel_ai_execution_task(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: AiExecutionTaskGetParams,
+) -> AppResult<AiExecutionTaskSnapshot> {
+    let snapshot = state
+        .background_tasks
+        .cancel_ai_execution(&params.task_id)?;
+    TauriAiExecutionTaskEmitter { app }.emit(&snapshot);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -2705,11 +2923,18 @@ pub(crate) fn command_handler(
         scaffold_conversation_adapter,
         validate_conversation_adapter,
         list_conversation_adapter_runtime_statuses,
+        list_agent_catalog,
+        check_agent_connection,
+        list_agent_models,
         check_opencode_translation_availability,
         translate_conversation_card_with_opencode,
         translate_conversation_card,
         test_conversation_translation_connection,
         list_conversation_translation_models,
+        start_conversation_card_translation,
+        get_ai_execution_task,
+        list_ai_execution_tasks,
+        cancel_ai_execution_task,
         register_conversation_adapter,
         unregister_conversation_adapter,
         try_run_conversation_adapter,
@@ -2771,6 +2996,10 @@ pub(crate) fn command_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::ai_execution::{executor::BackendFuture, AiExecutionResult};
+    use crate::backend::card_translation::{
+        ConversationTranslationCli, ConversationTranslationProvider,
+    };
     use crate::backend::dto::{PhysicalMountStateDto, SkillBackupState};
     use crate::backend::models::{
         AppKind, AssetFormat, AssetGroup, AssetGroupRules, AssetKind, DeploymentStrategy,
@@ -2779,8 +3008,154 @@ mod tests {
     use std::{
         path::{Path, PathBuf},
         process::Command,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Mutex,
+        },
+        time::{Duration, Instant},
     };
     use uuid::Uuid;
+
+    #[derive(Default)]
+    struct RecordingAiTaskEmitter {
+        snapshots: Mutex<Vec<AiExecutionTaskSnapshot>>,
+    }
+
+    impl AiExecutionTaskEmitter for RecordingAiTaskEmitter {
+        fn emit(&self, snapshot: &AiExecutionTaskSnapshot) {
+            self.snapshots.lock().unwrap().push(snapshot.clone());
+        }
+    }
+
+    struct AdapterFakeRuntime {
+        cleaned: Arc<AtomicBool>,
+    }
+
+    impl AgentExecutionRuntime for AdapterFakeRuntime {
+        fn execute<'a>(&'a self, request: AiExecutionRequest) -> BackendFuture<'a> {
+            Box::pin(async move {
+                request.report_phase(AiExecutionPhase::Resolving);
+                request.report_phase(AiExecutionPhase::Spawning);
+                request.report_phase(AiExecutionPhase::Prompting);
+                self.cleaned.store(true, Ordering::SeqCst);
+                Ok(AiExecutionResult {
+                    text: "adapter result".to_string(),
+                    agent_id: request.agent_id,
+                    protocol: crate::backend::agents::types::AgentProtocol::Acp,
+                    requested_model: request.model,
+                    elapsed_ms: 1,
+                })
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tauri_01_02_start_preparation_is_fast_and_has_no_global_lock_dependency() {
+        let tasks = Arc::new(BackgroundTaskRegistry::default());
+        let emitter = Arc::new(RecordingAiTaskEmitter::default());
+        let started = Instant::now();
+
+        let (snapshot, request) = prepare_ai_execution_task(
+            tasks.clone(),
+            opencode_translation_request(),
+            emitter.clone(),
+        )
+        .unwrap();
+
+        assert!(started.elapsed() < Duration::from_millis(100));
+        assert_eq!(
+            snapshot.state,
+            crate::adapters::tauri::background_tasks::AiExecutionTaskState::Queued
+        );
+        assert_eq!(request.prompt, "translate this");
+        assert_eq!(emitter.snapshots.lock().unwrap().as_slice(), [snapshot]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tauri_03_04_phase_and_terminal_events_are_full_snapshots_after_runtime_cleanup() {
+        let tasks = Arc::new(BackgroundTaskRegistry::default());
+        let emitter = Arc::new(RecordingAiTaskEmitter::default());
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let runtime: Arc<dyn AgentExecutionRuntime> = Arc::new(AdapterFakeRuntime {
+            cleaned: cleaned.clone(),
+        });
+        let (queued, request) = prepare_ai_execution_task(
+            tasks.clone(),
+            opencode_translation_request(),
+            emitter.clone(),
+        )
+        .unwrap();
+
+        run_ai_execution_task(
+            tasks.clone(),
+            runtime,
+            queued.id.clone(),
+            request,
+            emitter.clone(),
+        )
+        .await;
+
+        assert!(cleaned.load(Ordering::SeqCst));
+        let events = emitter.snapshots.lock().unwrap();
+        assert_eq!(events.first().unwrap().phase, AiExecutionPhase::Queued);
+        assert!(events
+            .iter()
+            .any(|snapshot| snapshot.phase == AiExecutionPhase::Resolving));
+        assert!(events
+            .iter()
+            .any(|snapshot| snapshot.phase == AiExecutionPhase::Prompting));
+        let terminal = events.last().unwrap();
+        assert_eq!(
+            terminal.state,
+            crate::adapters::tauri::background_tasks::AiExecutionTaskState::Succeeded
+        );
+        assert_eq!(terminal.result.as_ref().unwrap().text, "adapter result");
+        let serialized = serde_json::to_value(terminal).unwrap();
+        for field in [
+            "id",
+            "purpose",
+            "agent_id",
+            "state",
+            "phase",
+            "created_at",
+            "updated_at",
+            "finished_at",
+            "result",
+            "error",
+        ] {
+            assert!(serialized.get(field).is_some(), "missing field {field}");
+        }
+    }
+
+    #[test]
+    fn tauri_05_06_get_list_and_cancel_use_the_central_registry_token() {
+        let tasks = Arc::new(BackgroundTaskRegistry::default());
+        let emitter = Arc::new(RecordingAiTaskEmitter::default());
+        let (queued, request) =
+            prepare_ai_execution_task(tasks.clone(), opencode_translation_request(), emitter)
+                .unwrap();
+        let cancellation = request.cancellation.clone();
+
+        let cancelling = tasks.cancel_ai_execution(&queued.id).unwrap();
+
+        assert!(cancellation.is_cancelled());
+        assert_eq!(cancelling.phase, AiExecutionPhase::Cancelling);
+        assert_eq!(
+            tasks.ai_execution_snapshot(&queued.id).unwrap(),
+            Some(cancelling.clone())
+        );
+        assert_eq!(tasks.ai_execution_snapshots().unwrap(), [cancelling]);
+    }
+
+    fn opencode_translation_request() -> ConversationTranslationRequest {
+        ConversationTranslationRequest {
+            agent_id: None,
+            provider: ConversationTranslationProvider::Cli,
+            cli: ConversationTranslationCli::Opencode,
+            model: "model/a".to_string(),
+            prompt: "translate this".to_string(),
+        }
+    }
 
     fn open_test_database(db_path: &Path) -> crate::backend::store::Database {
         crate::backend::store::Database::open_initialized(db_path).expect("open initialized db")

@@ -196,6 +196,19 @@ fn normalize_shared_ai_settings(settings: &mut Value) {
         "aiRuntime".to_string(),
         json!({ "cli": cli, "model": model }),
     );
+    let mut agent_capabilities = root
+        .get("agentCapabilityAssignments")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for service_id in ["cardTranslation", "memory", "promptOptimization"] {
+        let agent_id = normalize_agent_capability_agent_id(agent_capabilities.get(service_id), cli);
+        agent_capabilities.insert(service_id.to_string(), Value::String(agent_id));
+    }
+    root.insert(
+        "agentCapabilityAssignments".to_string(),
+        Value::Object(agent_capabilities),
+    );
 
     let mut translation = legacy_translation;
     translation.remove("cli");
@@ -258,6 +271,28 @@ fn normalize_ai_runtime_model(value: Option<&Value>) -> String {
         normalized
     } else {
         String::new()
+    }
+}
+
+fn normalize_agent_capability_agent_id(value: Option<&Value>, fallback: &str) -> String {
+    let Some(value) = value.and_then(Value::as_str) else {
+        return fallback.to_string();
+    };
+    let normalized = value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    let normalized = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() || normalized.len() > 128 {
+        fallback.to_string()
+    } else {
+        normalized
     }
 }
 
@@ -437,5 +472,25 @@ mod tests {
         assert_eq!(settings["memory"]["autoDreamEnabled"], false);
         assert_eq!(settings["memory"]["minHours"], 12);
         assert_eq!(settings["memory"]["minSessions"], 3);
+    }
+
+    #[test]
+    fn service_agent_assignments_migrate_from_legacy_runtime_and_preserve_explicit_values() {
+        let settings = normalize_settings_paths(json!({
+            "aiRuntime": { "cli": "gemini", "model": "gemini-2.5-pro" },
+            "agentModels": { "codex": "openai/gpt-5-codex" },
+            "agentCapabilityAssignments": { "memory": "codex" }
+        }))
+        .expect("normalize service Agent settings");
+
+        assert_eq!(
+            settings["agentCapabilityAssignments"]["cardTranslation"],
+            "gemini"
+        );
+        assert_eq!(settings["agentCapabilityAssignments"]["memory"], "codex");
+        assert_eq!(
+            settings["agentCapabilityAssignments"]["promptOptimization"],
+            "gemini"
+        );
     }
 }

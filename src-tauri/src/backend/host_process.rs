@@ -1,10 +1,17 @@
 use std::{
+    env,
+    ffi::{OsStr, OsString},
+    fs,
     io::Read,
+    path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
     sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant},
 };
+
+const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
+const DISCOVERY_OUTPUT_CAP: usize = 8 * 1024;
 
 #[derive(Debug)]
 pub(crate) struct HostProcessOutput {
@@ -41,6 +48,96 @@ pub(crate) struct HostProcessControl<'a> {
     pub(crate) cancellation: Option<&'a AtomicBool>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HostProcessSignal {
+    Terminate,
+    Kill,
+}
+
+pub(crate) fn resolve_host_executable(command_name: &str) -> Option<PathBuf> {
+    let command_path = Path::new(command_name);
+    if command_path.components().count() > 1 {
+        return is_executable_file(command_path).then(|| command_path.to_path_buf());
+    }
+
+    let path_env = env::var_os("PATH");
+    let login_shell_candidate = find_command_with_login_shell(command_name);
+    let home_dir = dirs::home_dir();
+    let search_candidates = host_executable_search_candidates(command_name, home_dir.as_deref());
+    resolve_host_executable_from_sources(
+        command_name,
+        path_env.as_deref(),
+        login_shell_candidate,
+        &search_candidates,
+    )
+}
+
+pub(crate) fn resolve_host_executable_from_sources(
+    command_name: &str,
+    path_env: Option<&OsStr>,
+    login_shell_candidate: Option<PathBuf>,
+    search_candidates: &[PathBuf],
+) -> Option<PathBuf> {
+    if let Some(path) = find_program_on_path(command_name, path_env) {
+        return Some(path);
+    }
+
+    if let Some(path) = login_shell_candidate.filter(|path| is_executable_file(path)) {
+        return Some(path);
+    }
+
+    search_candidates
+        .iter()
+        .find(|candidate| is_executable_file(candidate))
+        .cloned()
+}
+
+pub(crate) fn host_executable_name(command_name: &str) -> OsString {
+    #[cfg(not(windows))]
+    {
+        OsString::from(command_name)
+    }
+
+    #[cfg(windows)]
+    {
+        OsString::from(format!("{command_name}.exe"))
+    }
+}
+
+pub(crate) fn host_executable_search_candidates(
+    command_name: &str,
+    home_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    let executable = host_executable_name(command_name);
+    let mut candidates = Vec::new();
+
+    #[cfg(not(windows))]
+    candidates.extend([
+        Path::new("/opt/homebrew/bin").join(&executable),
+        Path::new("/usr/local/bin").join(&executable),
+        Path::new("/opt/local/bin").join(&executable),
+    ]);
+
+    if let Some(home_dir) = home_dir {
+        candidates.extend([
+            home_dir
+                .join(format!(".{command_name}"))
+                .join("bin")
+                .join(&executable),
+            home_dir.join(".local").join("bin").join(&executable),
+            home_dir.join(".npm-global").join("bin").join(&executable),
+            home_dir.join(".pnpm-global").join("bin").join(&executable),
+            home_dir.join(".bun").join("bin").join(&executable),
+            home_dir.join(".deno").join("bin").join(&executable),
+            home_dir.join(".cargo").join("bin").join(&executable),
+            home_dir.join(".volta").join("bin").join(&executable),
+            home_dir.join("Library").join("pnpm").join(&executable),
+        ]);
+    }
+
+    candidates
+}
+
 pub(crate) fn run_command_with_timeout(
     command: &mut Command,
     timeout: Duration,
@@ -73,6 +170,7 @@ pub(crate) fn run_command_with_control(
 
     configure_process_tree(command);
     let mut child = command
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -152,6 +250,120 @@ fn is_cancelled(cancellation: Option<&AtomicBool>) -> bool {
     cancellation.is_some_and(|cancellation| cancellation.load(Ordering::Acquire))
 }
 
+fn find_program_on_path(program: &str, path_env: Option<&OsStr>) -> Option<PathBuf> {
+    let path_env = path_env?;
+    for directory in env::split_paths(path_env) {
+        if directory.as_os_str().is_empty() {
+            continue;
+        }
+        for file_name in executable_file_names(program) {
+            let candidate = directory.join(file_name);
+            if is_executable_file(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn executable_file_names(program: &str) -> Vec<OsString> {
+    vec![OsString::from(program)]
+}
+
+#[cfg(windows)]
+fn executable_file_names(program: &str) -> Vec<OsString> {
+    let program_path = Path::new(program);
+    if program_path.extension().is_some() {
+        return vec![OsString::from(program)];
+    }
+
+    ["exe", "cmd", "bat", "com"]
+        .into_iter()
+        .map(|extension| OsString::from(format!("{program}.{extension}")))
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn find_command_with_login_shell(command_name: &str) -> Option<PathBuf> {
+    if !command_name
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'+'))
+    {
+        return None;
+    }
+    let shell = login_shell()?;
+    let script = format!("command -v {command_name}");
+    let mut command = Command::new(shell);
+    command
+        .args(["-lc", &script])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let output = run_command_with_timeout(
+        &mut command,
+        LOGIN_SHELL_TIMEOUT,
+        DISCOVERY_OUTPUT_CAP,
+        DISCOVERY_OUTPUT_CAP,
+    )
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let path = PathBuf::from(first_nonempty_line(&output.stdout)?);
+    if path.is_absolute() && is_executable_file(&path) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+#[cfg(windows)]
+fn find_command_with_login_shell(_command_name: &str) -> Option<PathBuf> {
+    None
+}
+
+#[cfg(not(windows))]
+fn login_shell() -> Option<PathBuf> {
+    env::var_os("SHELL")
+        .map(PathBuf::from)
+        .filter(|path| is_executable_file(path))
+        .or_else(|| {
+            ["/bin/zsh", "/bin/bash", "/bin/sh"]
+                .into_iter()
+                .map(PathBuf::from)
+                .find(|path| is_executable_file(path))
+        })
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn first_nonempty_line(bytes: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_string)
+}
+
 fn read_capped_and_drain<R: Read>(mut reader: R, cap: usize) -> Result<(Vec<u8>, bool), String> {
     let mut output = Vec::with_capacity(cap.min(8192));
     let mut buffer = [0_u8; 8192];
@@ -183,37 +395,82 @@ fn join_output_reader(
 
 #[cfg(windows)]
 fn terminate_child_tree(child: &mut std::process::Child) {
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let status = Command::new("taskkill")
-        .args(["/PID", &child.id().to_string(), "/T", "/F"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .status();
-    if !status.is_ok_and(|status| status.success()) {
+    if signal_process_tree(child.id(), HostProcessSignal::Kill).is_err() {
         let _ = child.kill();
     }
 }
 
 #[cfg(unix)]
 fn terminate_child_tree(child: &mut std::process::Child) {
-    let process_group = -(child.id() as libc::pid_t);
-    // SAFETY: the child is spawned into a dedicated process group below, so the
-    // negative PID targets only that group. Failure is handled by killing the
-    // direct child as a fallback.
-    let _ = unsafe { libc::kill(process_group, libc::SIGKILL) };
+    let _ = signal_process_tree(child.id(), HostProcessSignal::Kill);
     let _ = child.kill();
 }
 
 #[cfg(unix)]
-fn configure_process_tree(command: &mut Command) {
+pub(crate) fn configure_process_tree(command: &mut Command) {
     use std::os::unix::process::CommandExt;
 
     command.process_group(0);
 }
 
 #[cfg(windows)]
-fn configure_process_tree(_command: &mut Command) {}
+pub(crate) fn configure_process_tree(_command: &mut Command) {}
+
+#[cfg(unix)]
+pub(crate) fn signal_process_tree(
+    process_group_id: u32,
+    signal: HostProcessSignal,
+) -> Result<(), String> {
+    let process_group_id = libc::pid_t::try_from(process_group_id)
+        .map_err(|_| "process group id is outside the platform range".to_string())?;
+    if process_group_id <= 0 {
+        return Err("process group id must be positive".to_string());
+    }
+
+    let signal = match signal {
+        HostProcessSignal::Terminate => libc::SIGTERM,
+        HostProcessSignal::Kill => libc::SIGKILL,
+    };
+    // SAFETY: managed children are spawned into a dedicated group whose id is
+    // recorded from the direct child pid. A negative pid signals that group.
+    if unsafe { libc::kill(-process_group_id, signal) } == 0 {
+        return Ok(());
+    }
+
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        return Ok(());
+    }
+    Err(format!("failed to signal process group: {error}"))
+}
+
+#[cfg(windows)]
+pub(crate) fn signal_process_tree(
+    process_id: u32,
+    signal: HostProcessSignal,
+) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    if process_id == 0 {
+        return Err("process id must be positive".to_string());
+    }
+
+    let mut command = Command::new("taskkill");
+    command.args(["/PID", &process_id.to_string(), "/T"]);
+    if signal == HostProcessSignal::Kill {
+        command.arg("/F");
+    }
+    let status = command
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map_err(|error| format!("failed to launch taskkill: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("taskkill exited with status {status}"))
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -264,6 +521,21 @@ mod tests {
 
         assert!(matches!(error, HostProcessError::Timeout { .. }));
         assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn process_tree_signal_is_idempotent_after_the_group_exits() {
+        let mut command = fixture_command("timeout");
+        configure_process_tree(&mut command);
+        let mut child = command.spawn().expect("spawn process-group fixture");
+        let process_group_id = child.id();
+
+        signal_process_tree(process_group_id, HostProcessSignal::Terminate)
+            .expect("first process-group terminate");
+        child.wait().expect("reap process-group fixture");
+        signal_process_tree(process_group_id, HostProcessSignal::Kill)
+            .expect("second process-group kill is a no-op");
     }
 
     fn fixture_command(mode: &str) -> Command {

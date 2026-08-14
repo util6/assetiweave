@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/util6/assetiweave/errs"
 	"github.com/util6/assetiweave/internal/output"
@@ -66,6 +68,13 @@ func (c *EngineClient) Call(ctx context.Context, method string, params any) (Cal
 	}
 
 	cmd := exec.CommandContext(ctx, enginePath)
+	cmd.Cancel = func() error {
+		if runtime.GOOS == "windows" {
+			return cmd.Process.Kill()
+		}
+		return cmd.Process.Signal(os.Interrupt)
+	}
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Stdin = bytes.NewReader(body)
 	if env := c.commandEnv(); len(env) > 0 {
 		cmd.Env = mergedEnv(env)

@@ -39,12 +39,15 @@ export {
   firstFontFamilyName,
   normalizeStoredSettings,
   normalizeConversationTranslationTargetLanguage,
+  resolveAgentCapability,
   resolveFontFamilyCss,
   TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH,
   TRANSLATION_MODEL_MAX_LENGTH,
   TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH,
 } from "./settingsSchema";
 export type {
+  AgentCapabilityAssignments,
+  AgentCapabilityServiceId,
   AiRuntimeCli,
   AiRuntimeSettings,
   AppSettings,

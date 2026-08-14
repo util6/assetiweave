@@ -4,13 +4,15 @@ import type { Translator } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
 import {
   checkConversationTranslationAvailability,
-  translateConversationCardContent,
   updateConversationPartTranslation,
+  type AiExecutionPhase,
+  type AiExecutionTaskSnapshot,
   type ConversationCardTranslationRequest,
   type OpencodeTranslationAvailability,
   type OpencodeTranslationResult,
   type ConversationPartTranslationUpdateRequest,
 } from "../../services/cardTranslation";
+import { useOptionalAiExecutionTasks } from "../../app/backgroundTasks/AiExecutionTaskProvider";
 import { revealPath } from "../../services/catalog";
 import type {
   ConversationCard,
@@ -45,6 +47,18 @@ export type ConversationContentType = string;
 export type ConversationContentVisibility = Record<ConversationContentType, boolean>;
 export type ConversationContentFormat = "plain" | "markdown";
 type TranslationAvailabilityStatus = "idle" | "checking" | "available" | "unavailable";
+type TranslationUiError = {
+  kind: "execution" | "persistence";
+  message: string;
+};
+
+export interface ConversationTranslationTaskController {
+  tasks: AiExecutionTaskSnapshot[];
+  startTranslation: (
+    request: ConversationCardTranslationRequest,
+  ) => Promise<AiExecutionTaskSnapshot>;
+  cancelTask: (taskId: string) => Promise<AiExecutionTaskSnapshot>;
+}
 
 export interface ConversationContentBlock {
   id: string;
@@ -174,7 +188,8 @@ export function ConversationContentCards({
   translationAvailabilityChecker,
   translationSaver = updateConversationPartTranslation,
   translationSettings = DEFAULT_TRANSLATION_SETTINGS,
-  translator = translateConversationCardContent,
+  translationTaskController,
+  translator,
   visibility,
 }: {
   activeBlockId?: string | null;
@@ -189,9 +204,12 @@ export function ConversationContentCards({
   translationAvailabilityChecker?: () => Promise<OpencodeTranslationAvailability>;
   translationSaver?: (request: ConversationPartTranslationUpdateRequest) => Promise<void>;
   translationSettings?: ResolvedConversationTranslationSettings;
+  translationTaskController?: ConversationTranslationTaskController;
   translator?: (request: ConversationCardTranslationRequest) => Promise<OpencodeTranslationResult>;
   visibility: ConversationContentVisibility;
 }) {
+  const globalTranslationTasks = useOptionalAiExecutionTasks();
+  const taskController = translationTaskController ?? globalTranslationTasks;
   const displayNodes: ConversationDisplayNode[] = nodes
     ?? blocks.map((block) => ({ type: "card", turnId: "", block }));
   const visibleNodes = displayNodes.flatMap((node): ConversationDisplayNode[] => {
@@ -218,18 +236,23 @@ export function ConversationContentCards({
   ));
   const [copiedBlockId, setCopiedBlockId] = useState<string | null>(null);
   const [translatedBlocks, setTranslatedBlocks] = useState<Record<string, string>>({});
-  const [translationErrors, setTranslationErrors] = useState<Record<string, string>>({});
+  const [translationErrors, setTranslationErrors] = useState<Record<string, TranslationUiError>>({});
   const [translatingBlockIds, setTranslatingBlockIds] = useState<Set<string>>(new Set());
+  const [translationTaskByBlockId, setTranslationTaskByBlockId] =
+    useState<Record<string, string>>({});
   const [translationAvailability, setTranslationAvailability] =
     useState<TranslationAvailabilityStatus>("idle");
   const copiedResetTimerRef = useRef<number | null>(null);
+  const handledTerminalTaskIdsRef = useRef(new Set<string>());
+  const mountedRef = useRef(true);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
       clearCopiedResetTimer(copiedResetTimerRef);
-    },
-    [],
-  );
+    };
+  }, []);
 
   useEffect(() => {
     if (visibleBlocks.length === 0) return;
@@ -263,6 +286,76 @@ export function ConversationContentCards({
     visibleBlocks.length,
   ]);
 
+  useEffect(() => {
+    if (!taskController) return;
+    for (const [blockId, taskId] of Object.entries(translationTaskByBlockId)) {
+      const task = taskController.tasks.find((candidate) => candidate.id === taskId);
+      if (!task || !isTerminalAiExecutionTask(task)) continue;
+      if (handledTerminalTaskIdsRef.current.has(task.id)) continue;
+      handledTerminalTaskIdsRef.current.add(task.id);
+
+      setTranslationTaskByBlockId((current) => {
+        if (current[blockId] !== taskId) return current;
+        const next = { ...current };
+        delete next[blockId];
+        return next;
+      });
+
+      if (task.state === "cancelled") {
+        setTranslationErrors((current) => removeRecordKey(current, blockId));
+        continue;
+      }
+
+      if (task.state === "failed") {
+        const message = task.error?.message ?? t("conversation.content.translationUnknownError");
+        setTranslationErrors((current) => ({
+          ...current,
+          [blockId]: { kind: "execution", message },
+        }));
+        onTranslationError?.(t("conversation.content.translationFailed", { message }));
+        continue;
+      }
+
+      const translatedText = task.result?.text;
+      if (!translatedText) {
+        const message = t("conversation.content.translationUnknownError");
+        setTranslationErrors((current) => ({
+          ...current,
+          [blockId]: { kind: "execution", message },
+        }));
+        onTranslationError?.(t("conversation.content.translationFailed", { message }));
+        continue;
+      }
+
+      setTranslatedBlocks((current) => ({ ...current, [blockId]: translatedText }));
+      const block = visibleBlocks.find((candidate) => candidate.id === blockId);
+      if (!block?.partId) continue;
+      void translationSaver({
+        partId: block.partId,
+        recordKind,
+        translatedText,
+      }).catch((error) => {
+        if (!mountedRef.current) return;
+        const message = errorMessage(error);
+        setTranslationErrors((current) => ({
+          ...current,
+          [blockId]: { kind: "persistence", message },
+        }));
+        onTranslationError?.(
+          t("conversation.content.translationSaveFailed", { message }),
+        );
+      });
+    }
+  }, [
+    onTranslationError,
+    recordKind,
+    t,
+    taskController,
+    translationSaver,
+    translationTaskByBlockId,
+    visibleBlocks,
+  ]);
+
   async function handleCopyBlock(block: ConversationContentBlock) {
     try {
       await writeClipboardText(block.text);
@@ -283,37 +376,59 @@ export function ConversationContentCards({
     if (translationAvailability !== "available") return;
 
     setTranslatingBlockIds((current) => new Set(current).add(block.id));
-    setTranslationErrors((current) => {
-      const next = { ...current };
-      delete next[block.id];
-      return next;
-    });
+    setTranslationErrors((current) => removeRecordKey(current, block.id));
+
+    const request: ConversationCardTranslationRequest = {
+      cli: translationSettings.cli,
+      model: translationSettings.model,
+      promptTemplate: translationSettings.promptTemplate,
+      provider: translationSettings.provider,
+      targetLanguage: translationSettings.targetLanguage,
+      text: block.text,
+    };
 
     try {
-      const result = await translator({
-        cli: translationSettings.cli,
-        model: translationSettings.model,
-        promptTemplate: translationSettings.promptTemplate,
-        provider: translationSettings.provider,
-        targetLanguage: translationSettings.targetLanguage,
-        text: block.text,
-      });
-      if (block.partId) {
-        await translationSaver({
-          partId: block.partId,
-          recordKind,
-          translatedText: result.translated_text,
-        });
+      if (taskController) {
+        const snapshot = await taskController.startTranslation(request);
+        handledTerminalTaskIdsRef.current.delete(snapshot.id);
+        setTranslationTaskByBlockId((current) => ({
+          ...current,
+          [block.id]: snapshot.id,
+        }));
+        return;
       }
+
+      if (!translator) {
+        throw new Error("AI execution task provider is unavailable");
+      }
+      const result = await translator(request);
       setTranslatedBlocks((current) => ({
         ...current,
         [block.id]: result.translated_text,
       }));
+      if (block.partId) {
+        try {
+          await translationSaver({
+            partId: block.partId,
+            recordKind,
+            translatedText: result.translated_text,
+          });
+        } catch (error) {
+          const message = errorMessage(error);
+          setTranslationErrors((current) => ({
+            ...current,
+            [block.id]: { kind: "persistence", message },
+          }));
+          onTranslationError?.(
+            t("conversation.content.translationSaveFailed", { message }),
+          );
+        }
+      }
     } catch (error) {
       const message = errorMessage(error);
       setTranslationErrors((current) => ({
         ...current,
-        [block.id]: message,
+        [block.id]: { kind: "execution", message },
       }));
       onTranslationError?.(
         t("conversation.content.translationFailed", { message }),
@@ -324,6 +439,23 @@ export function ConversationContentCards({
         next.delete(block.id);
         return next;
       });
+    }
+  }
+
+  async function handleCancelTranslation(blockId: string) {
+    const taskId = translationTaskByBlockId[blockId];
+    if (!taskController || !taskId) return;
+    try {
+      await taskController.cancelTask(taskId);
+    } catch (error) {
+      const message = errorMessage(error);
+      setTranslationErrors((current) => ({
+        ...current,
+        [blockId]: { kind: "execution", message },
+      }));
+      onTranslationError?.(
+        t("conversation.content.translationFailed", { message }),
+      );
     }
   }
 
@@ -364,6 +496,13 @@ export function ConversationContentCards({
   );
 
   function renderContentCard(block: ConversationContentBlock) {
+    const translationTaskId = translationTaskByBlockId[block.id];
+    const translationTask = translationTaskId
+      ? taskController?.tasks.find((task) => task.id === translationTaskId)
+      : undefined;
+    const translationTaskActive = translationTask
+      ? !isTerminalAiExecutionTask(translationTask)
+      : false;
     return (
       <ConversationContentCard
         block={block}
@@ -372,13 +511,15 @@ export function ConversationContentCards({
         highlighted={activeBlockId === block.id || block.legacyAnchorIds?.includes(activeBlockId ?? "") === true}
         key={block.id}
         onCopy={() => void handleCopyBlock(block)}
+        onCancelTranslation={() => void handleCancelTranslation(block.id)}
         onTranslate={() => void handleTranslateBlock(block)}
         resultPreviewLineLimit={resultPreviewLineLimit}
         t={t}
         translatedText={translatedBlocks[block.id] ?? block.translatedText ?? undefined}
-        translating={translatingBlockIds.has(block.id)}
+        translating={translatingBlockIds.has(block.id) || translationTaskActive}
         translationAvailability={translationAvailability}
         translationError={translationErrors[block.id]}
+        translationPhase={translationTaskActive ? translationTask?.phase : undefined}
         translationTargetLanguage={translationSettings.targetLanguage}
       />
     );
@@ -398,6 +539,7 @@ function ConversationContentCard({
   colors,
   copied,
   highlighted,
+  onCancelTranslation,
   onCopy,
   onTranslate,
   resultPreviewLineLimit,
@@ -406,12 +548,14 @@ function ConversationContentCard({
   translating,
   translationAvailability,
   translationError,
+  translationPhase,
   translationTargetLanguage,
 }: {
   block: ConversationContentBlock;
   colors: ConversationContentCardColorSettings;
   copied: boolean;
   highlighted: boolean;
+  onCancelTranslation: () => void;
   onCopy: () => void;
   onTranslate: () => void;
   resultPreviewLineLimit: number;
@@ -419,7 +563,8 @@ function ConversationContentCard({
   translatedText?: string;
   translating: boolean;
   translationAvailability: TranslationAvailabilityStatus;
-  translationError?: string;
+  translationError?: TranslationUiError;
+  translationPhase?: AiExecutionPhase;
   translationTargetLanguage: ConversationTranslationTargetLanguage;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -570,9 +715,31 @@ function ConversationContentCard({
             <MarkdownContent value={translatedText} />
           </div>
         ) : null}
+        {translationPhase ? (
+          <div
+            className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-inherit bg-theme-card/35 px-3 py-2 text-body-sm text-on-surface-variant"
+            data-testid={`translation-progress-${block.id}`}
+            role="status"
+          >
+            <span>{translationPhaseLabel(translationPhase, t)}</span>
+            <button
+              aria-label={t("conversation.content.translationCancel")}
+              className="rounded-md border border-theme-control-border bg-theme-control/80 px-2.5 py-1 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={translationPhase === "cancelling" || translationPhase === "cleaning_up"}
+              onClick={onCancelTranslation}
+              type="button"
+            >
+              {translationPhase === "cancelling"
+                ? t("conversation.content.translationCancelling")
+                : t("common.cancel")}
+            </button>
+          </div>
+        ) : null}
         {translationError ? (
           <div className="mt-3 rounded-xl border border-status-remove/35 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove" role="alert">
-            {t("conversation.content.translationFailed", { message: translationError })}
+            {translationError.kind === "persistence"
+              ? t("conversation.content.translationSaveFailed", { message: translationError.message })
+              : t("conversation.content.translationFailed", { message: translationError.message })}
           </div>
         ) : null}
         <BlockMetadata block={block} t={t} />
@@ -907,6 +1074,21 @@ function translationButtonLabel({
   return hasTranslation
     ? t("conversation.content.retranslate", { language: targetLanguage, type: label })
     : t("conversation.content.translate", { language: targetLanguage, type: label });
+}
+
+function translationPhaseLabel(phase: AiExecutionPhase, t: Translator) {
+  return t(`conversation.content.translationPhase.${phase}` as TranslationKey);
+}
+
+function isTerminalAiExecutionTask(task: AiExecutionTaskSnapshot) {
+  return task.state === "succeeded" || task.state === "failed" || task.state === "cancelled";
+}
+
+function removeRecordKey<T>(record: Record<string, T>, key: string) {
+  if (!(key in record)) return record;
+  const next = { ...record };
+  delete next[key];
+  return next;
 }
 
 function normalizeResultPreviewText(value: string) {

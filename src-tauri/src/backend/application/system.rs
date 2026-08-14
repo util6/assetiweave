@@ -23,6 +23,16 @@ impl AppService {
         })
     }
 
+    pub(crate) fn open_with_db_path_and_runtime(
+        db_path: PathBuf,
+        agent_runtime: std::sync::Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
+    ) -> AppResult<super::service::AgentAppService> {
+        Ok(super::service::AgentAppService {
+            _service: Self::open_with_db_path(db_path)?,
+            agent_runtime,
+        })
+    }
+
     pub(crate) fn request_context(&self) -> &RequestContext {
         &self.context
     }
@@ -171,9 +181,64 @@ fn engine_db_path() -> AppResult<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::ai_execution::{
+        executor::BackendFuture, AgentExecutionRuntime, AiExecutionRequest,
+    };
     use crate::backend::conversations::{
         ConversationAdapterRuntimeKind, ConversationAdapterRuntimeStatus,
     };
+    use std::sync::Arc;
+
+    struct FakeAgentRuntime;
+
+    impl AgentExecutionRuntime for FakeAgentRuntime {
+        fn execute<'a>(&'a self, _request: AiExecutionRequest) -> BackendFuture<'a> {
+            Box::pin(async { panic!("runtime execution is outside this constructor test") })
+        }
+    }
+
+    #[test]
+    fn app_service_accepts_an_injected_agent_runtime() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-runtime-injection-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let runtime: Arc<dyn AgentExecutionRuntime> = Arc::new(FakeAgentRuntime);
+
+        let service = AppService::open_with_db_path_and_runtime(db_path.clone(), runtime.clone())
+            .expect("open service with fake runtime");
+
+        assert!(Arc::ptr_eq(&service.agent_runtime, &runtime));
+        drop(service);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn default_app_services_share_one_runtime_without_probing_agent_processes() {
+        let first_path = std::env::temp_dir().join(format!(
+            "assetiweave-runtime-shared-first-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let second_path = std::env::temp_dir().join(format!(
+            "assetiweave-runtime-shared-second-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+
+        let first = AppService::open_with_db_path(first_path.clone()).expect("first service");
+        let second = AppService::open_with_db_path(second_path.clone()).expect("second service");
+
+        let first_runtime =
+            crate::backend::ai_execution::shared_agent_execution_runtime(&first_path)
+                .expect("first runtime");
+        let second_runtime =
+            crate::backend::ai_execution::shared_agent_execution_runtime(&second_path)
+                .expect("second runtime");
+        assert!(Arc::ptr_eq(&first_runtime, &second_runtime));
+        drop(first);
+        drop(second);
+        let _ = std::fs::remove_file(first_path);
+        let _ = std::fs::remove_file(second_path);
+    }
 
     #[test]
     fn runtime_doctor_ignores_unavailable_unrequired_runtimes() {

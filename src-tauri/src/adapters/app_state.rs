@@ -14,6 +14,8 @@ pub(crate) struct AppState {
     /// 后台长运行任务（如扫描、备份、目录挂载等）的中央注册表
     pub(crate) background_tasks:
         Arc<crate::adapters::tauri::background_tasks::BackgroundTaskRegistry>,
+    /// 跨命令共享的 Agent 执行 Runtime；并发限制与 Agent Registry 由它统一持有
+    pub(crate) agent_runtime: Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
     /// 是否允许关闭主窗口标记
     pub(crate) allow_close: Arc<AtomicBool>,
     /// 是否允许应用完全退出标记

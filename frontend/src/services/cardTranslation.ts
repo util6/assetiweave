@@ -18,8 +18,47 @@ export interface OpencodeTranslationResult {
   translated_text: string;
 }
 
+export type AiExecutionTaskState =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export type AiExecutionPhase =
+  | "queued"
+  | "resolving"
+  | "spawning"
+  | "initializing"
+  | "creating_session"
+  | "configuring"
+  | "prompting"
+  | "cancelling"
+  | "closing"
+  | "cleaning_up";
+
+export interface AiExecutionErrorView {
+  code: string;
+  message: string;
+  retryable: boolean;
+  phase: AiExecutionPhase | null;
+}
+
+export interface AiExecutionTaskSnapshot {
+  id: string;
+  purpose: "translation" | "connection_test";
+  agent_id: string;
+  state: AiExecutionTaskState;
+  phase: AiExecutionPhase;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+  result: { text: string } | null;
+  error: AiExecutionErrorView | null;
+}
+
 export interface ConversationCardTranslationRequest {
-  cli: ConversationTranslationCli;
+  agentId: string;
   model: string;
   promptTemplate?: string;
   provider: ConversationTranslationProvider;
@@ -34,13 +73,14 @@ export interface ConversationCardTranslationPromptRequest {
 }
 
 export interface ConversationTranslationCommandParams {
-  cli: ConversationTranslationCli;
+  agent_id: string;
   model: string;
   prompt: string;
   provider: ConversationTranslationProvider;
 }
 
 export interface ConversationTranslationConnectionRequest {
+  agentId?: string;
   cli: ConversationTranslationCli;
   model: string;
   prompt: string;
@@ -53,7 +93,7 @@ export interface ConversationTranslationModelsRequest {
 }
 
 export interface ConversationTranslationAvailabilityRequest {
-  cli: ConversationTranslationCli;
+  agentId: string;
   model: string;
   provider: ConversationTranslationProvider;
 }
@@ -99,12 +139,14 @@ export async function checkOpencodeTranslationAvailability(): Promise<OpencodeTr
 export async function checkConversationTranslationAvailability(
   request: ConversationTranslationAvailabilityRequest,
 ): Promise<OpencodeTranslationAvailability> {
-  if (request.provider === "cli" && request.cli === "opencode") {
+  if (request.provider === "cli" && request.agentId === "opencode") {
     return checkOpencodeTranslationAvailability();
   }
 
   return testConversationTranslationConnection({
     ...request,
+    cli: request.agentId === "gemini" ? "gemini" : "opencode",
+    agentId: request.agentId,
     prompt: "Reply with OK only.",
   });
 }
@@ -119,11 +161,49 @@ export async function translateConversationCardContent(
   const prompt = buildConversationCardTranslationPrompt(request);
   return invoke<OpencodeTranslationResult>("translate_conversation_card", {
     params: {
-      cli: request.cli,
+      agent_id: request.agentId,
       model: request.model,
       prompt,
       provider: request.provider,
     } satisfies ConversationTranslationCommandParams,
+  });
+}
+
+export async function startConversationCardTranslation(
+  request: ConversationCardTranslationRequest,
+): Promise<AiExecutionTaskSnapshot> {
+  assertDesktopTranslationRuntime();
+  const prompt = buildConversationCardTranslationPrompt(request);
+  return invoke<AiExecutionTaskSnapshot>("start_conversation_card_translation", {
+    params: {
+      agent_id: request.agentId,
+      model: request.model,
+      prompt,
+      provider: request.provider,
+    } satisfies ConversationTranslationCommandParams,
+  });
+}
+
+export async function getAiExecutionTask(
+  taskId: string,
+): Promise<AiExecutionTaskSnapshot | null> {
+  assertDesktopTranslationRuntime();
+  return invoke<AiExecutionTaskSnapshot | null>("get_ai_execution_task", {
+    params: { task_id: taskId },
+  });
+}
+
+export async function listAiExecutionTasks(): Promise<AiExecutionTaskSnapshot[]> {
+  assertDesktopTranslationRuntime();
+  return invoke<AiExecutionTaskSnapshot[]>("list_ai_execution_tasks");
+}
+
+export async function cancelAiExecutionTask(
+  taskId: string,
+): Promise<AiExecutionTaskSnapshot> {
+  assertDesktopTranslationRuntime();
+  return invoke<AiExecutionTaskSnapshot>("cancel_ai_execution_task", {
+    params: { task_id: taskId },
   });
 }
 
@@ -139,7 +219,13 @@ export async function testConversationTranslationConnection(
   }
 
   return invoke<OpencodeTranslationAvailability>("test_conversation_translation_connection", {
-    params: request,
+    params: {
+      agent_id: request.agentId,
+      cli: request.cli,
+      model: request.model,
+      prompt: request.prompt,
+      provider: request.provider,
+    },
   });
 }
 
@@ -172,4 +258,10 @@ export async function updateConversationPartTranslation(
       translated_text: request.translatedText,
     },
   });
+}
+
+function assertDesktopTranslationRuntime() {
+  if (!isTauriRuntime()) {
+    throw new Error("AI execution tasks require the desktop app runtime");
+  }
 }

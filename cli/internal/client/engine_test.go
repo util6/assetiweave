@@ -3,12 +3,70 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/util6/assetiweave/errs"
 	"github.com/util6/assetiweave/internal/output"
 	"github.com/util6/assetiweave/internal/protocol"
 )
+
+func TestEngineClientCancellationInterruptsEngineBeforeForcedTermination(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("signal forwarding fixture requires a POSIX shell")
+	}
+
+	tempDir := t.TempDir()
+	markerPath := filepath.Join(tempDir, "marker")
+	enginePath := filepath.Join(tempDir, "fake-engine")
+	script := "#!/bin/sh\n" +
+		"trap 'printf interrupted > \"" + markerPath + "\"; exit 130' INT TERM\n" +
+		"printf started > \"" + markerPath + "\"\n" +
+		"while :; do sleep 0.05; done\n"
+	if err := os.WriteFile(enginePath, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake Engine: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := NewEngineClient(enginePath).Call(ctx, "profile.list", map[string]any{})
+		done <- err
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		marker, err := os.ReadFile(markerPath)
+		if err == nil && string(marker) == "started" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("fake Engine did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Call() error = nil after cancellation")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Call() did not return after cancellation")
+	}
+
+	marker, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatalf("read cancellation marker: %v", err)
+	}
+	if string(marker) != "interrupted" {
+		t.Fatalf("marker = %q, want graceful interrupt", marker)
+	}
+}
 
 func TestEncodeRequestIncludesCompatibilityVersions(t *testing.T) {
 	body, err := encodeRequest("profile.list", map[string]any{})

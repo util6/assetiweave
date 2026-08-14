@@ -1,3 +1,4 @@
+mod agent;
 mod assets;
 mod card_translation;
 mod conversation_adapter_catalog_v2;

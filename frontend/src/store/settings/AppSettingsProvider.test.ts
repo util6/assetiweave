@@ -208,6 +208,24 @@ describe("AppSettingsProvider", () => {
     });
   });
 
+  it("migrates service Agent assignments from the legacy runtime and keeps models per Agent", () => {
+    const settings = normalizeStoredSettings({
+      aiRuntime: { cli: "gemini", model: "gemini-2.5-pro" },
+      agentModels: { codex: "openai/gpt-5-codex" },
+      agentCapabilityAssignments: { memory: "codex" },
+    });
+
+    expect(settings.agentCapabilityAssignments).toEqual({
+      cardTranslation: "gemini",
+      memory: "codex",
+      promptOptimization: "gemini",
+    });
+    expect(settings.agentModels).toEqual({
+      codex: "openai/gpt-5-codex",
+      gemini: "gemini-2.5-pro",
+    });
+  });
+
   it("keeps Auto-Dream disabled by default and normalizes its gates", () => {
     expect(normalizeStoredSettings({}).memory).toEqual({
       autoDreamEnabled: false,

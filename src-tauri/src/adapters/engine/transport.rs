@@ -1408,10 +1408,16 @@ mod tests {
 
     fn desktop_only_tauri_methods() -> BTreeSet<&'static str> {
         BTreeSet::from([
+            "cancel_ai_execution_task",
+            "cancel_app_close_prompt",
+            "complete_app_close",
             "copy_prompt_card_to_clipboard",
+            "get_ai_execution_task",
             "get_cli_tools_status",
             "install_cli_tools",
+            "list_ai_execution_tasks",
             "list_source_assets",
+            "start_conversation_card_translation",
         ])
     }
 
