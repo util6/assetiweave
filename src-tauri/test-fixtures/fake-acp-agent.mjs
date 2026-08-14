@@ -85,7 +85,22 @@ function handleNewSession(message) {
     fail(message.id);
     return;
   }
-  respond(message.id, { sessionId });
+  respond(message.id, {
+    sessionId,
+    configOptions: [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "fixture/model-fast",
+        options: [
+          { value: "fixture/model-fast", name: "Fixture Fast", description: "Fast fixture model" },
+          { value: "fixture/model-accurate", name: "Fixture Accurate" },
+        ],
+      },
+    ],
+  });
 }
 
 function handleSetConfig(message) {

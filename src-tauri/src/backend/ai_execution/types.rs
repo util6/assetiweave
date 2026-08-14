@@ -63,6 +63,7 @@ impl fmt::Debug for AiExecutionCancellation {
 pub(crate) enum AiExecutionPurpose {
     Translation,
     ConnectionTest,
+    ModelDiscovery,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

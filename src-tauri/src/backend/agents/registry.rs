@@ -5,8 +5,8 @@ use crate::backend::host_process::{
 };
 
 use super::types::{
-    AgentCommandDefinition, AgentDefinition, AgentDefinitionError, AgentId, AgentProtocol,
-    DeclaredAgentCapabilities,
+    AgentCatalogEntry, AgentCommandDefinition, AgentDefinition, AgentDefinitionError, AgentId,
+    AgentProtocol, DeclaredAgentCapabilities,
 };
 
 #[derive(Debug)]
@@ -22,6 +22,7 @@ const PROBE_STDERR_CAP: usize = 256 * 1024;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AgentAvailability {
     pub(crate) available: bool,
+    pub(crate) installed: bool,
     pub(crate) version: Option<String>,
     pub(crate) error: Option<AgentProbeError>,
 }
@@ -58,19 +59,89 @@ pub(crate) enum AgentProbeError {
 
 impl AgentRegistry {
     pub(crate) fn builtin() -> Result<Self, AgentRegistryError> {
-        let opencode = AgentDefinition {
-            id: AgentId::parse("opencode").map_err(AgentRegistryError::BuiltinDefinition)?,
-            display_name: "OpenCode".to_string(),
-            protocol: AgentProtocol::Acp,
-            command: "opencode".to_string(),
-            args: vec!["acp".to_string()],
-            env: Vec::new(),
-            declared_capabilities: DeclaredAgentCapabilities::acp_text(),
-            availability_probe: Some(AgentCommandDefinition::new(["--version"])),
-            model_discovery: Some(AgentCommandDefinition::new(["models"])),
-        };
-
-        Self::from_definitions([opencode])
+        Self::from_definitions([
+            builtin_agent(
+                "opencode",
+                "OpenCode",
+                AgentProtocol::Acp,
+                "opencode",
+                ["acp"],
+                "opencode",
+                true,
+            ),
+            builtin_agent(
+                "gemini",
+                "Gemini CLI",
+                AgentProtocol::Acp,
+                "gemini",
+                ["--acp"],
+                "gemini",
+                false,
+            ),
+            builtin_agent(
+                "kiro",
+                "Kiro",
+                AgentProtocol::Acp,
+                "kiro-cli-chat",
+                ["acp"],
+                "kiro-cli-chat",
+                false,
+            ),
+            builtin_agent(
+                "antigravity",
+                "Antigravity",
+                AgentProtocol::Native,
+                "agy",
+                [],
+                "agy",
+                false,
+            ),
+            builtin_agent(
+                "claude",
+                "Claude Code",
+                AgentProtocol::Acp,
+                "npx",
+                ["-y", "@agentclientprotocol/claude-agent-acp@0.58.1"],
+                "claude",
+                false,
+            ),
+            builtin_agent(
+                "codex",
+                "Codex CLI",
+                AgentProtocol::Acp,
+                "npx",
+                ["-y", "@agentclientprotocol/codex-acp@1.1.2"],
+                "codex",
+                false,
+            ),
+            builtin_agent(
+                "hermes",
+                "Hermes",
+                AgentProtocol::Acp,
+                "hermes",
+                ["acp"],
+                "hermes",
+                false,
+            ),
+            builtin_agent(
+                "pi",
+                "Pi",
+                AgentProtocol::Acp,
+                "npx",
+                ["-y", "pi-acp@0.0.33"],
+                "pi",
+                false,
+            ),
+            builtin_agent(
+                "qoder",
+                "Qoder",
+                AgentProtocol::Acp,
+                "qodercli",
+                ["--acp"],
+                "qodercli",
+                false,
+            ),
+        ])
     }
 
     pub(crate) fn from_definitions<I>(definitions: I) -> Result<Self, AgentRegistryError>
@@ -111,20 +182,33 @@ impl AgentRegistry {
         self.definitions.get(agent_id)
     }
 
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.definitions.len()
+    }
+
+    pub(crate) fn catalog(&self) -> Vec<AgentCatalogEntry> {
+        let mut catalog = self
+            .definitions
+            .values()
+            .map(AgentCatalogEntry::from_definition)
+            .collect::<Vec<_>>();
+        catalog.sort_by(|left, right| left.id.cmp(&right.id));
+        catalog
     }
 
     pub(crate) fn check_availability(&self, agent_id: &AgentId) -> AgentAvailability {
         let availability = match self.probe(agent_id, ProbeKind::Availability) {
             Ok(output) => AgentAvailability {
                 available: true,
+                installed: true,
                 version: first_nonempty_line(&output.stdout)
                     .or_else(|| first_nonempty_line(&output.stderr)),
                 error: None,
             },
             Err(error) => AgentAvailability {
                 available: false,
+                installed: !matches!(error, AgentProbeError::ExecutableNotFound { .. }),
                 version: None,
                 error: Some(error),
             },
@@ -179,9 +263,15 @@ impl AgentRegistry {
             agent_id: agent_id.clone(),
             kind: kind.as_str(),
         })?;
-        let program = resolve_host_executable(&definition.command).ok_or_else(|| {
-            AgentProbeError::ExecutableNotFound {
+        if resolve_host_executable(&definition.command).is_none() {
+            return Err(AgentProbeError::ExecutableNotFound {
                 command_name: definition.command.clone(),
+            });
+        }
+        let command_name = probe.command.as_deref().unwrap_or(&definition.command);
+        let program = resolve_host_executable(command_name).ok_or_else(|| {
+            AgentProbeError::ExecutableNotFound {
+                command_name: command_name.to_string(),
             }
         })?;
         let mut command = Command::new(program);
@@ -206,6 +296,33 @@ impl AgentRegistry {
             });
         }
         Ok(output)
+    }
+}
+
+fn builtin_agent<const N: usize>(
+    id: &str,
+    display_name: &str,
+    protocol: AgentProtocol,
+    command: &str,
+    args: [&str; N],
+    availability_command: &str,
+    cli_fallback: bool,
+) -> AgentDefinition {
+    AgentDefinition {
+        id: AgentId::parse(id).expect("builtin agent ids are valid"),
+        display_name: display_name.to_string(),
+        protocol,
+        command: command.to_string(),
+        args: args.into_iter().map(str::to_string).collect(),
+        env: Vec::new(),
+        declared_capabilities: DeclaredAgentCapabilities::acp_text(),
+        availability_probe: Some(AgentCommandDefinition::with_command(
+            availability_command,
+            ["--version"],
+        )),
+        model_discovery: (id == "opencode" || id == "antigravity")
+            .then(|| AgentCommandDefinition::new(["models"])),
+        cli_fallback,
     }
 }
 
@@ -284,9 +401,23 @@ impl fmt::Display for AgentProbeError {
 
 impl std::error::Error for AgentProbeError {}
 
+impl AgentProbeError {
+    pub(crate) fn code(&self) -> &'static str {
+        match self {
+            Self::AgentNotFound { .. } => "agent_not_found",
+            Self::ProbeNotConfigured { .. } => "probe_not_configured",
+            Self::ExecutableNotFound { .. } => "command_not_found",
+            Self::Timeout { .. } => "probe_timeout",
+            Self::SpawnFailed { .. } => "spawn_failed",
+            Self::OutputFailed { .. } => "probe_output_failed",
+            Self::OutputLimit { .. } => "probe_output_limit",
+            Self::ProbeFailed { .. } => "probe_failed",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum AgentRegistryError {
-    BuiltinDefinition(AgentDefinitionError),
     InvalidDefinition {
         agent_id: AgentId,
         source: AgentDefinitionError,
@@ -299,9 +430,6 @@ pub(crate) enum AgentRegistryError {
 impl fmt::Display for AgentRegistryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::BuiltinDefinition(source) => {
-                write!(formatter, "invalid builtin agent definition: {source}")
-            }
             Self::InvalidDefinition { agent_id, source } => {
                 write!(
                     formatter,
@@ -318,9 +446,7 @@ impl fmt::Display for AgentRegistryError {
 impl std::error::Error for AgentRegistryError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::BuiltinDefinition(source) | Self::InvalidDefinition { source, .. } => {
-                Some(source)
-            }
+            Self::InvalidDefinition { source, .. } => Some(source),
             Self::DuplicateId { .. } => None,
         }
     }
@@ -334,17 +460,57 @@ mod tests {
     };
 
     #[test]
-    fn builtin_registry_contains_only_the_phase_one_opencode_definition() {
+    fn builtin_registry_contains_the_requested_acp_agent_definitions() {
         let registry = AgentRegistry::builtin().expect("valid builtin registry");
         let definition = registry
             .get(&AgentId::parse("opencode").unwrap())
             .expect("OpenCode definition");
 
-        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.len(), 9);
         assert_eq!(definition.command, "opencode");
         assert_eq!(definition.args, ["acp"]);
         assert_eq!(definition.protocol, AgentProtocol::Acp);
         assert!(definition.declared_capabilities.text_prompt);
+
+        for (id, command, args, protocol) in [
+            ("gemini", "gemini", vec!["--acp"], AgentProtocol::Acp),
+            ("kiro", "kiro-cli-chat", vec!["acp"], AgentProtocol::Acp),
+            ("antigravity", "agy", vec![], AgentProtocol::Native),
+            (
+                "claude",
+                "npx",
+                vec!["-y", "@agentclientprotocol/claude-agent-acp@0.58.1"],
+                AgentProtocol::Acp,
+            ),
+            (
+                "codex",
+                "npx",
+                vec!["-y", "@agentclientprotocol/codex-acp@1.1.2"],
+                AgentProtocol::Acp,
+            ),
+            ("hermes", "hermes", vec!["acp"], AgentProtocol::Acp),
+            ("pi", "npx", vec!["-y", "pi-acp@0.0.33"], AgentProtocol::Acp),
+            ("qoder", "qodercli", vec!["--acp"], AgentProtocol::Acp),
+        ] {
+            let definition = registry
+                .get(&AgentId::parse(id).unwrap())
+                .unwrap_or_else(|| panic!("missing builtin Agent {id}"));
+            assert_eq!(definition.command, command);
+            assert_eq!(definition.args, args);
+            assert_eq!(definition.protocol, protocol);
+        }
+
+        assert!(registry
+            .catalog()
+            .iter()
+            .all(|entry| entry.protocol == "acp" || entry.id == "antigravity"));
+        assert!(
+            registry
+                .get(&AgentId::parse("antigravity").unwrap())
+                .expect("Antigravity definition")
+                .declared_capabilities
+                .text_prompt
+        );
     }
 
     #[test]
@@ -404,6 +570,7 @@ mod tests {
         let availability = registry.check_availability(&agent_id);
 
         assert!(!availability.available);
+        assert!(!availability.installed);
         assert!(matches!(
             availability.error,
             Some(AgentProbeError::ExecutableNotFound { .. })
@@ -436,6 +603,7 @@ mod tests {
             failure.error,
             Some(AgentProbeError::ProbeFailed { code: Some(7), .. })
         ));
+        assert!(failure.installed);
     }
 
     #[test]
@@ -470,6 +638,7 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: Some(AgentCommandDefinition::new(["--version"])),
             model_discovery: None,
+            cli_fallback: false,
         }
     }
 
@@ -489,6 +658,7 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: Some(AgentCommandDefinition::new(availability_args)),
             model_discovery: Some(AgentCommandDefinition::new(model_args)),
+            cli_fallback: false,
         }
     }
 }

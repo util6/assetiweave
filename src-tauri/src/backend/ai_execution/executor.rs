@@ -11,19 +11,36 @@ use tokio::sync::Semaphore;
 
 use crate::backend::agents::{
     registry::{AgentAvailability, AgentProbeError, AgentRegistry},
-    types::{AgentDefinition, AgentId, AgentProtocol},
+    types::{
+        AgentCatalogEntry, AgentConnectionResult, AgentDefinition, AgentId, AgentModelOption,
+        AgentModelsResult, AgentProtocol,
+    },
 };
 use crate::backend::operation_log::{log_info, log_warn, LogField};
 
 use super::{
-    backends::acp::AcpExecutionBackend, AiExecutionError, AiExecutionPhase,
-    AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest, AiExecutionResult,
+    backends::{acp::AcpExecutionBackend, native::NativeExecutionBackend},
+    AiExecutionError, AiExecutionPhase, AiExecutionProgressSink, AiExecutionPurpose,
+    AiExecutionRequest, AiExecutionResult,
 };
 
 const DEFAULT_MAX_CONCURRENCY: usize = 2;
 
 pub(crate) type BackendFuture<'a> =
     Pin<Box<dyn Future<Output = Result<AiExecutionResult, AiExecutionError>> + Send + 'a>>;
+pub(crate) type AgentConnectionFuture<'a> =
+    Pin<Box<dyn Future<Output = AgentConnectionResult> + Send + 'a>>;
+pub(crate) type BackendConnectionFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), AiExecutionError>> + Send + 'a>>;
+pub(crate) type BackendModelsFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<(Vec<AgentModelOption>, Option<String>), AiExecutionError>>
+            + Send
+            + 'a,
+    >,
+>;
+pub(crate) type AgentModelsFuture<'a> =
+    Pin<Box<dyn Future<Output = AgentModelsResult> + Send + 'a>>;
 
 pub(crate) trait AgentExecutionBackend: Send + Sync {
     fn execute<'a>(
@@ -31,14 +48,57 @@ pub(crate) trait AgentExecutionBackend: Send + Sync {
         definition: AgentDefinition,
         request: AiExecutionRequest,
     ) -> BackendFuture<'a>;
+
+    fn check_connection<'a>(&'a self, _definition: AgentDefinition) -> BackendConnectionFuture<'a> {
+        Box::pin(async {
+            Err(AiExecutionError::Protocol {
+                operation: "agent_connection_probe",
+            })
+        })
+    }
+
+    fn discover_models<'a>(&'a self, _definition: AgentDefinition) -> BackendModelsFuture<'a> {
+        Box::pin(async {
+            Err(AiExecutionError::Protocol {
+                operation: "agent_model_discovery",
+            })
+        })
+    }
 }
 
 pub(crate) trait AgentExecutionRuntime: Send + Sync {
     fn execute<'a>(&'a self, request: AiExecutionRequest) -> BackendFuture<'a>;
 
+    fn list_agent_catalog(&self) -> Vec<AgentCatalogEntry> {
+        Vec::new()
+    }
+
+    fn check_agent_installation(&self, agent_id: &AgentId) -> AgentConnectionResult {
+        unavailable_connection_result(
+            agent_id,
+            "agent_not_found",
+            "The selected AI agent is not registered.",
+        )
+    }
+
+    fn check_agent_connection<'a>(&'a self, agent_id: &'a AgentId) -> AgentConnectionFuture<'a> {
+        let result = self.check_agent_installation(agent_id);
+        Box::pin(async move { result })
+    }
+
+    fn discover_agent_models<'a>(&'a self, agent_id: &'a AgentId) -> AgentModelsFuture<'a> {
+        let result = unavailable_models_result(
+            agent_id,
+            "agent_not_found",
+            "The selected AI agent is not registered.",
+        );
+        Box::pin(async move { result })
+    }
+
     fn check_availability(&self, agent_id: &AgentId) -> AgentAvailability {
         AgentAvailability {
             available: false,
+            installed: false,
             version: None,
             error: Some(AgentProbeError::ProbeNotConfigured {
                 agent_id: agent_id.clone(),
@@ -69,11 +129,38 @@ impl AgentExecutionBackend for AcpExecutionBackend {
     ) -> BackendFuture<'a> {
         Box::pin(async move { AcpExecutionBackend::execute(self, &definition, request).await })
     }
+
+    fn check_connection<'a>(&'a self, definition: AgentDefinition) -> BackendConnectionFuture<'a> {
+        Box::pin(async move { AcpExecutionBackend::check_connection(self, &definition).await })
+    }
+
+    fn discover_models<'a>(&'a self, definition: AgentDefinition) -> BackendModelsFuture<'a> {
+        Box::pin(async move { AcpExecutionBackend::discover_models(self, &definition).await })
+    }
+}
+
+impl AgentExecutionBackend for NativeExecutionBackend {
+    fn execute<'a>(
+        &'a self,
+        definition: AgentDefinition,
+        request: AiExecutionRequest,
+    ) -> BackendFuture<'a> {
+        Box::pin(async move { NativeExecutionBackend::execute(self, &definition, request).await })
+    }
+
+    fn check_connection<'a>(&'a self, definition: AgentDefinition) -> BackendConnectionFuture<'a> {
+        Box::pin(async move { NativeExecutionBackend::check_connection(self, &definition).await })
+    }
+
+    fn discover_models<'a>(&'a self, definition: AgentDefinition) -> BackendModelsFuture<'a> {
+        Box::pin(async move { NativeExecutionBackend::discover_models(self, &definition).await })
+    }
 }
 
 pub(crate) struct AgentExecutor {
     registry: Arc<AgentRegistry>,
     acp: Arc<dyn AgentExecutionBackend>,
+    native: Arc<dyn AgentExecutionBackend>,
     permits: Arc<Semaphore>,
     active: Arc<Mutex<HashMap<uuid::Uuid, super::AiExecutionCancellation>>>,
 }
@@ -83,9 +170,10 @@ impl AgentExecutor {
         let registry = AgentRegistry::builtin().map_err(|_| AiExecutionError::Protocol {
             operation: "registry_initialize",
         })?;
-        Ok(Self::new(
+        Ok(Self::with_backends(
             Arc::new(registry),
-            Arc::new(AcpExecutionBackend::new(workspace_root)),
+            Arc::new(AcpExecutionBackend::new(workspace_root.clone())),
+            Arc::new(NativeExecutionBackend::new(workspace_root)),
             DEFAULT_MAX_CONCURRENCY,
         ))
     }
@@ -95,9 +183,19 @@ impl AgentExecutor {
         acp: Arc<dyn AgentExecutionBackend>,
         max_concurrency: usize,
     ) -> Self {
+        Self::with_backends(registry, acp.clone(), acp, max_concurrency)
+    }
+
+    pub(crate) fn with_backends(
+        registry: Arc<AgentRegistry>,
+        acp: Arc<dyn AgentExecutionBackend>,
+        native: Arc<dyn AgentExecutionBackend>,
+        max_concurrency: usize,
+    ) -> Self {
         Self {
             registry,
             acp,
+            native,
             permits: Arc::new(Semaphore::new(max_concurrency.max(1))),
             active: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -168,7 +266,7 @@ impl AgentExecutor {
             };
             let backend = match definition.protocol {
                 AgentProtocol::Acp => Arc::clone(&self.acp),
-                protocol => return Err(AiExecutionError::UnsupportedProtocol { protocol }),
+                AgentProtocol::Native => Arc::clone(&self.native),
             };
 
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -219,6 +317,109 @@ impl AgentExecutor {
             }
         }
         outcome
+    }
+
+    async fn check_connection(&self, agent_id: &AgentId) -> AgentConnectionResult {
+        let installation = self.registry.check_availability(agent_id);
+        let mut result = connection_result_from_availability(agent_id, &installation);
+        if !installation.available {
+            return result;
+        }
+
+        let Some(definition) = self.registry.get(agent_id).cloned() else {
+            return unavailable_connection_result(
+                agent_id,
+                "agent_not_found",
+                "The selected AI agent is not registered.",
+            );
+        };
+
+        let backend = match definition.protocol {
+            AgentProtocol::Acp => Arc::clone(&self.acp),
+            AgentProtocol::Native => Arc::clone(&self.native),
+        };
+
+        let protocol = definition.protocol;
+        match backend.check_connection(definition).await {
+            Ok(()) => {
+                result.available = true;
+                result.connected = true;
+                result.connection_method = Some(if protocol == AgentProtocol::Native {
+                    "native".to_string()
+                } else {
+                    "acp".to_string()
+                });
+                result.error_code = None;
+                result.error = None;
+            }
+            Err(error)
+                if self
+                    .registry
+                    .get(agent_id)
+                    .is_some_and(|item| item.cli_fallback) =>
+            {
+                // OpenCode is the compatibility seam that already has a CLI
+                // fallback. Other ACP definitions deliberately remain ACP-only.
+                result.available = true;
+                result.connected = true;
+                result.connection_method = Some("cli_fallback".to_string());
+                result.error_code = None;
+                result.error =
+                    Some("Probe failed; CLI availability fallback succeeded.".to_string());
+                let _ = error;
+            }
+            Err(error) => {
+                result.available = false;
+                result.connected = false;
+                result.connection_method = Some(if protocol == AgentProtocol::Native {
+                    "native".to_string()
+                } else {
+                    "acp".to_string()
+                });
+                result.error_code = Some(if protocol == AgentProtocol::Native {
+                    "native_connection_failed".to_string()
+                } else {
+                    "acp_connection_failed".to_string()
+                });
+                result.error = Some(error.to_view().message);
+            }
+        }
+        result
+    }
+
+    async fn discover_agent_models(&self, agent_id: &AgentId) -> AgentModelsResult {
+        let installation = self.registry.check_availability(agent_id);
+        if !installation.available {
+            return models_result_from_availability(agent_id, &installation);
+        }
+
+        let Some(definition) = self.registry.get(agent_id).cloned() else {
+            return unavailable_models_result(
+                agent_id,
+                "agent_not_found",
+                "The selected AI agent is not registered.",
+            );
+        };
+
+        let backend = match definition.protocol {
+            AgentProtocol::Acp => Arc::clone(&self.acp),
+            AgentProtocol::Native => Arc::clone(&self.native),
+        };
+
+        match backend.discover_models(definition).await {
+            Ok((models, current_model_id)) => AgentModelsResult {
+                agent_id: agent_id.to_string(),
+                available: true,
+                current_model_id: current_model_id
+                    .or_else(|| models.first().map(|model| model.id.clone())),
+                models,
+                error_code: None,
+                error: None,
+            },
+            Err(error) => {
+                unavailable_models_result(agent_id, "model_discovery_failed", &error.to_string())
+            }
+        }
     }
 
     #[cfg(test)]
@@ -274,6 +475,22 @@ impl AgentExecutionRuntime for AgentExecutor {
         self.registry.check_availability(agent_id)
     }
 
+    fn list_agent_catalog(&self) -> Vec<AgentCatalogEntry> {
+        self.registry.catalog()
+    }
+
+    fn check_agent_installation(&self, agent_id: &AgentId) -> AgentConnectionResult {
+        connection_result_from_availability(agent_id, &self.registry.check_availability(agent_id))
+    }
+
+    fn check_agent_connection<'a>(&'a self, agent_id: &'a AgentId) -> AgentConnectionFuture<'a> {
+        Box::pin(async move { AgentExecutor::check_connection(self, agent_id).await })
+    }
+
+    fn discover_agent_models<'a>(&'a self, agent_id: &'a AgentId) -> AgentModelsFuture<'a> {
+        Box::pin(async move { AgentExecutor::discover_agent_models(self, agent_id).await })
+    }
+
     fn discover_models(
         &self,
         agent_id: &AgentId,
@@ -291,6 +508,74 @@ impl AgentExecutionRuntime for AgentExecutor {
         for cancellation in cancellations {
             cancellation.cancel();
         }
+    }
+}
+
+fn unavailable_connection_result(
+    agent_id: &AgentId,
+    error_code: &str,
+    error: &str,
+) -> AgentConnectionResult {
+    AgentConnectionResult {
+        agent_id: agent_id.to_string(),
+        available: false,
+        installed: false,
+        connected: false,
+        version: None,
+        connection_method: None,
+        error_code: Some(error_code.to_string()),
+        error: Some(error.to_string()),
+    }
+}
+
+fn unavailable_models_result(
+    agent_id: &AgentId,
+    error_code: &str,
+    error: &str,
+) -> AgentModelsResult {
+    AgentModelsResult {
+        agent_id: agent_id.to_string(),
+        available: false,
+        models: Vec::new(),
+        current_model_id: None,
+        error_code: Some(error_code.to_string()),
+        error: Some(error.to_string()),
+    }
+}
+
+fn models_result_from_availability(
+    agent_id: &AgentId,
+    availability: &AgentAvailability,
+) -> AgentModelsResult {
+    AgentModelsResult {
+        agent_id: agent_id.to_string(),
+        available: availability.available,
+        models: Vec::new(),
+        current_model_id: None,
+        error_code: availability
+            .error
+            .as_ref()
+            .map(|error| error.code().to_string()),
+        error: availability.error.as_ref().map(ToString::to_string),
+    }
+}
+
+fn connection_result_from_availability(
+    agent_id: &AgentId,
+    availability: &AgentAvailability,
+) -> AgentConnectionResult {
+    AgentConnectionResult {
+        agent_id: agent_id.to_string(),
+        available: availability.available,
+        installed: availability.installed,
+        connected: false,
+        version: availability.version.clone(),
+        connection_method: availability.available.then(|| "cli_version".to_string()),
+        error_code: availability
+            .error
+            .as_ref()
+            .map(|error| error.code().to_string()),
+        error: availability.error.as_ref().map(ToString::to_string),
     }
 }
 
@@ -337,7 +622,7 @@ mod tests {
     use crate::backend::{
         agents::{
             registry::AgentRegistry,
-            types::{AgentId, DeclaredAgentCapabilities},
+            types::{AgentCommandDefinition, AgentId, DeclaredAgentCapabilities},
         },
         ai_execution::{AiExecutionCancellation, AiExecutionLimits, AiExecutionPurpose},
     };
@@ -421,6 +706,13 @@ mod tests {
                 })
             })
         }
+
+        fn check_connection<'a>(
+            &'a self,
+            _definition: AgentDefinition,
+        ) -> BackendConnectionFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -460,13 +752,8 @@ mod tests {
 
         let (native_backend, _started) = FakeBackend::new(FakeMode::Immediate);
         let native_executor = executor(AgentProtocol::Native, native_backend.clone(), 2);
-        assert!(matches!(
-            native_executor.execute(request("fake-agent")).await,
-            Err(AiExecutionError::UnsupportedProtocol {
-                protocol: AgentProtocol::Native
-            })
-        ));
-        assert_eq!(native_backend.calls.load(Ordering::SeqCst), 0);
+        assert!(native_executor.execute(request("fake-agent")).await.is_ok());
+        assert_eq!(native_backend.calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -559,6 +846,30 @@ mod tests {
         assert_eq!(result.requested_model.as_deref(), Some("requested/model"));
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn exe_11_connection_check_runs_install_probe_then_acp_handshake() {
+        let (backend, _started) = FakeBackend::new(FakeMode::Immediate);
+        let mut agent_definition = definition(AgentProtocol::Acp);
+        agent_definition.command = "sh".to_owned();
+        agent_definition.availability_probe = Some(AgentCommandDefinition::with_command(
+            "sh",
+            ["-c", "printf 'fake-agent 1.2.3\\n'"],
+        ));
+        let registry = AgentRegistry::from_definitions([agent_definition]).unwrap();
+        let executor = AgentExecutor::new(registry.into(), backend, 1);
+
+        let result = executor
+            .check_connection(&AgentId::parse("fake-agent").unwrap())
+            .await;
+
+        assert!(result.available);
+        assert!(result.installed);
+        assert!(result.connected);
+        assert_eq!(result.version.as_deref(), Some("fake-agent 1.2.3"));
+        assert_eq!(result.connection_method.as_deref(), Some("acp"));
+        assert_eq!(result.error_code, None);
+    }
+
     #[test]
     fn sec_execution_log_fields_exclude_prompt_model_and_payload() {
         let mut execution_request = request("fake-agent");
@@ -607,6 +918,7 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: None,
             model_discovery: None,
+            cli_fallback: false,
         }
     }
 

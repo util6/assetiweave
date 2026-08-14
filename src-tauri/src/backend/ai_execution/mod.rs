@@ -11,11 +11,15 @@ pub(crate) use types::{
     AiExecutionPurpose, AiExecutionRequest, AiExecutionResult,
 };
 
+use crate::backend::agents::types::{
+    AgentConnectionCheckMode, AgentConnectionResult, AgentId, AgentModelsResult,
+};
 use crate::backend::host_process::{
     resolve_host_executable, run_command_with_control, HostProcessControl, HostProcessError,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -46,6 +50,47 @@ pub(crate) fn shared_agent_execution_runtime(
     }
 }
 
+pub(crate) fn configured_agent_capability(
+    service_id: &str,
+) -> Result<(AgentId, Option<String>), String> {
+    let settings = crate::backend::app_settings::read_app_settings_value()
+        .map_err(|error| error.to_string())?;
+    let runtime = settings.get("aiRuntime").and_then(Value::as_object);
+    let assignments = settings
+        .get("agentCapabilityAssignments")
+        .and_then(Value::as_object);
+    let legacy_agent_id = match runtime
+        .and_then(|value| value.get("cli"))
+        .and_then(Value::as_str)
+    {
+        Some("gemini") => "gemini",
+        _ => "opencode",
+    };
+    let configured_assignment = assignments
+        .and_then(|value| value.get(service_id))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let configured_agent_id = configured_assignment.unwrap_or(legacy_agent_id);
+    let agent_id = AgentId::parse(configured_agent_id).map_err(|error| error.to_string())?;
+    let agent_models = settings.get("agentModels").and_then(Value::as_object);
+    let legacy_model = if configured_assignment.is_none() {
+        runtime
+            .and_then(|value| value.get("model"))
+            .and_then(Value::as_str)
+    } else {
+        None
+    };
+    let model = agent_models
+        .and_then(|models| models.get(agent_id.as_str()))
+        .and_then(Value::as_str)
+        .or(legacy_model)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    Ok((agent_id, model))
+}
+
 /// Runs the async Agent runtime from synchronous application/Engine seams.
 ///
 /// The dedicated thread is intentional: callers may already be inside a Tokio
@@ -68,6 +113,106 @@ pub(crate) fn execute_agent_blocking(
     .map_err(|_| AiExecutionError::Protocol {
         operation: "blocking_runtime_join",
     })?
+}
+
+pub(crate) fn check_agent_connection_blocking(
+    runtime: Arc<dyn AgentExecutionRuntime>,
+    agent_id: AgentId,
+    mode: AgentConnectionCheckMode,
+) -> AgentConnectionResult {
+    if matches!(mode, AgentConnectionCheckMode::Installation) {
+        return runtime.check_agent_installation(&agent_id);
+    }
+
+    let thread_runtime = runtime.clone();
+    let fallback_agent_id = agent_id.clone();
+    std::thread::spawn(move || {
+        let runtime_driver = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime_driver) => runtime_driver,
+            Err(_) => {
+                return connection_probe_failure(
+                    &agent_id,
+                    "connection_runtime_initialize",
+                    "The Agent connection probe runtime could not be initialized.",
+                )
+            }
+        };
+        runtime_driver.block_on(thread_runtime.check_agent_connection(&agent_id))
+    })
+    .join()
+    .unwrap_or_else(|_| {
+        connection_probe_failure(
+            &fallback_agent_id,
+            "connection_runtime_join",
+            "The Agent connection probe did not complete.",
+        )
+    })
+}
+
+pub(crate) fn discover_agent_models_blocking(
+    runtime: Arc<dyn AgentExecutionRuntime>,
+    agent_id: AgentId,
+) -> AgentModelsResult {
+    let fallback_agent_id = agent_id.clone();
+    std::thread::spawn(move || {
+        let runtime_driver = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime_driver) => runtime_driver,
+            Err(_) => {
+                return unavailable_models_result(
+                    &agent_id,
+                    "model_discovery_runtime_initialize",
+                    "The Agent model discovery runtime could not be initialized.",
+                )
+            }
+        };
+        runtime_driver.block_on(runtime.discover_agent_models(&agent_id))
+    })
+    .join()
+    .unwrap_or_else(|_| {
+        unavailable_models_result(
+            &fallback_agent_id,
+            "model_discovery_runtime_join",
+            "The Agent model discovery did not complete.",
+        )
+    })
+}
+
+fn connection_probe_failure(
+    agent_id: &AgentId,
+    error_code: &str,
+    error: &str,
+) -> AgentConnectionResult {
+    AgentConnectionResult {
+        agent_id: agent_id.to_string(),
+        available: false,
+        installed: false,
+        connected: false,
+        version: None,
+        connection_method: None,
+        error_code: Some(error_code.to_string()),
+        error: Some(error.to_string()),
+    }
+}
+
+fn unavailable_models_result(
+    agent_id: &AgentId,
+    error_code: &str,
+    error: &str,
+) -> AgentModelsResult {
+    AgentModelsResult {
+        agent_id: agent_id.to_string(),
+        available: false,
+        models: Vec::new(),
+        current_model_id: None,
+        error_code: Some(error_code.to_string()),
+        error: Some(error.to_string()),
+    }
 }
 
 const MAX_PROMPT_BYTES: usize = 1_000_000;

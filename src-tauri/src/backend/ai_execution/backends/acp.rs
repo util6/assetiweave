@@ -5,15 +5,19 @@ use std::{
 };
 
 use agent_client_protocol::schema::v1::{SessionId, StopReason};
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::backend::{
     agents::{
         process::{ManagedAgentProcess, ManagedAgentProcessError},
         protocol::acp::{AcpConnectConfig, AcpError, AcpProtocol, AcpProtocolChannels},
-        types::{AgentDefinition, AgentProtocol},
+        types::{AgentDefinition, AgentModelOption, AgentProtocol},
     },
-    ai_execution::{AiExecutionError, AiExecutionPhase, AiExecutionRequest, AiExecutionResult},
+    ai_execution::{
+        AiExecutionCancellation, AiExecutionError, AiExecutionLimits, AiExecutionPhase,
+        AiExecutionPurpose, AiExecutionRequest, AiExecutionResult,
+    },
     operation_log::{log_info, log_warn},
 };
 
@@ -108,6 +112,244 @@ impl AcpExecutionBackend {
         }
         outcome
     }
+
+    pub(crate) async fn check_connection(
+        &self,
+        definition: &AgentDefinition,
+    ) -> Result<(), AiExecutionError> {
+        let request = connection_probe_request(definition);
+        let workspace = create_workspace(&self.workspace_root)?;
+        let mut guard = AcpExecutionGuard::new(workspace);
+        let outcome = {
+            let probe = run_connection_probe(&mut guard, definition, &request);
+            tokio::pin!(probe);
+            match tokio::time::timeout(request.limits.total_timeout, &mut probe).await {
+                Ok(outcome) => outcome,
+                Err(_) => {
+                    request.cancellation.cancel();
+                    Err(timeout_error(definition, request.limits.total_timeout))
+                }
+            }
+        };
+        let cleanup = guard.cleanup(outcome.is_err(), &request).await;
+        if cleanup.failures.is_empty() {
+            return outcome;
+        }
+        if outcome.is_ok() || !cleanup.process_reaped || !cleanup.workspace_removed {
+            return Err(AiExecutionError::CleanupFailed {
+                failures: cleanup.failures,
+            });
+        }
+        outcome
+    }
+
+    pub(crate) async fn discover_models(
+        &self,
+        definition: &AgentDefinition,
+    ) -> Result<(Vec<AgentModelOption>, Option<String>), AiExecutionError> {
+        let request = model_discovery_request(definition);
+        let workspace = create_workspace(&self.workspace_root)?;
+        let mut guard = AcpExecutionGuard::new(workspace);
+        let outcome = {
+            let probe = run_session_probe(&mut guard, definition, &request);
+            tokio::pin!(probe);
+            match tokio::time::timeout(request.limits.total_timeout, &mut probe).await {
+                Ok(Ok(session)) => parse_session_models(&session),
+                Ok(Err(error)) => Err(error),
+                Err(_) => {
+                    request.cancellation.cancel();
+                    Err(timeout_error(definition, request.limits.total_timeout))
+                }
+            }
+        };
+        let cleanup = guard.cleanup(outcome.is_err(), &request).await;
+        if cleanup.failures.is_empty() {
+            return outcome;
+        }
+        if outcome.is_ok() || !cleanup.process_reaped || !cleanup.workspace_removed {
+            return Err(AiExecutionError::CleanupFailed {
+                failures: cleanup.failures,
+            });
+        }
+        outcome
+    }
+}
+
+async fn run_connection_probe(
+    guard: &mut AcpExecutionGuard,
+    definition: &AgentDefinition,
+    request: &AiExecutionRequest,
+) -> Result<(), AiExecutionError> {
+    run_session_probe(guard, definition, request)
+        .await
+        .map(|_| ())
+}
+
+async fn run_session_probe(
+    guard: &mut AcpExecutionGuard,
+    definition: &AgentDefinition,
+    request: &AiExecutionRequest,
+) -> Result<agent_client_protocol::schema::v1::NewSessionResponse, AiExecutionError> {
+    request.report_phase(AiExecutionPhase::Spawning);
+    let process = ManagedAgentProcess::spawn(
+        definition,
+        Some(&guard.workspace),
+        request.limits.stderr_bytes,
+    )
+    .await
+    .map_err(|error| map_process_error(definition, error))?;
+    guard.process = Some(process);
+
+    let (stdin, stdout) = guard
+        .process
+        .as_ref()
+        .expect("process stored before stdio")
+        .take_stdio()
+        .await
+        .map_err(|_| AiExecutionError::Protocol {
+            operation: "take_stdio",
+        })?;
+    let mut config = AcpConnectConfig::new(request.limits.initialize_timeout);
+    config.event_channel_capacity = PROTOCOL_EVENT_CAPACITY;
+    request.report_phase(AiExecutionPhase::Initializing);
+    let process = guard
+        .process
+        .as_ref()
+        .expect("process stored before connect");
+    let connect = AcpProtocol::connect(stdin, stdout, config);
+    tokio::pin!(connect);
+    let (protocol, _channels) = tokio::select! {
+        biased;
+        result = &mut connect => result.map_err(|error| map_acp_error("initialize", error))?,
+        exit = process.wait_for_exit() => {
+            return Err(AiExecutionError::AgentExited {
+                code: exit.and_then(|exit| exit.code),
+            });
+        }
+    };
+    guard.protocol = Some(protocol);
+
+    request.report_phase(AiExecutionPhase::CreatingSession);
+    let session = tokio::time::timeout(
+        request.limits.config_rpc_timeout,
+        guard
+            .protocol
+            .as_ref()
+            .expect("protocol stored before session")
+            .new_session(guard.workspace.clone()),
+    )
+    .await
+    .map_err(|_| AiExecutionError::Protocol {
+        operation: "session_new_timeout",
+    })?
+    .map_err(|error| map_acp_error("session_new", error))?;
+    guard.session_id = Some(session.session_id.clone());
+    Ok(session)
+}
+
+fn connection_probe_request(definition: &AgentDefinition) -> AiExecutionRequest {
+    AiExecutionRequest {
+        execution_id: format!("agent-probe-{}", Uuid::new_v4()),
+        agent_id: definition.id.clone(),
+        purpose: AiExecutionPurpose::ConnectionTest,
+        prompt: "ACP connection probe".to_string(),
+        model: None,
+        limits: AiExecutionLimits {
+            total_timeout: std::time::Duration::from_secs(35),
+            initialize_timeout: std::time::Duration::from_secs(15),
+            config_rpc_timeout: std::time::Duration::from_secs(15),
+            cancel_grace: std::time::Duration::from_secs(2),
+            close_timeout: std::time::Duration::from_secs(2),
+            text_bytes: 1024,
+            stderr_bytes: 64 * 1024,
+        },
+        cancellation: AiExecutionCancellation::default(),
+        progress: None,
+    }
+}
+
+fn model_discovery_request(definition: &AgentDefinition) -> AiExecutionRequest {
+    let mut request = connection_probe_request(definition);
+    request.execution_id = format!("agent-models-{}", Uuid::new_v4());
+    request.purpose = AiExecutionPurpose::ModelDiscovery;
+    request.prompt = "ACP model discovery".to_string();
+    request
+}
+
+fn parse_session_models(
+    session: &agent_client_protocol::schema::v1::NewSessionResponse,
+) -> Result<(Vec<AgentModelOption>, Option<String>), AiExecutionError> {
+    let value = serde_json::to_value(session).map_err(|_| AiExecutionError::Protocol {
+        operation: "session_model_catalog_serialize",
+    })?;
+    let config_options = array_field(&value, &["config_options", "configOptions"]);
+    let model_option = config_options.iter().find(|option| {
+        let category = string_field(option, &["category"]).unwrap_or_default();
+        let id = string_field(option, &["id"]).unwrap_or_default();
+        let option_type = string_field(option, &["type", "option_type"]).unwrap_or_default();
+        (category == "model" || id == "model")
+            && (option_type.is_empty() || option_type == "select")
+    });
+
+    if let Some(model_option) = model_option {
+        let models = array_field(model_option, &["options"])
+            .into_iter()
+            .filter_map(parse_model_option)
+            .collect::<Vec<_>>();
+        let current_model_id = string_field(
+            model_option,
+            &[
+                "current_value",
+                "currentValue",
+                "selected_value",
+                "selectedValue",
+            ],
+        )
+        .or_else(|| string_field(&value, &["current_model_id", "currentModelId"]));
+        if !models.is_empty() {
+            return Ok((models, current_model_id));
+        }
+    }
+
+    let models = array_field(&value, &["available_models", "availableModels"])
+        .into_iter()
+        .filter_map(parse_model_option)
+        .collect::<Vec<_>>();
+    let current_model_id = string_field(&value, &["current_model_id", "currentModelId"]);
+    Ok((models, current_model_id))
+}
+
+fn array_field<'a>(value: &'a Value, names: &[&str]) -> Vec<&'a Value> {
+    names
+        .iter()
+        .find_map(|name| value.get(*name).and_then(Value::as_array))
+        .map(|items| items.iter().collect())
+        .unwrap_or_default()
+}
+
+fn string_field(value: &Value, names: &[&str]) -> Option<String> {
+    names
+        .iter()
+        .find_map(|name| value.get(*name).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn parse_model_option(value: &Value) -> Option<AgentModelOption> {
+    if let Some(id) = value.as_str().map(str::trim).filter(|id| !id.is_empty()) {
+        return Some(AgentModelOption {
+            id: id.to_owned(),
+            label: id.to_owned(),
+            description: None,
+        });
+    }
+    let id = string_field(value, &["id", "value"])?;
+    Some(AgentModelOption {
+        label: string_field(value, &["label", "name"]).unwrap_or_else(|| id.clone()),
+        description: string_field(value, &["description"]),
+        id,
+    })
 }
 
 async fn run_execution(
@@ -511,6 +753,7 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: None,
             model_discovery: None,
+            cli_fallback: false,
         }
     }
 
@@ -567,6 +810,47 @@ mod tests {
         assert!(record.contains("\"event\":\"model\""));
         assert!(record.contains("\"event\":\"prompt\""));
         assert!(record.contains("\"event\":\"close\""));
+        assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn life_02_connection_probe_performs_initialize_and_session_new_without_prompt() {
+        let (root, record) = test_paths("connection-probe");
+        let workspace_root = root.join("workspaces");
+        let backend = AcpExecutionBackend::new(workspace_root.clone());
+
+        backend
+            .check_connection(&definition("happy", &record))
+            .await
+            .expect("ACP connection probe");
+
+        let records = records(&record);
+        assert!(records.contains("\"event\":\"initialize\""));
+        assert!(records.contains("\"event\":\"new\""));
+        assert!(records.contains("\"event\":\"close\""));
+        assert!(!records.contains("\"event\":\"prompt\""));
+        assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn life_03_model_discovery_reads_session_config_options_without_prompt() {
+        let (root, record) = test_paths("model-discovery");
+        let workspace_root = root.join("workspaces");
+        let backend = AcpExecutionBackend::new(workspace_root.clone());
+
+        let (models, current_model_id) = backend
+            .discover_models(&definition("happy", &record))
+            .await
+            .expect("ACP model discovery");
+
+        assert_eq!(current_model_id.as_deref(), Some("fixture/model-fast"));
+        assert_eq!(models[0].id, "fixture/model-fast");
+        assert_eq!(models[0].label, "Fixture Fast");
+        assert_eq!(models[0].description.as_deref(), Some("Fast fixture model"));
+        assert!(records(&record).contains("\"event\":\"new\""));
+        assert!(!records(&record).contains("\"event\":\"prompt\""));
         assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
         let _ = fs::remove_dir_all(root);
     }

@@ -861,6 +861,7 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: None,
             model_discovery: None,
+            cli_fallback: false,
         }
     }
 }

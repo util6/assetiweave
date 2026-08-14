@@ -1,5 +1,8 @@
 use std::{fmt, hash::Hash};
 
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
 const MAX_AGENT_ID_BYTES: usize = 64;
 const MAX_DISPLAY_NAME_BYTES: usize = 120;
 
@@ -41,6 +44,15 @@ pub(crate) enum AgentProtocol {
     Native,
 }
 
+impl AgentProtocol {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Acp => "acp",
+            Self::Native => "native",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AgentEnvEntry {
     pub(crate) name: String,
@@ -69,6 +81,7 @@ impl AgentEnvEntry {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct AgentCommandDefinition {
+    pub(crate) command: Option<String>,
     pub(crate) args: Vec<String>,
 }
 
@@ -79,11 +92,30 @@ impl AgentCommandDefinition {
         S: Into<String>,
     {
         Self {
+            command: None,
+            args: args.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    pub(crate) fn with_command<I, S>(command: impl Into<String>, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            command: Some(command.into()),
             args: args.into_iter().map(Into::into).collect(),
         }
     }
 
     fn validate(&self, field: &'static str) -> Result<(), AgentDefinitionError> {
+        if let Some(command) = self.command.as_deref() {
+            if command.trim().is_empty() || command.contains('\0') {
+                return Err(AgentDefinitionError::InvalidCommand(format!(
+                    "{field} command must be non-empty and may not contain NUL"
+                )));
+            }
+        }
         validate_arguments(&self.args, field)
     }
 }
@@ -110,6 +142,35 @@ pub(crate) struct AgentDefinition {
     pub(crate) declared_capabilities: DeclaredAgentCapabilities,
     pub(crate) availability_probe: Option<AgentCommandDefinition>,
     pub(crate) model_discovery: Option<AgentCommandDefinition>,
+    pub(crate) cli_fallback: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct AgentCatalogEntry {
+    pub(crate) id: String,
+    pub(crate) display_name: String,
+    pub(crate) command: String,
+    pub(crate) args: Vec<String>,
+    pub(crate) availability_command: String,
+    pub(crate) protocol: String,
+}
+
+impl AgentCatalogEntry {
+    pub(crate) fn from_definition(definition: &AgentDefinition) -> Self {
+        let availability_command = definition
+            .availability_probe
+            .as_ref()
+            .and_then(|probe| probe.command.as_deref())
+            .unwrap_or(&definition.command);
+        Self {
+            id: definition.id.to_string(),
+            display_name: definition.display_name.clone(),
+            command: definition.command.clone(),
+            args: definition.args.clone(),
+            availability_command: availability_command.to_string(),
+            protocol: definition.protocol.as_str().to_string(),
+        }
+    }
 }
 
 impl AgentDefinition {
@@ -141,6 +202,53 @@ impl AgentDefinition {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AgentConnectionCheckMode {
+    Installation,
+    Connection,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub(crate) struct AgentConnectionCheckRequest {
+    pub(crate) agent_id: String,
+    pub(crate) mode: AgentConnectionCheckMode,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct AgentConnectionResult {
+    pub(crate) agent_id: String,
+    pub(crate) available: bool,
+    pub(crate) installed: bool,
+    pub(crate) connected: bool,
+    pub(crate) version: Option<String>,
+    pub(crate) connection_method: Option<String>,
+    pub(crate) error_code: Option<String>,
+    pub(crate) error: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct AgentModelOption {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) description: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct AgentModelsResult {
+    pub(crate) agent_id: String,
+    pub(crate) available: bool,
+    pub(crate) models: Vec<AgentModelOption>,
+    pub(crate) current_model_id: Option<String>,
+    pub(crate) error_code: Option<String>,
+    pub(crate) error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub(crate) struct AgentModelsRequest {
+    pub(crate) agent_id: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -284,6 +392,7 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: Some(AgentCommandDefinition::new(["--version"])),
             model_discovery: Some(AgentCommandDefinition::new(["models"])),
+            cli_fallback: false,
         }
     }
 }
