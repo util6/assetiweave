@@ -180,6 +180,9 @@
     "validate_conversation_adapter",
     "list_conversation_adapter_runtime_statuses",
     "conversation.card.translation.run",
+    "list_agent_catalog",
+    "check_agent_connection",
+    "list_agent_models",
     "check_opencode_translation_availability",
     "translate_conversation_card_with_opencode",
     "translate_conversation_card",
@@ -9890,7 +9893,6 @@
       "params_schema": {
         "required": [
           "provider",
-          "cli",
           "model",
           "prompt"
         ],
@@ -9904,6 +9906,14 @@
               "apple"
             ],
             "description": "Translation provider family"
+          },
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "agent id"
           },
           "cli": {
             "type": "string",
@@ -9920,6 +9930,92 @@
           "prompt": {
             "type": "string",
             "description": "Rendered translation prompt"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "list_agent_catalog",
+      "canonical_method": "agent.catalog.list",
+      "description": "List built-in Agent runtime definitions",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "check_agent_connection",
+      "canonical_method": "agent.connection.check",
+      "description": "Check Agent installation or ACP connection",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "agent_id",
+          "mode"
+        ],
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "Registered Agent identifier",
+            "aliases": [
+              "agentId"
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "installation",
+              "connection"
+            ],
+            "description": "Probe mode: installation or connection"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "list_agent_models",
+      "canonical_method": "agent.models.list",
+      "description": "Load selectable models advertised by an Agent ACP session",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "agent_id"
+        ],
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "Registered Agent identifier",
+            "aliases": [
+              "agentId"
+            ]
           }
         },
         "additionalProperties": false
@@ -9985,7 +10081,6 @@
       "params_schema": {
         "required": [
           "provider",
-          "cli",
           "model",
           "prompt"
         ],
@@ -9999,6 +10094,14 @@
               "apple"
             ],
             "description": "Translation provider family"
+          },
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "agent id"
           },
           "cli": {
             "type": "string",
@@ -10035,7 +10138,6 @@
       "params_schema": {
         "required": [
           "provider",
-          "cli",
           "model",
           "prompt"
         ],
@@ -10049,6 +10151,14 @@
               "apple"
             ],
             "description": "Translation provider family"
+          },
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "agent id"
           },
           "cli": {
             "type": "string",

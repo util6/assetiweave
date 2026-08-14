@@ -70,7 +70,7 @@ describe("cardTranslation", () => {
 
     await expect(
       translateConversationCardContent({
-        cli: "opencode",
+        agentId: "opencode",
         model: "cliproxy/gpt-5.1-codex",
         promptTemplate: undefined,
         provider: "cli",
@@ -81,7 +81,7 @@ describe("cardTranslation", () => {
 
     expect(invoke).toHaveBeenCalledWith("translate_conversation_card", {
       params: {
-        cli: "opencode",
+        agent_id: "opencode",
         model: "cliproxy/gpt-5.1-codex",
         prompt: expect.stringContaining('Target language JSON: "简体中文"'),
         provider: "cli",
@@ -112,7 +112,7 @@ describe("cardTranslation", () => {
     vi.mocked(invoke).mockResolvedValueOnce(taskSnapshot("queued"));
 
     await expect(startConversationCardTranslation({
-      cli: "opencode",
+      agentId: "opencode",
       model: "cliproxy/gpt-5.1-codex",
       promptTemplate: undefined,
       provider: "cli",
@@ -122,7 +122,7 @@ describe("cardTranslation", () => {
 
     expect(invoke).toHaveBeenCalledWith("start_conversation_card_translation", {
       params: {
-        cli: "opencode",
+        agent_id: "opencode",
         model: "cliproxy/gpt-5.1-codex",
         prompt: expect.stringContaining('Target language JSON: "简体中文"'),
         provider: "cli",

@@ -63,6 +63,9 @@ pub(crate) enum ConversationTranslationCli {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ConversationTranslationRequest {
     pub(crate) provider: ConversationTranslationProvider,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
+    #[serde(default = "default_translation_cli")]
     pub(crate) cli: ConversationTranslationCli,
     pub(crate) model: String,
     pub(crate) prompt: String,
@@ -71,6 +74,9 @@ pub(crate) struct ConversationTranslationRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ConversationTranslationConnectionRequest {
     pub(crate) provider: ConversationTranslationProvider,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
+    #[serde(default = "default_translation_cli")]
     pub(crate) cli: ConversationTranslationCli,
     pub(crate) model: String,
     pub(crate) prompt: String,
@@ -104,24 +110,51 @@ pub(crate) fn test_conversation_translation_connection(
     params: ConversationTranslationConnectionRequest,
 ) -> OpencodeTranslationAvailability {
     let result = match params.provider {
-        ConversationTranslationProvider::Cli
-            if matches!(params.cli, ConversationTranslationCli::Opencode) =>
-        {
+        ConversationTranslationProvider::Cli => {
             let model = normalize_model(&params.model);
             model.and_then(|model| {
-                execute_opencode_translation(
-                    runtime,
-                    params.prompt,
-                    model,
-                    AiExecutionPurpose::ConnectionTest,
-                    connection_test_limits(),
-                )
+                if let Some(agent_id) = params.agent_id.as_deref() {
+                    execute_agent_translation(
+                        runtime,
+                        resolve_agent_id(Some(agent_id), params.cli)?,
+                        params.prompt,
+                        model,
+                        AiExecutionPurpose::ConnectionTest,
+                        connection_test_limits(),
+                    )
+                } else {
+                    match params.cli {
+                        ConversationTranslationCli::Opencode => execute_opencode_translation(
+                            runtime,
+                            params.prompt,
+                            model,
+                            AiExecutionPurpose::ConnectionTest,
+                            connection_test_limits(),
+                        ),
+                        ConversationTranslationCli::Gemini => {
+                            let translated_text = legacy_gemini::execute_translation(
+                                model,
+                                params.prompt,
+                                translation_command_options(Duration::from_secs(30)),
+                            )
+                            .map_err(|error| {
+                                translation_execution_error_message(
+                                    "gemini",
+                                    "gemini connection test",
+                                    error,
+                                )
+                            })?;
+                            Ok(OpencodeTranslationResult { translated_text })
+                        }
+                    }
+                }
             })
         }
         provider => translate_conversation_card(
             runtime,
             ConversationTranslationRequest {
                 provider,
+                agent_id: params.agent_id,
                 cli: params.cli,
                 model: params.model,
                 prompt: params.prompt,
@@ -188,7 +221,18 @@ pub(crate) fn translate_conversation_card(
 
     match params.provider {
         ConversationTranslationProvider::Cli => {
-            translate_with_cli(runtime, params.cli, model, params.prompt)
+            if let Some(agent_id) = params.agent_id.as_deref() {
+                execute_agent_translation(
+                    runtime,
+                    resolve_agent_id(Some(agent_id), params.cli)?,
+                    params.prompt,
+                    model,
+                    AiExecutionPurpose::Translation,
+                    AiExecutionLimits::default(),
+                )
+            } else {
+                translate_with_cli(runtime, params.cli, model, params.prompt)
+            }
         }
         ConversationTranslationProvider::Google => {
             Err("Google Translate provider is reserved but not implemented yet".to_string())
@@ -201,16 +245,14 @@ pub(crate) fn translate_conversation_card(
 
 pub(crate) fn prepare_opencode_agent_translation(
     params: ConversationTranslationRequest,
-) -> AppResult<(String, Option<String>)> {
+) -> AppResult<(AgentId, String, Option<String>)> {
     let ConversationTranslationProvider::Cli = params.provider else {
         return Err("AI execution tasks require a CLI translation provider".to_string());
     };
-    if !matches!(params.cli, ConversationTranslationCli::Opencode) {
-        return Err("AI execution tasks currently support OpenCode only".to_string());
-    }
     validate_translation_prompt(&params.prompt)?;
     let model = normalize_model(&params.model)?;
-    Ok((params.prompt.trim().to_string(), model))
+    let agent_id = resolve_agent_id(params.agent_id.as_deref(), params.cli)?;
+    Ok((agent_id, params.prompt.trim().to_string(), model))
 }
 
 pub(crate) fn translate_conversation_card_with_opencode(
@@ -255,20 +297,35 @@ fn translate_with_cli(
     }
 }
 
-fn execute_opencode_translation(
+fn resolve_agent_id(agent_id: Option<&str>, cli: ConversationTranslationCli) -> AppResult<AgentId> {
+    if let Some(agent_id) = agent_id.map(str::trim).filter(|value| !value.is_empty()) {
+        return AgentId::parse(agent_id).map_err(|error| error.to_string());
+    }
+    let legacy_id = match cli {
+        ConversationTranslationCli::Opencode => "opencode",
+        ConversationTranslationCli::Gemini => "gemini",
+    };
+    AgentId::parse(legacy_id).map_err(|error| error.to_string())
+}
+
+fn default_translation_cli() -> ConversationTranslationCli {
+    ConversationTranslationCli::Opencode
+}
+
+fn execute_agent_translation(
     runtime: Arc<dyn AgentExecutionRuntime>,
+    agent_id: AgentId,
     prompt: String,
     model: Option<String>,
     purpose: AiExecutionPurpose,
     limits: AiExecutionLimits,
 ) -> AppResult<OpencodeTranslationResult> {
     validate_translation_prompt(&prompt)?;
-    let prompt = prompt.trim().to_string();
     let request = AiExecutionRequest {
         execution_id: uuid::Uuid::new_v4().to_string(),
-        agent_id: opencode_agent_id(),
+        agent_id,
         purpose,
-        prompt,
+        prompt: prompt.trim().to_string(),
         model,
         limits,
         cancellation: AiExecutionCancellation::default(),
@@ -279,6 +336,18 @@ fn execute_opencode_translation(
     Ok(OpencodeTranslationResult {
         translated_text: result.text,
     })
+}
+
+fn execute_opencode_translation(
+    runtime: Arc<dyn AgentExecutionRuntime>,
+    prompt: String,
+    model: Option<String>,
+    purpose: AiExecutionPurpose,
+    limits: AiExecutionLimits,
+) -> AppResult<OpencodeTranslationResult> {
+    validate_translation_prompt(&prompt)?;
+    let prompt = prompt.trim().to_string();
+    execute_agent_translation(runtime, opencode_agent_id(), prompt, model, purpose, limits)
 }
 
 fn opencode_agent_id() -> AgentId {
@@ -424,6 +493,7 @@ mod tests {
             assert_eq!(agent_id.as_str(), "opencode");
             AgentAvailability {
                 available: true,
+                installed: true,
                 version: Some("opencode-test 1.0".to_string()),
                 error: None,
             }
@@ -469,6 +539,7 @@ mod tests {
         let result = translate_conversation_card(
             runtime.clone(),
             ConversationTranslationRequest {
+                agent_id: None,
                 provider: ConversationTranslationProvider::Cli,
                 cli: ConversationTranslationCli::Opencode,
                 model: " model/a ".to_string(),
@@ -511,6 +582,7 @@ mod tests {
         let oversized = translate_conversation_card(
             runtime.clone(),
             ConversationTranslationRequest {
+                agent_id: None,
                 provider: ConversationTranslationProvider::Cli,
                 cli: ConversationTranslationCli::Opencode,
                 model: String::new(),
@@ -520,6 +592,7 @@ mod tests {
         let invalid_model = translate_conversation_card(
             runtime.clone(),
             ConversationTranslationRequest {
+                agent_id: None,
                 provider: ConversationTranslationProvider::Cli,
                 cli: ConversationTranslationCli::Opencode,
                 model: "bad\nmodel".to_string(),
@@ -539,6 +612,7 @@ mod tests {
         let availability = test_conversation_translation_connection(
             runtime.clone(),
             ConversationTranslationConnectionRequest {
+                agent_id: None,
                 provider: ConversationTranslationProvider::Cli,
                 cli: ConversationTranslationCli::Opencode,
                 model: "model/a".to_string(),
@@ -596,6 +670,7 @@ mod tests {
         let google = translate_conversation_card(
             runtime.clone(),
             ConversationTranslationRequest {
+                agent_id: None,
                 provider: ConversationTranslationProvider::Google,
                 cli: ConversationTranslationCli::Opencode,
                 model: String::new(),
@@ -606,6 +681,7 @@ mod tests {
         let apple = translate_conversation_card(
             runtime.clone(),
             ConversationTranslationRequest {
+                agent_id: None,
                 provider: ConversationTranslationProvider::Apple,
                 cli: ConversationTranslationCli::Opencode,
                 model: String::new(),

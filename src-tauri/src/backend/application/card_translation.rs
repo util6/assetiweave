@@ -166,6 +166,7 @@ mod tests {
 
         let result = service
             .translate_conversation_card(ConversationTranslationRequest {
+                agent_id: None,
                 provider: ConversationTranslationProvider::Cli,
                 cli: ConversationTranslationCli::Opencode,
                 model: "model/a".to_string(),

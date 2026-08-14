@@ -1,4 +1,5 @@
 use super::prelude::*;
+use std::sync::Arc;
 use std::time::Duration;
 
 pub(super) const MEMORY_PHASE1_MAX_QUESTIONS: usize = 8;
@@ -7,8 +8,9 @@ const MEMORY_PHASE1_CONCURRENCY: usize = 2;
 
 #[derive(Clone)]
 pub(super) struct RecallAiRuntime {
-    pub runtime: crate::backend::ai_execution::AiCliRuntime,
+    pub agent_id: crate::backend::agents::types::AgentId,
     pub model: Option<String>,
+    pub runtime: Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,7 +48,7 @@ impl AppService {
                 extractions: Vec::new(),
             });
         }
-        let runtime = load_recall_ai_runtime()?;
+        let runtime = load_recall_ai_runtime(&self.db_path)?;
         let run_id = Uuid::new_v4().to_string();
         let kind = if preview.mode == MemoryRecallMode::Full {
             MemoryRunKind::FullOrganize
@@ -61,7 +63,7 @@ impl AppService {
                 kind,
                 &preview.scope,
                 preview.source_revision,
-                runtime.runtime.command_name(),
+                runtime.agent_id.as_str(),
                 runtime.model.as_deref(),
                 preview.selected_question_count,
             ))?;
@@ -294,26 +296,24 @@ pub(super) fn execute_recall_ai(
     cap: usize,
     cancellation: Option<crate::backend::ai_execution::AiExecutionCancellation>,
 ) -> AppResult<String> {
-    let dir = std::env::temp_dir().join(format!("assetiweave-memory-recall-{}", Uuid::new_v4()));
-    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    let mut options = crate::backend::ai_execution::AiCommandOptions::new(
-        Duration::from_secs(180),
-        cap,
-        16 * 1024,
-    );
-    options.current_dir = Some(dir.clone());
-    options.cancellation = cancellation;
-    let result = crate::backend::ai_execution::execute_structured_text(
-        crate::backend::ai_execution::AiStructuredTextRequest {
-            runtime: runtime.runtime,
-            model: runtime.model.clone(),
-            prompt,
-            options,
+    let request = crate::backend::ai_execution::AiExecutionRequest {
+        execution_id: Uuid::new_v4().to_string(),
+        agent_id: runtime.agent_id.clone(),
+        purpose: crate::backend::ai_execution::AiExecutionPurpose::Translation,
+        prompt,
+        model: runtime.model.clone(),
+        limits: crate::backend::ai_execution::AiExecutionLimits {
+            total_timeout: Duration::from_secs(180),
+            text_bytes: cap,
+            stderr_bytes: 16 * 1024,
+            ..Default::default()
         },
-    )
-    .map_err(|error| error.to_string());
-    let _ = fs::remove_dir_all(dir);
-    Ok(result?.text)
+        cancellation: cancellation.unwrap_or_default(),
+        progress: None,
+    };
+    crate::backend::ai_execution::execute_agent_blocking(runtime.runtime.clone(), request)
+        .map(|result| result.text)
+        .map_err(|error| error.to_string())
 }
 
 pub(super) fn strip_json_fence(value: &str) -> &str {
@@ -338,22 +338,15 @@ fn validate_raw_memories(items: &[MemoryRawMemory], allowed: &HashSet<String>) -
     Ok(())
 }
 
-fn load_recall_ai_runtime() -> AppResult<RecallAiRuntime> {
-    let settings = crate::backend::app_settings::read_app_settings_value()?;
-    let runtime = settings.get("aiRuntime").and_then(Value::as_object);
-    let cli = match runtime.and_then(|v| v.get("cli")).and_then(Value::as_str) {
-        Some("gemini") => crate::backend::ai_execution::AiCliRuntime::Gemini,
-        _ => crate::backend::ai_execution::AiCliRuntime::Opencode,
-    };
-    crate::backend::ai_execution::resolve_cli_executable(cli).map_err(|error| error.to_string())?;
+fn load_recall_ai_runtime(db_path: &Path) -> AppResult<RecallAiRuntime> {
+    let (agent_id, model) = crate::backend::ai_execution::configured_agent_capability("memory")
+        .map_err(|error| error.to_string())?;
+    let runtime = crate::backend::ai_execution::shared_agent_execution_runtime(db_path)
+        .map_err(|error| error.to_string())?;
     Ok(RecallAiRuntime {
-        runtime: cli,
-        model: runtime
-            .and_then(|v| v.get("model"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(str::to_string),
+        agent_id,
+        model,
+        runtime,
     })
 }
 

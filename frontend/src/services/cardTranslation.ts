@@ -58,7 +58,7 @@ export interface AiExecutionTaskSnapshot {
 }
 
 export interface ConversationCardTranslationRequest {
-  cli: ConversationTranslationCli;
+  agentId: string;
   model: string;
   promptTemplate?: string;
   provider: ConversationTranslationProvider;
@@ -73,13 +73,14 @@ export interface ConversationCardTranslationPromptRequest {
 }
 
 export interface ConversationTranslationCommandParams {
-  cli: ConversationTranslationCli;
+  agent_id: string;
   model: string;
   prompt: string;
   provider: ConversationTranslationProvider;
 }
 
 export interface ConversationTranslationConnectionRequest {
+  agentId?: string;
   cli: ConversationTranslationCli;
   model: string;
   prompt: string;
@@ -92,7 +93,7 @@ export interface ConversationTranslationModelsRequest {
 }
 
 export interface ConversationTranslationAvailabilityRequest {
-  cli: ConversationTranslationCli;
+  agentId: string;
   model: string;
   provider: ConversationTranslationProvider;
 }
@@ -138,12 +139,14 @@ export async function checkOpencodeTranslationAvailability(): Promise<OpencodeTr
 export async function checkConversationTranslationAvailability(
   request: ConversationTranslationAvailabilityRequest,
 ): Promise<OpencodeTranslationAvailability> {
-  if (request.provider === "cli" && request.cli === "opencode") {
+  if (request.provider === "cli" && request.agentId === "opencode") {
     return checkOpencodeTranslationAvailability();
   }
 
   return testConversationTranslationConnection({
     ...request,
+    cli: request.agentId === "gemini" ? "gemini" : "opencode",
+    agentId: request.agentId,
     prompt: "Reply with OK only.",
   });
 }
@@ -158,7 +161,7 @@ export async function translateConversationCardContent(
   const prompt = buildConversationCardTranslationPrompt(request);
   return invoke<OpencodeTranslationResult>("translate_conversation_card", {
     params: {
-      cli: request.cli,
+      agent_id: request.agentId,
       model: request.model,
       prompt,
       provider: request.provider,
@@ -173,7 +176,7 @@ export async function startConversationCardTranslation(
   const prompt = buildConversationCardTranslationPrompt(request);
   return invoke<AiExecutionTaskSnapshot>("start_conversation_card_translation", {
     params: {
-      cli: request.cli,
+      agent_id: request.agentId,
       model: request.model,
       prompt,
       provider: request.provider,
@@ -216,7 +219,13 @@ export async function testConversationTranslationConnection(
   }
 
   return invoke<OpencodeTranslationAvailability>("test_conversation_translation_connection", {
-    params: request,
+    params: {
+      agent_id: request.agentId,
+      cli: request.cli,
+      model: request.model,
+      prompt: request.prompt,
+      provider: request.provider,
+    },
   });
 }
 

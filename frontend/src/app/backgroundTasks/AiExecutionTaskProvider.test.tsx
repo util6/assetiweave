@@ -146,7 +146,7 @@ describe("AiExecutionTaskProvider", () => {
 });
 
 const translationRequest: ConversationCardTranslationRequest = {
-  cli: "opencode",
+  agentId: "opencode",
   model: "",
   provider: "cli",
   targetLanguage: "zh-CN",

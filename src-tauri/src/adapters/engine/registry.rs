@@ -2859,6 +2859,47 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "list_agent_catalog",
+        "agent.catalog.list",
+        "List built-in Agent runtime definitions",
+        Read,
+        App,
+        false,
+        NoParams,
+        Service => |service, _params| service.list_agent_catalog(),
+        &[],
+        None
+    ),
+    command!(
+        "check_agent_connection",
+        "agent.connection.check",
+        "Check Agent installation or ACP connection",
+        Read,
+        App,
+        false,
+        crate::backend::agents::types::AgentConnectionCheckRequest,
+        Service => |service, params| service.check_agent_connection(params),
+        &[
+            param!("agent_id", "Registered Agent identifier", ["agentId"]),
+            param!("mode", "Probe mode: installation or connection")
+        ],
+        None
+    ),
+    command!(
+        "list_agent_models",
+        "agent.models.list",
+        "Load selectable models advertised by an Agent ACP session",
+        Read,
+        App,
+        false,
+        crate::backend::agents::types::AgentModelsRequest,
+        Service => |service, params| service.list_agent_models(params),
+        &[
+            param!("agent_id", "Registered Agent identifier", ["agentId"])
+        ],
+        None
+    ),
+    command!(
         "check_opencode_translation_availability",
         "conversation.card.translation.opencode-status",
         "Check whether opencode is available for content card translation",
@@ -4313,9 +4354,17 @@ mod tests {
         let required = contract["params_schema"]["required"]
             .as_array()
             .expect("translation required fields");
-        for field in ["provider", "cli", "model", "prompt"] {
+        for field in ["provider", "model", "prompt"] {
             assert!(required.contains(&json!(field)), "missing field {field}");
         }
+        assert!(
+            !required.contains(&json!("cli")),
+            "legacy cli should remain optional when an Agent is selected"
+        );
+        assert_eq!(
+            contract["params_schema"]["properties"]["agent_id"]["type"],
+            json!(["string", "null"])
+        );
         assert_eq!(
             contract["params_schema"]["properties"]["cli"]["enum"],
             json!(["opencode", "gemini"])

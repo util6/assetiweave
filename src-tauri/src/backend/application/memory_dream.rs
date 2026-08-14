@@ -3,7 +3,7 @@ use chrono::{DateTime, Duration as ChronoDuration};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
-use std::{fs, time::Duration};
+use std::time::Duration;
 
 pub(crate) const MEMORY_DREAM_MAX_SESSIONS: usize = 8;
 pub(crate) const MEMORY_DREAM_MAX_QUESTIONS: usize = 40;
@@ -12,17 +12,18 @@ const MEMORY_DREAM_PROMPT_VERSION: &str = "memory-auto-dream-v1";
 const MEMORY_DREAM_STABILITY_MINUTES: i64 = 10;
 const MEMORY_DREAM_QUERY_ROW_LIMIT: usize = 4_096;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct MemoryDreamPolicy {
     auto_enabled: bool,
     min_hours: i64,
     min_sessions: i64,
     runtime_available: bool,
-    runtime: crate::backend::ai_execution::AiCliRuntime,
+    agent_id: crate::backend::agents::types::AgentId,
+    runtime: Option<std::sync::Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>>,
     model: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct MemoryDreamGateInputs<'a> {
     trigger: MemoryDreamTrigger,
     policy: MemoryDreamPolicy,
@@ -289,7 +290,7 @@ impl AppService {
             return Err(format_memory_dream_gate_error(&preview));
         }
 
-        let policy = load_memory_dream_policy()?;
+        let policy = load_memory_dream_policy(&self.db_path)?;
         let context = self.build_memory_dream_context(&preview)?;
         let run_id = Uuid::new_v4().to_string();
         let note_id = Uuid::new_v4().to_string();
@@ -304,7 +305,7 @@ impl AppService {
                 &params.scope,
                 trigger,
                 preview.source_revision_start,
-                policy.runtime.command_name(),
+                policy.agent_id.as_str(),
                 policy.model.as_deref(),
                 MEMORY_DREAM_PROMPT_VERSION,
                 preview.question_count,
@@ -389,7 +390,7 @@ impl AppService {
             trigger,
             source_revision_start: preview.source_revision_start,
             source_revision_end: preview.source_revision_end,
-            provider: policy.runtime.command_name().to_string(),
+            provider: policy.agent_id.to_string(),
             model: policy.model.clone(),
             prompt_version: MEMORY_DREAM_PROMPT_VERSION.to_string(),
             processed_count: preview.question_count,
@@ -523,7 +524,7 @@ impl AppService {
             MEMORY_DREAM_MAX_QUESTIONS,
             MEMORY_DREAM_MAX_INPUT_CHARS,
         );
-        let policy = load_memory_dream_policy()
+        let policy = load_memory_dream_policy(&self.db_path)
             .map_err(|error| format!("load Memory Dream policy: {error}"))?;
         let gates = evaluate_memory_dream_gates(MemoryDreamGateInputs {
             trigger,
@@ -748,30 +749,29 @@ fn execute_memory_dream_ai(
     prompt: &str,
     cancellation: Option<crate::backend::ai_execution::AiExecutionCancellation>,
 ) -> Result<String, crate::backend::ai_execution::AiExecutionError> {
-    let work_dir = std::env::temp_dir().join(format!("assetiweave-memory-ai-{}", Uuid::new_v4()));
-    fs::create_dir_all(&work_dir).map_err(|error| {
-        crate::backend::ai_execution::AiExecutionError::Output {
-            program: work_dir.clone(),
-            message: format!("failed to create isolated Memory AI directory: {error}"),
-        }
-    })?;
-    let mut options = crate::backend::ai_execution::AiCommandOptions::new(
-        Duration::from_secs(120),
-        64 * 1024,
-        8 * 1024,
-    );
-    options.current_dir = Some(work_dir.clone());
-    options.cancellation = cancellation;
-    let result = crate::backend::ai_execution::execute_structured_text(
-        crate::backend::ai_execution::AiStructuredTextRequest {
-            runtime: policy.runtime,
-            model: policy.model.clone(),
-            prompt: prompt.to_string(),
-            options,
+    let runtime =
+        policy
+            .runtime
+            .clone()
+            .ok_or(crate::backend::ai_execution::AiExecutionError::Protocol {
+                operation: "memory_runtime_initialize",
+            })?;
+    let request = crate::backend::ai_execution::AiExecutionRequest {
+        execution_id: Uuid::new_v4().to_string(),
+        agent_id: policy.agent_id.clone(),
+        purpose: crate::backend::ai_execution::AiExecutionPurpose::Translation,
+        prompt: prompt.to_string(),
+        model: policy.model.clone(),
+        limits: crate::backend::ai_execution::AiExecutionLimits {
+            total_timeout: Duration::from_secs(120),
+            text_bytes: 64 * 1024,
+            stderr_bytes: 8 * 1024,
+            ..Default::default()
         },
-    );
-    let _ = fs::remove_dir_all(work_dir);
-    result.map(|result| result.text)
+        cancellation: cancellation.unwrap_or_default(),
+        progress: None,
+    };
+    crate::backend::ai_execution::execute_agent_blocking(runtime, request).map(|result| result.text)
 }
 
 fn parse_and_validate_memory_dream_output(
@@ -944,10 +944,9 @@ fn memory_dream_candidates(markdown: &str) -> Vec<MemoryDreamCandidateDraft> {
     candidates
 }
 
-fn load_memory_dream_policy() -> AppResult<MemoryDreamPolicy> {
+fn load_memory_dream_policy(db_path: &Path) -> AppResult<MemoryDreamPolicy> {
     let settings = crate::backend::app_settings::read_app_settings_value()?;
     let memory = settings.get("memory").and_then(Value::as_object);
-    let ai_runtime = settings.get("aiRuntime").and_then(Value::as_object);
     let auto_enabled = memory
         .and_then(|memory| memory.get("autoDreamEnabled"))
         .and_then(Value::as_bool)
@@ -962,26 +961,18 @@ fn load_memory_dream_policy() -> AppResult<MemoryDreamPolicy> {
         .and_then(Value::as_i64)
         .unwrap_or(3)
         .clamp(1, 50);
-    let runtime = match ai_runtime
-        .and_then(|runtime| runtime.get("cli"))
-        .and_then(Value::as_str)
-    {
-        Some("gemini") => crate::backend::ai_execution::AiCliRuntime::Gemini,
-        _ => crate::backend::ai_execution::AiCliRuntime::Opencode,
-    };
-    let runtime_available = crate::backend::ai_execution::resolve_cli_executable(runtime).is_ok();
-    let model = ai_runtime
-        .and_then(|runtime| runtime.get("model"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
+    let (agent_id, model) = crate::backend::ai_execution::configured_agent_capability("memory")
+        .map_err(|error| error.to_string())?;
+    let runtime = crate::backend::ai_execution::shared_agent_execution_runtime(db_path)
+        .map_err(|error| error.to_string())?;
+    let runtime_available = runtime.check_availability(&agent_id).available;
     Ok(MemoryDreamPolicy {
         auto_enabled,
         min_hours,
         min_sessions,
         runtime_available,
-        runtime,
+        agent_id,
+        runtime: Some(runtime),
         model,
     })
 }
@@ -1255,7 +1246,8 @@ mod tests {
             min_hours: 12,
             min_sessions: 3,
             runtime_available: true,
-            runtime: crate::backend::ai_execution::AiCliRuntime::Opencode,
+            agent_id: crate::backend::agents::types::AgentId::parse("opencode").unwrap(),
+            runtime: None,
             model: None,
         }
     }

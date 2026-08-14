@@ -23,7 +23,10 @@ use crate::backend::capabilities::{
     sync_asset_mount_observations, target_profile_from_input, unmount_asset_mount_record,
 };
 use crate::{
-    backend::agents::types::AgentId,
+    backend::agents::types::{
+        AgentCatalogEntry, AgentConnectionCheckRequest, AgentConnectionResult, AgentModelsRequest,
+        AgentModelsResult,
+    },
     backend::ai_execution::{
         AgentExecutionRuntime, AiExecutionError, AiExecutionLimits, AiExecutionPhase,
         AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
@@ -1664,6 +1667,48 @@ pub(crate) fn list_conversation_adapter_runtime_statuses(
 }
 
 #[tauri::command]
+pub(crate) async fn list_agent_catalog(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<AgentCatalogEntry>> {
+    let db_path = state.db_path.clone();
+    let agent_runtime = state.agent_runtime.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?.list_agent_catalog()
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn check_agent_connection(
+    state: State<'_, AppState>,
+    params: AgentConnectionCheckRequest,
+) -> AppResult<AgentConnectionResult> {
+    let db_path = state.db_path.clone();
+    let agent_runtime = state.agent_runtime.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?
+            .check_agent_connection(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn list_agent_models(
+    state: State<'_, AppState>,
+    params: AgentModelsRequest,
+) -> AppResult<AgentModelsResult> {
+    let db_path = state.db_path.clone();
+    let agent_runtime = state.agent_runtime.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?.list_agent_models(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub(crate) async fn check_opencode_translation_availability(
     state: State<'_, AppState>,
 ) -> AppResult<OpencodeTranslationAvailability> {
@@ -1783,8 +1828,7 @@ fn prepare_ai_execution_task(
     params: ConversationTranslationRequest,
     emitter: Arc<dyn AiExecutionTaskEmitter>,
 ) -> AppResult<(AiExecutionTaskSnapshot, AiExecutionRequest)> {
-    let (prompt, model) = prepare_opencode_agent_translation(params)?;
-    let agent_id = AgentId::parse("opencode").map_err(|error| error.to_string())?;
+    let (agent_id, prompt, model) = prepare_opencode_agent_translation(params)?;
     let (snapshot, cancellation) =
         tasks.begin_ai_execution(AiExecutionPurpose::Translation, &agent_id)?;
     let progress = Arc::new(RegistryAiExecutionProgressSink {
@@ -2879,6 +2923,9 @@ pub(crate) fn command_handler(
         scaffold_conversation_adapter,
         validate_conversation_adapter,
         list_conversation_adapter_runtime_statuses,
+        list_agent_catalog,
+        check_agent_connection,
+        list_agent_models,
         check_opencode_translation_availability,
         translate_conversation_card_with_opencode,
         translate_conversation_card,
@@ -3102,6 +3149,7 @@ mod tests {
 
     fn opencode_translation_request() -> ConversationTranslationRequest {
         ConversationTranslationRequest {
+            agent_id: None,
             provider: ConversationTranslationProvider::Cli,
             cli: ConversationTranslationCli::Opencode,
             model: "model/a".to_string(),
