@@ -19,6 +19,7 @@ import clsx from "clsx";
 import {
   Activity,
   Bell,
+  Bot,
   Code2,
   Columns3,
   Cpu,
@@ -40,7 +41,7 @@ import {
   RefreshCw,
   RotateCcw,
   Settings,
-  ShieldCheck,
+  Sparkles,
   Terminal,
   Type,
   X,
@@ -62,6 +63,9 @@ import {
 import { SkillBackupDirectorySetting } from "../backup/SkillBackupDirectorySetting";
 import { SkillBackupLibraryDialog } from "../backup/SkillBackupLibraryDialog";
 import { ConfirmDialog } from "../common/ConfirmDialog";
+import { AgentCapabilityDialog } from "./AgentCapabilityDialog";
+import { AgentSettingsPanel } from "./AgentSettingsPanel";
+import { AgentCapabilitySetting } from "./AgentCapabilitySetting";
 import { ConversationFullSyncProgress } from "./ConversationFullSyncProgress";
 import { conversationCardColor, conversationCardLabel } from "../conversations/ConversationContentCards";
 import {
@@ -78,10 +82,6 @@ import {
   listConversationAdapterRuntimeStatuses,
   type ConversationAdapterRuntimeStatus,
 } from "../../services/conversations";
-import {
-  listConversationTranslationModels,
-  testConversationTranslationConnection,
-} from "../../services/cardTranslation";
 import type { ThemeId } from "../../theme/schema";
 import { isHexColor } from "../../theme/colorValidation";
 import { themeOptions } from "../../theme/themes";
@@ -103,11 +103,10 @@ import {
   fontFamilyOptions,
   normalizeConversationTranslationTargetLanguage,
   resolveFontFamilyCss,
-  TRANSLATION_MODEL_MAX_LENGTH,
+  type AgentCapabilityServiceId,
   TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH,
   TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH,
   useAppSettings,
-  type AiRuntimeCli,
   type ConversationTranslationProvider,
   type ConversationRuntimeOverrideSettings,
   type ConversationContentCardColorSettings,
@@ -170,15 +169,15 @@ export function GlobalSettingsDialog({
   const [adapterRuntimeStatuses, setAdapterRuntimeStatuses] = useState<ConversationAdapterRuntimeStatus[]>([]);
   const [adapterRuntimeLoading, setAdapterRuntimeLoading] = useState(false);
   const [adapterRuntimeError, setAdapterRuntimeError] = useState("");
-  const [translationConnectionState, setTranslationConnectionState] =
-    useState<"idle" | "checking" | "connected" | "failed">("idle");
-  const [translationConnectionMessage, setTranslationConnectionMessage] = useState("");
-  const [translationModels, setTranslationModels] = useState<string[]>([]);
-  const [translationModelsLoading, setTranslationModelsLoading] = useState(false);
-  const [translationModelsMessage, setTranslationModelsMessage] = useState("");
   const [fullSyncConfirmOpen, setFullSyncConfirmOpen] = useState(false);
   const [fullSyncStarting, setFullSyncStarting] = useState(false);
   const [fullSyncError, setFullSyncError] = useState("");
+  const [agentFocusId, setAgentFocusId] = useState<string | null>(null);
+  const [agentCapabilityDialog, setAgentCapabilityDialog] = useState<{
+    agentId: string;
+    model?: string;
+    serviceId: AgentCapabilityServiceId;
+  } | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -186,16 +185,6 @@ export function GlobalSettingsDialog({
       ensureGroupExpanded(initialPanel);
     }
   }, [initialPanel, open]);
-
-  useEffect(() => {
-    setTranslationConnectionState("idle");
-    setTranslationConnectionMessage("");
-    setTranslationModels([]);
-    setTranslationModelsMessage("");
-  }, [
-    settings.aiRuntime.cli,
-    settings.aiRuntime.model,
-  ]);
 
   function toggleGroupCollapsed(groupId: string) {
     setCollapsedGroups((prev) => {
@@ -307,7 +296,9 @@ export function GlobalSettingsDialog({
       scope: t("settings.scope.general"),
       panels: [
         { id: "general.appearance", icon: Palette, label: t("settings.section.appearance") },
-        { id: "general.ai", icon: Cpu, label: t("settings.section.aiRuntime") },
+        { id: "general.agents", icon: Bot, label: t("settings.section.agents") },
+        { id: "general.memory", icon: Cpu, label: t("settings.section.memory") },
+        { id: "general.promptOptimization", icon: Sparkles, label: t("settings.section.promptOptimization") },
         { id: "general.typography", icon: Type, label: t("settings.section.typography") },
         { id: "general.storage", icon: FileJson, label: t("settings.section.storage") },
       ],
@@ -346,6 +337,33 @@ export function GlobalSettingsDialog({
 
   function commitAppShortcuts(nextAppShortcuts: AppShortcut[]) {
     onAppShortcutsChange(nextAppShortcuts);
+  }
+
+  function openAgentSettings(agentId: string) {
+    setAgentCapabilityDialog(null);
+    setAgentFocusId(agentId);
+    setActivePanel("general.agents");
+    ensureGroupExpanded("general.agents");
+  }
+
+  function openAgentCapabilityDialog(serviceId: AgentCapabilityServiceId) {
+    const agentId = settings.agentCapabilityAssignments[serviceId];
+    setAgentCapabilityDialog({
+      agentId,
+      model: settings.agentModels[agentId],
+      serviceId,
+    });
+  }
+
+  function selectAgentCapability(agentId: string) {
+    if (!agentCapabilityDialog) {
+      return;
+    }
+    updateSetting("agentCapabilityAssignments", {
+      ...settings.agentCapabilityAssignments,
+      [agentCapabilityDialog.serviceId]: agentId,
+    });
+    setAgentCapabilityDialog(null);
   }
 
   function updateRailItem(id: string, patch: Partial<RailMenuItem>) {
@@ -485,58 +503,6 @@ export function GlobalSettingsDialog({
       ...settings.conversationTranslation,
       ...patch,
     });
-  }
-
-  function updateAiRuntime(patch: Partial<typeof settings.aiRuntime>) {
-    updateSetting("aiRuntime", {
-      ...settings.aiRuntime,
-      ...patch,
-    });
-  }
-
-  async function testTranslationConnection() {
-    setTranslationConnectionState("checking");
-    setTranslationConnectionMessage("");
-    try {
-      const result = await testConversationTranslationConnection({
-        cli: settings.aiRuntime.cli,
-        model: settings.aiRuntime.model,
-        prompt: "Reply with OK only.",
-        provider: "cli",
-      });
-      setTranslationConnectionState(result.available ? "connected" : "failed");
-      setTranslationConnectionMessage(
-        result.available
-          ? result.version || t("settings.conversation.translationConnected")
-          : result.error || t("settings.conversation.translationConnectionFailed"),
-      );
-    } catch (error) {
-      setTranslationConnectionState("failed");
-      setTranslationConnectionMessage(errorMessage(error));
-    }
-  }
-
-  async function refreshTranslationModels() {
-    setTranslationModelsLoading(true);
-    setTranslationModelsMessage("");
-    try {
-      const result = await listConversationTranslationModels({
-        cli: settings.aiRuntime.cli,
-        provider: "cli",
-      });
-      setTranslationModels(result.models);
-      setTranslationModelsMessage(
-        result.error ||
-          (result.models.length === 0
-            ? t("settings.conversation.translationModelsUnavailable")
-            : ""),
-      );
-    } catch (error) {
-      setTranslationModels([]);
-      setTranslationModelsMessage(errorMessage(error));
-    } finally {
-      setTranslationModelsLoading(false);
-    }
   }
 
   function clearDataBackupDirectory() {
@@ -720,7 +686,7 @@ export function GlobalSettingsDialog({
             </div>
           </div>
 
-          <nav className="flex flex-1 flex-col gap-1 px-4 py-5" aria-label={t("settings.navAria")}>
+          <nav className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-4 py-5" aria-label={t("settings.navAria")}>
             {settingGroups.map((group) => {
               const collapsed = collapsedGroups.has(group.id);
               return (
@@ -796,7 +762,7 @@ export function GlobalSettingsDialog({
             </Button>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-8 py-6">
             {activePanel === "general.appearance" && (
               <SettingsGroup>
                 <SettingRow icon={<Languages size={18} />} label={t("settings.language")}>
@@ -844,102 +810,34 @@ export function GlobalSettingsDialog({
               </SettingsGroup>
             )}
 
-            {activePanel === "general.ai" && (
+            {activePanel === "general.agents" && (
+              <AgentSettingsPanel
+                focusAgentId={agentFocusId}
+                onModelChange={(agentId, modelId) => {
+                  updateSetting("agentModels", {
+                    ...settings.agentModels,
+                    [agentId]: modelId,
+                  });
+                  if (agentId === "opencode") {
+                    updateSetting("aiRuntime", {
+                      ...settings.aiRuntime,
+                      model: modelId,
+                    });
+                  }
+                }}
+                selectedModels={settings.agentModels}
+              />
+            )}
+
+            {activePanel === "general.memory" && (
               <SettingsGroup>
-                <SettingRow icon={<Terminal size={18} />} label={t("settings.conversation.translationCli")}>
-                  <SegmentedControl
-                    label={t("settings.conversation.translationCli")}
-                    onChange={(value) =>
-                      updateAiRuntime({
-                        cli: value as AiRuntimeCli,
-                        model: "",
-                      })
-                    }
-                    options={[
-                      { label: t("settings.conversation.translationCli.opencode"), value: "opencode" },
-                      { label: t("settings.conversation.translationCli.gemini"), value: "gemini" },
-                    ]}
-                    value={settings.aiRuntime.cli}
+                <SettingRow icon={<Bot size={18} />} label={t("settings.agentCapabilities.label")}>
+                  <AgentCapabilitySetting
+                    agentId={settings.agentCapabilityAssignments.memory}
+                    description={t("settings.agentCapabilities.memoryDescription")}
+                    model={settings.agentModels[settings.agentCapabilityAssignments.memory]}
+                    onOpen={() => openAgentCapabilityDialog("memory")}
                   />
-                </SettingRow>
-                <SettingRow icon={<RefreshCw size={18} />} label={t("settings.conversation.translationModel")}>
-                  <div className="grid w-[min(38rem,52vw)] gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <Input
-                        aria-label={t("settings.conversation.translationModel")}
-                        className="h-9 min-w-0 flex-1"
-                        list={translationModels.length > 0 ? "ai-runtime-models" : undefined}
-                        maxLength={TRANSLATION_MODEL_MAX_LENGTH}
-                        onChange={(event) =>
-                          updateAiRuntime({
-                            model: event.target.value.slice(0, TRANSLATION_MODEL_MAX_LENGTH),
-                          })
-                        }
-                        placeholder={t("settings.conversation.translationModelPlaceholder")}
-                        value={settings.aiRuntime.model}
-                      />
-                      {translationModels.length > 0 ? (
-                        <datalist id="ai-runtime-models">
-                          {translationModels.map((model) => (
-                            <option key={model} value={model} />
-                          ))}
-                        </datalist>
-                      ) : null}
-                      <Button
-                        disabled={translationModelsLoading}
-                        onClick={() => void refreshTranslationModels()}
-                        type="button"
-                        variant="outline"
-                      >
-                        <RefreshCw className={translationModelsLoading ? "animate-spin" : ""} size={15} />
-                        <span>{t("settings.conversation.translationRefreshModels")}</span>
-                      </Button>
-                    </div>
-                    {translationModelsMessage ? (
-                      <p className="truncate text-body-sm text-on-surface-variant" title={translationModelsMessage}>
-                        {translationModelsMessage}
-                      </p>
-                    ) : null}
-                  </div>
-                </SettingRow>
-                <SettingRow icon={<Activity size={18} />} label={t("settings.conversation.translationConnection")}>
-                  <div className="flex w-[min(38rem,52vw)] min-w-0 items-center gap-2">
-                    <Button
-                      disabled={translationConnectionState === "checking"}
-                      onClick={() => void testTranslationConnection()}
-                      type="button"
-                      variant="outline"
-                    >
-                      <Activity className={translationConnectionState === "checking" ? "animate-pulse" : ""} size={15} />
-                      <span>
-                        {translationConnectionState === "checking"
-                          ? t("settings.conversation.translationConnecting")
-                          : t("settings.conversation.translationConnect")}
-                      </span>
-                    </Button>
-                    <span
-                      className={clsx(
-                        "min-w-0 flex-1 truncate text-body-sm",
-                        translationConnectionState === "connected"
-                          ? "text-status-create"
-                          : translationConnectionState === "failed"
-                            ? "text-status-remove"
-                            : "text-on-surface-variant",
-                      )}
-                      title={translationConnectionMessage}
-                    >
-                      {translationConnectionState === "connected"
-                        ? translationConnectionMessage || t("settings.conversation.translationConnected")
-                        : translationConnectionState === "failed"
-                          ? translationConnectionMessage || t("settings.conversation.translationConnectionFailed")
-                          : t("settings.conversation.translationConnectionIdle")}
-                    </span>
-                  </div>
-                </SettingRow>
-                <SettingRow icon={<ShieldCheck size={18} />} label={t("settings.ai.executionBoundary")}>
-                  <p className="w-[min(38rem,52vw)] rounded-lg border border-status-update/35 bg-status-update/10 px-3 py-2 text-body-sm text-on-surface-variant">
-                    {t("settings.ai.externalWarning")}
-                  </p>
                 </SettingRow>
                 <SettingRow icon={<Cpu size={18} />} label={t("settings.ai.autoDream")}>
                   <div className="flex w-[min(38rem,52vw)] items-center justify-between gap-4">
@@ -987,6 +885,24 @@ export function GlobalSettingsDialog({
                     unit={t("settings.unit.sessions")}
                     value={settings.memory.minSessions}
                   />
+                </SettingRow>
+              </SettingsGroup>
+            )}
+
+            {activePanel === "general.promptOptimization" && (
+              <SettingsGroup>
+                <SettingRow icon={<Bot size={18} />} label={t("settings.agentCapabilities.label")}>
+                  <AgentCapabilitySetting
+                    agentId={settings.agentCapabilityAssignments.promptOptimization}
+                    description={t("settings.agentCapabilities.promptOptimizationDescription")}
+                    model={settings.agentModels[settings.agentCapabilityAssignments.promptOptimization]}
+                    onOpen={() => openAgentCapabilityDialog("promptOptimization")}
+                  />
+                </SettingRow>
+                <SettingRow icon={<Sparkles size={18} />} label={t("settings.promptOptimization.descriptionLabel")}>
+                  <p className="w-[min(38rem,52vw)] text-body-sm leading-6 text-on-surface-variant">
+                    {t("settings.promptOptimization.description")}
+                  </p>
                 </SettingRow>
               </SettingsGroup>
             )}
@@ -1407,6 +1323,14 @@ export function GlobalSettingsDialog({
 
             {activePanel === "conversations.translation" && (
               <SettingsGroup>
+                <SettingRow icon={<Bot size={18} />} label={t("settings.agentCapabilities.label")}>
+                  <AgentCapabilitySetting
+                    agentId={settings.agentCapabilityAssignments.cardTranslation}
+                    description={t("settings.agentCapabilities.cardTranslationDescription")}
+                    model={settings.agentModels[settings.agentCapabilityAssignments.cardTranslation]}
+                    onOpen={() => openAgentCapabilityDialog("cardTranslation")}
+                  />
+                </SettingRow>
                 <SettingRow icon={<Languages size={18} />} label={t("settings.conversation.translationProvider")}>
                   <SegmentedControl
                     label={t("settings.conversation.translationProvider")}
@@ -1541,6 +1465,15 @@ export function GlobalSettingsDialog({
         open={fullSyncConfirmOpen}
         title={t("settings.conversation.fullSyncConfirmTitle")}
       />
+      {agentCapabilityDialog ? (
+        <AgentCapabilityDialog
+          agentId={agentCapabilityDialog.agentId}
+          model={agentCapabilityDialog.model}
+          onAgentChange={selectAgentCapability}
+          onClose={() => setAgentCapabilityDialog(null)}
+          onOpenAgentSettings={openAgentSettings}
+        />
+      ) : null}
     </div>
   );
 }

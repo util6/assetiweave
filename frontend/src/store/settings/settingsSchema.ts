@@ -11,6 +11,9 @@ export type ConversationTranslationTargetLanguage = string;
 export type ConversationTranslationProvider = "cli" | "google" | "apple";
 export type AiRuntimeCli = "opencode" | "gemini";
 export type ConversationTranslationCli = AiRuntimeCli;
+export type AgentCapabilityServiceId = "cardTranslation" | "memory" | "promptOptimization";
+
+export type AgentCapabilityAssignments = Record<AgentCapabilityServiceId, string>;
 
 export interface FontFamilySetting {
   customFontFamily: string;
@@ -21,7 +24,9 @@ export type FontFamilyValue = FontFamilySetting;
 
 export type SettingsPanelId =
   | "general.appearance"
-  | "general.ai"
+  | "general.agents"
+  | "general.memory"
+  | "general.promptOptimization"
   | "general.typography"
   | "general.storage"
   | "workspace.menu"
@@ -126,8 +131,10 @@ export interface ConversationTranslationSettings {
   targetLanguage: ConversationTranslationTargetLanguage;
 }
 
-export type ResolvedConversationTranslationSettings = AiRuntimeSettings &
-  ConversationTranslationSettings;
+export type ResolvedConversationTranslationSettings = ConversationTranslationSettings & {
+  agentId: string;
+  model: string;
+};
 
 export interface MemorySettings {
   autoDreamEnabled: boolean;
@@ -156,6 +163,8 @@ export const DEFAULT_CONVERSATION_CONTENT_CARD_COLORS: ConversationContentCardCo
 };
 
 export interface AppSettings {
+  agentCapabilityAssignments: AgentCapabilityAssignments;
+  agentModels: Record<string, string>;
   aiRuntime: AiRuntimeSettings;
   columnMinWidth: number;
 
@@ -171,6 +180,17 @@ export interface AppSettings {
   conversations: ConversationPageSettings;
 }
 
+export function resolveAgentCapability(
+  settings: AppSettings,
+  serviceId: AgentCapabilityServiceId,
+): { agentId: string; model: string } {
+  const agentId = settings.agentCapabilityAssignments[serviceId];
+  return {
+    agentId,
+    model: settings.agentModels[agentId] ?? "",
+  };
+}
+
 export interface AppSettingsStorageInfo {
   configDir: string;
   configPath: string;
@@ -179,6 +199,12 @@ export interface AppSettingsStorageInfo {
 }
 
 export const defaultSettings: AppSettings = {
+  agentCapabilityAssignments: {
+    cardTranslation: "opencode",
+    memory: "opencode",
+    promptOptimization: "opencode",
+  },
+  agentModels: {},
   aiRuntime: {
     cli: "opencode",
     model: "",
@@ -251,8 +277,14 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
     stored.conversationTranslation,
     stored.conversations,
   );
+  const agentModels = normalizeAgentModels(stored.agentModels);
 
   return {
+    agentCapabilityAssignments: normalizeAgentCapabilityAssignments(
+      stored.agentCapabilityAssignments,
+      aiRuntime.cli,
+    ),
+    agentModels: mergeLegacyAiRuntimeModel(agentModels, aiRuntime),
     aiRuntime,
     columnMinWidth: normalizeColumnMinWidth(stored.columnMinWidth),
 
@@ -271,6 +303,56 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
     theme: normalizeThemeId(stored.theme),
     typography,
     conversations,
+  };
+}
+
+function normalizeAgentModels(value: unknown): Record<string, string> {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([agentId, model]) => typeof agentId === "string" && typeof model === "string")
+      .map(([agentId, model]) => [agentId, normalizeAiRuntimeModel(model)])
+      .filter(([, model]) => model.length > 0),
+  );
+}
+
+function normalizeAgentCapabilityAssignments(
+  value: unknown,
+  legacyCli: AiRuntimeCli,
+): AgentCapabilityAssignments {
+  const stored = isRecord(value) ? value : {};
+  const fallback = legacyCli;
+  return {
+    cardTranslation: normalizeAgentCapabilityAgentId(stored.cardTranslation, fallback),
+    memory: normalizeAgentCapabilityAgentId(stored.memory, fallback),
+    promptOptimization: normalizeAgentCapabilityAgentId(stored.promptOptimization, fallback),
+  };
+}
+
+function normalizeAgentCapabilityAgentId(value: unknown, fallback: string): string {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const normalized = value
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+  return normalized.length > 0 && normalized.length <= 128 ? normalized : fallback;
+}
+
+function mergeLegacyAiRuntimeModel(
+  agentModels: Record<string, string>,
+  aiRuntime: AiRuntimeSettings,
+): Record<string, string> {
+  if (agentModels[aiRuntime.cli] || !aiRuntime.model) {
+    return agentModels;
+  }
+  return {
+    ...agentModels,
+    [aiRuntime.cli]: aiRuntime.model,
   };
 }
 
