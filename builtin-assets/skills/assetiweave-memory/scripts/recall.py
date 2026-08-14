@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from typing import Any
@@ -28,7 +29,14 @@ class RecallError(RuntimeError):
 
 
 def cli_path() -> str:
-    return os.environ.get("ASSETIWEAVE_CLI", "assetiweave-cli")
+    configured = os.environ.get("ASSETIWEAVE_CLI")
+    if configured:
+        return configured
+    if shutil.which("assetiweave-cli"):
+        return "assetiweave-cli"
+    if shutil.which("aiwc"):
+        return "aiwc"
+    return "assetiweave-cli"
 
 
 def call_cli(arguments: list[str]) -> dict[str, Any]:
@@ -84,6 +92,7 @@ def search_arguments(
     *,
     incremental: bool = False,
 ) -> list[str]:
+    question_limit = 100 if args.session else args.question_limit_per_query
     command = ["conversation", "search"]
     if incremental:
         command.extend(["incremental", "--recent-runs", str(args.recent_sync_runs)])
@@ -96,7 +105,7 @@ def search_arguments(
             "--kind",
             "question",
             "--limit",
-            str(args.question_limit_per_query),
+            str(question_limit),
         ]
     )
     if not incremental:
@@ -117,6 +126,8 @@ def search_arguments(
 
 
 def record_kinds(args: argparse.Namespace) -> list[str]:
+    if args.session and args.session.strip().lower().startswith("web-record-session-"):
+        return ["web"]
     if args.record_kind == "both":
         if args.project or args.current_project:
             return ["session"]
@@ -134,21 +145,57 @@ def is_internal_hit(hit: dict[str, Any]) -> bool:
     )
 
 
-def question_rank(hit: dict[str, Any]) -> tuple[int, int, str]:
+def session_item(hit: dict[str, Any]) -> dict[str, Any]:
+    value = hit.get("session")
+    return value if isinstance(value, dict) else {}
+
+
+def session_id_fragment(value: str) -> str:
+    normalized = value.strip().lower()
+    for prefix in ("conversation-session-", "web-record-session-"):
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix):]
+            break
+    return normalized[:8]
+
+
+def matches_session(hit: dict[str, Any], locator: str) -> bool:
+    session_id = str(session_item(hit).get("id") or hit.get("session_id") or "")
+    return bool(session_id) and session_id_fragment(session_id) == session_id_fragment(locator)
+
+
+def session_matched_queries(hit: dict[str, Any], searches: list[str]) -> list[str]:
+    text = "\n".join(
+        [
+            str(hit.get("question_title") or ""),
+            str(hit.get("snippet") or ""),
+        ]
+    ).lower()
+    return [query for query in searches if query.strip().lower() in text]
+
+
+def question_rank(hit: dict[str, Any]) -> tuple[int, int, int, int, str]:
+    relevance = (
+        int(hit.get("_session_relevance") or 0)
+        if "_session_relevance" in hit
+        else len(hit.get("_matched_queries") or [])
+    )
     lane_priority = 0 if hit.get("_lane") == "incremental" else 1
     score = int(hit.get("score") or 0)
-    return lane_priority, -score, str(hit.get("block_id") or "")
+    question_index = int(hit.get("question_index") or 0)
+    return -relevance, lane_priority, -score, question_index, str(hit.get("block_id") or "")
 
 
 def search_question_hits(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
-    searches = args.search or [args.query]
+    ranking_searches = args.search or [args.query]
+    searches = [args.session] if args.session else ranking_searches
     requests: list[dict[str, Any]] = []
     all_hits: list[dict[str, Any]] = []
     warnings: list[str] = []
     errors: list[RecallError] = []
     discarded_internal = 0
     request_lanes: list[tuple[str, bool]] = []
-    if args.recent_sync_runs:
+    if args.recent_sync_runs and not args.session:
         request_lanes.append(("incremental", True))
     request_lanes.append(("historical", False))
     for lane, incremental in request_lanes:
@@ -172,6 +219,17 @@ def search_question_hits(args: argparse.Namespace) -> tuple[list[dict[str, Any]]
                         "returned_question_hits": len(hits),
                     }
                 )
+                if int(data.get("total_count") or 0) > len(hits):
+                    if args.session:
+                        warnings.append(
+                            f"{lane} Session question lookup was truncated at 100 hits for "
+                            f"{record_kind}:{query}"
+                        )
+                    else:
+                        warnings.append(
+                            f"{lane} question search page was truncated for {record_kind}:{query}; "
+                            "narrow the query or raise --question-limit-per-query"
+                        )
                 if data.get("backend") == "legacy_scan":
                     warnings.append(f"{record_kind}:{query} used legacy_scan because the search index was unavailable or stale")
                 for raw_hit in hits:
@@ -179,8 +237,15 @@ def search_question_hits(args: argparse.Namespace) -> tuple[list[dict[str, Any]]
                         continue
                     hit = dict(raw_hit)
                     hit["_query"] = query
+                    hit["_lookup_query"] = query
+                    hit["_matched_queries"] = [query]
                     hit["_record_kind"] = record_kind
                     hit["_lane"] = lane
+                    if args.session and not matches_session(hit, args.session):
+                        continue
+                    if args.session:
+                        hit["_matched_queries"] = session_matched_queries(hit, ranking_searches)
+                        hit["_session_relevance"] = len(hit["_matched_queries"])
                     if is_internal_hit(hit):
                         discarded_internal += 1
                         continue
@@ -195,9 +260,35 @@ def search_question_hits(args: argparse.Namespace) -> tuple[list[dict[str, Any]]
     for hit in all_hits:
         key = (str(hit.get("_record_kind")), str(hit.get("block_id")))
         current = unique.get(key)
-        if current is None or question_rank(hit) < question_rank(current):
+        if current is None:
             unique[key] = hit
+            continue
+        matched_queries = list(
+            dict.fromkeys([*(current.get("_matched_queries") or []), *(hit.get("_matched_queries") or [])])
+        )
+        preferred = hit if question_rank(hit) < question_rank(current) else current
+        merged = dict(preferred)
+        merged["_matched_queries"] = matched_queries
+        if current.get("_lane") == "incremental" or hit.get("_lane") == "incremental":
+            merged["_lane"] = "incremental"
+            incremental_hit = current if current.get("_lane") == "incremental" else hit
+            merged["incremental"] = incremental_hit.get("incremental")
+        merged["score"] = max(int(current.get("score") or 0), int(hit.get("score") or 0))
+        unique[key] = merged
     ranked = sorted(unique.values(), key=question_rank)
+    resolved_session_ids = sorted(
+        {
+            str(session_item(hit).get("id") or hit.get("session_id"))
+            for hit in ranked
+            if session_item(hit).get("id") or hit.get("session_id")
+        }
+    )
+    if args.session and len(resolved_session_ids) > 1:
+        raise RecallError(
+            f"session locator {args.session!r} is ambiguous: {len(resolved_session_ids)} sessions matched"
+        )
+    if args.session and not resolved_session_ids:
+        raise RecallError(f"no Session matched locator {args.session!r}")
     coverage = {
         "search_requests": requests,
         "search_request_count": len(requests),
@@ -209,6 +300,10 @@ def search_question_hits(args: argparse.Namespace) -> tuple[list[dict[str, Any]]
         "backends": sorted({item["backend"] for item in requests}),
         "incremental_search_requests": sum(item["lane"] == "incremental" for item in requests),
         "historical_search_requests": sum(item["lane"] == "historical" for item in requests),
+        "search_hits_truncated": any(
+            item["total_question_hits"] > item["returned_question_hits"] for item in requests
+        ),
+        "resolved_session_ids": resolved_session_ids,
     }
     return ranked, coverage, warnings
 
@@ -234,6 +329,119 @@ def normalized_text(value: Any) -> str:
     return "\n".join(pieces).strip() or text
 
 
+def block_semantic_role(block: dict[str, Any]) -> str:
+    semantic_role = str(block.get("semantic_role") or "").strip().lower()
+    if semantic_role:
+        return semantic_role
+    renderer = str(block.get("renderer") or "").strip().lower()
+    if renderer == "diff":
+        return "file-change"
+    kind = str(block.get("kind") or "").strip().lower()
+    return kind.rsplit(".", 1)[-1]
+
+
+def result_outcome(block: dict[str, Any]) -> str | None:
+    if block_semantic_role(block) != "result":
+        return None
+    exit_code = block.get("exit_code")
+    status = str(block.get("status") or "").strip().lower()
+    if isinstance(exit_code, int) and exit_code != 0:
+        return "failure"
+    if status in {"failed", "failure", "error", "cancelled", "canceled", "timed_out", "timeout"}:
+        return "failure"
+    if exit_code == 0 or status in {"completed", "success", "succeeded"}:
+        return "success"
+    return "unknown"
+
+
+def evidence_tier(block: dict[str, Any]) -> str:
+    role = block_semantic_role(block)
+    if role == "question":
+        return "question-context"
+    if role in {"answer", "reasoning"}:
+        return "answer"
+    if role in {"file-change", "file_change", "diff", "code"}:
+        return "change"
+    if role == "command":
+        return "command"
+    if role == "result" and result_outcome(block) == "failure":
+        return "failure"
+    return "context"
+
+
+def related_block_rank(block: dict[str, Any], index: int) -> tuple[int, int]:
+    tier_order = {
+        "question-context": 0,
+        "answer": 1,
+        "change": 2,
+        "command": 3,
+        "failure": 4,
+        "context": 5,
+    }
+    return tier_order[evidence_tier(block)], index
+
+
+def compact_block_locator(block: dict[str, Any]) -> dict[str, Any]:
+    compact = {
+        key: block.get(key)
+        for key in (
+            "block_id",
+            "turn_id",
+            "part_id",
+            "kind",
+            "semantic_role",
+            "renderer",
+            "role",
+            "content_length",
+            "status",
+            "exit_code",
+        )
+        if block.get(key) is not None
+    }
+    compact["evidence_tier"] = evidence_tier(block)
+    outcome = result_outcome(block)
+    if outcome is not None:
+        compact["result_outcome"] = outcome
+    return compact
+
+
+def prioritize_related_blocks(
+    raw_blocks: list[Any],
+    selected_block_id: str,
+    limit: int,
+) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, int], bool]:
+    eligible: list[tuple[int, dict[str, Any]]] = []
+    suppressed: dict[str, int] = {}
+    tier_counts: dict[str, int] = {}
+    for index, raw_block in enumerate(raw_blocks):
+        if not isinstance(raw_block, dict) or raw_block.get("block_id") == selected_block_id:
+            continue
+        if block_semantic_role(raw_block) == "result" and result_outcome(raw_block) == "success":
+            suppressed["successful_result"] = suppressed.get("successful_result", 0) + 1
+            continue
+        tier = evidence_tier(raw_block)
+        tier_counts[tier] = tier_counts.get(tier, 0) + 1
+        eligible.append((index, raw_block))
+    eligible.sort(key=lambda item: related_block_rank(item[1], item[0]))
+    selected = [compact_block_locator(block) for _, block in eligible[:limit]]
+    return selected, tier_counts, suppressed, len(eligible) > len(selected)
+
+
+def fit_locator_budget(
+    blocks: list[dict[str, Any]],
+    remaining_chars: int,
+) -> tuple[list[dict[str, Any]], int, bool]:
+    selected: list[dict[str, Any]] = []
+    used_chars = 0
+    for block in blocks:
+        encoded_length = len(json.dumps(block, ensure_ascii=False, separators=(",", ":")))
+        if encoded_length > remaining_chars - used_chars:
+            return selected, used_chars, True
+        selected.append(block)
+        used_chars += encoded_length
+    return selected, used_chars, False
+
+
 def selected_question_evidence(
     args: argparse.Namespace,
     hits: list[dict[str, Any]],
@@ -243,6 +451,11 @@ def selected_question_evidence(
     used_chars = 0
     question_reads = 0
     block_locator_lists = 0
+    related_block_locators = 0
+    returned_related_block_locators = 0
+    related_block_output_chars = 0
+    questions_with_truncated_locators = 0
+    suppressed_successful_results = 0
     truncated = False
     for hit in hits:
         if len(evidence) >= args.max_evidence or used_chars >= args.max_chars:
@@ -261,14 +474,27 @@ def selected_question_evidence(
         if not content:
             continue
         related_blocks: list[dict[str, Any]] = []
+        related_block_counts: dict[str, int] = {}
+        related_blocks_suppressed: dict[str, int] = {}
+        related_blocks_truncated = False
         try:
             raw_blocks = call_cli(["conversation", "block", "list", question_id]).get("data", [])
             block_locator_lists += 1
             if isinstance(raw_blocks, list):
-                related_blocks = [
-                    block for block in raw_blocks
-                    if isinstance(block, dict) and block.get("block_id") != block_id
-                ]
+                related_blocks, related_block_counts, related_blocks_suppressed, related_blocks_truncated = (
+                    prioritize_related_blocks(raw_blocks, block_id, args.max_related_blocks_per_question)
+                )
+                related_block_locators += sum(related_block_counts.values())
+                related_blocks, locator_chars, locator_budget_truncated = fit_locator_budget(
+                    related_blocks,
+                    max(0, args.max_locator_chars - related_block_output_chars),
+                )
+                related_block_output_chars += locator_chars
+                related_blocks_truncated = related_blocks_truncated or locator_budget_truncated
+                returned_related_block_locators += len(related_blocks)
+                suppressed_successful_results += related_blocks_suppressed.get("successful_result", 0)
+                if related_blocks_truncated:
+                    questions_with_truncated_locators += 1
         except RecallError as error:
             warnings.append(f"failed to list related blocks for {question_id}: {error}")
         remaining = args.max_chars - used_chars
@@ -277,7 +503,7 @@ def selected_question_evidence(
         content_truncated = len(content) > len(clipped)
         truncated = truncated or content_truncated
         used_chars += len(clipped)
-        session = hit.get("session") or {}
+        session = session_item(hit)
         evidence.append(
             {
                 "id": f"question-{len(evidence)}",
@@ -294,7 +520,9 @@ def selected_question_evidence(
                 "turn_id": detail.get("turn_id") or hit.get("turn_id"),
                 "block_id": block_id,
                 "kind": detail.get("kind") or "question",
-                "matched_query": hit.get("_query"),
+                "lookup_query": hit.get("_lookup_query") or hit.get("_query"),
+                "matched_query": (hit.get("_matched_queries") or [hit.get("_query")])[0],
+                "matched_queries": hit.get("_matched_queries") or [],
                 "recall_lane": hit.get("_lane") or "historical",
                 "incremental": hit.get("incremental"),
                 "score": hit.get("score"),
@@ -302,11 +530,19 @@ def selected_question_evidence(
                 "content": clipped,
                 "content_truncated": content_truncated,
                 "related_blocks": related_blocks,
+                "related_block_counts": related_block_counts,
+                "related_blocks_suppressed": related_blocks_suppressed,
+                "related_blocks_truncated": related_blocks_truncated,
             }
         )
     return evidence, {
         "question_block_reads": question_reads,
         "block_locator_lists": block_locator_lists,
+        "related_block_locators": related_block_locators,
+        "returned_related_block_locators": returned_related_block_locators,
+        "related_block_output_char_count": related_block_output_chars,
+        "questions_with_truncated_locators": questions_with_truncated_locators,
+        "suppressed_successful_results": suppressed_successful_results,
         "candidate_question_count": len(evidence),
         "output_char_count": used_chars,
         "truncated": truncated or len(evidence) < len(hits),
@@ -317,9 +553,10 @@ def recall(args: argparse.Namespace) -> dict[str, Any]:
     hits, coverage, warnings = search_question_hits(args)
     evidence, hydration, hydration_warnings = selected_question_evidence(args, hits)
     coverage.update(hydration)
+    coverage["truncated"] = bool(coverage.get("truncated") or coverage.get("search_hits_truncated"))
     warnings.extend(hydration_warnings)
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "mode": "host_synthesized_recall",
         "phase": "question_discovery",
         "query": args.query,
@@ -331,7 +568,8 @@ def recall(args: argparse.Namespace) -> dict[str, Any]:
             "record_kind": args.record_kind,
             "since": args.since,
             "until": args.until,
-            "recent_sync_runs": args.recent_sync_runs,
+            "recent_sync_runs": 0 if args.session else args.recent_sync_runs,
+            "session": args.session,
         },
         "persistable": False,
         "insufficient_evidence": not evidence,
@@ -356,7 +594,8 @@ def read_blocks(args: argparse.Namespace) -> dict[str, Any]:
             warnings.append(f"failed to read block {block_id}: {error}")
             continue
         content = normalized_text(detail.get("content"))
-        if not content:
+        tier = evidence_tier(detail)
+        if not content and tier != "failure":
             continue
         remaining = args.max_chars - used_chars
         cap = min(args.max_card_chars, remaining)
@@ -378,12 +617,14 @@ def read_blocks(args: argparse.Namespace) -> dict[str, Any]:
                 "renderer": detail.get("renderer"),
                 "status": detail.get("status"),
                 "exit_code": detail.get("exit_code"),
+                "evidence_tier": tier,
+                "result_outcome": result_outcome(detail),
                 "content": clipped,
                 "content_truncated": content_truncated,
             }
         )
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "mode": "host_synthesized_recall",
         "phase": "selected_block_read",
         "persistable": False,
@@ -409,6 +650,10 @@ def parser() -> argparse.ArgumentParser:
     scope = recall_parser.add_mutually_exclusive_group()
     scope.add_argument("--current-project", action="store_true")
     scope.add_argument("--project")
+    scope.add_argument(
+        "--session",
+        help="target one Session via its 8-character display ID or full stable ID; skips incremental search",
+    )
     recall_parser.add_argument("--adapter")
     recall_parser.add_argument("--source")
     recall_parser.add_argument("--record-kind", choices=["session", "web", "both"], default="session")
@@ -429,6 +674,18 @@ def parser() -> argparse.ArgumentParser:
     recall_parser.add_argument("--max-evidence", type=int, default=8, help="maximum question cards to read")
     recall_parser.add_argument("--max-chars", type=int, default=20_000)
     recall_parser.add_argument("--max-card-chars", type=int, default=6_000)
+    recall_parser.add_argument(
+        "--max-related-blocks-per-question",
+        type=int,
+        default=16,
+        help="maximum prioritized related Block locators returned for each question",
+    )
+    recall_parser.add_argument(
+        "--max-locator-chars",
+        type=int,
+        default=12_000,
+        help="maximum JSON characters used by related Block locator metadata",
+    )
 
     read_parser = commands.add_parser("read", help="read exact content only for host-selected block IDs")
     read_parser.add_argument("--block", action="append", required=True, help="Block ID from recall related_blocks; repeat as needed")
@@ -466,6 +723,23 @@ def validate_args(args: argparse.Namespace) -> None:
         raise RecallError("--recent-sync-runs must be between 0 and 20")
     if args.question_limit_per_query < 1 or args.question_limit_per_query > 100:
         raise RecallError("--question-limit-per-query must be between 1 and 100")
+    if args.max_related_blocks_per_question < 1 or args.max_related_blocks_per_question > 100:
+        raise RecallError("--max-related-blocks-per-question must be between 1 and 100")
+    if args.max_locator_chars < 100 or args.max_locator_chars > 60_000:
+        raise RecallError("--max-locator-chars must be between 100 and 60000")
+    if args.session:
+        value = args.session.strip().lower()
+        is_short_id = len(value) == 8 and all(char in "0123456789abcdef" for char in value)
+        prefix = next(
+            (prefix for prefix in ("conversation-session-", "web-record-session-") if value.startswith(prefix)),
+            None,
+        )
+        stable_hash = value[len(prefix):] if prefix else ""
+        is_full_id = bool(prefix) and len(stable_hash) in {32, 64} and all(
+            char in "0123456789abcdef" for char in stable_hash
+        )
+        if not is_short_id and not is_full_id:
+            raise RecallError("--session must be an 8-character hexadecimal display ID or a full stable Session ID")
 
 
 def write(payload: dict[str, Any]) -> None:
