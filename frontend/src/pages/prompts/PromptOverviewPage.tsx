@@ -45,7 +45,10 @@ import { selectTargetDirectory } from "../../services/catalog";
 import { copyPromptImagesToClipboard, copyPromptTextToClipboard } from "../../services/promptClipboard";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useAppSettings } from "../../store/settings/AppSettingsProvider";
-import { normalizeConversationTranslationTargetLanguage } from "../../store/settings/settingsSchema";
+import {
+  normalizeConversationTranslationTargetLanguage,
+  resolveAgentCapability,
+} from "../../store/settings/settingsSchema";
 
 export interface PromptNote {
   attachments: PromptImageAttachment[];
@@ -163,6 +166,7 @@ export function PromptOverviewPage({
   const [availability, setAvailability] = useState<TranslationAvailabilityStatus>("idle");
   const [actionError, setActionError] = useState<string | null>(null);
   const copiedResetTimerRef = useRef<number | null>(null);
+  const promptOptimizationAgent = resolveAgentCapability(settings, "promptOptimization");
 
   useEffect(() => {
     onReady?.();
@@ -186,9 +190,9 @@ export function PromptOverviewPage({
     setAvailability("checking");
     const check = availabilityChecker ?? (() =>
       checkConversationTranslationAvailability({
-        cli: settings.aiRuntime.cli,
-        model: settings.aiRuntime.model,
-        provider: settings.conversationTranslation.provider,
+        agentId: promptOptimizationAgent.agentId,
+        model: promptOptimizationAgent.model,
+        provider: "cli",
       }));
 
     check()
@@ -206,9 +210,8 @@ export function PromptOverviewPage({
     };
   }, [
     availabilityChecker,
-    settings.aiRuntime.cli,
-    settings.aiRuntime.model,
-    settings.conversationTranslation.provider,
+    promptOptimizationAgent.agentId,
+    promptOptimizationAgent.model,
   ]);
 
   const defaultTagGroupLabel = t("prompt.tags.default");
@@ -398,9 +401,9 @@ export function PromptOverviewPage({
     setBusyActions((current) => ({ ...current, [note.id]: action }));
     try {
       const result = await translator({
-        cli: settings.aiRuntime.cli,
-        model: settings.aiRuntime.model,
-        provider: settings.conversationTranslation.provider,
+        agentId: promptOptimizationAgent.agentId,
+        model: promptOptimizationAgent.model,
+        provider: "cli",
         promptTemplate: request.promptTemplate,
         targetLanguage: request.targetLanguage,
         text: request.text ?? note.content,

@@ -261,7 +261,7 @@ export function ConversationContentCards({
     setTranslationAvailability("checking");
     const checkAvailability = translationAvailabilityChecker ?? (() =>
       checkConversationTranslationAvailability({
-        cli: translationSettings.cli,
+        agentId: translationSettings.agentId,
         model: translationSettings.model,
         provider: translationSettings.provider,
       }));
@@ -280,7 +280,7 @@ export function ConversationContentCards({
     };
   }, [
     translationAvailabilityChecker,
-    translationSettings.cli,
+    translationSettings.agentId,
     translationSettings.model,
     translationSettings.provider,
     visibleBlocks.length,
@@ -379,7 +379,7 @@ export function ConversationContentCards({
     setTranslationErrors((current) => removeRecordKey(current, block.id));
 
     const request: ConversationCardTranslationRequest = {
-      cli: translationSettings.cli,
+      agentId: translationSettings.agentId,
       model: translationSettings.model,
       promptTemplate: translationSettings.promptTemplate,
       provider: translationSettings.provider,
@@ -527,7 +527,7 @@ export function ConversationContentCards({
 }
 
 const DEFAULT_TRANSLATION_SETTINGS: ResolvedConversationTranslationSettings = {
-  cli: "opencode",
+  agentId: "opencode",
   model: "",
   promptTemplate: DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
   provider: "cli",

@@ -64,6 +64,7 @@ import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import { DEFAULT_COLUMN_MIN_WIDTH } from "../../store/settings/settingsSchema";
 import {
   DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
+  resolveAgentCapability,
   resolveFontFamilyCss,
   useAppSettings,
   type ConversationContentCardColorSettings,
@@ -1173,6 +1174,7 @@ export function ConversationsPage({
           translationSettings={{
             ...appSettings.conversationTranslation,
             ...appSettings.aiRuntime,
+            ...resolveAgentCapability(appSettings, "cardTranslation"),
           }}
           visibility={contentVisibility}
         />

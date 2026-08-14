@@ -357,7 +357,7 @@ export function ToolbarActionButton({
       className={toolbarSurfaceRecipe({
         tone: primary ? "primary" : "neutral",
         className: clsx(
-          "h-10",
+          "h-10 gap-1.5",
           text ? "min-w-[5.25rem] px-2.5 text-body-sm font-semibold" : "w-9",
         ),
       })}

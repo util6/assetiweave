@@ -15,6 +15,7 @@ import {
   ToolbarSortDirectionButton,
   ToolbarTextButton,
 } from "./DataToolbar";
+import { ToolbarButton } from "./ToolbarButton";
 
 describe("DataToolbar", () => {
   afterEach(() => {
@@ -254,5 +255,47 @@ describe("DataToolbar", () => {
     expect(html).toContain("px-2.5");
     expect(html).toContain("min-w-[5.25rem]");
     expect(html).toContain("w-9");
+  });
+
+  it("keeps toolbar icons and labels centered on one row", () => {
+    render(
+      <>
+        <ToolbarMultiSelectDropdown
+          allLabel="全部 (93)"
+          ariaLabel="筛选类型"
+          clearLabel="清空筛选"
+          emptyLabel="暂无"
+          label="筛选"
+          onClear={() => undefined}
+          onToggleValue={() => undefined}
+          options={[{ label: "Skill", value: "skill" }]}
+          selectedValues={["skill"]}
+        />
+        <ToolbarSortDirectionButton
+          direction="desc"
+          label="切换排序方向"
+          onClick={() => undefined}
+          title="当前：降序"
+        />
+        <ToolbarActionButton icon={<Download size={17} />} label="导出" primary text="导出" />
+        <ToolbarTextButton icon={<Download size={17} />} label="设置" />
+        <ToolbarButton icon={<Download size={17} />} label="下载" />
+      </>,
+    );
+
+    for (const button of [
+      screen.getByRole("button", { name: "筛选类型" }),
+      screen.getByRole("button", { name: "切换排序方向" }),
+      screen.getByRole("button", { name: "导出" }),
+      screen.getByRole("button", { name: "设置" }),
+      screen.getByRole("button", { name: "下载" }),
+    ]) {
+      expect(button.className).toContain("inline-flex");
+      expect(button.className).toContain("items-center");
+      expect(button.className).toContain("justify-center");
+      expect(button.className).toContain("whitespace-nowrap");
+    }
+
+    expect(screen.getByRole("button", { name: "导出" }).className).toContain("gap-1.5");
   });
 });

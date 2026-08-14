@@ -126,10 +126,12 @@ export const toolbarSurfaceRecipe = cva(
     variants: {
       tone: {
         container: "",
-        neutral: "hover:-translate-y-px hover:bg-theme-control-hover hover:text-on-surface active:translate-y-0",
-        active: "border-primary/45 bg-theme-control-hover text-primary hover:-translate-y-px active:translate-y-0",
+        neutral:
+          "inline-flex shrink-0 items-center justify-center whitespace-nowrap [&>svg]:shrink-0 hover:-translate-y-px hover:bg-theme-control-hover hover:text-on-surface active:translate-y-0",
+        active:
+          "inline-flex shrink-0 items-center justify-center whitespace-nowrap [&>svg]:shrink-0 border-primary/45 bg-theme-control-hover text-primary hover:-translate-y-px active:translate-y-0",
         primary:
-          "theme-primary-gradient border-primary/30 text-theme-button-primary-fg shadow-[0_10px_24px_rgb(var(--theme-glow)/0.18),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.24)] hover:-translate-y-px hover:shadow-[0_14px_32px_rgb(var(--theme-glow)/0.28)] active:translate-y-0",
+          "theme-primary-gradient inline-flex shrink-0 items-center justify-center whitespace-nowrap [&>svg]:shrink-0 border-primary/30 text-theme-button-primary-fg shadow-[0_10px_24px_rgb(var(--theme-glow)/0.18),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.24)] hover:-translate-y-px hover:shadow-[0_14px_32px_rgb(var(--theme-glow)/0.28)] active:translate-y-0",
       },
     },
     defaultVariants: {

@@ -935,7 +935,7 @@ describe("ConversationContentCards", () => {
         })}
         translationSaver={translationSaver}
         translationSettings={{
-          cli: "opencode",
+          agentId: "opencode",
           model: "anthropic/claude-sonnet-4-20250514",
           promptTemplate: "Translate to {targetLanguage}: {content}",
           provider: "cli",
@@ -957,7 +957,7 @@ describe("ConversationContentCards", () => {
 
     await waitFor(() =>
       expect(translator).toHaveBeenCalledWith({
-        cli: "opencode",
+        agentId: "opencode",
         model: "anthropic/claude-sonnet-4-20250514",
         promptTemplate: "Translate to {targetLanguage}: {content}",
         provider: "cli",
