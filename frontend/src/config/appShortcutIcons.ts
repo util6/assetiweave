@@ -3,6 +3,7 @@ import type { AppShortcutIconPath, AppShortcutIconSvg } from "../types";
 
 export interface AppShortcutIconAsset {
   legacyIcon: string;
+  accentColor: string;
   svg: string;
 }
 
@@ -29,6 +30,10 @@ export function scanAppShortcutIcons(assets: Record<string, AppShortcutIconAsset
 // The central object is the only built-in icon registry. Adding an entry there
 // automatically feeds both icon rendering and the global settings picker.
 export const appShortcutIconCatalog = scanAppShortcutIcons(appShortcutIconAssetsByKind);
+
+export const appShortcutIconAccentColors = Object.fromEntries(
+  appShortcutIconCatalog.map(({ appKind, asset }) => [appKind, asset.accentColor]),
+) as Record<string, string>;
 
 export const appShortcutIcons = Object.fromEntries(
   appShortcutIconCatalog.map(({ appKind, definition }) => [appKind, definition]),

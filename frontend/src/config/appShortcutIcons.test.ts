@@ -38,6 +38,7 @@ describe("app shortcut icon assets", () => {
       expect(definition.viewBox, appKind).toMatch(/^0 0 \d+ \d+$/);
       expect(appShortcutIconAssetsByKind[appKind].legacyIcon, appKind).toBeTruthy();
       expect(appShortcutIconAssetsByKind[appKind].svg, appKind).toContain("<svg");
+      expect(appShortcutIconAssetsByKind[appKind].accentColor, appKind).toMatch(/^#[0-9a-fA-F]{6}$/);
     }
   });
 
@@ -45,6 +46,7 @@ describe("app shortcut icon assets", () => {
     const catalog = scanAppShortcutIcons({
       "sample-agent": {
         legacyIcon: "S",
+        accentColor: "#123456",
         svg: '<svg viewBox="0 0 24 24"><path d="M0 0" /></svg>',
       },
     });

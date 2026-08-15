@@ -1,16 +1,19 @@
 import { PlugZap } from "lucide-react";
 import { useI18n } from "../../i18n/I18nProvider";
+import type { AppShortcut } from "../../types";
 import { Button } from "../ui/button";
 import { AgentCatalogIcon } from "./AgentCatalogIcon";
 import { agentCatalog } from "./agentCatalog";
 
 export function AgentCapabilitySetting({
   agentId,
+  appShortcuts = [],
   description,
   model,
   onOpen,
 }: {
   agentId: string;
+  appShortcuts?: AppShortcut[];
   description: string;
   model?: string;
   onOpen: () => void;
@@ -31,7 +34,7 @@ export function AgentCapabilitySetting({
         variant="outline"
       >
         {selectedAgent ? (
-          <AgentCatalogIcon agent={selectedAgent} className="size-[15px]" fallbackSize={15} />
+          <AgentCatalogIcon agent={selectedAgent} appShortcuts={appShortcuts} className="size-[15px]" fallbackSize={15} />
         ) : (
           <PlugZap size={15} />
         )}

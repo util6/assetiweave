@@ -1,5 +1,6 @@
 import { navigationModel } from "../router/menu";
 import type { NavigationModel } from "../router/types";
+import { appShortcutIconAccentColors } from "../config/appShortcutIcons";
 import type { AppShortcut, Asset, AssetGroupDetail, Source, TargetProfile } from "../types";
 
 export const fallbackAssets: Asset[] = [
@@ -243,11 +244,11 @@ export const fallbackProfiles: TargetProfile[] = [
 ];
 
 export const fallbackAppShortcuts: AppShortcut[] = [
-  { profileId: "claude", profileName: "Claude", appKind: "claude", displayIcon: "app:claude", accentColor: "#d97757", enabled: true },
-  { profileId: "codex", profileName: "Codex", appKind: "codex", displayIcon: "app:codex", accentColor: "#10b981", enabled: true },
-  { profileId: "gemini", profileName: "Gemini", appKind: "gemini", displayIcon: "app:gemini", accentColor: "#8e75b2", enabled: true },
-  { profileId: "opencode", profileName: "OpenCode", appKind: "opencode", displayIcon: "app:opencode", accentColor: "#6366f1", enabled: true },
-  { profileId: "cursor", profileName: "Cursor", appKind: "cursor", displayIcon: "app:cursor", accentColor: "#94a3b8", enabled: true },
+  { profileId: "claude", profileName: "Claude", appKind: "claude", displayIcon: "app:claude", accentColor: appShortcutIconAccentColors.claude, enabled: true },
+  { profileId: "codex", profileName: "Codex", appKind: "codex", displayIcon: "app:codex", accentColor: appShortcutIconAccentColors.codex, enabled: true },
+  { profileId: "gemini", profileName: "Gemini", appKind: "gemini", displayIcon: "app:gemini", accentColor: appShortcutIconAccentColors.gemini, enabled: true },
+  { profileId: "opencode", profileName: "OpenCode", appKind: "opencode", displayIcon: "app:opencode", accentColor: appShortcutIconAccentColors.opencode, enabled: true },
+  { profileId: "cursor", profileName: "Cursor", appKind: "cursor", displayIcon: "app:cursor", accentColor: appShortcutIconAccentColors.cursor, enabled: true },
 ];
 
 export const fallbackNavigationModel: NavigationModel = navigationModel;

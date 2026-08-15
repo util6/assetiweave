@@ -33,6 +33,9 @@ export function validateAppIconAssets(assets) {
     if (typeof asset.legacyIcon !== "string" || asset.legacyIcon.length === 0) {
       errors.push(`${appKind}: legacyIcon must be a non-empty string`);
     }
+    if (typeof asset.accentColor !== "string" || !/^#[0-9a-fA-F]{6}$/.test(asset.accentColor)) {
+      errors.push(`${appKind}: accentColor must be a six-digit hex color`);
+    }
     if (typeof asset.svg !== "string") {
       errors.push(`${appKind}: svg must be a string`);
       continue;

@@ -1,13 +1,16 @@
 import clsx from "clsx";
 import { BrainCircuit, Info, LoaderCircle, Pencil, PlugZap } from "lucide-react";
 import type { Translator } from "../../i18n/I18nProvider";
+import type { AppShortcut } from "../../types";
+import { appShortcutIconFrameStyle } from "../apps/AppShortcutIcon";
 import { Badge } from "../foundation/Badge";
 import { Button } from "../ui/button";
-import { AgentCatalogIcon, agentIconFrameClass } from "./AgentCatalogIcon";
+import { AgentCatalogIcon, agentIconFrameClass, resolveAgentIconAccentColor } from "./AgentCatalogIcon";
 import type { AgentCatalogItem, AgentConnectionState } from "./agentCatalog";
 
 export function AgentConnectionRow({
   agent,
+  appShortcuts = [],
   connectionMessage,
   connectionState,
   isTesting,
@@ -18,6 +21,7 @@ export function AgentConnectionRow({
   t,
 }: {
   agent: AgentCatalogItem;
+  appShortcuts?: AppShortcut[];
   connectionMessage?: string;
   connectionState: AgentConnectionState;
   isTesting: boolean;
@@ -28,10 +32,14 @@ export function AgentConnectionRow({
   t: Translator;
 }) {
   const status = statusMeta(connectionState, t);
+  const accentColor = resolveAgentIconAccentColor(agent, appShortcuts);
   return (
     <article className="group flex flex-wrap items-center gap-3 rounded-xl border border-theme-card-border/60 bg-theme-control/58 px-3.5 py-3 transition-[background,border-color,transform] hover:-translate-y-px hover:border-theme-nav-active-border/60 hover:bg-theme-control-hover/70 sm:flex-nowrap">
-      <span className={clsx("grid size-11 shrink-0 place-items-center rounded-xl border bg-theme-card", agentIconFrameClass(agent.iconTone))}>
-        <AgentCatalogIcon agent={agent} className="size-[22px]" />
+      <span
+        className={clsx("grid size-11 shrink-0 place-items-center rounded-xl border bg-theme-card", agentIconFrameClass())}
+        style={appShortcutIconFrameStyle(accentColor)}
+      >
+        <AgentCatalogIcon agent={agent} appShortcuts={appShortcuts} className="size-[22px]" />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">

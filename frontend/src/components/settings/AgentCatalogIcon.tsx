@@ -1,50 +1,50 @@
 import clsx from "clsx";
-import { AppShortcutIcon, appIconToken, supportsAppIcon } from "../apps/AppShortcutIcon";
+import {
+  AppShortcutIcon,
+  appIconToken,
+  resolveAppShortcutAccentColor,
+  supportsAppIcon,
+} from "../apps/AppShortcutIcon";
+import type { AppShortcut } from "../../types";
 import type { AgentCatalogItem } from "./agentCatalog";
 
-const AGENT_ICON_TONE_CLASSES = {
-  primary: {
-    border: "border-primary/30",
-    color: "text-primary",
-  },
-  update: {
-    border: "border-status-update/30",
-    color: "text-status-update",
-  },
-  create: {
-    border: "border-status-create/30",
-    color: "text-status-create",
-  },
-  neutral: {
-    border: "border-theme-control-border",
-    color: "text-on-surface-variant",
-  },
-} as const;
-
-export function agentIconColorClass(tone: AgentCatalogItem["iconTone"]) {
-  return AGENT_ICON_TONE_CLASSES[tone].color;
+export function resolveAgentIconAccentColor(agent: AgentCatalogItem, appShortcuts: AppShortcut[] = []) {
+  return resolveAppShortcutAccentColor(
+    { appKind: agent.id, profileName: agent.name },
+    appShortcuts,
+  );
 }
 
-export function agentIconFrameClass(tone: AgentCatalogItem["iconTone"]) {
-  const classes = AGENT_ICON_TONE_CLASSES[tone];
-  return clsx(classes.border, classes.color);
+export function agentIconFrameClass() {
+  return "border-theme-control-border text-primary";
 }
 
 export function AgentCatalogIcon({
   agent,
+  appShortcuts = [],
   className,
   fallbackSize = 22,
 }: {
   agent: AgentCatalogItem;
+  appShortcuts?: AppShortcut[];
   className?: string;
   fallbackSize?: number;
 }) {
-  const iconClassName = clsx(className, agentIconColorClass(agent.iconTone));
+  const accentColor = resolveAgentIconAccentColor(agent, appShortcuts);
+  const iconClassName = clsx(className, !accentColor && "text-primary");
+  const style = accentColor ? { color: accentColor } : undefined;
 
   if (supportsAppIcon(agent.id)) {
-    return <AppShortcutIcon appKind={agent.id} className={iconClassName} displayIcon={appIconToken(agent.id)} />;
+    return (
+      <AppShortcutIcon
+        appKind={agent.id}
+        className={iconClassName}
+        displayIcon={appIconToken(agent.id)}
+        style={style}
+      />
+    );
   }
 
   const FallbackIcon = agent.icon;
-  return <FallbackIcon aria-hidden="true" className={iconClassName} size={fallbackSize} />;
+  return <FallbackIcon aria-hidden="true" className={iconClassName} size={fallbackSize} style={style} />;
 }

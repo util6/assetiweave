@@ -6,10 +6,11 @@ import {
   checkAgentConnection,
   type AgentConnectionResult,
 } from "../../services/agentRuntime";
+import type { AppShortcut } from "../../types";
 import { Badge } from "../foundation/Badge";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
-import { AgentCatalogIcon, agentIconColorClass } from "./AgentCatalogIcon";
+import { AgentCatalogIcon, resolveAgentIconAccentColor } from "./AgentCatalogIcon";
 import {
   agentCatalog,
   registryAgentIds,
@@ -19,12 +20,14 @@ import {
 
 export function AgentCapabilityDialog({
   agentId,
+  appShortcuts = [],
   model,
   onAgentChange,
   onClose,
   onOpenAgentSettings,
 }: {
   agentId: string;
+  appShortcuts?: AppShortcut[];
   model?: string;
   onAgentChange: (agentId: string) => void;
   onClose: () => void;
@@ -92,12 +95,12 @@ export function AgentCapabilityDialog({
     >
       <div className="grid gap-3 px-4 py-4">
         <div className="flex items-center gap-3 rounded-xl border border-theme-nav-active-border/35 bg-theme-nav-active/10 px-3 py-3">
-          <span className={clsx(
-            "grid size-10 shrink-0 place-items-center rounded-lg border border-theme-nav-active-border/45 bg-theme-card",
-            selectedAgent ? agentIconColorClass(selectedAgent.iconTone) : "text-primary",
-          )}>
+          <span
+            className="grid size-10 shrink-0 place-items-center rounded-lg border border-theme-nav-active-border/45 bg-theme-card text-primary"
+            style={{ color: selectedAgent ? resolveAgentIconAccentColor(selectedAgent, appShortcuts) : undefined }}
+          >
             {selectedAgent ? (
-              <AgentCatalogIcon agent={selectedAgent} className="size-5" fallbackSize={20} />
+              <AgentCatalogIcon agent={selectedAgent} appShortcuts={appShortcuts} className="size-5" fallbackSize={20} />
             ) : (
               <Bot aria-hidden="true" size={20} />
             )}
@@ -132,6 +135,7 @@ export function AgentCapabilityDialog({
                   onOpenAgentSettings={() => onOpenAgentSettings(agent.id)}
                   onSelect={() => onAgentChange(agent.id)}
                   selected={agent.id === agentId}
+                  appShortcuts={appShortcuts}
                   t={t}
                 />
               </div>
@@ -151,6 +155,7 @@ export function AgentCapabilityDialog({
 
 function CapabilityAgentOption({
   agent,
+  appShortcuts,
   connectionState,
   currentModel,
   onOpenAgentSettings,
@@ -159,6 +164,7 @@ function CapabilityAgentOption({
   t,
 }: {
   agent: AgentCatalogItem;
+  appShortcuts: AppShortcut[];
   connectionState: AgentConnectionState;
   currentModel?: string;
   onOpenAgentSettings: () => void;
@@ -185,11 +191,11 @@ function CapabilityAgentOption({
         onClick={onSelect}
         type="button"
       >
-        <span className={clsx(
-          "grid size-9 shrink-0 place-items-center rounded-lg border border-theme-control-border bg-theme-card sm:size-10",
-          agentIconColorClass(agent.iconTone),
-        )}>
-          <AgentCatalogIcon agent={agent} className="size-[19px]" fallbackSize={19} />
+        <span
+          className="grid size-9 shrink-0 place-items-center rounded-lg border border-theme-control-border bg-theme-card text-primary sm:size-10"
+          style={{ color: resolveAgentIconAccentColor(agent, appShortcuts) }}
+        >
+          <AgentCatalogIcon agent={agent} appShortcuts={appShortcuts} className="size-[19px]" fallbackSize={19} />
         </span>
         <span className="min-w-0">
           <span className="flex flex-wrap items-center gap-2">

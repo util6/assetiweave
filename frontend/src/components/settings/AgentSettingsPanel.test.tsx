@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { AgentSettingsPanel } from "./AgentSettingsPanel";
+import type { AppShortcut } from "../../types";
 
 const agentRuntime = vi.hoisted(() => ({
   listAgentCatalog: vi.fn(),
@@ -105,6 +106,22 @@ describe("AgentSettingsPanel", () => {
     expect(screen.getByText(/当前版本在 Agents 页面统一展示命令、协议和连接状态；详细定义编辑将在后续接入/)).toBeTruthy();
   });
 
+  it("passes the global APP accent color to the matching Agent icon", () => {
+    const appShortcuts: AppShortcut[] = [{
+      profileId: "hermes",
+      profileName: "Hermes",
+      appKind: "custom",
+      displayIcon: "app:hermes",
+      accentColor: "#123456",
+      enabled: true,
+    }];
+
+    renderPanel({ appShortcuts });
+
+    const hermesRow = screen.getByRole("heading", { name: "Hermes" }).closest("article");
+    expect(hermesRow?.querySelector("svg")?.getAttribute("style")).toContain("color: rgb(18, 52, 86)");
+  });
+
   it("runs a real ACP connection check for a registered Agent", async () => {
     agentRuntime.checkAgentConnection.mockImplementation((agentId: string, mode: string) => Promise.resolve({
       agent_id: agentId,
@@ -155,10 +172,16 @@ describe("AgentSettingsPanel", () => {
   });
 });
 
-function renderPanel({ onModelChange = vi.fn() }: { onModelChange?: (agentId: string, modelId: string) => void } = {}) {
+function renderPanel({
+  appShortcuts = [],
+  onModelChange = vi.fn(),
+}: {
+  appShortcuts?: AppShortcut[];
+  onModelChange?: (agentId: string, modelId: string) => void;
+} = {}) {
   return render(
     <I18nProvider>
-      <AgentSettingsPanel onModelChange={onModelChange} selectedModels={{}} />
+      <AgentSettingsPanel appShortcuts={appShortcuts} onModelChange={onModelChange} selectedModels={{}} />
     </I18nProvider>,
   );
 }

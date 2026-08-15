@@ -1,5 +1,9 @@
-import { appShortcutIcons as APP_ICONS } from "../../config/appShortcutIcons";
+import {
+  appShortcutIconAccentColors,
+  appShortcutIcons as APP_ICONS,
+} from "../../config/appShortcutIcons";
 import type { AppKind, AppShortcut, AppShortcutIconSvg } from "../../types";
+import type { CSSProperties } from "react";
 
 type AppIconKey = string;
 
@@ -12,6 +16,7 @@ export function AppShortcutIcon({
   iconSvg,
   profileId,
   profileName,
+  style,
 }: {
   appKind: AppKind | string;
   className?: string;
@@ -19,14 +24,15 @@ export function AppShortcutIcon({
   iconSvg?: AppShortcutIconSvg | null;
   profileId?: string;
   profileName?: string;
+  style?: CSSProperties;
 }) {
   const icon = validIconSvg(iconSvg) ? iconSvg : resolveAppIcon(displayIcon, appKind, profileId, profileName);
   if (!icon) {
-    return <span className={className}>{displayIcon.slice(0, 4)}</span>;
+    return <span className={className} style={style}>{displayIcon.slice(0, 4)}</span>;
   }
 
   return (
-    <svg aria-hidden="true" className={className} fill="currentColor" viewBox={icon.viewBox ?? "0 0 24 24"}>
+    <svg aria-hidden="true" className={className} fill="currentColor" style={style} viewBox={icon.viewBox ?? "0 0 24 24"}>
       {icon.paths.map((path, index) => (
         <path clipRule={path.clipRule} d={path.d} fillRule={path.fillRule} key={`${path.d}-${index}`} />
       ))}
@@ -125,6 +131,45 @@ export function resolveAppIconKey(
   return null;
 }
 
+export function resolveAppShortcutAccentColor(
+  target:
+    | {
+        appKind?: string | null;
+        profileId?: string | null;
+        profileName?: string | null;
+        displayIcon?: string | null;
+      }
+    | string
+    | null
+    | undefined,
+  shortcuts: AppShortcut[] = [],
+) {
+  const appKey = resolveAppIconKey(target);
+  const targetValues = targetValuesFor(target);
+  const configuredShortcut = shortcuts.find((shortcut) => {
+    const shortcutKey = resolveAppIconKey(shortcut);
+    if (appKey && shortcutKey === appKey) {
+      return true;
+    }
+
+    return targetValues.some((value) => shortcutValues(shortcut).includes(value));
+  });
+
+  return configuredShortcut?.accentColor ?? (appKey ? appShortcutIconAccentColors[appKey] : undefined);
+}
+
+export function appShortcutIconFrameStyle(accentColor?: string | null): CSSProperties | undefined {
+  if (!accentColor) {
+    return undefined;
+  }
+
+  return {
+    backgroundColor: `${accentColor}1f`,
+    borderColor: `${accentColor}66`,
+    color: accentColor,
+  };
+}
+
 export function resolveAppIcon(
   displayIcon?: string | null,
   appKind?: string | null,
@@ -172,4 +217,20 @@ function parseAppIconToken(displayIcon: string): AppIconKey | null {
 
 function isAppIconKey(value: string): value is AppIconKey {
   return value in APP_ICONS;
+}
+
+function targetValuesFor(target: Parameters<typeof resolveAppShortcutAccentColor>[0]) {
+  if (!target || typeof target === "string") {
+    return target ? [target.trim().toLowerCase()] : [];
+  }
+
+  return [target.appKind, target.profileId, target.profileName]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.trim().toLowerCase());
+}
+
+function shortcutValues(shortcut: AppShortcut) {
+  return [shortcut.appKind, shortcut.profileId, shortcut.profileName]
+    .filter(Boolean)
+    .map((value) => value.trim().toLowerCase());
 }

@@ -57,6 +57,7 @@ import {
   AppShortcutIcon,
   AppShortcutIconForShortcut,
   appIconToken,
+  appShortcutIconFrameStyle,
   resolveAppIconKey,
   shortcutCustomIconText,
   shortcutUsesAppIcon,
@@ -817,6 +818,7 @@ export function GlobalSettingsDialog({
 
             {activePanel === "general.agents" && (
               <AgentSettingsPanel
+                appShortcuts={appShortcuts}
                 focusAgentId={agentFocusId}
                 onModelChange={(agentId, modelId) => {
                   updateSetting("agentModels", {
@@ -839,6 +841,7 @@ export function GlobalSettingsDialog({
                 <SettingRow icon={<Bot size={18} />} label={t("settings.agentCapabilities.label")}>
                   <AgentCapabilitySetting
                     agentId={settings.agentCapabilityAssignments.memory}
+                    appShortcuts={appShortcuts}
                     description={t("settings.agentCapabilities.memoryDescription")}
                     model={settings.agentModels[settings.agentCapabilityAssignments.memory]}
                     onOpen={() => openAgentCapabilityDialog("memory")}
@@ -899,6 +902,7 @@ export function GlobalSettingsDialog({
                 <SettingRow icon={<Bot size={18} />} label={t("settings.agentCapabilities.label")}>
                   <AgentCapabilitySetting
                     agentId={settings.agentCapabilityAssignments.promptOptimization}
+                    appShortcuts={appShortcuts}
                     description={t("settings.agentCapabilities.promptOptimizationDescription")}
                     model={settings.agentModels[settings.agentCapabilityAssignments.promptOptimization]}
                     onOpen={() => openAgentCapabilityDialog("promptOptimization")}
@@ -1332,6 +1336,7 @@ export function GlobalSettingsDialog({
                 <SettingRow icon={<Bot size={18} />} label={t("settings.agentCapabilities.label")}>
                   <AgentCapabilitySetting
                     agentId={settings.agentCapabilityAssignments.cardTranslation}
+                    appShortcuts={appShortcuts}
                     description={t("settings.agentCapabilities.cardTranslationDescription")}
                     model={settings.agentModels[settings.agentCapabilityAssignments.cardTranslation]}
                     onOpen={() => openAgentCapabilityDialog("cardTranslation")}
@@ -1474,6 +1479,7 @@ export function GlobalSettingsDialog({
       {agentCapabilityDialog ? (
         <AgentCapabilityDialog
           agentId={agentCapabilityDialog.agentId}
+          appShortcuts={appShortcuts}
           model={agentCapabilityDialog.model}
           onAgentChange={selectAgentCapability}
           onClose={() => setAgentCapabilityDialog(null)}
@@ -1704,11 +1710,7 @@ function SortableShortcutEditRow({
       <div className="flex min-w-0 items-center gap-3">
         <span
           className="grid size-9 shrink-0 place-items-center rounded-lg border text-[13px] font-bold"
-          style={{
-            borderColor: `${shortcut.accentColor}66`,
-            backgroundColor: `${shortcut.accentColor}1f`,
-            color: shortcut.accentColor,
-          }}
+          style={appShortcutIconFrameStyle(shortcut.accentColor)}
           aria-hidden="true"
         >
           <AppShortcutIconForShortcut className="size-5" shortcut={shortcut} />
@@ -1844,11 +1846,7 @@ function ShortcutIconSvgDialog({
       icon={
         <span
           className="grid size-10 place-items-center rounded-lg border text-[13px] font-bold"
-          style={{
-            borderColor: `${shortcut.accentColor}66`,
-            backgroundColor: `${shortcut.accentColor}1f`,
-            color: shortcut.accentColor,
-          }}
+          style={appShortcutIconFrameStyle(shortcut.accentColor)}
           aria-hidden="true"
         >
           <AppShortcutIconForShortcut className="size-5" shortcut={shortcut} />

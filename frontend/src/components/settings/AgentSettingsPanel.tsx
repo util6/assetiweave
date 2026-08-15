@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
+import type { AppShortcut } from "../../types";
 import {
   checkAgentConnection,
   listAgentCatalog,
@@ -33,10 +34,12 @@ import {
 } from "./agentCatalog";
 
 export function AgentSettingsPanel({
+  appShortcuts = [],
   focusAgentId,
   selectedModels,
   onModelChange,
 }: {
+  appShortcuts?: AppShortcut[];
   focusAgentId?: string | null;
   selectedModels: Record<string, string>;
   onModelChange: (agentId: AgentId, modelId: string) => void;
@@ -307,6 +310,7 @@ export function AgentSettingsPanel({
             >
               <AgentConnectionRow
                 agent={agent}
+                appShortcuts={appShortcuts}
                 connectionMessage={connectionMessages[agent.id]}
                 connectionState={connectionStates[agent.id]}
                 isTesting={testingAgentId === agent.id}

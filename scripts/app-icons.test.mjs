@@ -18,12 +18,13 @@ test("the bundled AssetIWeave app icon files are present", async () => {
 
 test("asset validation reports malformed entries", () => {
   const errors = validateAppIconAssets({
-    "Bad ID": { legacyIcon: "", svg: '<svg viewBox="invalid"></svg>' },
+    "Bad ID": { legacyIcon: "", accentColor: "invalid", svg: '<svg viewBox="invalid"></svg>' },
   });
 
   assert.deepEqual(errors, [
     "Bad ID: invalid app id",
     "Bad ID: legacyIcon must be a non-empty string",
+    "Bad ID: accentColor must be a six-digit hex color",
     "Bad ID: viewBox must be valid coordinates",
     "Bad ID: SVG must contain at least one path with d",
   ]);
@@ -31,7 +32,7 @@ test("asset validation reports malformed entries", () => {
 
 test("the source evaluator reads the central SVG code object", () => {
   const assets = evaluateAppIconSource(`export default {
-    sample: { legacyIcon: "S", svg: '<svg viewBox="0 0 24 24"><path d="M0 0" /></svg>' },
+    sample: { legacyIcon: "S", accentColor: "#123456", svg: '<svg viewBox="0 0 24 24"><path d="M0 0" /></svg>' },
   };`);
 
   assert.equal(assets.sample.legacyIcon, "S");
