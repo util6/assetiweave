@@ -1,7 +1,12 @@
 /* @vitest-environment jsdom */
 
 import { describe, expect, it } from "vitest";
-import { appShortcutIconAssetsByKind, appShortcutIcons } from "./appShortcutIcons";
+import {
+  appShortcutIconAssetsByKind,
+  appShortcutIconCatalog,
+  appShortcutIcons,
+  scanAppShortcutIcons,
+} from "./appShortcutIcons";
 
 describe("app shortcut icon assets", () => {
   it("exposes every built-in app icon declared in the central source file", () => {
@@ -34,5 +39,19 @@ describe("app shortcut icon assets", () => {
       expect(appShortcutIconAssetsByKind[appKind].legacyIcon, appKind).toBeTruthy();
       expect(appShortcutIconAssetsByKind[appKind].svg, appKind).toContain("<svg");
     }
+  });
+
+  it("scans a newly added source entry without a separate registry update", () => {
+    const catalog = scanAppShortcutIcons({
+      "sample-agent": {
+        legacyIcon: "S",
+        svg: '<svg viewBox="0 0 24 24"><path d="M0 0" /></svg>',
+      },
+    });
+
+    expect(catalog.map((item) => item.appKind)).toEqual(["sample-agent"]);
+    expect(catalog[0]?.asset.legacyIcon).toBe("S");
+    expect(catalog[0]?.definition.paths[0]?.d).toBe("M0 0");
+    expect(appShortcutIconCatalog.map((item) => item.appKind)).toEqual(Object.keys(appShortcutIconAssetsByKind));
   });
 });

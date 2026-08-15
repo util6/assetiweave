@@ -10,13 +10,28 @@ export interface AppShortcutIconDefinition extends AppShortcutIconSvg {
   legacyIcon?: string;
 }
 
+export interface AppShortcutIconCatalogItem {
+  appKind: string;
+  asset: AppShortcutIconAsset;
+  definition: AppShortcutIconDefinition;
+}
+
 export const appShortcutIconAssetsByKind = appShortcutIconAssets as Record<string, AppShortcutIconAsset>;
 
-export const appShortcutIcons = Object.fromEntries(
-  Object.entries(appShortcutIconAssetsByKind).map(([appKind, asset]) => [
+export function scanAppShortcutIcons(assets: Record<string, AppShortcutIconAsset>): AppShortcutIconCatalogItem[] {
+  return Object.entries(assets).map(([appKind, asset]) => ({
     appKind,
-    { ...parseSvgIcon(asset.svg), legacyIcon: asset.legacyIcon } satisfies AppShortcutIconDefinition,
-  ]),
+    asset,
+    definition: { ...parseSvgIcon(asset.svg), legacyIcon: asset.legacyIcon },
+  }));
+}
+
+// The central object is the only built-in icon registry. Adding an entry there
+// automatically feeds both icon rendering and the global settings picker.
+export const appShortcutIconCatalog = scanAppShortcutIcons(appShortcutIconAssetsByKind);
+
+export const appShortcutIcons = Object.fromEntries(
+  appShortcutIconCatalog.map(({ appKind, definition }) => [appKind, definition]),
 ) as Record<string, AppShortcutIconDefinition>;
 
 function parseSvgIcon(source: string): AppShortcutIconSvg {

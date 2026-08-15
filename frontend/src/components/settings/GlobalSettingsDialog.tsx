@@ -61,7 +61,7 @@ import {
   shortcutCustomIconText,
   shortcutUsesAppIcon,
 } from "../apps/AppShortcutIcon";
-import { appShortcutIconAssetsByKind, appShortcutIcons as APP_ICONS } from "../../config/appShortcutIcons";
+import { appShortcutIconCatalog } from "../../config/appShortcutIcons";
 import { SkillBackupDirectorySetting } from "../backup/SkillBackupDirectorySetting";
 import { SkillBackupLibraryDialog } from "../backup/SkillBackupLibraryDialog";
 import { ConfirmDialog } from "../common/ConfirmDialog";
@@ -1863,22 +1863,19 @@ function ShortcutIconSvgDialog({
         <div className="flex min-w-0 flex-col gap-2">
           <span className="text-label-caps uppercase text-outline">{t("settings.shortcuts.icon")}</span>
           <div className="flex flex-wrap items-center gap-1.5">
-            {Object.keys(APP_ICONS).map((iconKey) => (
+            {appShortcutIconCatalog.map(({ appKind, asset }) => (
               <Button
                 className="h-7 gap-1.5 px-2 text-xs capitalize"
-                key={iconKey}
+                key={appKind}
                 onClick={() => {
-                  const asset = appShortcutIconAssetsByKind[iconKey];
-                  if (asset) {
-                    onChange(asset.svg.trim());
-                  }
+                  onChange(asset.svg.trim());
                 }}
                 size="sm"
                 type="button"
                 variant="outline"
               >
-                <AppShortcutIcon appKind={iconKey} className="size-3.5" displayIcon={`app:${iconKey}`} />
-                <span>{iconKey}</span>
+                <AppShortcutIcon appKind={appKind} className="size-3.5" displayIcon={`app:${appKind}`} />
+                <span>{appKind}</span>
               </Button>
             ))}
           </div>
