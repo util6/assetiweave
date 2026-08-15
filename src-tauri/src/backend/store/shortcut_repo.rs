@@ -1,6 +1,7 @@
 use crate::backend::dto::{AppResult, AppShortcut, AppShortcutIconSvg};
 use crate::backend::models::TargetProfile;
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
+use std::collections::HashSet;
 
 use super::{
     codec::{decode_json, encode_enum, encode_json},
@@ -26,6 +27,50 @@ pub(crate) async fn seed_app_shortcuts_sqlx(
             .execute(pool)
             .await
             .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn ensure_default_app_shortcuts_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    shortcuts: &[(&str, &str, &str, bool)],
+) -> AppResult<()> {
+    let existing_ids = sqlx::query_scalar::<_, String>(
+        "SELECT profile_id FROM app_shortcut_items WHERE tenant_id = ?1",
+    )
+    .bind(tenant_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?
+    .into_iter()
+    .collect::<HashSet<_>>();
+    let mut next_sort_order = sqlx::query_scalar::<_, Option<i32>>(
+        "SELECT MAX(sort_order) FROM app_shortcut_items WHERE tenant_id = ?1",
+    )
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| error.to_string())?
+    .unwrap_or(-1)
+        + 1;
+
+    for (profile_id, display_icon, accent_color, enabled) in shortcuts {
+        if existing_ids.contains(*profile_id) {
+            continue;
+        }
+        sqlx::query(sql::UPSERT_APP_SHORTCUT)
+            .bind(tenant_id)
+            .bind(profile_id)
+            .bind(display_icon)
+            .bind(Option::<String>::None)
+            .bind(accent_color)
+            .bind(if *enabled { 1 } else { 0 })
+            .bind(next_sort_order)
+            .execute(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+        next_sort_order += 1;
     }
     Ok(())
 }

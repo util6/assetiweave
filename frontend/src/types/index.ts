@@ -194,6 +194,10 @@ export type AppKind =
   | "gemini"
   | "antigravity"
   | "openclaw"
+  | "kiro"
+  | "zcode"
+  | "qoder"
+  | "hermes"
   | "custom";
 
 export type ConversationAdapterKind = "external";

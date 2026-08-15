@@ -102,8 +102,12 @@ function defaultAccentColor(appKind: AppKind) {
     cursor: "#94a3b8",
     custom: "#8c909f",
     gemini: "#8e75b2",
+    hermes: "#f97316",
+    kiro: "#0ea5e9",
     openclaw: "#f43f5e",
     opencode: "#6366f1",
+    qoder: "#14b8a6",
+    zcode: "#f59e0b",
   };
   return colors[appKind];
 }

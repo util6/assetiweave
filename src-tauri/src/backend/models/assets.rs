@@ -75,6 +75,10 @@ pub enum AppKind {
     Antigravity,
     #[serde(rename = "openclaw", alias = "open_claw")]
     OpenClaw,
+    Kiro,
+    Zcode,
+    Qoder,
+    Hermes,
     Custom,
 }
 

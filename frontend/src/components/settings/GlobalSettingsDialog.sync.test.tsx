@@ -2,6 +2,8 @@
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { appShortcutIconCatalog } from "../../config/appShortcutIcons";
+import { fallbackAppShortcuts } from "../../mock/catalog";
 import { navigationModel } from "../../router/menu";
 import { defaultSettings } from "../../store/settings/settingsSchema";
 import { GlobalSettingsDialog } from "./GlobalSettingsDialog";
@@ -103,6 +105,26 @@ describe("GlobalSettingsDialog", () => {
     expect(screen.getByRole("heading", { name: "settings.agents.title" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "settings.agents.addCustom" })).toBeTruthy();
     await waitFor(() => expect(screen.getByRole("heading", { name: "OpenCode" })).toBeTruthy());
+  });
+
+  it("renders every built-in APP icon as an editable row in the shared APP settings list", () => {
+    render(
+      <GlobalSettingsDialog
+        appShortcuts={fallbackAppShortcuts}
+        initialPanel="workspace.shortcuts"
+        navigationModel={navigationModel}
+        onAppShortcutsChange={vi.fn()}
+        onClose={vi.fn()}
+        onNavigationModelChange={vi.fn()}
+        open
+      />,
+    );
+
+    expect(screen.getAllByLabelText("settings.shortcuts.color")).toHaveLength(appShortcutIconCatalog.length);
+    expect(screen.queryByRole("list", { name: "settings.shortcuts.appIcon" })).toBeNull();
+    for (const shortcut of fallbackAppShortcuts) {
+      expect(screen.getByText(shortcut.profileName)).toBeTruthy();
+    }
   });
 
   it("keeps the Memory panel focused on Memory controls", () => {

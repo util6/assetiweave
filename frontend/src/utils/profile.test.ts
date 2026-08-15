@@ -42,6 +42,7 @@ describe("profile helpers", () => {
   it("identifies protected default app profiles", () => {
     expect(isDefaultAppProfileId("codex")).toBe(true);
     expect(isDefaultAppProfileId("openclaw")).toBe(true);
+    expect(isDefaultAppProfileId("hermes")).toBe(true);
     expect(isDefaultAppProfileId("team-app")).toBe(false);
   });
 });

@@ -504,6 +504,10 @@
               "gemini",
               "antigravity",
               "openclaw",
+              "kiro",
+              "zcode",
+              "qoder",
+              "hermes",
               "custom"
             ],
             "description": "Origin application kind",
@@ -7661,6 +7665,10 @@
                   "gemini",
                   "antigravity",
                   "openclaw",
+                  "kiro",
+                  "zcode",
+                  "qoder",
+                  "hermes",
                   "custom",
                   null
                 ]
@@ -7804,6 +7812,10 @@
                   "gemini",
                   "antigravity",
                   "openclaw",
+                  "kiro",
+                  "zcode",
+                  "qoder",
+                  "hermes",
                   "custom",
                   null
                 ]
@@ -8045,6 +8057,10 @@
                   "gemini",
                   "antigravity",
                   "openclaw",
+                  "kiro",
+                  "zcode",
+                  "qoder",
+                  "hermes",
                   "custom",
                   null
                 ]
@@ -8281,6 +8297,10 @@
                   "gemini",
                   "antigravity",
                   "openclaw",
+                  "kiro",
+                  "zcode",
+                  "qoder",
+                  "hermes",
                   "custom"
                 ]
               },

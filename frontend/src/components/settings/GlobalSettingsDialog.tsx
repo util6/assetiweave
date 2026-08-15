@@ -69,7 +69,6 @@ import { ConfirmDialog } from "../common/ConfirmDialog";
 import { AgentCapabilityDialog } from "./AgentCapabilityDialog";
 import { AgentSettingsPanel } from "./AgentSettingsPanel";
 import { AgentCapabilitySetting } from "./AgentCapabilitySetting";
-import { BuiltinAppIconCatalog } from "./BuiltinAppIconCatalog";
 import { ConversationFullSyncProgress } from "./ConversationFullSyncProgress";
 import { conversationCardColor, conversationCardLabel } from "../conversations/ConversationContentCards";
 import {
@@ -1151,7 +1150,6 @@ export function GlobalSettingsDialog({
                     />
                   ))}
                 </SortableMenuList>
-                <BuiltinAppIconCatalog title={t("settings.shortcuts.appIcon")} />
               </MenuSection>
             )}
 

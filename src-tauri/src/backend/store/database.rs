@@ -174,6 +174,8 @@ pub(crate) async fn seed_tenant_defaults_sqlx(pool: &SqlitePool, tenant_id: &str
         for profile in crate::backend::defaults::default_profiles() {
             super::profile_repo::upsert_profile_sqlx(pool, tenant_id, &profile).await?;
         }
+    } else {
+        ensure_default_profiles_sqlx(pool, tenant_id).await?;
     }
     normalize_existing_profiles_sqlx(pool, tenant_id).await?;
     normalize_default_profiles_sqlx(pool, tenant_id).await?;
@@ -203,8 +205,29 @@ pub(crate) async fn seed_tenant_defaults_sqlx(pool: &SqlitePool, tenant_id: &str
             &crate::backend::defaults::default_app_shortcuts(),
         )
         .await?;
+    } else {
+        super::shortcut_repo::ensure_default_app_shortcuts_sqlx(
+            pool,
+            tenant_id,
+            &crate::backend::defaults::default_app_shortcuts(),
+        )
+        .await?;
     }
 
+    Ok(())
+}
+
+async fn ensure_default_profiles_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+    let existing_profiles = super::profile_repo::load_profiles_sqlx(pool, tenant_id).await?;
+    for profile in crate::backend::defaults::default_profiles() {
+        if existing_profiles
+            .iter()
+            .any(|existing| existing.id == profile.id)
+        {
+            continue;
+        }
+        super::profile_repo::upsert_profile_sqlx(pool, tenant_id, &profile).await?;
+    }
     Ok(())
 }
 
@@ -765,6 +788,66 @@ mod tests {
             .expect("query preserved adapter");
 
         assert_eq!(codex_name, "preserved");
+        drop(reopened);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn initialized_database_restores_missing_builtin_app_icon_rows() {
+        let db_path = temp_database_path("app-icon-defaults");
+        let database = Database::open_initialized(&db_path).expect("open initialized database");
+        drop(database);
+
+        let conn = Connection::open(&db_path).expect("open seeded database");
+        conn.execute_batch(
+            "UPDATE app_shortcut_items SET accent_color = '#123456' WHERE profile_id = 'codex';
+             DELETE FROM app_shortcut_items WHERE profile_id IN ('kiro', 'zcode', 'qoder', 'hermes');
+             DELETE FROM profiles WHERE id IN ('kiro', 'zcode', 'qoder', 'hermes');",
+        )
+        .expect("remove newly introduced app defaults");
+        drop(conn);
+
+        let reopened = Database::open(&db_path).expect("reopen initialized database");
+        reopened
+            .block_on(seed_tenant_defaults_sqlx(reopened.pool(), "default"))
+            .expect("restore initialized defaults");
+        let (profile_count, shortcut_count, codex_accent, hermes_accent) = reopened
+            .block_on(async {
+                let profile_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM profiles")
+                    .fetch_one(reopened.pool())
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let shortcut_count =
+                    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_shortcut_items")
+                        .fetch_one(reopened.pool())
+                        .await
+                        .map_err(|error| error.to_string())?;
+                let codex_accent = sqlx::query_scalar::<_, String>(
+                    "SELECT accent_color FROM app_shortcut_items WHERE profile_id = 'codex'",
+                )
+                .fetch_one(reopened.pool())
+                .await
+                .map_err(|error| error.to_string())?;
+                let hermes_accent = sqlx::query_scalar::<_, String>(
+                    "SELECT accent_color FROM app_shortcut_items WHERE profile_id = 'hermes'",
+                )
+                .fetch_one(reopened.pool())
+                .await
+                .map_err(|error| error.to_string())?;
+                AppResult::Ok((profile_count, shortcut_count, codex_accent, hermes_accent))
+            })
+            .expect("query restored app defaults");
+
+        assert_eq!(
+            profile_count,
+            crate::backend::defaults::default_profiles().len() as i64
+        );
+        assert_eq!(
+            shortcut_count,
+            crate::backend::defaults::default_app_shortcuts().len() as i64
+        );
+        assert_eq!(codex_accent, "#123456");
+        assert_eq!(hermes_accent, "#f97316");
         drop(reopened);
         cleanup_database(&db_path);
     }

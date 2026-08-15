@@ -6,6 +6,10 @@ export const DEFAULT_APP_PROFILE_IDS = [
   "cursor",
   "antigravity",
   "openclaw",
+  "kiro",
+  "zcode",
+  "qoder",
+  "hermes",
 ] as const;
 
 export function isDefaultAppProfileId(profileId: string) {

@@ -13,6 +13,10 @@ pub(crate) const DEFAULT_APP_PROFILE_IDS: &[&str] = &[
     "cursor",
     "antigravity",
     "openclaw",
+    "kiro",
+    "zcode",
+    "qoder",
+    "hermes",
 ];
 
 pub(crate) fn is_default_app_profile_id(profile_id: &str) -> bool {
@@ -108,6 +112,10 @@ pub(crate) fn default_profiles() -> Vec<TargetProfile> {
         ("gemini", "Gemini", AppKind::Gemini),
         ("antigravity", "Antigravity", AppKind::Antigravity),
         ("openclaw", "OpenClaw", AppKind::OpenClaw),
+        ("kiro", "Kiro", AppKind::Kiro),
+        ("zcode", "ZCode", AppKind::Zcode),
+        ("qoder", "Qoder", AppKind::Qoder),
+        ("hermes", "Hermes", AppKind::Hermes),
         ("custom", "Custom", AppKind::Custom),
     ]
     .into_iter()
@@ -237,6 +245,10 @@ pub(crate) fn default_app_shortcuts() -> Vec<(&'static str, &'static str, &'stat
         ("cursor", "app:cursor", "#94a3b8", true),
         ("antigravity", "app:antigravity", "#a78bfa", false),
         ("openclaw", "app:openclaw", "#f43f5e", false),
+        ("kiro", "app:kiro", "#0ea5e9", false),
+        ("zcode", "app:zcode", "#f59e0b", false),
+        ("qoder", "app:qoder", "#14b8a6", false),
+        ("hermes", "app:hermes", "#f97316", false),
         ("custom", "+", "#8c909f", false),
     ]
 }
@@ -275,7 +287,10 @@ fn sub_nav(id: &str, label: &str, route_key: &str) -> SubNavItem {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_navigation_model, default_profiles, default_sources_for_tenant};
+    use super::{
+        default_app_shortcuts, default_navigation_model, default_profiles,
+        default_sources_for_tenant,
+    };
 
     #[test]
     fn memory_is_an_independent_default_navigation_module() {
@@ -319,6 +334,36 @@ mod tests {
             .expect("cursor profile");
 
         assert_eq!(profile.target_paths, vec!["@config/Cursor/skills"]);
+    }
+
+    #[test]
+    fn every_builtin_app_icon_has_a_profile_and_shortcut() {
+        let builtin_app_ids = [
+            "antigravity",
+            "claude",
+            "codex",
+            "cursor",
+            "gemini",
+            "hermes",
+            "kiro",
+            "openclaw",
+            "opencode",
+            "qoder",
+            "zcode",
+        ];
+        let profiles = default_profiles();
+        let shortcuts = default_app_shortcuts();
+
+        for app_id in builtin_app_ids {
+            assert!(
+                profiles.iter().any(|profile| profile.id == app_id),
+                "missing profile: {app_id}"
+            );
+            assert!(
+                shortcuts.iter().any(|shortcut| shortcut.0 == app_id),
+                "missing shortcut: {app_id}"
+            );
+        }
     }
 
     #[test]

@@ -66,6 +66,10 @@ export const appKindValues = [
   "gemini",
   "antigravity",
   "openclaw",
+  "kiro",
+  "zcode",
+  "qoder",
+  "hermes",
   "custom",
 ] as const satisfies readonly AppKind[];
 

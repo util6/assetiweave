@@ -12,6 +12,10 @@ impl AppPathCatalog {
             AppKind::Gemini => "~/.gemini/skills",
             AppKind::Antigravity => "~/.antigravity/skills",
             AppKind::OpenClaw => "~/.openclaw/skills",
+            AppKind::Kiro => "~/.kiro/skills",
+            AppKind::Zcode => "~/.zcode/skills",
+            AppKind::Qoder => "~/.qoder/skills",
+            AppKind::Hermes => "~/.hermes/skills",
             AppKind::Custom => "~/assetiweave-target/skills",
         }
     }

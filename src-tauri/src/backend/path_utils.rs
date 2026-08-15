@@ -231,6 +231,10 @@ pub(crate) fn detect_app_target(path: &Path) -> Option<AppKind> {
             AppKind::Antigravity,
         ),
         (home.join(".openclaw").join("skills"), AppKind::OpenClaw),
+        (home.join(".kiro").join("skills"), AppKind::Kiro),
+        (home.join(".zcode").join("skills"), AppKind::Zcode),
+        (home.join(".qoder").join("skills"), AppKind::Qoder),
+        (home.join(".hermes").join("skills"), AppKind::Hermes),
     ];
 
     candidates
