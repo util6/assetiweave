@@ -1,6 +1,11 @@
 import { Minus, Square, X } from "lucide-react";
 import { useEffect, useState, type ComponentType, type SVGProps } from "react";
 import clsx from "clsx";
+import {
+  appWindowIconAsset,
+  observeAppWindowIconState,
+  type AppWindowIconState,
+} from "../../services/appWindowIcon";
 import { runWindowAction, type WindowAction } from "../../services/windowChrome";
 
 export type WindowChromeMode = "native" | "windows-frameless";
@@ -25,6 +30,7 @@ const windowControls: Array<{
 
 export function WindowTitleBar({ mode: controlledMode }: { mode?: WindowChromeMode }) {
   const [detectedMode, setDetectedMode] = useState<WindowChromeMode>(() => controlledMode ?? detectWindowChromeMode());
+  const [windowIconState, setWindowIconState] = useState<AppWindowIconState>("display");
   const mode = controlledMode ?? detectedMode;
   const customControls = mode === "windows-frameless";
 
@@ -33,6 +39,28 @@ export function WindowTitleBar({ mode: controlledMode }: { mode?: WindowChromeMo
       setDetectedMode(detectWindowChromeMode());
     }
   }, [controlledMode]);
+
+  useEffect(() => {
+    let disposed = false;
+    let stopObserving: (() => void) | undefined;
+
+    void observeAppWindowIconState((state) => {
+      if (!disposed) {
+        setWindowIconState(state);
+      }
+    }).then((stop) => {
+      if (disposed) {
+        stop();
+      } else {
+        stopObserving = stop;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      stopObserving?.();
+    };
+  }, []);
 
   if (mode === "native") {
     return null;
@@ -48,7 +76,12 @@ export function WindowTitleBar({ mode: controlledMode }: { mode?: WindowChromeMo
         data-tauri-drag-region="true"
       />
       <div className="pointer-events-none relative z-10 flex min-w-0 items-center gap-2 px-3 text-label-caps font-semibold">
-        <span className="size-3 rounded-[3px] border border-theme-nav-active-border bg-primary-strong" />
+        <img
+          alt=""
+          className="size-4 rounded-[4px] border border-theme-nav-active-border object-cover"
+          data-app-window-icon={windowIconState}
+          src={appWindowIconAsset(windowIconState)}
+        />
         <span className="truncate">AssetIWeave</span>
       </div>
       {customControls ? (

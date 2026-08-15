@@ -54,12 +54,14 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { DialogFrame } from "@/components/foundation/DialogFrame";
 import {
+  AppShortcutIcon,
   AppShortcutIconForShortcut,
   appIconToken,
+  resolveAppIconKey,
   shortcutCustomIconText,
   shortcutUsesAppIcon,
-  supportsAppIcon,
 } from "../apps/AppShortcutIcon";
+import { appShortcutIconAssetsByKind, appShortcutIcons as APP_ICONS } from "../../config/appShortcutIcons";
 import { SkillBackupDirectorySetting } from "../backup/SkillBackupDirectorySetting";
 import { SkillBackupLibraryDialog } from "../backup/SkillBackupLibraryDialog";
 import { ConfirmDialog } from "../common/ConfirmDialog";
@@ -581,9 +583,10 @@ export function GlobalSettingsDialog({
       return;
     }
 
-    if (!input && supportsAppIcon(shortcut.appKind)) {
+    const appKey = resolveAppIconKey(input) || resolveAppIconKey(shortcut);
+    if (!input && appKey) {
       updateAppShortcut(shortcut.profileId, {
-        displayIcon: appIconToken(shortcut.appKind),
+        displayIcon: appIconToken(appKey),
         iconSvg: null,
       });
       closeShortcutIconEditor();
@@ -603,8 +606,9 @@ export function GlobalSettingsDialog({
       return;
     }
 
+    const appKey = resolveAppIconKey(shortcut);
     updateAppShortcut(shortcut.profileId, {
-      ...(supportsAppIcon(shortcut.appKind) ? { displayIcon: appIconToken(shortcut.appKind) } : {}),
+      ...(appKey ? { displayIcon: appIconToken(appKey) } : {}),
       iconSvg: null,
     });
     closeShortcutIconEditor();
@@ -1650,8 +1654,9 @@ function SortableShortcutEditRow({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   const [draftColor, setDraftColor] = useState(shortcut.accentColor);
+  const appIconKey = resolveAppIconKey(shortcut);
+  const canUseAppIcon = Boolean(appIconKey);
   const usesAppIcon = shortcutUsesAppIcon(shortcut);
-  const canUseAppIcon = supportsAppIcon(shortcut.appKind);
   const usesCustomIcon = Boolean(shortcut.iconSvg || shortcutCustomIconText(shortcut));
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -1719,12 +1724,22 @@ function SortableShortcutEditRow({
             aria-pressed={usesAppIcon}
             className={clsx("h-9 shrink-0 px-3", usesAppIcon && "border-primary-strong/50 bg-theme-control-hover text-primary")}
             disabled={!canUseAppIcon}
-            onClick={() => onDisplayIconChange(appIconToken(shortcut.appKind))}
+            onClick={() => {
+              if (appIconKey) {
+                onDisplayIconChange(appIconToken(appIconKey));
+              }
+            }}
             title={t("settings.shortcuts.useAppIcon")}
             type="button"
             variant="outline"
           >
-            <AppShortcutIconForShortcut className="size-4" shortcut={{ ...shortcut, displayIcon: appIconToken(shortcut.appKind) || shortcut.displayIcon }} />
+            <AppShortcutIconForShortcut
+              className="size-4"
+              shortcut={{
+                ...shortcut,
+                displayIcon: (appIconKey ? appIconToken(appIconKey) : null) || shortcut.displayIcon,
+              }}
+            />
             <span>{t("settings.shortcuts.appIcon")}</span>
           </Button>
           <Button
@@ -1845,11 +1860,34 @@ function ShortcutIconSvgDialog({
     >
       <div className="flex min-h-0 flex-col gap-3">
         <p className="text-body-sm text-on-surface-variant">{t("settings.shortcuts.svgEditorDescription")}</p>
+        <div className="flex min-w-0 flex-col gap-2">
+          <span className="text-label-caps uppercase text-outline">{t("settings.shortcuts.icon")}</span>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {Object.keys(APP_ICONS).map((iconKey) => (
+              <Button
+                className="h-7 gap-1.5 px-2 text-xs capitalize"
+                key={iconKey}
+                onClick={() => {
+                  const asset = appShortcutIconAssetsByKind[iconKey];
+                  if (asset) {
+                    onChange(asset.svg.trim());
+                  }
+                }}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <AppShortcutIcon appKind={iconKey} className="size-3.5" displayIcon={`app:${iconKey}`} />
+                <span>{iconKey}</span>
+              </Button>
+            ))}
+          </div>
+        </div>
         <label className="flex min-h-0 flex-1 flex-col gap-2">
           <span className="text-label-caps uppercase text-outline">{t("settings.shortcuts.svgInput")}</span>
           <textarea
             aria-label={t("settings.shortcuts.svgInput")}
-            className="min-h-80 resize-y rounded-lg border border-theme-control-border bg-theme-control px-3 py-3 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60"
+            className="min-h-72 resize-y rounded-lg border border-theme-control-border bg-theme-control px-3 py-3 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60"
             onChange={(event) => onChange(event.target.value)}
             placeholder={t("settings.shortcuts.svgPlaceholder")}
             spellCheck={false}

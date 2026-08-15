@@ -3,6 +3,7 @@ import { BrainCircuit, Info, LoaderCircle, Pencil, PlugZap } from "lucide-react"
 import type { Translator } from "../../i18n/I18nProvider";
 import { Badge } from "../foundation/Badge";
 import { Button } from "../ui/button";
+import { AgentCatalogIcon, agentIconFrameClass } from "./AgentCatalogIcon";
 import type { AgentCatalogItem, AgentConnectionState } from "./agentCatalog";
 
 export function AgentConnectionRow({
@@ -26,12 +27,11 @@ export function AgentConnectionRow({
   selectedModel?: string;
   t: Translator;
 }) {
-  const Icon = agent.icon;
   const status = statusMeta(connectionState, t);
   return (
     <article className="group flex flex-wrap items-center gap-3 rounded-xl border border-theme-card-border/60 bg-theme-control/58 px-3.5 py-3 transition-[background,border-color,transform] hover:-translate-y-px hover:border-theme-nav-active-border/60 hover:bg-theme-control-hover/70 sm:flex-nowrap">
-      <span className={clsx("grid size-11 shrink-0 place-items-center rounded-xl border bg-theme-card", iconToneClass(agent.iconTone))}>
-        <Icon aria-hidden="true" size={22} />
+      <span className={clsx("grid size-11 shrink-0 place-items-center rounded-xl border bg-theme-card", agentIconFrameClass(agent.iconTone))}>
+        <AgentCatalogIcon agent={agent} className="size-[22px]" />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -76,13 +76,4 @@ function statusMeta(state: AgentConnectionState, t: Translator) {
   if (state === "not-installed") return { label: t("settings.agents.statusNotInstalled"), tone: "remove" as const };
   if (state === "checking") return { label: t("settings.agents.statusChecking"), tone: "update" as const };
   return { label: t("settings.agents.statusNotTested"), tone: "neutral" as const };
-}
-
-function iconToneClass(tone: AgentCatalogItem["iconTone"]) {
-  return {
-    primary: "border-primary/30 text-primary",
-    update: "border-status-update/30 text-status-update",
-    create: "border-status-create/30 text-status-create",
-    neutral: "border-theme-control-border text-on-surface-variant",
-  }[tone];
 }

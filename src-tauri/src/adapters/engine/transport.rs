@@ -1417,6 +1417,7 @@ mod tests {
             "install_cli_tools",
             "list_ai_execution_tasks",
             "list_source_assets",
+            "set_app_window_icon",
             "start_conversation_card_translation",
         ])
     }

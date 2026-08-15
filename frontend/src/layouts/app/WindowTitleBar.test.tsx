@@ -16,6 +16,7 @@ describe("WindowTitleBar", () => {
     expect(html).toContain('aria-label="Minimize window"');
     expect(html).toContain('aria-label="Toggle maximize window"');
     expect(html).toContain('aria-label="Close window"');
+    expect(html).toContain('data-app-window-icon="display"');
     expect(html.indexOf('data-tauri-drag-region="true"')).toBeLessThan(html.indexOf('aria-label="Window controls"'));
   });
 

@@ -1,6 +1,6 @@
 # 仓库目录与架构边界
 
-> 最后核对：2026-08-11
+> 最后核对：2026-08-14
 
 本文描述 AssetIWeave **当前代码实际采用的目录结构和职责边界**。它用于回答两个问题：
 
@@ -45,6 +45,7 @@ Go CLI
 | `src-tauri/` | 正式 | 完整 Rust 后端，包括 Tauri 壳、Engine、共享模型、存储和本地系统能力 | 前端展示状态、Go CLI 命令文案 |
 | `cli/` | 正式 | Go CLI、Engine 客户端、命令树、插件、策略、自更新 | 直接写数据库或自行创建挂载链接 |
 | `scripts/` | 正式辅助 | 构建、安装、契约生成和发布审计脚本 | 长期业务逻辑 |
+| `assets/` | 正式源码资产 | 应用图标、品牌视觉等跨前端/打包流程复用的静态资源 | 用户运行时资产、构建产物 |
 | `builtin-assets/` | 正式源码资产 | 官方 Conversation Adapter、内置 Skill、Catalog v1/v2 元数据和适配器测试；所有产品内置资产的唯一源码锚点 | 用户运行时副本、构建产物、手工维护的交付副本 |
 | `docs/` | 正式文档 | 面向开发和使用的当前说明 | 里程碑勾选清单、工具生成的会话历史 |
 | `specs/` | 需求与历史设计 | 产品需求、设计演进、任务里程碑 | 被当作当前代码目录地图 |
@@ -62,6 +63,12 @@ Go CLI
 - `builtin-assets/index.json`、`history/`、`catalog.json`：Adapter Catalog v2 与 legacy 兼容元数据。
 - `cli/internal/harvesters/templates/`：为 Go `embed` 保留的网页 Harvester 生成副本，只能通过 `pnpm conversation-adapters:build --update` 更新。
 - `~/.assetiweave/conversation-adapters/`：用户运行时工作区和不可变版本目录，不属于仓库源码。
+
+`assets/` 的目录边界如下：
+
+- `assets/app-icons/icons.ts`：第三方 APP 图标的唯一源码文件；按 APP 分组直接保存 SVG markup 和 legacy 映射。
+- `assets/assetiweave/`：AssetIWeave 自身的统一图标资源目录；`source/` 保存设计源图，`app-icon-display.png` 用于正常展示，`app-icon-minimized.png` 用于最小化状态，`icon.png`、`32x32.png`、`128x128.png`、`128x128@2x.png`、`icon.icns` 和 `icon.ico` 为 Tauri 打包产物。不与第三方 APP 的 SVG markup 混写到 `icons.ts`。
+- 图标名称、启用状态、强调色和用户自定义 SVG 仍属于全局设置/数据库，不复制到这个源码文件中。
 
 ## 3. 前端目录
 
@@ -84,7 +91,7 @@ Go CLI
 | `frontend/src/i18n/` | 文案、导航翻译和本地化 Provider | 所有可见固定文案 |
 | `frontend/src/manuals/` | routeKey 对应的应用内使用手册 | 不把手册内容塞进 `pages/` |
 | `frontend/src/mock/` | 浏览器预览兜底数据 | 不参与 Tauri 正式运行时的数据写入 |
-| `frontend/src/config/` | 静态资源配置 | 不放动态用户设置 |
+| `frontend/src/config/` | 静态资源配置和前端适配器 | 不放动态用户设置；原始 APP 图标维护在 `assets/app-icons/icons.ts` |
 | `frontend/src/utils/` | 无 React 状态的纯工具函数 | 不调用 Tauri、不维护全局状态 |
 | `frontend/src/lib/` | 第三方或底层通用适配 | 不作为无法分类代码的收容目录 |
 

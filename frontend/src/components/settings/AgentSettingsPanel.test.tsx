@@ -73,6 +73,10 @@ describe("AgentSettingsPanel", () => {
     expect(screen.getByRole("heading", { name: "Agents" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "OpenCode" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Gemini CLI" })).toBeTruthy();
+    const openCodeRow = screen.getByRole("heading", { name: "OpenCode" }).closest("article");
+    const geminiRow = screen.getByRole("heading", { name: "Gemini CLI" }).closest("article");
+    expect(openCodeRow?.querySelector('path[d="M16 6H8v12h8V6zm4 16H4V2h16v20z"]')).toBeTruthy();
+    expect(geminiRow?.querySelector('path[d^="M20.616 10.835"]')).toBeTruthy();
     expect(await screen.findByText("可用")).toBeTruthy();
     await waitFor(() => expect(agentRuntime.checkAgentConnection).toHaveBeenCalledWith("opencode", "installation"));
 

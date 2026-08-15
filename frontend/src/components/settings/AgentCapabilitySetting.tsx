@@ -1,6 +1,7 @@
 import { PlugZap } from "lucide-react";
 import { useI18n } from "../../i18n/I18nProvider";
 import { Button } from "../ui/button";
+import { AgentCatalogIcon } from "./AgentCatalogIcon";
 import { agentCatalog } from "./agentCatalog";
 
 export function AgentCapabilitySetting({
@@ -29,7 +30,11 @@ export function AgentCapabilitySetting({
         type="button"
         variant="outline"
       >
-        <PlugZap size={15} />
+        {selectedAgent ? (
+          <AgentCatalogIcon agent={selectedAgent} className="size-[15px]" fallbackSize={15} />
+        ) : (
+          <PlugZap size={15} />
+        )}
         <span className="truncate">
           {selectedAgent?.name ?? agentId}
           {model ? ` · ${model}` : ` · ${t("settings.agents.modelDefault")}`}

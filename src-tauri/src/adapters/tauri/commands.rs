@@ -7,6 +7,7 @@ use crate::adapters::app_state::AppState;
 use crate::adapters::prompt_clipboard::{
     copy_prompt_card_to_clipboard as copy_prompt_card_to_clipboard_impl, PromptClipboardParams,
 };
+use crate::adapters::tauri::app_icon::set_application_icon;
 use crate::adapters::tauri::background_tasks::{
     AiExecutionTaskGetParams, AiExecutionTaskSnapshot, BackgroundTaskRegistry,
     BackgroundTaskStatus, ConversationScriptInstallTaskSnapshot,
@@ -87,6 +88,11 @@ use std::{collections::BTreeMap, sync::Arc};
 use tauri::{AppHandle, Emitter, State};
 
 pub(crate) const AI_EXECUTION_TASK_UPDATED_EVENT: &str = "ai-execution://task-updated";
+
+#[tauri::command]
+pub(crate) async fn set_app_window_icon(app: AppHandle, icon: Vec<u8>) -> AppResult<()> {
+    set_application_icon(app, icon).map_err(Into::into)
+}
 
 #[tauri::command]
 pub(crate) fn get_app_overview(state: State<'_, AppState>) -> AppResult<AppOverview> {
@@ -2845,6 +2851,7 @@ pub(crate) fn command_handler(
 ) -> impl Fn(::tauri::ipc::Invoke<::tauri::Wry>) -> bool + Send + Sync + 'static {
     ::tauri::generate_handler![
         get_app_overview,
+        set_app_window_icon,
         list_tenants,
         get_active_tenant,
         create_tenant,

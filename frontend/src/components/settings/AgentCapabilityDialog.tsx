@@ -9,6 +9,7 @@ import {
 import { Badge } from "../foundation/Badge";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
+import { AgentCatalogIcon, agentIconColorClass } from "./AgentCatalogIcon";
 import {
   agentCatalog,
   registryAgentIds,
@@ -37,7 +38,6 @@ export function AgentCapabilityDialog({
   );
   const selectedAgent = capabilityAgents.find((agent) => agent.id === agentId)
     ?? agentCatalog.find((agent) => agent.id === agentId);
-  const SelectedAgentIcon = selectedAgent?.icon ?? Bot;
   const availableCount = Object.values(connectionStates).filter((state) => state === "available").length;
   const checkingCount = Object.values(connectionStates).filter((state) => state === "checking").length;
 
@@ -92,8 +92,15 @@ export function AgentCapabilityDialog({
     >
       <div className="grid gap-3 px-4 py-4">
         <div className="flex items-center gap-3 rounded-xl border border-theme-nav-active-border/35 bg-theme-nav-active/10 px-3 py-3">
-          <span className="grid size-10 shrink-0 place-items-center rounded-lg border border-theme-nav-active-border/45 bg-theme-card text-primary">
-            <SelectedAgentIcon aria-hidden="true" size={20} />
+          <span className={clsx(
+            "grid size-10 shrink-0 place-items-center rounded-lg border border-theme-nav-active-border/45 bg-theme-card",
+            selectedAgent ? agentIconColorClass(selectedAgent.iconTone) : "text-primary",
+          )}>
+            {selectedAgent ? (
+              <AgentCatalogIcon agent={selectedAgent} className="size-5" fallbackSize={20} />
+            ) : (
+              <Bot aria-hidden="true" size={20} />
+            )}
           </span>
           <div className="min-w-0">
             <p className="text-label-caps uppercase text-outline">
@@ -159,7 +166,6 @@ function CapabilityAgentOption({
   selected: boolean;
   t: Translator;
 }) {
-  const Icon = agent.icon;
   const available = connectionState === "available";
   const statusLabel = agentStatusLabel(connectionState, t);
   const statusTone = agentStatusTone(connectionState);
@@ -179,8 +185,11 @@ function CapabilityAgentOption({
         onClick={onSelect}
         type="button"
       >
-        <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-theme-control-border bg-theme-card text-primary sm:size-10">
-          <Icon aria-hidden="true" size={19} />
+        <span className={clsx(
+          "grid size-9 shrink-0 place-items-center rounded-lg border border-theme-control-border bg-theme-card sm:size-10",
+          agentIconColorClass(agent.iconTone),
+        )}>
+          <AgentCatalogIcon agent={agent} className="size-[19px]" fallbackSize={19} />
         </span>
         <span className="min-w-0">
           <span className="flex flex-wrap items-center gap-2">
