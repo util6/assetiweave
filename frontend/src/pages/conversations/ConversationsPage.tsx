@@ -4,9 +4,7 @@ import {
   AppWindow,
   ArrowDownWideNarrow,
   ArrowLeft,
-  Check,
   ChevronRight,
-  Copy,
   Download,
   Folder,
   GitMerge,
@@ -15,7 +13,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
-  Scissors,
   Settings,
   X,
 } from "lucide-react";
@@ -28,7 +25,13 @@ import {
   ToolbarTextButton,
 } from "../../components/common/DataToolbar";
 import { PageMetrics } from "../../components/common/PageMetrics";
-import { RenderSafeScrollSurface } from "../../components/common/rendering/RenderSafeScrollSurface";
+import {
+  RenderActivityProvider,
+  RenderSafeScrollSurface,
+  VirtualizedCollection,
+  renderingFlags,
+  type VirtualizedCollectionHandle,
+} from "../../components/common/rendering";
 import { PathPickerInput } from "../../components/common/PathPickerInput";
 import {
   AppShortcutIconForShortcut,
@@ -37,15 +40,20 @@ import {
 import type { NotificationMessage } from "../../components/notifications/NotificationBanner";
 import {
   buildConversationContentBlocks,
-  buildConversationDisplayNodes,
   conversationCardColor,
   conversationCardLabel,
   conversationCardDomId,
-  ConversationContentCards,
   DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
   type ConversationContentType,
   type ConversationContentVisibility,
 } from "../../components/conversations/ConversationContentCards";
+import {
+  buildConversationBlockTurnIndex,
+  buildConversationTurnPresentations,
+  collectConversationTurnBlocks,
+  ConversationTurn,
+} from "../../components/conversations/ConversationTurn";
+import { DEFAULT_TRANSLATION_SETTINGS, useConversationContentController } from "../../components/conversations/useConversationContentController";
 import { MarkdownContent } from "../../components/conversations/ConversationMarkdown";
 import {
   ConversationCardKindIcon,
@@ -62,6 +70,7 @@ import { ConversationImportDialog } from "../../components/conversations/Convers
 import {
   ConversationLoadingState,
   ConversationPreviewLoadingState,
+  ConversationTurnSkeleton,
 } from "../../components/conversations/ConversationSkeleton";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
@@ -2611,43 +2620,52 @@ export function QuestionPreview({
   visibility?: ConversationContentVisibility;
 }) {
   const title = question.question.title || firstLine(question.question.question_text, t);
-  const [copiedPromptTurnId, setCopiedPromptTurnId] = useState<string | null>(null);
   const [pickingOutputRoot, setPickingOutputRoot] = useState(false);
-  const copiedPromptResetTimerRef = useRef<number | null>(null);
   const activeBlockId = activeSearchTarget?.questionId === question.question.id ? activeSearchTarget.blockId : null;
-
-  useEffect(
-    () => () => {
-      clearCopiedResetTimer(copiedPromptResetTimerRef);
-    },
-    [],
+  const previewScrollRef = useRef<HTMLDivElement>(null);
+  const virtualizedCollectionRef = useRef<VirtualizedCollectionHandle>(null);
+  const turnModels = useMemo(() => buildConversationTurnPresentations(question), [question]);
+  const contentController = useConversationContentController({
+    blocks: collectConversationTurnBlocks(turnModels),
+    onCopyError,
+    recordKind,
+    scopeKey: question.question.id,
+    t,
+    translationSettings: translationSettings ?? DEFAULT_TRANSLATION_SETTINGS,
+  });
+  const blockTurnIndex = useMemo(() => buildConversationBlockTurnIndex(turnModels), [turnModels]);
+  const activeTurnId = activeBlockId ? blockTurnIndex.get(activeBlockId) ?? null : null;
+  const [focusedTurnId, setFocusedTurnId] = useState<string | null>(null);
+  const eagerKeys = useMemo(
+    () => activeTurnId ? new Set([activeTurnId]) : new Set<string>(),
+    [activeTurnId],
+  );
+  const pinnedKeys = useMemo(
+    () => new Set([activeTurnId, focusedTurnId].filter((value): value is string => Boolean(value))),
+    [activeTurnId, focusedTurnId],
   );
 
   useEffect(() => {
-    if (!activeBlockId) return;
-    const frameId = window.requestAnimationFrame(() => {
+    if (!activeTurnId) return;
+    virtualizedCollectionRef.current?.scrollToKey(activeTurnId, {
+      align: "center",
+      behavior: "auto",
+    });
+  }, [activeTurnId]);
+
+  const handleTurnReady = useCallback((turnId: string) => {
+    if (turnId !== activeTurnId || !activeBlockId) return;
+    window.requestAnimationFrame(() => {
       document
         .getElementById(conversationCardDomId(activeBlockId))
         ?.scrollIntoView?.({ behavior: "auto", block: "center" });
     });
-    return () => window.cancelAnimationFrame(frameId);
-  }, [activeBlockId]);
+  }, [activeBlockId, activeTurnId]);
 
-  async function handleCopyUserPrompt(turnId: string, value: string) {
-    try {
-      await writeClipboardText(value);
-      clearCopiedResetTimer(copiedPromptResetTimerRef);
-      setCopiedPromptTurnId(turnId);
-      copiedPromptResetTimerRef.current = window.setTimeout(() => {
-        setCopiedPromptTurnId((current) => (current === turnId ? null : current));
-        copiedPromptResetTimerRef.current = null;
-      }, 1400);
-    } catch (error) {
-      onCopyError?.(
-        t("conversation.content.copyFailed", { message: errorMessage(error) }),
-      );
-    }
-  }
+  const handlePreviewFocus = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
+    const turn = (event.target as HTMLElement).closest<HTMLElement>("[data-conversation-turn-id]");
+    setFocusedTurnId(turn?.dataset.conversationTurnId ?? null);
+  }, []);
 
   async function handlePickOutputRoot() {
     setPickingOutputRoot(true);
@@ -2691,122 +2709,60 @@ export function QuestionPreview({
           </div>
         </div>
       </header>
-      <RenderSafeScrollSurface className="min-h-0 flex-1">
-        <div className="render-safe-scroll-content px-5 py-5">
-          {question.turns.map((turn, index) => {
-          const usesStructuredContent = Boolean(question.cards && question.content_nodes);
-          const turnParts = usesStructuredContent
-            ? []
-            : question.parts.filter((part) => part.turn_id === turn.id);
-          const displayNodes = usesStructuredContent
-            ? buildConversationDisplayNodes(
-                question.cards ?? [],
-                question.content_nodes?.filter((node) => node.turn_id === turn.id) ?? [],
-              )
-            : undefined;
-          const blocks = displayNodes
-            ? []
-            : buildConversationContentBlocks(
-                turnParts,
-                question.cards?.filter((card) => turnParts.some((part) => part.id === card.part_id)),
-              );
-          const hasContent = displayNodes ? displayNodes.length > 0 : blocks.length > 0;
-          const promptBlockId = `${turn.id}-question`;
-          const promptHighlighted = activeBlockId === promptBlockId;
-          return (
-            <section className="mb-6" key={turn.id}>
-              <div
-                className={`conversation-prompt-block scroll-mt-32 rounded-xl border border-primary/30 bg-primary/[0.055] px-4 py-3 transition-shadow ${
-                  promptHighlighted ? "ring-2 ring-primary/70 shadow-[0_0_0_4px_rgb(var(--color-primary)/0.16)]" : ""
-                }`}
-                data-conversation-card-id={promptBlockId}
-                id={conversationCardDomId(promptBlockId)}
-              >
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <h3 className="flex items-center gap-2 text-label-caps text-primary">
-                    <span className="size-2 rounded-full bg-primary" />
-                    {t("conversation.question.userPrompt")}
-                  </h3>
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="select-text rounded-md border border-primary/25 bg-theme-card/45 px-1.5 py-0.5 font-mono text-code-sm normal-case text-on-surface-muted"
-                      title={promptBlockId}
-                    >
-                      {conversationIdFragment(promptBlockId)}
-                    </span>
-                    {index > 0 && onSplit ? (
-                      <ToolbarTextButton icon={<Scissors size={15} />} label={t("conversation.question.splitHere")} onClick={() => void onSplit(question, turn.id)} />
-                    ) : null}
-                    <PromptCopyButton
-                      copied={copiedPromptTurnId === turn.id}
-                      onClick={() => void handleCopyUserPrompt(turn.id, turn.user_text)}
-                      t={t}
-                    />
-                  </div>
-                </div>
-                <MarkdownContent value={turn.user_text} />
-              </div>
-              <div className="mt-3 pl-3">
-                <h3 className="mb-3 text-label-caps text-on-surface-muted">{t("conversation.question.parts")}</h3>
-                {!hasContent ? (
-                  <EmptyPanel>{t("conversation.markdown.empty")}</EmptyPanel>
-                ) : (
-                  <ConversationContentCards
-                    activeBlockId={activeBlockId}
-                    blocks={blocks}
-                    colors={contentCardColors}
-                    nodes={displayNodes}
-                    onCopyError={onCopyError}
-                    recordKind={recordKind}
-                    resultPreviewLineLimit={resultPreviewLineLimit}
-                    t={t}
-                    translationSettings={translationSettings}
-                    visibility={visibility}
-                  />
-                )}
-              </div>
-            </section>
-          );
-          })}
-        </div>
+      <RenderSafeScrollSurface
+        className="min-h-0 flex-1"
+        onFocusCapture={handlePreviewFocus}
+        ref={previewScrollRef}
+      >
+        <RenderActivityProvider scrollElementRef={previewScrollRef}>
+          <div className="render-safe-scroll-content px-5 py-5">
+            <VirtualizedCollection
+              contentVisibilityContainmentEnabled={renderingFlags.contentVisibilityContainment}
+              deferredRenderingEnabled={renderingFlags.deferredSkeletonRendering && turnModels.length >= 12}
+              eagerKeys={eagerKeys}
+              enabled={renderingFlags.conversationTurnVirtualization}
+              estimateSize={420}
+              fallback={() => <ConversationTurnSkeleton />}
+              getItemKey={(model) => model.turn.id}
+              gap={0}
+              items={turnModels}
+              minItems={12}
+              onItemReady={handleTurnReady}
+              pinnedKeys={pinnedKeys}
+              ref={virtualizedCollectionRef}
+              renderItem={(model, index) => (
+                <ConversationTurn
+                  activeBlockId={activeBlockId}
+                  colors={contentCardColors}
+                  controller={contentController}
+                  index={index}
+                  model={model}
+                  onCopyError={onCopyError}
+                  onSplit={onSplit ? (turnId) => void onSplit(question, turnId) : undefined}
+                  recordKind={recordKind}
+                  resultPreviewLineLimit={resultPreviewLineLimit}
+                  t={t}
+                  translationSettings={translationSettings}
+                  visibility={visibility}
+                />
+              )}
+              scrollElementRef={previewScrollRef}
+              size="tall"
+            />
+          </div>
+        </RenderActivityProvider>
       </RenderSafeScrollSurface>
     </div>
   );
 }
 
-function PromptCopyButton({
-  copied,
-  onClick,
-  t,
-}: {
-  copied: boolean;
-  onClick: () => void;
-  t: Translator;
-}) {
-  const label = copied
-    ? t("conversation.content.copied")
-    : t("conversation.question.copyPrompt");
-
-  return (
-    <button
-      aria-label={label}
-      className="inline-grid size-[1em] shrink-0 place-items-center rounded-[3px] text-label-caps text-primary/80 transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
-      onClick={onClick}
-      title={label}
-      type="button"
-    >
-      {copied ? <Check className="size-[1em]" /> : <Copy className="size-[1em]" />}
-    </button>
-  );
+function questionOriginLabel(origin: string, t: Translator) {
+  const key = `conversation.question.origin.${origin}` as TranslationKey;
+  return t(key);
 }
 
 function EmptyPanel({ children }: { children: ReactNode }) {
   return <div className="conversation-empty-state m-2 rounded-2xl p-6 text-center text-body-sm text-on-surface-variant">{children}</div>;
-}
-
-function questionOriginLabel(origin: string, t: Translator) {
-  const key = `conversation.question.origin.${origin}` as TranslationKey;
-  return t(key);
 }
 
 function firstLine(value: string, t: Translator) {
@@ -2828,19 +2784,6 @@ export function preferredConversationQuestionId(
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
-}
-
-function clearCopiedResetTimer(timerRef: { current: number | null }) {
-  if (timerRef.current === null) return;
-  window.clearTimeout(timerRef.current);
-  timerRef.current = null;
-}
-
-async function writeClipboardText(value: string) {
-  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-    throw new Error("Clipboard API is unavailable");
-  }
-  await navigator.clipboard.writeText(value);
 }
 
 function rememberDismissedConversationSyncProgressTask(

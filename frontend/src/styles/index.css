@@ -1263,3 +1263,8 @@
 .deferred-render-boundary[data-render-state="ready"] {
   min-block-size: 0;
 }
+
+.render-safe-content {
+  content-visibility: auto;
+  contain-intrinsic-size: auto var(--render-estimated-block-size);
+}

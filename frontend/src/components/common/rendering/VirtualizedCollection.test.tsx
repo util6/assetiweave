@@ -118,6 +118,12 @@ describe("VirtualizedCollection", () => {
       enabled: false,
     })).toThrow(/duplicate/i);
     cleanup();
+    renderCollection({
+      collectionItems: items.slice(0, 2),
+      enabled: false,
+    });
+    expect(document.querySelectorAll('[data-render-state="ready"]')).toHaveLength(2);
+    cleanup();
     expect(() => renderCollection({
       collectionItems: [{ id: "", label: "empty" }],
       enabled: false,

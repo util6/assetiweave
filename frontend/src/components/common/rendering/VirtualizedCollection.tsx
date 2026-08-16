@@ -31,6 +31,8 @@ export interface VirtualizedCollectionHandle {
 
 export interface VirtualizedCollectionProps<Item> {
   className?: string;
+  contentVisibilityContainmentEnabled?: boolean;
+  deferredRenderingEnabled?: boolean;
   eagerKeys?: ReadonlySet<string>;
   enabled?: boolean;
   estimateSize?: number | ((item: Item, index: number) => number);
@@ -99,6 +101,8 @@ function priorityForVirtualItem(
 function VirtualizedCollectionInner<Item>(
   {
     className,
+    contentVisibilityContainmentEnabled = true,
+    deferredRenderingEnabled = true,
     eagerKeys,
     enabled = true,
     estimateSize,
@@ -179,16 +183,20 @@ function VirtualizedCollectionInner<Item>(
       }
       const element = [...(scrollElementRef.current?.querySelectorAll<HTMLElement>("[data-virtual-item-key]") ?? [])]
         .find((candidate) => candidate.dataset.virtualItemKey === key);
-      element?.scrollIntoView({
-        block: options.align === "end" ? "end" : options.align === "start" ? "start" : "center",
-        behavior: options.behavior ?? "auto",
-      });
+      if (element && typeof element.scrollIntoView === "function") {
+        element.scrollIntoView({
+          block: options.align === "end" ? "end" : options.align === "start" ? "start" : "center",
+          behavior: options.behavior ?? "auto",
+        });
+      }
       return Boolean(element);
     },
   }), [keyToIndex, scrollElementRef, shouldVirtualize, virtualizer]);
 
   const renderBoundary = useCallback((item: Item, index: number, key: string, priority?: RenderPriority) => (
     <DeferredSkeletonBoundary
+      contentVisibilityContainment={contentVisibilityContainmentEnabled}
+      enabled={deferredRenderingEnabled && enabled}
       forceReady={limitedEagerKeys.has(key)}
       fallback={fallback?.(item, index)}
       itemKey={key}

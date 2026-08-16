@@ -12,6 +12,8 @@ export { createRenderVisibilityRegistry } from "./RenderVisibilityRegistry";
 export type { RenderVisibilityRegistry } from "./RenderVisibilityRegistry";
 export { VirtualizedCollection, overscanForPhase } from "./VirtualizedCollection";
 export type { VirtualizedCollectionHandle, VirtualizedCollectionProps } from "./VirtualizedCollection";
+export { renderingFlags } from "./renderingFeatureFlags";
+export type { RenderingFeatureFlags } from "./renderingFeatureFlags";
 export {
   SKELETON_BLOCK_SIZE_PX,
   type DeferredRenderState,

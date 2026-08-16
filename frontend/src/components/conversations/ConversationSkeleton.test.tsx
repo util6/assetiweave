@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ConversationLoadingState,
   ConversationPreviewLoadingState,
+  ConversationTurnSkeleton,
   ConversationsPageSkeleton,
 } from "./ConversationSkeleton";
 
@@ -24,5 +25,12 @@ describe("ConversationSkeleton", () => {
     expect((previewHtml.match(/role="status"/g) ?? []).length).toBe(1);
     expect(listHtml).toContain("Loading session");
     expect(previewHtml).toContain("Loading preview");
+  });
+
+  it("composes a turn-level skeleton with stable content geometry", () => {
+    const html = renderToStaticMarkup(<ConversationTurnSkeleton />);
+    expect(html).toContain("conversation-turn-skeleton");
+    expect(html).toContain("aurora-skeleton");
+    expect((html.match(/aria-hidden="true"/g) ?? []).length).toBeGreaterThanOrEqual(1);
   });
 });

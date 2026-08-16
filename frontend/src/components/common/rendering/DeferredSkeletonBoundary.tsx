@@ -13,6 +13,7 @@ import {
 export interface DeferredSkeletonBoundaryProps {
   children: ReactNode;
   className?: string;
+  contentVisibilityContainment?: boolean;
   enabled?: boolean;
   fallback?: ReactNode;
   forceReady?: boolean;
@@ -35,6 +36,7 @@ function DefaultDeferredSkeleton({ size }: { size: SkeletonBlockSize }): React.R
 export function DeferredSkeletonBoundary({
   children,
   className,
+  contentVisibilityContainment = true,
   enabled = true,
   fallback,
   forceReady = false,
@@ -150,7 +152,11 @@ export function DeferredSkeletonBoundary({
   return (
     <div
       aria-hidden={renderState === "ready" ? undefined : true}
-      className={cn("deferred-render-boundary", renderState === "ready" && "render-safe-content", className)}
+      className={cn(
+        "deferred-render-boundary",
+        renderState === "ready" && contentVisibilityContainment && "render-safe-content",
+        className,
+      )}
       data-render-item-key={itemKey}
       data-render-state={renderState}
       data-testid="deferred-render-boundary"

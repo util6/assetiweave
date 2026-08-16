@@ -1,18 +1,15 @@
 import { Check, CheckCircle2, Copy, GitCompareArrows, Languages, XCircle } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { Translator } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
 import {
-  checkConversationTranslationAvailability,
   updateConversationPartTranslation,
   type AiExecutionPhase,
-  type AiExecutionTaskSnapshot,
   type ConversationCardTranslationRequest,
   type OpencodeTranslationAvailability,
   type OpencodeTranslationResult,
   type ConversationPartTranslationUpdateRequest,
 } from "../../services/cardTranslation";
-import { useOptionalAiExecutionTasks } from "../../app/backgroundTasks/AiExecutionTaskProvider";
 import { revealPath } from "../../services/catalog";
 import type {
   ConversationCard,
@@ -46,19 +43,19 @@ export type ConversationContentType = string;
 
 export type ConversationContentVisibility = Record<ConversationContentType, boolean>;
 export type ConversationContentFormat = "plain" | "markdown";
-type TranslationAvailabilityStatus = "idle" | "checking" | "available" | "unavailable";
-type TranslationUiError = {
-  kind: "execution" | "persistence";
-  message: string;
-};
+import {
+  useConversationContentController,
+  type ConversationContentController,
+  type ConversationTranslationTaskController,
+  type TranslationAvailabilityStatus,
+  type TranslationUiError,
+} from "./useConversationContentController";
 
-export interface ConversationTranslationTaskController {
-  tasks: AiExecutionTaskSnapshot[];
-  startTranslation: (
-    request: ConversationCardTranslationRequest,
-  ) => Promise<AiExecutionTaskSnapshot>;
-  cancelTask: (taskId: string) => Promise<AiExecutionTaskSnapshot>;
-}
+export type {
+  ConversationTranslationTaskController,
+  TranslationAvailabilityStatus,
+  TranslationUiError,
+} from "./useConversationContentController";
 
 export interface ConversationContentBlock {
   id: string;
@@ -179,6 +176,7 @@ export function ConversationContentCards({
   activeBlockId,
   blocks,
   colors = DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
+  controller,
   onCopyError,
   onTranslationError,
   nodes,
@@ -195,6 +193,7 @@ export function ConversationContentCards({
   activeBlockId?: string | null;
   blocks: ConversationContentBlock[];
   colors?: ConversationContentCardColorSettings;
+  controller?: ConversationContentController;
   onCopyError?: (message: string) => void;
   onTranslationError?: (message: string) => void;
   nodes?: ConversationDisplayNode[];
@@ -208,8 +207,6 @@ export function ConversationContentCards({
   translator?: (request: ConversationCardTranslationRequest) => Promise<OpencodeTranslationResult>;
   visibility: ConversationContentVisibility;
 }) {
-  const globalTranslationTasks = useOptionalAiExecutionTasks();
-  const taskController = translationTaskController ?? globalTranslationTasks;
   const displayNodes: ConversationDisplayNode[] = nodes
     ?? blocks.map((block) => ({ type: "card", turnId: "", block }));
   const visibleNodes = displayNodes.flatMap((node): ConversationDisplayNode[] => {
@@ -234,230 +231,20 @@ export function ConversationContentCards({
       ? [node.block]
       : [...(node.command ? [node.command] : []), ...node.results]
   ));
-  const [copiedBlockId, setCopiedBlockId] = useState<string | null>(null);
-  const [translatedBlocks, setTranslatedBlocks] = useState<Record<string, string>>({});
-  const [translationErrors, setTranslationErrors] = useState<Record<string, TranslationUiError>>({});
-  const [translatingBlockIds, setTranslatingBlockIds] = useState<Set<string>>(new Set());
-  const [translationTaskByBlockId, setTranslationTaskByBlockId] =
-    useState<Record<string, string>>({});
-  const [translationAvailability, setTranslationAvailability] =
-    useState<TranslationAvailabilityStatus>("idle");
-  const copiedResetTimerRef = useRef<number | null>(null);
-  const handledTerminalTaskIdsRef = useRef(new Set<string>());
-  const mountedRef = useRef(true);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      clearCopiedResetTimer(copiedResetTimerRef);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (visibleBlocks.length === 0) return;
-
-    let cancelled = false;
-    setTranslationAvailability("checking");
-    const checkAvailability = translationAvailabilityChecker ?? (() =>
-      checkConversationTranslationAvailability({
-        agentId: translationSettings.agentId,
-        model: translationSettings.model,
-        provider: translationSettings.provider,
-      }));
-    checkAvailability()
-      .then((availability) => {
-        if (cancelled) return;
-        setTranslationAvailability(availability.available ? "available" : "unavailable");
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setTranslationAvailability("unavailable");
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    translationAvailabilityChecker,
-    translationSettings.agentId,
-    translationSettings.model,
-    translationSettings.provider,
-    visibleBlocks.length,
-  ]);
-
-  useEffect(() => {
-    if (!taskController) return;
-    for (const [blockId, taskId] of Object.entries(translationTaskByBlockId)) {
-      const task = taskController.tasks.find((candidate) => candidate.id === taskId);
-      if (!task || !isTerminalAiExecutionTask(task)) continue;
-      if (handledTerminalTaskIdsRef.current.has(task.id)) continue;
-      handledTerminalTaskIdsRef.current.add(task.id);
-
-      setTranslationTaskByBlockId((current) => {
-        if (current[blockId] !== taskId) return current;
-        const next = { ...current };
-        delete next[blockId];
-        return next;
-      });
-
-      if (task.state === "cancelled") {
-        setTranslationErrors((current) => removeRecordKey(current, blockId));
-        continue;
-      }
-
-      if (task.state === "failed") {
-        const message = task.error?.message ?? t("conversation.content.translationUnknownError");
-        setTranslationErrors((current) => ({
-          ...current,
-          [blockId]: { kind: "execution", message },
-        }));
-        onTranslationError?.(t("conversation.content.translationFailed", { message }));
-        continue;
-      }
-
-      const translatedText = task.result?.text;
-      if (!translatedText) {
-        const message = t("conversation.content.translationUnknownError");
-        setTranslationErrors((current) => ({
-          ...current,
-          [blockId]: { kind: "execution", message },
-        }));
-        onTranslationError?.(t("conversation.content.translationFailed", { message }));
-        continue;
-      }
-
-      setTranslatedBlocks((current) => ({ ...current, [blockId]: translatedText }));
-      const block = visibleBlocks.find((candidate) => candidate.id === blockId);
-      if (!block?.partId) continue;
-      void translationSaver({
-        partId: block.partId,
-        recordKind,
-        translatedText,
-      }).catch((error) => {
-        if (!mountedRef.current) return;
-        const message = errorMessage(error);
-        setTranslationErrors((current) => ({
-          ...current,
-          [blockId]: { kind: "persistence", message },
-        }));
-        onTranslationError?.(
-          t("conversation.content.translationSaveFailed", { message }),
-        );
-      });
-    }
-  }, [
+  const fallbackController = useConversationContentController({
+    blocks: visibleBlocks,
+    enabled: controller == null,
+    onCopyError,
     onTranslationError,
     recordKind,
     t,
-    taskController,
+    translationAvailabilityChecker,
     translationSaver,
-    translationTaskByBlockId,
-    visibleBlocks,
-  ]);
-
-  async function handleCopyBlock(block: ConversationContentBlock) {
-    try {
-      await writeClipboardText(block.text);
-      clearCopiedResetTimer(copiedResetTimerRef);
-      setCopiedBlockId(block.id);
-      copiedResetTimerRef.current = window.setTimeout(() => {
-        setCopiedBlockId((current) => (current === block.id ? null : current));
-        copiedResetTimerRef.current = null;
-      }, 1400);
-    } catch (error) {
-      onCopyError?.(
-        t("conversation.content.copyFailed", { message: errorMessage(error) }),
-      );
-    }
-  }
-
-  async function handleTranslateBlock(block: ConversationContentBlock) {
-    if (translationAvailability !== "available") return;
-
-    setTranslatingBlockIds((current) => new Set(current).add(block.id));
-    setTranslationErrors((current) => removeRecordKey(current, block.id));
-
-    const request: ConversationCardTranslationRequest = {
-      agentId: translationSettings.agentId,
-      model: translationSettings.model,
-      promptTemplate: translationSettings.promptTemplate,
-      provider: translationSettings.provider,
-      targetLanguage: translationSettings.targetLanguage,
-      text: block.text,
-    };
-
-    try {
-      if (taskController) {
-        const snapshot = await taskController.startTranslation(request);
-        handledTerminalTaskIdsRef.current.delete(snapshot.id);
-        setTranslationTaskByBlockId((current) => ({
-          ...current,
-          [block.id]: snapshot.id,
-        }));
-        return;
-      }
-
-      if (!translator) {
-        throw new Error("AI execution task provider is unavailable");
-      }
-      const result = await translator(request);
-      setTranslatedBlocks((current) => ({
-        ...current,
-        [block.id]: result.translated_text,
-      }));
-      if (block.partId) {
-        try {
-          await translationSaver({
-            partId: block.partId,
-            recordKind,
-            translatedText: result.translated_text,
-          });
-        } catch (error) {
-          const message = errorMessage(error);
-          setTranslationErrors((current) => ({
-            ...current,
-            [block.id]: { kind: "persistence", message },
-          }));
-          onTranslationError?.(
-            t("conversation.content.translationSaveFailed", { message }),
-          );
-        }
-      }
-    } catch (error) {
-      const message = errorMessage(error);
-      setTranslationErrors((current) => ({
-        ...current,
-        [block.id]: { kind: "execution", message },
-      }));
-      onTranslationError?.(
-        t("conversation.content.translationFailed", { message }),
-      );
-    } finally {
-      setTranslatingBlockIds((current) => {
-        const next = new Set(current);
-        next.delete(block.id);
-        return next;
-      });
-    }
-  }
-
-  async function handleCancelTranslation(blockId: string) {
-    const taskId = translationTaskByBlockId[blockId];
-    if (!taskController || !taskId) return;
-    try {
-      await taskController.cancelTask(taskId);
-    } catch (error) {
-      const message = errorMessage(error);
-      setTranslationErrors((current) => ({
-        ...current,
-        [blockId]: { kind: "execution", message },
-      }));
-      onTranslationError?.(
-        t("conversation.content.translationFailed", { message }),
-      );
-    }
-  }
+    translationSettings,
+    translationTaskController,
+    translator,
+  });
+  const contentController = controller ?? fallbackController;
 
   if (visibleBlocks.length === 0) {
     return (
@@ -496,30 +283,25 @@ export function ConversationContentCards({
   );
 
   function renderContentCard(block: ConversationContentBlock) {
-    const translationTaskId = translationTaskByBlockId[block.id];
-    const translationTask = translationTaskId
-      ? taskController?.tasks.find((task) => task.id === translationTaskId)
-      : undefined;
-    const translationTaskActive = translationTask
-      ? !isTerminalAiExecutionTask(translationTask)
-      : false;
     return (
       <ConversationContentCard
         block={block}
         colors={colors}
-        copied={copiedBlockId === block.id}
+        copied={contentController.isCopied(block.id)}
+        expanded={contentController.expandedBlockIds.has(block.id)}
         highlighted={activeBlockId === block.id || block.legacyAnchorIds?.includes(activeBlockId ?? "") === true}
         key={block.id}
-        onCopy={() => void handleCopyBlock(block)}
-        onCancelTranslation={() => void handleCancelTranslation(block.id)}
-        onTranslate={() => void handleTranslateBlock(block)}
+        onCopy={() => void contentController.copyBlock(block)}
+        onCancelTranslation={() => void contentController.cancelTranslation(block.id)}
+        onToggleExpanded={() => contentController.toggleExpanded(block.id)}
+        onTranslate={() => void contentController.translateBlock(block)}
         resultPreviewLineLimit={resultPreviewLineLimit}
         t={t}
-        translatedText={translatedBlocks[block.id] ?? block.translatedText ?? undefined}
-        translating={translatingBlockIds.has(block.id) || translationTaskActive}
-        translationAvailability={translationAvailability}
-        translationError={translationErrors[block.id]}
-        translationPhase={translationTaskActive ? translationTask?.phase : undefined}
+        translatedText={contentController.getTranslatedText(block)}
+        translating={contentController.isTranslating(block.id)}
+        translationAvailability={contentController.translationAvailability}
+        translationError={contentController.getTranslationError(block.id)}
+        translationPhase={contentController.getTranslationPhase(block.id)}
         translationTargetLanguage={translationSettings.targetLanguage}
       />
     );
@@ -538,9 +320,11 @@ function ConversationContentCard({
   block,
   colors,
   copied,
+  expanded,
   highlighted,
   onCancelTranslation,
   onCopy,
+  onToggleExpanded,
   onTranslate,
   resultPreviewLineLimit,
   t,
@@ -554,9 +338,11 @@ function ConversationContentCard({
   block: ConversationContentBlock;
   colors: ConversationContentCardColorSettings;
   copied: boolean;
+  expanded: boolean;
   highlighted: boolean;
   onCancelTranslation: () => void;
   onCopy: () => void;
+  onToggleExpanded: () => void;
   onTranslate: () => void;
   resultPreviewLineLimit: number;
   t: Translator;
@@ -567,7 +353,6 @@ function ConversationContentCard({
   translationPhase?: AiExecutionPhase;
   translationTargetLanguage: ConversationTranslationTargetLanguage;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const renderer = block.renderer ?? legacyRenderer(block.type, block.format);
   const { definitions } = useConversationCardKindRegistry();
   const definition = block.kind && block.kind === block.type ? definitions.get(block.kind) : undefined;
@@ -696,7 +481,7 @@ function ConversationContentCard({
             <button
               aria-expanded={expanded}
               className="rounded-xl border border-theme-control-border bg-theme-control/80 px-2.5 py-1 text-body-sm font-semibold text-theme-control-fg transition-[transform,background-color,border-color,color] duration-200 hover:-translate-y-px hover:bg-theme-control-hover hover:text-on-surface active:translate-y-0"
-              onClick={() => setExpanded((current) => !current)}
+              onClick={onToggleExpanded}
               type="button"
             >
               {expanded
@@ -1078,10 +863,6 @@ function translationButtonLabel({
 
 function translationPhaseLabel(phase: AiExecutionPhase, t: Translator) {
   return t(`conversation.content.translationPhase.${phase}` as TranslationKey);
-}
-
-function isTerminalAiExecutionTask(task: AiExecutionTaskSnapshot) {
-  return task.state === "succeeded" || task.state === "failed" || task.state === "cancelled";
 }
 
 function removeRecordKey<T>(record: Record<string, T>, key: string) {

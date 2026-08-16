@@ -45,6 +45,23 @@ export function ConversationPreviewSkeleton(): React.ReactElement {
   );
 }
 
+export function ConversationTurnSkeleton(): React.ReactElement {
+  return (
+    <SkeletonSurface className="conversation-turn-skeleton grid gap-4 rounded-xl p-4">
+      <div className="flex items-center justify-between gap-3">
+        <Skeleton className="h-3 w-28 rounded-full" />
+        <Skeleton className="h-3 w-20 rounded-full" />
+      </div>
+      <SkeletonText lines={3} />
+      <Skeleton className="h-5 w-36 rounded-md" />
+      <SkeletonSurface className="grid gap-3 rounded-xl p-3">
+        <Skeleton className="h-4 w-2/3 rounded-md" />
+        <SkeletonText lines={5} />
+      </SkeletonSurface>
+    </SkeletonSurface>
+  );
+}
+
 export function ConversationLoadingState({ label }: { label: string }): React.ReactElement {
   return (
     <AppSkeleton label={label} layout="list" scope="content">
