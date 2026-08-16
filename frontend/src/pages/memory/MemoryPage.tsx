@@ -24,7 +24,6 @@ import {
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
 import { EmptyState } from "../../components/foundation/EmptyState";
 import { PageHeader } from "../../components/foundation/PageHeader";
-import { MemoryLibraryContentSkeleton } from "../../components/foundation/Skeleton";
 import {
   MemoryItemEditorDialog,
   type MemoryEditorMode,
@@ -39,6 +38,7 @@ import {
 import { MemoryDreamWorkspace } from "../../components/memory/MemoryDreamWorkspace";
 import { MemoryOverviewWorkspace } from "../../components/memory/MemoryOverviewWorkspace";
 import { MemoryRecallWorkspace } from "../../components/memory/MemoryRecallWorkspace";
+import { MemoryLibraryContentSkeleton } from "../../components/memory/MemorySkeletons";
 import { Button } from "../../components/ui/button";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
@@ -376,10 +376,7 @@ function MemoryLibraryPage({ onEvidenceOpen }: { onEvidenceOpen?: (evidence: Mem
       />
 
       {loading ? (
-        <div aria-busy="true" className="min-h-0 flex-1" role="status">
-          <MemoryLibraryContentSkeleton />
-          <span className="sr-only">{t("memory.library.loading")}</span>
-        </div>
+        <MemoryLibraryContentSkeleton label={t("memory.library.loading")} />
       ) : error ? (
         <EmptyState
           actions={

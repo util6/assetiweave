@@ -5,7 +5,7 @@ import type { Translator } from "../../i18n/I18nProvider";
 import { getMemoryOverview } from "../../services/memory";
 import type { MemoryEvidenceSnapshot, MemoryOverview } from "../../types/memory";
 import { EmptyState } from "../foundation/EmptyState";
-import { MemoryOverviewSkeleton } from "../foundation/Skeleton";
+import { MemoryOverviewSkeleton } from "./MemorySkeletons";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 
 export function MemoryOverviewWorkspace({
@@ -38,12 +38,7 @@ export function MemoryOverviewWorkspace({
     return <EmptyState description={t("memory.overview.browserDescription")} icon={<Brain size={20} />} title={t("memory.overview.browserTitle")} />;
   }
   if (overview === undefined) {
-    return (
-      <div aria-busy="true" className="min-h-0 flex-1" role="status">
-        <MemoryOverviewSkeleton />
-        <span className="sr-only">{t("common.loading")}</span>
-      </div>
-    );
+    return <MemoryOverviewSkeleton label={t("common.loading")} />;
   }
 
   return (

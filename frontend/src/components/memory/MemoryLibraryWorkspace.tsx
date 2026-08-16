@@ -12,7 +12,7 @@ import {
 import { Badge } from "../foundation/Badge";
 import { EmptyState } from "../foundation/EmptyState";
 import { Panel } from "../foundation/Panel";
-import { MemoryDetailSkeleton } from "../foundation/Skeleton";
+import { MemoryDetailSkeleton } from "./MemorySkeletons";
 import { Button } from "../ui/button";
 import { useI18n } from "../../i18n/I18nProvider";
 import type {
@@ -212,7 +212,10 @@ function MemoryDetailPanel({
       );
     }
     return (
-      <MemoryDetailSkeleton />
+      <div aria-busy="true" className="min-h-0" role="status">
+        <span className="sr-only">{t("memory.library.loading")}</span>
+        <MemoryDetailSkeleton />
+      </div>
     );
   }
 

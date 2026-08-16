@@ -265,7 +265,7 @@ describe("ConversationsPage sync scope", () => {
 
     expect(screen.queryByText("Export question")).toBeNull();
     expect(screen.getByText("Loading session...")).toBeTruthy();
-    expect(document.querySelector(".conversation-loading-state")).toBeTruthy();
+    expect(document.querySelector(".app-skeleton-root")).toBeTruthy();
 
     resolveSecondSession(secondConversationSessionDetail);
     await waitFor(() => expect(screen.getAllByText("Second question").length).toBeGreaterThan(0));

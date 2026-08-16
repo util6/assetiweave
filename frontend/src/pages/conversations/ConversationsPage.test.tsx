@@ -1154,8 +1154,8 @@ describe("MarkdownContent", () => {
     );
 
     expect(html).toContain('aria-busy="true"');
-    expect(html).toContain("conversation-loading-state");
-    expect(html).toContain("conversation-preview-loading");
+    expect(html).toContain("app-skeleton-root");
+    expect((html.match(/role=\"status\"/g) ?? []).length).toBe(2);
     expect(html).toContain("正在准备 Markdown 预览...");
     expect(html).not.toContain("border-dashed");
   });
@@ -1188,7 +1188,7 @@ describe("MarkdownContent", () => {
 
     expect(html).toContain("conversation-selection-state");
     expect(html).toContain("选择一个问题以查看 Markdown 预览。");
-    expect(html).not.toContain("conversation-preview-loading");
+    expect(html).not.toContain("app-skeleton-root");
   });
 
   it("collapses the question list so the selected question preview can use the full width", () => {

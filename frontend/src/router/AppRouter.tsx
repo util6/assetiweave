@@ -5,8 +5,9 @@ import { useSearchIndex } from "../app/backgroundTasks/SearchIndexProvider";
 import { useSkillBackup } from "../app/backgroundTasks/SkillBackupProvider";
 import { useMemoryTasks } from "../app/backgroundTasks/MemoryTaskProvider";
 import { SkillBackupBackgroundTaskIndicator } from "../components/backup/SkillBackupProgress";
+import { ConversationsPageSkeleton } from "../components/conversations/ConversationSkeleton";
 import { ConversationBackgroundTaskIndicator } from "../components/conversations/ConversationToolbarControls";
-import { PageSkeleton, type PageSkeletonKind } from "../components/foundation/Skeleton";
+import { AppSkeleton, type SkeletonLayoutName } from "../components/foundation/skeleton";
 import { useCatalogController } from "../hooks/catalog/useCatalogController";
 import { useI18n } from "../i18n/I18nProvider";
 import { headerTabLabel, subNavLabel } from "../i18n/navigation";
@@ -271,13 +272,11 @@ export function AppRouter() {
           <div className="relative min-h-0 flex-1">
             <RouteTransitionOverlay transition={routeTransition} />
             {manualRouteKey ? (
-              <Suspense fallback={<RouteLoadingState kind="manual" />}>
+              <Suspense fallback={<RouteLoadingState layout="list" />}>
                 <ManualPage routeKey={manualRouteKey} onBack={() => setManualRouteKey(null)} />
               </Suspense>
           ) : routeId === "conversations" || routeId === "web-records" ? (
-            <RouteSuspense
-              kind={routeId === "web-records" ? "web-records" : "conversations"}
-            >
+            <Suspense fallback={<ConversationsPageSkeleton label={t("common.loading")} />}>
               <ConversationsPage
                 activeSubNavId={activeSubNavId}
                 appShortcuts={catalog.appShortcuts}
@@ -294,9 +293,9 @@ export function AppRouter() {
                 onOpenSettings={openSettings}
                 recordKind={routeId === "web-records" ? "web" : "session"}
               />
-            </RouteSuspense>
+            </Suspense>
           ) : routeId === "skill-mounts" ? (
-            <RouteSuspense kind="mounts">
+            <RouteSuspense layout="columns">
               <SkillMountsPage
                 appShortcuts={catalog.appShortcuts}
                 assetMountStatuses={catalog.assetMountStatuses}
@@ -318,7 +317,7 @@ export function AppRouter() {
               />
             </RouteSuspense>
           ) : routeId === "skill-groups" ? (
-            <RouteSuspense kind="groups">
+            <RouteSuspense layout="columns">
               <SkillGroupsPage
                 appShortcuts={catalog.appShortcuts}
                 assetMountStatuses={catalog.assetMountStatuses}
@@ -342,11 +341,11 @@ export function AppRouter() {
               />
             </RouteSuspense>
           ) : routeId === "prompts-overview" ? (
-            <RouteSuspense kind="prompts">
+            <RouteSuspense layout="cards">
               <PromptOverviewPage onManualOpen={openCurrentManual} onReady={() => completeRouteTransition(routeTransition?.id)} />
             </RouteSuspense>
           ) : routeId === "sources" ? (
-            <RouteSuspense kind="sources">
+            <RouteSuspense layout="list">
               <SourcesPage
                 appShortcuts={catalog.appShortcuts}
                 assetMountStatuses={catalog.assetMountStatuses}
@@ -370,13 +369,13 @@ export function AppRouter() {
               />
             </RouteSuspense>
           ) : routeId === "memory" ? (
-            <Suspense fallback={<RouteLoadingState kind={memorySkeletonKind(activeSubNavId)} />}>
+            <Suspense fallback={<RouteLoadingState layout={memorySkeletonLayout(activeSubNavId)} />}>
               <MemoryPage activeSubNavId={activeSubNavId} onEvidenceOpen={handleMemoryEvidenceOpen} />
             </Suspense>
           ) : routeId === "under-construction" ? (
             <UnderConstructionPage featureLabel={underConstructionFeatureLabel} onManualOpen={openCurrentManual} routeKey={activeRouteKey} />
           ) : (
-            <RouteSuspense kind="catalog">
+            <RouteSuspense layout="list">
               <CatalogPage
                 catalog={catalog}
                 onManualOpen={openCurrentManual}
@@ -420,31 +419,28 @@ export function AppRouter() {
   );
 }
 
-function RouteLoadingState({ kind }: { kind: PageSkeletonKind }) {
+function RouteLoadingState({ layout }: { layout: SkeletonLayoutName }) {
   const { t } = useI18n();
 
-  return <PageSkeleton kind={kind} label={t("common.loading")} />;
+  return <AppSkeleton label={t("common.loading")} layout={layout} />;
 }
 
 function RouteSuspense({
   children,
-  kind,
+  layout,
 }: {
   children: ReactNode;
-  kind: PageSkeletonKind;
+  layout: SkeletonLayoutName;
 }) {
   return (
-    <Suspense fallback={<RouteLoadingState kind={kind} />}>
+    <Suspense fallback={<RouteLoadingState layout={layout} />}>
       {children}
     </Suspense>
   );
 }
 
-function memorySkeletonKind(activeSubNavId: string): "memory-library" | "memory-overview" | "memory-dreams" | "memory-recall" {
-  if (activeSubNavId === "library") return "memory-library";
-  if (activeSubNavId === "dreams") return "memory-dreams";
-  if (activeSubNavId === "recall") return "memory-recall";
-  return "memory-overview";
+function memorySkeletonLayout(activeSubNavId: string): SkeletonLayoutName {
+  return activeSubNavId === "overview" ? "cards" : "columns";
 }
 
 function errorMessage(error: unknown) {
@@ -462,19 +458,21 @@ function routeTransitionKind(
 ): RouteTransitionKind | null {
   switch (resolveNavigationRoute(navigationModel, headerTabId, subNavId)) {
     case "catalog":
-      return "catalog";
+      return "list";
     case "conversations":
-      return "conversations";
+      return "columns";
     case "prompts-overview":
-      return "prompts";
+      return "cards";
     case "sources":
-      return "sources";
+      return "list";
     case "skill-groups":
-      return "groups";
+      return "columns";
     case "skill-mounts":
-      return "mounts";
+      return "columns";
     case "web-records":
-      return "web-records";
+      return "columns";
+    case "memory":
+      return subNavId === "overview" ? "cards" : "columns";
     default:
       return null;
   }

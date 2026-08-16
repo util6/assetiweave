@@ -7,7 +7,7 @@ import { AssetToolbar, type AssetViewMode } from "../../components/assets/AssetT
 import { ToolbarMultiSelectDropdown, ToolbarSingleSelectDropdown, ToolbarSortDirectionButton } from "../../components/common/DataToolbar";
 import { PageMetrics } from "../../components/common/PageMetrics";
 import { PageHeader } from "../../components/foundation/PageHeader";
-import { ListContentSkeleton } from "../../components/foundation/Skeleton";
+import { AppSkeleton } from "../../components/foundation/skeleton";
 import { DeploymentPlanPanel } from "../../components/plans/DeploymentPlanPanel";
 import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
 import type { CatalogController } from "../../hooks/catalog/useCatalogController";
@@ -318,7 +318,7 @@ export function CatalogPage({
       />
 
       {catalog.loading ? (
-        <ListContentSkeleton label={t("common.loading")} rows={8} variant="asset" />
+        <AppSkeleton label={t("common.loading")} layout="list" layoutProps={{ rows: 8 }} scope="content" />
       ) : (
         <>
           <DeploymentPlanPanel plan={catalog.plan} />

@@ -27,7 +27,7 @@ import { QuickMountButtons } from "../../components/assets/QuickMountButtons";
 import { GroupBulkMountControls } from "../../components/groups/GroupBulkMountControls";
 import { GroupExclusiveMountControls, type GroupMountMode } from "../../components/groups/GroupExclusiveMountControls";
 import { PageHeader } from "../../components/foundation/PageHeader";
-import { WorkbenchContentSkeleton } from "../../components/foundation/Skeleton";
+import { AppSkeleton } from "../../components/foundation/skeleton";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { SkillGroupCreateDialog } from "../../components/groups/SkillGroupCreateDialog";
 import { SkillGroupExclusiveMountDialog } from "../../components/groups/SkillGroupExclusiveMountDialog";
@@ -562,7 +562,7 @@ export function SkillGroupsPage({
       )}
 
       {loading ? (
-        <WorkbenchContentSkeleton columns={3} label={t("common.loading")} />
+        <AppSkeleton label={t("common.loading")} layout="columns" layoutProps={{ columns: 3 }} scope="content" />
       ) : filteredGroups.length === 0 ? (
         <div className="aurora-empty-surface px-4 py-10 text-center text-body-md text-on-surface-variant">
           {t("group.empty")}

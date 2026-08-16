@@ -13,7 +13,7 @@ function TransitionProbe() {
   return (
     <>
       <button
-        onClick={() => startTransition("groups", "正在加载分组管理")}
+        onClick={() => startTransition("columns", "正在加载分组管理")}
         type="button"
       >
         切换分组
@@ -59,8 +59,8 @@ describe("RouteTransition", () => {
       const { completeTransition, startTransition, transition } = useRouteTransition({ durationMs: 300 });
       return (
         <>
-          <button onClick={() => startTransition("groups", "分组")} type="button">分组</button>
-          <button onClick={() => startTransition("sources", "来源")} type="button">来源</button>
+          <button onClick={() => startTransition("columns", "分组")} type="button">分组</button>
+          <button onClick={() => startTransition("list", "来源")} type="button">来源</button>
           <button onClick={() => completeTransition()} type="button">完成</button>
           <RouteTransitionOverlay transition={transition} />
         </>

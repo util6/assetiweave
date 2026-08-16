@@ -7,7 +7,7 @@ import { AssetToolbar, type AssetToolbarViewMode } from "../../components/assets
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
 import { ToolbarMultiSelectDropdown, ToolbarSingleSelectDropdown, ToolbarSortDirectionButton } from "../../components/common/DataToolbar";
 import { PageHeader } from "../../components/foundation/PageHeader";
-import { ListContentSkeleton } from "../../components/foundation/Skeleton";
+import { AppSkeleton } from "../../components/foundation/skeleton";
 import { SourceEditDialog } from "../../components/sources/SourceEditDialog";
 import { SkillAcquireDialog } from "../../components/sources/SkillAcquireDialog";
 import { SourceList } from "../../components/sources/SourceList";
@@ -403,7 +403,7 @@ export function SourcesPage({
       />
 
       {sources.loading ? (
-        <ListContentSkeleton label={t("common.loading")} rows={6} variant="source" />
+        <AppSkeleton label={t("common.loading")} layout="list" layoutProps={{ rows: 6 }} scope="content" />
       ) : (
         <SourceList
           appShortcuts={appShortcuts}

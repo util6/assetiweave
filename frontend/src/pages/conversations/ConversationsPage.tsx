@@ -58,6 +58,10 @@ import {
   type ConversationSyncProgressState,
 } from "../../components/conversations/ConversationToolbarControls";
 import { ConversationImportDialog } from "../../components/conversations/ConversationImportDialog";
+import {
+  ConversationLoadingState,
+  ConversationPreviewLoadingState,
+} from "../../components/conversations/ConversationSkeleton";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { PageHeader } from "../../components/foundation/PageHeader";
@@ -2471,57 +2475,6 @@ export function SessionQuestionWorkspace({
       </ColumnPanel>
       {previewPanel}
     </ResizableColumns>
-  );
-}
-
-export function ConversationLoadingState({ label }: { label: string }) {
-  return (
-    <div aria-busy="true" className="conversation-loading-state" role="status">
-      <div className="conversation-loading-status">
-        <span aria-hidden="true" className="conversation-loading-status-icon">
-          <RefreshCw size={15} />
-        </span>
-        <span className="text-body-sm font-semibold text-on-surface">{label}</span>
-      </div>
-      <div aria-hidden="true" className="conversation-loading-stack">
-        {Array.from({ length: 4 }, (_, index) => (
-          <div className="conversation-loading-card" key={index}>
-            <div className="flex items-center justify-between gap-3">
-              <span className="aurora-skeleton conversation-loading-line conversation-loading-line-title" />
-              <span className="aurora-skeleton conversation-loading-line conversation-loading-line-badge" />
-            </div>
-            <span className="aurora-skeleton conversation-loading-line conversation-loading-line-wide" />
-            <span className="aurora-skeleton conversation-loading-line conversation-loading-line-medium" />
-            <span className="aurora-skeleton conversation-loading-line conversation-loading-line-meta" />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-export function ConversationPreviewLoadingState({ label }: { label: string }) {
-  return (
-    <div aria-busy="true" className="conversation-preview-loading" role="status">
-      <div className="conversation-preview-loading-shell">
-        <div className="conversation-preview-loading-head">
-          <span aria-hidden="true" className="conversation-preview-loading-icon">
-            <RefreshCw size={18} />
-          </span>
-          <div className="min-w-0">
-            <p className="text-label-caps text-primary">Markdown</p>
-            <p className="mt-1 text-body-sm font-semibold text-on-surface">{label}</p>
-          </div>
-        </div>
-        <div aria-hidden="true" className="conversation-preview-loading-content">
-          <span className="aurora-skeleton conversation-loading-line conversation-preview-loading-title" />
-          <span className="aurora-skeleton conversation-loading-line conversation-preview-loading-line-wide" />
-          <span className="aurora-skeleton conversation-loading-line conversation-preview-loading-line-medium" />
-          <span className="aurora-skeleton conversation-loading-line conversation-preview-loading-line-short" />
-          <span className="aurora-skeleton conversation-loading-line conversation-preview-loading-block" />
-        </div>
-      </div>
-    </div>
   );
 }
 

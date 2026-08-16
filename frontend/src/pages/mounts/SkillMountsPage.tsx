@@ -40,7 +40,7 @@ import { PathPickerInput } from "../../components/common/PathPickerInput";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { EmptyState as FoundationEmptyState } from "../../components/foundation/EmptyState";
 import { PageHeader } from "../../components/foundation/PageHeader";
-import { WorkbenchContentSkeleton } from "../../components/foundation/Skeleton";
+import { AppSkeleton } from "../../components/foundation/skeleton";
 import { Panel as FoundationPanel } from "../../components/foundation/Panel";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { Button } from "../../components/ui/button";
@@ -438,7 +438,7 @@ export function SkillMountsPage({
       />
 
       {loading ? (
-        <WorkbenchContentSkeleton columns={3} label={t("common.loading")} />
+        <AppSkeleton label={t("common.loading")} layout="columns" layoutProps={{ columns: 3 }} scope="content" />
       ) : filteredProfiles.length === 0 ? (
         <EmptyState className="aurora-empty-surface">{t("appMount.empty")}</EmptyState>
       ) : viewMode === "columns" && selectedProfile && selectedScope ? (

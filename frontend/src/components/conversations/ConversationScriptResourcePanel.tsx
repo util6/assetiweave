@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
+import { Skeleton } from "../foundation/skeleton";
 import {
   checkConversationAdapterPackageUpdates,
   getConversationAdapterPackageTask,
@@ -565,7 +566,7 @@ export function ConversationScriptResourcePanel({
           <span>{error}</span>
         </div>
       ) : loading ? (
-        <div className="mt-3 grid gap-2" aria-busy="true">
+        <div className="mt-3 grid gap-2">
           <div
             aria-live="polite"
             className="flex items-center gap-2 rounded-xl border border-status-update/30 bg-status-update/10 px-3 py-2 text-body-sm text-status-update"
@@ -576,8 +577,8 @@ export function ConversationScriptResourcePanel({
           </div>
           {Array.from({ length: 2 }).map((_, index) => (
             <div className="rounded-xl border border-theme-card-border bg-theme-control/40 p-3" key={index}>
-              <div className="h-4 w-48 max-w-full animate-pulse rounded bg-theme-control" />
-              <div className="mt-2 h-3 w-full max-w-lg animate-pulse rounded bg-theme-control" />
+              <Skeleton className="h-4 w-48 max-w-full rounded" />
+              <Skeleton className="mt-2 h-3 w-full max-w-lg rounded" />
             </div>
           ))}
         </div>
@@ -643,9 +644,10 @@ export function ConversationScriptResourcePanel({
           title={detailEntry.item.name}
         >
           {detailLoading ? (
-            <div aria-busy="true" className="grid gap-2">
-              <div className="h-5 w-52 animate-pulse rounded bg-theme-control" />
-              <div className="h-32 animate-pulse rounded bg-theme-control" />
+            <div aria-busy="true" className="grid gap-2" role="status">
+              <span className="sr-only">{t("conversation.scriptMarket.loading")}</span>
+              <Skeleton className="h-5 w-52 rounded" />
+              <Skeleton className="h-32 rounded" />
             </div>
           ) : detailError ? (
             <div className="rounded-xl border border-status-remove/35 bg-status-remove/10 p-3 text-body-sm text-status-remove">
