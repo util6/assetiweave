@@ -109,6 +109,11 @@
     background: rgb(var(--color-background));
   }
 
+  [data-scroll-phase="fast"] .aurora-skeleton::after {
+    animation: none;
+    opacity: 0;
+  }
+
   .aurora-skeleton::after {
     position: absolute;
     inset: 0;
