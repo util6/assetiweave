@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "codex",
   "name": "Codex",
-  "version": "1.5.12",
+  "version": "1.5.13",
   "protocol_version": 1,
   "runtime": {
     "type": "node",
@@ -98,6 +98,18 @@
       "default_renderer": "markdown",
       "allowed_renderers": [
         "markdown"
+      ],
+      "icon_hint": "book-open"
+    },
+    {
+      "id": "codex.plan",
+      "semantic_role": "plan",
+      "label": "任务列表",
+      "default_renderer": "markdown",
+      "allowed_renderers": [
+        "markdown",
+        "plain",
+        "json"
       ],
       "icon_hint": "book-open"
     }

@@ -19,7 +19,7 @@ import { normalizeSessionPayload } from "./payload-policy.mjs";
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
 
 /** 标识当前 Codex 内容卡片的 Schema 版本号，用于增量 Token 生成与缓存失效判定 */
-const CONTENT_CARD_SCHEMA_VERSION = "codex-content-cards-v15";
+const CONTENT_CARD_SCHEMA_VERSION = "codex-content-cards-v16";
 
 /** 单条 Part 节点的文本最大字符数上限 (96KB)，超长则触发截断规则 */
 const MAX_PART_TEXT_CHARS = 96 * 1024;
@@ -1110,6 +1110,68 @@ function isLowSignalControlTool(payload) {
   return type === "function_call" && name === "wait";
 }
 
+/** 判断是否为 update_plan 任务列表工具调用 */
+function isPlanTool(payload) {
+  const name = String(toolNameFromPayload(payload) ?? payload?.name ?? "").toLowerCase();
+  const type = String(payload?.type ?? "").toLowerCase();
+  return name === "update_plan" || type === "update_plan";
+}
+
+/** 解析 update_plan 的参数对象 */
+function parsePlanArguments(payload) {
+  const raw = payload?.arguments ?? payload?.input ?? payload?.params;
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw;
+  }
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    const parsed = parseJsonValue(trimmed);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+    const match = trimmed.match(/update_plan\s*\(\s*(\{[\s\S]*\})\s*\)/);
+    if (match) {
+      const codeJson = parseJsonValue(match[1]);
+      if (codeJson && typeof codeJson === "object") return codeJson;
+    }
+  }
+  if (Array.isArray(payload?.plan)) {
+    return { explanation: payload.explanation, plan: payload.plan };
+  }
+  return null;
+}
+
+/** 将任务列表与阶段说明格式化为精美的 Markdown 文本 */
+function formatPlanMarkdown(data) {
+  if (!data || typeof data !== "object") return "";
+  const explanation = typeof data.explanation === "string" ? data.explanation.trim() : "";
+  const plan = Array.isArray(data.plan) ? data.plan : [];
+
+  const sections = [];
+  if (explanation) {
+    sections.push(`> 📌 **阶段目标**：${explanation}`);
+  }
+
+  if (plan.length > 0) {
+    const items = plan.map((item) => {
+      const step = typeof item === "string" ? item : String(item?.step ?? item?.title ?? item?.name ?? "").trim();
+      const status = typeof item === "object" ? String(item?.status ?? "").toLowerCase() : "";
+      if (status === "completed" || status === "complete" || status === "done") {
+        return `- [x] ✅ ${step}`;
+      } else if (status === "in_progress" || status === "running" || status === "active") {
+        return `- [ ] 🔄 **${step}** *(进行中)*`;
+      } else {
+        return `- [ ] ⏳ ${step}`;
+      }
+    });
+    sections.push(items.join("\n"));
+  } else if (!explanation) {
+    sections.push("*(任务列表已初始化)*");
+  }
+
+  return sections.join("\n\n").trim();
+}
+
 /** 判断 JSON Payload 事件类型是否属于工具执行或 Tool 调用的相关事件 */
 function isToolEvent(payload) {
   const type = String(payload?.type ?? "");
@@ -1154,6 +1216,7 @@ function normalizeTurns(text) {
   const patchExecutions = patchExecutionsFromRollout(text);
   let projectPath = patchExecutions.projectPath;
   let pendingSkillRead = null;
+  const planCallIds = new Set();
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
     let parsed;
@@ -1261,9 +1324,37 @@ function normalizeTurns(text) {
       }
       if (!command?.trim()) {
         const displayText = toolDisplayText(payload, text);
+        const planCall = isPlanTool(payload) && !isToolResultPayload(payload);
+        const planData = planCall ? parsePlanArguments(payload) : null;
+        const planMarkdown = planCall ? formatPlanMarkdown(planData) : "";
+        if (planCall && executionId) planCallIds.add(executionId);
         if (skillRead) {
           appendDetectedSkill(current, skillDocument, skillPath);
           pendingSkillRead = null;
+        } else if (planCall && planMarkdown) {
+          current.parts.push({
+            role: "tool",
+            kind: "tool",
+            text: planMarkdown,
+            language: null,
+            command: null,
+            cwd: null,
+            status: "completed",
+            exit_code: 0,
+            source_execution_id: executionId,
+            metadata_json: metadata(
+              compactObject({
+                type: "plan",
+                format: "markdown",
+                status: "completed",
+                exit_code: 0,
+              }),
+              compactObject({
+                ...smallMetadata(payload),
+                execution_kind: "plan",
+              }),
+            ),
+          });
         } else if (isLowSignalControlTool(payload)) {
           // 维持隐形的占位 Part，确保重同步时后方 Part 的唯一 ID 保持稳定
           current.parts.push({
@@ -1297,7 +1388,10 @@ function normalizeTurns(text) {
                 status: result ? status : null,
                 exit_code: result ? exitCode : null,
               }),
-              smallMetadata(payload),
+              compactObject({
+                ...smallMetadata(payload),
+                execution_kind: (isPlanTool(payload) && isToolResultPayload(payload)) ? "plan" : undefined,
+              }),
             ),
           });
         }
@@ -1605,6 +1699,7 @@ function structuredCardRenderer(card) {
   }
   if (["markdown", "plain", "json"].includes(card.format)) return card.format;
   if (card.type === "answer") return "markdown";
+  if (card.type === "plan") return "markdown";
   if (card.type === "skill") return "path";
   if (card.type === "skill-content") return "markdown";
   return "plain";

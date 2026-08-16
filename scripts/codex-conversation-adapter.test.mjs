@@ -817,6 +817,63 @@ test("Codex adapter correlates a nested apply_patch event with its outer exec ca
   }
 });
 
+test("Codex adapter extracts update_plan tool calls into codex.plan Markdown cards and hides redundant ack results", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-plan-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    writeFileSync(rolloutPath, [
+      event("2026-08-16T00:00:00Z", "user", "开始执行任务计划"),
+      JSON.stringify({
+        timestamp: "2026-08-16T00:00:01Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "update_plan",
+          call_id: "call-plan-1",
+          arguments: JSON.stringify({
+            explanation: "重构定时任务与归档结构",
+            plan: [
+              { step: "检查现有配置", status: "completed" },
+              { step: "编写核心解析逻辑", status: "in_progress" },
+              { step: "运行完整测试套件", status: "pending" },
+            ],
+          }),
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-16T00:00:02Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-plan-1",
+          output: "Plan updated",
+        },
+      }),
+      event("2026-08-16T00:00:03Z", "assistant", "已更新计划并正在执行。"),
+    ].join("\n"));
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('session-1', '${sqlString(rolloutPath)}', 'Plan Fixture', '2026-08-16T00:00:03Z');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(fixtureRoot);
+    const parts = session.turns[0].parts;
+    assert.equal(parts.length, 2);
+    assert.equal(parts[0].content_card?.kind, "codex.plan");
+    assert.equal(parts[0].content_card?.renderer, "markdown");
+    assert.ok(parts[0].text.includes("📌 **阶段目标**：重构定时任务与归档结构"));
+    assert.ok(parts[0].text.includes("- [x] ✅ 检查现有配置"));
+    assert.ok(parts[0].text.includes("- [ ] 🔄 **编写核心解析逻辑** *(进行中)*"));
+    assert.ok(parts[0].text.includes("- [ ] ⏳ 运行完整测试套件"));
+    assert.equal(parts[1].content_card?.kind, "codex.answer");
+    assert.equal(parts[1].content_card?.renderer, "markdown");
+    assert.equal(parts[1].text, "已更新计划并正在执行。");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 function readFixtureSession(fixtureRoot) {
   const result = spawnSync(process.execPath, [adapterPath], {
     encoding: "utf8",

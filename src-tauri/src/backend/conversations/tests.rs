@@ -1955,7 +1955,7 @@ fn official_codex_adapter_separates_skill_context_and_splits_aggregated_commands
         vec![
             "skill".to_string(),
             "answer".to_string(),
-            "tool".to_string(),
+            "plan".to_string(),
             "command".to_string(),
             "command".to_string(),
             "command".to_string(),
@@ -1975,7 +1975,14 @@ fn official_codex_adapter_separates_skill_context_and_splits_aggregated_commands
         .text
         .as_deref()
         .is_some_and(|text| text.contains("```sh\ncargo test\n```")));
-    assert_eq!(parts[2].text.as_deref(), Some("function_call: update_plan"));
+    assert_eq!(parts[2].text.as_deref(), Some("*(任务列表已初始化)*"));
+    assert_eq!(
+        parts[2]
+            .content_card
+            .as_ref()
+            .and_then(|card| card.renderer.as_deref()),
+        Some("markdown")
+    );
     assert_eq!(parts[3].command.as_deref(), Some("cargo fmt --check"));
     assert_eq!(parts[4].command.as_deref(), Some("cargo test"));
     assert_ne!(parts[3].source_execution_id, parts[4].source_execution_id);

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package_id": "io.github.util6.codex-session",
   "name": "Codex Session Parser",
-  "version": "1.5.12",
+  "version": "1.5.13",
   "min_core_version": "0.5.2",
   "record_kind": "session",
   "adapter_manifest": "conversation-adapter.json",
@@ -13,6 +13,13 @@
     "protocol": "stdio-ndjson-v1"
   },
   "changelog": [
+    {
+      "version": "1.5.13",
+      "date": "2026-08-16",
+      "notes": [
+        "Extract update_plan tool calls into structured codex.plan Markdown task list cards and omit redundant acknowledgement result cards."
+      ]
+    },
     {
       "version": "1.5.12",
       "date": "2026-08-12",

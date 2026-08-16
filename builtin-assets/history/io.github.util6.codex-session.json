@@ -7,6 +7,22 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "1.5.13",
+      "channel": "stable",
+      "released_at": "2026-08-16T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.5.13-universal.zip",
+      "artifact_size": 110013,
+      "artifact_sha256": "62968b4d53d78fd5764080cf921bddf218360f22e64c84dbdfd5d122069b9129",
+      "changelog_markdown": "## 1.5.13\n\n- Extract update_plan tool calls into structured codex.plan Markdown task list cards and omit redundant acknowledgement result cards.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
+      }
+    },
+    {
       "version": "1.5.12",
       "channel": "stable",
       "released_at": "2026-08-12T00:00:00Z",

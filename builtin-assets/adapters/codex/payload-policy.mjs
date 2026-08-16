@@ -1,6 +1,6 @@
 import path from "node:path";
 
-export const PAYLOAD_POLICY_VERSION = 10;
+export const PAYLOAD_POLICY_VERSION = 11;
 
 const SUCCESS_STATUSES = new Set(["success", "succeeded", "completed", "complete", "done", "ok"]);
 const FAILURE_STATUS = /^(error|failed|failure|cancelled|canceled|interrupted|timeout|timed_out)$/i;
@@ -16,13 +16,15 @@ export function normalizeSessionPayload(session) {
     const parts = splitAggregatedShellCommandParts(originalParts);
     turn.parts = parts;
     const commands = new Map();
+    const invocations = new Map();
     const results = new Map();
 
     for (const part of parts) {
       const executionId = executionIdOf(part);
       if (!executionId) continue;
       if (isCommandPart(part)) commands.set(executionId, part);
-      else if (isResultPart(part)) results.set(executionId, part);
+      if (!isResultPart(part)) invocations.set(executionId, part);
+      else results.set(executionId, part);
     }
 
     for (const part of parts) {
@@ -50,10 +52,10 @@ export function normalizeSessionPayload(session) {
     for (const part of parts) {
       if (!part || typeof part !== "object" || !isResultPart(part) || isCommandPart(part)) continue;
       const metadata = parseMetadata(part.metadata_json);
-      const command = commands.get(executionIdOf(part)) ?? null;
-      const commandMetadata = parseMetadata(command?.metadata_json);
-      const executionKind = classifyExecution(part, metadata, command, commandMetadata);
-      const outcome = inferOutcome(command, part, executionKind);
+      const invocation = invocations.get(executionIdOf(part)) ?? null;
+      const invocationMetadata = parseMetadata(invocation?.metadata_json);
+      const executionKind = classifyExecution(part, metadata, invocation, invocationMetadata);
+      const outcome = inferOutcome(invocation, part, executionKind);
       applyOutcome(part, outcome);
 
       if (isFailure(part)) {
@@ -588,7 +590,7 @@ function cardTypeOf(part, metadata = parseMetadata(part?.metadata_json)) {
 
 function classifyExecution(part, metadata, peer, peerMetadata = {}) {
   for (const candidate of [metadata.execution_kind, metadata.executionKind, peerMetadata.execution_kind, peerMetadata.executionKind]) {
-    if (["read", "search", "shell", "file_change"].includes(candidate)) return candidate;
+    if (["read", "search", "shell", "file_change", "plan"].includes(candidate)) return candidate;
   }
   const sourceType = [
     metadata.source_type,
@@ -602,6 +604,7 @@ function classifyExecution(part, metadata, peer, peerMetadata = {}) {
   ].filter(Boolean).join(" ").toLowerCase();
   if (/view[_ -]?file|read[_ -]?file|list[_ -]?directory|\bread\b|\bls\b/.test(sourceType)) return "read";
   if (/grep|search|find|glob/.test(sourceType)) return "search";
+  if (/update[_ -]?plan/.test(sourceType)) return "plan";
   if (/(?:^|\s)(?:apply[_ -]?patch|patch|edit|multi[_ -]?edit|write(?:[_ -]?file)?|create[_ -]?file|str[_ -]?replace[_ -]?editor|file[_ -]?change|code[_ -]?action)(?:\s|$)/.test(sourceType)) return "file_change";
 
   const command = String(part?.command ?? peer?.command ?? "").trim();
@@ -757,7 +760,7 @@ function isEmptyResultPayload(part) {
     : /^(?:\{\}|\[\]|null|undefined)$/i.test(text)
       || /(?:^|\n)Output:\s*(?:\{\}|\[\]|null|undefined)\s*$/i.test(text);
   if (!emptyPayload || isFailure(part)) return false;
-  return executionKind === "shell" || executionKind === "unclassified";
+  return executionKind === "shell" || executionKind === "unclassified" || executionKind === "plan";
 }
 
 function isFailure(part) {
