@@ -264,6 +264,33 @@ describe("GlobalSettingsDialog", () => {
     });
   });
 
+  it("shows and stores the editable prompt optimization system prompt", () => {
+    render(
+      <GlobalSettingsDialog
+        appShortcuts={[]}
+        initialPanel="general.promptOptimization"
+        navigationModel={navigationModel}
+        onAppShortcutsChange={vi.fn()}
+        onClose={vi.fn()}
+        onNavigationModelChange={vi.fn()}
+        open
+      />,
+    );
+
+    const systemPrompt = screen.getByRole("textbox", {
+      name: "settings.promptOptimization.systemPrompt",
+    });
+    expect((systemPrompt as HTMLTextAreaElement).value).toBe(defaultSettings.promptOptimization.promptTemplate);
+
+    fireEvent.change(systemPrompt, {
+      target: { value: "Optimize the request for an implementation plan.\n{content}" },
+    });
+
+    expect(updateSettingMock).toHaveBeenCalledWith("promptOptimization", {
+      promptTemplate: "Optimize the request for an implementation plan.\n{content}",
+    });
+  });
+
   it("starts an all-record full reparse only after explicit confirmation", async () => {
     render(
       <GlobalSettingsDialog

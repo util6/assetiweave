@@ -4,6 +4,7 @@ import {
   COLUMN_MIN_WIDTH_MIN,
   DEFAULT_COLUMN_MIN_WIDTH,
   DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP,
+  DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
   RESULT_PREVIEW_LINE_LIMIT_MAX,
@@ -185,6 +186,22 @@ describe("AppSettingsProvider", () => {
     });
     expect(DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE).toContain("{targetLanguage}");
     expect(DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE).toContain("{content}");
+  });
+
+  it("migrates and normalizes prompt optimization settings", () => {
+    const customized = normalizeStoredSettings({
+      promptOptimization: {
+        promptTemplate: "  Optimize this request for a technical audience.\r\n\r\n{content}  ",
+      },
+    });
+
+    expect(customized.promptOptimization).toEqual({
+      promptTemplate: "Optimize this request for a technical audience.\n\n{content}",
+    });
+    expect(normalizeStoredSettings({
+      promptOptimization: { promptTemplate: "" },
+    }).promptOptimization).toEqual(defaultSettings.promptOptimization);
+    expect(DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE).toContain("{content}");
   });
 
   it("migrates legacy translation runtime settings into the shared AI runtime", () => {

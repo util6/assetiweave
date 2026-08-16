@@ -106,6 +106,7 @@ import {
   firstFontFamilyName,
   fontFamilyOptions,
   normalizeConversationTranslationTargetLanguage,
+  PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH,
   resolveFontFamilyCss,
   type AgentCapabilityServiceId,
   TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH,
@@ -505,6 +506,15 @@ export function GlobalSettingsDialog({
   ) {
     updateSetting("conversationTranslation", {
       ...settings.conversationTranslation,
+      ...patch,
+    });
+  }
+
+  function updatePromptOptimization(
+    patch: Partial<typeof settings.promptOptimization>,
+  ) {
+    updateSetting("promptOptimization", {
+      ...settings.promptOptimization,
       ...patch,
     });
   }
@@ -912,6 +922,26 @@ export function GlobalSettingsDialog({
                   <p className="w-[min(38rem,52vw)] text-body-sm leading-6 text-on-surface-variant">
                     {t("settings.promptOptimization.description")}
                   </p>
+                </SettingRow>
+                <SettingRow icon={<Code2 size={18} />} label={t("settings.promptOptimization.systemPrompt")}>
+                  <textarea
+                    aria-label={t("settings.promptOptimization.systemPrompt")}
+                    className="min-h-44 w-[min(38rem,52vw)] rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60"
+                    maxLength={PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH}
+                    onBlur={(event) =>
+                      updatePromptOptimization({
+                        promptTemplate: event.currentTarget.value.trim(),
+                      })
+                    }
+                    onChange={(event) =>
+                      updatePromptOptimization({
+                        promptTemplate: event.target.value.slice(0, PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH),
+                      })
+                    }
+                    placeholder={t("settings.promptOptimization.systemPromptPlaceholder")}
+                    spellCheck={false}
+                    value={settings.promptOptimization.promptTemplate}
+                  />
                 </SettingRow>
               </SettingsGroup>
             )}

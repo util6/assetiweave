@@ -79,6 +79,7 @@ export const DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP = true;
 export const TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH = 80;
 export const TRANSLATION_MODEL_MAX_LENGTH = 120;
 export const TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH = 4000;
+export const PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH = 4000;
 export const AUTO_DREAM_MIN_HOURS_MIN = 1;
 export const AUTO_DREAM_MIN_HOURS_MAX = 168;
 export const AUTO_DREAM_MIN_SESSIONS_MIN = 1;
@@ -93,6 +94,18 @@ export const DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE = [
   "Translate the content into {targetLanguage}.",
   "Preserve Markdown structure, code fences, inline code, commands, file paths, variable names, URLs, and diagnostics exactly when they should not be translated.",
   "Do not add explanations, labels, summaries, or commentary. Return only the translated content.",
+  "",
+  "<content>",
+  "{content}",
+  "</content>",
+].join("\n");
+export const DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE = [
+  "You are an expert prompt editor.",
+  "Rewrite the content into a clearer, more actionable prompt.",
+  "Keep the user's intent, constraints, domain terms, variables, Markdown, and code fences.",
+  "Improve structure, remove ambiguity, and make the requested outcome explicit.",
+  "Target working language: {targetLanguage}.",
+  "Return only the optimized prompt. Do not add commentary.",
   "",
   "<content>",
   "{content}",
@@ -129,6 +142,10 @@ export interface ConversationTranslationSettings {
   promptTemplate: string;
   provider: ConversationTranslationProvider;
   targetLanguage: ConversationTranslationTargetLanguage;
+}
+
+export interface PromptOptimizationSettings {
+  promptTemplate: string;
 }
 
 export type ResolvedConversationTranslationSettings = ConversationTranslationSettings & {
@@ -173,6 +190,7 @@ export interface AppSettings {
   dataBackup: DataBackupSettings;
   density: InterfaceDensity;
   memory: MemorySettings;
+  promptOptimization: PromptOptimizationSettings;
 
   showStartupNotification: boolean;
   theme: ThemeId;
@@ -224,6 +242,9 @@ export const defaultSettings: AppSettings = {
     autoDreamEnabled: false,
     minHours: DEFAULT_AUTO_DREAM_MIN_HOURS,
     minSessions: DEFAULT_AUTO_DREAM_MIN_SESSIONS,
+  },
+  promptOptimization: {
+    promptTemplate: DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE,
   },
 
   showStartupNotification: true,
@@ -277,6 +298,7 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
     stored.conversationTranslation,
     stored.conversations,
   );
+  const promptOptimization = normalizePromptOptimizationSettings(stored.promptOptimization);
   const agentModels = normalizeAgentModels(stored.agentModels);
 
   return {
@@ -295,6 +317,7 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
     conversationTranslation,
     density: stored.density === "compact" ? "compact" : defaultSettings.density,
     memory: normalizeMemorySettings(stored.memory),
+    promptOptimization,
 
     showStartupNotification:
       typeof stored.showStartupNotification === "boolean"
@@ -454,6 +477,13 @@ function normalizeConversationTranslationSettings(
   };
 }
 
+function normalizePromptOptimizationSettings(value: unknown): PromptOptimizationSettings {
+  const stored = isRecord(value) ? (value as Partial<PromptOptimizationSettings>) : {};
+  return {
+    promptTemplate: normalizePromptOptimizationPromptTemplate(stored.promptTemplate),
+  };
+}
+
 function normalizeAiRuntimeSettings(
   value: unknown,
   legacyConversationTranslation: unknown,
@@ -517,6 +547,16 @@ function normalizeConversationTranslationPromptTemplate(value: unknown): string 
   return normalized && normalized.length <= TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH
     ? normalized
     : defaultSettings.conversationTranslation.promptTemplate;
+}
+
+function normalizePromptOptimizationPromptTemplate(value: unknown): string {
+  if (typeof value !== "string") {
+    return defaultSettings.promptOptimization.promptTemplate;
+  }
+  const normalized = value.replace(/\r\n?/g, "\n").trim();
+  return normalized && normalized.length <= PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH
+    ? normalized
+    : defaultSettings.promptOptimization.promptTemplate;
 }
 
 export function normalizeConversationTranslationTargetLanguage(

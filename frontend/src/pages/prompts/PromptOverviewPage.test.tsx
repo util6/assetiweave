@@ -5,25 +5,28 @@ import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { AppSettingsProvider } from "../../store/settings/AppSettingsProvider";
-import { defaultSettings, defaultStorageInfo } from "../../store/settings/settingsSchema";
+import { defaultSettings, defaultStorageInfo, type AppSettings } from "../../store/settings/settingsSchema";
 import { parseTags, PromptOverviewPage } from "./PromptOverviewPage";
 
 const selectTargetDirectoryMock = vi.hoisted(() => vi.fn(async () => "/picked/project"));
 const copyPromptImagesToClipboardMock = vi.hoisted(() => vi.fn(async () => undefined));
 const copyPromptTextToClipboardMock = vi.hoisted(() => vi.fn(async () => undefined));
+const appSettingsState = vi.hoisted(() => ({ settings: null as unknown }));
+const getAppSettingsMock = vi.hoisted(() => vi.fn());
+const saveAppSettingsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../services/appSettings", () => ({
-  getAppSettings: vi.fn(async () => ({
+  getAppSettings: getAppSettingsMock.mockImplementation(async () => ({
     config_dir: defaultStorageInfo.configDir,
     config_path: defaultStorageInfo.configPath,
     conversation_adapter_dir: defaultStorageInfo.conversationAdapterDir,
-    settings: defaultSettings,
+    settings: appSettingsState.settings,
   })),
-  saveAppSettings: vi.fn(async () => ({
+  saveAppSettings: saveAppSettingsMock.mockImplementation(async (settings: AppSettings) => ({
     config_dir: defaultStorageInfo.configDir,
     config_path: defaultStorageInfo.configPath,
     conversation_adapter_dir: defaultStorageInfo.conversationAdapterDir,
-    settings: defaultSettings,
+    settings,
   })),
 }));
 
@@ -37,6 +40,9 @@ vi.mock("../../services/promptClipboard", () => ({
 }));
 
 beforeEach(() => {
+  appSettingsState.settings = defaultSettings;
+  getAppSettingsMock.mockClear();
+  saveAppSettingsMock.mockClear();
   vi.stubGlobal("localStorage", createMockLocalStorage());
   localStorage.setItem("assetiweave.locale", "zh");
   Object.defineProperty(navigator, "clipboard", {
@@ -468,6 +474,33 @@ describe("PromptOverviewPage", () => {
       });
     });
     expect(translator).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the configured prompt optimization system prompt", async () => {
+    const customPrompt = "Turn this into a concrete engineering plan.\n\n{content}";
+    appSettingsState.settings = {
+      ...defaultSettings,
+      promptOptimization: { promptTemplate: customPrompt },
+    };
+    const translator = vi.fn(async () => ({ translated_text: "Optimized implementation plan." }));
+
+    renderPromptPage({ translator });
+    fireEvent.change(screen.getByPlaceholderText("粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。"), {
+      target: { value: "add prompt optimization settings" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存卡片" }));
+
+    const optimizeButton = screen.getByRole("button", { name: "优化" }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(optimizeButton.disabled).toBe(false);
+    });
+    fireEvent.click(optimizeButton);
+
+    await waitFor(() => {
+      expect(translator).toHaveBeenCalledWith(expect.objectContaining({
+        promptTemplate: customPrompt,
+      }));
+    });
   });
 
   it("flips to an existing optimized prompt without running optimization again", async () => {

@@ -126,18 +126,6 @@ const PROMPT_TAG_GROUP_COLOR_PALETTE = [
     swatchClassName: "border-theme-button-primary-hover/65 bg-theme-button-primary-hover",
   },
 ] as const;
-const OPTIMIZE_PROMPT_TEMPLATE = [
-  "You are an expert prompt editor.",
-  "Rewrite the content into a clearer, more actionable prompt.",
-  "Keep the user's intent, constraints, domain terms, variables, Markdown, and code fences.",
-  "Improve structure, remove ambiguity, and make the requested outcome explicit.",
-  "Target working language: {targetLanguage}.",
-  "Return only the optimized prompt. Do not add commentary.",
-  "",
-  "<content>",
-  "{content}",
-  "</content>",
-].join("\n");
 const PROMPT_SEARCH_COMMIT_DELAY_MS = 700;
 
 export function PromptOverviewPage({
@@ -356,7 +344,7 @@ export function PromptOverviewPage({
 
   async function handleOptimizeNote(note: PromptNote, sourceText: string) {
     return runPromptAction(note, "optimize", {
-      promptTemplate: OPTIMIZE_PROMPT_TEMPLATE,
+      promptTemplate: settings.promptOptimization.promptTemplate,
       targetLanguage: settings.conversationTranslation.targetLanguage,
       text: sourceText,
     });

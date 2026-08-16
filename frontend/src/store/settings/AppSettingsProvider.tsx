@@ -25,6 +25,7 @@ export {
   DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
   DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
   DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
+  DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
   FONT_SIZE_STEP,
@@ -44,6 +45,7 @@ export {
   TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH,
   TRANSLATION_MODEL_MAX_LENGTH,
   TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH,
+  PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH,
 } from "./settingsSchema";
 export type {
   AgentCapabilityAssignments,
@@ -64,6 +66,7 @@ export type {
   FontFamilyValue,
   InterfaceDensity,
   MemorySettings,
+  PromptOptimizationSettings,
   ResolvedConversationTranslationSettings,
   SettingsPanelId,
 } from "./settingsSchema";
