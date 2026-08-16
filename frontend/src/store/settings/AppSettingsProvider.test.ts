@@ -189,6 +189,19 @@ describe("AppSettingsProvider", () => {
   });
 
   it("migrates and normalizes prompt optimization settings", () => {
+    const legacyDefaultPrompt = [
+      "You are an expert prompt editor.",
+      "Rewrite the content into a clearer, more actionable prompt.",
+      "Keep the user's intent, constraints, domain terms, variables, Markdown, and code fences.",
+      "Improve structure, remove ambiguity, and make the requested outcome explicit.",
+      "Target working language: {targetLanguage}.",
+      "Return only the optimized prompt. Do not add commentary.",
+      "",
+      "<content>",
+      "{content}",
+      "</content>",
+    ].join("\n");
+
     const customized = normalizeStoredSettings({
       promptOptimization: {
         promptTemplate: "  Optimize this request for a technical audience.\r\n\r\n{content}  ",
@@ -201,7 +214,11 @@ describe("AppSettingsProvider", () => {
     expect(normalizeStoredSettings({
       promptOptimization: { promptTemplate: "" },
     }).promptOptimization).toEqual(defaultSettings.promptOptimization);
+    expect(normalizeStoredSettings({
+      promptOptimization: { promptTemplate: legacyDefaultPrompt },
+    }).promptOptimization).toEqual(defaultSettings.promptOptimization);
     expect(DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE).toContain("{content}");
+    expect(DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE).not.toContain("{targetLanguage}");
   });
 
   it("migrates legacy translation runtime settings into the shared AI runtime", () => {

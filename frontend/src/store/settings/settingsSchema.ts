@@ -104,6 +104,17 @@ export const DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE = [
   "Rewrite the content into a clearer, more actionable prompt.",
   "Keep the user's intent, constraints, domain terms, variables, Markdown, and code fences.",
   "Improve structure, remove ambiguity, and make the requested outcome explicit.",
+  "Return only the optimized prompt. Do not add commentary.",
+  "",
+  "<content>",
+  "{content}",
+  "</content>",
+].join("\n");
+const LEGACY_DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE = [
+  "You are an expert prompt editor.",
+  "Rewrite the content into a clearer, more actionable prompt.",
+  "Keep the user's intent, constraints, domain terms, variables, Markdown, and code fences.",
+  "Improve structure, remove ambiguity, and make the requested outcome explicit.",
   "Target working language: {targetLanguage}.",
   "Return only the optimized prompt. Do not add commentary.",
   "",
@@ -554,6 +565,9 @@ function normalizePromptOptimizationPromptTemplate(value: unknown): string {
     return defaultSettings.promptOptimization.promptTemplate;
   }
   const normalized = value.replace(/\r\n?/g, "\n").trim();
+  if (normalized === LEGACY_DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE) {
+    return defaultSettings.promptOptimization.promptTemplate;
+  }
   return normalized && normalized.length <= PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH
     ? normalized
     : defaultSettings.promptOptimization.promptTemplate;
