@@ -1249,3 +1249,17 @@
   min-width: 0;
   background: rgb(var(--color-background));
 }
+
+.deferred-render-boundary {
+  min-block-size: var(--render-estimated-block-size);
+  contain: layout paint style;
+  background: rgb(var(--color-background));
+}
+
+.deferred-render-skeleton {
+  min-block-size: var(--render-estimated-block-size);
+}
+
+.deferred-render-boundary[data-render-state="ready"] {
+  min-block-size: 0;
+}
