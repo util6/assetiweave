@@ -28,6 +28,7 @@ import {
   ToolbarTextButton,
 } from "../../components/common/DataToolbar";
 import { PageMetrics } from "../../components/common/PageMetrics";
+import { RenderSafeScrollSurface } from "../../components/common/rendering/RenderSafeScrollSurface";
 import { PathPickerInput } from "../../components/common/PathPickerInput";
 import {
   AppShortcutIconForShortcut,
@@ -2690,8 +2691,9 @@ export function QuestionPreview({
           </div>
         </div>
       </header>
-      <div className="min-h-0 flex-1 overflow-auto px-5 py-5">
-        {question.turns.map((turn, index) => {
+      <RenderSafeScrollSurface className="min-h-0 flex-1">
+        <div className="render-safe-scroll-content px-5 py-5">
+          {question.turns.map((turn, index) => {
           const usesStructuredContent = Boolean(question.cards && question.content_nodes);
           const turnParts = usesStructuredContent
             ? []
@@ -2765,8 +2767,9 @@ export function QuestionPreview({
               </div>
             </section>
           );
-        })}
-      </div>
+          })}
+        </div>
+      </RenderSafeScrollSurface>
     </div>
   );
 }
