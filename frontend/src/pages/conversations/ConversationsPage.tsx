@@ -1,3 +1,4 @@
+import clsx from "clsx";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   AppWindow,
@@ -28,7 +29,10 @@ import {
 } from "../../components/common/DataToolbar";
 import { PageMetrics } from "../../components/common/PageMetrics";
 import { PathPickerInput } from "../../components/common/PathPickerInput";
-import { AppShortcutIconForShortcut } from "../../components/apps/AppShortcutIcon";
+import {
+  AppShortcutIconForShortcut,
+  APP_SHORTCUT_ICON_FRAME_CLASS,
+} from "../../components/apps/AppShortcutIcon";
 import type { NotificationMessage } from "../../components/notifications/NotificationBanner";
 import {
   buildConversationContentBlocks,
@@ -2200,7 +2204,7 @@ function ConversationAppIcon({
   return (
     <span
       aria-label={appName}
-      className="grid size-9 shrink-0 place-items-center rounded-xl border text-[13px] font-bold"
+      className={clsx(APP_SHORTCUT_ICON_FRAME_CLASS, "size-9 shrink-0 text-[13px] font-bold")}
       style={{
         borderColor: `${shortcut.accentColor}66`,
         backgroundColor: `${shortcut.accentColor}1f`,

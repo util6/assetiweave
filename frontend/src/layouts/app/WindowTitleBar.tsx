@@ -78,7 +78,7 @@ export function WindowTitleBar({ mode: controlledMode }: { mode?: WindowChromeMo
       <div className="pointer-events-none relative z-10 flex min-w-0 items-center gap-2 px-3 text-label-caps font-semibold">
         <img
           alt=""
-          className="size-4 rounded-[4px] border border-theme-nav-active-border object-cover"
+          className="size-4 overflow-hidden rounded-[22%] border border-theme-nav-active-border object-cover"
           data-app-window-icon={windowIconState}
           src={appWindowIconAsset(windowIconState)}
         />

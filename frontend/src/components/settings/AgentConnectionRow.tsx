@@ -2,7 +2,10 @@ import clsx from "clsx";
 import { BrainCircuit, Info, LoaderCircle, Pencil, PlugZap } from "lucide-react";
 import type { Translator } from "../../i18n/I18nProvider";
 import type { AppShortcut } from "../../types";
-import { appShortcutIconFrameStyle } from "../apps/AppShortcutIcon";
+import {
+  APP_SHORTCUT_ICON_FRAME_CLASS,
+  appShortcutIconFrameStyle,
+} from "../apps/AppShortcutIcon";
 import { Badge } from "../foundation/Badge";
 import { Button } from "../ui/button";
 import { AgentCatalogIcon, agentIconFrameClass, resolveAgentIconAccentColor } from "./AgentCatalogIcon";
@@ -36,7 +39,7 @@ export function AgentConnectionRow({
   return (
     <article className="group flex flex-wrap items-center gap-3 rounded-xl border border-theme-card-border/60 bg-theme-control/58 px-3.5 py-3 transition-[background,border-color,transform] hover:-translate-y-px hover:border-theme-nav-active-border/60 hover:bg-theme-control-hover/70 sm:flex-nowrap">
       <span
-        className={clsx("grid size-11 shrink-0 place-items-center rounded-xl border bg-theme-card", agentIconFrameClass())}
+        className={clsx(APP_SHORTCUT_ICON_FRAME_CLASS, "size-11 shrink-0 bg-theme-card", agentIconFrameClass())}
         style={appShortcutIconFrameStyle(accentColor)}
       >
         <AgentCatalogIcon agent={agent} appShortcuts={appShortcuts} className="size-[22px]" />

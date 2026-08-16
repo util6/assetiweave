@@ -24,7 +24,10 @@ import { AssetToolbar, type AssetToolbarViewMode } from "../../components/assets
 import { MountStatePill } from "../../components/assets/MountStatePill";
 import { QuickMountButtons } from "../../components/assets/QuickMountButtons";
 import { SkillBackupBadge } from "../../components/assets/SkillBackupBadge";
-import { AppShortcutIconForShortcut } from "../../components/apps/AppShortcutIcon";
+import {
+  AppShortcutIconForShortcut,
+  APP_SHORTCUT_ICON_FRAME_CLASS,
+} from "../../components/apps/AppShortcutIcon";
 import { SkillBackupLibraryDialog } from "../../components/backup/SkillBackupLibraryDialog";
 import {
   isSkillBackupRunning,
@@ -610,7 +613,7 @@ function AppMountRow({
       <div className="grid min-h-20 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5 hover:bg-theme-card-header/70 max-[860px]:grid-cols-1">
         <div className="flex min-w-0 items-start gap-3">
           <span
-            className="grid size-10 shrink-0 place-items-center rounded-xl border text-[13px] font-bold"
+            className={clsx(APP_SHORTCUT_ICON_FRAME_CLASS, "size-10 shrink-0 text-[13px] font-bold")}
             style={{
               backgroundColor: `${shortcut.accentColor}18`,
               borderColor: `${shortcut.accentColor}66`,
@@ -776,7 +779,7 @@ function AppMountColumnView({
                   type="button"
                 >
                   <span
-                    className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-xl border"
+                    className={clsx(APP_SHORTCUT_ICON_FRAME_CLASS, "mt-0.5 size-9 shrink-0")}
                     style={{
                       backgroundColor: `${profileShortcut.accentColor}18`,
                       borderColor: `${profileShortcut.accentColor}66`,

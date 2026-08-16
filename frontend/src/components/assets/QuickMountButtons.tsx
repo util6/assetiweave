@@ -39,7 +39,7 @@ export function QuickMountButtons({
         const button = (
           <button
             className={clsx(
-              "relative grid size-8 place-items-center overflow-hidden rounded-xl border text-[13px] font-bold transition-[transform,opacity,box-shadow,background-color,border-color] duration-200 hover:-translate-y-px active:translate-y-0",
+              "relative grid size-8 place-items-center overflow-hidden rounded-[22%] border text-[13px] font-bold transition-[transform,opacity,box-shadow,background-color,border-color] duration-200 hover:-translate-y-px active:translate-y-0",
               mounted ? "shadow-glow ring-1 ring-theme-nav-active-border/30" : "opacity-60 hover:opacity-100",
               (mountState === "conflict" || mountState === "broken") && "opacity-90",
               disabled && "pointer-events-none cursor-not-allowed opacity-40 hover:opacity-40",
@@ -93,7 +93,7 @@ function MountButtonStateRing({ color, state }: { color: string; state: MountDis
   return (
     <span
       aria-hidden="true"
-      className="pointer-events-none absolute inset-[4px] rounded-md border border-t-transparent opacity-90 animate-spin motion-reduce:animate-none"
+      className="pointer-events-none absolute inset-[4px] rounded-[22%] border border-t-transparent opacity-90 animate-spin motion-reduce:animate-none"
       style={{ borderBottomColor: color, borderLeftColor: color, borderRightColor: color }}
     />
   );

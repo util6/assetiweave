@@ -6,7 +6,7 @@ import type { TranslationKey } from "../../i18n/messages";
 import type { AppShortcut, Asset, AssetMountStatus, TargetProfile } from "../../types";
 import { getMountDisplayState, type MountDisplayState } from "../../utils/mountState";
 import { abbreviateHomePath } from "../../utils/path";
-import { AppShortcutIcon } from "../apps/AppShortcutIcon";
+import { AppShortcutIcon, APP_SHORTCUT_ICON_FRAME_CLASS } from "../apps/AppShortcutIcon";
 
 export function AssetMountCard({
   asset,
@@ -65,7 +65,10 @@ export function AssetMountCard({
       )}
       <div className="flex min-w-0 items-start gap-3">
         <span
-          className="relative grid size-9 shrink-0 place-items-center overflow-hidden rounded-full border text-[13px] font-bold transition-transform group-hover:scale-105"
+          className={clsx(
+            APP_SHORTCUT_ICON_FRAME_CLASS,
+            "size-9 shrink-0 text-[13px] font-bold transition-transform group-hover:scale-105",
+          )}
           style={{
             borderColor: mounted ? accentColor : mountCardRingColor(displayState, accentColor),
             backgroundColor: mounted ? `${accentColor}29` : `${accentColor}18`,
@@ -125,7 +128,7 @@ function MountCardStateRing({ color, state }: { color: string; state: MountDispl
 
   return (
     <span
-      className="absolute inset-[4px] rounded-full border border-t-transparent opacity-90 animate-spin motion-reduce:animate-none"
+      className="absolute inset-[4px] rounded-[22%] border border-t-transparent opacity-90 animate-spin motion-reduce:animate-none"
       style={{ borderBottomColor: color, borderLeftColor: color, borderRightColor: color }}
     />
   );

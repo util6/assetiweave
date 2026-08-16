@@ -8,6 +8,8 @@ import type { CSSProperties } from "react";
 type AppIconKey = string;
 
 const APP_ICON_TOKEN_PREFIX = "app:";
+export const APP_SHORTCUT_ICON_FRAME_CLASS =
+  "relative grid aspect-square place-items-center overflow-hidden rounded-[22%] border";
 
 export function AppShortcutIcon({
   appKind,
@@ -28,11 +30,24 @@ export function AppShortcutIcon({
 }) {
   const icon = validIconSvg(iconSvg) ? iconSvg : resolveAppIcon(displayIcon, appKind, profileId, profileName);
   if (!icon) {
-    return <span className={className} style={style}>{displayIcon.slice(0, 4)}</span>;
+    return (
+      <span
+        className={className}
+        style={{ ...style, borderRadius: "22%", overflow: "hidden" }}
+      >
+        {displayIcon.slice(0, 4)}
+      </span>
+    );
   }
 
   return (
-    <svg aria-hidden="true" className={className} fill="currentColor" style={style} viewBox={icon.viewBox ?? "0 0 24 24"}>
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="currentColor"
+      style={{ ...style, borderRadius: "22%", overflow: "hidden" }}
+      viewBox={icon.viewBox ?? "0 0 24 24"}
+    >
       {icon.paths.map((path, index) => (
         <path clipRule={path.clipRule} d={path.d} fillRule={path.fillRule} key={`${path.d}-${index}`} />
       ))}
@@ -166,7 +181,9 @@ export function appShortcutIconFrameStyle(accentColor?: string | null): CSSPrope
   return {
     backgroundColor: `${accentColor}1f`,
     borderColor: `${accentColor}66`,
+    borderRadius: "22%",
     color: accentColor,
+    overflow: "hidden",
   };
 }
 

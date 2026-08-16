@@ -56,6 +56,7 @@ import { DialogFrame } from "@/components/foundation/DialogFrame";
 import {
   AppShortcutIcon,
   AppShortcutIconForShortcut,
+  APP_SHORTCUT_ICON_FRAME_CLASS,
   appIconToken,
   appShortcutIconFrameStyle,
   resolveAppIconKey,
@@ -1707,7 +1708,7 @@ function SortableShortcutEditRow({
       </Button>
       <div className="flex min-w-0 items-center gap-3">
         <span
-          className="grid size-9 shrink-0 place-items-center rounded-lg border text-[13px] font-bold"
+          className={clsx(APP_SHORTCUT_ICON_FRAME_CLASS, "size-9 shrink-0 text-[13px] font-bold")}
           style={appShortcutIconFrameStyle(shortcut.accentColor)}
           aria-hidden="true"
         >
@@ -1843,7 +1844,7 @@ function ShortcutIconSvgDialog({
       footerClassName="justify-between"
       icon={
         <span
-          className="grid size-10 place-items-center rounded-lg border text-[13px] font-bold"
+          className={clsx(APP_SHORTCUT_ICON_FRAME_CLASS, "size-10 text-[13px] font-bold")}
           style={appShortcutIconFrameStyle(shortcut.accentColor)}
           aria-hidden="true"
         >

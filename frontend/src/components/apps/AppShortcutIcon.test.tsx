@@ -3,7 +3,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { AppShortcutIconSvg } from "../../types";
-import { AppShortcutIcon } from "./AppShortcutIcon";
+import {
+  AppShortcutIcon,
+  APP_SHORTCUT_ICON_FRAME_CLASS,
+  appShortcutIconFrameStyle,
+} from "./AppShortcutIcon";
 
 describe("AppShortcutIcon", () => {
   it("renders a built-in icon from the unified SVG asset catalog", () => {
@@ -61,6 +65,15 @@ describe("AppShortcutIcon", () => {
     const fallbackHtml = renderToStaticMarkup(
       <AppShortcutIcon appKind="custom" className="icon" displayIcon="+" profileId="custom" profileName="Custom" />,
     );
-    expect(fallbackHtml).toContain('<span class="icon">+</span>');
+    expect(fallbackHtml).toContain('<span class="icon" style="border-radius:22%;overflow:hidden">+</span>');
+  });
+
+  it("uses a Mac Dock rounded frame for app icon containers", () => {
+    expect(APP_SHORTCUT_ICON_FRAME_CLASS).toContain("rounded-[22%]");
+    expect(APP_SHORTCUT_ICON_FRAME_CLASS).toContain("overflow-hidden");
+    expect(appShortcutIconFrameStyle("#10b981")).toMatchObject({
+      borderRadius: "22%",
+      overflow: "hidden",
+    });
   });
 });
