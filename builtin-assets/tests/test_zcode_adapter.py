@@ -8,12 +8,12 @@ from pathlib import Path
 from typing import Any
 
 
-ADAPTER = Path(__file__).parents[1] / "adapters" / "zcode" / "zcode_adapter.py"
+ADAPTER = Path(__file__).parents[1] / "adapters" / "zcode" / "adapter.mjs"
 
 
 def run_adapter(request: dict[str, Any]) -> list[dict[str, Any]]:
     result = subprocess.run(
-        [sys.executable, str(ADAPTER)],
+        ["node", str(ADAPTER)],
         input=f"{json.dumps(request)}\n",
         text=True,
         capture_output=True,

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-16T00:00:00Z",
+  "updated_at": "2026-08-17T00:00:00Z",
   "items": [
     {
       "id": "io.github.util6.codex-session",
@@ -17,7 +17,7 @@
         "node"
       ],
       "expected_package_hash": "99b1849d5706d492ca42429bd4294a477c4a3a11f914297a038edf8fea0e9f7d",
-      "expected_content_hash": "5e9061c2a563479911c3e20f857628415e405eed0229fdd5e8128691d78a34dc",
+      "expected_content_hash": "51053c265f4a4c158e2ac6a7f2f0671203e7001452f83b39a2694b832d4bdcc8",
       "source": {
         "type": "github",
         "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
@@ -39,7 +39,7 @@
         "node"
       ],
       "expected_package_hash": "e841e71371463e4d975ba693fa5a629e9575a9baa9ec258267b17341c0f8e00b",
-      "expected_content_hash": "7402082acd6351b771383f98988bf0a88ae1c5093b278ecce5d946df6884bd7e",
+      "expected_content_hash": "c5a17ca30a1cce031528ecea7ed0bfa51ad1d748f098de44a394dac2c1d4e3b5",
       "source": {
         "type": "github",
         "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/opencode"
@@ -60,7 +60,7 @@
         "node"
       ],
       "expected_package_hash": "bfb10ce42179359976a9aa0b53617cfaf67bc63dcc32bb760e59b9520edb02b6",
-      "expected_content_hash": "84768c83036672f6a6569f9b22914352f58dc677ca4764a7387788376d64a475",
+      "expected_content_hash": "17aff181d7013a2f4dd696d582707ec0448aaf8e42db9aa0c71a7b15919553be",
       "source": {
         "type": "github",
         "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/claude-code"
@@ -69,7 +69,7 @@
     {
       "id": "io.github.util6.zcode-session",
       "name": "ZCode Session Parser",
-      "version": "0.4.3",
+      "version": "0.5.0",
       "record_kind": "session",
       "provider": "zcode",
       "adapter_id": "zcode",
@@ -79,10 +79,10 @@
         "session",
         "zcode",
         "sqlite",
-        "python"
+        "node"
       ],
-      "expected_package_hash": "6b6eb2bcd9a1cb2b23e15f27857500a4e5ac7c81a1541aa89b90aec49e7f0c93",
-      "expected_content_hash": "5a50814a30a7894ee5243873bce8cb175ffdce9fab8d6a75324b5d446837c044",
+      "expected_package_hash": "a29644ecbcadbb4c90341e1b44bd5f14112acdc52acce5f2887c87da562669d9",
+      "expected_content_hash": "fa7e1b0c5641bc9315d7e969d7b864ef4085a6cdc2301d9ec2d2e588c8fea49d",
       "source": {
         "type": "github",
         "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/zcode"
@@ -104,7 +104,7 @@
         "browser-cookie-auth"
       ],
       "expected_package_hash": "148dd1d498639e4bbfee1f8947fc09f692cd0db7223165df4efecb8e74f9559e",
-      "expected_content_hash": "1b00dd931991ecfbe19954b4dd59cb92513fc28f43a0d8d1f129f275e737aa31",
+      "expected_content_hash": "4b8898eedf120ab640cc5cc6db7a03fb3ec8a1cf8a3f370cdd17c9a9a51a2ab1",
       "source": {
         "type": "github",
         "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/chatgpt-web"
@@ -126,7 +126,7 @@
         "browser-cookie-auth"
       ],
       "expected_package_hash": "1f88216522667caa795a01579f21de1efbb0d08bfa70620a39dda3391d0518eb",
-      "expected_content_hash": "3c485df513a682713de1a946e69c19ddf2d6ed86e68e926e7af4f81338971756",
+      "expected_content_hash": "02b0159b1b8458dee17cbadb617c8ba9e4939211629d9223cc91c711a583b62f",
       "source": {
         "type": "github",
         "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/qwen-web"
@@ -148,7 +148,7 @@
         "browser-cookie-auth"
       ],
       "expected_package_hash": "2e177c4ba7caba1139c30022811db1223c473f5236ff3e0150f79831fee5efe5",
-      "expected_content_hash": "20f277c789a111d06f87b30be7523905826d9cb63b7194f5bd18fcf6bc8bfd76",
+      "expected_content_hash": "1d456c5f66703228492755d295555b3f3c12b17caf0ab3308f274617c8ffa365",
       "source": {
         "type": "github",
         "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/gemini-web"

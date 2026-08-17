@@ -7,6 +7,22 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "0.5.0",
+      "channel": "stable",
+      "released_at": "2026-08-17T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.zcode-session-0.5.0-universal.zip",
+      "artifact_size": 34377,
+      "artifact_sha256": "b73887f384ca805e4c92b906c59244c02803f10891fdf3eb21e240f59b35aec0",
+      "changelog_markdown": "## 0.5.0\n\n- Migrate ZCode adapter script to standard Node.js ES module implementation.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/zcode"
+      }
+    },
+    {
       "version": "0.4.3",
       "channel": "stable",
       "released_at": "2026-08-10T00:00:00Z",

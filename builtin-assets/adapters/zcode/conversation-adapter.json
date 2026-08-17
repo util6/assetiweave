@@ -2,11 +2,13 @@
   "schema_version": 1,
   "id": "zcode",
   "name": "ZCode",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "protocol_version": 1,
-  "command": [
-    "./zcode_adapter.py"
-  ],
+  "runtime": {
+    "type": "node",
+    "entry": "adapter.mjs",
+    "version": ">=20"
+  },
   "capabilities": [
     "probe",
     "list_sessions",

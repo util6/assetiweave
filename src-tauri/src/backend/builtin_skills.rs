@@ -19,7 +19,7 @@ const ORGANIZER_MANIFEST: &[u8] = include_bytes!(
 const ORGANIZER_ZCODE_MANIFEST: &[u8] =
     include_bytes!("../../../builtin-assets/adapters/zcode/conversation-adapter.json");
 const ORGANIZER_ZCODE_ADAPTER: &[u8] =
-    include_bytes!("../../../builtin-assets/adapters/zcode/zcode_adapter.py");
+    include_bytes!("../../../builtin-assets/adapters/zcode/adapter.mjs");
 const RECALL_SKILL: &[u8] =
     include_bytes!("../../../builtin-assets/skills/assetiweave-conversation-recall/SKILL.md");
 const RECALL_MANIFEST: &[u8] = include_bytes!(
@@ -60,7 +60,7 @@ const EMBEDDED_FILES: &[EmbeddedFile] = &[
         executable: false,
     },
     EmbeddedFile {
-        relative_path: "assetiweave-conversation-organizer/scripts/zcode-conversation-adapter/zcode_adapter.py",
+        relative_path: "assetiweave-conversation-organizer/scripts/zcode-conversation-adapter/adapter.mjs",
         contents: ORGANIZER_ZCODE_ADAPTER,
         executable: true,
     },
@@ -455,12 +455,12 @@ mod tests {
             .join("scripts")
             .join("zcode-conversation-adapter");
         assert!(adapter_dir.join("conversation-adapter.json").is_file());
-        assert!(adapter_dir.join("zcode_adapter.py").is_file());
+        assert!(adapter_dir.join("adapter.mjs").is_file());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert_ne!(
-                fs::metadata(adapter_dir.join("zcode_adapter.py"))
+                fs::metadata(adapter_dir.join("adapter.mjs"))
                     .expect("read installed adapter permissions")
                     .permissions()
                     .mode()
@@ -537,7 +537,7 @@ mod tests {
             .join("assetiweave-conversation-organizer")
             .join("scripts")
             .join("zcode-conversation-adapter")
-            .join("zcode_adapter.py");
+            .join("adapter.mjs");
         let mut permissions = fs::metadata(&adapter)
             .expect("read adapter metadata")
             .permissions();
@@ -581,7 +581,7 @@ mod tests {
         );
         assert_eq!(
             ORGANIZER_ZCODE_ADAPTER,
-            include_bytes!("../../../builtin-assets/adapters/zcode/zcode_adapter.py")
+            include_bytes!("../../../builtin-assets/adapters/zcode/adapter.mjs")
         );
     }
 

@@ -152,7 +152,7 @@ assetiweave-cli conversation sync --source <source-id>
 
 ```text
 scripts/zcode-conversation-adapter/conversation-adapter.json
-scripts/zcode-conversation-adapter/zcode_adapter.py
+scripts/zcode-conversation-adapter/adapter.mjs
 ```
 
 它以 SQLite 只读模式读取 `~/.zcode/cli/db/db.sqlite`。使用相对本 `SKILL.md` 的真实绝对路径替换 `<skill-dir>`：

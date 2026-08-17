@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 
-ADAPTER = Path(__file__).parents[1] / "adapters" / "zcode" / "zcode_adapter.py"
+ADAPTER = Path(__file__).parents[1] / "adapters" / "zcode" / "adapter.mjs"
 
 
 def create_fixture(path: Path) -> None:
@@ -165,7 +165,7 @@ def run_adapter(db_path: Path, session_id: str | None = None) -> list[dict]:
         "params": {"session_id": session_id},
     }
     completed = subprocess.run(
-        [sys.executable, str(ADAPTER)],
+        ["node", str(ADAPTER)],
         input=json.dumps(request),
         text=True,
         capture_output=True,

@@ -1754,7 +1754,7 @@ fn official_web_adapters_expose_incremental_session_discovery() {
 #[cfg(unix)]
 #[test]
 fn official_zcode_adapter_emits_structured_cards_without_legacy_metadata() {
-    if !command_available("python3") {
+    if !command_available("node") {
         return;
     }
     let fixture = TempFixture::new("assetiweave-zcode-card-contract-fixture");
@@ -1837,6 +1837,7 @@ fn official_adapter_manifests_use_runtime_without_legacy_command() {
         "../builtin-assets/adapters/codex/conversation-adapter.json",
         "../builtin-assets/adapters/opencode/conversation-adapter.json",
         "../builtin-assets/adapters/claude-code/conversation-adapter.json",
+        "../builtin-assets/adapters/zcode/conversation-adapter.json",
     ] {
         let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest_relative_path);
         let manifest: Value =

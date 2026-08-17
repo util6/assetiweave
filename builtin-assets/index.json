@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "updated_at": "2026-08-16T00:00:00Z",
+  "updated_at": "2026-08-17T00:00:00Z",
   "packages": [
     {
       "package_id": "io.github.util6.codex-session",
@@ -22,7 +22,7 @@
     },
     {
       "package_id": "io.github.util6.zcode-session",
-      "stable_version": "0.4.3",
+      "stable_version": "0.5.0",
       "beta_version": null,
       "history_url": "history/io.github.util6.zcode-session.json"
     },

@@ -68,6 +68,7 @@ var commandAliases = map[string][]string{
 	"question":       {"q"},
 	"recall":         {"rec"},
 	"rebuild":        {"rb"},
+	"refresh":        {"ref"},
 	"register":       {"reg"},
 	"reject":         {"rej"},
 	"reinstall":      {"re"},
