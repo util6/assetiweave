@@ -152,3 +152,14 @@ T00 完成前不应启动产品代码实施。评审有修改时先同步主索�
 - Deviations:
 - Next:
 ```
+
+### 2026-08-17 · T02–T33 implementation checkpoint
+
+- Status: 已完成主要实现，进入最终质量门；SPEC 状态仍为 Proposed，T00 人工评审保持 Pending。
+- Commit/working tree: 当前分支 `codex/agent-marketplace-dynamic-runtime` 的工作区实现；未改写 SPEC 目录外已存在的无关修改。
+- Files: 新增 Agent Market domain/catalog/cache/installers/lifecycle/migration、SQLite migration、bundled catalog、动态 Registry/runtime manager、AppService/Tauri/Engine/CLI/Frontend 集成及生命周期任务/预览对话框。
+- Tests-first evidence: 覆盖 System/Binary/Npx/Uvx 选择与安装约束、缓存/Registry 原子替换、生命周期任务去重/取消/terminal retention、CLI preview/confirmation、前端 lifecycle provider 与卸载清理确认。
+- Verification: `pnpm typecheck`、`pnpm test`（99 files/514 tests）、`pnpm build`、Rust targeted Engine/DB/background tests、Rust full suite（576 passed/1 ignored）、CLI targeted tests 和 `go vet` 已通过；`git diff --check`、相关 Rust `rustfmt --check` 已通过。CLI full test/race 仍受当前沙箱禁止 IPv6 `httptest` listener 和 fake Engine 进程启动影响。
+- Acceptance: bundled catalog 可在未安装九个 Agent 时展示；安装记录按 tenant 持久化；动态 Registry 只加载 enabled + ready + execution-ready；System/Binary/Npx/Uvx 走统一生命周期；managed uninstall 删除 app-owned 文件，System uninstall 只解除绑定；运行中 Agent 的更新/卸载受 mutation gate 阻止；Tauri/Engine/CLI contract 已同步；前端 Market/Installed、安装/更新/重装/卸载预览和后台任务状态已接入。
+- Deviations: 安装 protocol conformance 尚未把生命周期取消令牌深入 ACP/Native probe；legacy assignment migration 当前在 AppService open 中同步执行；catalog remote fetch 尚未提供完整可注入 fetcher/clock/filesystem seam 与 304 远端 fixture；Tauri lifecycle task 查询/取消接口保留为 desktop-only，CLI 使用已确认的一次性 Engine lifecycle 方法；T00 人工评审、真实平台 Binary/Npx/Uvx 联机 smoke 和最终人工 UI review 仍待完成。
+- Next: 完成代码 review/平台 smoke；确认工作区保护清单后提交中文 commit。
