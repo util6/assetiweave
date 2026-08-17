@@ -290,7 +290,7 @@ impl AppService {
             return Err(format_memory_dream_gate_error(&preview));
         }
 
-        let policy = load_memory_dream_policy(&self.db_path)?;
+        let policy = load_memory_dream_policy(self.agent_runtime.clone())?;
         let context = self.build_memory_dream_context(&preview)?;
         let run_id = Uuid::new_v4().to_string();
         let note_id = Uuid::new_v4().to_string();
@@ -524,7 +524,7 @@ impl AppService {
             MEMORY_DREAM_MAX_QUESTIONS,
             MEMORY_DREAM_MAX_INPUT_CHARS,
         );
-        let policy = load_memory_dream_policy(&self.db_path)
+        let policy = load_memory_dream_policy(self.agent_runtime.clone())
             .map_err(|error| format!("load Memory Dream policy: {error}"))?;
         let gates = evaluate_memory_dream_gates(MemoryDreamGateInputs {
             trigger,
@@ -944,7 +944,9 @@ fn memory_dream_candidates(markdown: &str) -> Vec<MemoryDreamCandidateDraft> {
     candidates
 }
 
-fn load_memory_dream_policy(db_path: &Path) -> AppResult<MemoryDreamPolicy> {
+fn load_memory_dream_policy(
+    runtime: std::sync::Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
+) -> AppResult<MemoryDreamPolicy> {
     let settings = crate::backend::app_settings::read_app_settings_value()?;
     let memory = settings.get("memory").and_then(Value::as_object);
     let auto_enabled = memory
@@ -962,8 +964,6 @@ fn load_memory_dream_policy(db_path: &Path) -> AppResult<MemoryDreamPolicy> {
         .unwrap_or(3)
         .clamp(1, 50);
     let (agent_id, model) = crate::backend::ai_execution::configured_agent_capability("memory")
-        .map_err(|error| error.to_string())?;
-    let runtime = crate::backend::ai_execution::shared_agent_execution_runtime(db_path)
         .map_err(|error| error.to_string())?;
     let runtime_available = runtime.check_availability(&agent_id).available;
     Ok(MemoryDreamPolicy {
@@ -1412,10 +1412,18 @@ mod tests {
                 database.pool(),
             ))
             .expect("load request context");
+        let runtime_manager =
+            std::sync::Arc::new(crate::backend::agent_market::AgentRuntimeManager::new(
+                database.pool().clone(),
+                db_path.with_extension("agent-executions"),
+            ));
+        let agent_runtime = runtime_manager.runtime();
         let service = AppService {
             db: database,
             db_path: db_path.clone(),
             context,
+            agent_runtime_manager: runtime_manager,
+            agent_runtime,
         };
 
         let result = service

@@ -1409,16 +1409,25 @@ mod tests {
     fn desktop_only_tauri_methods() -> BTreeSet<&'static str> {
         BTreeSet::from([
             "cancel_ai_execution_task",
+            "cancel_agent_lifecycle_task",
             "cancel_app_close_prompt",
             "complete_app_close",
             "copy_prompt_card_to_clipboard",
             "get_ai_execution_task",
+            "get_agent_lifecycle_task",
+            "get_agent_market_refresh_task",
             "get_cli_tools_status",
             "install_cli_tools",
             "list_ai_execution_tasks",
+            "list_agent_lifecycle_tasks",
+            "list_agent_market_refresh_tasks",
             "list_source_assets",
             "set_app_window_icon",
             "start_conversation_card_translation",
+            "start_agent_installation",
+            "start_agent_reinstallation",
+            "start_agent_uninstall",
+            "start_agent_update",
         ])
     }
 

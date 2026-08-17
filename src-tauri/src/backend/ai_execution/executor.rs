@@ -10,7 +10,7 @@ use std::{
 use tokio::sync::Semaphore;
 
 use crate::backend::agents::{
-    registry::{AgentAvailability, AgentProbeError, AgentRegistry},
+    registry::{AgentAvailability, AgentProbeError, AgentRegistry, AgentRegistryHandle},
     types::{
         AgentCatalogEntry, AgentConnectionResult, AgentDefinition, AgentId, AgentModelOption,
         AgentModelsResult, AgentProtocol,
@@ -158,14 +158,17 @@ impl AgentExecutionBackend for NativeExecutionBackend {
 }
 
 pub(crate) struct AgentExecutor {
-    registry: Arc<AgentRegistry>,
+    registry: AgentRegistryHandle,
     acp: Arc<dyn AgentExecutionBackend>,
     native: Arc<dyn AgentExecutionBackend>,
     permits: Arc<Semaphore>,
-    active: Arc<Mutex<HashMap<uuid::Uuid, super::AiExecutionCancellation>>>,
+    active:
+        Arc<Mutex<HashMap<uuid::Uuid, (AgentId, Option<String>, super::AiExecutionCancellation)>>>,
+    mutation_gates: Arc<Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>>,
 }
 
 impl AgentExecutor {
+    #[cfg(test)]
     pub(crate) fn builtin(workspace_root: PathBuf) -> Result<Self, AiExecutionError> {
         let registry = AgentRegistry::builtin().map_err(|_| AiExecutionError::Protocol {
             operation: "registry_initialize",
@@ -193,11 +196,28 @@ impl AgentExecutor {
         max_concurrency: usize,
     ) -> Self {
         Self {
+            registry: AgentRegistryHandle::from_registry(registry),
+            acp,
+            native,
+            permits: Arc::new(Semaphore::new(max_concurrency.max(1))),
+            active: Arc::new(Mutex::new(HashMap::new())),
+            mutation_gates: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub(crate) fn with_registry_handle(
+        registry: AgentRegistryHandle,
+        acp: Arc<dyn AgentExecutionBackend>,
+        native: Arc<dyn AgentExecutionBackend>,
+        max_concurrency: usize,
+    ) -> Self {
+        Self {
             registry,
             acp,
             native,
             permits: Arc::new(Semaphore::new(max_concurrency.max(1))),
             active: Arc::new(Mutex::new(HashMap::new())),
+            mutation_gates: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -225,13 +245,18 @@ impl AgentExecutor {
 
         let outcome = async {
             request.validate()?;
+            let mutation_gate = self.mutation_gate(request.agent_id.as_str());
+            let _execution_lease = mutation_gate.read().await;
             let active_id = uuid::Uuid::new_v4();
             self.active
                 .lock()
                 .map_err(|_| AiExecutionError::Protocol {
                     operation: "active_execution_registry",
                 })?
-                .insert(active_id, request.cancellation.clone());
+                .insert(
+                    active_id,
+                    (request.agent_id.clone(), None, request.cancellation.clone()),
+                );
             let _active_guard = ActiveExecutionGuard {
                 id: active_id,
                 active: self.active.clone(),
@@ -259,11 +284,16 @@ impl AgentExecutor {
                 return Err(cancelled_before_spawn(&request));
             }
             request.report_phase(AiExecutionPhase::Resolving);
-            let Some(definition) = self.registry.get(&request.agent_id).cloned() else {
+            let Some(definition) = self.registry.get(&request.agent_id) else {
                 return Err(AiExecutionError::AgentNotFound {
                     agent_id: request.agent_id.clone(),
                 });
             };
+            if let Ok(mut active) = self.active.lock() {
+                if let Some((_, installation_id, _)) = active.get_mut(&active_id) {
+                    *installation_id = definition.installation_id.clone();
+                }
+            }
             let backend = match definition.protocol {
                 AgentProtocol::Acp => Arc::clone(&self.acp),
                 AgentProtocol::Native => Arc::clone(&self.native),
@@ -326,7 +356,7 @@ impl AgentExecutor {
             return result;
         }
 
-        let Some(definition) = self.registry.get(agent_id).cloned() else {
+        let Some(definition) = self.registry.get(agent_id) else {
             return unavailable_connection_result(
                 agent_id,
                 "agent_not_found",
@@ -351,22 +381,6 @@ impl AgentExecutor {
                 });
                 result.error_code = None;
                 result.error = None;
-            }
-            Err(error)
-                if self
-                    .registry
-                    .get(agent_id)
-                    .is_some_and(|item| item.cli_fallback) =>
-            {
-                // OpenCode is the compatibility seam that already has a CLI
-                // fallback. Other ACP definitions deliberately remain ACP-only.
-                result.available = true;
-                result.connected = true;
-                result.connection_method = Some("cli_fallback".to_string());
-                result.error_code = None;
-                result.error =
-                    Some("Probe failed; CLI availability fallback succeeded.".to_string());
-                let _ = error;
             }
             Err(error) => {
                 result.available = false;
@@ -393,7 +407,7 @@ impl AgentExecutor {
             return models_result_from_availability(agent_id, &installation);
         }
 
-        let Some(definition) = self.registry.get(agent_id).cloned() else {
+        let Some(definition) = self.registry.get(agent_id) else {
             return unavailable_models_result(
                 agent_id,
                 "agent_not_found",
@@ -425,6 +439,30 @@ impl AgentExecutor {
     #[cfg(test)]
     fn available_permits(&self) -> usize {
         self.permits.available_permits()
+    }
+
+    pub(crate) fn active_count(&self, agent_id: &AgentId) -> usize {
+        self.active
+            .lock()
+            .map(|active| active.values().filter(|(id, _, _)| id == agent_id).count())
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn agent_in_use(&self, agent_id: &str) -> bool {
+        AgentId::parse(agent_id)
+            .map(|id| self.active_count(&id) > 0)
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn mutation_gate(&self, agent_id: &str) -> Arc<tokio::sync::RwLock<()>> {
+        let mut gates = self
+            .mutation_gates
+            .lock()
+            .expect("agent mutation gate lock poisoned");
+        gates
+            .entry(agent_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::RwLock::new(())))
+            .clone()
     }
 }
 
@@ -503,7 +541,12 @@ impl AgentExecutionRuntime for AgentExecutor {
         let cancellations = self
             .active
             .lock()
-            .map(|active| active.values().cloned().collect::<Vec<_>>())
+            .map(|active| {
+                active
+                    .values()
+                    .map(|(_, _, cancellation)| cancellation.clone())
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
         for cancellation in cancellations {
             cancellation.cancel();
@@ -525,6 +568,11 @@ fn unavailable_connection_result(
         connection_method: None,
         error_code: Some(error_code.to_string()),
         error: Some(error.to_string()),
+        installation_status: None,
+        runtime_status: None,
+        protocol_status: None,
+        execution_ready: false,
+        health_stale: false,
     }
 }
 
@@ -576,12 +624,18 @@ fn connection_result_from_availability(
             .as_ref()
             .map(|error| error.code().to_string()),
         error: availability.error.as_ref().map(ToString::to_string),
+        installation_status: None,
+        runtime_status: None,
+        protocol_status: None,
+        execution_ready: false,
+        health_stale: false,
     }
 }
 
 struct ActiveExecutionGuard {
     id: uuid::Uuid,
-    active: Arc<Mutex<HashMap<uuid::Uuid, super::AiExecutionCancellation>>>,
+    active:
+        Arc<Mutex<HashMap<uuid::Uuid, (AgentId, Option<String>, super::AiExecutionCancellation)>>>,
 }
 
 impl Drop for ActiveExecutionGuard {
@@ -910,6 +964,7 @@ mod tests {
     fn definition(protocol: AgentProtocol) -> AgentDefinition {
         AgentDefinition {
             id: AgentId::parse("fake-agent").unwrap(),
+            installation_id: None,
             display_name: "Fake Agent".to_owned(),
             protocol,
             command: "fake-agent".to_owned(),
@@ -918,7 +973,6 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: None,
             model_discovery: None,
-            cli_fallback: false,
         }
     }
 

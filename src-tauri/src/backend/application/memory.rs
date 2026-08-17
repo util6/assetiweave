@@ -589,10 +589,18 @@ mod tests {
                 async move { crate::backend::store::load_local_request_context_sqlx(&pool).await },
             )
             .expect("load request context");
+        let runtime_manager =
+            std::sync::Arc::new(crate::backend::agent_market::AgentRuntimeManager::new(
+                db.pool().clone(),
+                db_path.with_extension("agent-executions"),
+            ));
+        let agent_runtime = runtime_manager.runtime();
         let service = AppService {
             db,
             db_path: db_path.clone(),
             context,
+            agent_runtime_manager: runtime_manager,
+            agent_runtime,
         };
         (service, db_path)
     }

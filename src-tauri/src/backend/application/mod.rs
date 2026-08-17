@@ -1,4 +1,5 @@
 mod agent;
+mod agent_market;
 mod assets;
 mod card_translation;
 mod conversation_adapter_catalog_v2;
@@ -25,6 +26,9 @@ mod utils;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use agent_market::{
+    AgentInstallPreview, AgentMarketItemView, AgentMarketRefreshResult, AgentUninstallPreview,
+};
 pub(crate) use conversation_adapter_catalog_v2::*;
 pub(crate) use conversation_script_catalog::*;
 pub(crate) use params::*;

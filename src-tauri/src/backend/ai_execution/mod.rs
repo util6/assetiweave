@@ -24,30 +24,44 @@ use std::{
     ffi::OsString,
     path::{Path, PathBuf},
     process::{Command, ExitStatus},
-    sync::{Arc, OnceLock},
+    sync::Arc,
     time::Duration,
 };
 
-static SHARED_AGENT_EXECUTION_RUNTIME: OnceLock<Result<Arc<executor::AgentExecutor>, String>> =
-    OnceLock::new();
-
-pub(crate) fn shared_agent_execution_runtime(
+pub(crate) fn agent_runtime_manager(
     db_path: &Path,
-) -> Result<Arc<dyn AgentExecutionRuntime>, AiExecutionError> {
+) -> Result<Arc<crate::backend::agent_market::AgentRuntimeManager>, AiExecutionError> {
+    let db = crate::backend::store::Database::open_initialized(db_path).map_err(|_| {
+        AiExecutionError::Protocol {
+            operation: "runtime_database_initialize",
+        }
+    })?;
+    let pool = db.pool().clone();
+    let context = db
+        .block_on(
+            async move { crate::backend::store::load_local_request_context_sqlx(&pool).await },
+        )
+        .map_err(|_| AiExecutionError::Protocol {
+            operation: "runtime_context_initialize",
+        })?;
     let workspace_root = db_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("agent-executions");
-    match SHARED_AGENT_EXECUTION_RUNTIME.get_or_init(|| {
-        executor::AgentExecutor::builtin(workspace_root)
-            .map(Arc::new)
-            .map_err(|error| error.to_string())
-    }) {
-        Ok(runtime) => Ok(runtime.clone()),
-        Err(_) => Err(AiExecutionError::Protocol {
-            operation: "runtime_initialize",
-        }),
-    }
+    let manager = Arc::new(crate::backend::agent_market::AgentRuntimeManager::new(
+        db.pool().clone(),
+        workspace_root,
+    ));
+    let runtime_root = crate::backend::agent_market::default_runtime_root().map_err(|_| {
+        AiExecutionError::Protocol {
+            operation: "runtime_root_initialize",
+        }
+    })?;
+    db.block_on(manager.recover_startup(&context.tenant.id, &runtime_root))
+        .map_err(|_| AiExecutionError::Protocol {
+            operation: "runtime_registry_reload",
+        })?;
+    Ok(manager)
 }
 
 pub(crate) fn configured_agent_capability(
@@ -197,6 +211,11 @@ fn connection_probe_failure(
         connection_method: None,
         error_code: Some(error_code.to_string()),
         error: Some(error.to_string()),
+        installation_status: None,
+        runtime_status: None,
+        protocol_status: None,
+        execution_ready: false,
+        health_stale: false,
     }
 }
 

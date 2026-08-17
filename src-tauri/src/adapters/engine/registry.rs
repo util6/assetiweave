@@ -97,6 +97,36 @@ struct RevealPathParams {
     path: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+struct AgentMarketInspectParams {
+    agent_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+struct AgentUninstallPreviewParams {
+    agent_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+struct AgentToggleParams {
+    agent_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+struct AgentInstalledGetParams {
+    agent_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+struct AgentRuntimeCheckParams {
+    agent_id: String,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct ParamViolation {
     param: String,
@@ -2871,6 +2901,157 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "list_agent_market",
+        "agent.market.list",
+        "List curated Agent Market items and installation status",
+        Read,
+        App,
+        false,
+        crate::backend::agent_market::types::AgentMarketListRequest,
+        Service => |service, params| service.list_agent_market(params),
+        &[
+            param!("query", "Optional Agent search query"),
+            param!("protocol", "Optional Agent protocol filter"),
+            param!("installedOnly", "Only return installed Agents", ["installed_only"]),
+            param!("includeIncompatible", "Include core-incompatible items", ["include_incompatible"])
+        ],
+        Some("assetiweave-cli agent market list")
+    ),
+    command!(
+        "inspect_agent_market_item",
+        "agent.market.inspect",
+        "Inspect one curated Agent Market item",
+        Read,
+        App,
+        false,
+        AgentMarketInspectParams,
+        Service => |service, params| service.inspect_agent_market_item(params.agent_id),
+        &[param!("agentId", "Curated Agent identifier", ["agent_id"])],
+        Some("assetiweave-cli agent market inspect")
+    ),
+    command!(
+        "refresh_agent_market",
+        "agent.market.refresh.run",
+        "Refresh the controlled curated Agent Market catalog",
+        HighRiskWrite,
+        App,
+        false,
+        NoParams,
+        Service => |service, _params| service.refresh_agent_market_catalog(),
+        &[],
+        Some("assetiweave-cli agent market refresh")
+    ),
+    command!(
+        "preview_agent_installation",
+        "agent.install.preview",
+        "Preview an Agent installation, update or reinstall",
+        Read,
+        App,
+        false,
+        crate::backend::agent_market::types::AgentInstallPreviewRequest,
+        Service => |service, params| service.preview_agent_installation(params),
+        &[
+            param!("agentId", "Curated Agent identifier", ["agent_id"]),
+            param!("distributionId", "Optional distribution identifier", ["distribution_id"]),
+            param!("action", "install, update or reinstall")
+        ],
+        Some("assetiweave-cli agent install preview")
+    ),
+    command!(
+        "list_installed_agents",
+        "agent.installed.list",
+        "List current tenant Agent installations",
+        Read,
+        App,
+        false,
+        NoParams,
+        Service => |service, _params| service.list_installed_agents(),
+        &[],
+        Some("assetiweave-cli agent installed")
+    ),
+    command!(
+        "get_installed_agent",
+        "agent.installed.get",
+        "Get one current tenant Agent installation",
+        Read,
+        App,
+        false,
+        AgentInstalledGetParams,
+        Service => |service, params| service.get_installed_agent(params.agent_id),
+        &[param!("agentId", "Installed Agent identifier", ["agent_id"])],
+        Some("assetiweave-cli agent installed get")
+    ),
+    command!(
+        "preview_agent_uninstall",
+        "agent.uninstall.preview",
+        "Preview Agent references, ownership and cleanup scope",
+        Read,
+        App,
+        false,
+        AgentUninstallPreviewParams,
+        Service => |service, params| service.preview_agent_uninstall(params.agent_id),
+        &[param!("agentId", "Installed Agent identifier", ["agent_id"])],
+        Some("assetiweave-cli agent uninstall preview")
+    ),
+    command!(
+        "install_agent",
+        "agent.install.run",
+        "Install or update one Agent from a confirmed preview",
+        HighRiskWrite,
+        Friendly,
+        false,
+        crate::backend::agent_market::types::AgentInstallStartRequest,
+        Service => |service, params| service.install_agent(params),
+        &[
+            param!("agentId", "Curated Agent identifier", ["agent_id"]),
+            param!("catalogVersion", "Catalog version", ["catalog_version"]),
+            param!("agentVersion", "Fixed Agent version", ["agent_version"]),
+            param!("distributionId", "Selected distribution", ["distribution_id"]),
+            param!("previewToken", "Preview confirmation token", ["preview_token"])
+        ],
+        Some("assetiweave-cli agent install")
+    ),
+    command!(
+        "uninstall_agent",
+        "agent.uninstall.run",
+        "Uninstall or unbind one Agent",
+        HighRiskWrite,
+        Friendly,
+        false,
+        crate::backend::agent_market::types::AgentUninstallStartRequest,
+        Service => |service, params| service.uninstall_agent(params),
+        &[
+            param!("agentId", "Installed Agent identifier", ["agent_id"]),
+            param!("clearCapabilityAssignments", "Explicit capability assignments to clear", ["clear_capability_assignments"]),
+            param!("previewToken", "Preview confirmation token", ["preview_token"])
+        ],
+        Some("assetiweave-cli agent uninstall")
+    ),
+    command!(
+        "enable_agent",
+        "agent.enable",
+        "Enable an installed Agent and reload its runtime definition",
+        Write,
+        App,
+        false,
+        AgentToggleParams,
+        Service => |service, params| service.set_agent_enabled(params.agent_id, true),
+        &[param!("agentId", "Installed Agent identifier", ["agent_id"])],
+        Some("assetiweave-cli agent enable <agent-id>")
+    ),
+    command!(
+        "disable_agent",
+        "agent.disable",
+        "Disable an installed Agent and remove it from the runtime registry",
+        Write,
+        App,
+        false,
+        AgentToggleParams,
+        Service => |service, params| service.set_agent_enabled(params.agent_id, false),
+        &[param!("agentId", "Installed Agent identifier", ["agent_id"])],
+        Some("assetiweave-cli agent disable <agent-id>")
+    ),
+    command!(
         "check_agent_connection",
         "agent.connection.check",
         "Check Agent installation or ACP connection",
@@ -2884,6 +3065,18 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("mode", "Probe mode: installation or connection")
         ],
         None
+    ),
+    command!(
+        "check_agent_runtime",
+        "agent.runtime.check",
+        "Check one installed Agent runtime entry",
+        Read,
+        App,
+        false,
+        AgentRuntimeCheckParams,
+        Service => |service, params| service.check_agent_runtime(params.agent_id),
+        &[param!("agentId", "Installed Agent identifier", ["agent_id"])],
+        Some("assetiweave-cli agent check")
     ),
     command!(
         "list_agent_models",
@@ -3793,7 +3986,14 @@ pub(crate) fn command_specs() -> &'static [CommandSpec] {
 }
 
 pub(crate) fn find(method: &str) -> Option<&'static CommandSpec> {
-    COMMAND_SPECS.iter().find(|spec| spec.method == method)
+    COMMAND_SPECS
+        .iter()
+        .find(|spec| spec.method == method)
+        .or_else(|| {
+            COMMAND_SPECS
+                .iter()
+                .find(|spec| spec.canonical_method == method)
+        })
 }
 
 #[cfg(test)]

@@ -6,6 +6,15 @@ impl AppService {
     }
 
     pub(crate) fn open_with_db_path(db_path: PathBuf) -> AppResult<Self> {
+        let manager = crate::backend::ai_execution::agent_runtime_manager(&db_path)
+            .map_err(|error| error.to_string())?;
+        Self::open_with_db_path_and_manager(db_path, manager)
+    }
+
+    pub(crate) fn open_with_db_path_and_manager(
+        db_path: PathBuf,
+        runtime_manager: std::sync::Arc<crate::backend::agent_market::AgentRuntimeManager>,
+    ) -> AppResult<Self> {
         let db = crate::backend::store::Database::open_initialized(&db_path)?;
         let pool = db.pool().clone();
         let context = db.block_on(async move {
@@ -16,10 +25,26 @@ impl AppService {
         db.block_on(async move {
             crate::backend::store::seed_tenant_defaults_sqlx(&pool, &tenant_id).await
         })?;
+        let runtime_root = crate::backend::agent_market::default_runtime_root()
+            .map_err(|error| error.to_string())?;
+        db.block_on(runtime_manager.recover_startup(&context.tenant.id, &runtime_root))?;
+        let migration_scope = db_path.to_string_lossy().to_string();
+        if let Err(error) = db.block_on(crate::backend::agent_market::migrate_legacy_assignments(
+            db.pool().clone(),
+            runtime_manager.clone(),
+            &context.tenant.id,
+            &migration_scope,
+        )) {
+            eprintln!("agent market legacy migration deferred: {error}");
+        }
+        db.block_on(runtime_manager.reload(&context.tenant.id))?;
+        let agent_runtime = runtime_manager.runtime();
         Ok(Self {
             db,
             db_path,
             context,
+            agent_runtime_manager: runtime_manager,
+            agent_runtime,
         })
     }
 
@@ -92,7 +117,69 @@ impl AppService {
         &self,
         settings: Value,
     ) -> AppResult<crate::backend::app_settings::AppSettingsFile> {
+        self.validate_agent_capability_assignments(&settings)?;
         crate::backend::app_settings::save_app_settings(settings)
+    }
+
+    fn validate_agent_capability_assignments(&self, settings: &Value) -> AppResult<()> {
+        let Some(assignments) = settings
+            .get("agentCapabilityAssignments")
+            .and_then(Value::as_object)
+        else {
+            return Ok(());
+        };
+        let previous = crate::backend::app_settings::read_app_settings_value()?;
+        let previous_assignments = previous
+            .get("agentCapabilityAssignments")
+            .and_then(Value::as_object);
+        let repository =
+            crate::backend::agent_market::AgentInstallationRepository::new(self.db.pool().clone());
+        for (service_id, value) in assignments {
+            let Some(agent_id) = value
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                return Err(format!(
+                    "agent_not_installed: invalid assignment for {service_id}"
+                ));
+            };
+            if previous_assignments
+                .and_then(|values| values.get(service_id))
+                .and_then(Value::as_str)
+                == Some(agent_id)
+            {
+                continue;
+            }
+            let installation = self
+                .db
+                .block_on(repository.get(self.tenant_id(), agent_id))?
+                .ok_or_else(|| format!("agent_not_installed: {agent_id}"))?;
+            if !installation.enabled || !installation.execution_ready() {
+                return Err(format!("agent_not_ready: {agent_id}"));
+            }
+            let catalog = crate::backend::agent_market::CatalogCache::best_available()?;
+            let item = catalog
+                .item(agent_id)
+                .ok_or_else(|| format!("agent_capability_unsupported: {agent_id}"))?;
+            let purpose = match service_id.as_str() {
+                "cardTranslation" | "card_translation" => "card_translation",
+                "memory" => "memory",
+                "promptOptimization" | "prompt_optimization" => "prompt_optimization",
+                other => other,
+            };
+            if !item
+                .capabilities
+                .purposes
+                .iter()
+                .any(|candidate| candidate == purpose)
+            {
+                return Err(format!(
+                    "agent_capability_unsupported: {agent_id}/{purpose}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn run_doctor(&self) -> AppResult<Value> {
@@ -214,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn default_app_services_share_one_runtime_without_probing_agent_processes() {
+    fn default_app_services_use_independent_runtime_snapshots() {
         let first_path = std::env::temp_dir().join(format!(
             "assetiweave-runtime-shared-first-{}.sqlite",
             uuid::Uuid::new_v4()
@@ -227,13 +314,9 @@ mod tests {
         let first = AppService::open_with_db_path(first_path.clone()).expect("first service");
         let second = AppService::open_with_db_path(second_path.clone()).expect("second service");
 
-        let first_runtime =
-            crate::backend::ai_execution::shared_agent_execution_runtime(&first_path)
-                .expect("first runtime");
-        let second_runtime =
-            crate::backend::ai_execution::shared_agent_execution_runtime(&second_path)
-                .expect("second runtime");
-        assert!(Arc::ptr_eq(&first_runtime, &second_runtime));
+        let first_runtime = first.agent_runtime.clone();
+        let second_runtime = second.agent_runtime.clone();
+        assert!(!Arc::ptr_eq(&first_runtime, &second_runtime));
         drop(first);
         drop(second);
         let _ = std::fs::remove_file(first_path);

@@ -4,7 +4,7 @@ mod backend;
 use crate::{
     adapters::{app_state::AppState, tauri::background_tasks::BackgroundTaskRegistry},
     backend::{
-        ai_execution::shared_agent_execution_runtime,
+        ai_execution::agent_runtime_manager,
         application::AppService,
         data_backup::backup_database_from_settings,
         logs::write_startup_log,
@@ -53,8 +53,9 @@ pub fn run() {
     backend::builtin_skills::install_builtin_skills()
         .expect("failed to install AssetIWeave system Skills");
     let db_path = app_db_path().expect("failed to resolve AssetIWeave database path");
-    let agent_runtime = shared_agent_execution_runtime(&db_path)
-        .expect("failed to initialize AssetIWeave agent execution runtime");
+    let agent_runtime_manager = agent_runtime_manager(&db_path)
+        .expect("failed to initialize AssetIWeave agent runtime manager");
+    let agent_runtime = agent_runtime_manager.runtime();
     let conversation_full_sync_on_startup_enabled =
         match backend::app_settings::conversation_full_sync_on_startup_enabled() {
             Ok(enabled) => enabled,
@@ -64,8 +65,11 @@ pub fn run() {
             }
         };
     let conversation_payload_policy_reparse_required = {
-        let service = AppService::open_with_db_path(db_path.clone())
-            .expect("failed to initialize AssetIWeave database");
+        let service = AppService::open_with_db_path_and_manager(
+            db_path.clone(),
+            agent_runtime_manager.clone(),
+        )
+        .expect("failed to initialize AssetIWeave database");
         if let Err(error) = service.interrupt_stale_memory_runs() {
             eprintln!("failed to mark interrupted Memory runs on startup: {error}");
         }
@@ -163,6 +167,7 @@ pub fn run() {
             lock: Arc::new(Mutex::new(())),
             background_tasks: Arc::new(BackgroundTaskRegistry::default()),
             agent_runtime,
+            agent_runtime_manager,
             allow_close: Arc::new(AtomicBool::new(false)),
             allow_exit: Arc::new(AtomicBool::new(false)),
             exit_prompt_open: Arc::new(AtomicBool::new(false)),
@@ -287,10 +292,14 @@ pub fn run_engine_stdio() {
         .map(std::path::PathBuf::from)
         .map(Ok)
         .unwrap_or_else(backend::path_utils::app_db_path);
-    let runtime = match engine_db_path
-        .and_then(|path| shared_agent_execution_runtime(&path).map_err(|error| error.to_string()))
-    {
-        Ok(runtime) => runtime,
+    let runtime = match engine_db_path {
+        Ok(path) => match agent_runtime_manager(&path) {
+            Ok(manager) => manager.runtime(),
+            Err(error) => {
+                eprintln!("failed to initialize Engine agent runtime: {error}");
+                std::process::exit(1);
+            }
+        },
         Err(error) => {
             eprintln!("failed to initialize Engine agent runtime: {error}");
             std::process::exit(1);

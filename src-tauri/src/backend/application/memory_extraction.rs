@@ -48,7 +48,7 @@ impl AppService {
                 extractions: Vec::new(),
             });
         }
-        let runtime = load_recall_ai_runtime(&self.db_path)?;
+        let runtime = load_recall_ai_runtime(self.agent_runtime.clone())?;
         let run_id = Uuid::new_v4().to_string();
         let kind = if preview.mode == MemoryRecallMode::Full {
             MemoryRunKind::FullOrganize
@@ -338,10 +338,10 @@ fn validate_raw_memories(items: &[MemoryRawMemory], allowed: &HashSet<String>) -
     Ok(())
 }
 
-fn load_recall_ai_runtime(db_path: &Path) -> AppResult<RecallAiRuntime> {
+fn load_recall_ai_runtime(
+    runtime: Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
+) -> AppResult<RecallAiRuntime> {
     let (agent_id, model) = crate::backend::ai_execution::configured_agent_capability("memory")
-        .map_err(|error| error.to_string())?;
-    let runtime = crate::backend::ai_execution::shared_agent_execution_runtime(db_path)
         .map_err(|error| error.to_string())?;
     Ok(RecallAiRuntime {
         agent_id,

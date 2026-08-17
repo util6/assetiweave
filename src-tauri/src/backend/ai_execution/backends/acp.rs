@@ -736,6 +736,7 @@ mod tests {
     fn definition(mode: &str, record_path: &Path) -> AgentDefinition {
         AgentDefinition {
             id: AgentId::parse("fake-acp").unwrap(),
+            installation_id: None,
             display_name: "Fake ACP".to_owned(),
             protocol: AgentProtocol::Acp,
             command: "node".to_owned(),
@@ -753,7 +754,6 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: None,
             model_discovery: None,
-            cli_fallback: false,
         }
     }
 

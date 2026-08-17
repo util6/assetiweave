@@ -134,6 +134,10 @@ impl DeclaredAgentCapabilities {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AgentDefinition {
     pub(crate) id: AgentId,
+    /// Identity of the installation snapshot that produced this definition.
+    /// Built-in test definitions may leave this unset; persisted Agent Market
+    /// definitions always carry the current installation identity.
+    pub(crate) installation_id: Option<String>,
     pub(crate) display_name: String,
     pub(crate) protocol: AgentProtocol,
     pub(crate) command: String,
@@ -142,7 +146,6 @@ pub(crate) struct AgentDefinition {
     pub(crate) declared_capabilities: DeclaredAgentCapabilities,
     pub(crate) availability_probe: Option<AgentCommandDefinition>,
     pub(crate) model_discovery: Option<AgentCommandDefinition>,
-    pub(crate) cli_fallback: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -227,6 +230,11 @@ pub(crate) struct AgentConnectionResult {
     pub(crate) connection_method: Option<String>,
     pub(crate) error_code: Option<String>,
     pub(crate) error: Option<String>,
+    pub(crate) installation_status: Option<String>,
+    pub(crate) runtime_status: Option<String>,
+    pub(crate) protocol_status: Option<String>,
+    pub(crate) execution_ready: bool,
+    pub(crate) health_stale: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -384,6 +392,7 @@ mod tests {
     fn definition_with_command(command: &str) -> AgentDefinition {
         AgentDefinition {
             id: AgentId::parse("opencode").unwrap(),
+            installation_id: None,
             display_name: "OpenCode".to_string(),
             protocol: AgentProtocol::Acp,
             command: command.to_string(),
@@ -392,7 +401,6 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: Some(AgentCommandDefinition::new(["--version"])),
             model_discovery: Some(AgentCommandDefinition::new(["models"])),
-            cli_fallback: false,
         }
     }
 }

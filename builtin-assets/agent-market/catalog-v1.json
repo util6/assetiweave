@@ -1,0 +1,123 @@
+{
+  "schema": "assetiweave.agent-market/v1",
+  "catalogVersion": "2026.08.16.1",
+  "generatedAt": "2026-08-16T00:00:00Z",
+  "source": {
+    "kind": "assetiweave_curated",
+    "upstream": "agentclientprotocol/registry",
+    "upstreamRevision": "fixture-2026-08-16"
+  },
+  "items": [
+    {
+      "id": "opencode",
+      "displayName": "OpenCode",
+      "description": "OpenCode ACP agent",
+      "protocol": "acp",
+      "version": "1.0.0",
+      "coreCompatibility": { "min": "0.5.0", "maxExclusive": "0.6.0" },
+      "capabilities": { "purposes": ["card_translation", "memory", "prompt_optimization"], "textPrompt": true, "modelDiscovery": true },
+      "verification": { "status": "tested", "testedAt": "2026-08-16T00:00:00Z", "evidenceId": "opencode-fixture" },
+      "upstream": { "registryId": "opencode", "homepage": "https://opencode.ai", "license": "MIT" },
+      "distributions": [
+        { "id": "system-opencode", "type": "system", "priority": 10, "commandCandidates": ["opencode"], "versionArgs": ["--version"], "versionRange": ">=1.0.0", "launchArgs": ["acp"], "modelDiscoveryArgs": ["models"] },
+        { "id": "binary-darwin-arm64", "type": "binary", "priority": 20, "target": { "os": "darwin", "arch": "aarch64" }, "archive": "none", "url": "https://downloads.example.com/opencode-1.0.0", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 1000000, "executable": "opencode", "launchArgs": ["acp"] }
+      ]
+    },
+    {
+      "id": "gemini",
+      "displayName": "Gemini CLI",
+      "description": "Gemini ACP agent",
+      "protocol": "acp",
+      "version": "1.0.0",
+      "coreCompatibility": { "min": "0.5.0", "maxExclusive": "0.6.0" },
+      "capabilities": { "purposes": ["card_translation", "memory"], "textPrompt": true, "modelDiscovery": false },
+      "verification": { "status": "tested", "testedAt": "2026-08-16T00:00:00Z", "evidenceId": "gemini-fixture" },
+      "upstream": { "registryId": "gemini", "homepage": "https://github.com/google-gemini/gemini-cli", "license": "Apache-2.0" },
+      "distributions": [ { "id": "system-gemini", "type": "system", "priority": 10, "commandCandidates": ["gemini"], "versionArgs": ["--version"], "versionRange": ">=1.0.0", "launchArgs": ["--acp"] }, { "id": "npx-gemini", "type": "npx", "priority": 30, "package": "@google/gemini-cli", "version": "1.0.0", "bin": "gemini", "launchArgs": ["--acp"], "nodeRange": ">=20" } ]
+    },
+    {
+      "id": "kiro",
+      "displayName": "Kiro",
+      "description": "Kiro ACP agent",
+      "protocol": "acp",
+      "version": "1.0.0",
+      "coreCompatibility": { "min": "0.5.0", "maxExclusive": "0.6.0" },
+      "capabilities": { "purposes": ["card_translation", "memory"], "textPrompt": true, "modelDiscovery": false },
+      "verification": { "status": "tested", "testedAt": "2026-08-16T00:00:00Z", "evidenceId": "kiro-fixture" },
+      "upstream": { "registryId": "kiro", "homepage": "https://kiro.dev", "license": "Proprietary" },
+      "distributions": [ { "id": "system-kiro", "type": "system", "priority": 10, "commandCandidates": ["kiro-cli"], "versionArgs": ["--version"], "versionRange": ">=1.0.0", "launchArgs": ["acp"] } ]
+    },
+    {
+      "id": "antigravity",
+      "displayName": "Antigravity",
+      "description": "Antigravity native agent",
+      "protocol": "native",
+      "version": "1.0.0",
+      "coreCompatibility": { "min": "0.5.0", "maxExclusive": "0.6.0" },
+      "capabilities": { "purposes": ["card_translation", "memory"], "textPrompt": true, "modelDiscovery": false },
+      "verification": { "status": "tested", "testedAt": "2026-08-16T00:00:00Z", "evidenceId": "antigravity-fixture" },
+      "upstream": { "registryId": "antigravity", "homepage": "https://antigravity.example.com", "license": "Proprietary" },
+      "distributions": [ { "id": "system-antigravity", "type": "system", "priority": 10, "commandCandidates": ["agy"], "versionArgs": ["--version"], "versionRange": ">=1.0.0", "launchArgs": [] } ]
+    },
+    {
+      "id": "claude",
+      "displayName": "Claude Code",
+      "description": "Claude ACP agent",
+      "protocol": "acp",
+      "version": "0.58.1",
+      "coreCompatibility": { "min": "0.5.0", "maxExclusive": "0.6.0" },
+      "capabilities": { "purposes": ["card_translation", "memory", "prompt_optimization"], "textPrompt": true, "modelDiscovery": false },
+      "verification": { "status": "tested", "testedAt": "2026-08-16T00:00:00Z", "evidenceId": "claude-fixture" },
+      "upstream": { "registryId": "claude-acp", "homepage": "https://github.com/zed-industries/claude-agent-acp", "license": "MIT" },
+      "distributions": [ { "id": "npx-claude", "type": "npx", "priority": 30, "package": "@agentclientprotocol/claude-agent-acp", "version": "0.58.1", "bin": "claude-agent-acp", "launchArgs": [], "nodeRange": ">=20" } ]
+    },
+    {
+      "id": "codex",
+      "displayName": "Codex CLI",
+      "description": "Codex ACP agent",
+      "protocol": "acp",
+      "version": "1.1.2",
+      "coreCompatibility": { "min": "0.5.0", "maxExclusive": "0.6.0" },
+      "capabilities": { "purposes": ["card_translation", "memory", "prompt_optimization"], "textPrompt": true, "modelDiscovery": false },
+      "verification": { "status": "tested", "testedAt": "2026-08-16T00:00:00Z", "evidenceId": "codex-fixture" },
+      "upstream": { "registryId": "codex-acp", "homepage": "https://github.com/zed-industries/codex-acp", "license": "Apache-2.0" },
+      "distributions": [ { "id": "npx-codex", "type": "npx", "priority": 30, "package": "@agentclientprotocol/codex-acp", "version": "1.1.2", "bin": "codex-acp", "launchArgs": [], "nodeRange": ">=20" } ]
+    },
+    {
+      "id": "hermes",
+      "displayName": "Hermes",
+      "description": "Hermes ACP agent",
+      "protocol": "acp",
+      "version": "1.0.0",
+      "coreCompatibility": { "min": "0.5.0", "maxExclusive": "0.6.0" },
+      "capabilities": { "purposes": ["card_translation", "memory"], "textPrompt": true, "modelDiscovery": false },
+      "verification": { "status": "tested", "testedAt": "2026-08-16T00:00:00Z", "evidenceId": "hermes-fixture" },
+      "upstream": { "registryId": "hermes", "homepage": "https://hermes.example.com", "license": "MIT" },
+      "distributions": [ { "id": "system-hermes", "type": "system", "priority": 10, "commandCandidates": ["hermes"], "versionArgs": ["--version"], "versionRange": ">=1.0.0", "launchArgs": ["acp"] }, { "id": "uvx-hermes", "type": "uvx", "priority": 40, "package": "hermes-agent", "version": "1.0.0", "command": "hermes", "launchArgs": ["acp"], "pythonRange": ">=3.10" } ]
+    },
+    {
+      "id": "pi",
+      "displayName": "Pi",
+      "description": "Pi ACP agent",
+      "protocol": "acp",
+      "version": "0.0.33",
+      "coreCompatibility": { "min": "0.5.0", "maxExclusive": "0.6.0" },
+      "capabilities": { "purposes": ["card_translation", "memory"], "textPrompt": true, "modelDiscovery": false },
+      "verification": { "status": "tested", "testedAt": "2026-08-16T00:00:00Z", "evidenceId": "pi-fixture" },
+      "upstream": { "registryId": "pi-acp", "homepage": "https://github.com/aliou/pi-acp", "license": "MIT" },
+      "distributions": [ { "id": "npx-pi", "type": "npx", "priority": 30, "package": "pi-acp", "version": "0.0.33", "bin": "pi-acp", "launchArgs": [], "nodeRange": ">=20" } ]
+    },
+    {
+      "id": "qoder",
+      "displayName": "Qoder",
+      "description": "Qoder ACP agent",
+      "protocol": "acp",
+      "version": "1.0.0",
+      "coreCompatibility": { "min": "0.5.0", "maxExclusive": "0.6.0" },
+      "capabilities": { "purposes": ["card_translation", "memory"], "textPrompt": true, "modelDiscovery": false },
+      "verification": { "status": "tested", "testedAt": "2026-08-16T00:00:00Z", "evidenceId": "qoder-fixture" },
+      "upstream": { "registryId": "qoder", "homepage": "https://docs.qoder.com/cli/acp", "license": "Proprietary" },
+      "distributions": [ { "id": "system-qoder", "type": "system", "priority": 10, "commandCandidates": ["qoder"], "versionArgs": ["--version"], "versionRange": ">=1.0.0", "launchArgs": ["--acp"] }, { "id": "npx-qoder", "type": "npx", "priority": 30, "package": "@qoder/cli", "version": "1.0.0", "bin": "qoder", "launchArgs": ["--acp"], "nodeRange": ">=20" } ]
+    }
+  ]
+}

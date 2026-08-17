@@ -2847,6 +2847,163 @@ pub(crate) fn copy_prompt_card_to_clipboard(params: PromptClipboardParams) -> Ap
     copy_prompt_card_to_clipboard_impl(params)
 }
 
+// Keep the generated Tauri command shims in this module so the existing
+// command handler remains a single, locally resolvable macro surface. The
+// implementation stays in the dedicated Agent Market adapter.
+#[tauri::command]
+pub(crate) async fn list_agent_market(
+    state: State<'_, AppState>,
+    params: crate::backend::agent_market::types::AgentMarketListRequest,
+) -> AppResult<Vec<crate::backend::application::AgentMarketItemView>> {
+    crate::adapters::tauri::agent_market::list_agent_market(state, params).await
+}
+
+#[tauri::command]
+pub(crate) async fn inspect_agent_market_item(
+    state: State<'_, AppState>,
+    agent_id: String,
+) -> AppResult<crate::backend::application::AgentMarketItemView> {
+    crate::adapters::tauri::agent_market::inspect_agent_market_item(state, agent_id).await
+}
+
+#[tauri::command]
+pub(crate) fn refresh_agent_market(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot> {
+    crate::adapters::tauri::agent_market::refresh_agent_market(app, state)
+}
+
+#[tauri::command]
+pub(crate) fn get_agent_market_refresh_task(
+    state: State<'_, AppState>,
+    task_id: String,
+) -> AppResult<crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot> {
+    crate::adapters::tauri::agent_market::get_agent_market_refresh_task(state, task_id)
+}
+
+#[tauri::command]
+pub(crate) fn list_agent_market_refresh_tasks(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot>> {
+    crate::adapters::tauri::agent_market::list_agent_market_refresh_tasks(state)
+}
+
+#[tauri::command]
+pub(crate) async fn preview_agent_installation(
+    state: State<'_, AppState>,
+    params: crate::backend::agent_market::types::AgentInstallPreviewRequest,
+) -> AppResult<crate::backend::application::AgentInstallPreview> {
+    crate::adapters::tauri::agent_market::preview_agent_installation(state, params).await
+}
+
+#[tauri::command]
+pub(crate) async fn preview_agent_uninstall(
+    state: State<'_, AppState>,
+    agent_id: String,
+) -> AppResult<crate::backend::application::AgentUninstallPreview> {
+    crate::adapters::tauri::agent_market::preview_agent_uninstall(state, agent_id).await
+}
+
+#[tauri::command]
+pub(crate) async fn list_installed_agents(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::backend::agent_market::types::AgentInstallationView>> {
+    crate::adapters::tauri::agent_market::list_installed_agents(state).await
+}
+
+#[tauri::command]
+pub(crate) async fn get_installed_agent(
+    state: State<'_, AppState>,
+    agent_id: String,
+) -> AppResult<crate::backend::agent_market::types::AgentInstallationView> {
+    crate::adapters::tauri::agent_market::get_installed_agent(state, agent_id).await
+}
+
+#[tauri::command]
+pub(crate) async fn check_agent_runtime(
+    state: State<'_, AppState>,
+    agent_id: String,
+) -> AppResult<crate::backend::agent_market::types::AgentInstallationView> {
+    crate::adapters::tauri::agent_market::check_agent_runtime(state, agent_id).await
+}
+
+#[tauri::command]
+pub(crate) fn get_agent_lifecycle_task(
+    state: State<'_, AppState>,
+    task_id: String,
+) -> AppResult<crate::backend::agent_market::types::AgentLifecycleTaskSnapshot> {
+    crate::adapters::tauri::agent_market::get_agent_lifecycle_task(state, task_id)
+}
+
+#[tauri::command]
+pub(crate) fn list_agent_lifecycle_tasks(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::backend::agent_market::types::AgentLifecycleTaskSnapshot>> {
+    crate::adapters::tauri::agent_market::list_agent_lifecycle_tasks(state)
+}
+
+#[tauri::command]
+pub(crate) fn cancel_agent_lifecycle_task(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> AppResult<crate::backend::agent_market::types::AgentLifecycleTaskSnapshot> {
+    crate::adapters::tauri::agent_market::cancel_agent_lifecycle_task(app, state, task_id)
+}
+
+#[tauri::command]
+pub(crate) fn start_agent_installation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: crate::backend::agent_market::types::AgentInstallStartRequest,
+) -> AppResult<crate::backend::agent_market::types::AgentLifecycleTaskSnapshot> {
+    crate::adapters::tauri::agent_market::start_agent_installation(app, state, params)
+}
+
+#[tauri::command]
+pub(crate) fn start_agent_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: crate::backend::agent_market::types::AgentInstallStartRequest,
+) -> AppResult<crate::backend::agent_market::types::AgentLifecycleTaskSnapshot> {
+    crate::adapters::tauri::agent_market::start_agent_update(app, state, params)
+}
+
+#[tauri::command]
+pub(crate) fn start_agent_reinstallation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: crate::backend::agent_market::types::AgentInstallStartRequest,
+) -> AppResult<crate::backend::agent_market::types::AgentLifecycleTaskSnapshot> {
+    crate::adapters::tauri::agent_market::start_agent_reinstallation(app, state, params)
+}
+
+#[tauri::command]
+pub(crate) fn start_agent_uninstall(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: crate::backend::agent_market::types::AgentUninstallStartRequest,
+) -> AppResult<crate::backend::agent_market::types::AgentLifecycleTaskSnapshot> {
+    crate::adapters::tauri::agent_market::start_agent_uninstall(app, state, params)
+}
+
+#[tauri::command]
+pub(crate) async fn enable_agent(
+    state: State<'_, AppState>,
+    agent_id: String,
+) -> AppResult<crate::backend::agent_market::types::AgentInstallationView> {
+    crate::adapters::tauri::agent_market::enable_agent(state, agent_id).await
+}
+
+#[tauri::command]
+pub(crate) async fn disable_agent(
+    state: State<'_, AppState>,
+    agent_id: String,
+) -> AppResult<crate::backend::agent_market::types::AgentInstallationView> {
+    crate::adapters::tauri::agent_market::disable_agent(state, agent_id).await
+}
+
 pub(crate) fn command_handler(
 ) -> impl Fn(::tauri::ipc::Invoke<::tauri::Wry>) -> bool + Send + Sync + 'static {
     ::tauri::generate_handler![
@@ -2931,6 +3088,25 @@ pub(crate) fn command_handler(
         validate_conversation_adapter,
         list_conversation_adapter_runtime_statuses,
         list_agent_catalog,
+        list_agent_market,
+        inspect_agent_market_item,
+        refresh_agent_market,
+        get_agent_market_refresh_task,
+        list_agent_market_refresh_tasks,
+        preview_agent_installation,
+        preview_agent_uninstall,
+        list_installed_agents,
+        get_installed_agent,
+        check_agent_runtime,
+        get_agent_lifecycle_task,
+        list_agent_lifecycle_tasks,
+        cancel_agent_lifecycle_task,
+        start_agent_installation,
+        start_agent_update,
+        start_agent_reinstallation,
+        start_agent_uninstall,
+        enable_agent,
+        disable_agent,
         check_agent_connection,
         list_agent_models,
         check_opencode_translation_availability,

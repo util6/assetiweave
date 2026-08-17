@@ -16,6 +16,8 @@ pub(crate) struct AppState {
         Arc<crate::adapters::tauri::background_tasks::BackgroundTaskRegistry>,
     /// 跨命令共享的 Agent 执行 Runtime；并发限制与 Agent Registry 由它统一持有
     pub(crate) agent_runtime: Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
+    /// Agent installation repository and atomic Registry owner.
+    pub(crate) agent_runtime_manager: Arc<crate::backend::agent_market::AgentRuntimeManager>,
     /// 是否允许关闭主窗口标记
     pub(crate) allow_close: Arc<AtomicBool>,
     /// 是否允许应用完全退出标记

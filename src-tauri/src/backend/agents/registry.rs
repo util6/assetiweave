@@ -1,4 +1,13 @@
-use std::{collections::HashMap, fmt, process::Command, sync::RwLock, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt,
+    process::Command,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, RwLock,
+    },
+    time::Duration,
+};
 
 use crate::backend::host_process::{
     resolve_host_executable, run_command_with_timeout, HostProcessError, HostProcessOutput,
@@ -13,6 +22,74 @@ use super::types::{
 pub(crate) struct AgentRegistry {
     definitions: HashMap<AgentId, AgentDefinition>,
     observations: RwLock<HashMap<AgentId, AgentAvailability>>,
+}
+
+/// Atomically replaceable immutable registry handle used by executions and lifecycle reloads.
+/// A caller always receives a cloned definition from one complete snapshot.
+#[derive(Clone, Debug)]
+pub(crate) struct AgentRegistryHandle {
+    snapshot: Arc<RwLock<Arc<AgentRegistry>>>,
+    generation: Arc<AtomicU64>,
+}
+
+impl Default for AgentRegistryHandle {
+    fn default() -> Self {
+        Self::from_registry(Arc::new(
+            AgentRegistry::from_definitions(Vec::<AgentDefinition>::new())
+                .expect("empty agent registry is valid"),
+        ))
+    }
+}
+
+impl AgentRegistryHandle {
+    pub(crate) fn from_registry(registry: Arc<AgentRegistry>) -> Self {
+        Self {
+            snapshot: Arc::new(RwLock::new(registry)),
+            generation: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> Arc<AgentRegistry> {
+        self.snapshot
+            .read()
+            .expect("agent registry lock poisoned")
+            .clone()
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn publish(&self, definitions: Vec<AgentDefinition>) -> Result<u64, String> {
+        let next =
+            AgentRegistry::from_definitions(definitions).map_err(|error| error.to_string())?;
+        let mut current = self
+            .snapshot
+            .write()
+            .map_err(|_| "agent registry lock poisoned".to_string())?;
+        *current = Arc::new(next);
+        Ok(self.generation.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+
+    pub(crate) fn get(&self, agent_id: &AgentId) -> Option<AgentDefinition> {
+        self.snapshot().get(agent_id).cloned()
+    }
+
+    pub(crate) fn catalog(&self) -> Vec<AgentCatalogEntry> {
+        self.snapshot().catalog()
+    }
+
+    pub(crate) fn check_availability(&self, agent_id: &AgentId) -> AgentAvailability {
+        self.snapshot().check_availability(agent_id)
+    }
+
+    pub(crate) fn discover_models(
+        &self,
+        agent_id: &AgentId,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, AgentProbeError> {
+        self.snapshot().discover_models(agent_id, timeout)
+    }
 }
 
 const AVAILABILITY_TIMEOUT: Duration = Duration::from_secs(8);
@@ -58,6 +135,7 @@ pub(crate) enum AgentProbeError {
 }
 
 impl AgentRegistry {
+    #[cfg(test)]
     pub(crate) fn builtin() -> Result<Self, AgentRegistryError> {
         Self::from_definitions([
             builtin_agent(
@@ -67,7 +145,6 @@ impl AgentRegistry {
                 "opencode",
                 ["acp"],
                 "opencode",
-                true,
             ),
             builtin_agent(
                 "gemini",
@@ -76,7 +153,6 @@ impl AgentRegistry {
                 "gemini",
                 ["--acp"],
                 "gemini",
-                false,
             ),
             builtin_agent(
                 "kiro",
@@ -85,7 +161,6 @@ impl AgentRegistry {
                 "kiro-cli-chat",
                 ["acp"],
                 "kiro-cli-chat",
-                false,
             ),
             builtin_agent(
                 "antigravity",
@@ -94,7 +169,6 @@ impl AgentRegistry {
                 "agy",
                 [],
                 "agy",
-                false,
             ),
             builtin_agent(
                 "claude",
@@ -103,7 +177,6 @@ impl AgentRegistry {
                 "npx",
                 ["-y", "@agentclientprotocol/claude-agent-acp@0.58.1"],
                 "claude",
-                false,
             ),
             builtin_agent(
                 "codex",
@@ -112,7 +185,6 @@ impl AgentRegistry {
                 "npx",
                 ["-y", "@agentclientprotocol/codex-acp@1.1.2"],
                 "codex",
-                false,
             ),
             builtin_agent(
                 "hermes",
@@ -121,7 +193,6 @@ impl AgentRegistry {
                 "hermes",
                 ["acp"],
                 "hermes",
-                false,
             ),
             builtin_agent(
                 "pi",
@@ -130,7 +201,6 @@ impl AgentRegistry {
                 "npx",
                 ["-y", "pi-acp@0.0.33"],
                 "pi",
-                false,
             ),
             builtin_agent(
                 "qoder",
@@ -139,7 +209,6 @@ impl AgentRegistry {
                 "qodercli",
                 ["--acp"],
                 "qodercli",
-                false,
             ),
         ])
     }
@@ -306,10 +375,10 @@ fn builtin_agent<const N: usize>(
     command: &str,
     args: [&str; N],
     availability_command: &str,
-    cli_fallback: bool,
 ) -> AgentDefinition {
     AgentDefinition {
         id: AgentId::parse(id).expect("builtin agent ids are valid"),
+        installation_id: None,
         display_name: display_name.to_string(),
         protocol,
         command: command.to_string(),
@@ -322,7 +391,6 @@ fn builtin_agent<const N: usize>(
         )),
         model_discovery: (id == "opencode" || id == "antigravity")
             .then(|| AgentCommandDefinition::new(["models"])),
-        cli_fallback,
     }
 }
 
@@ -630,6 +698,7 @@ mod tests {
     fn definition(id: &str, protocol: AgentProtocol) -> AgentDefinition {
         AgentDefinition {
             id: AgentId::parse(id).unwrap(),
+            installation_id: None,
             display_name: id.to_string(),
             protocol,
             command: "agent-command".to_string(),
@@ -638,7 +707,6 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: Some(AgentCommandDefinition::new(["--version"])),
             model_discovery: None,
-            cli_fallback: false,
         }
     }
 
@@ -650,6 +718,7 @@ mod tests {
     ) -> AgentDefinition {
         AgentDefinition {
             id: AgentId::parse(id).unwrap(),
+            installation_id: None,
             display_name: id.to_string(),
             protocol: AgentProtocol::Acp,
             command: command.to_string(),
@@ -658,7 +727,6 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: Some(AgentCommandDefinition::new(availability_args)),
             model_discovery: Some(AgentCommandDefinition::new(model_args)),
-            cli_fallback: false,
         }
     }
 }

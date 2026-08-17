@@ -55,8 +55,7 @@ impl AppService {
     fn agent_runtime(
         &self,
     ) -> AppResult<std::sync::Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>> {
-        crate::backend::ai_execution::shared_agent_execution_runtime(&self.db_path)
-            .map_err(|error| error.to_string())
+        Ok(self.agent_runtime.clone())
     }
 }
 

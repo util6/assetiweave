@@ -843,6 +843,7 @@ mod tests {
     fn fixture_definition(mode: &str) -> AgentDefinition {
         AgentDefinition {
             id: AgentId::parse("fixture").unwrap(),
+            installation_id: None,
             display_name: "Fixture".to_string(),
             protocol: AgentProtocol::Acp,
             command: env::current_exe()
@@ -861,7 +862,6 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: None,
             model_discovery: None,
-            cli_fallback: false,
         }
     }
 }

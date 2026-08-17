@@ -3,15 +3,19 @@
 //! 支持包含会话同步、内存整理 (Memory Run)、扫描索引、备份导入导出以及脚本安装卸载在内的异步后台任务注册、取消控制、状态快照与事件广播。
 
 use crate::backend::{
+    agent_market::types::{
+        AgentLifecycleTaskSnapshot, AgentMarketError, LifecycleTaskPhase, LifecycleTaskState,
+        ProgressSnapshot,
+    },
     agents::types::AgentId,
     ai_execution::{
         AiExecutionCancellation, AiExecutionError, AiExecutionErrorView, AiExecutionPhase,
         AiExecutionPurpose, AiExecutionResult,
     },
     application::{
-        ConversationAdapterPackageInstallParams, ConversationAdapterPackageUninstallParams,
-        ConversationScriptInstallParams, ConversationSyncMode, ConversationSyncParams,
-        MemoryTaskStartParams,
+        AgentMarketRefreshResult, ConversationAdapterPackageInstallParams,
+        ConversationAdapterPackageUninstallParams, ConversationScriptInstallParams,
+        ConversationSyncMode, ConversationSyncParams, MemoryTaskStartParams,
     },
     dto::{AppResult, CatalogAsset},
     models::{MemoryDreamTrigger, MemoryRunKind, MemoryScope},
@@ -21,13 +25,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 use uuid::Uuid;
 
 const AI_EXECUTION_TERMINAL_RETENTION: Duration = Duration::from_secs(10 * 60);
 const AI_EXECUTION_TERMINAL_LIMIT: usize = 100;
+const AGENT_LIFECYCLE_TERMINAL_RETENTION: Duration = Duration::from_secs(10 * 60);
+const AGENT_LIFECYCLE_TERMINAL_LIMIT: usize = 100;
 
 /// 后台异步任务的状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -243,6 +252,42 @@ struct MemoryTaskEntry {
     cancellation: AiExecutionCancellation,
 }
 
+struct AgentLifecycleTaskEntry {
+    snapshot: AgentLifecycleTaskSnapshot,
+    cancellation: Arc<AtomicBool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AgentMarketRefreshTaskState {
+    Running,
+    Succeeded,
+    Failed,
+}
+
+impl AgentMarketRefreshTaskState {
+    pub(crate) fn is_terminal(self) -> bool {
+        matches!(self, Self::Succeeded | Self::Failed)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentMarketRefreshTaskSnapshot {
+    pub(crate) id: String,
+    pub(crate) state: AgentMarketRefreshTaskState,
+    pub(crate) created_at: String,
+    pub(crate) updated_at: String,
+    pub(crate) finished_at: Option<String>,
+    pub(crate) result: Option<AgentMarketRefreshResult>,
+    pub(crate) error: Option<String>,
+}
+
+struct AgentMarketRefreshTaskEntry {
+    snapshot: AgentMarketRefreshTaskSnapshot,
+    terminal_at: Option<Instant>,
+}
+
 #[derive(Default)]
 pub(crate) struct BackgroundTaskRegistry {
     conversation_sync: Mutex<HashMap<ConversationSyncScope, ConversationSyncTaskSnapshot>>,
@@ -251,9 +296,276 @@ pub(crate) struct BackgroundTaskRegistry {
     conversation_search_index: Mutex<Option<ConversationSearchIndexTaskSnapshot>>,
     memory_tasks: Mutex<HashMap<String, MemoryTaskEntry>>,
     ai_executions: Mutex<HashMap<String, AiExecutionTaskEntry>>,
+    agent_lifecycle_tasks: Mutex<HashMap<String, AgentLifecycleTaskEntry>>,
+    agent_market_refresh_tasks: Mutex<HashMap<String, AgentMarketRefreshTaskEntry>>,
 }
 
 impl BackgroundTaskRegistry {
+    pub(crate) fn begin_agent_market_refresh(
+        &self,
+    ) -> AppResult<(AgentMarketRefreshTaskSnapshot, bool)> {
+        let mut tasks = self
+            .agent_market_refresh_tasks
+            .lock()
+            .map_err(|error| error.to_string())?;
+        prune_agent_market_refresh_tasks(&mut tasks);
+        if let Some(entry) = tasks
+            .values()
+            .find(|entry| !entry.snapshot.state.is_terminal())
+        {
+            return Ok((entry.snapshot.clone(), false));
+        }
+        let now = Utc::now().to_rfc3339();
+        let snapshot = AgentMarketRefreshTaskSnapshot {
+            id: Uuid::new_v4().to_string(),
+            state: AgentMarketRefreshTaskState::Running,
+            created_at: now.clone(),
+            updated_at: now,
+            finished_at: None,
+            result: None,
+            error: None,
+        };
+        tasks.insert(
+            snapshot.id.clone(),
+            AgentMarketRefreshTaskEntry {
+                snapshot: snapshot.clone(),
+                terminal_at: None,
+            },
+        );
+        Ok((snapshot, true))
+    }
+
+    pub(crate) fn finish_agent_market_refresh(
+        &self,
+        task_id: &str,
+        result: Result<AgentMarketRefreshResult, String>,
+    ) -> AppResult<AgentMarketRefreshTaskSnapshot> {
+        let mut tasks = self
+            .agent_market_refresh_tasks
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| "Agent Market refresh task not found".to_string())?;
+        entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
+        entry.snapshot.updated_at = Utc::now().to_rfc3339();
+        entry.terminal_at = Some(Instant::now());
+        match result {
+            Ok(result) => {
+                entry.snapshot.state = AgentMarketRefreshTaskState::Succeeded;
+                entry.snapshot.result = Some(result);
+            }
+            Err(error) => {
+                entry.snapshot.state = AgentMarketRefreshTaskState::Failed;
+                entry.snapshot.error = Some(error);
+            }
+        }
+        Ok(entry.snapshot.clone())
+    }
+
+    pub(crate) fn agent_market_refresh_snapshot(
+        &self,
+        task_id: &str,
+    ) -> AppResult<AgentMarketRefreshTaskSnapshot> {
+        self.agent_market_refresh_tasks
+            .lock()
+            .map_err(|error| error.to_string())?
+            .get(task_id)
+            .map(|entry| entry.snapshot.clone())
+            .ok_or_else(|| "Agent Market refresh task not found".to_string())
+    }
+
+    pub(crate) fn agent_market_refresh_snapshots(
+        &self,
+    ) -> AppResult<Vec<AgentMarketRefreshTaskSnapshot>> {
+        let mut snapshots = self
+            .agent_market_refresh_tasks
+            .lock()
+            .map_err(|error| error.to_string())?
+            .values()
+            .map(|entry| entry.snapshot.clone())
+            .collect::<Vec<_>>();
+        snapshots.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+        Ok(snapshots)
+    }
+
+    pub(crate) fn begin_agent_lifecycle(
+        &self,
+        agent_id: String,
+        action: String,
+        catalog_version: Option<String>,
+        agent_version: Option<String>,
+        distribution_id: Option<String>,
+        distribution_type: Option<crate::backend::agent_market::types::DistributionType>,
+        ownership: Option<crate::backend::agent_market::types::Ownership>,
+    ) -> AppResult<(AgentLifecycleTaskSnapshot, Arc<AtomicBool>, bool)> {
+        let mut tasks = self
+            .agent_lifecycle_tasks
+            .lock()
+            .map_err(|error| error.to_string())?;
+        prune_agent_lifecycle_tasks(&mut tasks);
+        if let Some(entry) = tasks.values().find(|entry| {
+            entry.snapshot.agent_id == agent_id
+                && matches!(
+                    entry.snapshot.state,
+                    LifecycleTaskState::Queued | LifecycleTaskState::Running
+                )
+        }) {
+            return Ok((entry.snapshot.clone(), entry.cancellation.clone(), false));
+        }
+        let now = Utc::now().to_rfc3339();
+        let snapshot = AgentLifecycleTaskSnapshot {
+            id: Uuid::new_v4().to_string(),
+            agent_id,
+            action,
+            state: LifecycleTaskState::Queued,
+            phase: LifecycleTaskPhase::Queued,
+            catalog_version,
+            agent_version,
+            distribution_id,
+            distribution_type,
+            ownership,
+            progress: ProgressSnapshot {
+                completed_units: 0,
+                total_units: None,
+                downloaded_bytes: None,
+                total_bytes: None,
+            },
+            cancellable: true,
+            created_at: now.clone(),
+            updated_at: now,
+            finished_at: None,
+            result: None,
+            error: None,
+            warnings: Vec::new(),
+        };
+        let cancellation = Arc::new(AtomicBool::new(false));
+        tasks.insert(
+            snapshot.id.clone(),
+            AgentLifecycleTaskEntry {
+                snapshot: snapshot.clone(),
+                cancellation: cancellation.clone(),
+            },
+        );
+        Ok((snapshot, cancellation, true))
+    }
+
+    pub(crate) fn update_agent_lifecycle(
+        &self,
+        task_id: &str,
+        phase: LifecycleTaskPhase,
+        completed_units: u64,
+        downloaded_bytes: Option<u64>,
+        warnings: Vec<String>,
+    ) -> AppResult<AgentLifecycleTaskSnapshot> {
+        let mut tasks = self
+            .agent_lifecycle_tasks
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| "agent lifecycle task not found".to_string())?;
+        if !matches!(entry.snapshot.state, LifecycleTaskState::Cancelled) {
+            entry.snapshot.state = LifecycleTaskState::Running;
+            entry.snapshot.phase = phase;
+            entry.snapshot.progress.completed_units = completed_units;
+            entry.snapshot.progress.downloaded_bytes = downloaded_bytes;
+            entry.snapshot.warnings = warnings;
+            entry.snapshot.updated_at = Utc::now().to_rfc3339();
+        }
+        Ok(entry.snapshot.clone())
+    }
+
+    pub(crate) fn finish_agent_lifecycle(
+        &self,
+        task_id: &str,
+        result: Result<(Option<Value>, Vec<String>), AgentMarketError>,
+    ) -> AppResult<AgentLifecycleTaskSnapshot> {
+        let mut tasks = self
+            .agent_lifecycle_tasks
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| "agent lifecycle task not found".to_string())?;
+        if matches!(entry.snapshot.state, LifecycleTaskState::Cancelled) {
+            entry.snapshot.phase = LifecycleTaskPhase::Cancelled;
+            entry.snapshot.cancellable = false;
+            entry
+                .snapshot
+                .finished_at
+                .get_or_insert_with(|| Utc::now().to_rfc3339());
+            entry.snapshot.updated_at = Utc::now().to_rfc3339();
+        } else {
+            entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
+            entry.snapshot.updated_at = Utc::now().to_rfc3339();
+            entry.snapshot.cancellable = false;
+            match result {
+                Ok((result, warnings)) => {
+                    entry.snapshot.state = LifecycleTaskState::Succeeded;
+                    entry.snapshot.phase = LifecycleTaskPhase::Succeeded;
+                    entry.snapshot.result = result;
+                    entry.snapshot.warnings = warnings;
+                }
+                Err(error) => {
+                    entry.snapshot.state = LifecycleTaskState::Failed;
+                    entry.snapshot.phase = LifecycleTaskPhase::Failed;
+                    entry.snapshot.error = Some((&error).into());
+                }
+            }
+        }
+        Ok(entry.snapshot.clone())
+    }
+
+    pub(crate) fn agent_lifecycle_snapshot(
+        &self,
+        task_id: &str,
+    ) -> AppResult<AgentLifecycleTaskSnapshot> {
+        self.agent_lifecycle_tasks
+            .lock()
+            .map_err(|error| error.to_string())?
+            .get(task_id)
+            .map(|entry| entry.snapshot.clone())
+            .ok_or_else(|| "agent lifecycle task not found".to_string())
+    }
+
+    pub(crate) fn agent_lifecycle_snapshots(&self) -> AppResult<Vec<AgentLifecycleTaskSnapshot>> {
+        let mut snapshots = self
+            .agent_lifecycle_tasks
+            .lock()
+            .map_err(|error| error.to_string())?
+            .values()
+            .map(|entry| entry.snapshot.clone())
+            .collect::<Vec<_>>();
+        snapshots.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+        Ok(snapshots)
+    }
+
+    pub(crate) fn cancel_agent_lifecycle(
+        &self,
+        task_id: &str,
+    ) -> AppResult<AgentLifecycleTaskSnapshot> {
+        let mut tasks = self
+            .agent_lifecycle_tasks
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| "agent lifecycle task not found".to_string())?;
+        entry.cancellation.store(true, Ordering::SeqCst);
+        if matches!(
+            entry.snapshot.state,
+            LifecycleTaskState::Queued | LifecycleTaskState::Running
+        ) {
+            entry.snapshot.state = LifecycleTaskState::Cancelled;
+            entry.snapshot.phase = LifecycleTaskPhase::Cancelled;
+            entry.snapshot.cancellable = false;
+            entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
+            entry.snapshot.updated_at = Utc::now().to_rfc3339();
+        }
+        Ok(entry.snapshot.clone())
+    }
+
     pub(crate) fn begin_conversation_search_index_rebuild(
         &self,
     ) -> AppResult<(ConversationSearchIndexTaskSnapshot, bool)> {
@@ -1180,12 +1492,83 @@ impl BackgroundTaskRegistry {
                     .any(|entry| !entry.snapshot.state.is_terminal())
             })
             .unwrap_or(true);
+        let agent_lifecycle_running = self
+            .agent_lifecycle_tasks
+            .lock()
+            .map(|tasks| {
+                tasks.values().any(|entry| {
+                    matches!(
+                        entry.snapshot.state,
+                        LifecycleTaskState::Queued | LifecycleTaskState::Running
+                    )
+                })
+            })
+            .unwrap_or(true);
         conversation_sync_running
             || conversation_script_install_running
             || skill_backup_running
             || conversation_search_index_running
             || memory_running
             || ai_execution_running
+            || agent_lifecycle_running
+    }
+}
+
+fn prune_agent_lifecycle_tasks(tasks: &mut HashMap<String, AgentLifecycleTaskEntry>) {
+    let now = Utc::now();
+    tasks.retain(|_, entry| {
+        if !entry.snapshot.state.is_terminal() {
+            return true;
+        }
+        entry
+            .snapshot
+            .finished_at
+            .as_deref()
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+            .map(|finished| {
+                now.signed_duration_since(finished.with_timezone(&Utc))
+                    .to_std()
+                    .unwrap_or_default()
+                    <= AGENT_LIFECYCLE_TERMINAL_RETENTION
+            })
+            .unwrap_or(true)
+    });
+    let mut terminal = tasks
+        .values()
+        .filter(|entry| entry.snapshot.state.is_terminal())
+        .map(|entry| (entry.snapshot.id.clone(), entry.snapshot.created_at.clone()))
+        .collect::<Vec<_>>();
+    if terminal.len() > AGENT_LIFECYCLE_TERMINAL_LIMIT {
+        terminal.sort_by(|left, right| left.1.cmp(&right.1));
+        let excess = terminal.len() - AGENT_LIFECYCLE_TERMINAL_LIMIT;
+        for (id, _) in terminal.into_iter().take(excess) {
+            tasks.remove(&id);
+        }
+    }
+}
+
+fn prune_agent_market_refresh_tasks(tasks: &mut HashMap<String, AgentMarketRefreshTaskEntry>) {
+    let now = Instant::now();
+    tasks.retain(|_, entry| {
+        !entry.snapshot.state.is_terminal()
+            || entry.terminal_at.is_none_or(|finished| {
+                now.duration_since(finished) <= AGENT_LIFECYCLE_TERMINAL_RETENTION
+            })
+    });
+    if tasks.len() <= AGENT_LIFECYCLE_TERMINAL_LIMIT {
+        return;
+    }
+    let mut terminal = tasks
+        .iter()
+        .filter(|(_, entry)| entry.snapshot.state.is_terminal())
+        .map(|(id, entry)| (id.clone(), entry.snapshot.updated_at.clone()))
+        .collect::<Vec<_>>();
+    terminal.sort_by(|left, right| left.1.cmp(&right.1));
+    for (id, _) in terminal
+        .into_iter()
+        .take(tasks.len() - AGENT_LIFECYCLE_TERMINAL_LIMIT)
+    {
+        tasks.remove(&id);
     }
 }
 
@@ -1747,6 +2130,85 @@ mod tests {
         assert_eq!(report.cancelled_count, 1);
         assert_eq!(report.remaining_count, 1);
         assert!(!report.converged);
+    }
+
+    #[test]
+    fn agent_lifecycle_task_deduplicates_same_agent_and_finishes_with_stable_state() {
+        let registry = BackgroundTaskRegistry::default();
+        let (first, cancellation, should_start) = registry
+            .begin_agent_lifecycle(
+                "fixture-agent".to_string(),
+                "install".to_string(),
+                Some("catalog-v1".to_string()),
+                Some("1.0.0".to_string()),
+                Some("fixture-system".to_string()),
+                None,
+                None,
+            )
+            .unwrap();
+        let (duplicate, duplicate_cancellation, duplicate_should_start) = registry
+            .begin_agent_lifecycle(
+                "fixture-agent".to_string(),
+                "update".to_string(),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        assert!(should_start);
+        assert!(!duplicate_should_start);
+        assert_eq!(first.id, duplicate.id);
+        assert!(Arc::ptr_eq(&cancellation, &duplicate_cancellation));
+
+        let running = registry
+            .update_agent_lifecycle(
+                &first.id,
+                LifecycleTaskPhase::Downloading,
+                2,
+                Some(128),
+                vec!["fixture warning".to_string()],
+            )
+            .unwrap();
+        assert_eq!(running.state, LifecycleTaskState::Running);
+        assert_eq!(running.progress.completed_units, 2);
+        assert_eq!(running.progress.downloaded_bytes, Some(128));
+
+        let cancelled = registry.cancel_agent_lifecycle(&first.id).unwrap();
+        assert_eq!(cancelled.state, LifecycleTaskState::Cancelled);
+        assert!(cancellation.load(Ordering::SeqCst));
+        let terminal = registry
+            .finish_agent_lifecycle(&first.id, Ok((None, Vec::new())))
+            .unwrap();
+        assert_eq!(terminal.phase, LifecycleTaskPhase::Cancelled);
+        assert!(!terminal.cancellable);
+        assert!(!registry.has_running_tasks());
+    }
+
+    #[test]
+    fn agent_market_refresh_deduplicates_running_task_and_retains_terminal_snapshot() {
+        let registry = BackgroundTaskRegistry::default();
+        let (first, should_start) = registry.begin_agent_market_refresh().unwrap();
+        let (duplicate, duplicate_should_start) = registry.begin_agent_market_refresh().unwrap();
+        assert!(should_start);
+        assert!(!duplicate_should_start);
+        assert_eq!(first.id, duplicate.id);
+
+        let result = AgentMarketRefreshResult {
+            status: "updated".to_string(),
+            catalog_version: "catalog-v1".to_string(),
+            item_count: 1,
+            source: "bundled".to_string(),
+            etag: None,
+        };
+        let finished = registry
+            .finish_agent_market_refresh(&first.id, Ok(result.clone()))
+            .unwrap();
+        assert_eq!(finished.state, AgentMarketRefreshTaskState::Succeeded);
+        assert_eq!(finished.result, Some(result));
+        assert_eq!(registry.agent_market_refresh_snapshots().unwrap().len(), 1);
     }
 
     #[test]

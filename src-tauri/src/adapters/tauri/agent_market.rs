@@ -1,0 +1,427 @@
+//! Thin Tauri adapter for Agent Market reads and background lifecycle tasks.
+
+use std::sync::Arc;
+
+use tauri::{AppHandle, Emitter, State};
+
+use crate::backend::agent_market::types::AgentInstallationView;
+use crate::{
+    adapters::app_state::AppState,
+    backend::{
+        agent_market::types::{
+            AgentInstallPreviewRequest, AgentInstallStartRequest, AgentLifecycleTaskSnapshot,
+            AgentMarketError, AgentMarketListRequest, AgentUninstallStartRequest,
+        },
+        application::{
+            AgentInstallPreview, AgentMarketItemView, AgentUninstallPreview, AppService,
+        },
+        dto::AppResult,
+    },
+};
+
+pub(crate) const AGENT_LIFECYCLE_TASK_UPDATED_EVENT: &str = "agent-market://lifecycle-task-updated";
+pub(crate) const AGENT_MARKET_REFRESH_TASK_UPDATED_EVENT: &str =
+    "agent-market://refresh-task-updated";
+
+pub(crate) async fn list_agent_market(
+    state: State<'_, AppState>,
+    params: AgentMarketListRequest,
+) -> AppResult<Vec<AgentMarketItemView>> {
+    let db_path = state.db_path.clone();
+    let manager = state.agent_runtime_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path_and_manager(db_path, manager)?.list_agent_market(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(crate) async fn inspect_agent_market_item(
+    state: State<'_, AppState>,
+    agent_id: String,
+) -> AppResult<AgentMarketItemView> {
+    let db_path = state.db_path.clone();
+    let manager = state.agent_runtime_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path_and_manager(db_path, manager)?
+            .inspect_agent_market_item(agent_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(crate) fn refresh_agent_market(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot> {
+    let (snapshot, should_start) = state.background_tasks.begin_agent_market_refresh()?;
+    let _ = app.emit(AGENT_MARKET_REFRESH_TASK_UPDATED_EVENT, &snapshot);
+    if should_start {
+        let tasks = state.background_tasks.clone();
+        let task_id = snapshot.id.clone();
+        let db_path = state.db_path.clone();
+        let manager = state.agent_runtime_manager.clone();
+        tauri::async_runtime::spawn(async move {
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                AppService::open_with_db_path_and_manager(db_path, manager)
+                    .and_then(|service| service.refresh_agent_market_catalog())
+            })
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|result| result);
+            if let Ok(snapshot) = tasks.finish_agent_market_refresh(&task_id, result) {
+                let _ = app.emit(AGENT_MARKET_REFRESH_TASK_UPDATED_EVENT, &snapshot);
+            }
+        });
+    }
+    Ok(snapshot)
+}
+
+pub(crate) fn get_agent_market_refresh_task(
+    state: State<'_, AppState>,
+    task_id: String,
+) -> AppResult<crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot> {
+    state
+        .background_tasks
+        .agent_market_refresh_snapshot(&task_id)
+}
+
+pub(crate) fn list_agent_market_refresh_tasks(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot>> {
+    state.background_tasks.agent_market_refresh_snapshots()
+}
+
+pub(crate) async fn preview_agent_installation(
+    state: State<'_, AppState>,
+    params: AgentInstallPreviewRequest,
+) -> AppResult<AgentInstallPreview> {
+    let db_path = state.db_path.clone();
+    let manager = state.agent_runtime_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path_and_manager(db_path, manager)?
+            .preview_agent_installation(params)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(crate) async fn list_installed_agents(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<AgentInstallationView>> {
+    let db_path = state.db_path.clone();
+    let manager = state.agent_runtime_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path_and_manager(db_path, manager)?.list_installed_agents()
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(crate) async fn get_installed_agent(
+    state: State<'_, AppState>,
+    agent_id: String,
+) -> AppResult<AgentInstallationView> {
+    let db_path = state.db_path.clone();
+    let manager = state.agent_runtime_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path_and_manager(db_path, manager)?.get_installed_agent(agent_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(crate) async fn check_agent_runtime(
+    state: State<'_, AppState>,
+    agent_id: String,
+) -> AppResult<AgentInstallationView> {
+    let db_path = state.db_path.clone();
+    let manager = state.agent_runtime_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path_and_manager(db_path, manager)?.check_agent_runtime(agent_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(crate) async fn preview_agent_uninstall(
+    state: State<'_, AppState>,
+    agent_id: String,
+) -> AppResult<AgentUninstallPreview> {
+    let db_path = state.db_path.clone();
+    let manager = state.agent_runtime_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::open_with_db_path_and_manager(db_path, manager)?
+            .preview_agent_uninstall(agent_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(crate) fn get_agent_lifecycle_task(
+    state: State<'_, AppState>,
+    task_id: String,
+) -> AppResult<AgentLifecycleTaskSnapshot> {
+    state.background_tasks.agent_lifecycle_snapshot(&task_id)
+}
+
+pub(crate) fn list_agent_lifecycle_tasks(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<AgentLifecycleTaskSnapshot>> {
+    state.background_tasks.agent_lifecycle_snapshots()
+}
+
+pub(crate) fn cancel_agent_lifecycle_task(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> AppResult<AgentLifecycleTaskSnapshot> {
+    let snapshot = state.background_tasks.cancel_agent_lifecycle(&task_id)?;
+    let _ = app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
+    Ok(snapshot)
+}
+
+pub(crate) fn start_agent_installation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: AgentInstallStartRequest,
+) -> AppResult<AgentLifecycleTaskSnapshot> {
+    start_agent_installation_with_action(app, state, params, "install")
+}
+
+pub(crate) fn start_agent_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: AgentInstallStartRequest,
+) -> AppResult<AgentLifecycleTaskSnapshot> {
+    start_agent_installation_with_action(app, state, params, "update")
+}
+
+pub(crate) fn start_agent_reinstallation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: AgentInstallStartRequest,
+) -> AppResult<AgentLifecycleTaskSnapshot> {
+    start_agent_installation_with_action(app, state, params, "reinstall")
+}
+
+fn start_agent_installation_with_action(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: AgentInstallStartRequest,
+    action: &str,
+) -> AppResult<AgentLifecycleTaskSnapshot> {
+    let (snapshot, cancellation, should_start) = state.background_tasks.begin_agent_lifecycle(
+        params.agent_id.clone(),
+        action.to_string(),
+        Some(params.catalog_version.clone()),
+        Some(params.agent_version.clone()),
+        Some(params.distribution_id.clone()),
+        None,
+        None,
+    )?;
+    let _ = app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
+    if !should_start {
+        return Ok(snapshot);
+    }
+    spawn_install_worker(app, state, params, snapshot.id.clone(), cancellation);
+    Ok(snapshot)
+}
+
+pub(crate) fn start_agent_uninstall(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: AgentUninstallStartRequest,
+) -> AppResult<AgentLifecycleTaskSnapshot> {
+    let (snapshot, cancellation, should_start) = state.background_tasks.begin_agent_lifecycle(
+        params.agent_id.clone(),
+        "uninstall".to_string(),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
+    let _ = app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
+    if !should_start {
+        return Ok(snapshot);
+    }
+    spawn_uninstall_worker(app, state, params, snapshot.id.clone(), cancellation);
+    Ok(snapshot)
+}
+
+pub(crate) async fn enable_agent(
+    state: State<'_, AppState>,
+    agent_id: String,
+) -> AppResult<AgentInstallationView> {
+    let db_path = state.db_path.clone();
+    let manager = state.agent_runtime_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let service = AppService::open_with_db_path_and_manager(db_path, manager)?;
+        let installation = service.set_agent_enabled(agent_id, true)?;
+        service
+            .list_installed_agents()?
+            .into_iter()
+            .find(|item| item.agent_id == installation.agent_id)
+            .ok_or_else(|| "Agent installation disappeared".to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(crate) async fn disable_agent(
+    state: State<'_, AppState>,
+    agent_id: String,
+) -> AppResult<AgentInstallationView> {
+    let db_path = state.db_path.clone();
+    let manager = state.agent_runtime_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let service = AppService::open_with_db_path_and_manager(db_path, manager)?;
+        let installation = service.set_agent_enabled(agent_id, false)?;
+        service
+            .list_installed_agents()?
+            .into_iter()
+            .find(|item| item.agent_id == installation.agent_id)
+            .ok_or_else(|| "Agent installation disappeared".to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn spawn_install_worker(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: AgentInstallStartRequest,
+    task_id: String,
+    cancellation: Arc<std::sync::atomic::AtomicBool>,
+) {
+    let tasks = state.background_tasks.clone();
+    let phase_tasks = tasks.clone();
+    let phase_task_id = task_id.clone();
+    let phase_app = app.clone();
+    let db_path = state.db_path.clone();
+    let manager = state.agent_runtime_manager.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = tasks.update_agent_lifecycle(
+            &task_id,
+            crate::backend::agent_market::types::LifecycleTaskPhase::Preparing,
+            1,
+            None,
+            Vec::new(),
+        );
+        let result = if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+            Err("Agent installation cancelled".to_string())
+        } else {
+            tauri::async_runtime::spawn_blocking(move || {
+                AppService::open_with_db_path_and_manager(db_path, manager)?
+                    .install_agent_with_cancellation_and_progress(
+                        params,
+                        Some(cancellation.clone()),
+                        Some(Arc::new(move |phase| {
+                            if let Ok(snapshot) = phase_tasks.update_agent_lifecycle(
+                                &phase_task_id,
+                                phase,
+                                1,
+                                None,
+                                Vec::new(),
+                            ) {
+                                let _ =
+                                    phase_app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
+                            }
+                        })),
+                    )
+                    .map(|outcome| outcome)
+            })
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|result| result)
+        };
+        let terminal = match result {
+            Ok(outcome) => tasks
+                .finish_agent_lifecycle(
+                    &task_id,
+                    Ok((
+                        serde_json::to_value(&outcome.installation).ok(),
+                        outcome.warnings,
+                    )),
+                )
+                .ok(),
+            Err(error) => tasks
+                .finish_agent_lifecycle(
+                    &task_id,
+                    Err(AgentMarketError::new("installation_failed", &error, true)),
+                )
+                .ok(),
+        };
+        if let Some(snapshot) = terminal {
+            let _ = app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
+        }
+    });
+}
+
+fn spawn_uninstall_worker(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: AgentUninstallStartRequest,
+    task_id: String,
+    cancellation: Arc<std::sync::atomic::AtomicBool>,
+) {
+    let tasks = state.background_tasks.clone();
+    let phase_tasks = tasks.clone();
+    let phase_task_id = task_id.clone();
+    let phase_app = app.clone();
+    let db_path = state.db_path.clone();
+    let manager = state.agent_runtime_manager.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = tasks.update_agent_lifecycle(
+            &task_id,
+            crate::backend::agent_market::types::LifecycleTaskPhase::Preparing,
+            1,
+            None,
+            Vec::new(),
+        );
+        let result = if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+            Err("Agent uninstall cancelled".to_string())
+        } else {
+            tauri::async_runtime::spawn_blocking(move || {
+                AppService::open_with_db_path_and_manager(db_path, manager)?
+                    .uninstall_agent_with_cancellation_and_progress(
+                        params,
+                        Some(cancellation.clone()),
+                        Some(Arc::new(move |phase| {
+                            if let Ok(snapshot) = phase_tasks.update_agent_lifecycle(
+                                &phase_task_id,
+                                phase,
+                                1,
+                                None,
+                                Vec::new(),
+                            ) {
+                                let _ =
+                                    phase_app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
+                            }
+                        })),
+                    )
+            })
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|result| result)
+        };
+        let terminal = match result {
+            Ok(installation) => tasks
+                .finish_agent_lifecycle(
+                    &task_id,
+                    Ok((serde_json::to_value(installation).ok(), Vec::new())),
+                )
+                .ok(),
+            Err(error) => tasks
+                .finish_agent_lifecycle(
+                    &task_id,
+                    Err(AgentMarketError::new("uninstall_failed", &error, true)),
+                )
+                .ok(),
+        };
+        if let Some(snapshot) = terminal {
+            let _ = app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
+        }
+    });
+}
