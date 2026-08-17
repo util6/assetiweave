@@ -24,13 +24,16 @@ export type FontFamilyValue = FontFamilySetting;
 
 export type SettingsPanelId =
   | "general.appearance"
-  | "general.agents"
   | "general.memory"
   | "general.promptOptimization"
   | "general.typography"
   | "general.storage"
   | "workspace.menu"
   | "workspace.shortcuts"
+  | "agents.market"
+  | "agents.settings"
+  /** @deprecated Kept for links from older desktop builds. */
+  | "general.agents"
   | "conversations.sessions"
   | "conversations.translation"
   | "conversations.adapters";

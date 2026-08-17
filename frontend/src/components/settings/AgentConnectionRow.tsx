@@ -17,10 +17,16 @@ export function AgentConnectionRow({
   connectionMessage,
   connectionState,
   isTesting,
+  isManaging,
   onSelectModel,
   onEdit,
   onTest,
+  onInstall,
+  onUpdate,
+  onReinstall,
+  onUninstall,
   selectedModel,
+  view = "market",
   t,
 }: {
   agent: AgentCatalogItem;
@@ -28,10 +34,16 @@ export function AgentConnectionRow({
   connectionMessage?: string;
   connectionState: AgentConnectionState;
   isTesting: boolean;
-  onSelectModel: () => void;
-  onEdit: () => void;
-  onTest: () => void;
+  isManaging?: boolean;
+  onSelectModel?: () => void;
+  onEdit?: () => void;
+  onTest?: () => void;
+  onInstall?: () => void;
+  onUpdate?: () => void;
+  onReinstall?: () => void;
+  onUninstall?: () => void;
   selectedModel?: string;
+  view?: "market" | "settings";
   t: Translator;
 }) {
   const status = statusMeta(connectionState, t);
@@ -58,24 +70,50 @@ export function AgentConnectionRow({
         </div>
       </div>
       <div className="flex w-full shrink-0 items-center justify-end gap-2 sm:w-auto">
-        <Button disabled={isTesting} onClick={onTest} type="button" variant="outline">
-          {isTesting ? <LoaderCircle className="animate-spin" size={15} /> : <PlugZap size={15} />}
-          <span>{isTesting ? t("settings.agents.testing") : t("settings.agents.testConnection")}</span>
-        </Button>
-        <Button
-          aria-label={`${t("settings.agents.model")} ${agent.name}`}
-          onClick={onSelectModel}
-          title={selectedModel || t("settings.agents.model")}
-          type="button"
-          variant="outline"
-        >
-          <BrainCircuit size={15} />
-          <span className="max-w-36 truncate">{selectedModel || t("settings.agents.model")}</span>
-        </Button>
-        <Button aria-label={`${t("settings.agents.edit")} ${agent.name}`} onClick={onEdit} type="button" variant="outline">
-          <Pencil size={15} />
-          <span>{t("settings.agents.edit")}</span>
-        </Button>
+        {view === "market" && onInstall ? (
+          <Button disabled={isManaging} onClick={onInstall} type="button">
+            {isManaging ? t("settings.agents.installing") : agent.installed ? (agent.installed.enabled ? t("settings.agents.disable") : t("settings.agents.enable")) : t("settings.agents.install")}
+          </Button>
+        ) : null}
+        {view === "market" && onUpdate && agent.updateAvailable ? (
+          <Button disabled={isManaging} onClick={onUpdate} type="button" variant="outline">
+            {isManaging ? t("settings.agents.installing") : t("settings.agents.update")}
+          </Button>
+        ) : null}
+        {view === "market" && onReinstall && agent.installed ? (
+          <Button disabled={isManaging} onClick={onReinstall} type="button" variant="outline">
+            {isManaging ? t("settings.agents.installing") : t("settings.agents.reinstall")}
+          </Button>
+        ) : null}
+        {view === "market" && onUninstall && agent.installed ? (
+          <Button disabled={isManaging} onClick={onUninstall} type="button" variant="outline">
+            {isManaging ? t("settings.agents.installing") : t("settings.agents.uninstall")}
+          </Button>
+        ) : null}
+        {view === "settings" && onTest ? (
+          <Button disabled={isTesting} onClick={onTest} type="button" variant="outline">
+            {isTesting ? <LoaderCircle className="animate-spin" size={15} /> : <PlugZap size={15} />}
+            <span>{isTesting ? t("settings.agents.testing") : t("settings.agents.testConnection")}</span>
+          </Button>
+        ) : null}
+        {view === "settings" && onSelectModel ? (
+          <Button
+            aria-label={`${t("settings.agents.model")} ${agent.name}`}
+            onClick={onSelectModel}
+            title={selectedModel || t("settings.agents.model")}
+            type="button"
+            variant="outline"
+          >
+            <BrainCircuit size={15} />
+            <span className="max-w-36 truncate">{selectedModel || t("settings.agents.model")}</span>
+          </Button>
+        ) : null}
+        {view === "settings" && onEdit ? (
+          <Button aria-label={`${t("settings.agents.edit")} ${agent.name}`} onClick={onEdit} type="button" variant="outline">
+            <Pencil size={15} />
+            <span>{t("settings.agents.edit")}</span>
+          </Button>
+        ) : null}
       </div>
     </article>
   );

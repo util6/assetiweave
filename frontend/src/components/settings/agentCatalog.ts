@@ -1,15 +1,8 @@
 import { Bot, Code2, Cpu, Terminal, Zap, type LucideIcon } from "lucide-react";
+import type { AgentInstallationView, AgentMarketItem } from "../../services/agentRuntime";
 
-export type AgentId =
-  | "opencode"
-  | "gemini"
-  | "kiro"
-  | "antigravity"
-  | "claude"
-  | "codex"
-  | "hermes"
-  | "pi"
-  | "qoder";
+/** Runtime Agent IDs come from the curated Market catalog, not a frontend union. */
+export type AgentId = string;
 
 export type AgentFilter = "all" | "available" | "unavailable";
 export type AgentConnectionState =
@@ -28,92 +21,53 @@ export interface AgentCatalogItem {
   description: string;
   icon: LucideIcon;
   connectionMode: AgentConnectionMode;
+  installed?: AgentInstallationView | null;
+  marketVersion?: string;
+  updateAvailable?: boolean;
 }
 
-export const agentCatalog: AgentCatalogItem[] = [
-  {
-    id: "opencode",
-    name: "OpenCode",
-    command: "opencode acp",
-    protocol: "ACP over stdio + CLI fallback",
-    description: "AssetIWeave 内置的 ACP Agent，连接检测保留 CLI 兜底。",
-    icon: Bot,
-    connectionMode: "registry",
-  },
-  {
-    id: "gemini",
-    name: "Gemini CLI",
-    command: "gemini --acp",
-    protocol: "ACP over stdio",
-    description: "使用 Gemini CLI 的 ACP 入口加载会话和模型配置。",
-    icon: Zap,
-    connectionMode: "registry",
-  },
-  {
-    id: "kiro",
-    name: "Kiro",
-    command: "kiro-cli-chat acp",
-    protocol: "ACP over stdio",
-    description: "使用 Kiro CLI 的 ACP 入口检测安装和会话初始化。",
-    icon: Code2,
-    connectionMode: "registry",
-  },
-  {
-    id: "antigravity",
-    name: "Antigravity",
-    command: "agy",
-    protocol: "Direct CLI (stream-json)",
-    description: "通过 agy CLI 原生流式协议执行卡片翻译与模型发现。",
-    icon: Zap,
-    connectionMode: "registry",
-  },
-  {
-    id: "claude",
-    name: "Claude Code",
-    command: "npx -y @agentclientprotocol/claude-agent-acp@0.58.1",
-    protocol: "ACP over stdio",
-    description: "使用 Claude Code 官方 ACP bridge 执行初始化和 session/new 检测。",
-    icon: Cpu,
-    connectionMode: "registry",
-  },
-  {
-    id: "codex",
-    name: "Codex CLI",
-    command: "npx -y @agentclientprotocol/codex-acp@1.1.2",
-    protocol: "ACP over stdio",
-    description: "使用 Codex CLI ACP bridge 执行初始化和 session/new 检测。",
-    icon: Terminal,
-    connectionMode: "registry",
-  },
-  {
-    id: "hermes",
-    name: "Hermes",
-    command: "hermes acp",
-    protocol: "ACP over stdio",
-    description: "通过 Hermes 的原生 ACP 子命令检测连接。",
-    icon: Bot,
-    connectionMode: "registry",
-  },
-  {
-    id: "pi",
-    name: "Pi",
-    command: "npx -y pi-acp@0.0.33",
-    protocol: "ACP over stdio",
-    description: "沿用 AionUI 的 pi-acp bridge，并先检测 pi CLI。",
-    icon: Code2,
-    connectionMode: "registry",
-  },
-  {
-    id: "qoder",
-    name: "Qoder",
-    command: "qodercli --acp",
-    protocol: "ACP over stdio",
-    description: "使用 qodercli 的 ACP 子命令检测安装和连接。",
-    icon: Cpu,
-    connectionMode: "registry",
-  },
+const agentPresentationMetadata: Record<string, { name: string; icon: LucideIcon }> = {
+  opencode: { name: "OpenCode", icon: Bot },
+  gemini: { name: "Gemini CLI", icon: Zap },
+  kiro: { name: "Kiro", icon: Code2 },
+  antigravity: { name: "Antigravity", icon: Zap },
+  claude: { name: "Claude Code", icon: Cpu },
+  codex: { name: "Codex CLI", icon: Terminal },
+  hermes: { name: "Hermes", icon: Bot },
+  pi: { name: "Pi", icon: Code2 },
+  qoder: { name: "Qoder", icon: Cpu },
+};
+
+const legacyPresentationItems: Array<[string, string]> = [
+  ["opencode", "ACP Agent"],
+  ["gemini", "ACP Agent"],
+  ["kiro", "ACP Agent"],
+  ["antigravity", "Native Agent"],
+  ["claude", "ACP Agent"],
+  ["codex", "ACP Agent"],
+  ["hermes", "ACP Agent"],
+  ["pi", "ACP Agent"],
+  ["qoder", "ACP Agent"],
 ];
 
+/**
+ * Compatibility fallback for older desktop builds/browser previews. Runtime
+ * commands, package names and distribution details must come from Market DTOs.
+ */
+export const agentCatalog: AgentCatalogItem[] = legacyPresentationItems.map(([id, protocol]) => ({
+  id,
+  name: agentPresentationMetadata[id].name,
+  command: "managed runtime",
+  protocol,
+  description: "Agent Market runtime metadata is unavailable in this build.",
+  icon: agentPresentationMetadata[id].icon,
+  connectionMode: "registry",
+}));
+
+/*
+  Presentation-only metadata intentionally does not include executable
+  commands, package names, versions, or distribution choices.
+*/
 export const initialConnectionStates: Record<AgentId, AgentConnectionState> = {
   opencode: "checking",
   gemini: "not-tested",
@@ -129,3 +83,23 @@ export const initialConnectionStates: Record<AgentId, AgentConnectionState> = {
 export const registryAgentIds = agentCatalog
   .filter((agent) => agent.connectionMode === "registry")
   .map((agent) => agent.id);
+
+export function marketItemToCatalogItem(item: AgentMarketItem): AgentCatalogItem {
+  const known = agentPresentationMetadata[item.id];
+  const recommended = item.distributions.find((distribution) => distribution.recommended);
+  return {
+    id: item.id,
+    name: item.displayName || known?.name || item.id,
+    command: item.installed?.displayInstallPath
+      || recommended?.targetPath
+      || recommended?.distributionId
+      || item.id,
+    protocol: item.protocol.toUpperCase(),
+    description: item.description,
+    icon: known?.icon ?? Bot,
+    connectionMode: "registry",
+    installed: item.installed,
+    marketVersion: item.version,
+    updateAvailable: item.updateAvailable,
+  };
+}

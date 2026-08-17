@@ -6,6 +6,7 @@ import {
   checkAgentConnection,
   type AgentConnectionResult,
 } from "../../services/agentRuntime";
+import * as agentRuntime from "../../services/agentRuntime";
 import type { AppShortcut } from "../../types";
 import { Badge } from "../foundation/Badge";
 import { DialogFrame } from "../foundation/DialogFrame";
@@ -13,6 +14,7 @@ import { Button } from "../ui/button";
 import { AgentCatalogIcon, resolveAgentIconAccentColor } from "./AgentCatalogIcon";
 import {
   agentCatalog,
+  marketItemToCatalogItem,
   registryAgentIds,
   type AgentCatalogItem,
   type AgentConnectionState,
@@ -35,9 +37,16 @@ export function AgentCapabilityDialog({
 }) {
   const { t } = useI18n();
   const [connectionStates, setConnectionStates] = useState<Record<string, AgentConnectionState>>({});
+  const [marketAgents, setMarketAgents] = useState<AgentCatalogItem[] | null>(null);
   const capabilityAgents = useMemo(
-    () => agentCatalog.filter((agent) => agent.connectionMode === "registry"),
-    [],
+    () => {
+      const readyAgents = marketAgents ?? agentCatalog.filter((agent) => agent.connectionMode === "registry");
+      const currentUnavailable = agentId && !readyAgents.some((agent) => agent.id === agentId)
+        ? agentCatalog.find((agent) => agent.id === agentId)
+        : undefined;
+      return currentUnavailable ? [currentUnavailable, ...readyAgents] : readyAgents;
+    },
+    [agentId, marketAgents],
   );
   const selectedAgent = capabilityAgents.find((agent) => agent.id === agentId)
     ?? agentCatalog.find((agent) => agent.id === agentId);
@@ -47,9 +56,9 @@ export function AgentCapabilityDialog({
   useEffect(() => {
     let cancelled = false;
     const ids = registryAgentIds;
-    setConnectionStates(Object.fromEntries(ids.map((id) => [id, "checking"])));
 
     async function checkAvailability() {
+      setConnectionStates(Object.fromEntries(ids.map((id) => [id, "checking"])));
       await Promise.all(ids.map(async (id) => {
         try {
           const result = await checkAgentConnection(id, "installation");
@@ -64,11 +73,37 @@ export function AgentCapabilityDialog({
       }));
     }
 
+    if (typeof agentRuntime.listAgentMarket === "function") {
+      void agentRuntime.listAgentMarket()
+        .then((items) => {
+          if (cancelled) return;
+          if (items.length === 0) {
+            void checkAvailability();
+            return;
+          }
+          const allAgents = items.map(marketItemToCatalogItem);
+          const agents = allAgents.filter((agent) => {
+            const item = items.find((candidate) => candidate.id === agent.id);
+            const installed = item?.installed;
+            return installed?.enabled === true && installed.executionReady === true;
+          });
+          setMarketAgents(agents);
+          setConnectionStates(Object.fromEntries(allAgents.map((agent) => {
+            const item = items.find((candidate) => candidate.id === agent.id);
+            return [agent.id, item?.installed ? "failed" : "not-installed"];
+          }).concat(agents.map((agent) => [agent.id, "available"] as const))));
+        })
+        .catch(() => undefined);
+      return () => {
+        cancelled = true;
+      };
+    }
+
     void checkAvailability();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [agentId]);
 
   return (
     <DialogFrame
@@ -132,6 +167,7 @@ export function AgentCapabilityDialog({
                   agent={agent}
                   connectionState={connectionStates[agent.id] ?? "not-tested"}
                   currentModel={agent.id === agentId ? model : undefined}
+                  disabled={agent.id === agentId && connectionStates[agent.id] !== "available"}
                   onOpenAgentSettings={() => onOpenAgentSettings(agent.id)}
                   onSelect={() => onAgentChange(agent.id)}
                   selected={agent.id === agentId}
@@ -158,6 +194,7 @@ function CapabilityAgentOption({
   appShortcuts,
   connectionState,
   currentModel,
+  disabled,
   onOpenAgentSettings,
   onSelect,
   selected,
@@ -167,6 +204,7 @@ function CapabilityAgentOption({
   appShortcuts: AppShortcut[];
   connectionState: AgentConnectionState;
   currentModel?: string;
+  disabled?: boolean;
   onOpenAgentSettings: () => void;
   onSelect: () => void;
   selected: boolean;
@@ -183,10 +221,12 @@ function CapabilityAgentOption({
         selected
           ? "border-theme-nav-active-border bg-theme-nav-active/12 shadow-[0_0_0_1px_rgb(var(--theme-nav-active-border)/0.22),0_12px_30px_rgb(var(--theme-panel-shadow)/0.12)]"
           : "border-theme-card-border/70 bg-theme-control/45 hover:border-theme-nav-active-border/55 hover:bg-theme-control-hover/65",
+        disabled && "cursor-not-allowed opacity-70",
       )}
     >
       <button
         aria-pressed={selected}
+        disabled={disabled}
         className="flex min-w-0 flex-1 items-center gap-3 text-left outline-none focus-visible:rounded-lg focus-visible:ring-2 focus-visible:ring-primary-strong/55"
         onClick={onSelect}
         type="button"

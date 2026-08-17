@@ -138,6 +138,10 @@ interface SettingsGroupConfig {
   panels: SettingsPanelConfig[];
 }
 
+function normalizeSettingsPanelId(panelId: SettingsPanelId): SettingsPanelId {
+  return panelId === "general.agents" ? "agents.market" : panelId;
+}
+
 export function GlobalSettingsDialog({
   appShortcuts,
   initialPanel = "general.appearance",
@@ -160,7 +164,7 @@ export function GlobalSettingsDialog({
   const { locale, setLocale, t } = useI18n();
   const { resetSettings, settings, storageInfo, updateSetting } = useAppSettings();
   const { startSync: startConversationSync, tasks: conversationSyncTasks } = useConversationSync();
-  const [activePanel, setActivePanel] = useState<SettingsPanelId>(initialPanel);
+  const [activePanel, setActivePanel] = useState<SettingsPanelId>(() => normalizeSettingsPanelId(initialPanel));
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [editingShortcutIconId, setEditingShortcutIconId] = useState<string | null>(null);
   const [iconSvgDraft, setIconSvgDraft] = useState("");
@@ -186,8 +190,9 @@ export function GlobalSettingsDialog({
 
   useEffect(() => {
     if (open) {
-      setActivePanel(initialPanel);
-      ensureGroupExpanded(initialPanel);
+      const nextPanel = normalizeSettingsPanelId(initialPanel);
+      setActivePanel(nextPanel);
+      ensureGroupExpanded(nextPanel);
     }
   }, [initialPanel, open]);
 
@@ -301,7 +306,6 @@ export function GlobalSettingsDialog({
       scope: t("settings.scope.general"),
       panels: [
         { id: "general.appearance", icon: Palette, label: t("settings.section.appearance") },
-        { id: "general.agents", icon: Bot, label: t("settings.section.agents") },
         { id: "general.memory", icon: Cpu, label: t("settings.section.memory") },
         { id: "general.promptOptimization", icon: Sparkles, label: t("settings.section.promptOptimization") },
         { id: "general.typography", icon: Type, label: t("settings.section.typography") },
@@ -315,6 +319,15 @@ export function GlobalSettingsDialog({
       panels: [
         { id: "workspace.menu", icon: Menu, label: t("settings.section.menu") },
         { id: "workspace.shortcuts", icon: MousePointerClick, label: t("settings.section.shortcuts") },
+      ],
+    },
+    {
+      id: "agents",
+      label: t("settings.group.agents"),
+      scope: t("settings.scope.agents"),
+      panels: [
+        { id: "agents.market", icon: Bot, label: t("settings.section.acpMarket") },
+        { id: "agents.settings", icon: Settings, label: t("settings.section.acpSettings") },
       ],
     },
     {
@@ -347,8 +360,8 @@ export function GlobalSettingsDialog({
   function openAgentSettings(agentId: string) {
     setAgentCapabilityDialog(null);
     setAgentFocusId(agentId);
-    setActivePanel("general.agents");
-    ensureGroupExpanded("general.agents");
+    setActivePanel("agents.market");
+    ensureGroupExpanded("agents.market");
   }
 
   function openAgentCapabilityDialog(serviceId: AgentCapabilityServiceId) {
@@ -826,7 +839,7 @@ export function GlobalSettingsDialog({
               </SettingsGroup>
             )}
 
-            {activePanel === "general.agents" && (
+            {(activePanel === "agents.market" || activePanel === "agents.settings") && (
               <AgentSettingsPanel
                 appShortcuts={appShortcuts}
                 focusAgentId={agentFocusId}
@@ -843,6 +856,7 @@ export function GlobalSettingsDialog({
                   }
                 }}
                 selectedModels={settings.agentModels}
+                view={activePanel === "agents.settings" ? "settings" : "market"}
               />
             )}
 

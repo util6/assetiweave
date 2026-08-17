@@ -1,10 +1,9 @@
 import clsx from "clsx";
 import {
-  ChevronDown,
   CircleHelp,
   Code2,
   LoaderCircle,
-  Plus,
+  RefreshCw,
   Search,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
@@ -16,13 +15,18 @@ import {
   listAgentModels,
   type AgentModelOption,
   type AgentConnectionResult,
+  type AgentInstallPreview,
   type AgentModelsResult,
+  type AgentUninstallPreview,
 } from "../../services/agentRuntime";
+import * as agentRuntime from "../../services/agentRuntime";
 import { Badge } from "../foundation/Badge";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { AgentConnectionRow } from "./AgentConnectionRow";
+import { AgentInstallPreviewDialog } from "./AgentInstallPreviewDialog";
+import { AgentUninstallPreviewDialog } from "./AgentUninstallPreviewDialog";
 import {
   agentCatalog,
   initialConnectionStates,
@@ -31,6 +35,7 @@ import {
   type AgentConnectionState,
   type AgentFilter,
   type AgentId,
+  marketItemToCatalogItem,
 } from "./agentCatalog";
 
 export function AgentSettingsPanel({
@@ -38,19 +43,32 @@ export function AgentSettingsPanel({
   focusAgentId,
   selectedModels,
   onModelChange,
+  view = "market",
 }: {
   appShortcuts?: AppShortcut[];
   focusAgentId?: string | null;
   selectedModels: Record<string, string>;
   onModelChange: (agentId: AgentId, modelId: string) => void;
+  view?: "market" | "settings";
 }) {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<AgentFilter>("all");
   const [connectionStates, setConnectionStates] = useState(() => ({ ...initialConnectionStates }));
+  const [marketCatalog, setMarketCatalog] = useState<AgentCatalogItem[] | null>(null);
   const [connectionMessages, setConnectionMessages] = useState<Record<string, string>>({});
   const [testingAgentId, setTestingAgentId] = useState<AgentId | null>(null);
-  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [marketBusyAgentId, setMarketBusyAgentId] = useState<AgentId | null>(null);
+  const [marketRefreshBusy, setMarketRefreshBusy] = useState(false);
+  const [pendingLifecycle, setPendingLifecycle] = useState<{
+    agent: AgentCatalogItem;
+    action: "install" | "update" | "reinstall";
+    preview: AgentInstallPreview;
+  } | null>(null);
+  const [pendingUninstall, setPendingUninstall] = useState<{
+    agent: AgentCatalogItem;
+    preview: AgentUninstallPreview;
+  } | null>(null);
   const [infoAgent, setInfoAgent] = useState<AgentCatalogItem | null>(null);
   const [modelAgent, setModelAgent] = useState<AgentCatalogItem | null>(null);
   const [modelResult, setModelResult] = useState<AgentModelsResult | null>(null);
@@ -59,12 +77,31 @@ export function AgentSettingsPanel({
   const [modelError, setModelError] = useState("");
   const modelRequestId = useRef(0);
   const agentRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const [customDialogOpen, setCustomDialogOpen] = useState(false);
-  const addMenuRef = useRef<HTMLDivElement>(null);
-  const addMenuItemRef = useRef<HTMLButtonElement>(null);
+  const canRefreshAgentMarket = Object.prototype.hasOwnProperty.call(agentRuntime, "refreshAgentMarket");
+  const canPreviewAgentUninstall = Object.prototype.hasOwnProperty.call(agentRuntime, "previewAgentUninstall");
+  const canManageAgentLifecycle = typeof agentRuntime.listAgentMarket === "function";
+  const settingsOnly = view === "settings";
 
   useEffect(() => {
     let disposed = false;
+    if (typeof agentRuntime.listAgentMarket === "function") {
+      void agentRuntime.listAgentMarket()
+        .then((items) => {
+          if (disposed) return;
+          if (items.length === 0) return;
+          const dynamicCatalog = items.map(marketItemToCatalogItem);
+          setMarketCatalog(dynamicCatalog);
+          setConnectionStates(Object.fromEntries(items.map((item) => [
+            item.id,
+            item.installed?.executionReady ? "available" : item.installed ? "failed" : "not-installed",
+          ])));
+        })
+        .catch(() => undefined);
+      return () => {
+        disposed = true;
+      };
+    }
+
     async function checkInstalledAgents() {
       let ids = registryAgentIds;
       try {
@@ -106,33 +143,12 @@ export function AgentSettingsPanel({
     };
   }, [t]);
 
-  useEffect(() => {
-    if (!addMenuOpen) return;
-
-    function handlePointerDown(event: PointerEvent) {
-      if (!addMenuRef.current?.contains(event.target as Node)) {
-        setAddMenuOpen(false);
-      }
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setAddMenuOpen(false);
-      }
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    addMenuItemRef.current?.focus();
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [addMenuOpen]);
+  const displayedCatalog = (marketCatalog ?? agentCatalog).filter((agent) =>
+    view === "market" || Boolean(agent.installed));
 
   const filteredAgents = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    return agentCatalog.filter((agent) => {
+    return displayedCatalog.filter((agent) => {
       const state = connectionStates[agent.id];
       const matchesFilter = filter === "all"
         || (filter === "available" && state === "available")
@@ -141,11 +157,14 @@ export function AgentSettingsPanel({
         || `${agent.name} ${agent.command} ${agent.protocol} ${agent.description}`.toLowerCase().includes(normalizedQuery);
       return matchesFilter && matchesQuery;
     });
-  }, [connectionStates, filter, query]);
+  }, [connectionStates, displayedCatalog, filter, query]);
 
-  const availableCount = Object.values(connectionStates).filter((state) => state === "available").length;
-  const unavailableCount = Object.values(connectionStates).filter(
-    (state) => state !== "available" && state !== "checking",
+  const displayedAgentIds = new Set(displayedCatalog.map((agent) => agent.id));
+  const availableCount = Object.entries(connectionStates).filter(
+    ([id, state]) => displayedAgentIds.has(id) && state === "available",
+  ).length;
+  const unavailableCount = Object.entries(connectionStates).filter(
+    ([id, state]) => displayedAgentIds.has(id) && state !== "available" && state !== "checking",
   ).length;
 
   useEffect(() => {
@@ -172,6 +191,162 @@ export function AgentSettingsPanel({
     } finally {
       setTestingAgentId(null);
     }
+  }
+
+  async function reloadMarketCatalog() {
+    const items = await agentRuntime.listAgentMarket();
+    setMarketCatalog(items.map(marketItemToCatalogItem));
+    setConnectionStates(Object.fromEntries(items.map((item) => [
+      item.id,
+      item.installed?.executionReady ? "available" : item.installed ? "failed" : "not-installed",
+    ])));
+  }
+
+  async function refreshMarketCatalog() {
+    if (typeof agentRuntime.refreshAgentMarket !== "function") return;
+    setMarketRefreshBusy(true);
+    try {
+      let snapshot = await agentRuntime.refreshAgentMarket();
+      while (snapshot.state === "running") {
+        await new Promise((resolve) => window.setTimeout(resolve, 300));
+        snapshot = await agentRuntime.getAgentMarketRefreshTask(snapshot.id);
+      }
+      if (snapshot.state === "failed") {
+        setConnectionMessages((current) => ({ ...current, _market: snapshot.error || t("settings.agents.refreshFailed") }));
+        return;
+      }
+      await reloadMarketCatalog();
+    } catch (error) {
+      setConnectionMessages((current) => ({ ...current, _market: errorMessage(error) }));
+    } finally {
+      setMarketRefreshBusy(false);
+    }
+  }
+
+  async function runMarketLifecycle(agent: AgentCatalogItem, action: "install" | "update" | "reinstall") {
+    if (typeof agentRuntime.listAgentMarket !== "function") return;
+    setMarketBusyAgentId(agent.id);
+    try {
+      if (action === "install" && agent.installed) {
+        const result = agent.installed.enabled
+          ? await agentRuntime.disableAgent(agent.id)
+          : await agentRuntime.enableAgent(agent.id);
+        setConnectionStates((current) => ({
+          ...current,
+          [agent.id]: result.executionReady ? "available" : "failed",
+        }));
+        setMarketCatalog((current) => current?.map((item) => item.id === agent.id
+          ? { ...item, installed: result, updateAvailable: result.updateAvailable }
+          : item) ?? current);
+        return;
+      }
+
+      const preview = await agentRuntime.previewAgentInstallation({ agentId: agent.id, action });
+      if (preview.conflicts.length > 0) {
+        setConnectionMessages((current) => ({ ...current, [agent.id]: preview.conflicts.join(", ") }));
+        return;
+      }
+      setPendingLifecycle({ agent, action, preview });
+    } catch (error) {
+      setConnectionMessages((current) => ({ ...current, [agent.id]: errorMessage(error) }));
+    } finally {
+      setMarketBusyAgentId(null);
+    }
+  }
+
+  async function selectLifecycleDistribution(distributionId: string) {
+    if (!pendingLifecycle || distributionId === pendingLifecycle.preview.selectedDistribution.distributionId) return;
+    setMarketBusyAgentId(pendingLifecycle.agent.id);
+    try {
+      const preview = await agentRuntime.previewAgentInstallation({
+        agentId: pendingLifecycle.agent.id,
+        action: pendingLifecycle.action,
+        distributionId,
+      });
+      setPendingLifecycle((current) => current ? { ...current, preview } : current);
+    } catch (error) {
+      setConnectionMessages((current) => ({ ...current, [pendingLifecycle.agent.id]: errorMessage(error) }));
+    } finally {
+      setMarketBusyAgentId(null);
+    }
+  }
+
+  async function confirmLifecycle() {
+    if (!pendingLifecycle) return;
+    const { agent, action, preview } = pendingLifecycle;
+    setPendingLifecycle(null);
+    setMarketBusyAgentId(agent.id);
+    try {
+      const request = {
+        agentId: agent.id,
+        catalogVersion: preview.catalogVersion,
+        agentVersion: preview.targetVersion,
+        distributionId: preview.selectedDistribution.distributionId,
+        previewToken: preview.previewToken,
+      };
+      const task = action === "update"
+        ? await agentRuntime.startAgentUpdate(request)
+        : action === "reinstall"
+          ? await agentRuntime.startAgentReinstallation(request)
+          : await agentRuntime.startAgentInstallation(request);
+      let snapshot = task;
+      while (snapshot.state === "queued" || snapshot.state === "running") {
+        await new Promise((resolve) => window.setTimeout(resolve, 300));
+        snapshot = await agentRuntime.getAgentLifecycleTask(snapshot.id);
+      }
+      if (snapshot.state === "failed") {
+        setConnectionMessages((current) => ({ ...current, [agent.id]: snapshot.error?.message || "安装失败" }));
+      }
+      await reloadMarketCatalog();
+    } catch (error) {
+      setConnectionMessages((current) => ({ ...current, [agent.id]: errorMessage(error) }));
+    } finally {
+      setMarketBusyAgentId(null);
+    }
+  }
+
+  async function previewUninstall(agent: AgentCatalogItem) {
+    if (typeof agentRuntime.previewAgentUninstall !== "function") return;
+    setMarketBusyAgentId(agent.id);
+    try {
+      const preview = await agentRuntime.previewAgentUninstall(agent.id);
+      setPendingUninstall({ agent, preview });
+    } catch (error) {
+      setConnectionMessages((current) => ({ ...current, [agent.id]: errorMessage(error) }));
+    } finally {
+      setMarketBusyAgentId(null);
+    }
+  }
+
+  async function confirmUninstall(clearCapabilityAssignments: string[]) {
+    if (!pendingUninstall) return;
+    const { agent, preview } = pendingUninstall;
+    setPendingUninstall(null);
+    setMarketBusyAgentId(agent.id);
+    try {
+      const task = await agentRuntime.startAgentUninstall({
+        agentId: agent.id,
+        clearCapabilityAssignments,
+        previewToken: preview.previewToken,
+      });
+      let snapshot = task;
+      while (snapshot.state === "queued" || snapshot.state === "running") {
+        await new Promise((resolve) => window.setTimeout(resolve, 300));
+        snapshot = await agentRuntime.getAgentLifecycleTask(snapshot.id);
+      }
+      if (snapshot.state === "failed") {
+        setConnectionMessages((current) => ({ ...current, [agent.id]: snapshot.error?.message || t("settings.agents.uninstallFailed") }));
+      }
+      await reloadMarketCatalog();
+    } catch (error) {
+      setConnectionMessages((current) => ({ ...current, [agent.id]: errorMessage(error) }));
+    } finally {
+      setMarketBusyAgentId(null);
+    }
+  }
+
+  async function manageMarketAgent(agent: AgentCatalogItem) {
+    await runMarketLifecycle(agent, "install");
   }
 
   function openModelDialog(agent: AgentCatalogItem) {
@@ -232,50 +407,28 @@ export function AgentSettingsPanel({
           </p>
           <p className="mt-1 text-body-sm text-outline">{t("settings.agents.registryHint")}</p>
         </div>
-        <div className="relative shrink-0" ref={addMenuRef}>
-          <Button
-            aria-expanded={addMenuOpen}
-            aria-haspopup="menu"
-            onClick={() => setAddMenuOpen((open) => !open)}
-            onKeyDown={(event) => {
-              if (event.key === "ArrowDown") {
-                event.preventDefault();
-                setAddMenuOpen(true);
-              }
-            }}
-            type="button"
-            variant="outline"
-          >
-            <Plus size={16} />
-            {t("settings.agents.addCustom")}
-            <ChevronDown className={clsx("transition-transform", addMenuOpen && "rotate-180")} size={15} />
-          </Button>
-          {addMenuOpen ? (
-            <div
-              aria-label={t("settings.agents.addCustom")}
-              className="absolute right-0 top-12 z-10 w-64 rounded-xl border border-theme-card-border bg-theme-card p-1 shadow-[var(--theme-shadow-dialog)]"
-              role="menu"
-            >
-              <button
-                className="flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left text-body-sm text-on-surface-variant outline-none transition-colors focus:bg-theme-control-hover focus:text-on-surface"
-                onClick={() => {
-                  setAddMenuOpen(false);
-                  setCustomDialogOpen(true);
-                }}
-                ref={addMenuItemRef}
-                role="menuitem"
-                type="button"
-              >
-                <Code2 className="mt-0.5 shrink-0 text-primary" size={16} />
-                <span>
-                  <span className="block font-semibold text-on-surface">{t("settings.agents.customDefinition")}</span>
-                  <span className="mt-0.5 block text-code-sm">{t("settings.agents.customDefinitionHint")}</span>
-                </span>
-              </button>
-            </div>
-          ) : null}
-        </div>
       </div>
+
+      {view === "market" && canRefreshAgentMarket ? (
+        <div className="flex justify-end">
+          <Button
+            aria-label={t("settings.agents.refresh")}
+            disabled={marketRefreshBusy}
+            onClick={() => void refreshMarketCatalog()}
+            size="icon"
+            title={t("settings.agents.refresh")}
+            type="button"
+            variant="ghost"
+          >
+            <RefreshCw className={marketRefreshBusy ? "animate-spin" : undefined} size={16} />
+          </Button>
+        </div>
+      ) : null}
+      {connectionMessages._market ? (
+        <p className="rounded-xl border border-status-remove/35 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove">
+          {connectionMessages._market}
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -292,7 +445,7 @@ export function AgentSettingsPanel({
           </label>
         </div>
         <div className="flex shrink-0 items-center gap-1 rounded-xl border border-theme-card-border bg-theme-card/55 p-1" role="tablist">
-          <AgentFilterButton count={agentCatalog.length} filter="all" onChange={setFilter} selected={filter} t={t} />
+          <AgentFilterButton count={displayedCatalog.length} filter="all" onChange={setFilter} selected={filter} t={t} />
           <AgentFilterButton count={availableCount} filter="available" onChange={setFilter} selected={filter} t={t} />
           <AgentFilterButton count={unavailableCount} filter="unavailable" onChange={setFilter} selected={filter} t={t} />
         </div>
@@ -314,11 +467,17 @@ export function AgentSettingsPanel({
                 connectionMessage={connectionMessages[agent.id]}
                 connectionState={connectionStates[agent.id]}
                 isTesting={testingAgentId === agent.id}
-                onEdit={() => setInfoAgent(agent)}
-                onSelectModel={() => openModelDialog(agent)}
-                onTest={() => void testConnection(agent)}
+                isManaging={marketBusyAgentId === agent.id}
+                onInstall={!settingsOnly && canManageAgentLifecycle ? () => void manageMarketAgent(agent) : undefined}
+                onUpdate={!settingsOnly && canManageAgentLifecycle ? () => void runMarketLifecycle(agent, "update") : undefined}
+                onReinstall={!settingsOnly && canManageAgentLifecycle ? () => void runMarketLifecycle(agent, "reinstall") : undefined}
+                onUninstall={!settingsOnly && canPreviewAgentUninstall ? () => void previewUninstall(agent) : undefined}
+                onEdit={settingsOnly ? () => setInfoAgent(agent) : undefined}
+                onSelectModel={settingsOnly ? () => openModelDialog(agent) : undefined}
+                onTest={settingsOnly ? () => void testConnection(agent) : undefined}
                 selectedModel={selectedModels[agent.id]}
                 t={t}
+                view={view}
               />
             </div>
           ))}
@@ -421,6 +580,27 @@ export function AgentSettingsPanel({
         </DialogFrame>
       ) : null}
 
+      {pendingLifecycle ? (
+        <AgentInstallPreviewDialog
+          agent={pendingLifecycle.agent}
+          busy={marketBusyAgentId === pendingLifecycle.agent.id}
+          onClose={() => setPendingLifecycle(null)}
+          onConfirm={() => void confirmLifecycle()}
+          onSelectDistribution={(distributionId) => void selectLifecycleDistribution(distributionId)}
+          preview={pendingLifecycle.preview}
+        />
+      ) : null}
+
+      {pendingUninstall ? (
+        <AgentUninstallPreviewDialog
+          agent={pendingUninstall.agent}
+          busy={marketBusyAgentId === pendingUninstall.agent.id}
+          onClose={() => setPendingUninstall(null)}
+          onConfirm={(assignments) => void confirmUninstall(assignments)}
+          preview={pendingUninstall.preview}
+        />
+      ) : null}
+
       {infoAgent ? (
         <DialogFrame
           closeLabel={t("common.close")}
@@ -446,35 +626,6 @@ export function AgentSettingsPanel({
         </DialogFrame>
       ) : null}
 
-      {customDialogOpen ? (
-        <DialogFrame
-          closeLabel={t("common.close")}
-          contentClassName="grid gap-4"
-          description={t("settings.agents.customDialogDescription")}
-          footer={
-            <Button onClick={() => setCustomDialogOpen(false)} type="button" variant="outline">
-              {t("common.close")}
-            </Button>
-          }
-          icon={<Code2 size={18} />}
-          onClose={() => setCustomDialogOpen(false)}
-          size="lg"
-          title={t("settings.agents.customDialogTitle")}
-        >
-          <div className="grid gap-3 sm:grid-cols-2">
-            <DefinitionValue label={t("settings.agents.field.agentId")} value="my-agent" />
-            <DefinitionValue label={t("settings.agents.field.displayName")} value="My Agent" />
-            <DefinitionValue label={t("settings.agents.command")} value="my-agent --acp" />
-            <DefinitionValue label={t("settings.agents.protocol")} value="ACP" />
-            <div className="sm:col-span-2">
-              <DefinitionValue label={t("settings.agents.field.arguments")} value="--acp" />
-            </div>
-          </div>
-          <p className="rounded-xl border border-status-update/25 bg-status-update/10 px-3 py-3 text-body-sm leading-6 text-on-surface-variant">
-            {t("settings.agents.customDialogNotice")}
-          </p>
-        </DialogFrame>
-      ) : null}
     </div>
   );
 }
@@ -581,9 +732,7 @@ function applyConnectionResult(
     : !result.installed || (mode === "installation" && result.error_code === "command_not_found")
       ? "not-installed"
       : "failed";
-  const message = result.connection_method === "cli_fallback"
-    ? `${result.version || t("settings.agents.connectionAvailable")} · ${t("settings.agents.connectionCliFallback")}`
-    : result.available
+  const message = result.available
       ? result.version || t("settings.agents.connectionAvailable")
       : result.error || t("settings.agents.connectionFailed");
   setConnectionStates((current) => ({ ...current, [agentId]: state }));

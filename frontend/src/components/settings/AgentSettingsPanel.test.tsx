@@ -6,7 +6,9 @@ import { I18nProvider } from "../../i18n/I18nProvider";
 import { AgentSettingsPanel } from "./AgentSettingsPanel";
 import type { AppShortcut } from "../../types";
 
+const listAgentMarketMock = vi.hoisted(() => vi.fn());
 const agentRuntime = vi.hoisted(() => ({
+  listAgentMarket: undefined as undefined | typeof listAgentMarketMock,
   listAgentCatalog: vi.fn(),
   listAgentModels: vi.fn(),
   checkAgentConnection: vi.fn(),
@@ -21,6 +23,7 @@ beforeEach(() => {
   });
   vi.stubGlobal("navigator", { language: "zh-CN" });
   vi.clearAllMocks();
+  agentRuntime.listAgentMarket = undefined;
   agentRuntime.listAgentCatalog.mockResolvedValue([
     "opencode",
     "gemini",
@@ -75,10 +78,10 @@ describe("AgentSettingsPanel", () => {
     expect(screen.getByRole("heading", { name: "OpenCode" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Gemini CLI" })).toBeTruthy();
     const openCodeRow = screen.getByRole("heading", { name: "OpenCode" }).closest("article");
-    const geminiRow = screen.getByRole("heading", { name: "Gemini CLI" }).closest("article");
+    const geminiRow = (await screen.findByRole("heading", { name: "Gemini CLI" })).closest("article");
     expect(openCodeRow?.querySelector('path[d="M16 6H8v12h8V6zm4 16H4V2h16v20z"]')).toBeTruthy();
     expect(geminiRow?.querySelector('path[d^="M20.616 10.835"]')).toBeTruthy();
-    expect(await screen.findByText("可用")).toBeTruthy();
+    expect(screen.getAllByText("可用").length).toBeGreaterThan(0);
     await waitFor(() => expect(agentRuntime.checkAgentConnection).toHaveBeenCalledWith("opencode", "installation"));
 
     fireEvent.click(screen.getByRole("tab", { name: /^可用/ }));
@@ -92,9 +95,9 @@ describe("AgentSettingsPanel", () => {
   });
 
   it("tests a registered Agent and keeps editing inside the Agents page", async () => {
-    renderPanel();
+    renderSettingsPanel();
 
-    const geminiRow = screen.getByRole("heading", { name: "Gemini CLI" }).closest("article");
+    const geminiRow = (await screen.findByRole("heading", { name: "Gemini CLI" })).closest("article");
     expect(geminiRow).toBeTruthy();
     fireEvent.click(within(geminiRow as HTMLElement).getByRole("button", { name: "测试连接" }));
 
@@ -133,9 +136,9 @@ describe("AgentSettingsPanel", () => {
       error_code: agentId === "codex" ? null : "command_not_found",
       error: agentId === "codex" ? null : `${agentId} was not found`,
     }));
-    renderPanel();
+    renderSettingsPanel();
 
-    const codexRow = screen.getByRole("heading", { name: "Codex CLI" }).closest("article");
+    const codexRow = (await screen.findByRole("heading", { name: "Codex CLI" })).closest("article");
     fireEvent.click(within(codexRow as HTMLElement).getByRole("button", { name: "测试连接" }));
 
     await waitFor(() => expect(agentRuntime.checkAgentConnection).toHaveBeenCalledWith("codex", "connection"));
@@ -144,9 +147,9 @@ describe("AgentSettingsPanel", () => {
 
   it("loads ACP models in a dialog and persists the selected model callback", async () => {
     const onModelChange = vi.fn();
-    renderPanel({ onModelChange });
+    renderSettingsPanel({ onModelChange });
 
-    const codexRow = screen.getByRole("heading", { name: "Codex CLI" }).closest("article");
+    const codexRow = (await screen.findByRole("heading", { name: "Codex CLI" })).closest("article");
     fireEvent.click(within(codexRow as HTMLElement).getByRole("button", { name: "模型 Codex CLI" }));
 
     expect(await screen.findByRole("heading", { name: "选择模型 · Codex CLI" })).toBeTruthy();
@@ -161,27 +164,133 @@ describe("AgentSettingsPanel", () => {
     expect(within(currentModelSection).getByRole("radio", { name: /Fixture Accurate/ })).toBeTruthy();
   });
 
-  it("opens the custom Agent definition template from the add menu", () => {
+  it("does not expose a custom Agent definition entry", () => {
     renderPanel();
 
-    fireEvent.click(screen.getByRole("button", { name: /添加自定义 Agent/ }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /查看定义模板/ }));
+    expect(screen.queryByRole("button", { name: /添加自定义 Agent/ })).toBeNull();
+  });
 
-    expect(screen.getByRole("heading", { name: "自定义 Agent 定义模板" })).toBeTruthy();
-    expect(screen.getByText(/暂不把自定义定义写入运行时 Registry/)).toBeTruthy();
+  it("keeps lifecycle and definition actions in the ACP market view", async () => {
+    agentRuntime.listAgentMarket = listAgentMarketMock;
+    listAgentMarketMock.mockResolvedValue([createMarketItem("opencode", true)]);
+
+    renderPanel();
+
+    const openCodeRow = await screen.findByRole("heading", { name: "OpenCode" });
+    const row = openCodeRow.closest("article");
+    expect(within(row as HTMLElement).getByRole("button", { name: "停用" })).toBeTruthy();
+    expect(within(row as HTMLElement).getByRole("button", { name: "重装" })).toBeTruthy();
+    expect(within(row as HTMLElement).queryByRole("button", { name: "测试连接" })).toBeNull();
+    expect(within(row as HTMLElement).queryByRole("button", { name: "模型 OpenCode" })).toBeNull();
+    expect(within(row as HTMLElement).queryByRole("button", { name: "编辑 OpenCode" })).toBeNull();
+    expect(within(row as HTMLElement).getAllByRole("button")).toHaveLength(2);
+  });
+
+  it("shows only installed Agents and the three compact ACP settings actions", async () => {
+    agentRuntime.listAgentMarket = listAgentMarketMock;
+    listAgentMarketMock.mockResolvedValue([
+      createMarketItem("opencode", true),
+      createMarketItem("codex", false),
+    ]);
+
+    renderPanel({ view: "settings" });
+
+    const openCodeRow = await screen.findByRole("heading", { name: "OpenCode" });
+    expect(screen.queryByRole("heading", { name: "Codex CLI" })).toBeNull();
+    const row = openCodeRow.closest("article");
+    expect(row).toBeTruthy();
+    expect(within(row as HTMLElement).getAllByRole("button")).toHaveLength(3);
+    expect(within(row as HTMLElement).getByRole("button", { name: "测试连接" })).toBeTruthy();
+    expect(within(row as HTMLElement).getByRole("button", { name: "模型 OpenCode" })).toBeTruthy();
+    expect(within(row as HTMLElement).getByRole("button", { name: "编辑 OpenCode" })).toBeTruthy();
+    expect(within(row as HTMLElement).queryByRole("button", { name: /安装状态|更新|重装|卸载/ })).toBeNull();
   });
 });
+
+function renderSettingsPanel(options: Parameters<typeof renderPanel>[0] = {}) {
+  agentRuntime.listAgentMarket = listAgentMarketMock;
+  listAgentMarketMock.mockResolvedValue([
+    createMarketItem("opencode", true),
+    createMarketItem("gemini", true),
+    createMarketItem("codex", true),
+  ]);
+  return renderPanel({ ...options, view: "settings" });
+}
 
 function renderPanel({
   appShortcuts = [],
   onModelChange = vi.fn(),
+  view = "market",
 }: {
   appShortcuts?: AppShortcut[];
   onModelChange?: (agentId: string, modelId: string) => void;
+  view?: "market" | "settings";
 } = {}) {
   return render(
     <I18nProvider>
-      <AgentSettingsPanel appShortcuts={appShortcuts} onModelChange={onModelChange} selectedModels={{}} />
+      <AgentSettingsPanel appShortcuts={appShortcuts} onModelChange={onModelChange} selectedModels={{}} view={view} />
     </I18nProvider>,
   );
+}
+
+function createMarketItem(id: string, installed: boolean) {
+  const displayName = id === "opencode" ? "OpenCode" : id === "gemini" ? "Gemini CLI" : "Codex CLI";
+  return {
+    id,
+    catalogVersion: "fixture-catalog",
+    displayName,
+    description: "Fixture Agent",
+    protocol: "acp",
+    version: "1.0.0",
+    coreCompatible: true,
+    capabilities: {
+      purposes: ["text"],
+      textPrompt: true,
+      modelDiscovery: true,
+    },
+    verification: {
+      status: "tested",
+      testedAt: "2026-08-17T00:00:00Z",
+      evidenceId: "fixture-evidence",
+    },
+    distributions: [{
+      distributionId: "fixture-binary",
+      distributionType: "binary",
+      selectable: true,
+      recommended: true,
+      ownership: "managed",
+      reasonCode: null,
+      requiredRuntime: null,
+      resolvedVersion: "1.0.0",
+      downloadSize: null,
+      targetPath: null,
+    }],
+    recommendedDistributionId: "fixture-binary",
+    installed: installed ? {
+      agentId: id,
+      displayName,
+      version: "1.0.0",
+      protocol: "acp",
+      distributionId: "fixture-binary",
+      distributionType: "binary",
+      ownership: "managed",
+      displayInstallPath: `/tmp/${id}`,
+      enabled: true,
+      installed: true,
+      installationStatus: "installed",
+      runtimeStatus: "ready",
+      protocolStatus: "ready",
+      connected: false,
+      executionReady: true,
+      healthStale: false,
+      selectedModelId: null,
+      modelStatus: null,
+      updateAvailable: false,
+      operation: null,
+      lastCheckedAt: null,
+      error: null,
+      warnings: [],
+    } : null,
+    updateAvailable: false,
+  };
 }

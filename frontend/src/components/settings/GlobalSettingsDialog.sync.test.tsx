@@ -93,7 +93,7 @@ describe("GlobalSettingsDialog", () => {
     render(
       <GlobalSettingsDialog
         appShortcuts={[]}
-        initialPanel="general.agents"
+        initialPanel="agents.market"
         navigationModel={navigationModel}
         onAppShortcutsChange={vi.fn()}
         onClose={vi.fn()}
@@ -103,8 +103,29 @@ describe("GlobalSettingsDialog", () => {
     );
 
     expect(screen.getByRole("heading", { name: "settings.agents.title" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "settings.agents.addCustom" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "settings.agents.addCustom" })).toBeNull();
     await waitFor(() => expect(screen.getByRole("heading", { name: "OpenCode" })).toBeTruthy());
+  });
+
+  it("keeps ACP market and ACP settings as separate Agent navigation panels", () => {
+    render(
+      <GlobalSettingsDialog
+        appShortcuts={[]}
+        initialPanel="agents.market"
+        navigationModel={navigationModel}
+        onAppShortcutsChange={vi.fn()}
+        onClose={vi.fn()}
+        onNavigationModelChange={vi.fn()}
+        open
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "settings.section.acpMarket" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "settings.section.acpSettings" }));
+
+    expect(screen.getByRole("heading", { name: "settings.section.acpSettings" })).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "settings.agents.marketTab" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "settings.agents.installedTab" })).toBeNull();
   });
 
   it("renders every built-in APP icon as an editable row in the shared APP settings list", () => {
