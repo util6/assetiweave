@@ -49,6 +49,11 @@ func annotateCommandTree(root *cobra.Command) {
 	annotateLocalCommand(root, []string{"harvester", "repair"}, "conversation", platform.RiskHighRiskWrite)
 	annotateLocalCommand(root, []string{"harvester", "run"}, "conversation", platform.RiskHighRiskWrite)
 	annotateLocalCommand(root, []string{"update"}, "system", platform.RiskHighRiskWrite)
+	annotateLocalCommand(root, []string{"agent", "update"}, "agent", platform.RiskHighRiskWrite)
+	annotateLocalCommand(root, []string{"agent", "update", "preview"}, "agent", platform.RiskRead)
+	annotateLocalCommand(root, []string{"agent", "reinstall"}, "agent", platform.RiskHighRiskWrite)
+	annotateLocalCommand(root, []string{"agent", "reinstall", "preview"}, "agent", platform.RiskRead)
+	annotateLocalCommand(root, []string{"agent", "installed", "list"}, "agent", platform.RiskRead)
 }
 
 func annotateEngineCommand(command *cobra.Command, spec engineschema.CommandSpec, domain string) {

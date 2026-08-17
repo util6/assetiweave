@@ -181,7 +181,19 @@
     "list_conversation_adapter_runtime_statuses",
     "conversation.card.translation.run",
     "list_agent_catalog",
+    "list_agent_market",
+    "inspect_agent_market_item",
+    "refresh_agent_market",
+    "preview_agent_installation",
+    "list_installed_agents",
+    "get_installed_agent",
+    "preview_agent_uninstall",
+    "install_agent",
+    "uninstall_agent",
+    "enable_agent",
+    "disable_agent",
     "check_agent_connection",
+    "check_agent_runtime",
     "list_agent_models",
     "check_opencode_translation_availability",
     "translate_conversation_card_with_opencode",
@@ -9979,6 +9991,423 @@
     },
     {
       "contract_version": 3,
+      "method": "list_agent_market",
+      "canonical_method": "agent.market.list",
+      "description": "List curated Agent Market items and installation status",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "properties": {
+          "query": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional Agent search query"
+          },
+          "protocol": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "acp",
+              "native"
+            ],
+            "description": "Optional Agent protocol filter"
+          },
+          "installedOnly": {
+            "type": "boolean",
+            "default": false,
+            "description": "Only return installed Agents",
+            "aliases": [
+              "installed_only"
+            ]
+          },
+          "includeIncompatible": {
+            "type": "boolean",
+            "default": true,
+            "description": "Include core-incompatible items",
+            "aliases": [
+              "include_incompatible"
+            ]
+          }
+        },
+        "type": "object",
+        "additionalProperties": false,
+        "required": []
+      },
+      "cli": "assetiweave-cli agent market list",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "inspect_agent_market_item",
+      "canonical_method": "agent.market.inspect",
+      "description": "Inspect one curated Agent Market item",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "agentId"
+        ],
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "description": "Curated Agent identifier",
+            "aliases": [
+              "agent_id"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli agent market inspect",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "refresh_agent_market",
+      "canonical_method": "agent.market.refresh.run",
+      "description": "Refresh the controlled curated Agent Market catalog",
+      "risk": "high-risk-write",
+      "confirmation_required": true,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {
+          "yes": {
+            "type": "boolean",
+            "description": "Confirm the high-risk operation"
+          }
+        }
+      },
+      "cli": "assetiweave-cli agent market refresh",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "preview_agent_installation",
+      "canonical_method": "agent.install.preview",
+      "description": "Preview an Agent installation, update or reinstall",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "agentId",
+          "action"
+        ],
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "description": "Curated Agent identifier",
+            "aliases": [
+              "agent_id"
+            ]
+          },
+          "catalogVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "catalogVersion"
+          },
+          "agentVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "agentVersion"
+          },
+          "distributionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional distribution identifier",
+            "aliases": [
+              "distribution_id"
+            ]
+          },
+          "action": {
+            "type": "string",
+            "description": "install, update or reinstall"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli agent install preview",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "list_installed_agents",
+      "canonical_method": "agent.installed.list",
+      "description": "List current tenant Agent installations",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "cli": "assetiweave-cli agent installed",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "get_installed_agent",
+      "canonical_method": "agent.installed.get",
+      "description": "Get one current tenant Agent installation",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "agentId"
+        ],
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "description": "Installed Agent identifier",
+            "aliases": [
+              "agent_id"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli agent installed get",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "preview_agent_uninstall",
+      "canonical_method": "agent.uninstall.preview",
+      "description": "Preview Agent references, ownership and cleanup scope",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "agentId"
+        ],
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "description": "Installed Agent identifier",
+            "aliases": [
+              "agent_id"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli agent uninstall preview",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "install_agent",
+      "canonical_method": "agent.install.run",
+      "description": "Install or update one Agent from a confirmed preview",
+      "risk": "high-risk-write",
+      "confirmation_required": true,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "agentId",
+          "catalogVersion",
+          "agentVersion",
+          "distributionId",
+          "previewToken"
+        ],
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "description": "Curated Agent identifier",
+            "aliases": [
+              "agent_id"
+            ]
+          },
+          "catalogVersion": {
+            "type": "string",
+            "description": "Catalog version",
+            "aliases": [
+              "catalog_version"
+            ]
+          },
+          "agentVersion": {
+            "type": "string",
+            "description": "Fixed Agent version",
+            "aliases": [
+              "agent_version"
+            ]
+          },
+          "distributionId": {
+            "type": "string",
+            "description": "Selected distribution",
+            "aliases": [
+              "distribution_id"
+            ]
+          },
+          "previewToken": {
+            "type": "string",
+            "description": "Preview confirmation token",
+            "aliases": [
+              "preview_token"
+            ]
+          },
+          "yes": {
+            "type": "boolean",
+            "description": "Confirm the high-risk operation"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli agent install",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "uninstall_agent",
+      "canonical_method": "agent.uninstall.run",
+      "description": "Uninstall or unbind one Agent",
+      "risk": "high-risk-write",
+      "confirmation_required": true,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "agentId",
+          "previewToken"
+        ],
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "description": "Installed Agent identifier",
+            "aliases": [
+              "agent_id"
+            ]
+          },
+          "clearCapabilityAssignments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "Explicit capability assignments to clear",
+            "aliases": [
+              "clear_capability_assignments"
+            ]
+          },
+          "previewToken": {
+            "type": "string",
+            "description": "Preview confirmation token",
+            "aliases": [
+              "preview_token"
+            ]
+          },
+          "yes": {
+            "type": "boolean",
+            "description": "Confirm the high-risk operation"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli agent uninstall",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "enable_agent",
+      "canonical_method": "agent.enable",
+      "description": "Enable an installed Agent and reload its runtime definition",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "agentId"
+        ],
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "description": "Installed Agent identifier",
+            "aliases": [
+              "agent_id"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli agent enable <agent-id>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "disable_agent",
+      "canonical_method": "agent.disable",
+      "description": "Disable an installed Agent and remove it from the runtime registry",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "agentId"
+        ],
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "description": "Installed Agent identifier",
+            "aliases": [
+              "agent_id"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli agent disable <agent-id>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
       "method": "check_agent_connection",
       "canonical_method": "agent.connection.check",
       "description": "Check Agent installation or ACP connection",
@@ -10012,6 +10441,35 @@
         "additionalProperties": false
       },
       "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "check_agent_runtime",
+      "canonical_method": "agent.runtime.check",
+      "description": "Check one installed Agent runtime entry",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "agentId"
+        ],
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "description": "Installed Agent identifier",
+            "aliases": [
+              "agent_id"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli agent check",
       "since": "0.1.0",
       "deprecated": false
     },
