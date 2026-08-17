@@ -609,7 +609,7 @@ export function ConversationScriptResourcePanel({
       {detailEntry ? (
         <DialogFrame
           closeLabel={t("common.close")}
-          contentClassName="grid max-h-[70vh] gap-4 overflow-y-auto"
+          contentClassName="grid gap-4"
           footer={
             <>
               <Button onClick={() => setDetailEntry(null)} type="button" variant="outline">

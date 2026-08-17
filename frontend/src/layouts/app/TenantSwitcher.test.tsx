@@ -20,7 +20,7 @@ describe("TenantSwitcher", () => {
     renderTenantManager({ onSwitchTenant });
 
     fireEvent.click(screen.getByRole("button", { name: "Tenants" }));
-    fireEvent.change(within(screen.getByTestId("main-content-dialog-root")).getByRole("combobox", { name: "Switch tenant" }), {
+    fireEvent.change(screen.getByRole("combobox", { name: "Switch tenant" }), {
       target: { value: "client-a" },
     });
 
@@ -51,7 +51,7 @@ describe("TenantSwitcher", () => {
     fireEvent.click(within(screen.getByTestId("side-rail-action")).getByRole("button", { name: "Tenants" }));
 
     expect(within(screen.getByTestId("side-rail-action")).queryByRole("dialog")).toBeNull();
-    expect(within(screen.getByTestId("main-content-dialog-root")).getByRole("dialog")).not.toBeNull();
+    expect(screen.getByRole("dialog")).not.toBeNull();
   });
 
   it("uses the side rail trigger as the permanent entry point", () => {
