@@ -4,7 +4,12 @@ use crate::backend::{
     path_utils::normalize_path_for_storage,
 };
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeSet, fs, path::Path, path::PathBuf};
+use std::{
+    collections::BTreeSet,
+    fs, io,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use walkdir::WalkDir;
 
 pub(crate) const SYSTEM_SKILLS_MARKER: &str = ".assetiweave-system-skills.marker";
@@ -36,6 +41,7 @@ const MEMORY_MANIFEST: &[u8] =
     include_bytes!("../../../builtin-assets/skills/assetiweave-memory/assetiweave.skill.json");
 const MEMORY_RECALL_SCRIPT: &[u8] =
     include_bytes!("../../../builtin-assets/skills/assetiweave-memory/scripts/recall.py");
+const FILE_OPERATION_ATTEMPTS: usize = 4;
 
 struct EmbeddedFile {
     relative_path: &'static str,
@@ -211,28 +217,46 @@ fn install_builtin_skills_at(root: &Path) -> AppResult<BuiltinSkillInstallResult
     write_embedded_tree(&staging, &fingerprint)?;
 
     if path_is_present(root) {
-        fs::rename(root, &previous).map_err(|error| {
-            format!(
-                "stage existing system Skills {} for replacement: {error}",
+        rename_path(
+            root,
+            &previous,
+            &format!(
+                "stage existing system Skills {} for replacement",
                 root.display()
-            )
-        })?;
+            ),
+        )?;
     }
-    if let Err(error) = fs::rename(&staging, root) {
-        if path_is_present(&previous) {
-            let _ = fs::rename(&previous, root);
+    if let Err(error) = rename_path(
+        &staging,
+        root,
+        &format!("activate system Skills {}", root.display()),
+    ) {
+        let rollback_error = if path_is_present(&previous) {
+            rename_path(
+                &previous,
+                root,
+                &format!("rollback system Skills {}", root.display()),
+            )
+            .err()
+        } else {
+            None
+        };
+        let cleanup_error = remove_path(&staging).err();
+        let mut message = error;
+        if let Some(rollback_error) = rollback_error {
+            message.push_str(&format!("; rollback failed: {rollback_error}"));
         }
-        let _ = remove_path(&staging);
-        return Err(format!(
-            "activate system Skills {}: {error}",
-            root.display()
-        ));
+        if let Some(cleanup_error) = cleanup_error {
+            message.push_str(&format!("; staging cleanup failed: {cleanup_error}"));
+        }
+        return Err(message);
     }
     if path_is_present(&previous) {
         if let Err(error) = remove_path(&previous) {
-            eprintln!(
-                "failed to remove previous AssetIWeave system Skills {}: {error}",
-                previous.display()
+            crate::backend::operation_log::log_warn(
+                "app.startup.skills.cleanup",
+                "failed to remove previous AssetIWeave system Skills",
+                &[("path", previous.display().to_string()), ("error", error)],
             );
         }
     }
@@ -248,15 +272,7 @@ fn validate_embedded_skills() -> AppResult<()> {
     for embedded in EMBEDDED_SKILLS {
         let skill = std::str::from_utf8(embedded.skill)
             .map_err(|error| format!("decode {}/SKILL.md: {error}", embedded.directory))?;
-        if !skill.starts_with("---\n")
-            || !skill.contains(&format!("name: {}", embedded.name))
-            || !skill.contains("description:")
-        {
-            return Err(format!(
-                "embedded Skill {} has invalid frontmatter",
-                embedded.directory
-            ));
-        }
+        validate_embedded_skill_frontmatter(skill, embedded.name, embedded.directory)?;
         let manifest: serde_json::Value = serde_json::from_slice(embedded.manifest)
             .map_err(|error| format!("decode {} manifest: {error}", embedded.directory))?;
         if manifest.get("id").and_then(serde_json::Value::as_str) != Some(embedded.id)
@@ -273,6 +289,50 @@ fn validate_embedded_skills() -> AppResult<()> {
         }
     }
     Ok(())
+}
+
+fn validate_embedded_skill_frontmatter(
+    skill: &str,
+    expected_name: &str,
+    directory: &str,
+) -> AppResult<()> {
+    let normalized = normalize_embedded_skill_text(skill);
+    let frontmatter = normalized.strip_prefix("---\n").and_then(|body| {
+        body.split_once("\n---\n")
+            .map(|(frontmatter, _)| frontmatter)
+    });
+    let Some(frontmatter) = frontmatter else {
+        return Err(format!(
+            "embedded Skill {directory} has invalid frontmatter"
+        ));
+    };
+
+    let mut name = None;
+    let mut description = None;
+    for line in frontmatter.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        match key.trim() {
+            "name" => name = Some(value.trim()),
+            "description" => description = Some(value.trim()),
+            _ => {}
+        }
+    }
+
+    if name != Some(expected_name) || description.is_none_or(str::is_empty) {
+        return Err(format!(
+            "embedded Skill {directory} has invalid frontmatter"
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_embedded_skill_text(skill: &str) -> String {
+    skill
+        .trim_start_matches('\u{feff}')
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
 }
 
 fn embedded_fingerprint() -> String {
@@ -346,11 +406,14 @@ fn write_embedded_tree(root: &Path, fingerprint: &str) -> AppResult<()> {
             .parent()
             .ok_or_else(|| format!("embedded file has no parent: {}", path.display()))?;
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        fs::write(&path, file.contents).map_err(|error| error.to_string())?;
+        retry_io("write embedded system Skill file", || {
+            fs::write(&path, file.contents)
+        })?;
         set_executable_if_needed(&path, file.executable)?;
     }
-    fs::write(root.join(SYSTEM_SKILLS_MARKER), format!("{fingerprint}\n"))
-        .map_err(|error| error.to_string())
+    retry_io("write embedded system Skill marker", || {
+        fs::write(root.join(SYSTEM_SKILLS_MARKER), format!("{fingerprint}\n"))
+    })
 }
 
 fn path_is_present(path: &Path) -> bool {
@@ -364,10 +427,41 @@ fn remove_path(path: &Path) -> AppResult<()> {
         Err(error) => return Err(error.to_string()),
     };
     if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
-        fs::remove_dir_all(path).map_err(|error| error.to_string())
+        retry_io(&format!("remove directory {}", path.display()), || {
+            fs::remove_dir_all(path)
+        })
     } else {
-        fs::remove_file(path).map_err(|error| error.to_string())
+        retry_io(&format!("remove file {}", path.display()), || {
+            fs::remove_file(path)
+        })
     }
+}
+
+fn rename_path(from: &Path, to: &Path, description: &str) -> AppResult<()> {
+    retry_io(description, || fs::rename(from, to))
+}
+
+fn retry_io<T, F>(description: &str, mut operation: F) -> AppResult<T>
+where
+    F: FnMut() -> io::Result<T>,
+{
+    let mut last_error = None;
+    for attempt in 0..FILE_OPERATION_ATTEMPTS {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                last_error = Some(error);
+                if attempt + 1 < FILE_OPERATION_ATTEMPTS && cfg!(windows) {
+                    std::thread::sleep(Duration::from_millis(50 * (attempt as u64 + 1)));
+                }
+            }
+        }
+    }
+
+    Err(format!(
+        "{description}: {}",
+        last_error.expect("file operation must have an error")
+    ))
 }
 
 #[cfg(unix)]
@@ -572,6 +666,43 @@ mod tests {
         assert_eq!(source.root_path, "~/.assetiweave/skills/.system");
         assert!(source.enabled);
         assert_eq!(source.priority, -200);
+    }
+
+    #[test]
+    fn normalizes_bom_crlf_and_lone_cr_before_validating_frontmatter() {
+        let skill = "\u{feff}---\r\nname: sample-skill\rdescription: A sample skill.\r\n---\r# Sample Skill";
+
+        assert!(validate_embedded_skill_frontmatter(skill, "sample-skill", "sample-dir").is_ok());
+    }
+
+    #[test]
+    fn rejects_missing_or_mismatched_embedded_skill_frontmatter() {
+        let missing = "name: sample-skill\ndescription: A sample skill.";
+        let mismatched =
+            "---\nname: another-skill\ndescription: A sample skill.\n---\n# Sample Skill";
+
+        assert!(
+            validate_embedded_skill_frontmatter(missing, "sample-skill", "sample-dir").is_err()
+        );
+        assert!(
+            validate_embedded_skill_frontmatter(mismatched, "sample-skill", "sample-dir").is_err()
+        );
+    }
+
+    #[test]
+    fn retries_transient_file_operations() {
+        let mut attempts = 0;
+        retry_io("test operation", || {
+            attempts += 1;
+            if attempts < 3 {
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            } else {
+                Ok(())
+            }
+        })
+        .expect("transient operation should eventually succeed");
+
+        assert_eq!(attempts, 3);
     }
 
     #[test]

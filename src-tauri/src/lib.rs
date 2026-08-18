@@ -20,6 +20,7 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 const APP_CLOSE_REQUESTED_EVENT: &str = "app-close-requested";
+const STARTUP_SELF_CHECK_ARG: &str = "--startup-self-check";
 const AI_EXECUTION_CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const AI_EXECUTION_CLOSE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(25);
 
@@ -48,45 +49,172 @@ pub(crate) async fn converge_ai_executions_before_close(
     }
 }
 
+fn setup_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic payload".to_string()
+        };
+        let location = info
+            .location()
+            .map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()))
+            .unwrap_or_else(|| "unknown location".to_string());
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let panic_message =
+            format!("Panic occurred at {location}: {payload}\nBacktrace:\n{backtrace}");
+        eprintln!("{panic_message}");
+        crate::backend::logs::record_fatal_panic(&panic_message);
+        default_hook(info);
+    }));
+}
+
+fn has_startup_self_check_arg<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    args.into_iter()
+        .any(|argument| argument.as_ref() == STARTUP_SELF_CHECK_ARG)
+}
+
+fn run_startup_self_check(_context: tauri::Context<tauri::Wry>) -> Result<(), String> {
+    backend::builtin_skills::install_builtin_skills()
+        .map_err(|error| format!("内置 Skill 校验或安装失败: {error}"))?;
+    let db_path = app_db_path().map_err(|error| format!("数据库路径初始化失败: {error}"))?;
+    let runtime = AppRuntime::bootstrap(db_path, RuntimeRole::OneShot)
+        .map_err(|error| format!("数据库和运行时初始化失败: {error}"))?;
+    let report = runtime.shutdown_with_grace(std::time::Duration::from_secs(5));
+    if !report.unfinished_task_ids.is_empty()
+        || !report.dispatcher_drained
+        || report.dispatcher_remaining_events > 0
+        || report.dispatcher_timed_out
+    {
+        return Err(format!(
+            "运行时关闭自检失败: unfinished_tasks={}, dispatcher_drained={}, remaining_events={}, timed_out={}",
+            report.unfinished_task_ids.len(),
+            report.dispatcher_drained,
+            report.dispatcher_remaining_events,
+            report.dispatcher_timed_out
+        ));
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    backend::builtin_skills::install_builtin_skills()
-        .expect("failed to install AssetIWeave system Skills");
-    let db_path = app_db_path().expect("failed to resolve AssetIWeave database path");
-    let runtime = AppRuntime::bootstrap(db_path.clone(), RuntimeRole::ResidentHost)
-        .map_err(|error| error.to_string())
-        .expect("failed to initialize AssetIWeave AppRuntime");
+    setup_panic_hook();
+    let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+    if has_startup_self_check_arg(std::env::args()) {
+        match run_startup_self_check(context) {
+            Ok(()) => return,
+            Err(error) => {
+                let message = format!("AssetIWeave startup self-check failed: {error}");
+                log_error("app.startup.self_check", "启动自检失败", &error, &[]);
+                crate::backend::logs::record_fatal_panic(&message);
+                eprintln!("{message}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if let Err(error) = backend::builtin_skills::install_builtin_skills() {
+        log_error(
+            "app.startup.skills",
+            "failed to install AssetIWeave system Skills",
+            &error,
+            &[],
+        );
+        panic!("failed to install AssetIWeave system Skills: {error}");
+    }
+    let db_path = match app_db_path() {
+        Ok(path) => path,
+        Err(error) => {
+            log_error(
+                "app.startup.db_path",
+                "failed to resolve AssetIWeave database path",
+                &error,
+                &[],
+            );
+            panic!("failed to resolve AssetIWeave database path: {error}");
+        }
+    };
+    let runtime = match AppRuntime::bootstrap(db_path.clone(), RuntimeRole::ResidentHost) {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            log_error(
+                "app.startup.runtime",
+                "failed to initialize AssetIWeave AppRuntime",
+                &error,
+                &[],
+            );
+            panic!("failed to initialize AssetIWeave AppRuntime: {error}");
+        }
+    };
     let agent_runtime_manager = runtime.agent_runtime_manager();
     let agent_runtime = runtime.agent_runtime();
     let conversation_full_sync_on_startup_enabled =
         match backend::app_settings::conversation_full_sync_on_startup_enabled() {
             Ok(enabled) => enabled,
             Err(error) => {
-                eprintln!("failed to read Conversation startup sync setting: {error}");
+                log_error(
+                    "app.startup.conversation_sync_setting",
+                    "failed to read Conversation startup sync setting",
+                    &error,
+                    &[],
+                );
                 true
             }
         };
     let conversation_payload_policy_reparse_required = {
         let service = AppService::from_runtime(&runtime);
         if let Err(error) = service.interrupt_stale_memory_runs() {
-            eprintln!("failed to mark interrupted Memory runs on startup: {error}");
+            log_error(
+                "app.startup.memory_recovery",
+                "failed to mark interrupted Memory runs on startup",
+                &error,
+                &[],
+            );
         }
         if let Err(error) = service.refresh_recorded_assets() {
-            eprintln!("failed to validate recorded AssetIWeave assets on startup: {error}");
+            log_error(
+                "app.startup.asset_refresh",
+                "failed to validate recorded AssetIWeave assets on startup",
+                &error,
+                &[],
+            );
         }
         if let Err(error) = service.refresh_asset_mount_statuses(None) {
-            eprintln!("failed to sync AssetIWeave mount observations on startup: {error}");
+            log_error(
+                "app.startup.mount_refresh",
+                "failed to sync AssetIWeave mount observations on startup",
+                &error,
+                &[],
+            );
         }
         match service.conversation_payload_policy_reparse_required() {
             Ok(required) => required,
             Err(error) => {
-                eprintln!("failed to inspect Conversation payload policy state: {error}");
+                log_error(
+                    "app.startup.conversation_policy",
+                    "failed to inspect Conversation payload policy state",
+                    &error,
+                    &[],
+                );
                 false
             }
         }
     };
     if let Err(error) = write_startup_log() {
-        eprintln!("failed to write AssetIWeave startup log: {error}");
+        log_error(
+            "app.startup.log",
+            "failed to write AssetIWeave startup log",
+            &error,
+            &[],
+        );
     }
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -144,7 +272,12 @@ pub fn run() {
                                     allow_close.store(true, Ordering::SeqCst);
                                     allow_exit.store(true, Ordering::SeqCst);
                                     if let Err(error) = close_window.close() {
-                                        eprintln!("failed to close AssetIWeave after confirmation: {error}");
+                                        log_error(
+                                            "app.close.window",
+                                            "failed to close AssetIWeave after confirmation",
+                                            &error,
+                                            &[],
+                                        );
                                     }
                                 });
                             }
@@ -157,12 +290,22 @@ pub fn run() {
                     return;
                 }
                 if let Err(error) = window.emit(APP_CLOSE_REQUESTED_EVENT, ()) {
-                    eprintln!("failed to notify frontend about close request: {error}");
+                    log_error(
+                        "app.close.request",
+                        "failed to notify frontend about close request",
+                        &error,
+                        &[],
+                    );
                     state.exit_prompt_open.store(false, Ordering::SeqCst);
                     state.allow_close.store(true, Ordering::SeqCst);
                     state.allow_exit.store(true, Ordering::SeqCst);
                     if let Err(close_error) = window.close() {
-                        eprintln!("failed to close AssetIWeave after close prompt notification error: {close_error}");
+                        log_error(
+                            "app.close.window",
+                            "failed to close AssetIWeave after close prompt notification error",
+                            &close_error,
+                            &[],
+                        );
                     }
                 }
             }
@@ -181,8 +324,11 @@ pub fn run() {
             shutdown_sync_done: Arc::new(AtomicBool::new(false)),
         })
         .invoke_handler(adapters::tauri::command_handler())
-        .build(tauri::generate_context!())
-        .expect("error while running AssetIWeave");
+        .build(context)
+        .unwrap_or_else(|error| {
+            log_error("app.startup.tauri", "error while running AssetIWeave", &error, &[]);
+            panic!("error while running AssetIWeave: {error}");
+        });
     if conversation_full_sync_on_startup_enabled && conversation_payload_policy_reparse_required {
         let state = app.state::<AppState>();
         let params = backend::application::ConversationSyncParams {
@@ -198,7 +344,12 @@ pub fn run() {
             state.background_tasks.clone(),
             params,
         ) {
-            eprintln!("failed to start Conversation payload policy reparse: {error}");
+            log_error(
+                "app.startup.conversation_policy_reparse",
+                "failed to start Conversation payload policy reparse",
+                &error,
+                &[],
+            );
         }
     }
     app.run(move |app_handle, event| {
@@ -254,7 +405,12 @@ pub fn run() {
                 return;
             }
             if let Err(error) = app_handle.emit(APP_CLOSE_REQUESTED_EVENT, ()) {
-                eprintln!("failed to notify frontend about app exit request: {error}");
+                log_error(
+                    "app.exit.request",
+                    "failed to notify frontend about app exit request",
+                    &error,
+                    &[],
+                );
                 state.exit_prompt_open.store(false, Ordering::SeqCst);
                 state.allow_exit.store(true, Ordering::SeqCst);
                 app_handle.exit(0);
@@ -268,11 +424,21 @@ pub(crate) fn sync_before_close(db_path: &std::path::Path, backup_database: bool
         Ok(runtime) => {
             let service = AppService::from_runtime(&runtime);
             if let Err(error) = service.refresh_asset_mount_statuses(None) {
-                eprintln!("failed to sync AssetIWeave mount observations before close: {error}");
+                log_error(
+                    "app.close.mount_refresh",
+                    "failed to sync AssetIWeave mount observations before close",
+                    &error,
+                    &[],
+                );
             }
         }
         Err(error) => {
-            eprintln!("failed to open AssetIWeave database before close: {error}");
+            log_error(
+                "app.close.database",
+                "failed to open AssetIWeave database before close",
+                &error,
+                &[],
+            );
         }
     }
 
@@ -286,11 +452,20 @@ pub(crate) fn sync_before_close(db_path: &std::path::Path, backup_database: bool
                         .map(|error| format!("{}: {}", error.directory, error.message))
                         .collect::<Vec<_>>()
                         .join("; ");
-                    eprintln!("AssetIWeave database backup completed with warnings: {errors}");
+                    log_warn(
+                        "app.close.database_backup",
+                        "AssetIWeave database backup completed with warnings",
+                        &[("errors", errors)],
+                    );
                 }
             }
             Err(error) => {
-                eprintln!("failed to back up AssetIWeave database before close: {error}");
+                log_error(
+                    "app.close.database_backup",
+                    "failed to back up AssetIWeave database before close",
+                    &error,
+                    &[],
+                );
             }
         }
     }
@@ -354,4 +529,21 @@ fn install_engine_termination_handlers(
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_startup_self_check_arg;
+
+    #[test]
+    fn recognizes_startup_self_check_argument_without_matching_similar_values() {
+        assert!(has_startup_self_check_arg([
+            "assetiweave",
+            "--startup-self-check"
+        ]));
+        assert!(!has_startup_self_check_arg([
+            "assetiweave",
+            "--startup-self-check=true"
+        ]));
+    }
 }

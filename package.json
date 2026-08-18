@@ -29,7 +29,7 @@
     "cli:release-audit": "node scripts/release-audit.js",
     "cli:run": "node scripts/run.js",
     "precli:test": "pnpm artifacts:guard",
-    "cli:test": "GOCACHE=$PWD/target/go-build go test -C cli ./...",
+    "cli:test": "node scripts/run-go-tests.mjs",
     "postcli:test": "pnpm artifacts:check",
     "cli:test:e2e": "go test -C cli -tags=e2e ./tests/cli_e2e",
     "conversation-adapters:check": "node scripts/conversation-adapter-packages.mjs check",

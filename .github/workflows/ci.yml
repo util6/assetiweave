@@ -140,11 +140,24 @@ jobs:
       - name: Test Rust workspace
         run: cargo test --workspace -- --test-threads=1
 
+      - name: Build desktop binary for startup self-check
+        run: cargo build -p assetiweave --bin assetiweave
+
+      - name: Run Windows startup self-check
+        shell: pwsh
+        run: |
+          $checkRoot = Join-Path $env:RUNNER_TEMP "assetiweave-startup-self-check"
+          New-Item -ItemType Directory -Force -Path $checkRoot | Out-Null
+          $env:ASSETIWEAVE_DB_PATH = Join-Path $checkRoot "app.db"
+          $env:ASSETIWEAVE_LOG_DIR = Join-Path $checkRoot "logs"
+          & ".\target\debug\assetiweave.exe" --startup-self-check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Vet CLI
         run: go vet -C cli ./...
 
       - name: Test CLI
-        run: go test -C cli ./...
+        run: pnpm cli:test
 
       - name: Build CLI
         run: go build -C cli ./...

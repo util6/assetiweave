@@ -143,7 +143,11 @@ impl AppRuntime {
                 &migration_scope,
             ))
         {
-            eprintln!("agent market legacy migration deferred: {error}");
+            crate::backend::operation_log::log_warn(
+                "app.startup.agent_market_migration",
+                "agent market legacy migration deferred",
+                &[("error", error.to_string())],
+            );
         }
         runtime
             .block_on(agent_runtime_manager.reload(&tenant_id))
@@ -185,7 +189,11 @@ impl AppRuntime {
     fn start_resident_services(&self) {
         let dispatcher = Arc::new(EventDispatcher::new(self.db.clone(), self.db_path.clone()));
         if let Err(error) = dispatcher.initialize_all_tenants() {
-            eprintln!("domain event dispatcher initialization deferred: {error}");
+            crate::backend::operation_log::log_warn(
+                "app.startup.event_dispatcher",
+                "domain event dispatcher initialization deferred",
+                &[("error", error.to_string())],
+            );
             return;
         }
         let handle = dispatcher.start();
