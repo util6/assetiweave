@@ -10,7 +10,7 @@ use sqlx::SqlitePool;
 
 use crate::backend::{
     agents::{
-        registry::AgentRegistryHandle,
+        registry::{AgentRegistry, AgentRegistryHandle},
         types::{
             AgentCommandDefinition, AgentDefinition, AgentEnvEntry, AgentId, AgentProtocol,
             DeclaredAgentCapabilities,
@@ -21,6 +21,7 @@ use crate::backend::{
         executor::AgentExecutor,
         AgentExecutionRuntime,
     },
+    extension_kernel::DomainPackageSystem,
 };
 
 use super::{
@@ -32,16 +33,81 @@ const STAGING_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 
 pub(crate) type AgentRuntimeRegistry = AgentRegistryHandle;
 
+/// Agent Market's domain seam over the installation record. ACP/native
+/// manifest details stay here; the kernel only receives the normalized
+/// identity and compatibility projection.
+pub(crate) struct AgentPackageSystem {
+    manifest: super::types::AgentPackageManifest,
+}
+
+impl AgentPackageSystem {
+    pub(crate) fn from_installation(installation: &AgentInstallation) -> Result<Self, String> {
+        Ok(Self {
+            manifest: installation.package_manifest()?,
+        })
+    }
+}
+
+impl crate::backend::extension_kernel::DomainPackageSystem for AgentPackageSystem {
+    fn kind(&self) -> crate::backend::extension_kernel::PackageKind {
+        crate::backend::extension_kernel::PackageKind::Agent
+    }
+
+    fn inspect(
+        &self,
+        dir: &Path,
+    ) -> Result<
+        crate::backend::extension_kernel::InspectedPackage,
+        crate::backend::extension_kernel::ExtensionError,
+    > {
+        if !dir.exists() {
+            return Err(
+                crate::backend::extension_kernel::ExtensionError::ManifestInvalid {
+                    package_id: self.manifest.identity.package_id.clone(),
+                    reason: format!("Agent install directory does not exist: {}", dir.display()),
+                },
+            );
+        }
+        Ok(crate::backend::extension_kernel::InspectedPackage {
+            identity: self.manifest.identity.clone(),
+            compatibility: self.manifest.compatibility.clone(),
+            invocation: self.manifest.invocation.clone(),
+            availability_probe: self.manifest.availability_probe.clone(),
+            model_discovery_probe: self.manifest.model_discovery_probe.clone(),
+            install_dir: dir.to_path_buf(),
+        })
+    }
+
+    fn on_installed(
+        &self,
+        _pkg: &crate::backend::extension_kernel::InspectedPackage,
+    ) -> Result<(), crate::backend::extension_kernel::ExtensionError> {
+        Ok(())
+    }
+
+    fn on_removed(
+        &self,
+        _id: &crate::backend::extension_kernel::PackageIdentity,
+    ) -> Result<(), crate::backend::extension_kernel::ExtensionError> {
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct AgentRuntimeManager {
     repository: AgentInstallationRepository,
     registry: AgentRuntimeRegistry,
+    registry_snapshot: Arc<crate::backend::extension_kernel::RegistrySnapshot<AgentRegistry>>,
     executor: Arc<AgentExecutor>,
 }
 
 impl AgentRuntimeManager {
     pub(crate) fn new(pool: SqlitePool, workspace_root: PathBuf) -> Self {
-        let registry = AgentRuntimeRegistry::default();
+        let registry_snapshot = Arc::new(crate::backend::extension_kernel::RegistrySnapshot::new(
+            AgentRegistry::from_definitions(Vec::<AgentDefinition>::new())
+                .expect("empty agent registry is valid"),
+        ));
+        let registry = AgentRuntimeRegistry::from_snapshot(registry_snapshot.clone());
         let executor = Arc::new(AgentExecutor::with_registry_handle(
             registry.clone(),
             Arc::new(AcpExecutionBackend::new(workspace_root.clone())),
@@ -51,6 +117,7 @@ impl AgentRuntimeManager {
         Self {
             repository: AgentInstallationRepository::new(pool),
             registry,
+            registry_snapshot,
             executor,
         }
     }
@@ -79,9 +146,35 @@ impl AgentRuntimeManager {
         let installations = self.repository.list_registry_candidates(tenant_id).await?;
         let definitions = installations
             .iter()
-            .map(definition_from_installation)
+            .map(|installation| {
+                let package_system = AgentPackageSystem::from_installation(installation)
+                    .map_err(|error| error.to_string())?;
+                if package_system.kind() != crate::backend::extension_kernel::PackageKind::Agent {
+                    return Err("Agent package system returned the wrong package kind".to_string());
+                }
+                let install_dir = installation
+                    .install_dir
+                    .clone()
+                    .or_else(|| {
+                        installation
+                            .resolved_program
+                            .parent()
+                            .map(Path::to_path_buf)
+                    })
+                    .ok_or_else(|| "Agent installation has no runtime directory".to_string())?;
+                let inspected = package_system
+                    .inspect(&install_dir)
+                    .map_err(|error| error.to_string())?;
+                package_system
+                    .on_installed(&inspected)
+                    .map_err(|error| error.to_string())?;
+                definition_from_installation(installation)
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        self.registry.publish(definitions)
+        let next =
+            AgentRegistry::from_definitions(definitions).map_err(|error| error.to_string())?;
+        self.registry_snapshot.replace(next);
+        Ok(self.registry.bump_generation())
     }
 
     /// Recover only state that can be proven to be owned by the Agent Market.
@@ -236,19 +329,6 @@ struct ResolvedDefinition {
     id: String,
     display_name: String,
     protocol: String,
-    program: String,
-    #[serde(default)]
-    args: Vec<String>,
-    #[serde(default)]
-    env: Vec<ResolvedEnvEntry>,
-    #[serde(default)]
-    model_discovery_args: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ResolvedEnvEntry {
-    name: String,
-    value: String,
 }
 
 pub(crate) fn definition_json(
@@ -271,15 +351,25 @@ pub(crate) fn definition_json(
 pub(crate) fn definition_from_installation(
     installation: &AgentInstallation,
 ) -> Result<AgentDefinition, String> {
+    let package_manifest = installation.package_manifest()?;
     let resolved: ResolvedDefinition = serde_json::from_value(installation.definition_json.clone())
         .map_err(|error| error.to_string())?;
+    if package_manifest.identity.package_id != resolved.id {
+        return Err("resolved definition id does not match package identity".to_string());
+    }
+    if package_manifest.compatibility.protocol_version != 1 {
+        return Err("unsupported Agent package protocol version".to_string());
+    }
     let id = AgentId::parse(resolved.id).map_err(|error| error.to_string())?;
     let protocol = match resolved.protocol.as_str() {
         "acp" => AgentProtocol::Acp,
         "native" => AgentProtocol::Native,
         other => return Err(format!("unsupported agent protocol: {other}")),
     };
-    let program = resolved.program;
+    let invocation = package_manifest.invocation;
+    let availability_probe = package_manifest.availability_probe;
+    let model_discovery_probe = package_manifest.model_discovery_probe;
+    let program = invocation.entry.clone();
     let expected_program = installation.resolved_program.to_string_lossy();
     if program != expected_program {
         return Err("resolved definition program does not match installation record".to_string());
@@ -299,7 +389,7 @@ pub(crate) fn definition_from_installation(
     } else if installation.install_dir.is_some() {
         return Err("system Agent must not have a managed installation directory".to_string());
     }
-    if resolved
+    if invocation
         .args
         .iter()
         .any(|arg| matches!(arg.as_str(), "-y" | "npx" | "uvx"))
@@ -315,17 +405,21 @@ pub(crate) fn definition_from_installation(
         display_name: resolved.display_name,
         protocol,
         command: program.clone(),
-        args: resolved.args,
-        env: resolved
+        args: invocation.args,
+        env: invocation
             .env
             .into_iter()
-            .map(|entry| AgentEnvEntry::new(entry.name, entry.value))
+            .map(|entry| AgentEnvEntry::new(entry.key, entry.value))
             .collect(),
         declared_capabilities: DeclaredAgentCapabilities::acp_text(),
-        availability_probe: Some(AgentCommandDefinition::with_command(program, ["--version"])),
-        model_discovery: resolved
-            .model_discovery_args
-            .map(AgentCommandDefinition::new),
+        availability_probe: Some(AgentCommandDefinition {
+            command: availability_probe.program,
+            args: availability_probe.args,
+        }),
+        model_discovery: model_discovery_probe.map(|probe| AgentCommandDefinition {
+            command: probe.program,
+            args: probe.args,
+        }),
     };
     if installation.protocol == AgentMarketProtocol::Acp {
         definition.declared_capabilities = DeclaredAgentCapabilities::acp_text();
@@ -433,6 +527,14 @@ mod tests {
             .args
             .iter()
             .any(|arg| arg == "-y" || arg == "npx" || arg == "uvx"));
+        let package_system = AgentPackageSystem::from_installation(&installation).unwrap();
+        let inspected = package_system.inspect(&root).unwrap();
+        assert_eq!(inspected.identity, installation.package_identity().unwrap());
+        assert_eq!(inspected.invocation.entry, program_path.to_string_lossy());
+        assert_eq!(
+            inspected.availability_probe.args,
+            vec!["--version".to_string()]
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 }

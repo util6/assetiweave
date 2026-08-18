@@ -87,6 +87,8 @@ fn test_asset(id: &str) -> Asset {
         source_id: "source-a".to_string(),
         name: id.to_string(),
         kind: AssetKind::Skill,
+        detector_id: "legacy.classifier".to_string(),
+        detector_version: 1,
         format: AssetFormat::Directory,
         relative_path: id.to_string(),
         absolute_path: absolute_path.to_string_lossy().to_string(),
@@ -102,7 +104,8 @@ fn test_profile(id: &str, enabled: bool) -> TargetProfile {
     TargetProfile {
         id: id.to_string(),
         name: id.to_string(),
-        app_kind: AppKind::Custom,
+        app_kind: Some(AppKind::Custom),
+        target_provider_id: "custom".to_string(),
         target_paths: vec![std::env::temp_dir()
             .join(format!(
                 "assetiweave-plan-test-{id}-{}",

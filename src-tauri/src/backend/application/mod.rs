@@ -1,6 +1,7 @@
 mod agent;
 mod agent_market;
 mod assets;
+pub(crate) mod bootstrap;
 mod card_translation;
 mod conversation_adapter_catalog_v2;
 mod conversation_adapters;

@@ -82,6 +82,10 @@ use crate::{
         asset_log_fields, log_error, log_info, log_warn, profile_log_fields,
         source_input_log_fields, source_log_fields, status_summary_fields,
     },
+    backend::runtime::{
+        tasks::{SpawnOutcome, TaskContext, TaskKind, TaskSpec},
+        AppError,
+    },
 };
 use serde_json::Value;
 use std::{collections::BTreeMap, sync::Arc};
@@ -96,20 +100,17 @@ pub(crate) async fn set_app_window_icon(app: AppHandle, icon: Vec<u8>) -> AppRes
 
 #[tauri::command]
 pub(crate) fn get_app_overview(state: State<'_, AppState>) -> AppResult<AppOverview> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.overview()
+    AppService::from_runtime(&state.runtime).overview()
 }
 
 #[tauri::command]
 pub(crate) fn list_tenants(state: State<'_, AppState>) -> AppResult<Vec<Tenant>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_tenants()
+    AppService::from_runtime(&state.runtime).list_tenants()
 }
 
 #[tauri::command]
 pub(crate) fn get_active_tenant(state: State<'_, AppState>) -> AppResult<Tenant> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.active_tenant()
+    AppService::from_runtime(&state.runtime).active_tenant()
 }
 
 #[tauri::command]
@@ -118,10 +119,7 @@ pub(crate) fn create_tenant(
     params: TenantCreateParams,
 ) -> AppResult<Tenant> {
     let fields = vec![("name", params.name.clone())];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.create_tenant(params)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).create_tenant(params))();
     match &result {
         Ok(tenant) => log_info(
             "tenant.create",
@@ -136,10 +134,7 @@ pub(crate) fn create_tenant(
 #[tauri::command]
 pub(crate) fn switch_tenant(state: State<'_, AppState>, tenant_id: String) -> AppResult<Tenant> {
     let fields = vec![("tenant_id", tenant_id.clone())];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.switch_tenant(tenant_id)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).switch_tenant(tenant_id))();
     match &result {
         Ok(tenant) => log_info(
             "tenant.switch",
@@ -155,8 +150,7 @@ pub(crate) fn switch_tenant(state: State<'_, AppState>, tenant_id: String) -> Ap
 pub(crate) fn get_app_settings(
     state: State<'_, AppState>,
 ) -> AppResult<crate::backend::app_settings::AppSettingsFile> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.get_app_settings()
+    AppService::from_runtime(&state.runtime).get_app_settings()
 }
 
 #[tauri::command]
@@ -164,8 +158,7 @@ pub(crate) fn save_app_settings(
     state: State<'_, AppState>,
     settings: serde_json::Value,
 ) -> AppResult<crate::backend::app_settings::AppSettingsFile> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.save_app_settings(settings)
+    AppService::from_runtime(&state.runtime).save_app_settings(settings)
 }
 
 #[tauri::command]
@@ -188,6 +181,7 @@ pub(crate) async fn complete_app_close(
     let allow_exit = state.allow_exit.clone();
     let db_path = state.db_path.clone();
     let background_tasks = state.background_tasks.clone();
+    let runtime = state.runtime.clone();
 
     crate::converge_ai_executions_before_close(background_tasks).await;
 
@@ -197,6 +191,35 @@ pub(crate) async fn complete_app_close(
         })
         .await
         .map_err(|error| error.to_string())?;
+    }
+
+    let shutdown_report = tauri::async_runtime::spawn_blocking(move || {
+        runtime.shutdown_with_grace(std::time::Duration::from_secs(5))
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    if !shutdown_report.dispatcher_drained
+        || !shutdown_report.unfinished_task_ids.is_empty()
+        || shutdown_report.dispatcher_timed_out
+    {
+        log_warn(
+            "app.close.runtime",
+            "应用运行时在关闭期限内未完全收敛",
+            &[
+                (
+                    "unfinished_tasks",
+                    shutdown_report.unfinished_task_ids.len().to_string(),
+                ),
+                (
+                    "dispatcher_remaining_events",
+                    shutdown_report.dispatcher_remaining_events.to_string(),
+                ),
+                (
+                    "dispatcher_timed_out",
+                    shutdown_report.dispatcher_timed_out.to_string(),
+                ),
+            ],
+        );
     }
 
     exit_prompt_open.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -211,8 +234,7 @@ pub(crate) fn list_assets(
     state: State<'_, AppState>,
     kind: Option<AssetKind>,
 ) -> AppResult<Vec<CatalogAsset>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_assets(ListAssetsParams { kind })
+    AppService::from_runtime(&state.runtime).list_assets(ListAssetsParams { kind })
 }
 
 #[tauri::command]
@@ -220,8 +242,7 @@ pub(crate) fn list_source_assets(
     state: State<'_, AppState>,
     kind: Option<AssetKind>,
 ) -> AppResult<Vec<CatalogAsset>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_source_assets(kind)
+    AppService::from_runtime(&state.runtime).list_source_assets(kind)
 }
 
 #[tauri::command]
@@ -229,8 +250,7 @@ pub(crate) fn list_memory_items(
     state: State<'_, AppState>,
     params: MemoryItemListParams,
 ) -> AppResult<MemoryItemPage> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_memory_items(params)
+    AppService::from_runtime(&state.runtime).list_memory_items(params)
 }
 
 #[tauri::command]
@@ -238,8 +258,7 @@ pub(crate) fn get_memory_item(
     state: State<'_, AppState>,
     params: MemoryItemGetParams,
 ) -> AppResult<MemoryItemDetail> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.get_memory_item(params)
+    AppService::from_runtime(&state.runtime).get_memory_item(params)
 }
 
 #[tauri::command]
@@ -247,10 +266,7 @@ pub(crate) fn create_memory_item(
     state: State<'_, AppState>,
     params: MemoryItemCreateParams,
 ) -> AppResult<MemoryItemDetail> {
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.create_memory_item(params)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).create_memory_item(params))();
     match &result {
         Ok(detail) => log_info(
             "memory.item.create",
@@ -269,10 +285,7 @@ pub(crate) fn update_memory_item(
 ) -> AppResult<MemoryItemDetail> {
     let item_id = params.item_id.clone();
     let fields = [("item_id", item_id.clone())];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.update_memory_item(params)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).update_memory_item(params))();
     match &result {
         Ok(_) => log_info("memory.item.update", "更新 Memory 成功", &fields),
         Err(error) => log_error("memory.item.update", "更新 Memory 失败", error, &fields),
@@ -286,10 +299,7 @@ pub(crate) fn archive_memory_item(
     params: MemoryItemGetParams,
 ) -> AppResult<MemoryItemDetail> {
     let fields = [("item_id", params.item_id.clone())];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.archive_memory_item(params)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).archive_memory_item(params))();
     match &result {
         Ok(_) => log_info("memory.item.archive", "归档 Memory 成功", &fields),
         Err(error) => log_error("memory.item.archive", "归档 Memory 失败", error, &fields),
@@ -303,10 +313,7 @@ pub(crate) fn accept_memory_candidate(
     params: MemoryCandidateAcceptParams,
 ) -> AppResult<MemoryItemDetail> {
     let fields = [("item_id", params.item_id.clone())];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.accept_memory_candidate(params)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).accept_memory_candidate(params))();
     match &result {
         Ok(_) => log_info("memory.candidate.accept", "接受 Memory 候选成功", &fields),
         Err(error) => log_error(
@@ -325,10 +332,7 @@ pub(crate) fn reject_memory_candidate(
     params: MemoryItemGetParams,
 ) -> AppResult<MemoryItemDetail> {
     let fields = [("item_id", params.item_id.clone())];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.reject_memory_candidate(params)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).reject_memory_candidate(params))();
     match &result {
         Ok(_) => log_info("memory.candidate.reject", "拒绝 Memory 候选成功", &fields),
         Err(error) => log_error(
@@ -346,8 +350,7 @@ pub(crate) fn memory_dream_status(
     state: State<'_, AppState>,
     params: MemoryDreamScopeParams,
 ) -> AppResult<crate::backend::dto::MemoryDreamPreview> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.memory_dream_status(params)
+    AppService::from_runtime(&state.runtime).memory_dream_status(params)
 }
 
 #[tauri::command]
@@ -355,7 +358,7 @@ pub(crate) fn memory_overview(
     state: State<'_, AppState>,
     params: MemoryDreamScopeParams,
 ) -> AppResult<crate::backend::dto::MemoryOverview> {
-    AppService::open_with_db_path(state.db_path.clone())?.memory_overview(params)
+    AppService::from_runtime(&state.runtime).memory_overview(params)
 }
 
 #[tauri::command]
@@ -363,7 +366,7 @@ pub(crate) fn list_memory_dream_notes(
     state: State<'_, AppState>,
     params: MemoryDreamListParams,
 ) -> AppResult<crate::backend::dto::MemoryDreamNotePage> {
-    AppService::open_with_db_path(state.db_path.clone())?.list_memory_dream_notes(params)
+    AppService::from_runtime(&state.runtime).list_memory_dream_notes(params)
 }
 
 #[tauri::command]
@@ -371,7 +374,7 @@ pub(crate) fn get_memory_dream_note(
     state: State<'_, AppState>,
     params: MemoryDreamGetParams,
 ) -> AppResult<crate::backend::models::MemoryDreamNoteDetail> {
-    AppService::open_with_db_path(state.db_path.clone())?.get_memory_dream_note(params)
+    AppService::from_runtime(&state.runtime).get_memory_dream_note(params)
 }
 
 #[tauri::command]
@@ -379,7 +382,7 @@ pub(crate) fn archive_memory_dream_note(
     state: State<'_, AppState>,
     params: MemoryDreamGetParams,
 ) -> AppResult<crate::backend::models::MemoryDreamNoteDetail> {
-    AppService::open_with_db_path(state.db_path.clone())?.archive_memory_dream_note(params)
+    AppService::from_runtime(&state.runtime).archive_memory_dream_note(params)
 }
 
 #[tauri::command]
@@ -387,7 +390,7 @@ pub(crate) fn promote_memory_dream_note(
     state: State<'_, AppState>,
     params: MemoryDreamGetParams,
 ) -> AppResult<Vec<MemoryItemDetail>> {
-    AppService::open_with_db_path(state.db_path.clone())?.promote_memory_dream_note(params)
+    AppService::from_runtime(&state.runtime).promote_memory_dream_note(params)
 }
 
 #[tauri::command]
@@ -395,8 +398,7 @@ pub(crate) fn preview_memory_dream(
     state: State<'_, AppState>,
     params: MemoryDreamPreviewParams,
 ) -> AppResult<crate::backend::dto::MemoryDreamPreview> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.preview_memory_dream(params)
+    AppService::from_runtime(&state.runtime).preview_memory_dream(params)
 }
 
 #[tauri::command]
@@ -404,7 +406,7 @@ pub(crate) fn run_memory_dream(
     state: State<'_, AppState>,
     params: MemoryDreamRunParams,
 ) -> AppResult<crate::backend::dto::MemoryDreamRunResult> {
-    AppService::open_with_db_path(state.db_path.clone())?.run_memory_dream(params)
+    AppService::from_runtime(&state.runtime).run_memory_dream(params)
 }
 
 #[tauri::command]
@@ -412,7 +414,7 @@ pub(crate) fn preview_memory_recall(
     state: State<'_, AppState>,
     params: MemoryRecallPreviewParams,
 ) -> AppResult<crate::backend::dto::MemoryRecallPreview> {
-    AppService::open_with_db_path(state.db_path.clone())?.preview_memory_recall(params)
+    AppService::from_runtime(&state.runtime).preview_memory_recall(params)
 }
 
 #[tauri::command]
@@ -420,7 +422,7 @@ pub(crate) fn run_memory_recall(
     state: State<'_, AppState>,
     params: MemoryRecallRunParams,
 ) -> AppResult<crate::backend::dto::MemoryRecallRunResult> {
-    AppService::open_with_db_path(state.db_path.clone())?.run_memory_recall(params)
+    AppService::from_runtime(&state.runtime).run_memory_recall(params)
 }
 
 #[tauri::command]
@@ -428,7 +430,7 @@ pub(crate) fn verify_memory(
     state: State<'_, AppState>,
     params: MemoryVerifyParams,
 ) -> AppResult<crate::backend::dto::MemoryVerifyResult> {
-    AppService::open_with_db_path(state.db_path.clone())?.verify_memory(params)
+    AppService::from_runtime(&state.runtime).verify_memory(params)
 }
 
 #[tauri::command]
@@ -448,7 +450,7 @@ pub(crate) fn start_memory_task(
         return Ok(snapshot);
     }
 
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     let background_tasks = state.background_tasks.clone();
     let task_id = snapshot.id.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -456,7 +458,7 @@ pub(crate) fn start_memory_task(
         let progress_app = app.clone();
         let progress_task_id = task_id.clone();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let service = AppService::open_with_db_path(db_path)?;
+            let service = AppService::from_runtime(&runtime);
             let report = move |phase: &str,
                                processed_count: usize,
                                total_count: usize,
@@ -564,8 +566,7 @@ fn emit_memory_task(app: &AppHandle, snapshot: &MemoryTaskSnapshot) {
 pub(crate) fn get_skill_backup_settings(
     state: State<'_, AppState>,
 ) -> AppResult<SkillBackupSettings> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.get_skill_backup_settings()
+    AppService::from_runtime(&state.runtime).get_skill_backup_settings()
 }
 
 #[tauri::command]
@@ -579,8 +580,7 @@ pub(crate) fn update_skill_backup_settings(
         ("migrate", migrate.unwrap_or(true).to_string()),
     ];
     let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.update_skill_backup_settings(
+        AppService::from_runtime(&state.runtime).update_skill_backup_settings(
             UpdateSkillBackupSettingsParams {
                 root_path,
                 migrate: migrate.unwrap_or(true),
@@ -613,10 +613,7 @@ pub(crate) fn backup_skill(
     asset_id: String,
 ) -> AppResult<CatalogAsset> {
     let fields = vec![("asset_id", asset_id.clone())];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.backup_skill(asset_id)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).backup_skill(asset_id))();
 
     match &result {
         Ok(asset) => log_info(
@@ -640,7 +637,7 @@ pub(crate) fn backup_skills(
         return Ok(snapshot);
     }
 
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     let background_tasks = state.background_tasks.clone();
     let task_id = snapshot.id.clone();
     let task_asset_ids = snapshot.asset_ids.clone();
@@ -649,25 +646,22 @@ pub(crate) fn backup_skills(
         let progress_tasks = background_tasks.clone();
         let progress_task_id = task_id.clone();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            AppService::open_with_db_path(db_path).and_then(|service| {
-                service.backup_skills_with_progress(
-                    task_asset_ids,
-                    |completed_count, next_asset_id| match progress_tasks
-                        .update_skill_backup_progress(
-                            &progress_task_id,
-                            completed_count,
-                            next_asset_id.map(str::to_string),
-                        ) {
-                        Ok(snapshot) => emit_skill_backup_task(&progress_app, &snapshot),
-                        Err(error) => log_error(
-                            "skill.backup.background",
-                            "更新 Skill 后台备份进度失败",
-                            &error,
-                            &[("task_id", progress_task_id.clone())],
-                        ),
-                    },
-                )
-            })
+            AppService::from_runtime(&runtime).backup_skills_with_progress(
+                task_asset_ids,
+                |completed_count, next_asset_id| match progress_tasks.update_skill_backup_progress(
+                    &progress_task_id,
+                    completed_count,
+                    next_asset_id.map(str::to_string),
+                ) {
+                    Ok(snapshot) => emit_skill_backup_task(&progress_app, &snapshot),
+                    Err(error) => log_error(
+                        "skill.backup.background",
+                        "更新 Skill 后台备份进度失败",
+                        &error,
+                        &[("task_id", progress_task_id.clone())],
+                    ),
+                },
+            )
         }))
         .unwrap_or_else(|_| Err("skill backup task panicked".to_string()));
         match &result {
@@ -732,16 +726,72 @@ fn emit_conversation_script_install_task(
     }
 }
 
+fn spawn_conversation_lifecycle_task<F>(
+    app: AppHandle,
+    background_tasks: Arc<BackgroundTaskRegistry>,
+    task_id: String,
+    operation: &'static str,
+    work: F,
+) -> AppResult<()>
+where
+    F: FnOnce() -> Result<Value, String> + Send + 'static,
+{
+    let task_id_for_runtime = task_id.clone();
+    let background_tasks_for_runtime = background_tasks.clone();
+    let app_for_runtime = app.clone();
+    let operation_for_runtime = operation;
+    let task = Box::new(move |context: TaskContext| {
+        let result = if context.is_cancelled() {
+            Err(format!("{operation_for_runtime} task cancelled"))
+        } else {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
+                .unwrap_or_else(|_| Err(format!("{operation_for_runtime} task panicked")))
+        };
+        match &result {
+            Ok(value) => log_info(
+                operation_for_runtime,
+                "扩展生命周期任务成功",
+                &[
+                    ("task_id", task_id_for_runtime.clone()),
+                    ("result", value.to_string()),
+                ],
+            ),
+            Err(error) => log_error(
+                operation_for_runtime,
+                "扩展生命周期任务失败",
+                error,
+                &[("task_id", task_id_for_runtime.clone())],
+            ),
+        }
+        let projection_result = result.clone();
+        match background_tasks_for_runtime
+            .finish_conversation_script_install(&task_id_for_runtime, projection_result)
+        {
+            Ok(snapshot) => emit_conversation_script_install_task(&app_for_runtime, &snapshot),
+            Err(error) => log_error(
+                operation_for_runtime,
+                "更新扩展生命周期任务状态失败",
+                &error,
+                &[("task_id", task_id_for_runtime.clone())],
+            ),
+        }
+        result.map_err(AppError::Legacy)
+    });
+    if let Err(error) = background_tasks.spawn_extension_lifecycle(&task_id, task) {
+        let _ =
+            background_tasks.finish_conversation_script_install(&task_id, Err(error.to_string()));
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) fn search_skills(
     state: State<'_, AppState>,
     params: SkillSearchParams,
 ) -> AppResult<SkillSearchResult> {
     let fields = vec![("query", params.query.clone())];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.search_skills(params)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).search_skills(params))();
 
     match &result {
         Ok(result) => log_info(
@@ -763,10 +813,7 @@ pub(crate) fn acquire_skill(
     params: SkillAcquireParams,
 ) -> AppResult<Value> {
     let fields = vec![("url", params.url.clone())];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.acquire_skill(params)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).acquire_skill(params))();
 
     match &result {
         Ok(value) => log_info(
@@ -800,10 +847,7 @@ pub(crate) fn acquire_skill(
 pub(crate) fn list_skill_remote_sources(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<SkillRemoteSource>> {
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.list_skill_remote_sources()
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).list_skill_remote_sources())();
 
     match &result {
         Ok(sources) => log_info(
@@ -826,10 +870,7 @@ pub(crate) fn check_skill_remote_sources(
         .as_ref()
         .map(|asset_id| vec![("asset_id", asset_id.clone())])
         .unwrap_or_default();
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.check_skill_remote_sources(params)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).check_skill_remote_sources(params))();
 
     match &result {
         Ok(sources) => log_info(
@@ -865,9 +906,7 @@ pub(crate) fn update_asset_description(
 ) -> AppResult<Asset> {
     let fields = vec![("asset_id", asset_id.clone())];
     let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?
-            .update_asset_description(asset_id, description)
+        AppService::from_runtime(&state.runtime).update_asset_description(asset_id, description)
     })();
 
     match &result {
@@ -894,9 +933,7 @@ pub(crate) fn delete_asset(
 ) -> AppResult<Asset> {
     let fields = vec![("asset_id", asset_id.clone())];
     let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?
-            .delete_asset(asset_id, unmount.unwrap_or(false))
+        AppService::from_runtime(&state.runtime).delete_asset(asset_id, unmount.unwrap_or(false))
     })();
 
     match &result {
@@ -908,23 +945,18 @@ pub(crate) fn delete_asset(
 
 #[tauri::command]
 pub(crate) fn list_sources(state: State<'_, AppState>) -> AppResult<Vec<Source>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_sources()
+    AppService::from_runtime(&state.runtime).list_sources()
 }
 
 #[tauri::command]
 pub(crate) fn list_skill_sources(state: State<'_, AppState>) -> AppResult<Vec<Source>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_skill_sources()
+    AppService::from_runtime(&state.runtime).list_skill_sources()
 }
 
 #[tauri::command]
 pub(crate) fn create_source(state: State<'_, AppState>, source: SourceInput) -> AppResult<Source> {
     let input_fields = source_input_log_fields(&source);
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.add_source(source)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).add_source(source))();
 
     match &result {
         Ok(source) => log_info(
@@ -940,10 +972,7 @@ pub(crate) fn create_source(state: State<'_, AppState>, source: SourceInput) -> 
 #[tauri::command]
 pub(crate) fn update_source(state: State<'_, AppState>, source: Source) -> AppResult<Source> {
     let input_fields = source_log_fields(&source);
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.update_source(source)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).update_source(source))();
 
     match &result {
         Ok(source) => log_info(
@@ -960,8 +989,7 @@ pub(crate) fn update_source(state: State<'_, AppState>, source: Source) -> AppRe
 pub(crate) fn delete_source(state: State<'_, AppState>, id: String) -> AppResult<()> {
     let fields = vec![("source_id", id.clone())];
     let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?
+        AppService::from_runtime(&state.runtime)
             .remove_source(SourceRemoveParams {
                 id: id.clone(),
                 dry_run: false,
@@ -979,8 +1007,7 @@ pub(crate) fn delete_source(state: State<'_, AppState>, id: String) -> AppResult
 
 #[tauri::command]
 pub(crate) fn list_profiles(state: State<'_, AppState>) -> AppResult<Vec<TargetProfile>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_profiles()
+    AppService::from_runtime(&state.runtime).list_profiles()
 }
 
 #[tauri::command]
@@ -995,10 +1022,7 @@ pub(crate) fn create_profile(
     if let Some(app_kind) = input.app_kind {
         input_fields.push(("app_kind", format!("{app_kind:?}")));
     }
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.create_profile(input)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).create_profile(input))();
 
     match &result {
         Ok(profile) => log_info(
@@ -1022,10 +1046,7 @@ pub(crate) fn update_profile(
     profile: TargetProfile,
 ) -> AppResult<TargetProfile> {
     let input_fields = profile_log_fields(&profile);
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.update_profile(profile)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).update_profile(profile))();
 
     match &result {
         Ok(profile) => log_info(
@@ -1046,10 +1067,7 @@ pub(crate) fn update_profile(
 #[tauri::command]
 pub(crate) fn delete_profile(state: State<'_, AppState>, id: String) -> AppResult<()> {
     let fields = vec![("profile_id", id.clone())];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.delete_profile(id)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).delete_profile(id))();
 
     match &result {
         Ok(()) => log_info("profile.delete", "删除目标 APP 配置成功", &fields),
@@ -1060,8 +1078,7 @@ pub(crate) fn delete_profile(state: State<'_, AppState>, id: String) -> AppResul
 
 #[tauri::command]
 pub(crate) fn get_navigation_model(state: State<'_, AppState>) -> AppResult<NavigationModel> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.navigation_model()
+    AppService::from_runtime(&state.runtime).navigation_model()
 }
 
 #[tauri::command]
@@ -1075,10 +1092,7 @@ pub(crate) fn update_navigation_model(
         ("active_sub_nav_id", model.active_sub_nav_id.clone()),
         ("rail_count", model.rail_items.len().to_string()),
     ];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.update_navigation_model(model)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).update_navigation_model(model))();
 
     match &result {
         Ok(_) => log_info("navigation.update", "更新导航配置成功", &fields),
@@ -1089,16 +1103,14 @@ pub(crate) fn update_navigation_model(
 
 #[tauri::command]
 pub(crate) fn list_app_shortcuts(state: State<'_, AppState>) -> AppResult<Vec<AppShortcut>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_app_shortcuts()
+    AppService::from_runtime(&state.runtime).list_app_shortcuts()
 }
 
 #[tauri::command]
 pub(crate) fn list_app_shortcut_settings(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<AppShortcut>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_app_shortcut_settings()
+    AppService::from_runtime(&state.runtime).list_app_shortcut_settings()
 }
 
 #[tauri::command]
@@ -1107,10 +1119,7 @@ pub(crate) fn update_app_shortcuts(
     shortcuts: Vec<AppShortcut>,
 ) -> AppResult<Vec<AppShortcut>> {
     let fields = vec![("shortcut_count", shortcuts.len().to_string())];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.update_app_shortcuts(shortcuts)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).update_app_shortcuts(shortcuts))();
 
     match &result {
         Ok(shortcuts) => log_info(
@@ -1133,8 +1142,7 @@ pub(crate) fn list_asset_mounts(
     state: State<'_, AppState>,
     asset_id: Option<String>,
 ) -> AppResult<Vec<AssetMount>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_asset_mounts(asset_id.as_deref())
+    AppService::from_runtime(&state.runtime).list_asset_mounts(asset_id.as_deref())
 }
 
 #[tauri::command]
@@ -1142,9 +1150,7 @@ pub(crate) fn list_asset_mount_statuses(
     state: State<'_, AppState>,
     asset_id: Option<String>,
 ) -> AppResult<Vec<AssetMountStatus>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?
-        .list_asset_mount_statuses(asset_id.as_deref())
+    AppService::from_runtime(&state.runtime).list_asset_mount_statuses(asset_id.as_deref())
 }
 
 #[tauri::command]
@@ -1157,9 +1163,7 @@ pub(crate) fn refresh_asset_mount_statuses(
         .map(|asset_id| vec![("asset_id", asset_id.clone())])
         .unwrap_or_default();
     let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?
-            .refresh_asset_mount_statuses(asset_id.as_deref())
+        AppService::from_runtime(&state.runtime).refresh_asset_mount_statuses(asset_id.as_deref())
     })();
 
     match &result {
@@ -1175,8 +1179,7 @@ pub(crate) fn refresh_asset_mount_statuses(
 
 #[tauri::command]
 pub(crate) fn list_skill_groups(state: State<'_, AppState>) -> AppResult<Vec<AssetGroupDetail>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_skill_groups()
+    AppService::from_runtime(&state.runtime).list_skill_groups()
 }
 
 #[tauri::command]
@@ -1185,10 +1188,7 @@ pub(crate) fn create_skill_group(
     input: AssetGroupInput,
 ) -> AppResult<AssetGroupDetail> {
     let input_fields = vec![("group_name", input.name.clone())];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.create_skill_group(input)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).create_skill_group(input))();
 
     match &result {
         Ok(detail) => log_info(
@@ -1219,10 +1219,7 @@ pub(crate) fn update_skill_group(
         ("group_id", group.id.clone()),
         ("group_name", group.name.clone()),
     ];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.update_skill_group(group)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).update_skill_group(group))();
 
     match &result {
         Ok(detail) => log_info(
@@ -1247,10 +1244,7 @@ pub(crate) fn update_skill_group(
 #[tauri::command]
 pub(crate) fn delete_skill_group(state: State<'_, AppState>, group_id: String) -> AppResult<()> {
     let fields = vec![("group_id", group_id.clone())];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.delete_skill_group(group_id)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).delete_skill_group(group_id))();
 
     match &result {
         Ok(()) => log_info("skill_group.delete", "删除 skill 分组成功", &fields),
@@ -1270,9 +1264,7 @@ pub(crate) fn set_skill_group_manual_members(
         ("asset_count", asset_ids.len().to_string()),
     ];
     let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?
-            .set_skill_group_manual_members(group_id, asset_ids)
+        AppService::from_runtime(&state.runtime).set_skill_group_manual_members(group_id, asset_ids)
     })();
 
     match &result {
@@ -1308,8 +1300,7 @@ pub(crate) fn apply_skill_group_mount(
         ("enabled", enabled.to_string()),
     ];
     let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.apply_skill_group_mount(
+        AppService::from_runtime(&state.runtime).apply_skill_group_mount(
             &group_id,
             &profile_id,
             enabled,
@@ -1369,11 +1360,8 @@ pub(crate) fn preview_skill_group_exclusive_mount(
         ("profile_id", input.profile_id.clone()),
         ("group_count", input.group_ids.len().to_string()),
     ];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?
-            .preview_skill_group_exclusive_mount(input)
-    })();
+    let result =
+        (|| AppService::from_runtime(&state.runtime).preview_skill_group_exclusive_mount(input))();
 
     match &result {
         Ok(preview) => {
@@ -1425,11 +1413,8 @@ pub(crate) fn apply_skill_group_exclusive_mount(
         ("profile_id", input.profile_id.clone()),
         ("group_count", input.group_ids.len().to_string()),
     ];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?
-            .apply_skill_group_exclusive_mount(input)
-    })();
+    let result =
+        (|| AppService::from_runtime(&state.runtime).apply_skill_group_exclusive_mount(input))();
 
     match &result {
         Ok(result) => {
@@ -1496,11 +1481,8 @@ pub(crate) fn toggle_asset_mount(
     asset_id: String,
     profile_id: String,
 ) -> AppResult<AssetMount> {
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?
-            .toggle_asset_mount(&asset_id, &profile_id)
-    })();
+    let result =
+        (|| AppService::from_runtime(&state.runtime).toggle_asset_mount(&asset_id, &profile_id))();
 
     if let Err(error) = &result {
         log_error(
@@ -1519,11 +1501,8 @@ pub(crate) fn unmount_asset_mount(
     asset_id: String,
     profile_id: String,
 ) -> AppResult<AssetMountUpdateResult> {
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?
-            .unmount_asset_by_id(&asset_id, &profile_id)
-    })();
+    let result =
+        (|| AppService::from_runtime(&state.runtime).unmount_asset_by_id(&asset_id, &profile_id))();
 
     if let Err(error) = &result {
         log_error(
@@ -1542,11 +1521,8 @@ pub(crate) fn mount_asset_mount(
     asset_id: String,
     profile_id: String,
 ) -> AppResult<AssetMountUpdateResult> {
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?
-            .mount_asset_by_id(&asset_id, &profile_id)
-    })();
+    let result =
+        (|| AppService::from_runtime(&state.runtime).mount_asset_by_id(&asset_id, &profile_id))();
 
     if let Err(error) = &result {
         log_error(
@@ -1568,8 +1544,7 @@ pub(crate) fn set_asset_mount(
     strategy: Option<DeploymentStrategy>,
 ) -> AppResult<AssetMount> {
     let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.set_asset_mount(
+        AppService::from_runtime(&state.runtime).set_asset_mount(
             &asset_id,
             &profile_id,
             enabled,
@@ -1601,8 +1576,7 @@ pub(crate) fn scan_sources(
         .map(|kind| vec![("asset_kind", format!("{kind:?}"))])
         .unwrap_or_default();
     let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.scan_sources(SourceScanParams {
+        AppService::from_runtime(&state.runtime).scan_sources(SourceScanParams {
             kind,
             dry_run: false,
         })
@@ -1621,10 +1595,7 @@ pub(crate) fn scan_sources(
 
 #[tauri::command]
 pub(crate) fn scan_skill_sources(state: State<'_, AppState>) -> AppResult<Vec<CatalogAsset>> {
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.scan_skill_sources()
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).scan_skill_sources())();
 
     match &result {
         Ok(assets) => log_info(
@@ -1641,8 +1612,7 @@ pub(crate) fn scan_skill_sources(state: State<'_, AppState>) -> AppResult<Vec<Ca
 pub(crate) fn list_conversation_adapters(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ConversationAdapter>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_conversation_adapters()
+    AppService::from_runtime(&state.runtime).list_conversation_adapters()
 }
 
 #[tauri::command]
@@ -1650,8 +1620,7 @@ pub(crate) fn scaffold_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterScaffoldParams,
 ) -> AppResult<crate::backend::conversations::ExternalAdapterScaffoldResult> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.scaffold_conversation_adapter(params)
+    AppService::from_runtime(&state.runtime).scaffold_conversation_adapter(params)
 }
 
 #[tauri::command]
@@ -1659,27 +1628,23 @@ pub(crate) fn validate_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterValidateParams,
 ) -> AppResult<crate::backend::conversations::ExternalAdapterValidationResult> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.validate_conversation_adapter(params)
+    AppService::from_runtime(&state.runtime).validate_conversation_adapter(params)
 }
 
 #[tauri::command]
 pub(crate) fn list_conversation_adapter_runtime_statuses(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<crate::backend::conversations::ConversationAdapterRuntimeStatus>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?
-        .list_conversation_adapter_runtime_statuses()
+    AppService::from_runtime(&state.runtime).list_conversation_adapter_runtime_statuses()
 }
 
 #[tauri::command]
 pub(crate) async fn list_agent_catalog(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<AgentCatalogEntry>> {
-    let db_path = state.db_path.clone();
-    let agent_runtime = state.agent_runtime.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?.list_agent_catalog()
+        AppService::from_runtime(&runtime).list_agent_catalog()
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1690,11 +1655,9 @@ pub(crate) async fn check_agent_connection(
     state: State<'_, AppState>,
     params: AgentConnectionCheckRequest,
 ) -> AppResult<AgentConnectionResult> {
-    let db_path = state.db_path.clone();
-    let agent_runtime = state.agent_runtime.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?
-            .check_agent_connection(params)
+        AppService::from_runtime(&runtime).check_agent_connection(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1705,10 +1668,9 @@ pub(crate) async fn list_agent_models(
     state: State<'_, AppState>,
     params: AgentModelsRequest,
 ) -> AppResult<AgentModelsResult> {
-    let db_path = state.db_path.clone();
-    let agent_runtime = state.agent_runtime.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?.list_agent_models(params)
+        AppService::from_runtime(&runtime).list_agent_models(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1718,11 +1680,9 @@ pub(crate) async fn list_agent_models(
 pub(crate) async fn check_opencode_translation_availability(
     state: State<'_, AppState>,
 ) -> AppResult<OpencodeTranslationAvailability> {
-    let db_path = state.db_path.clone();
-    let agent_runtime = state.agent_runtime.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?
-            .check_opencode_translation_availability()
+        AppService::from_runtime(&runtime).check_opencode_translation_availability()
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1733,11 +1693,9 @@ pub(crate) async fn translate_conversation_card_with_opencode(
     state: State<'_, AppState>,
     params: OpencodeTranslationRequest,
 ) -> AppResult<OpencodeTranslationResult> {
-    let db_path = state.db_path.clone();
-    let agent_runtime = state.agent_runtime.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?
-            .translate_conversation_card_with_opencode(params)
+        AppService::from_runtime(&runtime).translate_conversation_card_with_opencode(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1748,11 +1706,9 @@ pub(crate) async fn translate_conversation_card(
     state: State<'_, AppState>,
     params: ConversationTranslationRequest,
 ) -> AppResult<OpencodeTranslationResult> {
-    let db_path = state.db_path.clone();
-    let agent_runtime = state.agent_runtime.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?
-            .translate_conversation_card(params)
+        AppService::from_runtime(&runtime).translate_conversation_card(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1763,11 +1719,9 @@ pub(crate) async fn test_conversation_translation_connection(
     state: State<'_, AppState>,
     params: ConversationTranslationConnectionRequest,
 ) -> AppResult<OpencodeTranslationAvailability> {
-    let db_path = state.db_path.clone();
-    let agent_runtime = state.agent_runtime.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?
-            .test_conversation_translation_connection(params)
+        AppService::from_runtime(&runtime).test_conversation_translation_connection(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1778,11 +1732,9 @@ pub(crate) async fn list_conversation_translation_models(
     state: State<'_, AppState>,
     params: ConversationTranslationModelsRequest,
 ) -> AppResult<ConversationTranslationModelsResult> {
-    let db_path = state.db_path.clone();
-    let agent_runtime = state.agent_runtime.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path_and_runtime(db_path, agent_runtime)?
-            .list_conversation_translation_models(params)
+        AppService::from_runtime(&runtime).list_conversation_translation_models(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1933,8 +1885,7 @@ pub(crate) fn register_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterRegisterParams,
 ) -> AppResult<serde_json::Value> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.register_conversation_adapter(params)
+    AppService::from_runtime(&state.runtime).register_conversation_adapter(params)
 }
 
 #[tauri::command]
@@ -1942,8 +1893,7 @@ pub(crate) fn unregister_conversation_adapter(
     state: State<'_, AppState>,
     params: ConversationAdapterUnregisterParams,
 ) -> AppResult<serde_json::Value> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.unregister_conversation_adapter(params)
+    AppService::from_runtime(&state.runtime).unregister_conversation_adapter(params)
 }
 
 #[tauri::command]
@@ -1951,16 +1901,14 @@ pub(crate) fn try_run_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterTryRunParams,
 ) -> AppResult<crate::backend::conversations::ExternalAdapterRunResult> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.try_run_conversation_adapter(params)
+    AppService::from_runtime(&state.runtime).try_run_conversation_adapter(params)
 }
 
 #[tauri::command]
 pub(crate) fn list_conversation_sources(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ConversationSource>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_conversation_sources()
+    AppService::from_runtime(&state.runtime).list_conversation_sources()
 }
 
 #[tauri::command]
@@ -1968,8 +1916,7 @@ pub(crate) fn upsert_conversation_source(
     state: State<'_, AppState>,
     params: ConversationSourceUpsertParams,
 ) -> AppResult<serde_json::Value> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.upsert_conversation_source(params)
+    AppService::from_runtime(&state.runtime).upsert_conversation_source(params)
 }
 
 #[tauri::command]
@@ -1977,8 +1924,7 @@ pub(crate) fn disable_conversation_source(
     state: State<'_, AppState>,
     params: ConversationSourceDisableParams,
 ) -> AppResult<serde_json::Value> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.disable_conversation_source(params)
+    AppService::from_runtime(&state.runtime).disable_conversation_source(params)
 }
 
 #[tauri::command]
@@ -1986,7 +1932,7 @@ pub(crate) fn list_conversation_script_catalog(
     state: State<'_, AppState>,
     params: ConversationScriptCatalogParams,
 ) -> AppResult<Vec<crate::backend::application::ConversationScriptCatalogEntry>> {
-    AppService::open_with_db_path(state.db_path.clone())?.list_conversation_script_catalog(params)
+    AppService::from_runtime(&state.runtime).list_conversation_script_catalog(params)
 }
 
 #[tauri::command]
@@ -1994,8 +1940,7 @@ pub(crate) fn register_conversation_adapter_local(
     state: State<'_, AppState>,
     params: ConversationAdapterLocalRegisterParams,
 ) -> AppResult<serde_json::Value> {
-    AppService::open_with_db_path(state.db_path.clone())?
-        .register_conversation_adapter_local(params)
+    AppService::from_runtime(&state.runtime).register_conversation_adapter_local(params)
 }
 
 #[tauri::command]
@@ -2003,9 +1948,9 @@ pub(crate) async fn inspect_conversation_adapter_package(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageInspectParams,
 ) -> AppResult<crate::backend::application::ConversationAdapterPackageInspection> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?.inspect_conversation_adapter_package(params)
+        AppService::from_runtime(&runtime).inspect_conversation_adapter_package(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2016,9 +1961,9 @@ pub(crate) async fn prepare_conversation_adapter_package_change(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageChangeParams,
 ) -> AppResult<crate::backend::application::ConversationAdapterPackageChangePreflight> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     let mut preflight = tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?.prepare_conversation_adapter_package_change(params)
+        AppService::from_runtime(&runtime).prepare_conversation_adapter_package_change(params)
     })
     .await
     .map_err(|error| error.to_string())??;
@@ -2037,9 +1982,9 @@ pub(crate) async fn list_conversation_adapter_packages(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageCatalogParams,
 ) -> AppResult<Vec<crate::backend::application::ConversationAdapterPackageCatalogEntry>> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?.list_conversation_adapter_packages(params)
+        AppService::from_runtime(&runtime).list_conversation_adapter_packages(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2050,9 +1995,9 @@ pub(crate) async fn list_conversation_adapter_package_releases(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageReleaseListParams,
 ) -> AppResult<Vec<crate::backend::models::ConversationAdapterCatalogRelease>> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?.list_conversation_adapter_package_releases(params)
+        AppService::from_runtime(&runtime).list_conversation_adapter_package_releases(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2063,9 +2008,9 @@ pub(crate) async fn list_installed_conversation_adapter_package_versions(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageVersionChangeParams,
 ) -> AppResult<Vec<crate::backend::models::ConversationAdapterPackageVersion>> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?
+        AppService::from_runtime(&runtime)
             .list_installed_conversation_adapter_package_versions(params)
     })
     .await
@@ -2077,9 +2022,9 @@ pub(crate) async fn switch_conversation_adapter_package_version(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageVersionChangeParams,
 ) -> AppResult<serde_json::Value> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?.switch_conversation_adapter_package_version(params)
+        AppService::from_runtime(&runtime).switch_conversation_adapter_package_version(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2090,10 +2035,9 @@ pub(crate) async fn rollback_conversation_adapter_package_version(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageVersionChangeParams,
 ) -> AppResult<serde_json::Value> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?
-            .rollback_conversation_adapter_package_version(params)
+        AppService::from_runtime(&runtime).rollback_conversation_adapter_package_version(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2104,9 +2048,9 @@ pub(crate) async fn delete_conversation_adapter_package_version(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageVersionChangeParams,
 ) -> AppResult<serde_json::Value> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?.delete_conversation_adapter_package_version(params)
+        AppService::from_runtime(&runtime).delete_conversation_adapter_package_version(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2117,9 +2061,9 @@ pub(crate) async fn refresh_conversation_adapter_catalogs(
     state: State<'_, AppState>,
     params: ConversationAdapterCatalogRefreshParams,
 ) -> AppResult<Vec<crate::backend::models::ConversationAdapterCatalogRelease>> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?.refresh_conversation_adapter_catalogs(params)
+        AppService::from_runtime(&runtime).refresh_conversation_adapter_catalogs(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2130,9 +2074,9 @@ pub(crate) async fn check_conversation_adapter_package_updates(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageUpdateCheckParams,
 ) -> AppResult<Vec<crate::backend::application::ConversationAdapterPackageUpdateStatus>> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?.check_conversation_adapter_package_updates(params)
+        AppService::from_runtime(&runtime).check_conversation_adapter_package_updates(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2143,10 +2087,9 @@ pub(crate) async fn set_conversation_adapter_package_update_policy(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageUpdatePolicyParams,
 ) -> AppResult<crate::backend::models::ConversationAdapterPackage> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?
-            .set_conversation_adapter_package_update_policy(params)
+        AppService::from_runtime(&runtime).set_conversation_adapter_package_update_policy(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2165,40 +2108,15 @@ pub(crate) fn install_conversation_adapter_package(
         return Ok(snapshot);
     }
 
-    let db_path = state.db_path.clone();
-    let background_tasks = state.background_tasks.clone();
+    let runtime = state.runtime.clone();
     let task_id = snapshot.id.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            AppService::open_with_db_path(db_path)
-                .and_then(|service| service.install_conversation_adapter_package(params))
-        }))
-        .unwrap_or_else(|_| Err("conversation adapter package install task panicked".to_string()));
-        match &result {
-            Ok(value) => log_info(
-                "conversation.adapter_package.install",
-                "后台安装对话适配器包成功",
-                &[("task_id", task_id.clone()), ("result", value.to_string())],
-            ),
-            Err(error) => log_error(
-                "conversation.adapter_package.install",
-                "后台安装对话适配器包失败",
-                error,
-                &[("task_id", task_id.clone())],
-            ),
-        }
-        match background_tasks.finish_conversation_script_install(&task_id, result) {
-            Ok(snapshot) => emit_conversation_script_install_task(&app, &snapshot),
-            Err(error) => {
-                log_error(
-                    "conversation.adapter_package.install",
-                    "更新对话适配器包后台安装任务状态失败",
-                    &error,
-                    &[("task_id", task_id)],
-                );
-            }
-        }
-    });
+    spawn_conversation_lifecycle_task(
+        app,
+        state.background_tasks.clone(),
+        task_id,
+        "conversation.adapter_package.install",
+        move || AppService::from_runtime(&runtime).install_conversation_adapter_package(params),
+    )?;
 
     Ok(snapshot)
 }
@@ -2216,40 +2134,15 @@ pub(crate) fn update_conversation_adapter_package(
         return Ok(snapshot);
     }
 
-    let db_path = state.db_path.clone();
-    let background_tasks = state.background_tasks.clone();
+    let runtime = state.runtime.clone();
     let task_id = snapshot.id.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            AppService::open_with_db_path(db_path)
-                .and_then(|service| service.update_conversation_adapter_package(params))
-        }))
-        .unwrap_or_else(|_| Err("conversation adapter package update task panicked".to_string()));
-        match &result {
-            Ok(value) => log_info(
-                "conversation.adapter_package.update",
-                "后台更新对话适配器包成功",
-                &[("task_id", task_id.clone()), ("result", value.to_string())],
-            ),
-            Err(error) => log_error(
-                "conversation.adapter_package.update",
-                "后台更新对话适配器包失败",
-                error,
-                &[("task_id", task_id.clone())],
-            ),
-        }
-        match background_tasks.finish_conversation_script_install(&task_id, result) {
-            Ok(snapshot) => emit_conversation_script_install_task(&app, &snapshot),
-            Err(error) => {
-                log_error(
-                    "conversation.adapter_package.update",
-                    "更新对话适配器包后台任务状态失败",
-                    &error,
-                    &[("task_id", task_id)],
-                );
-            }
-        }
-    });
+    spawn_conversation_lifecycle_task(
+        app,
+        state.background_tasks.clone(),
+        task_id,
+        "conversation.adapter_package.update",
+        move || AppService::from_runtime(&runtime).update_conversation_adapter_package(params),
+    )?;
 
     Ok(snapshot)
 }
@@ -2266,27 +2159,15 @@ pub(crate) fn uninstall_conversation_adapter_package(
     if !should_start {
         return Ok(snapshot);
     }
-    let db_path = state.db_path.clone();
-    let background_tasks = state.background_tasks.clone();
+    let runtime = state.runtime.clone();
     let task_id = snapshot.id.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            AppService::open_with_db_path(db_path)
-                .and_then(|service| service.uninstall_conversation_adapter_package(params))
-        }))
-        .unwrap_or_else(|_| {
-            Err("conversation adapter package uninstall task panicked".to_string())
-        });
-        match background_tasks.finish_conversation_script_install(&task_id, result) {
-            Ok(snapshot) => emit_conversation_script_install_task(&app, &snapshot),
-            Err(error) => log_error(
-                "conversation.adapter_package.uninstall",
-                "更新对话适配器包后台卸载任务状态失败",
-                &error,
-                &[("task_id", task_id)],
-            ),
-        }
-    });
+    spawn_conversation_lifecycle_task(
+        app,
+        state.background_tasks.clone(),
+        task_id,
+        "conversation.adapter_package.uninstall",
+        move || AppService::from_runtime(&runtime).uninstall_conversation_adapter_package(params),
+    )?;
     Ok(snapshot)
 }
 
@@ -2312,40 +2193,15 @@ pub(crate) fn install_conversation_script(
         return Ok(snapshot);
     }
 
-    let db_path = state.db_path.clone();
-    let background_tasks = state.background_tasks.clone();
+    let runtime = state.runtime.clone();
     let task_id = snapshot.id.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            AppService::open_with_db_path(db_path)
-                .and_then(|service| service.install_conversation_script(params))
-        }))
-        .unwrap_or_else(|_| Err("conversation script install task panicked".to_string()));
-        match &result {
-            Ok(value) => log_info(
-                "conversation.script.install",
-                "后台安装对话脚本成功",
-                &[("task_id", task_id.clone()), ("result", value.to_string())],
-            ),
-            Err(error) => log_error(
-                "conversation.script.install",
-                "后台安装对话脚本失败",
-                error,
-                &[("task_id", task_id.clone())],
-            ),
-        }
-        match background_tasks.finish_conversation_script_install(&task_id, result) {
-            Ok(snapshot) => emit_conversation_script_install_task(&app, &snapshot),
-            Err(error) => {
-                log_error(
-                    "conversation.script.install",
-                    "更新后台安装任务状态失败",
-                    &error,
-                    &[("task_id", task_id)],
-                );
-            }
-        }
-    });
+    spawn_conversation_lifecycle_task(
+        app,
+        state.background_tasks.clone(),
+        task_id,
+        "conversation.script.install",
+        move || AppService::from_runtime(&runtime).install_conversation_script(params),
+    )?;
 
     Ok(snapshot)
 }
@@ -2367,7 +2223,7 @@ pub(crate) fn sync_conversations(
 ) -> AppResult<ConversationSyncTaskSnapshot> {
     start_conversation_sync_background(
         app,
-        state.db_path.clone(),
+        state.runtime.clone(),
         state.background_tasks.clone(),
         params,
     )
@@ -2375,7 +2231,7 @@ pub(crate) fn sync_conversations(
 
 pub(crate) fn start_conversation_sync_background(
     app: AppHandle,
-    db_path: std::path::PathBuf,
+    runtime: std::sync::Arc<crate::backend::runtime::AppRuntime>,
     background_tasks: std::sync::Arc<
         crate::adapters::tauri::background_tasks::BackgroundTaskRegistry,
     >,
@@ -2392,38 +2248,36 @@ pub(crate) fn start_conversation_sync_background(
         let progress_tasks = background_tasks.clone();
         let progress_task_id = task_id.clone();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            AppService::open_with_db_path(db_path).and_then(|service| {
-                service.sync_conversations_with_progress(
-                    params,
-                    |completed_source_count, total_source_count, current_source_name| {
-                        match progress_tasks.update_conversation_sync_progress(
-                            &progress_task_id,
-                            completed_source_count,
-                            total_source_count,
-                            current_source_name,
-                        ) {
-                            Ok(snapshot) => {
-                                if let Err(error) =
-                                    progress_app.emit("conversation-sync-task-updated", &snapshot)
-                                {
-                                    log_error(
-                                        "conversation.sync",
-                                        "推送后台同步进度失败",
-                                        &error.to_string(),
-                                        &[("task_id", progress_task_id.clone())],
-                                    );
-                                }
+            AppService::from_runtime(&runtime).sync_conversations_with_progress(
+                params,
+                |completed_source_count, total_source_count, current_source_name| {
+                    match progress_tasks.update_conversation_sync_progress(
+                        &progress_task_id,
+                        completed_source_count,
+                        total_source_count,
+                        current_source_name,
+                    ) {
+                        Ok(snapshot) => {
+                            if let Err(error) =
+                                progress_app.emit("conversation-sync-task-updated", &snapshot)
+                            {
+                                log_error(
+                                    "conversation.sync",
+                                    "推送后台同步进度失败",
+                                    &error.to_string(),
+                                    &[("task_id", progress_task_id.clone())],
+                                );
                             }
-                            Err(error) => log_error(
-                                "conversation.sync",
-                                "更新后台同步进度失败",
-                                &error,
-                                &[("task_id", progress_task_id.clone())],
-                            ),
                         }
-                    },
-                )
-            })
+                        Err(error) => log_error(
+                            "conversation.sync",
+                            "更新后台同步进度失败",
+                            &error,
+                            &[("task_id", progress_task_id.clone())],
+                        ),
+                    }
+                },
+            )
         }))
         .unwrap_or_else(|_| Err("conversation sync task panicked".to_string()));
         match &result {
@@ -2483,9 +2337,9 @@ pub(crate) async fn list_conversation_sessions(
     state: State<'_, AppState>,
     params: ConversationSessionListParams,
 ) -> AppResult<Vec<crate::backend::dto::ConversationSessionListItem>> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?.list_conversation_sessions(params)
+        AppService::from_runtime(&runtime).list_conversation_sessions(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2496,9 +2350,9 @@ pub(crate) async fn get_conversation_session(
     state: State<'_, AppState>,
     params: ConversationSessionGetParams,
 ) -> AppResult<crate::backend::dto::ConversationSessionDetail> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?.get_conversation_session(params)
+        AppService::from_runtime(&runtime).get_conversation_session(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2509,8 +2363,7 @@ pub(crate) fn export_conversation_session(
     state: State<'_, AppState>,
     params: ConversationSessionExportParams,
 ) -> AppResult<serde_json::Value> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.export_conversation_session(params)
+    AppService::from_runtime(&state.runtime).export_conversation_session(params)
 }
 
 #[tauri::command]
@@ -2518,9 +2371,9 @@ pub(crate) async fn list_web_record_sessions(
     state: State<'_, AppState>,
     params: ConversationSessionListParams,
 ) -> AppResult<Vec<crate::backend::dto::ConversationSessionListItem>> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?.list_web_record_sessions(params)
+        AppService::from_runtime(&runtime).list_web_record_sessions(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2531,9 +2384,9 @@ pub(crate) async fn get_web_record_session(
     state: State<'_, AppState>,
     params: ConversationSessionGetParams,
 ) -> AppResult<crate::backend::dto::ConversationSessionDetail> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?.get_web_record_session(params)
+        AppService::from_runtime(&runtime).get_web_record_session(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2544,9 +2397,9 @@ pub(crate) async fn search_conversation_records(
     state: State<'_, AppState>,
     params: ConversationSearchParams,
 ) -> AppResult<ConversationSearchResult> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?.search_conversation_records(params)
+        AppService::from_runtime(&runtime).search_conversation_records(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2558,10 +2411,9 @@ pub(crate) async fn search_recent_incremental_conversation_records(
     state: State<'_, AppState>,
     params: crate::backend::application::ConversationIncrementalSearchParams,
 ) -> AppResult<ConversationSearchResult> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?
-            .search_recent_incremental_conversation_records(params)
+        AppService::from_runtime(&runtime).search_recent_incremental_conversation_records(params)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2571,9 +2423,9 @@ pub(crate) async fn search_recent_incremental_conversation_records(
 pub(crate) async fn get_conversation_search_index_status(
     state: State<'_, AppState>,
 ) -> AppResult<ConversationSearchIndexStatus> {
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        AppService::open_with_db_path(db_path)?.get_conversation_search_index_status()
+        AppService::from_runtime(&runtime).get_conversation_search_index_status()
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2591,35 +2443,99 @@ pub(crate) fn start_conversation_search_index_rebuild(
         return Ok(snapshot);
     }
 
-    let db_path = state.db_path.clone();
+    let runtime = state.runtime.clone();
     let background_tasks = state.background_tasks.clone();
     let task_id = snapshot.id.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            AppService::open_with_db_path(db_path)
-                .and_then(|service| service.rebuild_conversation_search_index())
-                .and_then(|report| serde_json::to_value(report).map_err(|error| error.to_string()))
-        }))
-        .unwrap_or_else(|_| Err("conversation search index rebuild panicked".to_string()));
-        match background_tasks.finish_conversation_search_index_rebuild(&task_id, result) {
-            Ok(snapshot) => {
-                if let Err(error) = app.emit("conversation-search-index-task-updated", &snapshot) {
-                    log_error(
-                        "conversation.search.index.rebuild",
-                        "推送对话搜索索引任务状态失败",
-                        &error.to_string(),
-                        &[("task_id", task_id)],
-                    );
-                }
-            }
-            Err(error) => log_error(
-                "conversation.search.index.rebuild",
-                "更新对话搜索索引任务状态失败",
-                &error,
-                &[("task_id", task_id)],
+    if let Some(task_runtime) = background_tasks.task_runtime() {
+        let app = app.clone();
+        let task_id_for_runtime = task_id.clone();
+        let background_tasks_for_runtime = background_tasks.clone();
+        let outcome = task_runtime.spawn(
+            TaskSpec::new(
+                TaskKind::SearchIndexRebuild,
+                Some("conversation-search-index".to_string()),
             ),
+            Box::new(move |_context| {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    AppService::from_runtime(&runtime)
+                        .rebuild_conversation_search_index()
+                        .and_then(|report| {
+                            serde_json::to_value(report).map_err(|error| error.to_string())
+                        })
+                }))
+                .unwrap_or_else(|_| Err("conversation search index rebuild panicked".to_string()));
+                let projection_result = result.clone();
+                match background_tasks_for_runtime.finish_conversation_search_index_rebuild(
+                    &task_id_for_runtime,
+                    projection_result,
+                ) {
+                    Ok(snapshot) => {
+                        if let Err(error) =
+                            app.emit("conversation-search-index-task-updated", &snapshot)
+                        {
+                            log_error(
+                                "conversation.search.index.rebuild",
+                                "推送对话搜索索引任务状态失败",
+                                &error.to_string(),
+                                &[("task_id", task_id_for_runtime.clone())],
+                            );
+                        }
+                    }
+                    Err(error) => log_error(
+                        "conversation.search.index.rebuild",
+                        "更新对话搜索索引任务状态失败",
+                        &error,
+                        &[("task_id", task_id_for_runtime.clone())],
+                    ),
+                }
+                result.map_err(AppError::Legacy)
+            }),
+        );
+        match outcome {
+            Ok(SpawnOutcome::Started(_)) => {}
+            Ok(SpawnOutcome::Existing(_)) => {
+                return Err(
+                    "conversation search index task is already running in TaskRuntime".to_string(),
+                );
+            }
+            Err(error) => {
+                let _ = background_tasks
+                    .finish_conversation_search_index_rebuild(&task_id, Err(error.to_string()));
+                return Err(error.into());
+            }
         }
-    });
+    } else {
+        tauri::async_runtime::spawn_blocking(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                AppService::from_runtime(&runtime)
+                    .rebuild_conversation_search_index()
+                    .and_then(|report| {
+                        serde_json::to_value(report).map_err(|error| error.to_string())
+                    })
+            }))
+            .unwrap_or_else(|_| Err("conversation search index rebuild panicked".to_string()));
+            match background_tasks.finish_conversation_search_index_rebuild(&task_id, result) {
+                Ok(snapshot) => {
+                    if let Err(error) =
+                        app.emit("conversation-search-index-task-updated", &snapshot)
+                    {
+                        log_error(
+                            "conversation.search.index.rebuild",
+                            "推送对话搜索索引任务状态失败",
+                            &error.to_string(),
+                            &[("task_id", task_id)],
+                        );
+                    }
+                }
+                Err(error) => log_error(
+                    "conversation.search.index.rebuild",
+                    "更新对话搜索索引任务状态失败",
+                    &error,
+                    &[("task_id", task_id)],
+                ),
+            }
+        });
+    }
     Ok(snapshot)
 }
 
@@ -2635,8 +2551,7 @@ pub(crate) fn export_web_record_session(
     state: State<'_, AppState>,
     params: ConversationSessionExportParams,
 ) -> AppResult<serde_json::Value> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.export_web_record_session(params)
+    AppService::from_runtime(&state.runtime).export_web_record_session(params)
 }
 
 #[tauri::command]
@@ -2644,8 +2559,7 @@ pub(crate) fn list_conversation_questions(
     state: State<'_, AppState>,
     params: ConversationQuestionListParams,
 ) -> AppResult<Vec<crate::backend::dto::ConversationQuestionDetail>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_conversation_questions(params)
+    AppService::from_runtime(&state.runtime).list_conversation_questions(params)
 }
 
 #[tauri::command]
@@ -2653,8 +2567,7 @@ pub(crate) fn get_conversation_question(
     state: State<'_, AppState>,
     params: ConversationQuestionGetParams,
 ) -> AppResult<crate::backend::dto::ConversationQuestionDetail> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.get_conversation_question(params)
+    AppService::from_runtime(&state.runtime).get_conversation_question(params)
 }
 
 #[tauri::command]
@@ -2662,8 +2575,7 @@ pub(crate) fn list_conversation_blocks(
     state: State<'_, AppState>,
     params: ConversationBlockListParams,
 ) -> AppResult<Vec<crate::backend::dto::ConversationBlockLocator>> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.list_conversation_blocks(params)
+    AppService::from_runtime(&state.runtime).list_conversation_blocks(params)
 }
 
 #[tauri::command]
@@ -2671,8 +2583,7 @@ pub(crate) fn get_conversation_block(
     state: State<'_, AppState>,
     params: ConversationBlockGetParams,
 ) -> AppResult<crate::backend::dto::ConversationBlockDetail> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.get_conversation_block(params)
+    AppService::from_runtime(&state.runtime).get_conversation_block(params)
 }
 
 #[tauri::command]
@@ -2680,8 +2591,7 @@ pub(crate) fn merge_conversation_questions(
     state: State<'_, AppState>,
     params: ConversationQuestionMergeParams,
 ) -> AppResult<crate::backend::dto::ConversationMutationResult> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.merge_conversation_questions(params)
+    AppService::from_runtime(&state.runtime).merge_conversation_questions(params)
 }
 
 #[tauri::command]
@@ -2689,8 +2599,7 @@ pub(crate) fn split_conversation_question(
     state: State<'_, AppState>,
     params: ConversationQuestionSplitParams,
 ) -> AppResult<crate::backend::dto::ConversationMutationResult> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?.split_conversation_question(params)
+    AppService::from_runtime(&state.runtime).split_conversation_question(params)
 }
 
 #[tauri::command]
@@ -2698,9 +2607,7 @@ pub(crate) fn update_conversation_part_translation(
     state: State<'_, AppState>,
     params: ConversationPartTranslationUpdateParams,
 ) -> AppResult<()> {
-    let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-    AppService::open_with_db_path(state.db_path.clone())?
-        .update_conversation_part_translation(params)
+    AppService::from_runtime(&state.runtime).update_conversation_part_translation(params)
 }
 
 #[tauri::command]
@@ -2712,10 +2619,7 @@ pub(crate) fn create_plan(
         .as_ref()
         .map(|profile_id| vec![("profile_id", profile_id.clone())])
         .unwrap_or_default();
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.create_plan(profile_id.as_deref())
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).create_plan(profile_id.as_deref()))();
 
     match &result {
         Ok(plan) => {
@@ -2748,10 +2652,7 @@ pub(crate) fn execute_plan(
             action_ids.as_ref().map(Vec::len).unwrap_or(0).to_string(),
         ),
     ];
-    let result = (|| {
-        let _guard = state.lock.lock().map_err(|error| error.to_string())?;
-        AppService::open_with_db_path(state.db_path.clone())?.execute_plan(plan, action_ids)
-    })();
+    let result = (|| AppService::from_runtime(&state.runtime).execute_plan(plan, action_ids))();
 
     match &result {
         Ok(result) => {
@@ -3530,6 +3431,7 @@ mod tests {
             id: None,
             name: "  Team App  ".to_string(),
             app_kind: None,
+            target_provider_id: None,
             target_paths: Some(vec!["  ~/team-app/skills  ".to_string()]),
             supported_kinds: None,
             deployment_strategy: None,
@@ -3542,7 +3444,7 @@ mod tests {
 
         assert_eq!(profile.id, "team-app");
         assert_eq!(profile.name, "Team App");
-        assert_eq!(profile.app_kind, AppKind::Custom);
+        assert_eq!(profile.app_kind, Some(AppKind::Custom));
         assert_eq!(profile.target_paths, vec!["~/team-app/skills"]);
         assert_eq!(profile.supported_kinds, vec![AssetKind::Skill]);
         assert_eq!(profile.include.kinds, vec![AssetKind::Skill]);
@@ -3559,6 +3461,7 @@ mod tests {
             id: Some("team-app".to_string()),
             name: "Team App".to_string(),
             app_kind: Some(AppKind::Custom),
+            target_provider_id: None,
             target_paths: Some(vec!["~/team-app/skills".to_string()]),
             supported_kinds: None,
             deployment_strategy: None,
@@ -4594,6 +4497,7 @@ mod tests {
             repo_root: None,
             scan_root: String::new(),
             origin_app_kind: None,
+            origin_provider_id: None,
             include_globs: vec!["**/SKILL.md".to_string()],
             exclude_globs: vec![],
             default_kind: Some(AssetKind::Skill),
@@ -4608,7 +4512,8 @@ mod tests {
         TargetProfile {
             id: id.to_string(),
             name: id.to_string(),
-            app_kind: AppKind::Custom,
+            app_kind: Some(AppKind::Custom),
+            target_provider_id: "custom".to_string(),
             target_paths: vec![target_root.to_string_lossy().to_string()],
             supported_kinds: vec![AssetKind::Skill],
             deployment_strategy: DeploymentStrategy::SymlinkToSource,
@@ -4649,6 +4554,8 @@ mod tests {
             source_id: source.id.clone(),
             name: id.to_string(),
             kind,
+            detector_id: "legacy.classifier".to_string(),
+            detector_version: 1,
             format: AssetFormat::Directory,
             relative_path: id.to_string(),
             absolute_path: absolute_path.to_string_lossy().to_string(),

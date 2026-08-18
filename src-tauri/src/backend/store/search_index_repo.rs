@@ -143,22 +143,48 @@ pub(crate) async fn bump_conversation_search_source_revision_sqlx(
 pub(crate) async fn bump_conversation_search_source_revision_sqlx_tx(
     connection: &mut SqliteConnection,
     tenant_id: &str,
-) -> AppResult<()> {
+) -> AppResult<i64> {
+    let tenant_exists =
+        sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM tenants WHERE id = ?1)")
+            .bind(tenant_id)
+            .fetch_one(&mut *connection)
+            .await
+            .map_err(|error| error.to_string())?;
+    if tenant_exists == 0 {
+        return Ok(0);
+    }
     sqlx::query(
+        r#"
+        INSERT INTO conversation_search_index_state (
+            tenant_id, index_instance_id, schema_version, tokenizer_version, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5)
+        ON CONFLICT(tenant_id) DO NOTHING
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(Uuid::new_v4().to_string())
+    .bind(CONVERSATION_SEARCH_SCHEMA_VERSION)
+    .bind(CONVERSATION_SEARCH_TOKENIZER_VERSION)
+    .bind(Utc::now().to_rfc3339())
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| error.to_string())?;
+    let revision = sqlx::query_scalar::<_, i64>(
         r#"
         UPDATE conversation_search_index_state
         SET source_revision = source_revision + 1,
             health = CASE WHEN health = 'ready' THEN 'stale' ELSE health END,
             updated_at = ?1
         WHERE tenant_id = ?2
+        RETURNING source_revision
         "#,
     )
     .bind(Utc::now().to_rfc3339())
     .bind(tenant_id)
-    .execute(connection)
+    .fetch_one(connection)
     .await
     .map_err(|error| error.to_string())?;
-    Ok(())
+    Ok(revision)
 }
 
 pub(crate) async fn try_acquire_conversation_search_writer_lease_sqlx(
@@ -287,8 +313,8 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
                 Vec<crate::backend::models::ConversationCardKindDefinition>,
             >(&card_kinds_json)
             .unwrap_or_default();
-            let Some(card) = crate::backend::conversations::cards::project_persisted_content_card(
-                crate::backend::conversations::cards::PersistedConversationCardProjectionSource {
+            let Some(card) = crate::backend::projection::conversation_cards::project_persisted_content_card(
+                crate::backend::projection::conversation_cards::PersistedConversationCardProjectionSource {
                     content_card_json: content_card_json.as_deref(),
                     metadata_json: metadata.as_deref(),
                     text: text.as_deref(),
@@ -337,7 +363,29 @@ pub(crate) async fn complete_conversation_search_index_rebuild_sqlx(
     document_count: i64,
     size_bytes: i64,
 ) -> AppResult<bool> {
+    complete_conversation_search_index_rebuild_with_offset_sqlx(
+        pool,
+        tenant_id,
+        expected_revision,
+        generation,
+        document_count,
+        size_bytes,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn complete_conversation_search_index_rebuild_with_offset_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    expected_revision: i64,
+    generation: &str,
+    document_count: i64,
+    size_bytes: i64,
+    consumer_offset: Option<(&str, i64)>,
+) -> AppResult<bool> {
     let now = Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     let result = sqlx::query(
         r#"
         UPDATE conversation_search_index_state
@@ -356,9 +404,24 @@ pub(crate) async fn complete_conversation_search_index_rebuild_sqlx(
     .bind(CONVERSATION_SEARCH_SCHEMA_VERSION)
     .bind(CONVERSATION_SEARCH_TOKENIZER_VERSION)
     .bind(tenant_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|error| error.to_string())?;
+    if result.rows_affected() == 1 {
+        if let Some((consumer_id, last_seq)) = consumer_offset {
+            sqlx::query(
+                "INSERT INTO domain_event_consumer_offsets (consumer_id, tenant_id, last_seq, updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (consumer_id, tenant_id) DO UPDATE SET last_seq = MAX(last_seq, excluded.last_seq), updated_at = excluded.updated_at",
+            )
+            .bind(consumer_id)
+            .bind(tenant_id)
+            .bind(last_seq)
+            .bind(&now)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?;
+        }
+    }
+    tx.commit().await.map_err(|error| error.to_string())?;
     Ok(result.rows_affected() == 1)
 }
 

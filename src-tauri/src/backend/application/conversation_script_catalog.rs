@@ -1,4 +1,5 @@
 use super::prelude::*;
+use crate::backend::extension_kernel::DomainPackageSystem;
 use crate::backend::models::{
     ConversationAdapterPackageChangeAction, ConversationAdapterPackageChangeRisk,
     ConversationAdapterPackageOrigin, ConversationAdapterPackageRecordKind,
@@ -63,6 +64,11 @@ impl AppService {
                 &managed_root,
                 params.dry_run,
             )?);
+        }
+        if !params.dry_run {
+            if let Some(runtime) = self.runtime.as_ref() {
+                runtime.refresh_conversation_adapter_catalog()?;
+            }
         }
         Ok(json!({
             "dry_run": params.dry_run,
@@ -259,6 +265,9 @@ impl AppService {
             .await
         })?;
         self.save_conversation_adapter_package(&package)?;
+        if let Some(runtime) = self.runtime.as_ref() {
+            runtime.refresh_conversation_adapter_catalog()?;
+        }
 
         Ok(json!({
             "dry_run": false,
@@ -481,7 +490,11 @@ impl AppService {
             .and_then(clean_non_empty_string)
             .is_some()
         {
-            return self.install_conversation_adapter_package_release(params);
+            let result = self.install_conversation_adapter_package_release(params)?;
+            if let Some(runtime) = self.runtime.as_ref() {
+                runtime.refresh_conversation_adapter_catalog()?;
+            }
+            return Ok(result);
         }
 
         let catalog = load_conversation_script_catalog(params.catalog_url.as_deref())?;
@@ -493,12 +506,18 @@ impl AppService {
             .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))?;
         validate_conversation_script_catalog_item(&item)?;
 
-        install_conversation_adapter_package_from_item(
+        let result = install_conversation_adapter_package_from_item(
             self,
             &item,
             params.dry_run,
             params.catalog_url.as_deref(),
-        )
+        )?;
+        if !params.dry_run {
+            if let Some(runtime) = self.runtime.as_ref() {
+                runtime.refresh_conversation_adapter_catalog()?;
+            }
+        }
+        Ok(result)
     }
 
     pub(crate) fn update_conversation_adapter_package(
@@ -522,7 +541,11 @@ impl AppService {
             .and_then(clean_non_empty_string)
             .is_some()
         {
-            return self.install_conversation_adapter_package_release(params);
+            let result = self.install_conversation_adapter_package_release(params)?;
+            if let Some(runtime) = self.runtime.as_ref() {
+                runtime.refresh_conversation_adapter_catalog()?;
+            }
+            return Ok(result);
         }
 
         let catalog = load_conversation_script_catalog(params.catalog_url.as_deref())?;
@@ -533,12 +556,18 @@ impl AppService {
             .find(|item| item.package_id() == package_id)
             .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))?;
         validate_conversation_script_catalog_item(&item)?;
-        install_conversation_adapter_package_from_item(
+        let result = install_conversation_adapter_package_from_item(
             self,
             &item,
             params.dry_run,
             params.catalog_url.as_deref(),
-        )
+        )?;
+        if !params.dry_run {
+            if let Some(runtime) = self.runtime.as_ref() {
+                runtime.refresh_conversation_adapter_catalog()?;
+            }
+        }
+        Ok(result)
     }
 
     pub(crate) fn uninstall_conversation_adapter_package(
@@ -573,6 +602,16 @@ impl AppService {
             }));
         }
 
+        let package_identity = crate::backend::extension_kernel::PackageIdentity {
+            kind: crate::backend::extension_kernel::PackageKind::ConversationAdapter,
+            package_id: package.package_id.clone(),
+            version: semver::Version::parse(&package.version)
+                .map_err(|error| format!("invalid installed package version: {error}"))?,
+        };
+        crate::backend::conversations::ConversationAdapterPackageSystem
+            .on_removed(&package_identity)
+            .map_err(|error| error.to_string())?;
+
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let package_id = package.package_id.clone();
@@ -586,6 +625,9 @@ impl AppService {
             )
             .await
         })?;
+        if let Some(runtime) = self.runtime.as_ref() {
+            runtime.refresh_conversation_adapter_catalog()?;
+        }
         Ok(json!({
             "dry_run": false,
             "uninstalled": true,
@@ -793,6 +835,9 @@ impl AppService {
                 return Err(error);
             }
         }
+        if let Some(runtime) = self.runtime.as_ref() {
+            runtime.refresh_conversation_adapter_catalog()?;
+        }
         Ok(json!({
             "dry_run": false,
             "deleted": true,
@@ -888,6 +933,9 @@ impl AppService {
             )
             .await
         })?;
+        if let Some(runtime) = self.runtime.as_ref() {
+            runtime.refresh_conversation_adapter_catalog()?;
+        }
         Ok(
             json!({"dry_run": false, "activated": true, "package_id": package_id, "version": version}),
         )
@@ -1717,6 +1765,20 @@ fn install_conversation_adapter_package_files(
             crate::backend::conversations::validate_conversation_adapter_package_dir(
                 &prepared_dir,
             )?;
+        let kernel_inspection = crate::backend::conversations::ConversationAdapterPackageSystem
+            .inspect(&prepared_dir)
+            .map_err(|error| error.to_string())?;
+        crate::backend::conversations::ConversationAdapterPackageSystem
+            .on_installed(&kernel_inspection)
+            .map_err(|error| error.to_string())?;
+        if kernel_inspection.identity.package_id != item.package_id()
+            || kernel_inspection.identity.version
+                != semver::Version::parse(&item.version).map_err(|error| error.to_string())?
+        {
+            return Err(
+                "conversation adapter kernel identity differs from catalog item".to_string(),
+            );
+        }
         validate_installed_package_for_catalog_item(item, &prepared_validation)?;
 
         if version_dir.exists() {

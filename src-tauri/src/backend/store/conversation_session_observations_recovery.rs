@@ -1,7 +1,6 @@
 use sqlx::SqlitePool;
 use std::collections::{BTreeMap, BTreeSet};
-use crate::backend::application::AppResult;
-use crate::backend::dto::ConversationRecordKind;
+use crate::backend::dto::{AppResult, ConversationRecordKind};
 use crate::backend::conversations::types::ConversationSessionDescriptor;
 
 pub(crate) async fn load_conversation_session_versions_sqlx(

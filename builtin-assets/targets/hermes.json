@@ -1,0 +1,19 @@
+{
+  "id": "hermes",
+  "name": "Hermes",
+  "app_kind_compat": "hermes",
+  "default_targets": [
+    {
+      "asset_kind": "skill",
+      "path": "~/.hermes/skills"
+    }
+  ],
+  "supported_kinds": [
+    "skill",
+    "prompt",
+    "rule",
+    "custom"
+  ],
+  "deployment_strategy": "symlink_to_source",
+  "icon": null
+}

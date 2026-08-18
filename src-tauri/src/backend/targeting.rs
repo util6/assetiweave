@@ -233,6 +233,8 @@ mod tests {
             source_id: "codex-skills".to_string(),
             name: name.to_string(),
             kind: AssetKind::Skill,
+            detector_id: "legacy.classifier".to_string(),
+            detector_version: 1,
             format: AssetFormat::Directory,
             relative_path: name.to_string(),
             absolute_path: absolute_path.to_string_lossy().to_string(),
@@ -248,7 +250,8 @@ mod tests {
         TargetProfile {
             id: "codex".to_string(),
             name: "Codex".to_string(),
-            app_kind: AppKind::Codex,
+            app_kind: Some(AppKind::Codex),
+            target_provider_id: "codex".to_string(),
             target_paths: vec![target_root.to_string_lossy().to_string()],
             supported_kinds: vec![AssetKind::Skill],
             deployment_strategy: DeploymentStrategy::SymlinkToSource,

@@ -49,6 +49,8 @@ pub(super) fn scan_skill_assets(source: &Source) -> AppResult<Vec<Asset>> {
                 &skill_relative_string,
                 Some(path),
                 AssetKind::Skill,
+                "builtin.skill",
+                1,
                 AssetFormat::Directory,
                 &now,
             )?;

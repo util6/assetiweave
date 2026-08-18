@@ -451,6 +451,8 @@ pub(crate) struct SourceInput {
     pub(crate) scan_root: Option<String>,
     #[serde(alias = "originAppKind")]
     pub(crate) origin_app_kind: Option<AppKind>,
+    #[serde(default, alias = "originProviderId")]
+    pub(crate) origin_provider_id: Option<String>,
     #[serde(alias = "includeGlobs")]
     pub(crate) include_globs: Vec<String>,
     #[serde(alias = "excludeGlobs")]
@@ -466,6 +468,8 @@ pub(crate) struct TargetProfileInput {
     pub(crate) id: Option<String>,
     pub(crate) name: String,
     pub(crate) app_kind: Option<AppKind>,
+    #[serde(default, alias = "targetProviderId")]
+    pub(crate) target_provider_id: Option<String>,
     pub(crate) target_paths: Option<Vec<String>>,
     pub(crate) supported_kinds: Option<Vec<AssetKind>>,
     pub(crate) deployment_strategy: Option<DeploymentStrategy>,

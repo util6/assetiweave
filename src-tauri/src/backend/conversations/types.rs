@@ -8,6 +8,26 @@ pub(super) const DEFAULT_MAX_CONTROL_LINE_BYTES: usize = 8 * 1024 * 1024;
 pub(super) const DEFAULT_MAX_ITEM_LINE_BYTES: usize = 64 * 1024 * 1024;
 pub(super) const DEFAULT_MAX_TOTAL_BYTES: usize = 256 * 1024 * 1024;
 
+/// Immutable domain catalog published through the shared kernel snapshot.
+/// Package manifests remain domain-owned; this catalog only provides the
+/// complete adapter registration view consumed by conversation workflows.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ConversationAdapterCatalog {
+    pub(crate) adapters: Vec<ConversationAdapter>,
+}
+
+impl ConversationAdapterCatalog {
+    pub(crate) fn new(adapters: Vec<ConversationAdapter>) -> Self {
+        Self { adapters }
+    }
+
+    pub(crate) fn get(&self, adapter_id: &str) -> Option<&ConversationAdapter> {
+        self.adapters
+            .iter()
+            .find(|adapter| adapter.id == adapter_id)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct ConversationAdapterManifest {
     #[serde(alias = "schemaVersion")]
@@ -28,6 +48,87 @@ pub(crate) struct ConversationAdapterManifest {
     pub(crate) card_contract_version: Option<u32>,
     #[serde(default, alias = "cardKinds")]
     pub(crate) card_kinds: Vec<ConversationCardKindDefinition>,
+}
+
+impl ConversationAdapterManifest {
+    pub(crate) fn package_identity(
+        &self,
+    ) -> Result<
+        crate::backend::extension_kernel::PackageIdentity,
+        crate::backend::extension_kernel::ExtensionError,
+    > {
+        let version = semver::Version::parse(&self.version).map_err(|error| {
+            crate::backend::extension_kernel::ExtensionError::ManifestInvalid {
+                package_id: self.id.clone(),
+                reason: format!("invalid semantic version: {error}"),
+            }
+        })?;
+        Ok(crate::backend::extension_kernel::PackageIdentity {
+            kind: crate::backend::extension_kernel::PackageKind::ConversationAdapter,
+            package_id: self.id.clone(),
+            version,
+        })
+    }
+
+    pub(crate) fn compatibility(&self) -> crate::backend::extension_kernel::Compatibility {
+        crate::backend::extension_kernel::Compatibility {
+            protocol_version: self.protocol_version,
+            core_requirement: None,
+        }
+    }
+
+    pub(crate) fn process_invocation(
+        &self,
+        install_dir: &std::path::Path,
+    ) -> crate::backend::extension_kernel::ProcessInvocation {
+        let (kind, entry, args, version_req) = match self.runtime.as_ref() {
+            Some(runtime) => (
+                match runtime.kind {
+                    ConversationAdapterRuntimeKind::Node => {
+                        crate::backend::extension_kernel::RuntimeProgramKind::Node
+                    }
+                    ConversationAdapterRuntimeKind::Python => {
+                        crate::backend::extension_kernel::RuntimeProgramKind::Python
+                    }
+                    ConversationAdapterRuntimeKind::Bash => {
+                        crate::backend::extension_kernel::RuntimeProgramKind::Bash
+                    }
+                    ConversationAdapterRuntimeKind::Executable => {
+                        crate::backend::extension_kernel::RuntimeProgramKind::Executable
+                    }
+                },
+                runtime.entry.clone(),
+                runtime.args.clone(),
+                runtime.version.clone(),
+            ),
+            None => (
+                crate::backend::extension_kernel::RuntimeProgramKind::Executable,
+                self.command.first().cloned().unwrap_or_default(),
+                self.command.iter().skip(1).cloned().collect(),
+                None,
+            ),
+        };
+        crate::backend::extension_kernel::ProcessInvocation {
+            kind,
+            entry,
+            args,
+            env: Vec::new(),
+            working_dir: Some(install_dir.to_path_buf()),
+            version_req,
+            immutable_install_dir: install_dir.to_path_buf(),
+        }
+    }
+
+    pub(crate) fn availability_probe(&self) -> crate::backend::extension_kernel::ProbeSpec {
+        crate::backend::extension_kernel::ProbeSpec {
+            program: None,
+            args: vec!["--version".to_string()],
+            env: Vec::new(),
+            timeout: std::time::Duration::from_millis(DEFAULT_PROBE_TIMEOUT_MS),
+            output_limit: DEFAULT_MAX_CONTROL_LINE_BYTES,
+            kind: crate::backend::extension_kernel::ProbeKind::Availability,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

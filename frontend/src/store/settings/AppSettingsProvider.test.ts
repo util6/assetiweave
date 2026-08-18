@@ -252,6 +252,8 @@ describe("AppSettingsProvider", () => {
     expect(settings.agentCapabilityAssignments).toEqual({
       cardTranslation: "gemini",
       memory: "codex",
+      "memory.extraction": "codex",
+      "memory.dream": "codex",
       promptOptimization: "gemini",
     });
     expect(settings.agentModels).toEqual({

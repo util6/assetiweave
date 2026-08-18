@@ -27,10 +27,23 @@ pub(crate) fn target_profile_from_input(input: TargetProfileInput) -> AppResult<
         return Err("profile target path is required".to_string());
     }
 
+    let app_kind = input.app_kind.or_else(|| {
+        input
+            .target_provider_id
+            .is_none()
+            .then_some(AppKind::Custom)
+    });
+    let target_provider_id = input
+        .target_provider_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| app_kind.map(|kind| format!("{kind:?}").to_lowercase()))
+        .unwrap_or_else(|| id.clone());
     let profile = TargetProfile {
         id,
         name,
-        app_kind: input.app_kind.unwrap_or(AppKind::Custom),
+        app_kind,
+        target_provider_id,
         target_paths,
         supported_kinds: input
             .supported_kinds
@@ -177,6 +190,7 @@ mod tests {
             id: Some("custom-home".to_string()),
             name: "Custom Home".to_string(),
             app_kind: Some(AppKind::Custom),
+            target_provider_id: None,
             target_paths: Some(vec![home_target]),
             supported_kinds: None,
             deployment_strategy: None,

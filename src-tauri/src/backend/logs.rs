@@ -10,7 +10,12 @@ use std::{
 
 const APP_LOG_FILE_PREFIX: &str = "app.log";
 const CODEX_API_LOG_FILE_PREFIX: &str = "codex-api.log";
-const MANAGED_LOG_FILE_PREFIXES: &[&str] = &[APP_LOG_FILE_PREFIX, CODEX_API_LOG_FILE_PREFIX];
+const PANIC_LOG_FILE_PREFIX: &str = "panic.log";
+const MANAGED_LOG_FILE_PREFIXES: &[&str] = &[
+    APP_LOG_FILE_PREFIX,
+    CODEX_API_LOG_FILE_PREFIX,
+    PANIC_LOG_FILE_PREFIX,
+];
 const DEFAULT_LOG_TAIL_LINES: usize = 200;
 const MIN_LOG_TAIL_LINES: usize = 20;
 const MAX_LOG_TAIL_LINES: usize = 5000;
@@ -101,6 +106,22 @@ pub(crate) fn record_error(operation: &str, message: &str, fields: &[(&str, Stri
     record_operation(OperationLogLevel::Error, operation, message, fields);
 }
 
+pub(crate) fn record_fatal_panic(message: &str) {
+    let mut paths = Vec::new();
+    if let Ok(log_dir) = get_log_dir() {
+        paths.push(log_dir.join(PANIC_LOG_FILE_PREFIX));
+    }
+
+    let fallback = std::env::temp_dir()
+        .join("AssetIWeave")
+        .join(PANIC_LOG_FILE_PREFIX);
+    if !paths.iter().any(|path| path == &fallback) {
+        paths.push(fallback);
+    }
+
+    let _ = write_fatal_panic_log(&paths, message);
+}
+
 pub(crate) fn logs_get_snapshot(
     file_name: Option<String>,
     line_limit: Option<usize>,
@@ -186,7 +207,7 @@ fn get_log_dir() -> Result<PathBuf, String> {
 }
 
 fn ensure_default_log_file() -> Result<(), String> {
-    if !list_managed_log_files()?.is_empty() {
+    if get_log_dir()?.join(APP_LOG_FILE_PREFIX).is_file() {
         return Ok(());
     }
 
@@ -371,6 +392,38 @@ fn write_operation_log_to_dir(
     append_app_log_line(log_dir, &line)
 }
 
+fn write_fatal_panic_log(paths: &[PathBuf], message: &str) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for path in paths {
+        let Some(parent) = path.parent() else {
+            errors.push(format!("日志路径没有父目录: {}", path.display()));
+            continue;
+        };
+        if let Err(error) = fs::create_dir_all(parent) {
+            errors.push(format!("创建日志目录 {} 失败: {error}", parent.display()));
+            continue;
+        }
+
+        let result = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .and_then(|mut file| {
+                writeln!(file, "[{}] FATAL: {message}", Local::now().to_rfc3339())
+            });
+        match result {
+            Ok(()) => return Ok(()),
+            Err(error) => errors.push(format!("写入日志文件 {} 失败: {error}", path.display())),
+        }
+    }
+
+    if errors.is_empty() {
+        Err("没有可用的 panic 日志路径".to_string())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
 fn append_app_log_line(log_dir: &Path, line: &str) -> Result<(), String> {
     let log_file = log_dir.join(APP_LOG_FILE_PREFIX);
     let mut file = OpenOptions::new()
@@ -506,6 +559,36 @@ mod tests {
             OperationLogLevel::Warn
         );
         assert!(OperationLogLevel::from_str("debug").is_err());
+    }
+
+    #[test]
+    fn panic_log_is_available_through_the_log_viewer() {
+        assert!(is_managed_log_file_name("panic.log"));
+        assert!(is_managed_log_file_name("panic.log.1"));
+    }
+
+    #[test]
+    fn panic_log_writer_uses_the_next_path_when_primary_path_fails() {
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-panic-log-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time after epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("create panic log test root");
+        let blocking_parent = root.join("blocking-parent");
+        fs::write(&blocking_parent, "not a directory").expect("create blocking parent");
+        let primary = blocking_parent.join("panic.log");
+        let fallback = root.join("fallback").join("panic.log");
+
+        write_fatal_panic_log(&[primary, fallback.clone()], "panic details")
+            .expect("write fallback panic log");
+
+        assert!(fs::read_to_string(fallback)
+            .expect("read fallback panic log")
+            .contains("panic details"));
+        fs::remove_dir_all(root).expect("remove panic log test root");
     }
 
     #[test]

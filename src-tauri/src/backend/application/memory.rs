@@ -599,6 +599,7 @@ mod tests {
             db,
             db_path: db_path.clone(),
             context,
+            runtime: None,
             agent_runtime_manager: runtime_manager,
             agent_runtime,
         };

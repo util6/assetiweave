@@ -201,8 +201,38 @@ fn normalize_shared_ai_settings(settings: &mut Value) {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    let supported_capabilities = [
+        "cardTranslation",
+        "memory",
+        "memory.extraction",
+        "memory.dream",
+        "promptOptimization",
+    ];
+    let unknown_capabilities = agent_capabilities
+        .keys()
+        .filter(|key| !supported_capabilities.contains(&key.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    for key in unknown_capabilities {
+        agent_capabilities.remove(&key);
+        crate::backend::operation_log::log_warn(
+            "settings.agent_capability",
+            "未知的 Agent capability 已禁用",
+            &[("capability", key)],
+        );
+    }
     for service_id in ["cardTranslation", "memory", "promptOptimization"] {
         let agent_id = normalize_agent_capability_agent_id(agent_capabilities.get(service_id), cli);
+        agent_capabilities.insert(service_id.to_string(), Value::String(agent_id));
+    }
+    let memory_agent = agent_capabilities
+        .get("memory")
+        .and_then(Value::as_str)
+        .unwrap_or(cli)
+        .to_string();
+    for service_id in ["memory.extraction", "memory.dream"] {
+        let agent_id =
+            normalize_agent_capability_agent_id(agent_capabilities.get(service_id), &memory_agent);
         agent_capabilities.insert(service_id.to_string(), Value::String(agent_id));
     }
     root.insert(
@@ -491,6 +521,14 @@ mod tests {
         assert_eq!(
             settings["agentCapabilityAssignments"]["promptOptimization"],
             "gemini"
+        );
+        assert_eq!(
+            settings["agentCapabilityAssignments"]["memory.extraction"],
+            "codex"
+        );
+        assert_eq!(
+            settings["agentCapabilityAssignments"]["memory.dream"],
+            "codex"
         );
     }
 }

@@ -15,6 +15,9 @@ impl AppService {
     }
 
     pub(crate) fn list_conversation_adapters(&self) -> AppResult<Vec<ConversationAdapter>> {
+        if let Some(runtime) = self.runtime.as_ref() {
+            return Ok(runtime.conversation_adapter_catalog().adapters.clone());
+        }
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
@@ -99,6 +102,9 @@ impl AppService {
                 }
                 AppResult::Ok(())
             })?;
+            if let Some(runtime) = self.runtime.as_ref() {
+                runtime.refresh_conversation_adapter_catalog()?;
+            }
         }
         Ok(preview)
     }
@@ -157,6 +163,9 @@ impl AppService {
                 )
                 .await
             })?;
+            if let Some(runtime) = self.runtime.as_ref() {
+                runtime.refresh_conversation_adapter_catalog()?;
+            }
             return Ok(json!({
                 "dry_run": false,
                 "unregistered": false,
@@ -180,6 +189,9 @@ impl AppService {
                 .await
             })?
             .ok_or_else(|| format!("conversation adapter not found: {}", params.adapter_id))?;
+        if let Some(runtime) = self.runtime.as_ref() {
+            runtime.refresh_conversation_adapter_catalog()?;
+        }
         Ok(json!({
             "dry_run": false,
             "unregistered": true,
@@ -488,6 +500,11 @@ impl AppService {
             };
             let source_error = match sync_result {
                 Ok(result) => {
+                    if !params.dry_run {
+                        if let Some(runtime) = &self.runtime {
+                            runtime.notify_domain_events();
+                        }
+                    }
                     results.push(result);
                     None
                 }

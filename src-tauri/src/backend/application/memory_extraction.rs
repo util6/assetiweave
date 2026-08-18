@@ -341,8 +341,10 @@ fn validate_raw_memories(items: &[MemoryRawMemory], allowed: &HashSet<String>) -
 fn load_recall_ai_runtime(
     runtime: Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
 ) -> AppResult<RecallAiRuntime> {
-    let (agent_id, model) = crate::backend::ai_execution::configured_agent_capability("memory")
-        .map_err(|error| error.to_string())?;
+    let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
+        &crate::backend::ai_execution::composition::ActionId::new("memory.extraction"),
+    )
+    .map_err(|error| error.to_string())?;
     Ok(RecallAiRuntime {
         agent_id,
         model,

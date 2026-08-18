@@ -6,6 +6,17 @@ use std::{fs, path::Path, path::PathBuf, process::Command};
 use walkdir::WalkDir;
 
 pub(crate) fn app_db_path() -> AppResult<PathBuf> {
+    if let Some(path) = std::env::var_os("ASSETIWEAVE_DB_PATH").filter(|path| !path.is_empty()) {
+        let path = PathBuf::from(path);
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        return Ok(path);
+    }
+
     let mut data_dir = dirs::data_dir().ok_or("无法确定系统数据目录")?;
     data_dir.push("AssetIWeave");
     fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;

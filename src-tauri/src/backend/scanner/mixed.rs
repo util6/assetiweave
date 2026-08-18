@@ -48,6 +48,8 @@ pub(super) fn scan_mixed_assets(source: &Source) -> AppResult<Vec<Asset>> {
                     &skill_relative_string,
                     Some(path),
                     AssetKind::Skill,
+                    "builtin.skill",
+                    1,
                     AssetFormat::Directory,
                     &now,
                 )?;
@@ -61,7 +63,19 @@ pub(super) fn scan_mixed_assets(source: &Source) -> AppResult<Vec<Asset>> {
         }
 
         let format = detect_format(path);
-        let kind = classify_asset(source, path, &relative_string, format);
+        let (detector_id, detector_version, kind) =
+            super::detector::detect(&super::detector::DetectionCtx {
+                source,
+                path,
+                relative_path: &relative_string,
+                format,
+            })
+            .map(|(id, version, detection)| (id, version, detection.kind))
+            .unwrap_or((
+                "legacy.classifier",
+                1,
+                classify_asset(source, path, &relative_string, format),
+            ));
         if matches!(format, AssetFormat::Unknown) && matches!(kind, AssetKind::Unclassified) {
             continue;
         }
@@ -73,6 +87,8 @@ pub(super) fn scan_mixed_assets(source: &Source) -> AppResult<Vec<Asset>> {
             &relative_string,
             None,
             kind,
+            detector_id,
+            detector_version,
             format,
             &now,
         )?;

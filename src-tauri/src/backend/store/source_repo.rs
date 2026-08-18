@@ -81,24 +81,25 @@ fn map_sqlx_source_row(row: &SqliteRow) -> AppResult<Source> {
             .transpose()?,
         scan_root: row.try_get(7).map_err(|error| error.to_string())?,
         origin_app_kind: decode_optional_enum(row.try_get(8).map_err(|error| error.to_string())?)?,
+        origin_provider_id: row.try_get(9).map_err(|error| error.to_string())?,
         include_globs: decode_json(
-            row.try_get::<String, _>(9)
-                .map_err(|error| error.to_string())?,
-        )?,
-        exclude_globs: decode_json(
             row.try_get::<String, _>(10)
                 .map_err(|error| error.to_string())?,
         )?,
+        exclude_globs: decode_json(
+            row.try_get::<String, _>(11)
+                .map_err(|error| error.to_string())?,
+        )?,
         default_kind: decode_optional_enum::<AssetKind>(
-            row.try_get(11).map_err(|error| error.to_string())?,
+            row.try_get(12).map_err(|error| error.to_string())?,
         )?,
         enabled: row
-            .try_get::<i64, _>(12)
+            .try_get::<i64, _>(13)
             .map_err(|error| error.to_string())?
             == 1,
-        priority: row.try_get(13).map_err(|error| error.to_string())?,
-        last_scanned_at: row.try_get(14).map_err(|error| error.to_string())?,
-        last_scan_status: row.try_get(15).map_err(|error| error.to_string())?,
+        priority: row.try_get(14).map_err(|error| error.to_string())?,
+        last_scanned_at: row.try_get(15).map_err(|error| error.to_string())?,
+        last_scan_status: row.try_get(16).map_err(|error| error.to_string())?,
     })
 }
 
@@ -119,6 +120,7 @@ pub(crate) async fn upsert_source_sqlx(
         .bind(&source.repo_root)
         .bind(&source.scan_root)
         .bind(encode_optional_enum(source.origin_app_kind)?)
+        .bind(&source.origin_provider_id)
         .bind(encode_json(&source.include_globs)?)
         .bind(encode_json(&source.exclude_globs)?)
         .bind(encode_optional_enum(source.default_kind)?)
@@ -152,6 +154,7 @@ pub(crate) fn normalize_source(source: &Source) -> Source {
         source.repo_root = None;
         source.scan_root = String::new();
         source.origin_app_kind = None;
+        source.origin_provider_id = None;
         return source;
     }
 
@@ -169,6 +172,7 @@ pub(crate) fn normalize_source(source: &Source) -> Source {
         source.repo_root = None;
         source.scan_root = String::new();
         source.origin_app_kind = None;
+        source.origin_provider_id = None;
         return source;
     }
 
@@ -178,6 +182,9 @@ pub(crate) fn normalize_source(source: &Source) -> Source {
         source.repo_root = None;
         source.scan_root = String::new();
         source.origin_app_kind = Some(app_kind);
+        if source.origin_provider_id.is_none() {
+            source.origin_provider_id = Some(format!("{app_kind:?}").to_ascii_lowercase());
+        }
         return source;
     }
 
@@ -359,6 +366,7 @@ mod tests {
             repo_root: None,
             scan_root: String::new(),
             origin_app_kind: None,
+            origin_provider_id: None,
             include_globs: vec!["**/*".to_string()],
             exclude_globs: Vec::new(),
             default_kind: if matches!(scanner_kind, SourceScannerKind::Skill) {

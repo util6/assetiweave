@@ -1,0 +1,19 @@
+{
+  "id": "codex",
+  "name": "Codex",
+  "app_kind_compat": "codex",
+  "default_targets": [
+    {
+      "asset_kind": "skill",
+      "path": "~/.codex/skills"
+    }
+  ],
+  "supported_kinds": [
+    "skill",
+    "prompt",
+    "rule",
+    "custom"
+  ],
+  "deployment_strategy": "symlink_to_source",
+  "icon": null
+}

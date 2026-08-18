@@ -52,6 +52,9 @@ pub(crate) fn source_input_log_fields(source: &SourceInput) -> Vec<LogField> {
     if let Some(origin_app_kind) = source.origin_app_kind {
         fields.push(("origin_app_kind", format!("{origin_app_kind:?}")));
     }
+    if let Some(origin_provider_id) = &source.origin_provider_id {
+        fields.push(("origin_provider_id", origin_provider_id.clone()));
+    }
     fields
 }
 
@@ -67,6 +70,9 @@ pub(crate) fn source_log_fields(source: &Source) -> Vec<LogField> {
     ];
     if let Some(origin_app_kind) = source.origin_app_kind {
         fields.push(("origin_app_kind", format!("{origin_app_kind:?}")));
+    }
+    if let Some(origin_provider_id) = &source.origin_provider_id {
+        fields.push(("origin_provider_id", origin_provider_id.clone()));
     }
     if let Some(status) = &source.last_scan_status {
         fields.push(("last_scan_status", status.clone()));

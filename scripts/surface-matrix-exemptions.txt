@@ -1,0 +1,21 @@
+# Tauri-only lifecycle, window, and background-task wrappers without a direct Engine method.
+set_app_window_icon
+cancel_app_close_prompt
+complete_app_close
+list_source_assets
+start_conversation_card_translation
+get_ai_execution_task
+list_ai_execution_tasks
+cancel_ai_execution_task
+get_cli_tools_status
+install_cli_tools
+copy_prompt_card_to_clipboard
+get_agent_market_refresh_task
+list_agent_market_refresh_tasks
+get_agent_lifecycle_task
+list_agent_lifecycle_tasks
+cancel_agent_lifecycle_task
+start_agent_installation
+start_agent_update
+start_agent_reinstallation
+start_agent_uninstall

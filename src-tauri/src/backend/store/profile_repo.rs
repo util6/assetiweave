@@ -55,6 +55,12 @@ pub(crate) async fn upsert_profile_sqlx(
 }
 
 fn normalize_profile_paths(mut profile: TargetProfile) -> AppResult<TargetProfile> {
+    if profile.target_provider_id.trim().is_empty() {
+        profile.target_provider_id = profile
+            .app_kind
+            .map(|kind| format!("{kind:?}").to_lowercase())
+            .unwrap_or_else(|| profile.id.clone());
+    }
     profile.target_paths = profile
         .target_paths
         .iter()
@@ -103,6 +109,30 @@ mod tests {
     use crate::backend::models::{AppKind, AssetKind, DeploymentStrategy, ProfileSafety, RuleSet};
     use crate::backend::store::Database;
     use uuid::Uuid;
+
+    #[test]
+    fn legacy_profile_payload_derives_a_provider_id_and_round_trips() {
+        let legacy = serde_json::json!({
+            "id": "codex",
+            "name": "Codex",
+            "app_kind": "codex",
+            "target_paths": ["~/.codex/skills"],
+            "supported_kinds": ["skill"],
+            "deployment_strategy": "symlink_to_source",
+            "enabled": true,
+            "include": { "kinds": ["skill"], "tags": [], "groups": [], "sources": [], "path_patterns": [] },
+            "exclude": { "kinds": ["unclassified"], "tags": [], "groups": [], "sources": [], "path_patterns": [] },
+            "safety": { "allow_remove": false, "allow_overwrite": false }
+        });
+        let profile: TargetProfile = serde_json::from_value(legacy).expect("decode legacy profile");
+
+        let migrated = normalize_profile_paths(profile).expect("migrate legacy profile");
+        assert_eq!(migrated.target_provider_id, "codex");
+        let encoded = serde_json::to_string(&migrated).expect("encode migrated profile");
+        let decoded: TargetProfile =
+            serde_json::from_str(&encoded).expect("decode migrated profile");
+        assert_eq!(decoded.target_provider_id, "codex");
+    }
 
     #[test]
     fn sqlx_profile_repo_round_trips_and_deletes_related_rows() {
@@ -225,7 +255,8 @@ mod tests {
         TargetProfile {
             id: id.to_string(),
             name: id.to_string(),
-            app_kind: AppKind::Codex,
+            app_kind: Some(AppKind::Codex),
+            target_provider_id: "codex".to_string(),
             target_paths: vec![format!("/tmp/{id}")],
             supported_kinds: vec![AssetKind::Skill],
             deployment_strategy: DeploymentStrategy::SymlinkToSource,

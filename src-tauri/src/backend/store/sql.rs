@@ -1,6 +1,6 @@
 pub(crate) const LIST_SOURCES: &str = r#"
 SELECT id, name, kind, root_path, scanner_kind, source_origin, repo_root, scan_root,
-       origin_app_kind, include_globs, exclude_globs, default_kind, enabled, priority,
+       origin_app_kind, origin_provider_id, include_globs, exclude_globs, default_kind, enabled, priority,
        last_scanned_at, last_scan_status
 FROM sources
 WHERE tenant_id = ?1
@@ -9,7 +9,7 @@ ORDER BY priority ASC, name ASC
 
 pub(crate) const LIST_SKILL_SOURCES: &str = r#"
 SELECT id, name, kind, root_path, scanner_kind, source_origin, repo_root, scan_root,
-       origin_app_kind, include_globs, exclude_globs, default_kind, enabled, priority,
+       origin_app_kind, origin_provider_id, include_globs, exclude_globs, default_kind, enabled, priority,
        last_scanned_at, last_scan_status
 FROM sources
 WHERE tenant_id = ?1 AND scanner_kind = 'skill'
@@ -18,7 +18,7 @@ ORDER BY priority ASC, name ASC
 
 pub(crate) const LOAD_SOURCE: &str = r#"
 SELECT id, name, kind, root_path, scanner_kind, source_origin, repo_root, scan_root,
-       origin_app_kind, include_globs, exclude_globs, default_kind, enabled, priority,
+       origin_app_kind, origin_provider_id, include_globs, exclude_globs, default_kind, enabled, priority,
        last_scanned_at, last_scan_status
 FROM sources
 WHERE tenant_id = ?1 AND id = ?2
@@ -26,7 +26,8 @@ WHERE tenant_id = ?1 AND id = ?2
 
 pub(crate) const LIST_ASSETS: &str = r#"
 SELECT id, source_id, name, kind, format, relative_path, absolute_path,
-       entry_file, description, content_hash, discovered_at, updated_at
+       entry_file, description, content_hash, discovered_at, updated_at,
+       detector_id, detector_version
 FROM assets
 WHERE tenant_id = ?1
 ORDER BY name ASC
@@ -34,7 +35,8 @@ ORDER BY name ASC
 
 pub(crate) const LIST_ASSETS_BY_KIND: &str = r#"
 SELECT id, source_id, name, kind, format, relative_path, absolute_path,
-       entry_file, description, content_hash, discovered_at, updated_at
+       entry_file, description, content_hash, discovered_at, updated_at,
+       detector_id, detector_version
 FROM assets
 WHERE tenant_id = ?1 AND kind = ?2
 ORDER BY name ASC
@@ -42,7 +44,8 @@ ORDER BY name ASC
 
 pub(crate) const LOAD_ASSET: &str = r#"
 SELECT id, source_id, name, kind, format, relative_path, absolute_path,
-       entry_file, description, content_hash, discovered_at, updated_at
+       entry_file, description, content_hash, discovered_at, updated_at,
+       detector_id, detector_version
 FROM assets
 WHERE tenant_id = ?1 AND id = ?2
 "#;
@@ -374,9 +377,9 @@ NOT EXISTS (
 pub(crate) const UPSERT_SOURCE: &str = r#"
 INSERT INTO sources (
     tenant_id, id, name, kind, root_path, scanner_kind, source_origin, repo_root, scan_root,
-    origin_app_kind, include_globs, exclude_globs, default_kind, enabled, priority,
+    origin_app_kind, origin_provider_id, include_globs, exclude_globs, default_kind, enabled, priority,
     last_scanned_at, last_scan_status
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
 ON CONFLICT(tenant_id, id) DO UPDATE SET
     name = excluded.name,
     kind = excluded.kind,
@@ -386,6 +389,7 @@ ON CONFLICT(tenant_id, id) DO UPDATE SET
     repo_root = excluded.repo_root,
     scan_root = excluded.scan_root,
     origin_app_kind = excluded.origin_app_kind,
+    origin_provider_id = excluded.origin_provider_id,
     include_globs = excluded.include_globs,
     exclude_globs = excluded.exclude_globs,
     default_kind = excluded.default_kind,
@@ -485,8 +489,9 @@ WHERE tenant_id = ?3 AND id = ?4
 pub(crate) const INSERT_ASSET: &str = r#"
 INSERT INTO assets (
     tenant_id, id, source_id, name, kind, format, relative_path, absolute_path,
-    entry_file, description, content_hash, discovered_at, updated_at
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+    entry_file, description, content_hash, discovered_at, updated_at,
+    detector_id, detector_version
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
 "#;
 
 pub(crate) const UPSERT_DEPLOYMENT_STATE: &str = r#"

@@ -1,5 +1,15 @@
 # 任务清单：AssetIWeave
 
+## Runtime Extension Refactor 后续项（2026-08-19）
+
+- [ ] SPEC-06 B：收口 provider-neutral Availability；统一
+  `check_opencode_translation_availability`、`configured_agent_capability` 与
+  `legacy_gemini.rs`，避免与已落地的 Agent Runtime 能力长期双轨并存。
+- [X] SPEC-02：补齐 prepared adapter seed 的只读目录边界测试、Projection/Models
+  依赖守卫、`block_on`/`Legacy(` 单调计数基线，并接入 CI。
+- [X] SPEC-04/07：为 `DomainEventConsumer` 明确 `InitialPosition` 注册协议；当前
+  首发消费者声明 `GenesisZero`，后发消费者未完成 backfill/cutoff 注册时拒绝启动。
+
 ## Milestone：2026-07-02 架构文档与 Engine/CLI 现状对齐
 
 - [X] M2.1 将 `AGENTS.md` 从通用仓库规范更新为当前 Agent 操作准则

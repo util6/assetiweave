@@ -1,5 +1,5 @@
 use crate::backend::dto::{AppResult, AppShortcut, AppShortcutIconSvg};
-use crate::backend::models::TargetProfile;
+use crate::backend::models::{AppKind, TargetProfile};
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 use std::collections::HashSet;
 
@@ -135,7 +135,7 @@ fn map_sqlx_app_shortcut(row: &SqliteRow) -> AppResult<AppShortcut> {
     Ok(AppShortcut {
         profile_id: row.try_get(0).map_err(|error| error.to_string())?,
         profile_name: profile.name,
-        app_kind: encode_enum(profile.app_kind)?,
+        app_kind: encode_enum(profile.app_kind.unwrap_or(AppKind::Custom))?,
         display_icon: row.try_get(1).map_err(|error| error.to_string())?,
         icon_svg: decode_icon_svg_sqlx(row.try_get(2).map_err(|error| error.to_string())?)?,
         accent_color: row.try_get(3).map_err(|error| error.to_string())?,
@@ -154,7 +154,7 @@ fn map_sqlx_app_shortcut_setting(row: &SqliteRow) -> AppResult<AppShortcut> {
     let profile_name = profile.name;
     Ok(AppShortcut {
         profile_id: row.try_get(0).map_err(|error| error.to_string())?,
-        app_kind: encode_enum(profile.app_kind)?,
+        app_kind: encode_enum(profile.app_kind.unwrap_or(AppKind::Custom))?,
         display_icon: row
             .try_get::<Option<String>, _>(2)
             .map_err(|error| error.to_string())?

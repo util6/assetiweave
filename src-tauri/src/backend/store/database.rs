@@ -1,4 +1,6 @@
-use crate::backend::{dto::AppResult, path_utils::ensure_app_library_dirs};
+use crate::backend::dto::AppResult;
+#[cfg(test)]
+use crate::backend::path_utils::ensure_app_library_dirs;
 use sqlx::{
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
@@ -8,7 +10,7 @@ use std::{
     collections::BTreeSet,
     future::Future,
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 use tokio::runtime::Runtime;
@@ -16,7 +18,12 @@ use tokio::runtime::Runtime;
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 static INITIALIZED_DB_PATHS: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
 
+#[derive(Clone)]
 pub(crate) struct Database {
+    inner: Arc<DatabaseInner>,
+}
+
+struct DatabaseInner {
     pool: SqlitePool,
     runtime: Runtime,
 }
@@ -26,9 +33,10 @@ impl Database {
     pub(crate) fn open(db_path: &Path) -> AppResult<Self> {
         let runtime = build_runtime()?;
         let pool = runtime.block_on(open_migrated_pool(db_path))?;
-        Ok(Self { pool, runtime })
+        Ok(Self::from_parts(pool, runtime))
     }
 
+    #[cfg(test)]
     pub(crate) fn open_initialized(db_path: &Path) -> AppResult<Self> {
         let runtime = build_runtime()?;
         let pool = runtime.block_on(open_migrated_pool(db_path))?;
@@ -39,17 +47,35 @@ impl Database {
         if !initialized_paths.contains(db_path) {
             ensure_app_library_dirs()?;
             runtime.block_on(seed_defaults_sqlx(&pool))?;
+            #[cfg(test)]
+            {
+                let adapters =
+                    crate::backend::conversations::ensure_official_conversation_adapters()?;
+                runtime.block_on(
+                    super::conversation_repo::seed_prepared_builtin_conversation_adapters_sqlx(
+                        &pool,
+                        super::tenant_repo::DEFAULT_TENANT_ID,
+                        adapters,
+                    ),
+                )?;
+            }
             initialized_paths.insert(db_path.to_path_buf());
         }
-        Ok(Self { pool, runtime })
+        Ok(Self::from_parts(pool, runtime))
+    }
+
+    pub(crate) fn from_parts(pool: SqlitePool, runtime: Runtime) -> Self {
+        Self {
+            inner: Arc::new(DatabaseInner { pool, runtime }),
+        }
     }
 
     pub(crate) fn pool(&self) -> &SqlitePool {
-        &self.pool
+        &self.inner.pool
     }
 
     pub(crate) fn block_on<F: Future>(&self, future: F) -> F::Output {
-        self.runtime.block_on(future)
+        self.inner.runtime.block_on(future)
     }
 }
 
@@ -118,14 +144,16 @@ pub(crate) fn migrate_database(db_path: &Path) -> AppResult<()> {
     .map_err(|_| "SQLx migration worker panicked".to_string())?
 }
 
-fn build_runtime() -> AppResult<Runtime> {
-    tokio::runtime::Builder::new_current_thread()
+pub(crate) fn build_runtime() -> AppResult<Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("aiw-rt")
         .enable_time()
         .build()
         .map_err(|error| error.to_string())
 }
 
-async fn open_migrated_pool(db_path: &Path) -> AppResult<SqlitePool> {
+pub(crate) async fn open_migrated_pool(db_path: &Path) -> AppResult<SqlitePool> {
     let options = SqliteConnectOptions::new()
         .filename(db_path)
         .create_if_missing(true)
@@ -150,7 +178,7 @@ async fn open_migrated_pool(db_path: &Path) -> AppResult<SqlitePool> {
     Ok(pool)
 }
 
-async fn seed_defaults_sqlx(pool: &SqlitePool) -> AppResult<()> {
+pub(crate) async fn seed_defaults_sqlx(pool: &SqlitePool) -> AppResult<()> {
     super::tenant_repo::ensure_local_identity_sqlx(pool).await?;
     let tenant_id = super::tenant_repo::DEFAULT_TENANT_ID;
 
@@ -179,11 +207,6 @@ pub(crate) async fn seed_tenant_defaults_sqlx(pool: &SqlitePool, tenant_id: &str
     }
     normalize_existing_profiles_sqlx(pool, tenant_id).await?;
     normalize_default_profiles_sqlx(pool, tenant_id).await?;
-
-    super::conversation_repo::seed_builtin_conversation_adapters_sqlx(pool, tenant_id).await?;
-    super::conversation_repo::migrate_legacy_conversation_adapter_hashes_sqlx(pool, tenant_id)
-        .await?;
-    super::conversation_repo::normalize_conversation_paths_sqlx(pool, tenant_id).await?;
 
     let default_navigation_model = crate::backend::defaults::default_navigation_model();
     if count_rows(pool, tenant_id, "navigation_state").await? == 0 {
@@ -569,7 +592,7 @@ mod tests {
         assert_eq!(memory_table_count, 3);
         assert_eq!(memory_recall_index_count, 2);
         assert_eq!(execution_projection_index_count, 0);
-        assert_eq!(migration_count, 25);
+        assert_eq!(migration_count, 29);
         cleanup_database(&db_path);
     }
 
@@ -644,7 +667,7 @@ mod tests {
             )
         );
         assert_eq!(cursor_target_path, "@config/Cursor/skills");
-        assert_eq!(migration_count, 25);
+        assert_eq!(migration_count, 29);
         cleanup_database(&db_path);
     }
 
@@ -705,7 +728,7 @@ mod tests {
                 row.get(0)
             })
             .expect("query migrations");
-        assert_eq!(migration_count, 25);
+        assert_eq!(migration_count, 29);
         cleanup_database(&db_path);
     }
 

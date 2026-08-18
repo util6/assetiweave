@@ -34,6 +34,20 @@ pub enum ConversationAdapterTrustState {
     Untrusted,
 }
 
+impl crate::backend::extension_kernel::TrustGate for ConversationAdapterTrustState {
+    fn can_enable(&self) -> bool {
+        matches!(self, Self::BuiltIn | Self::Trusted)
+    }
+
+    fn needs_confirmation(&self) -> bool {
+        matches!(self, Self::Changed)
+    }
+
+    fn integrity_changed(&self) -> bool {
+        matches!(self, Self::Changed | Self::Untrusted)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConversationAdapterPackageRecordKind {

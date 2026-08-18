@@ -20,6 +20,30 @@ pub(crate) fn rebuild_conversation_search_index(
     db_path: &Path,
     tenant_id: &str,
 ) -> AppResult<ConversationSearchIndexRebuildReport> {
+    rebuild_conversation_search_index_inner(database, db_path, tenant_id, None)
+}
+
+pub(crate) fn rebuild_conversation_search_index_with_offset(
+    database: &Database,
+    db_path: &Path,
+    tenant_id: &str,
+    consumer_id: &str,
+    last_seq: i64,
+) -> AppResult<ConversationSearchIndexRebuildReport> {
+    rebuild_conversation_search_index_inner(
+        database,
+        db_path,
+        tenant_id,
+        Some((consumer_id, last_seq)),
+    )
+}
+
+fn rebuild_conversation_search_index_inner(
+    database: &Database,
+    db_path: &Path,
+    tenant_id: &str,
+    consumer_offset: Option<(&str, i64)>,
+) -> AppResult<ConversationSearchIndexRebuildReport> {
     let started = Instant::now();
     let pool = database.pool().clone();
     let tenant_id_owned = tenant_id.to_string();
@@ -96,13 +120,14 @@ pub(crate) fn rebuild_conversation_search_index(
         let tenant_for_publish = tenant_id.to_string();
         let generation_for_publish = generation.clone();
         let published = database.block_on(async move {
-            crate::backend::store::complete_conversation_search_index_rebuild_sqlx(
+            crate::backend::store::complete_conversation_search_index_rebuild_with_offset_sqlx(
                 &pool,
                 &tenant_for_publish,
                 state.source_revision,
                 &generation_for_publish,
                 document_count,
                 size_bytes,
+                consumer_offset,
             )
             .await
         })?;

@@ -1,0 +1,19 @@
+{
+  "id": "claude",
+  "name": "Claude",
+  "app_kind_compat": "claude",
+  "default_targets": [
+    {
+      "asset_kind": "skill",
+      "path": "~/.claude/skills"
+    }
+  ],
+  "supported_kinds": [
+    "skill",
+    "prompt",
+    "rule",
+    "custom"
+  ],
+  "deployment_strategy": "symlink_to_source",
+  "icon": null
+}

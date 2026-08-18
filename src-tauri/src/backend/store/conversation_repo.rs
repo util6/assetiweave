@@ -4,6 +4,7 @@ use crate::backend::dto::{
     ConversationRecordKind, ConversationSearchCardType, ConversationSearchHit,
     ConversationSearchPage, ConversationSessionDetail, ConversationSessionListItem,
 };
+use crate::backend::events::DomainEvent;
 use crate::backend::models::{
     conversation_turn_fingerprint, group_turn_ids_by_question, ConversationAdapter,
     ConversationAdapterCatalogRelease, ConversationAdapterKind, ConversationAdapterPackage,
@@ -212,12 +213,13 @@ pub(crate) struct ConversationSyncDelta {
     pub(crate) observed_at: String,
 }
 
-pub(crate) async fn seed_builtin_conversation_adapters_sqlx(
+pub(crate) async fn seed_prepared_builtin_conversation_adapters_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
+    adapters: Vec<ConversationAdapter>,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    for mut adapter in crate::backend::conversations::ensure_official_conversation_adapters()? {
+    for mut adapter in adapters {
         match load_conversation_adapter_sqlx(pool, tenant_id, &adapter.id).await? {
             Some(existing) if existing.trust_state != ConversationAdapterTrustState::BuiltIn => {}
             Some(existing) => {
@@ -1141,6 +1143,7 @@ async fn import_conversation_sessions_with_presence_sqlx(
 
     for batch in sessions.chunks(CONVERSATION_IMPORT_BATCH_SIZE) {
         let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+        let mut batch_changed_session_ids = Vec::new();
         for normalized in batch {
             let session = conversation_session_from_normalized(source, normalized, &now);
             let change_kind =
@@ -1187,17 +1190,31 @@ async fn import_conversation_sessions_with_presence_sqlx(
             )
             .await?;
             changed_session_count += 1;
+            batch_changed_session_ids.push(session.id);
         }
-        super::bump_conversation_search_source_revision_sqlx_tx(&mut *tx, tenant_id).await?;
+        let revision =
+            super::bump_conversation_search_source_revision_sqlx_tx(&mut *tx, tenant_id).await?;
+        crate::backend::events::append_outbox_event_sqlx_tx(
+            &mut tx,
+            &DomainEvent::conversation_source_committed(
+                tenant_id,
+                &sync_run_id,
+                &source.id,
+                revision,
+                batch_changed_session_ids,
+            ),
+        )
+        .await?;
         tx.commit().await.map_err(|error| error.to_string())?;
     }
 
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
-    mark_missing_conversation_sessions_sqlx_tx(
+    let missing_or_restored_session_ids = mark_missing_conversation_sessions_sqlx_tx(
         &mut tx,
         tenant_id,
         &source.id,
         &incoming_session_ids,
+        &sync_run_id,
         &now,
     )
     .await?;
@@ -1231,7 +1248,19 @@ async fn import_conversation_sessions_with_presence_sqlx(
         },
     )
     .await?;
-    super::bump_conversation_search_source_revision_sqlx_tx(&mut *tx, tenant_id).await?;
+    let revision =
+        super::bump_conversation_search_source_revision_sqlx_tx(&mut *tx, tenant_id).await?;
+    crate::backend::events::append_outbox_event_sqlx_tx(
+        &mut tx,
+        &DomainEvent::conversation_source_committed(
+            tenant_id,
+            &sync_run_id,
+            &source.id,
+            revision,
+            missing_or_restored_session_ids,
+        ),
+    )
+    .await?;
     tx.commit().await.map_err(|error| error.to_string())?;
 
     Ok(ConversationImportResult {
@@ -2102,9 +2131,11 @@ pub(super) fn project_conversation_cards_and_nodes(
     let mut content_nodes = Vec::new();
     let mut execution_node_indices = BTreeMap::<(String, String), usize>::new();
     for part in parts {
-        if let Some(card) = crate::backend::conversations::cards::project_conversation_content_card(
-            part, adapter_id, card_kinds,
-        )? {
+        if let Some(card) =
+            crate::backend::projection::conversation_cards::project_conversation_content_card(
+                part, adapter_id, card_kinds,
+            )?
+        {
             let card_index = cards.len();
             let execution_role = card
                 .semantic_role
@@ -3213,8 +3244,10 @@ async fn mark_missing_conversation_sessions_sqlx_tx(
     tenant_id: &str,
     source_id: &str,
     incoming_session_ids: &BTreeSet<String>,
+    sync_run_id: &str,
     now: &str,
-) -> AppResult<()> {
+) -> AppResult<Vec<String>> {
+    let mut changed_session_ids = Vec::new();
     let existing_sessions = sqlx::query_as::<_, (String, i64)>(
         "SELECT id, missing FROM conversation_sessions WHERE tenant_id = ?1 AND source_id = ?2",
     )
@@ -3240,6 +3273,17 @@ async fn mark_missing_conversation_sessions_sqlx_tx(
             .execute(&mut **tx)
             .await
             .map_err(|error| error.to_string())?;
+            insert_conversation_sync_delta_sqlx_tx(
+                tx,
+                tenant_id,
+                sync_run_id,
+                "session",
+                &session_id,
+                "restored",
+                now,
+            )
+            .await?;
+            changed_session_ids.push(session_id.clone());
             continue;
         }
         if missing != 0 {
@@ -3258,8 +3302,19 @@ async fn mark_missing_conversation_sessions_sqlx_tx(
         .execute(&mut **tx)
         .await
         .map_err(|error| error.to_string())?;
+        insert_conversation_sync_delta_sqlx_tx(
+            tx,
+            tenant_id,
+            sync_run_id,
+            "session",
+            &session_id,
+            "missing",
+            now,
+        )
+        .await?;
+        changed_session_ids.push(session_id);
     }
-    Ok(())
+    Ok(changed_session_ids)
 }
 
 async fn prune_conversation_turns_sqlx_tx(
@@ -4299,9 +4354,9 @@ pub(super) fn append_declared_card_to_question_aggregate(
 
 fn resolved_content_card_for_part(
     part: &ConversationPart,
-) -> Option<crate::backend::conversations::cards::ResolvedConversationContentCard> {
-    crate::backend::conversations::cards::resolve_historical_content_card(
-        crate::backend::conversations::cards::ConversationCardProjectionSource {
+) -> Option<crate::backend::projection::conversation_cards::ResolvedConversationContentCard> {
+    crate::backend::projection::conversation_cards::resolve_historical_content_card(
+        crate::backend::projection::conversation_cards::ConversationCardProjectionSource {
             content_card: part.content_card.as_ref(),
             metadata_json: part.metadata_json.as_deref(),
             text: part.text.as_deref(),
@@ -4316,7 +4371,7 @@ fn resolved_content_card_for_part(
 }
 
 fn content_card_type_value(value: &str) -> Option<ConversationSearchCardType> {
-    crate::backend::conversations::cards::is_valid_card_kind(value)
+    crate::backend::projection::conversation_cards::is_valid_card_kind(value)
         .then(|| ConversationSearchCardType::new(value))
 }
 
@@ -5364,7 +5419,16 @@ mod tests {
             .block_on(async {
                 upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &market_adapter)
                     .await?;
-                seed_builtin_conversation_adapters_sqlx(database.pool(), TEST_TENANT_ID).await?;
+                seed_prepared_builtin_conversation_adapters_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    vec![test_conversation_adapter(
+                        "codex",
+                        ConversationAdapterKind::External,
+                        ConversationAdapterTrustState::BuiltIn,
+                    )],
+                )
+                .await?;
                 load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, "codex").await
             })
             .expect("seed built-in conversation adapters")

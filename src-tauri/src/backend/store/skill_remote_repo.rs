@@ -185,6 +185,8 @@ mod tests {
             source_id: "source-a".to_string(),
             name: "Skill A".to_string(),
             kind: AssetKind::Skill,
+            detector_id: "legacy.classifier".to_string(),
+            detector_version: 1,
             format: AssetFormat::Directory,
             relative_path: "skill-a".to_string(),
             absolute_path: "/tmp/source-a/skill-a".to_string(),

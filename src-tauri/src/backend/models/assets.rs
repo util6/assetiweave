@@ -94,6 +94,37 @@ pub enum DeploymentStrategy {
     ConfigMerge,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct TargetProviderId(pub String);
+
+impl TargetProviderId {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TargetPathRule {
+    pub asset_kind: AssetKind,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TargetProfileDescriptor {
+    pub id: String,
+    pub name: String,
+    pub app_kind_compat: Option<AppKind>,
+    pub default_targets: Vec<TargetPathRule>,
+    pub supported_kinds: Vec<AssetKind>,
+    pub deployment_strategy: DeploymentStrategy,
+    pub icon: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeploymentActionType {
@@ -123,6 +154,8 @@ pub struct Source {
     pub repo_root: Option<String>,
     pub scan_root: String,
     pub origin_app_kind: Option<AppKind>,
+    #[serde(default)]
+    pub origin_provider_id: Option<String>,
     pub include_globs: Vec<String>,
     pub exclude_globs: Vec<String>,
     pub default_kind: Option<AssetKind>,
@@ -138,6 +171,10 @@ pub struct Asset {
     pub source_id: String,
     pub name: String,
     pub kind: AssetKind,
+    #[serde(default = "default_asset_detector_id")]
+    pub detector_id: String,
+    #[serde(default = "default_asset_detector_version")]
+    pub detector_version: u32,
     pub format: AssetFormat,
     pub relative_path: String,
     pub absolute_path: String,
@@ -146,6 +183,14 @@ pub struct Asset {
     pub content_hash: Option<String>,
     pub discovered_at: String,
     pub updated_at: String,
+}
+
+fn default_asset_detector_id() -> String {
+    "legacy.classifier".to_string()
+}
+
+fn default_asset_detector_version() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -167,7 +212,10 @@ pub struct ProfileSafety {
 pub struct TargetProfile {
     pub id: String,
     pub name: String,
-    pub app_kind: AppKind,
+    #[serde(default)]
+    pub app_kind: Option<AppKind>,
+    #[serde(default)]
+    pub target_provider_id: String,
     pub target_paths: Vec<String>,
     pub supported_kinds: Vec<AssetKind>,
     pub deployment_strategy: DeploymentStrategy,

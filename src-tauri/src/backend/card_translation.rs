@@ -35,6 +35,15 @@ pub(crate) struct OpencodeTranslationAvailability {
     pub(crate) error: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub(crate) struct ActionAvailability {
+    pub(crate) available: bool,
+    pub(crate) agent_id: Option<String>,
+    pub(crate) installed: bool,
+    pub(crate) version: Option<String>,
+    pub(crate) error: Option<String>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct OpencodeTranslationRequest {
     pub(crate) prompt: String,
@@ -94,14 +103,47 @@ pub(crate) struct ConversationTranslationModelsResult {
     pub(crate) error: Option<String>,
 }
 
+/// Provider-neutral availability check. The action composition layer selects
+/// the configured agent; this function only reports the runtime probe.
+pub(crate) fn check_action_availability(
+    runtime: &dyn AgentExecutionRuntime,
+    action: &crate::backend::ai_execution::composition::ActionId,
+) -> ActionAvailability {
+    let Ok((agent_id, _model)) =
+        crate::backend::ai_execution::composition::resolve_agent_for(action)
+    else {
+        return ActionAvailability {
+            available: false,
+            agent_id: None,
+            installed: false,
+            version: None,
+            error: Some(format!(
+                "unknown or unavailable action: {}",
+                action.as_str()
+            )),
+        };
+    };
+    let availability = runtime.check_availability(&agent_id);
+    ActionAvailability {
+        available: availability.available,
+        agent_id: Some(agent_id.to_string()),
+        installed: availability.installed,
+        version: availability.version,
+        error: availability.error.map(|error| error.to_string()),
+    }
+}
+
 pub(crate) fn check_opencode_translation_availability(
     runtime: &dyn AgentExecutionRuntime,
 ) -> OpencodeTranslationAvailability {
-    let availability = runtime.check_availability(&opencode_agent_id());
+    let availability = check_action_availability(
+        runtime,
+        &crate::backend::ai_execution::composition::ActionId::new("translation"),
+    );
     OpencodeTranslationAvailability {
         available: availability.available,
         version: availability.version,
-        error: availability.error.map(|error| error.to_string()),
+        error: availability.error,
     }
 }
 

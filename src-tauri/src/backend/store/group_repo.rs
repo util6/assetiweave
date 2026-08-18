@@ -453,6 +453,8 @@ mod tests {
             test_asset("frontend-ui", "source-a", "frontend-ui"),
             Asset {
                 kind: AssetKind::Rule,
+                detector_id: "legacy.classifier".to_string(),
+                detector_version: 1,
                 ..test_asset("frontend-rule", "source-a", "frontend-rule")
             },
         ];
@@ -480,6 +482,8 @@ mod tests {
             test_asset("tampermonkey", "source-a", "scripts/tampermonkey"),
             Asset {
                 kind: AssetKind::Rule,
+                detector_id: "legacy.classifier".to_string(),
+                detector_version: 1,
                 ..test_asset("frontend-rule", "source-a", "frontend-rule")
             },
         ];
@@ -587,6 +591,8 @@ mod tests {
             source_id: source_id.to_string(),
             name: id.to_string(),
             kind: AssetKind::Skill,
+            detector_id: "legacy.classifier".to_string(),
+            detector_version: 1,
             format: AssetFormat::Directory,
             relative_path: relative_path.to_string(),
             absolute_path: format!("/tmp/{relative_path}"),

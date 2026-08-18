@@ -963,8 +963,10 @@ fn load_memory_dream_policy(
         .and_then(Value::as_i64)
         .unwrap_or(3)
         .clamp(1, 50);
-    let (agent_id, model) = crate::backend::ai_execution::configured_agent_capability("memory")
-        .map_err(|error| error.to_string())?;
+    let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
+        &crate::backend::ai_execution::composition::ActionId::new("memory.dream"),
+    )
+    .map_err(|error| error.to_string())?;
     let runtime_available = runtime.check_availability(&agent_id).available;
     Ok(MemoryDreamPolicy {
         auto_enabled,
@@ -1422,6 +1424,7 @@ mod tests {
             db: database,
             db_path: db_path.clone(),
             context,
+            runtime: None,
             agent_runtime_manager: runtime_manager,
             agent_runtime,
         };

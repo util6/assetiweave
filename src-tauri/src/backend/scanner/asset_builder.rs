@@ -37,6 +37,8 @@ pub(super) fn build_asset(
     relative_path: &str,
     entry_file: Option<&Path>,
     kind: AssetKind,
+    detector_id: &str,
+    detector_version: u32,
     format: AssetFormat,
     timestamp: &str,
 ) -> AppResult<Asset> {
@@ -71,6 +73,8 @@ pub(super) fn build_asset(
         source_id: source.id.clone(),
         name,
         kind,
+        detector_id: detector_id.to_string(),
+        detector_version,
         format,
         relative_path: relative_path.to_string(),
         absolute_path: asset_path.to_string_lossy().to_string(),

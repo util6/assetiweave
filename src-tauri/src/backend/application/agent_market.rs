@@ -16,6 +16,7 @@ use crate::backend::agent_market::{
     default_runtime_root, is_safe_managed_install_path, AgentLifecycleService, CatalogCache,
     DistributionSelectionContext, DistributionSelector, SystemObservation,
 };
+use crate::backend::extension_kernel::TrustGate;
 
 #[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -424,6 +425,10 @@ impl AppService {
         if self.agent_runtime_manager.agent_in_use(&request.agent_id) {
             conflicts.push("agent_in_use".to_string());
         }
+        let mut warnings = Vec::new();
+        if item.verification.status.needs_confirmation() {
+            warnings.push("experimental_verification".to_string());
+        }
         let preview_token = catalog.preview_token(item, &selected.distribution_id, &request.action);
         let target_path = selected.target_path.as_ref().map(|path| {
             crate::backend::path_utils::display_path_or_original(&path.to_string_lossy())
@@ -444,7 +449,7 @@ impl AppService {
             download_size: selected.download_size,
             runtime_requirements: selected.required_runtime.into_iter().collect(),
             conflicts,
-            warnings: Vec::new(),
+            warnings,
             confirmation_required: true,
             preview_token,
         })

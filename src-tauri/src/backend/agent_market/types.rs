@@ -1,4 +1,4 @@
-use std::{fmt, path::PathBuf};
+use std::{fmt, path::PathBuf, time::Duration};
 
 use schemars::JsonSchema;
 use semver::Version;
@@ -22,6 +22,17 @@ impl AgentMarketProtocol {
             Self::Native => "native",
         }
     }
+}
+
+/// Agent-domain manifest projection. The manifest stays ACP/native-specific,
+/// while its shared process and probe seams are owned by Extension Kernel.
+#[derive(Clone, Debug)]
+pub(crate) struct AgentPackageManifest {
+    pub(crate) identity: crate::backend::extension_kernel::PackageIdentity,
+    pub(crate) compatibility: crate::backend::extension_kernel::Compatibility,
+    pub(crate) invocation: crate::backend::extension_kernel::ProcessInvocation,
+    pub(crate) availability_probe: crate::backend::extension_kernel::ProbeSpec,
+    pub(crate) model_discovery_probe: Option<crate::backend::extension_kernel::ProbeSpec>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -72,6 +83,20 @@ impl Ownership {
 pub(crate) enum VerificationStatus {
     Tested,
     Experimental,
+}
+
+impl crate::backend::extension_kernel::TrustGate for VerificationStatus {
+    fn can_enable(&self) -> bool {
+        true
+    }
+
+    fn needs_confirmation(&self) -> bool {
+        matches!(self, Self::Experimental)
+    }
+
+    fn integrity_changed(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -507,6 +532,92 @@ pub(crate) struct AgentInstallation {
 }
 
 impl AgentInstallation {
+    pub(crate) fn package_identity(
+        &self,
+    ) -> Result<crate::backend::extension_kernel::PackageIdentity, String> {
+        let version = Version::parse(&self.agent_version).map_err(|error| {
+            format!(
+                "agent {} has invalid package version: {error}",
+                self.agent_id
+            )
+        })?;
+        Ok(crate::backend::extension_kernel::PackageIdentity {
+            kind: crate::backend::extension_kernel::PackageKind::Agent,
+            package_id: self.agent_id.clone(),
+            version,
+        })
+    }
+
+    pub(crate) fn process_invocation(&self) -> crate::backend::extension_kernel::ProcessInvocation {
+        let env = self
+            .definition_json
+            .get("env")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| {
+                Some(crate::backend::extension_kernel::EnvEntry {
+                    key: entry.get("name")?.as_str()?.to_string(),
+                    value: entry.get("value")?.as_str()?.to_string(),
+                })
+            })
+            .collect();
+        crate::backend::extension_kernel::ProcessInvocation {
+            kind: crate::backend::extension_kernel::RuntimeProgramKind::Executable,
+            entry: self.resolved_program.to_string_lossy().to_string(),
+            args: self.args.clone(),
+            env,
+            working_dir: self.install_dir.clone(),
+            version_req: Some(format!("={}", self.agent_version)),
+            immutable_install_dir: self.install_dir.clone().unwrap_or_else(|| {
+                self.resolved_program
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .to_path_buf()
+            }),
+        }
+    }
+
+    pub(crate) fn package_manifest(&self) -> Result<AgentPackageManifest, String> {
+        let identity = self.package_identity()?;
+        let invocation = self.process_invocation();
+        let availability_probe = crate::backend::extension_kernel::ProbeSpec {
+            program: Some(invocation.entry.clone()),
+            args: vec!["--version".to_string()],
+            env: invocation.env.clone(),
+            timeout: Duration::from_secs(8),
+            output_limit: 1024 * 1024,
+            kind: crate::backend::extension_kernel::ProbeKind::Availability,
+        };
+        let model_discovery_probe = self
+            .definition_json
+            .get("model_discovery_args")
+            .or_else(|| self.definition_json.get("modelDiscoveryArgs"))
+            .and_then(serde_json::Value::as_array)
+            .map(|args| crate::backend::extension_kernel::ProbeSpec {
+                program: Some(invocation.entry.clone()),
+                args: args
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .collect(),
+                env: invocation.env.clone(),
+                timeout: Duration::from_secs(8),
+                output_limit: 1024 * 1024,
+                kind: crate::backend::extension_kernel::ProbeKind::ModelDiscovery,
+            });
+        Ok(AgentPackageManifest {
+            identity,
+            compatibility: crate::backend::extension_kernel::Compatibility {
+                protocol_version: 1,
+                core_requirement: None,
+            },
+            invocation,
+            availability_probe,
+            model_discovery_probe,
+        })
+    }
+
     pub(crate) fn installed(&self) -> bool {
         true
     }
@@ -952,6 +1063,17 @@ mod tests {
     }
 
     #[test]
+    fn verification_status_uses_the_shared_trust_gate_without_collapsing_domain_states() {
+        use crate::backend::extension_kernel::TrustGate;
+
+        assert!(VerificationStatus::Tested.can_enable());
+        assert!(!VerificationStatus::Tested.needs_confirmation());
+        assert!(VerificationStatus::Experimental.can_enable());
+        assert!(VerificationStatus::Experimental.needs_confirmation());
+        assert!(!VerificationStatus::Experimental.integrity_changed());
+    }
+
+    #[test]
     fn catalog_rejects_floating_versions_and_unsafe_paths() {
         let mut item = item();
         item.version = "latest".to_string();
@@ -1016,5 +1138,62 @@ mod tests {
         assert!(!installation.execution_ready());
         installation.protocol_status = ProtocolStatus::Ready;
         assert!(installation.execution_ready());
+    }
+
+    #[test]
+    fn package_manifest_projects_agent_invocation_and_probe_contracts() {
+        let installation = AgentInstallation {
+            tenant_id: "default".to_string(),
+            agent_id: "agent".to_string(),
+            installation_id: "installation".to_string(),
+            display_name: "Agent".to_string(),
+            catalog_item_version: "1.2.3".to_string(),
+            agent_version: "1.2.3".to_string(),
+            protocol: AgentMarketProtocol::Acp,
+            distribution_id: "binary".to_string(),
+            distribution_type: DistributionType::Binary,
+            ownership: Ownership::Managed,
+            install_dir: Some(PathBuf::from("/tmp/agent-install")),
+            resolved_program: PathBuf::from("/tmp/agent-install/bin/agent"),
+            args: vec!["acp".to_string()],
+            definition_json: serde_json::json!({
+                "env": [{ "name": "TOKEN", "value": "fixture" }],
+                "modelDiscoveryArgs": ["--models"]
+            }),
+            integrity_json: Some(serde_json::json!({ "sha256": "fixture" })),
+            source_registry: "fixture".to_string(),
+            catalog_version: "catalog-v1".to_string(),
+            enabled: true,
+            installation_status: InstallationStatus::Ready,
+            runtime_status: RuntimeStatus::Ready,
+            runtime_error_code: None,
+            runtime_error_message: None,
+            runtime_checked_at: None,
+            protocol_status: ProtocolStatus::Ready,
+            protocol_error_code: None,
+            protocol_error_message: None,
+            protocol_checked_at: None,
+            model_status: None,
+            model_error_code: None,
+            model_checked_at: None,
+            installed_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+
+        let manifest = installation
+            .package_manifest()
+            .expect("agent package manifest");
+        assert_eq!(manifest.identity.package_id, "agent");
+        assert_eq!(manifest.invocation.args, vec!["acp"]);
+        assert_eq!(manifest.invocation.env[0].key, "TOKEN");
+        assert_eq!(manifest.availability_probe.args, vec!["--version"]);
+        assert_eq!(
+            manifest
+                .model_discovery_probe
+                .as_ref()
+                .expect("model probe")
+                .args,
+            vec!["--models"]
+        );
     }
 }

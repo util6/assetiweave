@@ -28,6 +28,10 @@ impl AppService {
             )
             .await?;
             crate::backend::store::seed_tenant_defaults_sqlx(&pool, &tenant.id).await?;
+            crate::backend::application::bootstrap::materialize_and_seed_builtin_adapters(
+                &pool, &tenant.id,
+            )
+            .await?;
             if set_active {
                 crate::backend::store::set_active_tenant_sqlx(&pool, &principal_id, &tenant.id)
                     .await?;

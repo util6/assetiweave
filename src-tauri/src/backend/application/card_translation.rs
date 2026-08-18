@@ -1,6 +1,16 @@
 use super::prelude::*;
 
 impl AppService {
+    pub(crate) fn check_action_availability(
+        &self,
+        action: &crate::backend::ai_execution::composition::ActionId,
+    ) -> AppResult<crate::backend::card_translation::ActionAvailability> {
+        Ok(crate::backend::card_translation::check_action_availability(
+            self.agent_runtime()?.as_ref(),
+            action,
+        ))
+    }
+
     pub(crate) fn check_opencode_translation_availability(
         &self,
     ) -> AppResult<crate::backend::card_translation::OpencodeTranslationAvailability> {
