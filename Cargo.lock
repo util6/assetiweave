@@ -129,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "assetiweave"
-version = "0.5.3"
+version = "0.6.0"
 dependencies = [
  "agent-client-protocol",
  "base64 0.22.1",

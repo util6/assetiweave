@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.6.0
+
+- 架构：接入 Agent 插件市场与 ACP 动态运行时体系，支持 ACP Agent 执行运行时与 Antigravity Native Direct-CLI 运行时，扩展卡片翻译与 Memory 服务的 Agent 动态能力分派。
+- 架构：落地前端统一 Skeleton 骨架渲染架构与通用骨架边界，引入骨架驱动集合 `VirtualizedCollection`、会话回合级虚拟化与渲染调度器，显著提升长列表性能与滚动平滑度。
+- 会话适配器：重构 ZCode 会话适配器为 Node.js 实现并升级至 0.5.0；Codex 适配器发布 1.5.13 支持任务列表解析与代码块识别；完善 Antigravity 会话解析与文件变更差异对比。
+- 记忆与检索：完善 `assetiweave-memory` 渐进式检索、8 位短 Session ID 定向与近期增量优先读取能力。
+- 视觉与交互：引入极光果冻视觉主题，统一 APP 与 Agent 图标体系为 Mac Dock 圆角样式并支持自动扫描注册；修复 DialogFrame 嵌套弹窗截断与遮罩层级问题。
+- 规范：补充前端统一 Skeleton 架构与滚动渲染稳定性规范、Agent 插件市场与动态运行时架构设计规范。
+
 ## v0.5.3
 
 - Move bundled adapters, catalog metadata and system Skills into the canonical `builtin-assets/` tree.

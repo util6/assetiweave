@@ -17,7 +17,7 @@ Local-first AI asset catalog and mount manager.
 </div>
 
 > [!IMPORTANT]
-> AssetIWeave `v0.5.3` 当前覆盖 **Skill 资产管理、Conversation Session 浏览、适配器运行时管理与 CLI 自动化**。桌面端与 CLI 通过 Rust Engine 共用业务规则；更新包使用 Tauri updater 签名验证，安装包仍可能显示额外的操作系统信任提示。
+> AssetIWeave `v0.6.0` 当前覆盖 **Skill 资产管理、Conversation Session 浏览、适配器运行时管理与 CLI 自动化**。桌面端与 CLI 通过 Rust Engine 共用业务规则；更新包使用 Tauri updater 签名验证，安装包仍可能显示额外的操作系统信任提示。
 
 ## 为什么需要 AssetIWeave
 
@@ -138,7 +138,7 @@ source repo asset
 
 ## 安装
 
-前往 [GitHub Releases](https://github.com/util6/assetiweave/releases) 下载 `v0.5.3` 或更新版本的对应平台安装包。
+前往 [GitHub Releases](https://github.com/util6/assetiweave/releases) 下载 `v0.6.0` 或更新版本的对应平台安装包。
 
 | 平台 | 发布产物 |
 | --- | --- |
