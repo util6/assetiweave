@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "updated_at": "2026-08-17T00:00:00Z",
+  "updated_at": "2026-08-18T00:00:00Z",
   "packages": [
     {
       "package_id": "io.github.util6.codex-session",
