@@ -1,8 +1,9 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const srcRoot = resolve(new URL("..", import.meta.url).pathname);
+const srcRoot = fileURLToPath(new URL("..", import.meta.url));
 const scannedRoots = ["components", "pages", "layouts"].map((dir) => resolve(srcRoot, dir));
 const scannedExtensions = new Set([".ts", ".tsx"]);
 const ignoredFilePatterns = [/\.test\./, /\.spec\./];
