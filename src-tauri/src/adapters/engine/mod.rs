@@ -6,6 +6,7 @@ pub(crate) mod policy;
 pub(crate) mod protocol;
 pub(crate) mod registry;
 pub(crate) mod runtime;
+pub(crate) mod surface_mapping;
 mod transport;
 
 pub(crate) use transport::run_stdio;

@@ -20,7 +20,7 @@ pub(crate) use harvester::run_conversation_harvester_for_adapter_source;
 pub(crate) use official::ensure_official_conversation_adapters;
 pub(crate) use package::{
     validate_conversation_adapter_package_dir, ConversationAdapterPackageRuntimeProtocol,
-    ConversationAdapterPackageValidationResult,
+    ConversationAdapterPackageSystem, ConversationAdapterPackageValidationResult,
 };
 #[allow(unused_imports)]
 pub(crate) use readers::{
@@ -29,8 +29,8 @@ pub(crate) use readers::{
 };
 #[allow(unused_imports)]
 pub(crate) use types::{
-    ConversationAdapterManifest, ConversationAdapterRuntimeKind, ConversationAdapterRuntimeStatus,
-    ConversationSessionDescriptor, ExternalAdapterRegisterParams, ExternalAdapterRunResult,
-    ExternalAdapterScaffoldParams, ExternalAdapterScaffoldResult, ExternalAdapterTryRunParams,
-    ExternalAdapterValidateParams, ExternalAdapterValidationResult,
+    ConversationAdapterCatalog, ConversationAdapterManifest, ConversationAdapterRuntimeKind,
+    ConversationAdapterRuntimeStatus, ConversationSessionDescriptor, ExternalAdapterRegisterParams,
+    ExternalAdapterRunResult, ExternalAdapterScaffoldParams, ExternalAdapterScaffoldResult,
+    ExternalAdapterTryRunParams, ExternalAdapterValidateParams, ExternalAdapterValidationResult,
 };

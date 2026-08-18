@@ -1,0 +1,19 @@
+{
+  "id": "zcode",
+  "name": "ZCode",
+  "app_kind_compat": "zcode",
+  "default_targets": [
+    {
+      "asset_kind": "skill",
+      "path": "~/.zcode/skills"
+    }
+  ],
+  "supported_kinds": [
+    "skill",
+    "prompt",
+    "rule",
+    "custom"
+  ],
+  "deployment_strategy": "symlink_to_source",
+  "icon": null
+}

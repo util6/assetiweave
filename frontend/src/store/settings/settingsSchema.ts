@@ -11,7 +11,12 @@ export type ConversationTranslationTargetLanguage = string;
 export type ConversationTranslationProvider = "cli" | "google" | "apple";
 export type AiRuntimeCli = "opencode" | "gemini";
 export type ConversationTranslationCli = AiRuntimeCli;
-export type AgentCapabilityServiceId = "cardTranslation" | "memory" | "promptOptimization";
+export type AgentCapabilityServiceId =
+  | "cardTranslation"
+  | "memory"
+  | "memory.extraction"
+  | "memory.dream"
+  | "promptOptimization";
 
 export type AgentCapabilityAssignments = Record<AgentCapabilityServiceId, string>;
 
@@ -234,6 +239,8 @@ export const defaultSettings: AppSettings = {
   agentCapabilityAssignments: {
     cardTranslation: "opencode",
     memory: "opencode",
+    "memory.extraction": "opencode",
+    "memory.dream": "opencode",
     promptOptimization: "opencode",
   },
   agentModels: {},
@@ -362,9 +369,15 @@ function normalizeAgentCapabilityAssignments(
 ): AgentCapabilityAssignments {
   const stored = isRecord(value) ? value : {};
   const fallback = legacyCli;
+  const memory = normalizeAgentCapabilityAgentId(stored.memory, fallback);
   return {
     cardTranslation: normalizeAgentCapabilityAgentId(stored.cardTranslation, fallback),
-    memory: normalizeAgentCapabilityAgentId(stored.memory, fallback),
+    memory,
+    "memory.extraction": normalizeAgentCapabilityAgentId(
+      stored["memory.extraction"],
+      memory,
+    ),
+    "memory.dream": normalizeAgentCapabilityAgentId(stored["memory.dream"], memory),
     promptOptimization: normalizeAgentCapabilityAgentId(stored.promptOptimization, fallback),
   };
 }

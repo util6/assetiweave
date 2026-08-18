@@ -40,17 +40,18 @@ pub(crate) use conversation_repo::{
     load_conversation_question_detail_sqlx, load_conversation_session_detail_sqlx,
     load_conversation_session_versions_sqlx, load_conversation_source_sqlx,
     load_recent_conversation_sync_deltas_sqlx, mark_conversation_payload_policy_applied_sqlx,
-    merge_conversation_questions_sqlx, persist_conversation_session_observations_sqlx,
+    merge_conversation_questions_sqlx, migrate_legacy_conversation_adapter_hashes_sqlx,
+    normalize_conversation_paths_sqlx, persist_conversation_session_observations_sqlx,
     resolve_conversation_part_id_prefix_sqlx, resolve_conversation_question_id_prefix_sqlx,
     resolve_conversation_session_id_prefix_sqlx, resolve_conversation_turn_id_prefix_sqlx,
-    search_conversation_cards_sqlx, split_conversation_question_sqlx,
-    update_conversation_part_translation_sqlx, upsert_conversation_adapter_catalog_release_sqlx,
-    upsert_conversation_adapter_package_sqlx, upsert_conversation_adapter_sqlx,
-    upsert_conversation_source_sqlx, ConversationImportResult,
+    search_conversation_cards_sqlx, seed_prepared_builtin_conversation_adapters_sqlx,
+    split_conversation_question_sqlx, update_conversation_part_translation_sqlx,
+    upsert_conversation_adapter_catalog_release_sqlx, upsert_conversation_adapter_package_sqlx,
+    upsert_conversation_adapter_sqlx, upsert_conversation_source_sqlx, ConversationImportResult,
 };
 pub(crate) use database::{
-    count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx,
-    seed_tenant_defaults_sqlx, Database,
+    build_runtime, count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx,
+    open_migrated_pool, seed_defaults_sqlx, seed_tenant_defaults_sqlx, Database,
 };
 pub(crate) use deployment_repo::{
     count_deployment_state_by_profile_sqlx, delete_orphan_deployment_state_sqlx,
@@ -89,8 +90,8 @@ pub(crate) use profile_repo::{
 };
 pub(crate) use search_index_repo::{
     bump_conversation_search_source_revision_sqlx_tx,
-    complete_conversation_search_index_rebuild_sqlx, fail_conversation_search_index_rebuild_sqlx,
-    load_conversation_search_index_documents_sqlx,
+    complete_conversation_search_index_rebuild_with_offset_sqlx,
+    fail_conversation_search_index_rebuild_sqlx, load_conversation_search_index_documents_sqlx,
     load_or_create_conversation_search_index_state_sqlx,
     mark_conversation_search_index_unusable_sqlx,
     try_acquire_conversation_search_writer_lease_sqlx, ConversationSearchIndexState,

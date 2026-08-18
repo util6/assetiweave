@@ -1,0 +1,19 @@
+{
+  "id": "cursor",
+  "name": "Cursor",
+  "app_kind_compat": "cursor",
+  "default_targets": [
+    {
+      "asset_kind": "skill",
+      "path": "@config/Cursor/skills"
+    }
+  ],
+  "supported_kinds": [
+    "skill",
+    "prompt",
+    "rule",
+    "custom"
+  ],
+  "deployment_strategy": "symlink_to_source",
+  "icon": null
+}

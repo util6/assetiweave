@@ -18,7 +18,12 @@ use crate::backend::{
         ConversationSyncMode, ConversationSyncParams, MemoryTaskStartParams,
     },
     dto::{AppResult, CatalogAsset},
+    extension_kernel::{
+        LifecycleOp, LifecycleRequestKey, LifecycleReservationOutcome, LifecycleTaskCoordinator,
+        PackageIdentity, PackageKind, ResourceKey,
+    },
     models::{MemoryDreamTrigger, MemoryRunKind, MemoryScope},
+    runtime::tasks::{TaskFn, TaskRuntime, TaskSnapshot},
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -288,8 +293,11 @@ struct AgentMarketRefreshTaskEntry {
     terminal_at: Option<Instant>,
 }
 
-#[derive(Default)]
 pub(crate) struct BackgroundTaskRegistry {
+    /// Compatibility projections remain here while migrated task execution is
+    /// owned by the backend TaskRuntime.
+    task_runtime: Option<TaskRuntime>,
+    lifecycle: LifecycleTaskCoordinator,
     conversation_sync: Mutex<HashMap<ConversationSyncScope, ConversationSyncTaskSnapshot>>,
     conversation_script_install: Mutex<Option<ConversationScriptInstallTaskSnapshot>>,
     skill_backup: Mutex<Option<SkillBackupTaskSnapshot>>,
@@ -300,7 +308,45 @@ pub(crate) struct BackgroundTaskRegistry {
     agent_market_refresh_tasks: Mutex<HashMap<String, AgentMarketRefreshTaskEntry>>,
 }
 
+impl Default for BackgroundTaskRegistry {
+    fn default() -> Self {
+        Self::with_task_runtime(TaskRuntime::new())
+    }
+}
+
 impl BackgroundTaskRegistry {
+    pub(crate) fn with_task_runtime(task_runtime: TaskRuntime) -> Self {
+        Self {
+            lifecycle: LifecycleTaskCoordinator::new(task_runtime.clone()),
+            task_runtime: Some(task_runtime),
+            conversation_sync: Mutex::new(HashMap::new()),
+            conversation_script_install: Mutex::new(None),
+            skill_backup: Mutex::new(None),
+            conversation_search_index: Mutex::new(None),
+            memory_tasks: Mutex::new(HashMap::new()),
+            ai_executions: Mutex::new(HashMap::new()),
+            agent_lifecycle_tasks: Mutex::new(HashMap::new()),
+            agent_market_refresh_tasks: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub(crate) fn task_runtime(&self) -> Option<TaskRuntime> {
+        self.task_runtime.clone()
+    }
+
+    /// Start work through the same kernel coordinator used by both extension
+    /// domains. The domain projection remains responsible for its rich UI
+    /// snapshot, while TaskRuntime owns execution and shutdown accounting.
+    pub(crate) fn spawn_extension_lifecycle(
+        &self,
+        task_id: &str,
+        task: TaskFn,
+    ) -> AppResult<TaskSnapshot> {
+        self.lifecycle
+            .spawn(task_id, Value::Null, task)
+            .map_err(|error| error.to_string())
+    }
+
     pub(crate) fn begin_agent_market_refresh(
         &self,
     ) -> AppResult<(AgentMarketRefreshTaskSnapshot, bool)> {
@@ -404,15 +450,12 @@ impl BackgroundTaskRegistry {
             .lock()
             .map_err(|error| error.to_string())?;
         prune_agent_lifecycle_tasks(&mut tasks);
-        if let Some(entry) = tasks.values().find(|entry| {
-            entry.snapshot.agent_id == agent_id
-                && matches!(
-                    entry.snapshot.state,
-                    LifecycleTaskState::Queued | LifecycleTaskState::Running
-                )
-        }) {
-            return Ok((entry.snapshot.clone(), entry.cancellation.clone(), false));
-        }
+        let lifecycle_key = extension_lifecycle_key(
+            PackageKind::Agent,
+            &agent_id,
+            agent_version.as_deref(),
+            &action,
+        )?;
         let now = Utc::now().to_rfc3339();
         let snapshot = AgentLifecycleTaskSnapshot {
             id: Uuid::new_v4().to_string(),
@@ -439,6 +482,36 @@ impl BackgroundTaskRegistry {
             error: None,
             warnings: Vec::new(),
         };
+        match self
+            .lifecycle
+            .reserve(snapshot.id.clone(), lifecycle_key)
+            .map_err(|error| error.to_string())?
+        {
+            LifecycleReservationOutcome::Started => {}
+            LifecycleReservationOutcome::Existing(existing_id) => {
+                let existing = tasks.get(&existing_id).ok_or_else(|| {
+                    format!("agent lifecycle task projection not found: {existing_id}")
+                })?;
+                return Ok((
+                    existing.snapshot.clone(),
+                    existing.cancellation.clone(),
+                    false,
+                ));
+            }
+        }
+        if tasks.values().any(|entry| {
+            entry.snapshot.agent_id == snapshot.agent_id
+                && matches!(
+                    entry.snapshot.state,
+                    LifecycleTaskState::Queued | LifecycleTaskState::Running
+                )
+        }) {
+            self.lifecycle.release(&snapshot.id);
+            return Err(format!(
+                "agent lifecycle task already running for {}",
+                snapshot.agent_id
+            ));
+        }
         let cancellation = Arc::new(AtomicBool::new(false));
         tasks.insert(
             snapshot.id.clone(),
@@ -514,7 +587,10 @@ impl BackgroundTaskRegistry {
                 }
             }
         }
-        Ok(entry.snapshot.clone())
+        let snapshot = entry.snapshot.clone();
+        drop(tasks);
+        self.lifecycle.finish_projection(task_id);
+        Ok(snapshot)
     }
 
     pub(crate) fn agent_lifecycle_snapshot(
@@ -545,6 +621,7 @@ impl BackgroundTaskRegistry {
         &self,
         task_id: &str,
     ) -> AppResult<AgentLifecycleTaskSnapshot> {
+        let _ = self.lifecycle.cancel(task_id);
         let mut tasks = self
             .agent_lifecycle_tasks
             .lock()
@@ -772,12 +849,6 @@ impl BackgroundTaskRegistry {
             .conversation_script_install
             .lock()
             .map_err(|error| error.to_string())?;
-        if let Some(snapshot) = current
-            .as_ref()
-            .filter(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
-        {
-            return Ok((snapshot.clone(), false));
-        }
 
         let item_id = params.item_id.trim().to_string();
         if item_id.is_empty() {
@@ -799,6 +870,37 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
+        match self
+            .lifecycle
+            .reserve(
+                snapshot.id.clone(),
+                extension_lifecycle_key(
+                    PackageKind::ConversationAdapter,
+                    &snapshot.package_id,
+                    snapshot.version.as_deref(),
+                    "install",
+                )?,
+            )
+            .map_err(|error| error.to_string())?
+        {
+            LifecycleReservationOutcome::Started => {}
+            LifecycleReservationOutcome::Existing(existing_id) => {
+                let existing = current
+                    .as_ref()
+                    .filter(|current| current.id == existing_id)
+                    .ok_or_else(|| {
+                        format!("conversation lifecycle task projection not found: {existing_id}")
+                    })?;
+                return Ok((existing.clone(), false));
+            }
+        }
+        if current
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
+        {
+            self.lifecycle.release(&snapshot.id);
+            return Err("conversation lifecycle task already running".to_string());
+        }
         *current = Some(snapshot.clone());
         Ok((snapshot, true))
     }
@@ -827,12 +929,6 @@ impl BackgroundTaskRegistry {
             .conversation_script_install
             .lock()
             .map_err(|error| error.to_string())?;
-        if let Some(snapshot) = current
-            .as_ref()
-            .filter(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
-        {
-            return Ok((snapshot.clone(), false));
-        }
 
         let package_id = params.package_id.trim().to_string();
         if package_id.is_empty() {
@@ -854,6 +950,37 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
+        match self
+            .lifecycle
+            .reserve(
+                snapshot.id.clone(),
+                extension_lifecycle_key(
+                    PackageKind::ConversationAdapter,
+                    &snapshot.package_id,
+                    snapshot.version.as_deref(),
+                    action,
+                )?,
+            )
+            .map_err(|error| error.to_string())?
+        {
+            LifecycleReservationOutcome::Started => {}
+            LifecycleReservationOutcome::Existing(existing_id) => {
+                let existing = current
+                    .as_ref()
+                    .filter(|current| current.id == existing_id)
+                    .ok_or_else(|| {
+                        format!("conversation lifecycle task projection not found: {existing_id}")
+                    })?;
+                return Ok((existing.clone(), false));
+            }
+        }
+        if current
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
+        {
+            self.lifecycle.release(&snapshot.id);
+            return Err("conversation lifecycle task already running".to_string());
+        }
         *current = Some(snapshot.clone());
         Ok((snapshot, true))
     }
@@ -866,12 +993,6 @@ impl BackgroundTaskRegistry {
             .conversation_script_install
             .lock()
             .map_err(|error| error.to_string())?;
-        if let Some(snapshot) = current
-            .as_ref()
-            .filter(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
-        {
-            return Ok((snapshot.clone(), false));
-        }
         let package_id = params.package_id.trim().to_string();
         if package_id.is_empty() {
             return Err("conversation adapter package uninstall requires a package id".to_string());
@@ -891,6 +1012,37 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
+        match self
+            .lifecycle
+            .reserve(
+                snapshot.id.clone(),
+                extension_lifecycle_key(
+                    PackageKind::ConversationAdapter,
+                    &snapshot.package_id,
+                    snapshot.version.as_deref(),
+                    "uninstall",
+                )?,
+            )
+            .map_err(|error| error.to_string())?
+        {
+            LifecycleReservationOutcome::Started => {}
+            LifecycleReservationOutcome::Existing(existing_id) => {
+                let existing = current
+                    .as_ref()
+                    .filter(|current| current.id == existing_id)
+                    .ok_or_else(|| {
+                        format!("conversation lifecycle task projection not found: {existing_id}")
+                    })?;
+                return Ok((existing.clone(), false));
+            }
+        }
+        if current
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
+        {
+            self.lifecycle.release(&snapshot.id);
+            return Err("conversation lifecycle task already running".to_string());
+        }
         *current = Some(snapshot.clone());
         Ok((snapshot, true))
     }
@@ -928,7 +1080,10 @@ impl BackgroundTaskRegistry {
                 snapshot.error = Some(error);
             }
         }
-        Ok(snapshot.clone())
+        let snapshot = snapshot.clone();
+        drop(current);
+        self.lifecycle.finish_projection(task_id);
+        Ok(snapshot)
     }
 
     pub(crate) fn conversation_script_install_snapshot(
@@ -1547,6 +1702,37 @@ fn prune_agent_lifecycle_tasks(tasks: &mut HashMap<String, AgentLifecycleTaskEnt
     }
 }
 
+fn extension_lifecycle_key(
+    kind: PackageKind,
+    package_id: &str,
+    version: Option<&str>,
+    action: &str,
+) -> AppResult<LifecycleRequestKey> {
+    let version = version
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("0.0.0");
+    let version = semver::Version::parse(version)
+        .map_err(|error| format!("invalid extension package version {version}: {error}"))?;
+    let operation = match action {
+        "install" | "reinstall" => LifecycleOp::Install,
+        "update" | "upgrade" => LifecycleOp::Upgrade,
+        "uninstall" | "remove" => LifecycleOp::Remove,
+        "enable" => LifecycleOp::Enable,
+        "disable" => LifecycleOp::Disable,
+        "probe" | "check" => LifecycleOp::Probe,
+        other => return Err(format!("unsupported extension lifecycle action: {other}")),
+    };
+    Ok(LifecycleRequestKey {
+        resource: ResourceKey::new(PackageIdentity {
+            kind,
+            package_id: package_id.to_string(),
+            version,
+        }),
+        operation,
+    })
+}
+
 fn prune_agent_market_refresh_tasks(tasks: &mut HashMap<String, AgentMarketRefreshTaskEntry>) {
     let now = Instant::now();
     tasks.retain(|_, entry| {
@@ -1658,6 +1844,121 @@ mod tests {
             .unwrap();
         assert_eq!(finished.status, BackgroundTaskStatus::Completed);
         assert!(!registry.has_running_tasks());
+    }
+
+    #[test]
+    fn production_registry_can_expose_the_shared_task_runtime() {
+        let runtime = TaskRuntime::new();
+        let registry = BackgroundTaskRegistry::with_task_runtime(runtime.clone());
+
+        assert!(registry.task_runtime().is_some());
+        runtime.shutdown_with_grace(Duration::ZERO);
+    }
+
+    #[test]
+    fn conversation_and_agent_lifecycle_use_one_kernel_task_runtime() {
+        let runtime = TaskRuntime::new();
+        let registry = BackgroundTaskRegistry::with_task_runtime(runtime.clone());
+        let (agent, _, agent_should_start) = registry
+            .begin_agent_lifecycle(
+                "shared-kernel-agent".to_string(),
+                "install".to_string(),
+                None,
+                Some("1.0.0".to_string()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let (adapter, adapter_should_start) = registry
+            .begin_conversation_adapter_package_install(&ConversationAdapterPackageInstallParams {
+                catalog_url: None,
+                package_id: "shared-kernel-agent".to_string(),
+                version: Some("1.0.0".to_string()),
+                dry_run: false,
+                yes: true,
+            })
+            .unwrap();
+
+        assert!(agent_should_start);
+        assert!(adapter_should_start);
+        assert_ne!(agent.id, adapter.id);
+
+        let (agent_release, agent_wait) = std::sync::mpsc::channel();
+        let (adapter_release, adapter_wait) = std::sync::mpsc::channel();
+        let agent_task = registry
+            .spawn_extension_lifecycle(
+                &agent.id,
+                Box::new(move |_| {
+                    agent_wait
+                        .recv_timeout(Duration::from_secs(1))
+                        .map_err(|error| {
+                            crate::backend::runtime::AppError::Legacy(error.to_string())
+                        })?;
+                    Ok(serde_json::json!({ "domain": "agent" }))
+                }),
+            )
+            .unwrap();
+        let adapter_task = registry
+            .spawn_extension_lifecycle(
+                &adapter.id,
+                Box::new(move |_| {
+                    adapter_wait
+                        .recv_timeout(Duration::from_secs(1))
+                        .map_err(|error| {
+                            crate::backend::runtime::AppError::Legacy(error.to_string())
+                        })?;
+                    Ok(serde_json::json!({ "domain": "conversation" }))
+                }),
+            )
+            .unwrap();
+
+        assert_eq!(
+            agent_task.kind,
+            crate::backend::runtime::tasks::TaskKind::ExtensionLifecycle
+        );
+        assert_eq!(
+            adapter_task.kind,
+            crate::backend::runtime::tasks::TaskKind::ExtensionLifecycle
+        );
+        assert_eq!(
+            runtime
+                .list(crate::backend::runtime::tasks::TaskFilter {
+                    kind: Some(crate::backend::runtime::tasks::TaskKind::ExtensionLifecycle),
+                    active_only: true,
+                })
+                .len(),
+            2
+        );
+
+        agent_release.send(()).unwrap();
+        adapter_release.send(()).unwrap();
+        for _ in 0..100 {
+            if runtime
+                .list(crate::backend::runtime::tasks::TaskFilter {
+                    kind: Some(crate::backend::runtime::tasks::TaskKind::ExtensionLifecycle),
+                    active_only: true,
+                })
+                .is_empty()
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(runtime
+            .list(crate::backend::runtime::tasks::TaskFilter {
+                kind: Some(crate::backend::runtime::tasks::TaskKind::ExtensionLifecycle),
+                active_only: true,
+            })
+            .is_empty());
+
+        registry
+            .finish_agent_lifecycle(&agent.id, Ok((None, Vec::new())))
+            .unwrap();
+        registry
+            .finish_conversation_script_install(&adapter.id, Ok(serde_json::json!({})))
+            .unwrap();
+        runtime.shutdown_with_grace(Duration::ZERO);
     }
 
     #[test]
@@ -1811,7 +2112,7 @@ mod tests {
             .expect("start install task");
         let (duplicate, should_start_duplicate) = registry
             .begin_conversation_script_install(&ConversationScriptInstallParams {
-                item_id: "opencode-session".to_string(),
+                item_id: "codex-session".to_string(),
                 ..params
             })
             .expect("reuse running install task");
@@ -2149,10 +2450,10 @@ mod tests {
         let (duplicate, duplicate_cancellation, duplicate_should_start) = registry
             .begin_agent_lifecycle(
                 "fixture-agent".to_string(),
-                "update".to_string(),
-                None,
-                None,
-                None,
+                "install".to_string(),
+                Some("catalog-v1".to_string()),
+                Some("1.0.0".to_string()),
+                Some("fixture-system".to_string()),
                 None,
                 None,
             )
@@ -2185,6 +2486,35 @@ mod tests {
         assert_eq!(terminal.phase, LifecycleTaskPhase::Cancelled);
         assert!(!terminal.cancellable);
         assert!(!registry.has_running_tasks());
+    }
+
+    #[test]
+    fn lifecycle_projection_does_not_return_another_operation_snapshot() {
+        let registry = BackgroundTaskRegistry::default();
+        registry
+            .begin_agent_lifecycle(
+                "fixture-agent".to_string(),
+                "install".to_string(),
+                None,
+                Some("1.0.0".to_string()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        let error = registry
+            .begin_agent_lifecycle(
+                "fixture-agent".to_string(),
+                "update".to_string(),
+                None,
+                Some("2.0.0".to_string()),
+                None,
+                None,
+                None,
+            )
+            .expect_err("a different active operation must not reuse the install task");
+        assert!(error.contains("already running"));
     }
 
     #[test]

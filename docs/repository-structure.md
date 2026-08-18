@@ -35,6 +35,7 @@ Go CLI
 - `AppService` 位于 `src-tauri/src/backend/application/`，是桌面命令与 Engine 共用的应用服务入口。
 - 文件扫描、挂载判断、计划和执行规则以 Rust 实现为准。
 - Go CLI 负责命令体验、插件、策略接入和自更新，不复制 Rust 业务逻辑。
+- `docs/generated/surface-matrix.md` 与 `src-tauri/src/adapters/engine/surface_mapping.rs` 是由 `pnpm gen:surface-matrix` 生成的接口覆盖物，不应手工编辑。
 - `frontend/src/mock/` 只用于浏览器预览和后端不可用时的兜底，不是另一套数据源。
 
 ## 2. 仓库根目录

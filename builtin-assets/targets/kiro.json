@@ -1,0 +1,19 @@
+{
+  "id": "kiro",
+  "name": "Kiro",
+  "app_kind_compat": "kiro",
+  "default_targets": [
+    {
+      "asset_kind": "skill",
+      "path": "~/.kiro/skills"
+    }
+  ],
+  "supported_kinds": [
+    "skill",
+    "prompt",
+    "rule",
+    "custom"
+  ],
+  "deployment_strategy": "symlink_to_source",
+  "icon": null
+}

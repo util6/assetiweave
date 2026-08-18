@@ -154,6 +154,7 @@ fn source_from_input(source: SourceInput) -> Source {
         repo_root: source.repo_root,
         scan_root: source.scan_root.unwrap_or_default(),
         origin_app_kind: source.origin_app_kind,
+        origin_provider_id: source.origin_provider_id,
         include_globs: source.include_globs,
         exclude_globs: source.exclude_globs,
         default_kind: source.default_kind,

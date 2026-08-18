@@ -2,15 +2,46 @@ use super::prelude::*;
 
 impl AppService {
     pub(crate) fn open_for_engine() -> AppResult<Self> {
-        Self::open_with_db_path(engine_db_path()?)
+        if let Some(runtime) = crate::backend::runtime::current_process_runtime() {
+            return Ok(Self::from_runtime(&runtime));
+        }
+
+        // Unit tests dispatch engine commands without starting the resident host.
+        // Production always installs the process runtime before this path is used.
+        #[cfg(test)]
+        {
+            return Self::open_with_db_path(engine_db_path()?);
+        }
+
+        #[cfg(not(test))]
+        {
+            Err("Engine AppRuntime has not been bootstrapped".to_string())
+        }
     }
 
+    /// Bind a request to the process-level runtime without I/O.
+    pub(crate) fn from_runtime(
+        runtime: &std::sync::Arc<crate::backend::runtime::AppRuntime>,
+    ) -> Self {
+        let snapshot = runtime.context();
+        Self {
+            runtime: Some(runtime.clone()),
+            db: runtime.db().clone(),
+            db_path: runtime.db_path().to_path_buf(),
+            context: snapshot.request_context.clone(),
+            agent_runtime_manager: runtime.agent_runtime_manager(),
+            agent_runtime: runtime.agent_runtime(),
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn open_with_db_path(db_path: PathBuf) -> AppResult<Self> {
         let manager = crate::backend::ai_execution::agent_runtime_manager(&db_path)
             .map_err(|error| error.to_string())?;
         Self::open_with_db_path_and_manager(db_path, manager)
     }
 
+    #[cfg(test)]
     pub(crate) fn open_with_db_path_and_manager(
         db_path: PathBuf,
         runtime_manager: std::sync::Arc<crate::backend::agent_market::AgentRuntimeManager>,
@@ -22,9 +53,16 @@ impl AppService {
         })?;
         let pool = db.pool().clone();
         let tenant_id = context.tenant.id.clone();
+        let seed_tenant_id = tenant_id.clone();
         db.block_on(async move {
-            crate::backend::store::seed_tenant_defaults_sqlx(&pool, &tenant_id).await
+            crate::backend::store::seed_tenant_defaults_sqlx(&pool, &seed_tenant_id).await
         })?;
+        let pool = db.pool().clone();
+        db.block_on(
+            crate::backend::application::bootstrap::materialize_and_seed_builtin_adapters(
+                &pool, &tenant_id,
+            ),
+        )?;
         let runtime_root = crate::backend::agent_market::default_runtime_root()
             .map_err(|error| error.to_string())?;
         db.block_on(runtime_manager.recover_startup(&context.tenant.id, &runtime_root))?;
@@ -40,6 +78,7 @@ impl AppService {
         db.block_on(runtime_manager.reload(&context.tenant.id))?;
         let agent_runtime = runtime_manager.runtime();
         Ok(Self {
+            runtime: None,
             db,
             db_path,
             context,
@@ -48,6 +87,7 @@ impl AppService {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn open_with_db_path_and_runtime(
         db_path: PathBuf,
         agent_runtime: std::sync::Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
@@ -256,6 +296,7 @@ fn conversation_runtime_doctor_summary(
     }
 }
 
+#[cfg(test)]
 fn engine_db_path() -> AppResult<PathBuf> {
     if let Ok(path) = env::var("ASSETIWEAVE_DB_PATH") {
         if !path.trim().is_empty() {

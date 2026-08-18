@@ -60,6 +60,20 @@ AssetIWeave 是一个独立的 Tauri 桌面应用，用于管理本机 AI 文件
 - `backend/app_settings.rs`、`data_backup.rs`、`logs.rs`、`operation_log.rs`、`card_translation.rs`：设置、备份、日志、操作记录和卡片翻译等独立基础能力。
 - `backend/defaults.rs`、`path_utils.rs`：内置模板、路径展开、Git 路径和 hash 等共享工具。
 
+Extension Kernel 与领域扩展边界：
+
+```text
+Extension Kernel（backend/extension_kernel）
+├── PackageIdentity / Compatibility / TrustGate
+├── ProcessInvocation / ProbeSpec / ProbeResult
+├── RegistrySnapshot<T> / LifecycleOp / ExtensionError
+└── DomainPackageSystem seam
+        ├── Conversation Adapter manifest、card contract、来源同步
+        └── Agent Market manifest、ACP 能力、模型发现
+```
+
+Kernel 只提供共享机制，不理解领域 manifest，也不实现进程内热重载。新增市场型模块必须新增 `PackageKind`、领域 `DomainPackageSystem` 和能力 seam，禁止再建一套垂直注册表/安装流程；部署安全不变量仍属于 Core。
+
 架构约束：
 
 - 不再描述或新建独立 core crate；当前后端是单一 `src-tauri` package。
@@ -290,6 +304,27 @@ flowchart TB
     C6 --> Targets
     C7 --> D4["export directory"]
 ```
+
+### 3.1 Extension Kernel 与领域扩展
+
+Conversation Adapter 与 Agent Market 共用 `backend/extension_kernel/`，领域
+manifest、数据库状态和业务流程仍由各自模块持有：
+
+```mermaid
+flowchart LR
+    Kernel["Extension Kernel\nPackageIdentity / Compatibility\nTrustGate / ProcessInvocation\nProbeSpec / RegistrySnapshot\nLifecycleTask / ExtensionError"]
+    Conversation["Conversation Adapter\nConversationAdapterManifest\nConversationAdapterCatalog"]
+    Agent["Agent Market\nAgentPackageManifest\nAgentRegistry"]
+    Runtime["TaskRuntime\n生命周期去重、冲突、关闭"]
+
+    Conversation -->|DomainPackageSystem| Kernel
+    Agent -->|DomainPackageSystem| Kernel
+    Kernel --> Runtime
+```
+
+`PackageKind` 是封闭枚举。新增市场型扩展必须新增对应的
+`DomainPackageSystem`、领域 manifest 和架构决策，不得另起一套注册表、安装
+流程或万能 manifest；本轮不实现新的 package kind，也不引入进程内热重载。
 
 ## 4. 应用信息架构
 

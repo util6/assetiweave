@@ -1,6 +1,6 @@
 use std::{
     path::PathBuf,
-    sync::{atomic::AtomicBool, Arc, Mutex},
+    sync::{atomic::AtomicBool, Arc},
 };
 
 /// 桌面应用全局共享状态
@@ -9,8 +9,8 @@ use std::{
 pub(crate) struct AppState {
     /// SQLite 数据库文件的本地绝对路径
     pub(crate) db_path: PathBuf,
-    /// 全局操作互斥锁，用于在关键写操作期间进行并发同步
-    pub(crate) lock: Arc<Mutex<()>>,
+    /// 进程级共享资源宿主；请求从该实例绑定 AppService。
+    pub(crate) runtime: Arc<crate::backend::runtime::AppRuntime>,
     /// 后台长运行任务（如扫描、备份、目录挂载等）的中央注册表
     pub(crate) background_tasks:
         Arc<crate::adapters::tauri::background_tasks::BackgroundTaskRegistry>,

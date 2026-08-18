@@ -4,17 +4,17 @@ mod backend;
 use crate::{
     adapters::{app_state::AppState, tauri::background_tasks::BackgroundTaskRegistry},
     backend::{
-        ai_execution::agent_runtime_manager,
         application::AppService,
         data_backup::backup_database_from_settings,
         logs::write_startup_log,
         operation_log::{log_error, log_warn},
         path_utils::app_db_path,
+        runtime::{AppRuntime, RuntimeRole},
     },
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc,
 };
 use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -53,9 +53,11 @@ pub fn run() {
     backend::builtin_skills::install_builtin_skills()
         .expect("failed to install AssetIWeave system Skills");
     let db_path = app_db_path().expect("failed to resolve AssetIWeave database path");
-    let agent_runtime_manager = agent_runtime_manager(&db_path)
-        .expect("failed to initialize AssetIWeave agent runtime manager");
-    let agent_runtime = agent_runtime_manager.runtime();
+    let runtime = AppRuntime::bootstrap(db_path.clone(), RuntimeRole::ResidentHost)
+        .map_err(|error| error.to_string())
+        .expect("failed to initialize AssetIWeave AppRuntime");
+    let agent_runtime_manager = runtime.agent_runtime_manager();
+    let agent_runtime = runtime.agent_runtime();
     let conversation_full_sync_on_startup_enabled =
         match backend::app_settings::conversation_full_sync_on_startup_enabled() {
             Ok(enabled) => enabled,
@@ -65,11 +67,7 @@ pub fn run() {
             }
         };
     let conversation_payload_policy_reparse_required = {
-        let service = AppService::open_with_db_path_and_manager(
-            db_path.clone(),
-            agent_runtime_manager.clone(),
-        )
-        .expect("failed to initialize AssetIWeave database");
+        let service = AppService::from_runtime(&runtime);
         if let Err(error) = service.interrupt_stale_memory_runs() {
             eprintln!("failed to mark interrupted Memory runs on startup: {error}");
         }
@@ -120,6 +118,7 @@ pub fn run() {
                     let allow_exit = state.allow_exit.clone();
                     let exit_prompt_open = state.exit_prompt_open.clone();
                     let background_tasks = state.background_tasks.clone();
+                    let runtime = state.runtime.clone();
                     prompt_window
                         .dialog()
                         .message(
@@ -136,6 +135,12 @@ pub fn run() {
                             if quit_anyway {
                                 tauri::async_runtime::spawn(async move {
                                     converge_ai_executions_before_close(background_tasks).await;
+                                    let _ = tauri::async_runtime::spawn_blocking(move || {
+                                        runtime.shutdown_with_grace(
+                                            std::time::Duration::from_secs(5),
+                                        )
+                                    })
+                                    .await;
                                     allow_close.store(true, Ordering::SeqCst);
                                     allow_exit.store(true, Ordering::SeqCst);
                                     if let Err(error) = close_window.close() {
@@ -164,8 +169,10 @@ pub fn run() {
         })
         .manage(AppState {
             db_path,
-            lock: Arc::new(Mutex::new(())),
-            background_tasks: Arc::new(BackgroundTaskRegistry::default()),
+            runtime: runtime.clone(),
+            background_tasks: Arc::new(BackgroundTaskRegistry::with_task_runtime(
+                runtime.task_runtime().clone(),
+            )),
             agent_runtime,
             agent_runtime_manager,
             allow_close: Arc::new(AtomicBool::new(false)),
@@ -187,7 +194,7 @@ pub fn run() {
         };
         if let Err(error) = adapters::tauri::commands::start_conversation_sync_background(
             app.handle().clone(),
-            state.db_path.clone(),
+            state.runtime.clone(),
             state.background_tasks.clone(),
             params,
         ) {
@@ -211,6 +218,7 @@ pub fn run() {
                 let allow_exit = state.allow_exit.clone();
                 let exit_prompt_open = state.exit_prompt_open.clone();
                 let background_tasks = state.background_tasks.clone();
+                let runtime = state.runtime.clone();
                 prompt_app
                     .dialog()
                     .message(
@@ -227,6 +235,12 @@ pub fn run() {
                         if quit_anyway {
                             tauri::async_runtime::spawn(async move {
                                 converge_ai_executions_before_close(background_tasks).await;
+                                let _ = tauri::async_runtime::spawn_blocking(move || {
+                                    runtime.shutdown_with_grace(
+                                        std::time::Duration::from_secs(5),
+                                    )
+                                })
+                                .await;
                                 allow_exit.store(true, Ordering::SeqCst);
                                 exit_app.exit(0);
                             });
@@ -250,8 +264,9 @@ pub fn run() {
 }
 
 pub(crate) fn sync_before_close(db_path: &std::path::Path, backup_database: bool) {
-    match AppService::open_with_db_path(db_path.to_path_buf()) {
-        Ok(service) => {
+    match AppRuntime::bootstrap(db_path.to_path_buf(), RuntimeRole::OneShot) {
+        Ok(runtime) => {
+            let service = AppService::from_runtime(&runtime);
             if let Err(error) = service.refresh_asset_mount_statuses(None) {
                 eprintln!("failed to sync AssetIWeave mount observations before close: {error}");
             }
@@ -293,10 +308,16 @@ pub fn run_engine_stdio() {
         .map(Ok)
         .unwrap_or_else(backend::path_utils::app_db_path);
     let runtime = match engine_db_path {
-        Ok(path) => match agent_runtime_manager(&path) {
-            Ok(manager) => manager.runtime(),
+        Ok(path) => match AppRuntime::bootstrap(path, RuntimeRole::OneShot) {
+            Ok(runtime) => {
+                if let Err(error) = backend::runtime::install_process_runtime(runtime.clone()) {
+                    eprintln!("failed to install Engine AppRuntime: {error}");
+                    std::process::exit(1);
+                }
+                runtime.agent_runtime()
+            }
             Err(error) => {
-                eprintln!("failed to initialize Engine agent runtime: {error}");
+                eprintln!("failed to initialize Engine AppRuntime: {error}");
                 std::process::exit(1);
             }
         },

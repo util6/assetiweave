@@ -527,6 +527,14 @@
               "originAppKind"
             ]
           },
+          "origin_provider_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "origin provider id"
+          },
           "include_globs": {
             "type": "array",
             "items": {
@@ -7685,6 +7693,13 @@
                   null
                 ]
               },
+              "origin_provider_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "default": null
+              },
               "include_globs": {
                 "type": "array",
                 "items": {
@@ -7831,6 +7846,13 @@
                   "custom",
                   null
                 ]
+              },
+              "origin_provider_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "default": null
               },
               "include_globs": {
                 "type": "array",
@@ -8077,6 +8099,13 @@
                   null
                 ]
               },
+              "target_provider_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "default": null
+              },
               "target_paths": {
                 "type": [
                   "array",
@@ -8300,7 +8329,10 @@
                 "type": "string"
               },
               "app_kind": {
-                "type": "string",
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "enum": [
                   "codex",
                   "claude",
@@ -8313,8 +8345,14 @@
                   "zcode",
                   "qoder",
                   "hermes",
-                  "custom"
-                ]
+                  "custom",
+                  null
+                ],
+                "default": null
+              },
+              "target_provider_id": {
+                "type": "string",
+                "default": ""
               },
               "target_paths": {
                 "type": "array",
@@ -8483,7 +8521,6 @@
             "required": [
               "id",
               "name",
-              "app_kind",
               "target_paths",
               "supported_kinds",
               "deployment_strategy",

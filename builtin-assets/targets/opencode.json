@@ -1,0 +1,19 @@
+{
+  "id": "opencode",
+  "name": "OpenCode",
+  "app_kind_compat": "opencode",
+  "default_targets": [
+    {
+      "asset_kind": "skill",
+      "path": "~/.config/opencode/skills"
+    }
+  ],
+  "supported_kinds": [
+    "skill",
+    "prompt",
+    "rule",
+    "custom"
+  ],
+  "deployment_strategy": "symlink_to_source",
+  "icon": null
+}

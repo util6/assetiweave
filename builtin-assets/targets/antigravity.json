@@ -1,0 +1,19 @@
+{
+  "id": "antigravity",
+  "name": "Antigravity",
+  "app_kind_compat": "antigravity",
+  "default_targets": [
+    {
+      "asset_kind": "skill",
+      "path": "~/.antigravity/skills"
+    }
+  ],
+  "supported_kinds": [
+    "skill",
+    "prompt",
+    "rule",
+    "custom"
+  ],
+  "deployment_strategy": "symlink_to_source",
+  "icon": null
+}

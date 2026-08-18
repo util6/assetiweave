@@ -89,6 +89,12 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
+      - name: Check module boundaries
+        run: bash scripts/check-module-boundaries.sh
+
+      - name: Check surface matrix
+        run: bash scripts/gen-surface-matrix.sh --check
+
       - name: Test Rust workspace
         run: cargo test --workspace
 

@@ -65,6 +65,10 @@ fn map_sqlx_asset_row(row: &SqliteRow) -> AppResult<Asset> {
         content_hash: row.try_get(9).map_err(|error| error.to_string())?,
         discovered_at: row.try_get(10).map_err(|error| error.to_string())?,
         updated_at: row.try_get(11).map_err(|error| error.to_string())?,
+        detector_id: row.try_get(12).map_err(|error| error.to_string())?,
+        detector_version: row
+            .try_get::<i64, _>(13)
+            .map_err(|error| error.to_string())? as u32,
     })
 }
 
@@ -96,6 +100,8 @@ pub(crate) async fn replace_source_assets_sqlx(
             .bind(&asset.content_hash)
             .bind(&asset.discovered_at)
             .bind(&asset.updated_at)
+            .bind(&asset.detector_id)
+            .bind(asset.detector_version)
             .execute(&mut *tx)
             .await
             .map_err(|error| error.to_string())?;
@@ -223,6 +229,8 @@ mod tests {
             source_id: "source-a".to_string(),
             name: name.to_string(),
             kind,
+            detector_id: "legacy.classifier".to_string(),
+            detector_version: 1,
             format: AssetFormat::Markdown,
             relative_path: format!("{name}.md"),
             absolute_path: format!("/tmp/{name}.md"),

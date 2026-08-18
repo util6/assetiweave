@@ -1,4 +1,5 @@
 pub(crate) mod backends;
+pub(crate) mod composition;
 mod error;
 pub(crate) mod executor;
 pub(crate) mod legacy_gemini;
@@ -19,7 +20,6 @@ use crate::backend::host_process::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -28,6 +28,7 @@ use std::{
     time::Duration,
 };
 
+#[cfg(test)]
 pub(crate) fn agent_runtime_manager(
     db_path: &Path,
 ) -> Result<Arc<crate::backend::agent_market::AgentRuntimeManager>, AiExecutionError> {
@@ -64,45 +65,19 @@ pub(crate) fn agent_runtime_manager(
     Ok(manager)
 }
 
+#[deprecated(note = "use composition::resolve_agent_for with an explicit ActionId")]
 pub(crate) fn configured_agent_capability(
     service_id: &str,
 ) -> Result<(AgentId, Option<String>), String> {
-    let settings = crate::backend::app_settings::read_app_settings_value()
-        .map_err(|error| error.to_string())?;
-    let runtime = settings.get("aiRuntime").and_then(Value::as_object);
-    let assignments = settings
-        .get("agentCapabilityAssignments")
-        .and_then(Value::as_object);
-    let legacy_agent_id = match runtime
-        .and_then(|value| value.get("cli"))
-        .and_then(Value::as_str)
-    {
-        Some("gemini") => "gemini",
-        _ => "opencode",
+    let action = match service_id {
+        "memory" => composition::ActionId::new("memory.extraction"),
+        "cardTranslation" | "card_translation" => composition::ActionId::new("translation"),
+        "promptOptimization" | "prompt_optimization" => {
+            composition::ActionId::new("prompt_optimization")
+        }
+        other => composition::ActionId::new(other),
     };
-    let configured_assignment = assignments
-        .and_then(|value| value.get(service_id))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let configured_agent_id = configured_assignment.unwrap_or(legacy_agent_id);
-    let agent_id = AgentId::parse(configured_agent_id).map_err(|error| error.to_string())?;
-    let agent_models = settings.get("agentModels").and_then(Value::as_object);
-    let legacy_model = if configured_assignment.is_none() {
-        runtime
-            .and_then(|value| value.get("model"))
-            .and_then(Value::as_str)
-    } else {
-        None
-    };
-    let model = agent_models
-        .and_then(|models| models.get(agent_id.as_str()))
-        .and_then(Value::as_str)
-        .or(legacy_model)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    Ok((agent_id, model))
+    composition::resolve_agent_for(&action).map_err(|error| error.to_string())
 }
 
 /// Runs the async Agent runtime from synchronous application/Engine seams.

@@ -1,0 +1,19 @@
+{
+  "id": "qoder",
+  "name": "Qoder",
+  "app_kind_compat": "qoder",
+  "default_targets": [
+    {
+      "asset_kind": "skill",
+      "path": "~/.qoder/skills"
+    }
+  ],
+  "supported_kinds": [
+    "skill",
+    "prompt",
+    "rule",
+    "custom"
+  ],
+  "deployment_strategy": "symlink_to_source",
+  "icon": null
+}

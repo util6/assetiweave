@@ -64,6 +64,92 @@ pub(crate) struct ConversationAdapterPackageValidationResult {
     pub(crate) adapter_validation: ExternalAdapterValidationResult,
 }
 
+/// Conversation's implementation of the kernel domain seam. The package
+/// manifest remains fully conversation-specific; the kernel only receives the
+/// normalized identity and compatibility projection.
+pub(crate) struct ConversationAdapterPackageSystem;
+
+impl crate::backend::extension_kernel::DomainPackageSystem for ConversationAdapterPackageSystem {
+    fn kind(&self) -> crate::backend::extension_kernel::PackageKind {
+        crate::backend::extension_kernel::PackageKind::ConversationAdapter
+    }
+
+    fn inspect(
+        &self,
+        dir: &Path,
+    ) -> Result<
+        crate::backend::extension_kernel::InspectedPackage,
+        crate::backend::extension_kernel::ExtensionError,
+    > {
+        let validation = validate_conversation_adapter_package_dir(dir).map_err(|reason| {
+            crate::backend::extension_kernel::ExtensionError::ManifestInvalid {
+                package_id: dir.to_string_lossy().to_string(),
+                reason,
+            }
+        })?;
+        let adapter_manifest = &validation.adapter_validation.manifest;
+        let version = semver::Version::parse(&validation.manifest.version).map_err(|error| {
+            crate::backend::extension_kernel::ExtensionError::ManifestInvalid {
+                package_id: validation.manifest.package_id.clone(),
+                reason: format!("invalid package version: {error}"),
+            }
+        })?;
+        let identity = crate::backend::extension_kernel::PackageIdentity {
+            kind: crate::backend::extension_kernel::PackageKind::ConversationAdapter,
+            package_id: validation.manifest.package_id.clone(),
+            version,
+        };
+        let adapter_identity = adapter_manifest.package_identity().map_err(|error| {
+            crate::backend::extension_kernel::ExtensionError::ManifestInvalid {
+                package_id: identity.package_id.clone(),
+                reason: error.to_string(),
+            }
+        })?;
+        if adapter_identity.version != identity.version {
+            return Err(
+                crate::backend::extension_kernel::ExtensionError::ManifestInvalid {
+                    package_id: identity.package_id.clone(),
+                    reason: format!(
+                        "package and adapter versions differ: {} != {}",
+                        identity.version, adapter_identity.version
+                    ),
+                },
+            );
+        }
+        let core_requirement = semver::VersionReq::parse(&validation.manifest.min_core_version)
+            .map_err(
+                |error| crate::backend::extension_kernel::ExtensionError::ManifestInvalid {
+                    package_id: identity.package_id.clone(),
+                    reason: format!("invalid minCoreVersion: {error}"),
+                },
+            )?;
+        let mut compatibility = adapter_manifest.compatibility();
+        compatibility.core_requirement = Some(core_requirement);
+        Ok(crate::backend::extension_kernel::InspectedPackage {
+            identity,
+            compatibility,
+            invocation: adapter_manifest.process_invocation(dir),
+            availability_probe: adapter_manifest.availability_probe(),
+            model_discovery_probe: None,
+            install_dir: dir.to_path_buf(),
+        })
+    }
+
+    fn on_installed(
+        &self,
+        _pkg: &crate::backend::extension_kernel::InspectedPackage,
+    ) -> Result<(), crate::backend::extension_kernel::ExtensionError> {
+        Ok(())
+    }
+
+    fn on_removed(
+        &self,
+        _id: &crate::backend::extension_kernel::PackageIdentity,
+    ) -> Result<(), crate::backend::extension_kernel::ExtensionError> {
+        Ok(())
+    }
+}
+
 pub(crate) fn validate_conversation_adapter_package_dir(
     package_root: &Path,
 ) -> AppResult<ConversationAdapterPackageValidationResult> {
@@ -371,5 +457,45 @@ mod tests {
         assert!(validate_safe_id("package id", "com.util6.codex-session").is_ok());
         assert!(validate_safe_id("package id", "../external").is_err());
         assert!(validate_safe_id("package id", "publisher/package").is_err());
+    }
+
+    #[test]
+    fn kernel_package_inspection_preserves_fixture_package_identity() {
+        use crate::backend::extension_kernel::DomainPackageSystem;
+
+        let root =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../builtin-assets/adapters/codex");
+        let inspected = ConversationAdapterPackageSystem
+            .inspect(&root)
+            .expect("inspect fixed conversation adapter package");
+        assert_eq!(
+            ConversationAdapterPackageSystem.kind(),
+            crate::backend::extension_kernel::PackageKind::ConversationAdapter
+        );
+        assert_eq!(
+            inspected.identity.kind,
+            crate::backend::extension_kernel::PackageKind::ConversationAdapter
+        );
+        assert_eq!(
+            inspected.identity.package_id,
+            "io.github.util6.codex-session"
+        );
+        assert_eq!(
+            inspected.identity.version,
+            semver::Version::parse("1.5.13").unwrap()
+        );
+        assert_eq!(inspected.compatibility.protocol_version, 1);
+        assert_eq!(
+            inspected.invocation.kind,
+            crate::backend::extension_kernel::RuntimeProgramKind::Node
+        );
+        assert_eq!(inspected.invocation.entry, "adapter.mjs");
+        assert_eq!(inspected.invocation.version_req.as_deref(), Some(">=20"));
+        assert_eq!(
+            inspected.availability_probe.kind,
+            crate::backend::extension_kernel::ProbeKind::Availability
+        );
+        assert_eq!(inspected.availability_probe.args, vec!["--version"]);
+        assert!(inspected.model_discovery_probe.is_none());
     }
 }

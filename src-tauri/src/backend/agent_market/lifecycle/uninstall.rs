@@ -4,6 +4,10 @@ use super::{is_safe_managed_install_path, market_error, AgentLifecycleService};
 use crate::backend::agent_market::types::{
     AgentInstallation, AgentMarketError, AgentUninstallStartRequest, LifecycleTaskPhase, Ownership,
 };
+use crate::backend::{
+    agent_market::runtime::AgentPackageSystem,
+    extension_kernel::{DomainPackageSystem, PackageKind},
+};
 
 pub(crate) async fn run(
     service: &AgentLifecycleService,
@@ -68,6 +72,21 @@ pub(crate) async fn run(
             false,
         ));
     }
+    let package_system = AgentPackageSystem::from_installation(&installation)
+        .map_err(|error| market_error("uninstall_failed", error, false))?;
+    if package_system.kind() != PackageKind::Agent {
+        return Err(market_error(
+            "uninstall_failed",
+            "The Agent package system returned the wrong package kind.",
+            false,
+        ));
+    }
+    let identity = installation
+        .package_identity()
+        .map_err(|error| market_error("uninstall_failed", error, false))?;
+    package_system
+        .on_removed(&identity)
+        .map_err(|error| market_error("uninstall_failed", error.to_string(), false))?;
     // Capability assignment cleanup is deliberately explicit at the adapter
     // boundary. This service only removes a row after the caller has supplied
     // the requested references; it never invents a replacement assignment.

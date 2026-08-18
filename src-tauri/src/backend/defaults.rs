@@ -1,7 +1,7 @@
 use crate::backend::dto::{HeaderTabItem, NavigationModel, RailMenuItem, SubNavItem};
 use crate::backend::models::{
-    AppKind, AssetKind, DeploymentStrategy, ProfileSafety, RuleSet, Source, SourceKind,
-    SourceOrigin, SourceScannerKind, TargetProfile,
+    AssetKind, ProfileSafety, RuleSet, Source, SourceKind, SourceOrigin, SourceScannerKind,
+    TargetProfile,
 };
 use std::collections::BTreeMap;
 
@@ -85,6 +85,7 @@ pub(crate) fn default_sources_for_tenant(tenant_id: &str) -> Vec<Source> {
             repo_root: None,
             scan_root: String::new(),
             origin_app_kind: None,
+            origin_provider_id: None,
             include_globs: includes.into_iter().map(str::to_string).collect(),
             exclude_globs: vec![
                 "**/.git/**".to_string(),
@@ -104,56 +105,39 @@ pub(crate) fn default_sources_for_tenant(tenant_id: &str) -> Vec<Source> {
 }
 
 pub(crate) fn default_profiles() -> Vec<TargetProfile> {
-    [
-        ("codex", "Codex", AppKind::Codex),
-        ("claude", "Claude", AppKind::Claude),
-        ("cursor", "Cursor", AppKind::Cursor),
-        ("opencode", "OpenCode", AppKind::OpenCode),
-        ("gemini", "Gemini", AppKind::Gemini),
-        ("antigravity", "Antigravity", AppKind::Antigravity),
-        ("openclaw", "OpenClaw", AppKind::OpenClaw),
-        ("kiro", "Kiro", AppKind::Kiro),
-        ("zcode", "ZCode", AppKind::Zcode),
-        ("qoder", "Qoder", AppKind::Qoder),
-        ("hermes", "Hermes", AppKind::Hermes),
-        ("custom", "Custom", AppKind::Custom),
-    ]
-    .into_iter()
-    .map(|(id, name, app_kind)| TargetProfile {
-        id: id.to_string(),
-        name: name.to_string(),
-        app_kind,
-        target_paths: vec![
-            crate::backend::app_paths::AppPathCatalog::default_skill_target(app_kind).to_string(),
-        ],
-        supported_kinds: vec![
-            AssetKind::Skill,
-            AssetKind::Prompt,
-            AssetKind::Rule,
-            AssetKind::Custom,
-        ],
-        deployment_strategy: DeploymentStrategy::SymlinkToSource,
-        enabled: true,
-        include: RuleSet {
-            kinds: vec![AssetKind::Skill, AssetKind::Prompt, AssetKind::Rule],
-            tags: vec![],
-            groups: vec![],
-            sources: vec![],
-            path_patterns: vec![],
-        },
-        exclude: RuleSet {
-            kinds: vec![AssetKind::Unclassified],
-            tags: vec![],
-            groups: vec![],
-            sources: vec![],
-            path_patterns: vec![],
-        },
-        safety: ProfileSafety {
-            allow_remove: false,
-            allow_overwrite: false,
-        },
-    })
-    .collect()
+    crate::backend::target_catalog::TargetCatalog::builtin()
+        .expect("builtin target descriptors must be valid")
+        .descriptors()
+        .iter()
+        .map(|descriptor| TargetProfile {
+            id: descriptor.id.clone(),
+            name: descriptor.name.clone(),
+            app_kind: descriptor.app_kind_compat,
+            target_provider_id: descriptor.id.clone(),
+            target_paths: vec![descriptor.default_targets[0].path.clone()],
+            supported_kinds: descriptor.supported_kinds.clone(),
+            deployment_strategy: descriptor.deployment_strategy,
+            enabled: true,
+            include: RuleSet {
+                kinds: vec![AssetKind::Skill, AssetKind::Prompt, AssetKind::Rule],
+                tags: vec![],
+                groups: vec![],
+                sources: vec![],
+                path_patterns: vec![],
+            },
+            exclude: RuleSet {
+                kinds: vec![AssetKind::Unclassified],
+                tags: vec![],
+                groups: vec![],
+                sources: vec![],
+                path_patterns: vec![],
+            },
+            safety: ProfileSafety {
+                allow_remove: false,
+                allow_overwrite: false,
+            },
+        })
+        .collect()
 }
 
 pub(crate) fn default_navigation_model() -> NavigationModel {

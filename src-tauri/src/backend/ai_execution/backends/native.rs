@@ -13,9 +13,7 @@ use crate::backend::{
         process::{ManagedAgentProcess, ManagedAgentProcessError},
         types::{AgentDefinition, AgentModelOption, AgentProtocol},
     },
-    ai_execution::{
-        AiExecutionError, AiExecutionPhase, AiExecutionRequest, AiExecutionResult,
-    },
+    ai_execution::{AiExecutionError, AiExecutionPhase, AiExecutionRequest, AiExecutionResult},
     host_process::resolve_host_executable,
     operation_log::log_info,
 };
@@ -233,7 +231,8 @@ impl NativeExecutionGuard {
             }
         }
         self.process.take();
-        let workspace_removed = fs::remove_dir_all(&self.workspace).is_ok() || !self.workspace.exists();
+        let workspace_removed =
+            fs::remove_dir_all(&self.workspace).is_ok() || !self.workspace.exists();
         NativeCleanupOutcome {
             process_reaped,
             workspace_removed,
@@ -317,7 +316,8 @@ async fn run_native_execution(
             match event {
                 "step_update" => {
                     if let Some(step) = v.get("step_update") {
-                        let step_type = step.get("step_type").and_then(|s| s.as_str()).unwrap_or("");
+                        let step_type =
+                            step.get("step_type").and_then(|s| s.as_str()).unwrap_or("");
                         if step_type == "agent_response" {
                             if let Some(delta) = step.get("text_delta").and_then(|d| d.as_str()) {
                                 accumulated_text.push_str(delta);

@@ -169,6 +169,7 @@ pub(crate) fn system_skill_source() -> AppResult<Source> {
         repo_root: None,
         scan_root: String::new(),
         origin_app_kind: None,
+        origin_provider_id: None,
         include_globs: vec!["**/SKILL.md".to_string()],
         exclude_globs: vec![
             "**/.git/**".to_string(),

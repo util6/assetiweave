@@ -6,35 +6,14 @@ pub(super) fn classify_asset(
     relative_path: &str,
     format: AssetFormat,
 ) -> AssetKind {
-    let lower = relative_path.to_lowercase();
-    if lower.contains("prompt") {
-        return AssetKind::Prompt;
-    }
-    if lower.contains("rule")
-        || lower.contains(".cursorrules")
-        || lower.contains("requirements")
-        || lower.contains("design")
-    {
-        return AssetKind::Rule;
-    }
-    if lower.contains("memory") {
-        return AssetKind::Memory;
-    }
-    if lower.contains("agent") {
-        return AssetKind::Agent;
-    }
-    if lower.contains("workflow") {
-        return AssetKind::Workflow;
-    }
-    if lower.contains("command") || lower.contains("slash") {
-        return AssetKind::Command;
-    }
-    if matches!(
+    let context = super::detector::DetectionCtx {
+        source,
+        path,
+        relative_path,
         format,
-        AssetFormat::Json | AssetFormat::Yaml | AssetFormat::Toml
-    ) && lower.contains("mcp")
-    {
-        return AssetKind::Mcp;
+    };
+    if let Some((_, _, detection)) = super::detector::detect(&context) {
+        return detection.kind;
     }
     if let Some(default_kind) = source.default_kind {
         return default_kind;

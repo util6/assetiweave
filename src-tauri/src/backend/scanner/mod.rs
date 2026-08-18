@@ -1,5 +1,6 @@
 mod asset_builder;
 mod classifier;
+mod detector;
 mod dispatcher;
 mod glob;
 mod mixed;

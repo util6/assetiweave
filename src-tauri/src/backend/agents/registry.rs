@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+use crate::backend::extension_kernel::RegistrySnapshot;
 use crate::backend::host_process::{
     resolve_host_executable, run_command_with_timeout, HostProcessError, HostProcessOutput,
 };
@@ -28,7 +29,7 @@ pub(crate) struct AgentRegistry {
 /// A caller always receives a cloned definition from one complete snapshot.
 #[derive(Clone, Debug)]
 pub(crate) struct AgentRegistryHandle {
-    snapshot: Arc<RwLock<Arc<AgentRegistry>>>,
+    snapshot: Arc<RegistrySnapshot<AgentRegistry>>,
     generation: Arc<AtomicU64>,
 }
 
@@ -44,16 +45,24 @@ impl Default for AgentRegistryHandle {
 impl AgentRegistryHandle {
     pub(crate) fn from_registry(registry: Arc<AgentRegistry>) -> Self {
         Self {
-            snapshot: Arc::new(RwLock::new(registry)),
+            snapshot: Arc::new(RegistrySnapshot::from_arc(registry)),
             generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
+    pub(crate) fn from_snapshot(snapshot: Arc<RegistrySnapshot<AgentRegistry>>) -> Self {
+        Self {
+            snapshot,
+            generation: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    pub(crate) fn bump_generation(&self) -> u64 {
+        self.generation.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
     pub(crate) fn snapshot(&self) -> Arc<AgentRegistry> {
-        self.snapshot
-            .read()
-            .expect("agent registry lock poisoned")
-            .clone()
+        self.snapshot.load()
     }
 
     pub(crate) fn generation(&self) -> u64 {
@@ -63,12 +72,8 @@ impl AgentRegistryHandle {
     pub(crate) fn publish(&self, definitions: Vec<AgentDefinition>) -> Result<u64, String> {
         let next =
             AgentRegistry::from_definitions(definitions).map_err(|error| error.to_string())?;
-        let mut current = self
-            .snapshot
-            .write()
-            .map_err(|_| "agent registry lock poisoned".to_string())?;
-        *current = Arc::new(next);
-        Ok(self.generation.fetch_add(1, Ordering::SeqCst) + 1)
+        self.snapshot.replace(next);
+        Ok(self.bump_generation())
     }
 
     pub(crate) fn get(&self, agent_id: &AgentId) -> Option<AgentDefinition> {
