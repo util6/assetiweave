@@ -511,6 +511,9 @@ func TestPortableArchiveValidationRejectsTooManyEntries(t *testing.T) {
 }
 
 func TestRunExecutesRelativeEntrypoint(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping shell script test on windows")
+	}
 	root := t.TempDir()
 	dir := filepath.Join(root, "demo-web")
 	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o700); err != nil {
