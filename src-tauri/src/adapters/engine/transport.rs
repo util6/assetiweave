@@ -331,7 +331,7 @@ mod tests {
         env,
         ffi::OsString,
         fs,
-        path::PathBuf,
+        path::{Path, PathBuf},
         process::Command,
         sync::{Mutex, MutexGuard, OnceLock},
     };
@@ -685,10 +685,8 @@ mod tests {
         .expect("move to new custom backup root");
 
         assert_eq!(
-            settings["root_path"],
-            json!(crate::backend::host_paths::normalize_path_to_display_text(
-                &new_root
-            ))
+            Path::new(settings["root_path"].as_str().unwrap()),
+            new_root.as_path()
         );
         assert!(new_root
             .join("downloaded")
