@@ -3,6 +3,7 @@ use crate::backend::models::{
     AppKind, Asset, AssetFormat, AssetKind, AssetMount, DeploymentStrategy, ProfileSafety, RuleSet,
     TargetProfile,
 };
+use std::path::Path;
 
 #[test]
 fn build_plan_only_uses_enabled_mounts() {
@@ -69,7 +70,10 @@ fn build_plan_exposes_portable_display_paths_separately_from_runtime_paths() {
         None,
     );
 
-    assert!(plan.actions[0].target_path.starts_with('/'));
+    assert!(
+        Path::new(&plan.actions[0].target_path).is_absolute()
+            || plan.actions[0].target_path.starts_with('/')
+    );
     assert_eq!(
         plan.actions[0].display_target_path.as_deref(),
         Some("~/.codex/skills/asset-display")

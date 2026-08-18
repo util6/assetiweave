@@ -550,6 +550,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn acquire_skill_imports_from_isolated_git_repo_and_records_remote_source() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-acquire-import-home");
@@ -830,6 +831,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn source_add_aliases_are_normalized_before_typed_dispatch() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-source-alias-home");

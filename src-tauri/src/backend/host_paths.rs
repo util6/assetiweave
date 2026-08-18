@@ -248,7 +248,13 @@ impl HostPathResolver {
                 relative.trim_start_matches(['\\', '/'])
             ));
         }
-        base.join(relative)
+        let base = base.to_string_lossy().replace('\\', "/");
+        let relative = relative.replace('\\', "/");
+        PathBuf::from(format!(
+            "{}/{}",
+            base.trim_end_matches(['\\', '/']),
+            relative.trim_start_matches(['\\', '/'])
+        ))
     }
 
     fn strip_directory_prefix(&self, path: &str, directory: &Path) -> Option<String> {
@@ -287,11 +293,7 @@ impl HostPathResolver {
     }
 
     fn portable_text(&self, value: &str) -> String {
-        if self.platform == HostPlatform::Windows {
-            value.replace('\\', "/")
-        } else {
-            value.to_string()
-        }
+        value.replace('\\', "/")
     }
 
     fn portable_relative_text(&self, value: &str) -> String {

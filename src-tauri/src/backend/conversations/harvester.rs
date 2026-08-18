@@ -359,17 +359,10 @@ mod tests {
 
         assert_eq!(invocation.program, PathBuf::from("node"));
         assert_eq!(
-            invocation.args,
-            vec![
-                fixture
-                    .path()
-                    .join("scripts")
-                    .join("harvest.js")
-                    .to_string_lossy()
-                    .to_string(),
-                "--once".to_string()
-            ]
+            PathBuf::from(&invocation.args[0]),
+            fixture.path().join("scripts").join("harvest.js")
         );
+        assert_eq!(&invocation.args[1..], &["--once"]);
     }
 
     #[test]
@@ -386,17 +379,10 @@ mod tests {
 
         assert_eq!(invocation.program, PathBuf::from("node"));
         assert_eq!(
-            invocation.args,
-            vec![
-                fixture
-                    .path()
-                    .join("scripts")
-                    .join("harvest.mjs")
-                    .to_string_lossy()
-                    .to_string(),
-                "--once".to_string()
-            ]
+            PathBuf::from(&invocation.args[0]),
+            fixture.path().join("scripts").join("harvest.mjs")
         );
+        assert_eq!(&invocation.args[1..], &["--once"]);
     }
 
     #[test]

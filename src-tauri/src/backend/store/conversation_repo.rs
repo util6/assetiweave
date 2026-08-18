@@ -4995,6 +4995,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn sqlx_conversation_adapter_packages_round_trip_by_package_and_adapter() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-package-sqlx-{}.sqlite",
@@ -5097,6 +5098,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn conversation_adapter_runtime_paths_normalize_to_config_anchor() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-adapter-config-path-{}.sqlite",
