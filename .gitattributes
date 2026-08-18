@@ -1,0 +1,29 @@
+# Auto-detect text files and normalize line endings to LF across all platforms
+* text=auto eol=lf
+
+# Explicit LF for source files, configurations, scripts, and embedded assets
+*.md text eol=lf
+*.json text eol=lf
+*.mjs text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.rs text eol=lf
+*.go text eol=lf
+*.sql text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.svg text eol=lf
+
+# Binaries
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.icns binary
+*.db binary
+*.sqlite binary
+*.exe binary

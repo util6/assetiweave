@@ -48,13 +48,63 @@ pub(crate) async fn converge_ai_executions_before_close(
     }
 }
 
+fn setup_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic payload".to_string()
+        };
+        let location = info
+            .location()
+            .map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()))
+            .unwrap_or_else(|| "unknown location".to_string());
+        let panic_message = format!("Panic occurred at {location}: {payload}");
+        eprintln!("{panic_message}");
+        crate::backend::logs::record_fatal_panic(&panic_message);
+        default_hook(info);
+    }));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    backend::builtin_skills::install_builtin_skills()
-        .expect("failed to install AssetIWeave system Skills");
-    let db_path = app_db_path().expect("failed to resolve AssetIWeave database path");
-    let agent_runtime_manager = agent_runtime_manager(&db_path)
-        .expect("failed to initialize AssetIWeave agent runtime manager");
+    setup_panic_hook();
+    if let Err(error) = backend::builtin_skills::install_builtin_skills() {
+        log_error(
+            "app.startup.skills",
+            "failed to install AssetIWeave system Skills",
+            &error,
+            &[],
+        );
+        panic!("failed to install AssetIWeave system Skills: {error}");
+    }
+    let db_path = match app_db_path() {
+        Ok(path) => path,
+        Err(error) => {
+            log_error(
+                "app.startup.db_path",
+                "failed to resolve AssetIWeave database path",
+                &error,
+                &[],
+            );
+            panic!("failed to resolve AssetIWeave database path: {error}");
+        }
+    };
+    let agent_runtime_manager = match agent_runtime_manager(&db_path) {
+        Ok(manager) => manager,
+        Err(error) => {
+            log_error(
+                "app.startup.agent_runtime",
+                "failed to initialize AssetIWeave agent runtime manager",
+                &error,
+                &[],
+            );
+            panic!("failed to initialize AssetIWeave agent runtime manager: {error}");
+        }
+    };
     let agent_runtime = agent_runtime_manager.runtime();
     let conversation_full_sync_on_startup_enabled =
         match backend::app_settings::conversation_full_sync_on_startup_enabled() {

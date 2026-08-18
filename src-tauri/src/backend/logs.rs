@@ -101,6 +101,20 @@ pub(crate) fn record_error(operation: &str, message: &str, fields: &[(&str, Stri
     record_operation(OperationLogLevel::Error, operation, message, fields);
 }
 
+pub(crate) fn record_fatal_panic(message: &str) {
+    if let Ok(log_dir) = get_log_dir() {
+        let panic_path = log_dir.join("panic.log");
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(panic_path)
+        {
+            let timestamp = Local::now().to_rfc3339();
+            let _ = writeln!(file, "[{timestamp}] FATAL: {message}");
+        }
+    }
+}
+
 pub(crate) fn logs_get_snapshot(
     file_name: Option<String>,
     line_limit: Option<usize>,

@@ -247,15 +247,7 @@ fn validate_embedded_skills() -> AppResult<()> {
     for embedded in EMBEDDED_SKILLS {
         let skill = std::str::from_utf8(embedded.skill)
             .map_err(|error| format!("decode {}/SKILL.md: {error}", embedded.directory))?;
-        if !skill.starts_with("---\n")
-            || !skill.contains(&format!("name: {}", embedded.name))
-            || !skill.contains("description:")
-        {
-            return Err(format!(
-                "embedded Skill {} has invalid frontmatter",
-                embedded.directory
-            ));
-        }
+        validate_embedded_skill_frontmatter(skill, embedded.name, embedded.directory)?;
         let manifest: serde_json::Value = serde_json::from_slice(embedded.manifest)
             .map_err(|error| format!("decode {} manifest: {error}", embedded.directory))?;
         if manifest.get("id").and_then(serde_json::Value::as_str) != Some(embedded.id)
@@ -270,6 +262,23 @@ fn validate_embedded_skills() -> AppResult<()> {
                 embedded.directory
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_embedded_skill_frontmatter(
+    skill: &str,
+    expected_name: &str,
+    directory: &str,
+) -> AppResult<()> {
+    let normalized = skill.replace("\r\n", "\n");
+    if !normalized.starts_with("---\n")
+        || !normalized.contains(&format!("name: {expected_name}"))
+        || !normalized.contains("description:")
+    {
+        return Err(format!(
+            "embedded Skill {directory} has invalid frontmatter"
+        ));
     }
     Ok(())
 }
@@ -583,6 +592,19 @@ mod tests {
             ORGANIZER_ZCODE_ADAPTER,
             include_bytes!("../../../builtin-assets/adapters/zcode/adapter.mjs")
         );
+    }
+
+    #[test]
+    fn validates_embedded_skill_frontmatter_with_crlf_and_lf() {
+        let lf_skill = "---\nname: sample-skill\ndescription: A sample skill.\n---\n# Sample Skill";
+        let crlf_skill =
+            "---\r\nname: sample-skill\r\ndescription: A sample skill.\r\n---\r\n# Sample Skill";
+        let invalid_skill = "name: sample-skill\ndescription: A sample skill.";
+
+        assert!(validate_embedded_skill_frontmatter(lf_skill, "sample-skill", "sample-dir").is_ok());
+        assert!(validate_embedded_skill_frontmatter(crlf_skill, "sample-skill", "sample-dir").is_ok());
+        assert!(validate_embedded_skill_frontmatter(invalid_skill, "sample-skill", "sample-dir").is_err());
+        assert!(validate_embedded_skill_frontmatter(lf_skill, "wrong-name", "sample-dir").is_err());
     }
 
     fn unique_temp_dir(prefix: &str) -> std::path::PathBuf {
