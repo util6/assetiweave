@@ -208,7 +208,10 @@ impl HostPathResolver {
             }
         }
 
-        if Path::new(raw).is_absolute() || looks_like_windows_absolute_path(raw) {
+        if Path::new(raw).is_absolute()
+            || raw.starts_with('/')
+            || looks_like_windows_absolute_path(raw)
+        {
             return Ok(PathSpec {
                 anchor: PathAnchor::Absolute,
                 value: self.host_text(raw),

@@ -751,6 +751,7 @@ fn adapter_runtime_requirements_include_legacy_javascript_commands() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn adapter_runtime_overrides_read_configured_programs() {
     let settings = json!({

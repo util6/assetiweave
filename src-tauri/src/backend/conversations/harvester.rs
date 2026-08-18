@@ -264,7 +264,7 @@ fn validate_harvester_relative_entry(
 
 fn looks_like_windows_rooted_path(path: &str) -> bool {
     let bytes = path.as_bytes();
-    if path.starts_with("\\\\") || path.starts_with('\\') {
+    if path.starts_with("\\\\") || path.starts_with('\\') || path.starts_with('/') {
         return true;
     }
     bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic()

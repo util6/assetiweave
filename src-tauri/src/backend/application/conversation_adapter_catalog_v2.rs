@@ -741,9 +741,10 @@ mod tests {
             .expect("preview exact release install");
 
         assert_eq!(preview["package_id"], "io.github.util6.codex-session");
-        assert!(preview["install_path"]
-            .as_str()
-            .is_some_and(|path| path.ends_with("/versions/1.0.1")));
+        assert!(preview["install_path"].as_str().is_some_and(|path| {
+            let normalized = path.replace('\\', "/");
+            normalized.ends_with("/versions/1.0.1")
+        }));
 
         drop(service);
         let _ = fs::remove_dir_all(root);

@@ -265,6 +265,7 @@ mod tests {
     use std::{path::PathBuf, process::Command};
 
     #[test]
+    #[cfg(unix)]
     fn public_error_view_has_a_stable_code_and_redacts_process_output() {
         let status = Command::new("/usr/bin/false")
             .status()

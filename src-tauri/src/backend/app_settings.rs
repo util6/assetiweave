@@ -433,6 +433,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn settings_path_values_are_normalized_before_persistence() {
         let home = dirs::home_dir().expect("home directory");
         let settings = normalize_settings_paths(json!({

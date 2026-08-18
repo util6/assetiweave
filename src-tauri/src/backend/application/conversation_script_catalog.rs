@@ -3113,6 +3113,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn uninstalled_replacement_uses_content_hash_and_rebases_manifest_paths() {
         let package = package("codex-session", "codex", "2.0.0");
         let replacement = crate::backend::models::ConversationAdapterPackageVersion {

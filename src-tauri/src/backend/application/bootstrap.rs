@@ -93,8 +93,14 @@ mod tests {
             .expect("load prepared adapter")
             .expect("prepared adapter should be persisted");
         assert_eq!(loaded.id, prepared.id);
-        assert_eq!(loaded.manifest_path, prepared.manifest_path);
-        assert_eq!(loaded.executable_path, prepared.executable_path);
+        assert_eq!(
+            loaded.manifest_path.as_deref().map(Path::new),
+            prepared.manifest_path.as_deref().map(Path::new)
+        );
+        assert_eq!(
+            loaded.executable_path.as_deref().map(Path::new),
+            prepared.executable_path.as_deref().map(Path::new)
+        );
 
         pool.close().await;
         let _ = fs::remove_dir_all(fixture_root);

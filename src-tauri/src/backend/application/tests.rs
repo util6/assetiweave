@@ -100,6 +100,7 @@ fn creating_tenant_seeds_isolated_skill_backup_library_root() {
     assert!(
         settings
             .expanded_root_path
+            .replace('\\', "/")
             .ends_with(".assetiweave/tenants/client-a/library/skills"),
         "unexpected tenant skill root: {}",
         settings.expanded_root_path
