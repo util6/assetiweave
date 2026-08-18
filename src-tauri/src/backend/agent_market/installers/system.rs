@@ -78,6 +78,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(unix)]
     fn system_materialization_never_claims_an_owned_directory() {
         let directory = tempfile_dir();
         let executable = directory.join("agent");

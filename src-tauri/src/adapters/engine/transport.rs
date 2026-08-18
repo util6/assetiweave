@@ -441,7 +441,7 @@ mod tests {
         fs::create_dir_all(&home).expect("create temp home");
         fs::create_dir_all(&source).expect("create skill source");
         fs::write(source.join("SKILL.md"), "description: dry run").expect("write skill");
-        env::set_var("HOME", &home);
+        set_test_home(&home);
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
         let value = dispatch(EngineRequest {
             method: "skill.import".to_string(),
@@ -477,7 +477,7 @@ mod tests {
         fs::create_dir_all(&home).expect("create temp home");
         fs::create_dir_all(&source).expect("create skill source");
         fs::write(source.join("SKILL.md"), "description: downloaded").expect("write skill");
-        env::set_var("HOME", &home);
+        set_test_home(&home);
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         dispatch(EngineRequest {
@@ -518,7 +518,7 @@ mod tests {
         let home = unique_temp_dir("assetiweave-engine-acquire-home");
         let db_path = home.join("app.db");
         fs::create_dir_all(&home).expect("create temp home");
-        env::set_var("HOME", &home);
+        set_test_home(&home);
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         let value = dispatch(EngineRequest {
@@ -591,7 +591,7 @@ mod tests {
         )
         .expect("write git url rewrite");
 
-        env::set_var("HOME", &home);
+        set_test_home(&home);
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
         dispatch(EngineRequest {
             method: "update_skill_backup_settings".to_string(),
@@ -658,7 +658,7 @@ mod tests {
         let old_root = unique_temp_dir("assetiweave-engine-old-backup");
         let new_root = unique_temp_dir("assetiweave-engine-new-backup");
         fs::create_dir_all(&home).expect("create temp home");
-        env::set_var("HOME", &home);
+        set_test_home(&home);
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         dispatch(EngineRequest {
@@ -684,9 +684,12 @@ mod tests {
         })
         .expect("move to new custom backup root");
 
-        env::remove_var("ASSETIWEAVE_DB_PATH");
-        env::remove_var("HOME");
-        assert_eq!(settings["root_path"], json!(new_root.to_string_lossy()));
+        assert_eq!(
+            settings["root_path"],
+            json!(crate::backend::host_paths::normalize_path_to_display_text(
+                &new_root
+            ))
+        );
         assert!(new_root
             .join("downloaded")
             .join("old-skill")
@@ -708,7 +711,7 @@ mod tests {
         fs::create_dir_all(&home).expect("create temp home");
         fs::create_dir_all(&skill).expect("create app skill");
         fs::write(skill.join("SKILL.md"), "description: app target").expect("write app skill");
-        env::set_var("HOME", &home);
+        set_test_home(&home);
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         dispatch(EngineRequest {
@@ -787,7 +790,7 @@ mod tests {
         let home = unique_temp_dir("assetiweave-engine-source-home");
         let db_path = home.join("app.db");
         fs::create_dir_all(&home).expect("create temp home");
-        env::set_var("HOME", &home);
+        set_test_home(&home);
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         let value = dispatch(EngineRequest {
@@ -834,7 +837,7 @@ mod tests {
         let home = unique_temp_dir("assetiweave-engine-source-alias-home");
         let db_path = home.join("app.db");
         fs::create_dir_all(&home).expect("create temp home");
-        env::set_var("HOME", &home);
+        set_test_home(&home);
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         let value = dispatch(EngineRequest {
@@ -871,7 +874,7 @@ mod tests {
         let home = unique_temp_dir("assetiweave-engine-invalid-params-home");
         let db_path = home.join("app.db");
         fs::create_dir_all(&home).expect("create temp home");
-        env::set_var("HOME", &home);
+        set_test_home(&home);
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         let error = dispatch(EngineRequest {
@@ -894,7 +897,7 @@ mod tests {
         let home = unique_temp_dir("assetiweave-engine-alias-home");
         let db_path = home.join("app.db");
         fs::create_dir_all(&home).expect("create temp home");
-        env::set_var("HOME", &home);
+        set_test_home(&home);
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         let profiles = dispatch(EngineRequest {
@@ -1075,7 +1078,7 @@ mod tests {
         let home = unique_temp_dir("assetiweave-engine-nested-params-home");
         let db_path = home.join("app.db");
         fs::create_dir_all(&home).expect("create temp home");
-        env::set_var("HOME", &home);
+        set_test_home(&home);
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         let error = dispatch(EngineRequest {
@@ -1107,7 +1110,7 @@ mod tests {
         let policy_path = home.join("policy.json");
         fs::create_dir_all(&home).expect("create policy home");
         fs::write(&policy_path, r#"{"version":1,"deny":["delete_source"]}"#).expect("write policy");
-        env::set_var("HOME", &home);
+        set_test_home(&home);
         env::set_var("ASSETIWEAVE_DB_PATH", home.join("app.db"));
         env::set_var("ASSETIWEAVE_POLICY_PATH", &policy_path);
 
@@ -1133,7 +1136,7 @@ mod tests {
         let policy_path = home.join("policy.json");
         fs::create_dir_all(&home).expect("create policy home");
         fs::write(&policy_path, "{").expect("write invalid policy");
-        env::set_var("HOME", &home);
+        set_test_home(&home);
         env::set_var("ASSETIWEAVE_DB_PATH", home.join("app.db"));
         env::set_var("ASSETIWEAVE_POLICY_PATH", &policy_path);
 
@@ -1210,7 +1213,7 @@ mod tests {
         let home = unique_temp_dir("assetiweave-engine-create-profile-home");
         let db_path = home.join("app.db");
         fs::create_dir_all(&home).expect("create temp home");
-        env::set_var("HOME", &home);
+        set_test_home(&home);
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         let error = dispatch(EngineRequest {
@@ -1236,7 +1239,7 @@ mod tests {
         fs::create_dir_all(&home).expect("create temp home");
         fs::create_dir_all(&skill).expect("create external skill");
         fs::write(skill.join("SKILL.md"), "description: external").expect("write skill");
-        env::set_var("HOME", &home);
+        set_test_home(&home);
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         dispatch(EngineRequest {
@@ -1286,7 +1289,7 @@ mod tests {
         let home = unique_temp_dir("assetiweave-engine-protected-source-home");
         let db_path = home.join("app.db");
         fs::create_dir_all(&home).expect("create temp home");
-        env::set_var("HOME", &home);
+        set_test_home(&home);
         env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
 
         let error = dispatch(EngineRequest {
@@ -1338,6 +1341,7 @@ mod tests {
             Ok(TestEnvGuard {
                 _lock: lock,
                 home: env::var_os("HOME"),
+                userprofile: env::var_os("USERPROFILE"),
                 db_path: env::var_os("ASSETIWEAVE_DB_PATH"),
                 policy_path: env::var_os("ASSETIWEAVE_POLICY_PATH"),
             })
@@ -1347,6 +1351,7 @@ mod tests {
     struct TestEnvGuard<'a> {
         _lock: MutexGuard<'a, ()>,
         home: Option<OsString>,
+        userprofile: Option<OsString>,
         db_path: Option<OsString>,
         policy_path: Option<OsString>,
     }
@@ -1354,9 +1359,16 @@ mod tests {
     impl Drop for TestEnvGuard<'_> {
         fn drop(&mut self) {
             restore_env_var("HOME", self.home.take());
+            restore_env_var("USERPROFILE", self.userprofile.take());
             restore_env_var("ASSETIWEAVE_DB_PATH", self.db_path.take());
             restore_env_var("ASSETIWEAVE_POLICY_PATH", self.policy_path.take());
         }
+    }
+
+    fn set_test_home(home: &std::path::Path) {
+        env::set_var("HOME", home);
+        #[cfg(windows)]
+        env::set_var("USERPROFILE", home);
     }
 
     fn restore_env_var(key: &str, value: Option<OsString>) {

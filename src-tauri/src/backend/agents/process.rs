@@ -645,6 +645,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    #[cfg(unix)]
     async fn graceful_deadline_converges_through_force_kill() {
         let process = spawn_fixture("sleep", 1024).await;
 

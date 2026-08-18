@@ -461,14 +461,29 @@ pub(crate) fn signal_process_tree(
     if signal == HostProcessSignal::Kill {
         command.arg("/F");
     }
-    let status = command
+    let output = command
         .creation_flags(CREATE_NO_WINDOW)
-        .status()
+        .output()
         .map_err(|error| format!("failed to launch taskkill: {error}"))?;
-    if status.success() {
+    if output.status.success() {
         Ok(())
     } else {
-        Err(format!("taskkill exited with status {status}"))
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if stderr.contains("not found")
+            || stderr.contains("PID")
+            || stdout.contains("not found")
+            || stdout.contains("PID")
+            || output.status.code() == Some(128)
+            || output.status.code() == Some(1)
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "taskkill exited with status {}: {stderr}",
+                output.status
+            ))
+        }
     }
 }
 
