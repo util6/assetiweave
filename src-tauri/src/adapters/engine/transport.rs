@@ -577,7 +577,12 @@ mod tests {
                 "add browser skill",
             ],
         );
-        let repo_url = format!("file://{}", repo.display());
+        let normalized_repo = repo.to_string_lossy().replace('\\', "/");
+        let repo_url = if normalized_repo.starts_with('/') {
+            format!("file://{normalized_repo}")
+        } else {
+            format!("file:///{normalized_repo}")
+        };
         fs::write(
             home.join(".gitconfig"),
             format!(
@@ -1326,7 +1331,7 @@ mod tests {
 
     impl TestEnvLock {
         fn lock(&self) -> Result<TestEnvGuard<'_>, String> {
-            let lock = self.lock.lock().map_err(|error| error.to_string())?;
+            let lock = self.lock.lock().unwrap_or_else(|poison| poison.into_inner());
             Ok(TestEnvGuard {
                 _lock: lock,
                 home: env::var_os("HOME"),

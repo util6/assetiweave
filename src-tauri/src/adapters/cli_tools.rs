@@ -394,12 +394,20 @@ mod tests {
     #[test]
     fn path_contains_entry_matches_whole_path_segment() {
         let wanted = PathBuf::from("/Users/example/.local/bin");
-        let path_env = "/usr/bin:/Users/example/.local/bin:/bin";
-        assert!(path_contains_entry(path_env, &wanted));
-        assert!(!path_contains_entry(
-            "/usr/bin:/Users/example/.local/bin-extra:/bin",
-            &wanted
-        ));
+        let path_env = env::join_paths([
+            Path::new("/usr/bin"),
+            Path::new("/Users/example/.local/bin"),
+            Path::new("/bin"),
+        ])
+        .unwrap();
+        assert!(path_contains_entry(&path_env.to_string_lossy(), &wanted));
+        let bad_path_env = env::join_paths([
+            Path::new("/usr/bin"),
+            Path::new("/Users/example/.local/bin-extra"),
+            Path::new("/bin"),
+        ])
+        .unwrap();
+        assert!(!path_contains_entry(&bad_path_env.to_string_lossy(), &wanted));
     }
 
     #[test]
