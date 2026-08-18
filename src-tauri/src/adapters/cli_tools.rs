@@ -407,7 +407,10 @@ mod tests {
             Path::new("/bin"),
         ])
         .unwrap();
-        assert!(!path_contains_entry(&bad_path_env.to_string_lossy(), &wanted));
+        assert!(!path_contains_entry(
+            &bad_path_env.to_string_lossy(),
+            &wanted
+        ));
     }
 
     #[test]

@@ -1331,7 +1331,10 @@ mod tests {
 
     impl TestEnvLock {
         fn lock(&self) -> Result<TestEnvGuard<'_>, String> {
-            let lock = self.lock.lock().unwrap_or_else(|poison| poison.into_inner());
+            let lock = self
+                .lock
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             Ok(TestEnvGuard {
                 _lock: lock,
                 home: env::var_os("HOME"),
