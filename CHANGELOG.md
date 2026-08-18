@@ -1,4 +1,13 @@
 # Changelog
+ 
+## v0.6.1
+
+- 架构：统一运行时与扩展领域基础设施（ADR-008 与 ADR-009），引入 `AppRuntime` 运行时内核、细粒度分片锁与优雅关机支持。
+- 扩展内核：抽象统一扩展内核 `ExtensionKernel`，整合 Agent、会话适配器与外部工具的生命周期、启动器与信任模型。
+- 领域事件：引入领域事件分发总线与事件消费者体系（`EventDispatcher` / `DomainEvent`），解耦持久化与运行时状态联动。
+- 跨平台修复：彻底修复 Windows 平台由于 CRLF 换行符与路径规范差异导致的启动崩溃问题，增强启动自检（`--startup-self-check`）与进程守护。
+- 架构守卫：引入全量表面接口矩阵分析工具与架构边界校验脚本（`gen-surface-matrix` / `check-module-boundaries`），保障多端契约一致。
+- 稳定性：修复 StrictMode 并发场景下滚动活动阶段（ScrollPhase）判定的测试偶发波动。
 
 ## v0.6.0
 

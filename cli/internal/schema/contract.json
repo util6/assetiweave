@@ -1,7 +1,7 @@
 {
   "protocol_version": 1,
   "contract_version": 3,
-  "engine_version": "0.6.0",
+  "engine_version": "0.6.1",
   "methods": [
     "overview.get",
     "tenant.list",

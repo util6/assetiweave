@@ -28,6 +28,8 @@ describe("RenderActivityProvider", () => {
     document.body.append(surface);
     const ref = { current: surface } as React.MutableRefObject<HTMLDivElement | null>;
     const addEventListener = vi.spyOn(surface, "addEventListener");
+    let currentTime = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => currentTime);
 
     render(
       <StrictMode>
@@ -42,6 +44,7 @@ describe("RenderActivityProvider", () => {
 
     Object.defineProperty(surface, "scrollTop", { configurable: true, value: 100 });
     act(() => {
+      currentTime = 16;
       surface.dispatchEvent(new Event("scroll"));
       [...rafCallbacks.values()].forEach((callback) => callback(16));
       rafCallbacks.clear();
