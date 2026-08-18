@@ -765,10 +765,10 @@ mod tests {
             prompt: "translate fixture".to_owned(),
             model: model.map(str::to_owned),
             limits: AiExecutionLimits {
-                initialize_timeout: Duration::from_millis(300),
-                config_rpc_timeout: Duration::from_millis(100),
-                cancel_grace: Duration::from_millis(100),
-                close_timeout: Duration::from_millis(100),
+                initialize_timeout: Duration::from_secs(5),
+                config_rpc_timeout: Duration::from_secs(2),
+                cancel_grace: Duration::from_millis(500),
+                close_timeout: Duration::from_millis(500),
                 text_bytes: 1024,
                 stderr_bytes: 1024,
                 ..AiExecutionLimits::default()

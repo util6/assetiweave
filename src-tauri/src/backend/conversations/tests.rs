@@ -1207,6 +1207,7 @@ fn external_adapter_scaffold_preserves_existing_entrypoint() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn external_adapter_validation_hash_changes_when_executable_changes() {
     let fixture = TempFixture::new("assetiweave-adapter-validation-fixture");

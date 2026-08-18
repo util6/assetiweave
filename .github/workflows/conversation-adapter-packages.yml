@@ -58,22 +58,31 @@ jobs:
             git commit -m "chore: update conversation adapter catalog metadata [skip ci]"
             git push
           fi
-      - name: Reject mutable release assets
+      - name: Publish immutable adapter packages
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view conversation-adapter-packages-main >/dev/null 2>&1; then
+            existing_assets="$(gh release view conversation-adapter-packages-main --json assets --jq '.assets[].name')"
+            to_upload=()
             while IFS= read -r artifact; do
               name="$(basename "$artifact")"
-              if gh release view conversation-adapter-packages-main --json assets --jq '.assets[].name' | grep -Fxq "$name"; then
-                echo "refusing to overwrite immutable artifact: $name" >&2
-                exit 1
+              if echo "$existing_assets" | grep -Fxq "$name"; then
+                echo "Artifact already published, skipping: $name"
+              else
+                echo "Found new artifact to publish: $name"
+                to_upload+=("$artifact")
               fi
             done < <(find target/conversation-adapter-packages -type f -name '*.zip' -print)
+            if [ ${#to_upload[@]} -gt 0 ]; then
+              gh release upload conversation-adapter-packages-main "${to_upload[@]}"
+            else
+              echo "All adapter packages already published in conversation-adapter-packages-main."
+            fi
           else
-            gh release create conversation-adapter-packages-main --title "Conversation adapter packages" --notes "Rolling immutable conversation adapter package artifacts."
+            gh release create conversation-adapter-packages-main \
+              --title "Conversation adapter packages" \
+              --notes "Rolling immutable conversation adapter package artifacts." \
+              target/conversation-adapter-packages/*.zip
           fi
-      - name: Upload immutable artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload conversation-adapter-packages-main target/conversation-adapter-packages/*.zip
+
