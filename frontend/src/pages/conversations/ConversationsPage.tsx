@@ -84,7 +84,6 @@ import {
   DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
   resolveAgentCapability,
   resolveFontFamilyCss,
-  useAppSettings,
   type ConversationContentCardColorSettings,
   type ResolvedConversationTranslationSettings,
   type SettingsPanelId,
@@ -105,8 +104,7 @@ import {
   type ConversationSyncTaskSnapshot,
 } from "../../services/conversations";
 import { selectTargetDirectory } from "../../services/catalog";
-import { useConversationSync } from "../../app/backgroundTasks/ConversationSyncProvider";
-import { useSearchIndex } from "../../app/backgroundTasks/SearchIndexProvider";
+import { useConversationsController } from "../../hooks/conversations/useConversationsController";
 import { iconButtonRecipe } from "../../theme/recipes";
 import type {
   AppKind,
@@ -215,9 +213,9 @@ export function ConversationsPage({
   recordKind?: "session" | "web";
 }) {
   const { t } = useI18n();
-  const { startSync, taskFor } = useConversationSync();
-  const { rebuild: rebuildSearchIndex, status: searchIndexStatus, task: searchIndexTask } = useSearchIndex();
-  const { settings: appSettings } = useAppSettings();
+  const { appSettings, conversationSync, searchIndex } = useConversationsController();
+  const { startSync, taskFor } = conversationSync;
+  const { rebuild: rebuildSearchIndex, status: searchIndexStatus, task: searchIndexTask } = searchIndex;
   const currentRecordKind: ConversationRecordKind = recordKind;
   const syncTask = taskFor(currentRecordKind);
   const webRecordMode = currentRecordKind === "web";

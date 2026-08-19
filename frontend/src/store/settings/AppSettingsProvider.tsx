@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { getAppSettings, saveAppSettings } from "../../services/appSettings";
 import { applyThemeToElement } from "../../theme/cssVars";
@@ -10,6 +10,7 @@ import {
   type AppSettings,
   type AppSettingsStorageInfo,
 } from "./settingsSchema";
+import { readCachedSettings, writeCachedSettings } from "./settingsPersistence";
 
 export {
   AUTO_DREAM_MIN_HOURS_MAX,
@@ -71,8 +72,6 @@ export type {
   SettingsPanelId,
 } from "./settingsSchema";
 
-const STORAGE_KEY = "assetiweave.settings";
-
 interface AppSettingsContextValue {
   resetSettings: () => void;
   settings: AppSettings;
@@ -85,10 +84,11 @@ interface AppSettingsContextValue {
 const AppSettingsContext = createContext<AppSettingsContextValue | null>(null);
 
 export function AppSettingsProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettings] = useState<AppSettings>(() => readStoredSettings());
+  const [settings, setSettings] = useState<AppSettings>(() => readCachedSettings());
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [storageInfo, setStorageInfo] = useState<AppSettingsStorageInfo>(defaultStorageInfo);
+  const lastPersistedSettingsRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -96,7 +96,10 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
     getAppSettings()
       .then((file) => {
         if (cancelled) return;
-        setSettings(normalizeStoredSettings(file.settings));
+        const normalizedSettings = normalizeStoredSettings(file.settings);
+        setSettings(normalizedSettings);
+        writeCachedSettings(normalizedSettings);
+        lastPersistedSettingsRef.current = JSON.stringify(normalizedSettings);
         setStorageInfo({
           ...defaultStorageInfo,
           configDir: file.display_config_dir ?? file.config_dir,
@@ -118,11 +121,18 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    writeStoredSettings(settings);
     if (!settingsLoaded || settingsError) return;
+    const serializedSettings = JSON.stringify(settings);
+    if (lastPersistedSettingsRef.current === serializedSettings) return;
+
+    let active = true;
+    lastPersistedSettingsRef.current = serializedSettings;
     void saveAppSettings(settings)
       .then((file) => {
+        if (!active) return;
         const normalizedSettings = normalizeStoredSettings(file.settings);
+        writeCachedSettings(normalizedSettings);
+        lastPersistedSettingsRef.current = JSON.stringify(normalizedSettings);
         setSettings((current) => {
           if (!settingsEqual(current, settings)) return current;
           return settingsEqual(current, normalizedSettings) ? current : normalizedSettings;
@@ -133,8 +143,17 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
           configPath: file.display_config_path ?? file.config_path,
           conversationAdapterDir: file.display_conversation_adapter_dir ?? file.conversation_adapter_dir,
         });
+        setSettingsError(null);
       })
-      .catch((error) => setSettingsError(errorMessage(error)));
+      .catch((error) => {
+        if (active) {
+          lastPersistedSettingsRef.current = null;
+          setSettingsError(errorMessage(error));
+        }
+      });
+    return () => {
+      active = false;
+    };
   }, [settings, settingsError, settingsLoaded]);
 
   useLayoutEffect(() => {
@@ -168,6 +187,8 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AppSettingsContextValue>(() => {
     function updateSetting<Key extends keyof AppSettings>(key: Key, settingValue: AppSettings[Key]) {
+      setSettingsError(null);
+      lastPersistedSettingsRef.current = null;
       setSettings((currentSettings) => ({
         ...currentSettings,
         [key]: settingValue,
@@ -175,7 +196,11 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
     }
 
     return {
-      resetSettings: () => setSettings(defaultSettings),
+      resetSettings: () => {
+        setSettingsError(null);
+        lastPersistedSettingsRef.current = null;
+        setSettings(defaultSettings);
+      },
       settings,
       settingsError,
       settingsLoaded,
@@ -193,33 +218,6 @@ export function useAppSettings() {
     throw new Error("useAppSettings must be used inside AppSettingsProvider");
   }
   return context;
-}
-
-function readStoredSettings(): AppSettings {
-  try {
-    if (typeof localStorage === "undefined") {
-      return defaultSettings;
-    }
-
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) {
-      return defaultSettings;
-    }
-
-    return normalizeStoredSettings(JSON.parse(stored));
-  } catch {
-    return defaultSettings;
-  }
-}
-
-function writeStoredSettings(settings: AppSettings) {
-  try {
-    if (typeof localStorage !== "undefined") {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-    }
-  } catch {
-    // The desktop JSON settings file remains the source of truth when available.
-  }
 }
 
 function errorMessage(error: unknown) {

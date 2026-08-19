@@ -52,6 +52,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { FullscreenDialogFrame } from "@/components/foundation/FullscreenDialogFrame";
 import { DialogFrame } from "@/components/foundation/DialogFrame";
 import {
   AppShortcutIcon,
@@ -77,6 +78,7 @@ import {
   useConversationCardKindRegistry,
 } from "../conversations/ConversationCardKindRegistry";
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
+import { useSettingsPanelController } from "../../hooks/settings/useSettingsPanelController";
 import { headerTabLabel, railLabel, subNavLabel } from "../../i18n/navigation";
 import type { Locale, TranslationKey } from "../../i18n/messages";
 import type { HeaderTabItem, LocalizedNavigationLabels, NavigationModel, RailMenuItem, SubNavItem } from "../../router/types";
@@ -164,8 +166,17 @@ export function GlobalSettingsDialog({
   const { locale, setLocale, t } = useI18n();
   const { resetSettings, settings, storageInfo, updateSetting } = useAppSettings();
   const { startSync: startConversationSync, tasks: conversationSyncTasks } = useConversationSync();
-  const [activePanel, setActivePanel] = useState<SettingsPanelId>(() => normalizeSettingsPanelId(initialPanel));
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const {
+    activePanel,
+    collapsedGroups,
+    ensureGroupExpanded,
+    setActivePanel,
+    toggleGroupCollapsed,
+  } = useSettingsPanelController({
+    initialPanel,
+    normalizePanel: normalizeSettingsPanelId,
+    open,
+  });
   const [editingShortcutIconId, setEditingShortcutIconId] = useState<string | null>(null);
   const [iconSvgDraft, setIconSvgDraft] = useState("");
   const [iconSvgError, setIconSvgError] = useState("");
@@ -190,59 +201,18 @@ export function GlobalSettingsDialog({
   } | null>(null);
 
   useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const documentElement = document.documentElement;
-    const body = document.body;
-    const previousDocumentOverflow = documentElement.style.overflow;
-    const previousBodyOverflow = body.style.overflow;
-    documentElement.style.overflow = "hidden";
-    body.style.overflow = "hidden";
-
-    return () => {
-      documentElement.style.overflow = previousDocumentOverflow;
-      body.style.overflow = previousBodyOverflow;
-    };
-  }, [open]);
-
-  useEffect(() => {
     if (open) {
       const nextPanel = normalizeSettingsPanelId(initialPanel);
       setActivePanel(nextPanel);
-      ensureGroupExpanded(nextPanel);
+      ensureGroupExpanded(nextPanel, settingGroups);
     }
   }, [initialPanel, open]);
 
-  function toggleGroupCollapsed(groupId: string) {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(groupId)) {
-        next.delete(groupId);
-      } else {
-        next.add(groupId);
-      }
-      return next;
-    });
-  }
-
-  function ensureGroupExpanded(panelId: SettingsPanelId) {
-    const group = settingGroups.find((candidate) =>
-      candidate.panels.some((panel) => panel.id === panelId),
-    );
-    if (!group) {
-      return;
+  useEffect(() => {
+    if (!open) {
+      closeShortcutIconEditor();
     }
-    setCollapsedGroups((prev) => {
-      if (!prev.has(group.id)) {
-        return prev;
-      }
-      const next = new Set(prev);
-      next.delete(group.id);
-      return next;
-    });
-  }
+  }, [open]);
 
   useEffect(() => {
     if (!open) {
@@ -297,22 +267,6 @@ export function GlobalSettingsDialog({
       cancelled = true;
     };
   }, [open]);
-
-  useEffect(() => {
-    if (!open) {
-      closeShortcutIconEditor();
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, open]);
 
   if (!open) {
     return null;
@@ -380,7 +334,7 @@ export function GlobalSettingsDialog({
     setAgentCapabilityDialog(null);
     setAgentFocusId(agentId);
     setActivePanel("agents.market");
-    ensureGroupExpanded("agents.market");
+    ensureGroupExpanded("agents.market", settingGroups);
   }
 
   function openAgentCapabilityDialog(serviceId: AgentCapabilityServiceId) {
@@ -712,13 +666,14 @@ export function GlobalSettingsDialog({
     });
 
   return (
-    <div className="fixed inset-x-0 bottom-0 top-[var(--app-window-titlebar-height)] z-50 bg-background text-on-surface">
-      <section
-        aria-labelledby="global-settings-title"
-        aria-modal="true"
-        className="grid h-[calc(100vh-var(--app-window-titlebar-height))] w-screen grid-cols-[288px_minmax(0,1fr)] overflow-hidden bg-theme-card-header"
-        role="dialog"
-      >
+    <FullscreenDialogFrame
+      aria-label={t("settings.title")}
+      className="bg-background text-on-surface"
+      hideHeader
+      onClose={onClose}
+      title={t("settings.title")}
+    >
+      <div className="grid h-full w-full grid-cols-[288px_minmax(0,1fr)] overflow-hidden bg-theme-card-header">
         <aside className="flex min-h-0 flex-col border-r border-theme-card-border bg-theme-nav/95">
           <div className="border-b border-theme-card-border px-6 py-6">
             <div className="flex items-center gap-3">
@@ -1499,7 +1454,7 @@ export function GlobalSettingsDialog({
             )}
           </div>
         </div>
-      </section>
+      </div>
       {editingShortcutIcon && (
         <ShortcutIconSvgDialog
           draft={iconSvgDraft}
@@ -1561,7 +1516,7 @@ export function GlobalSettingsDialog({
           onOpenAgentSettings={openAgentSettings}
         />
       ) : null}
-    </div>
+    </FullscreenDialogFrame>
   );
 }
 

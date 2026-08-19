@@ -30,6 +30,7 @@ export interface DialogFrameProps extends Omit<React.HTMLAttributes<HTMLElement>
   icon?: React.ReactNode;
   iconClassName?: string;
   initialFocusRef?: React.RefObject<HTMLElement | null>;
+  hideHeader?: boolean;
   onClose?: () => void;
   onBackdropClick?: () => void;
   overlayClassName?: string;
@@ -54,6 +55,7 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
       footerClassName,
       headerActions,
       headerClassName,
+      hideHeader = false,
       icon,
       iconClassName,
       initialFocusRef,
@@ -67,7 +69,7 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
     },
     ref,
   ) => {
-    const hasHeader = Boolean(title || description || icon || headerActions || onClose);
+    const hasHeader = !hideHeader && Boolean(title || description || icon || headerActions || onClose);
     const previouslyFocusedElementRef = React.useRef<HTMLElement | null>(
       typeof document !== "undefined" && document.activeElement instanceof HTMLElement ? document.activeElement : null,
     );
@@ -86,6 +88,24 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
             previouslyFocusedElement.focus();
           }
         }, 0);
+      };
+    }, []);
+
+    React.useEffect(() => {
+      if (typeof document === "undefined") {
+        return;
+      }
+
+      const documentElement = document.documentElement;
+      const body = document.body;
+      const previousDocumentOverflow = documentElement.style.overflow;
+      const previousBodyOverflow = body.style.overflow;
+      documentElement.style.overflow = "hidden";
+      body.style.overflow = "hidden";
+
+      return () => {
+        documentElement.style.overflow = previousDocumentOverflow;
+        body.style.overflow = previousBodyOverflow;
       };
     }, []);
 
@@ -188,6 +208,14 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
                     </DialogPrimitive.Close>
                   )}
                 </header>
+              )}
+              {hideHeader && title && (
+                <>
+                  <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
+                  <DialogPrimitive.Description className="sr-only">
+                    {description ?? title}
+                  </DialogPrimitive.Description>
+                </>
               )}
               <div className={cn("min-h-0 flex-1 overflow-y-auto px-5 py-4", contentClassName)}>{children}</div>
               {footer && (

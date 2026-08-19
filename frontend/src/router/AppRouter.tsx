@@ -8,20 +8,24 @@ import { SkillBackupBackgroundTaskIndicator } from "../components/backup/SkillBa
 import { ConversationsPageSkeleton } from "../components/conversations/ConversationSkeleton";
 import { ConversationBackgroundTaskIndicator } from "../components/conversations/ConversationToolbarControls";
 import { AppSkeleton, type SkeletonLayoutName } from "../components/foundation/skeleton";
-import { useCatalogController } from "../hooks/catalog/useCatalogController";
+import { useCatalogController, type CatalogController } from "../hooks/catalog/useCatalogController";
 import { useI18n } from "../i18n/I18nProvider";
 import { headerTabLabel, subNavLabel } from "../i18n/navigation";
 import { AppLayout } from "../layouts/app/AppLayout";
 import { UnderConstructionPage } from "../pages/under-construction/UnderConstructionPage";
-import { resolveAppRoute } from "./routes";
+import { resolveAppRoute, type AppRouteId } from "./routes";
 import {
   loadCatalogPage,
   loadConversationsPage,
+  loadLogViewerModal,
+  loadManualPage,
+  loadMemoryPage,
   loadPromptOverviewPage,
   loadSkillGroupsPage,
   loadSkillMountsPage,
-  loadSourcesPage,
   preloadRoute,
+  loadSourcesPage,
+  routeRegistry,
 } from "./routeLoaders";
 import {
   RouteTransitionOverlay,
@@ -38,33 +42,15 @@ import {
 } from "./navigationTargets";
 
 const CatalogPage = lazy(loadCatalogPage);
-
 const ConversationsPage = lazy(loadConversationsPage);
 
-const LogViewerModal = lazy(() =>
-  import("../components/logs/LogViewerModal").then((module) => ({
-    default: module.LogViewerModal,
-  })),
-);
-
-const ManualPage = lazy(() =>
-  import("../manuals/ManualPage").then((module) => ({
-    default: module.ManualPage,
-  })),
-);
-
-const MemoryPage = lazy(() =>
-  import("../pages/memory/MemoryPage").then((module) => ({
-    default: module.MemoryPage,
-  })),
-);
+const LogViewerModal = lazy(loadLogViewerModal);
+const ManualPage = lazy(loadManualPage);
+const MemoryPage = lazy(loadMemoryPage);
 
 const SkillGroupsPage = lazy(loadSkillGroupsPage);
-
 const PromptOverviewPage = lazy(loadPromptOverviewPage);
-
 const SkillMountsPage = lazy(loadSkillMountsPage);
-
 const SourcesPage = lazy(loadSourcesPage);
 
 export function AppRouter() {
@@ -275,114 +261,22 @@ export function AppRouter() {
               <Suspense fallback={<RouteLoadingState layout="list" />}>
                 <ManualPage routeKey={manualRouteKey} onBack={() => setManualRouteKey(null)} />
               </Suspense>
-          ) : routeId === "conversations" || routeId === "web-records" ? (
-            <Suspense fallback={<ConversationsPageSkeleton label={t("common.loading")} />}>
-              <ConversationsPage
-                activeSubNavId={activeSubNavId}
-                appShortcuts={catalog.appShortcuts}
-                onReady={() => completeRouteTransition(routeTransition?.id)}
-                onManualOpen={openCurrentManual}
-                navigationTarget={conversationNavigationTarget?.recordKind === (routeId === "web-records" ? "web" : "session")
-                  ? conversationNavigationTarget
-                  : null}
-                onNavigationTargetConsumed={(nonce) =>
-                  setConversationNavigationTarget((current) => current?.nonce === nonce ? null : current)
-                }
-                onNotify={(notification) => catalog.showNotification(notification)}
-                onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
-                onOpenSettings={openSettings}
-                recordKind={routeId === "web-records" ? "web" : "session"}
-              />
-            </Suspense>
-          ) : routeId === "skill-mounts" ? (
-            <RouteSuspense layout="columns">
-              <SkillMountsPage
-                appShortcuts={catalog.appShortcuts}
-                assetMountStatuses={catalog.assetMountStatuses}
-                assets={catalog.assets}
-                onReady={() => completeRouteTransition(routeTransition?.id)}
-                onCatalogRefresh={catalog.refreshOverview}
-                onManualOpen={openCurrentManual}
-                onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
-                onOpenSettings={() => openSettings("general.storage")}
-                onRefreshMountStatus={catalog.refreshMountStatus}
-                onRefreshProfiles={catalog.refreshProfiles}
-                onRevealPath={(path) => void catalog.revealPath(path)}
-                onSaveAppShortcuts={catalog.saveAppShortcuts}
-                onSetSkillMountProfiles={catalog.setMountProfiles}
-                onToggleMount={catalog.toggleMountProfile}
-                profiles={catalog.profiles}
-                refreshingMountStatus={catalog.refreshingMountStatus}
-                sources={catalog.sources}
-              />
-            </RouteSuspense>
-          ) : routeId === "skill-groups" ? (
-            <RouteSuspense layout="columns">
-              <SkillGroupsPage
-                appShortcuts={catalog.appShortcuts}
-                assetMountStatuses={catalog.assetMountStatuses}
-                assets={catalog.assets}
-                onReady={() => completeRouteTransition(routeTransition?.id)}
-                expandedAssetIds={catalog.expandedIds}
-                onManualOpen={openCurrentManual}
-                onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
-                onOpenSettings={() => openSettings("general.storage")}
-                onApplyGroupExclusiveMount={catalog.applyGroupExclusiveMount}
-                onPreviewGroupExclusiveMount={catalog.previewGroupExclusiveMount}
-                onRefreshMountStatus={catalog.refreshMountStatus}
-                onRevealPath={(path) => void catalog.revealPath(path)}
-                onSetGroupMountProfile={catalog.setGroupMountProfile}
-                onSetSkillMountProfiles={catalog.setMountProfiles}
-                onToggleAsset={catalog.toggleAsset}
-                onToggleMount={catalog.toggleMountProfile}
-                profiles={catalog.profiles}
-                refreshingMountStatus={catalog.refreshingMountStatus}
-                sources={catalog.sources}
-              />
-            </RouteSuspense>
-          ) : routeId === "prompts-overview" ? (
-            <RouteSuspense layout="cards">
-              <PromptOverviewPage onManualOpen={openCurrentManual} onReady={() => completeRouteTransition(routeTransition?.id)} />
-            </RouteSuspense>
-          ) : routeId === "sources" ? (
-            <RouteSuspense layout="list">
-              <SourcesPage
-                appShortcuts={catalog.appShortcuts}
-                assetMountStatuses={catalog.assetMountStatuses}
-                assets={catalog.assets}
-                onReady={() => completeRouteTransition(routeTransition?.id)}
-                expandedAssetIds={catalog.expandedIds}
-                onAssetReveal={(path) => void catalog.revealPath(path)}
-                onApplyAssetUpdate={catalog.applyAssetUpdate}
-                onCatalogRefresh={catalog.refreshOverview}
-                onClearDeploymentPlan={catalog.clearDeploymentPlan}
-                onManualOpen={openCurrentManual}
-                onNotifyError={(message) => catalog.showNotification({ tone: "error", message })}
-                onOpenSettings={() => openSettings("workspace.menu")}
-                onRefreshMountStatus={catalog.refreshMountStatus}
-                onRemoveAsset={catalog.removeAsset}
-                onSetSourceMountProfile={catalog.setMountProfiles}
-                onToggleAsset={catalog.toggleAsset}
-                onToggleMount={catalog.toggleMountProfile}
-                profiles={catalog.profiles}
-                refreshingMountStatus={catalog.refreshingMountStatus}
-              />
-            </RouteSuspense>
-          ) : routeId === "memory" ? (
-            <Suspense fallback={<RouteLoadingState layout={memorySkeletonLayout(activeSubNavId)} />}>
-              <MemoryPage activeSubNavId={activeSubNavId} onEvidenceOpen={handleMemoryEvidenceOpen} />
-            </Suspense>
-          ) : routeId === "under-construction" ? (
-            <UnderConstructionPage featureLabel={underConstructionFeatureLabel} onManualOpen={openCurrentManual} routeKey={activeRouteKey} />
-          ) : (
-            <RouteSuspense layout="list">
-              <CatalogPage
-                catalog={catalog}
-                onManualOpen={openCurrentManual}
-                onOpenSettings={() => openSettings("general.appearance")}
-                onReady={() => completeRouteTransition(routeTransition?.id)}
-              />
-            </RouteSuspense>
+            ) : (
+              routeRenderers[routeId]({
+                activeRouteKey,
+                activeSubNavId,
+                appShortcuts: catalog.appShortcuts,
+                catalog,
+                conversationNavigationTarget,
+                completeRouteTransition,
+                handleMemoryEvidenceOpen,
+                loadingLabel: t("common.loading"),
+                onManualOpen: openCurrentManual,
+                onOpenSettings: openSettings,
+                routeTransitionId: routeTransition?.id,
+                setConversationNavigationTarget,
+                underConstructionFeatureLabel,
+              })
             )}
           </div>
         </div>
@@ -425,6 +319,155 @@ function RouteLoadingState({ layout }: { layout: SkeletonLayoutName }) {
   return <AppSkeleton label={t("common.loading")} layout={layout} />;
 }
 
+interface RouteRenderContext {
+  activeRouteKey: string;
+  activeSubNavId: string;
+  appShortcuts: CatalogController["appShortcuts"];
+  catalog: CatalogController;
+  conversationNavigationTarget: ConversationNavigationTarget | null;
+  completeRouteTransition: (id?: number) => void;
+  handleMemoryEvidenceOpen: (evidence: MemoryEvidenceSnapshot) => void;
+  loadingLabel: string;
+  onManualOpen: () => void;
+  onOpenSettings: (panel?: SettingsPanelId) => void;
+  routeTransitionId?: number;
+  setConversationNavigationTarget: (
+    updater: (current: ConversationNavigationTarget | null) => ConversationNavigationTarget | null,
+  ) => void;
+  underConstructionFeatureLabel?: string;
+}
+
+const routeRenderers: Record<AppRouteId, (context: RouteRenderContext) => ReactNode> = {
+  catalog: (context) => (
+    <RouteSuspense layout={routeRegistry.catalog.skeleton}>
+      <CatalogPage
+        catalog={context.catalog}
+        onManualOpen={context.onManualOpen}
+        onOpenSettings={() => context.onOpenSettings("general.appearance")}
+        onReady={() => context.completeRouteTransition(context.routeTransitionId)}
+      />
+    </RouteSuspense>
+  ),
+  conversations: (context) => renderConversationRoute(context, "session"),
+  "web-records": (context) => renderConversationRoute(context, "web"),
+  "skill-mounts": (context) => (
+    <RouteSuspense layout={routeRegistry["skill-mounts"].skeleton}>
+      <SkillMountsPage
+        appShortcuts={context.appShortcuts}
+        assetMountStatuses={context.catalog.assetMountStatuses}
+        assets={context.catalog.assets}
+        onReady={() => context.completeRouteTransition(context.routeTransitionId)}
+        onCatalogRefresh={context.catalog.refreshOverview}
+        onManualOpen={context.onManualOpen}
+        onNotifyError={(message) => context.catalog.showNotification({ tone: "error", message })}
+        onOpenSettings={() => context.onOpenSettings("general.storage")}
+        onRefreshMountStatus={context.catalog.refreshMountStatus}
+        onRefreshProfiles={context.catalog.refreshProfiles}
+        onRevealPath={(path) => void context.catalog.revealPath(path)}
+        onSaveAppShortcuts={context.catalog.saveAppShortcuts}
+        onSetSkillMountProfiles={context.catalog.setMountProfiles}
+        onToggleMount={context.catalog.toggleMountProfile}
+        profiles={context.catalog.profiles}
+        refreshingMountStatus={context.catalog.refreshingMountStatus}
+        sources={context.catalog.sources}
+      />
+    </RouteSuspense>
+  ),
+  "skill-groups": (context) => (
+    <RouteSuspense layout={routeRegistry["skill-groups"].skeleton}>
+      <SkillGroupsPage
+        appShortcuts={context.appShortcuts}
+        assetMountStatuses={context.catalog.assetMountStatuses}
+        assets={context.catalog.assets}
+        onReady={() => context.completeRouteTransition(context.routeTransitionId)}
+        expandedAssetIds={context.catalog.expandedIds}
+        onManualOpen={context.onManualOpen}
+        onNotifyError={(message) => context.catalog.showNotification({ tone: "error", message })}
+        onOpenSettings={() => context.onOpenSettings("general.storage")}
+        onApplyGroupExclusiveMount={context.catalog.applyGroupExclusiveMount}
+        onPreviewGroupExclusiveMount={context.catalog.previewGroupExclusiveMount}
+        onRefreshMountStatus={context.catalog.refreshMountStatus}
+        onRevealPath={(path) => void context.catalog.revealPath(path)}
+        onSetGroupMountProfile={context.catalog.setGroupMountProfile}
+        onSetSkillMountProfiles={context.catalog.setMountProfiles}
+        onToggleAsset={context.catalog.toggleAsset}
+        onToggleMount={context.catalog.toggleMountProfile}
+        profiles={context.catalog.profiles}
+        refreshingMountStatus={context.catalog.refreshingMountStatus}
+        sources={context.catalog.sources}
+      />
+    </RouteSuspense>
+  ),
+  "prompts-overview": (context) => (
+    <RouteSuspense layout={routeRegistry["prompts-overview"].skeleton}>
+      <PromptOverviewPage
+        onManualOpen={context.onManualOpen}
+        onReady={() => context.completeRouteTransition(context.routeTransitionId)}
+      />
+    </RouteSuspense>
+  ),
+  sources: (context) => (
+    <RouteSuspense layout={routeRegistry.sources.skeleton}>
+      <SourcesPage
+        appShortcuts={context.appShortcuts}
+        assetMountStatuses={context.catalog.assetMountStatuses}
+        assets={context.catalog.assets}
+        onReady={() => context.completeRouteTransition(context.routeTransitionId)}
+        expandedAssetIds={context.catalog.expandedIds}
+        onAssetReveal={(path) => void context.catalog.revealPath(path)}
+        onApplyAssetUpdate={context.catalog.applyAssetUpdate}
+        onCatalogRefresh={context.catalog.refreshOverview}
+        onClearDeploymentPlan={context.catalog.clearDeploymentPlan}
+        onManualOpen={context.onManualOpen}
+        onNotifyError={(message) => context.catalog.showNotification({ tone: "error", message })}
+        onOpenSettings={() => context.onOpenSettings("workspace.menu")}
+        onRefreshMountStatus={context.catalog.refreshMountStatus}
+        onRemoveAsset={context.catalog.removeAsset}
+        onSetSourceMountProfile={context.catalog.setMountProfiles}
+        onToggleAsset={context.catalog.toggleAsset}
+        onToggleMount={context.catalog.toggleMountProfile}
+        profiles={context.catalog.profiles}
+        refreshingMountStatus={context.catalog.refreshingMountStatus}
+      />
+    </RouteSuspense>
+  ),
+  memory: (context) => (
+    <Suspense fallback={<RouteLoadingState layout={memorySkeletonLayout(context.activeSubNavId)} />}>
+      <MemoryPage activeSubNavId={context.activeSubNavId} onEvidenceOpen={context.handleMemoryEvidenceOpen} />
+    </Suspense>
+  ),
+  "under-construction": (context) => (
+    <UnderConstructionPage
+      featureLabel={context.underConstructionFeatureLabel}
+      onManualOpen={context.onManualOpen}
+      routeKey={context.activeRouteKey}
+    />
+  ),
+};
+
+function renderConversationRoute(context: RouteRenderContext, recordKind: "session" | "web") {
+  return (
+    <Suspense fallback={<ConversationsPageSkeleton label={context.loadingLabel} />}>
+      <ConversationsPage
+        activeSubNavId={context.activeSubNavId}
+        appShortcuts={context.appShortcuts}
+        onReady={() => context.completeRouteTransition(context.routeTransitionId)}
+        onManualOpen={context.onManualOpen}
+        navigationTarget={context.conversationNavigationTarget?.recordKind === recordKind
+          ? context.conversationNavigationTarget
+          : null}
+        onNavigationTargetConsumed={(nonce) =>
+          context.setConversationNavigationTarget((current) => current?.nonce === nonce ? null : current)
+        }
+        onNotify={(notification) => context.catalog.showNotification(notification)}
+        onNotifyError={(message) => context.catalog.showNotification({ tone: "error", message })}
+        onOpenSettings={context.onOpenSettings}
+        recordKind={recordKind}
+      />
+    </Suspense>
+  );
+}
+
 function RouteSuspense({
   children,
   layout,
@@ -456,24 +499,7 @@ function routeTransitionKind(
   subNavId: string,
   navigationModel: NavigationModel,
 ): RouteTransitionKind | null {
-  switch (resolveNavigationRoute(navigationModel, headerTabId, subNavId)) {
-    case "catalog":
-      return "list";
-    case "conversations":
-      return "columns";
-    case "prompts-overview":
-      return "cards";
-    case "sources":
-      return "list";
-    case "skill-groups":
-      return "columns";
-    case "skill-mounts":
-      return "columns";
-    case "web-records":
-      return "columns";
-    case "memory":
-      return subNavId === "overview" ? "cards" : "columns";
-    default:
-      return null;
-  }
+  const routeId = resolveNavigationRoute(navigationModel, headerTabId, subNavId);
+  const transition = routeRegistry[routeId]?.transition;
+  return transition === "memory" ? memorySkeletonLayout(subNavId) : transition;
 }
