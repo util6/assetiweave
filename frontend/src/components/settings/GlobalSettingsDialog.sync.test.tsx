@@ -9,6 +9,7 @@ import { defaultSettings } from "../../store/settings/settingsSchema";
 import { GlobalSettingsDialog } from "./GlobalSettingsDialog";
 
 const startSyncMock = vi.hoisted(() => vi.fn());
+const resetSettingsMock = vi.hoisted(() => vi.fn());
 const updateSettingMock = vi.hoisted(() => vi.fn());
 const conversationSyncState = vi.hoisted(() => ({ tasks: [] as Array<Record<string, unknown>> }));
 
@@ -30,7 +31,7 @@ vi.mock("../../store/settings/AppSettingsProvider", async (importOriginal) => {
   return {
     ...actual,
     useAppSettings: () => ({
-      resetSettings: vi.fn(),
+      resetSettings: resetSettingsMock,
       settings: defaultSettings,
       storageInfo: {
         configDir: "/tmp/config",
@@ -71,6 +72,7 @@ vi.mock("../../services/cardTranslation", () => ({
 describe("GlobalSettingsDialog", () => {
   beforeEach(() => {
     conversationSyncState.tasks = [];
+    resetSettingsMock.mockReset();
     updateSettingMock.mockReset();
     startSyncMock.mockReset().mockResolvedValue({
       id: "sync-full",
@@ -238,6 +240,30 @@ describe("GlobalSettingsDialog", () => {
     const dialogList = screen.getByRole("list", { name: "settings.agentCapabilities.dialogTitle" });
     expect(dialogList.className).not.toContain("overflow-y-auto");
     expect(dialogList.parentElement?.parentElement?.className).toContain("overflow-y-auto");
+  });
+
+  it("requires explicit confirmation before restoring default settings", () => {
+    render(
+      <GlobalSettingsDialog
+        appShortcuts={[]}
+        initialPanel="general.appearance"
+        navigationModel={navigationModel}
+        onAppShortcutsChange={vi.fn()}
+        onClose={vi.fn()}
+        onNavigationModelChange={vi.fn()}
+        open
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "settings.reset" }));
+
+    expect(resetSettingsMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "settings.resetConfirmTitle" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "settings.resetConfirmAction" }));
+
+    expect(resetSettingsMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("heading", { name: "settings.resetConfirmTitle" })).toBeNull();
   });
 
   it("jumps from the capability picker to the focused Agent settings row", () => {

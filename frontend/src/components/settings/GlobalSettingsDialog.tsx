@@ -178,6 +178,7 @@ export function GlobalSettingsDialog({
   const [adapterRuntimeStatuses, setAdapterRuntimeStatuses] = useState<ConversationAdapterRuntimeStatus[]>([]);
   const [adapterRuntimeLoading, setAdapterRuntimeLoading] = useState(false);
   const [adapterRuntimeError, setAdapterRuntimeError] = useState("");
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [fullSyncConfirmOpen, setFullSyncConfirmOpen] = useState(false);
   const [fullSyncStarting, setFullSyncStarting] = useState(false);
   const [fullSyncError, setFullSyncError] = useState("");
@@ -763,7 +764,7 @@ export function GlobalSettingsDialog({
           <div className="border-t border-theme-card-border p-4">
             <Button
               className="w-full"
-              onClick={resetSettings}
+              onClick={() => setResetConfirmOpen(true)}
               type="button"
               variant="outline"
             >
@@ -1505,6 +1506,19 @@ export function GlobalSettingsDialog({
           await onSkillBackupLibraryChange?.();
         }}
         open={backupDialogOpen}
+      />
+      <ConfirmDialog
+        busy={false}
+        confirmLabel={t("settings.resetConfirmAction")}
+        message={t("settings.resetConfirmMessage")}
+        onClose={() => setResetConfirmOpen(false)}
+        onConfirm={() => {
+          resetSettings();
+          setResetConfirmOpen(false);
+        }}
+        open={resetConfirmOpen}
+        title={t("settings.resetConfirmTitle")}
+        tone="danger"
       />
       <ConfirmDialog
         busy={fullSyncStarting}
