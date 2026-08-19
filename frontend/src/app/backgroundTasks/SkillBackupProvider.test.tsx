@@ -4,22 +4,19 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SkillBackupProvider, useSkillBackup } from "./SkillBackupProvider";
 
-const listenMock = vi.hoisted(() => vi.fn());
+const subscribeSkillBackupTasksMock = vi.hoisted(() => vi.fn());
 const getSkillBackupTaskMock = vi.hoisted(() => vi.fn());
 const startSkillBackupTaskMock = vi.hoisted(() => vi.fn());
-
-vi.mock("@tauri-apps/api/event", () => ({
-  listen: listenMock,
-}));
 
 vi.mock("../../services/catalog", () => ({
   getSkillBackupTask: getSkillBackupTaskMock,
   startSkillBackupTask: startSkillBackupTaskMock,
+  subscribeSkillBackupTasks: subscribeSkillBackupTasksMock,
 }));
 
 describe("SkillBackupProvider", () => {
   beforeEach(() => {
-    listenMock.mockReset().mockResolvedValue(vi.fn());
+    subscribeSkillBackupTasksMock.mockReset().mockResolvedValue(vi.fn());
     getSkillBackupTaskMock.mockReset().mockResolvedValue(null);
     startSkillBackupTaskMock.mockReset();
   });
@@ -33,9 +30,9 @@ describe("SkillBackupProvider", () => {
   it("keeps unrelated features interactive while backup progress updates", async () => {
     const runningTask = taskSnapshot("running", 0);
     startSkillBackupTaskMock.mockResolvedValue(runningTask);
-    let backupListener: ((event: { payload: unknown }) => void) | undefined;
-    listenMock.mockImplementation(
-      async (_eventName: string, listener: (event: { payload: unknown }) => void) => {
+    let backupListener: ((snapshot: unknown) => void) | undefined;
+    subscribeSkillBackupTasksMock.mockImplementation(
+      async (listener: (snapshot: unknown) => void) => {
         backupListener = listener;
         return vi.fn();
       },
@@ -53,7 +50,7 @@ describe("SkillBackupProvider", () => {
     expect(screen.getByTestId("backup-status").textContent).toBe("running:0/2");
 
     await act(async () => {
-      backupListener?.({ payload: taskSnapshot("completed", 2) });
+      backupListener?.(taskSnapshot("completed", 2));
     });
     expect(screen.getByTestId("backup-status").textContent).toBe("completed:2/2");
   });

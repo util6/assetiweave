@@ -6,10 +6,10 @@ import {
 } from "./AgentLifecycleTaskProvider";
 import type { AgentLifecycleTaskSnapshot } from "../../services/agentRuntime";
 
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("../../services/agentRuntime", () => ({
   cancelAgentLifecycleTask: vi.fn(),
   listAgentLifecycleTasks: vi.fn().mockResolvedValue([]),
+  subscribeAgentLifecycleTasks: vi.fn().mockResolvedValue(vi.fn()),
 }));
 
 function task(overrides: Partial<AgentLifecycleTaskSnapshot> = {}): AgentLifecycleTaskSnapshot {

@@ -2,20 +2,20 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
-  useState,
   type ReactNode,
 } from "react";
-import { listen } from "@tauri-apps/api/event";
 import {
   getSkillBackupTask,
   startSkillBackupTask,
+  subscribeSkillBackupTasks,
   type SkillBackupTaskSnapshot,
 } from "../../services/catalog";
+import { useBackgroundTaskRuntime, type BackgroundTaskRuntimeAdapter } from "./BackgroundTaskRuntime";
 
-const SKILL_BACKUP_TASK_UPDATED_EVENT = "skill-backup-task-updated";
-const BACKUP_STATUS_POLL_INTERVAL_MS = 1000;
+interface SkillBackupRuntimeEvent {
+  snapshot: SkillBackupTaskSnapshot;
+}
 
 interface SkillBackupContextValue {
   startBackup: (assetIds: string[]) => Promise<SkillBackupTaskSnapshot>;
@@ -25,95 +25,35 @@ interface SkillBackupContextValue {
 const SkillBackupContext = createContext<SkillBackupContextValue | null>(null);
 
 export function SkillBackupProvider({ children }: { children: ReactNode }) {
-  const [task, setTask] = useState<SkillBackupTaskSnapshot | null>(null);
-
-  const refreshTask = useCallback(async () => {
-    const snapshot = await getSkillBackupTask();
-    setTask(snapshot);
-    return snapshot;
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void getSkillBackupTask()
-      .then((snapshot) => {
-        if (!cancelled) {
-          setTask((current) => current ?? snapshot);
+  const adapter = useMemo<BackgroundTaskRuntimeAdapter<SkillBackupTaskSnapshot | null, SkillBackupRuntimeEvent>>(
+    () => ({
+      initialState: null,
+      isRunning: (state) => state?.status === "running",
+      merge: (current, incoming) => {
+        if (isSkillBackupRuntimeEvent(incoming)) {
+          return incoming.snapshot;
         }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    void listen<SkillBackupTaskSnapshot>(
-      SKILL_BACKUP_TASK_UPDATED_EVENT,
-      (event) => {
-        if (!cancelled) {
-          setTask(event.payload);
-        }
+        return current?.status === "running" && !incoming ? current : incoming;
       },
-    )
-      .then((removeListener) => {
-        if (cancelled) {
-          removeListener();
-        } else {
-          unlisten = removeListener;
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (task?.status !== "running") {
-      return;
-    }
-
-    let polling = false;
-    const intervalId = window.setInterval(() => {
-      if (polling) {
-        return;
-      }
-      polling = true;
-      void refreshTask()
-        .catch(() => {})
-        .finally(() => {
-          polling = false;
-        });
-    }, BACKUP_STATUS_POLL_INTERVAL_MS);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [refreshTask, task?.id, task?.status]);
+      refresh: () => getSkillBackupTask(),
+      subscribe: (listener) => subscribeSkillBackupTasks((snapshot) => listener({ snapshot })),
+    }),
+    [],
+  );
+  const { merge, state: task } = useBackgroundTaskRuntime(adapter);
 
   const startBackup = useCallback(async (assetIds: string[]) => {
     const snapshot = await startSkillBackupTask(assetIds);
-    setTask(snapshot);
+    merge({ snapshot });
     return snapshot;
-  }, []);
+  }, [merge]);
 
   const value = useMemo<SkillBackupContextValue>(
-    () => ({
-      startBackup,
-      task,
-    }),
+    () => ({ startBackup, task }),
     [startBackup, task],
   );
 
-  return (
-    <SkillBackupContext.Provider value={value}>
-      {children}
-    </SkillBackupContext.Provider>
-  );
+  return <SkillBackupContext.Provider value={value}>{children}</SkillBackupContext.Provider>;
 }
 
 export function useSkillBackup() {
@@ -122,4 +62,10 @@ export function useSkillBackup() {
     throw new Error("useSkillBackup must be used inside SkillBackupProvider");
   }
   return context;
+}
+
+function isSkillBackupRuntimeEvent(
+  incoming: SkillBackupTaskSnapshot | SkillBackupRuntimeEvent | null,
+): incoming is SkillBackupRuntimeEvent {
+  return Boolean(incoming && "snapshot" in incoming);
 }

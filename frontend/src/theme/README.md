@@ -13,6 +13,7 @@ Assetiweave uses a TypeScript theme registry, not ad hoc CSS color edits. A them
 
 - Layout utilities are allowed in product components: `flex`, `grid`, `gap-*`, `px-*`, `min-h-*`, `overflow-*`.
 - Color, border, shadow, hover, focus, and scrim styles must come from theme tokens or foundation components.
-- Prefer `Panel`, `DialogFrame`, `SurfaceButton`, `Badge`, `FieldFrame`, and `EmptyState` from `src/components/foundation`.
+- Prefer `Panel`, `DialogFrame`, `FullscreenDialogFrame`, `SurfaceButton`, `Badge`, `FieldFrame`, and `EmptyState` from `src/components/foundation`.
+- `SurfaceButton` is a compatibility alias of the canonical `components/ui/Button`; add variants to the UI primitive instead of creating a second implementation.
 - Do not put raw hex, fixed `rgba(...)`, or Tailwind color families such as `bg-purple-*`, `border-slate-*`, or `text-white` into `src/components`, `src/pages`, or `src/layouts`.
 - Dynamic user accent colors may be imported from `src/theme/themes.ts`; do not hardcode them in components.

@@ -1,7 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { isTauriRuntime } from "./appUpdater";
 
 export type AgentConnectionCheckMode = "installation" | "connection";
+
+const AGENT_LIFECYCLE_TASK_UPDATED_EVENT = "agent-market://lifecycle-task-updated";
 
 export interface AgentRuntimeCatalogEntry {
   id: string;
@@ -356,6 +359,15 @@ export async function getAgentLifecycleTask(taskId: string): Promise<AgentLifecy
 export async function listAgentLifecycleTasks(): Promise<AgentLifecycleTaskSnapshot[]> {
   if (!isTauriRuntime()) return [];
   return invoke<AgentLifecycleTaskSnapshot[]>("list_agent_lifecycle_tasks");
+}
+
+export function subscribeAgentLifecycleTasks(listener: (snapshot: AgentLifecycleTaskSnapshot) => void) {
+  if (!isTauriRuntime()) {
+    return Promise.resolve(() => undefined);
+  }
+  return listen<AgentLifecycleTaskSnapshot>(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, (event) => {
+    listener(event.payload);
+  });
 }
 
 export async function cancelAgentLifecycleTask(taskId: string): Promise<AgentLifecycleTaskSnapshot> {

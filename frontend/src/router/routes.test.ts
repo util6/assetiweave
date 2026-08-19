@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { fallbackNavigationModel } from "../mock/catalog";
 import { normalizeNavigationModelRoutes, resolveAppRoute } from "./routes";
+import { routeRegistry } from "./routeLoaders";
 
 describe("app route resolution", () => {
+  it("keeps every implemented route on the registry path", () => {
+    expect(routeRegistry.catalog.loader).toBeTypeOf("function");
+    expect(routeRegistry.conversations.loader).toBeTypeOf("function");
+    expect(routeRegistry["web-records"].loader).toBe(routeRegistry.conversations.loader);
+    expect(routeRegistry.memory.loader).toBeTypeOf("function");
+    expect(routeRegistry["under-construction"].loader).toBeUndefined();
+  });
+
   it("routes the existing skills groups tab to the skill groups page", () => {
     expect(
       resolveAppRoute(

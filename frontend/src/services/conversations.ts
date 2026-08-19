@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import repositoryConversationCatalog from "../../../builtin-assets/catalog.json";
 import type {
   ConversationAdapter,
@@ -130,6 +131,9 @@ export type ImportConversationSourceProgress = "validating" | "source" | "sync";
 export type StartConversationSync = typeof syncConversations;
 
 export type ConversationSyncTaskStatus = "running" | "completed" | "failed";
+
+const CONVERSATION_SYNC_TASK_UPDATED_EVENT = "conversation-sync-task-updated";
+const CONVERSATION_SEARCH_INDEX_TASK_UPDATED_EVENT = "conversation-search-index-task-updated";
 
 export type ConversationScriptCatalogSourceKind = "github" | "artifact_zip" | "local_directory";
 
@@ -1085,6 +1089,17 @@ export async function getConversationSyncTask(): Promise<ConversationSyncTaskSna
   }
 }
 
+export function subscribeConversationSyncTasks(
+  listener: (snapshot: ConversationSyncTaskSnapshot) => void,
+) {
+  if (!isTauriRuntime()) {
+    return Promise.resolve(() => undefined);
+  }
+  return listen<ConversationSyncTaskSnapshot>(CONVERSATION_SYNC_TASK_UPDATED_EVENT, (event) => {
+    listener(event.payload);
+  });
+}
+
 export async function getConversationSearchIndexStatus(): Promise<ConversationSearchIndexStatus> {
   try {
     return await invoke<ConversationSearchIndexStatus>("get_conversation_search_index_status");
@@ -1111,6 +1126,17 @@ export async function getConversationSearchIndexTask(): Promise<ConversationSear
     if (isTauriRuntime()) throw error;
     return null;
   }
+}
+
+export function subscribeConversationSearchIndexTasks(
+  listener: (snapshot: ConversationSearchIndexTaskSnapshot) => void,
+) {
+  if (!isTauriRuntime()) {
+    return Promise.resolve(() => undefined);
+  }
+  return listen<ConversationSearchIndexTaskSnapshot>(CONVERSATION_SEARCH_INDEX_TASK_UPDATED_EVENT, (event) => {
+    listener(event.payload);
+  });
 }
 
 function previewConversationSearchIndexStatus(health: ConversationSearchIndexStatus["health"]): ConversationSearchIndexStatus {

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   memoryDreamPreviewSchema,
   memoryDreamNoteDetailSchema,
@@ -36,6 +37,7 @@ import type {
 } from "../types/memory";
 
 const DESKTOP_REQUIRED = "Memory writes are available only in the AssetIWeave desktop application.";
+const MEMORY_TASK_UPDATED_EVENT = "memory-task-updated";
 
 export async function listMemoryItems(params: MemoryItemListParams = {}): Promise<MemoryItemPageResult> {
   if (!isTauriRuntime()) {
@@ -188,6 +190,15 @@ export async function cancelMemoryTask(taskId: string): Promise<MemoryTaskSnapsh
   return memoryTaskSnapshotSchema.parse(
     await invoke("cancel_memory_task", { params: { task_id: taskId } }),
   );
+}
+
+export function subscribeMemoryTasks(listener: (snapshot: MemoryTaskSnapshot) => void) {
+  if (!isTauriRuntime()) {
+    return Promise.resolve(() => undefined);
+  }
+  return listen<MemoryTaskSnapshot>(MEMORY_TASK_UPDATED_EVENT, (event) => {
+    listener(event.payload);
+  });
 }
 
 export async function previewMemoryRecall(params: MemoryRecallPreviewParams): Promise<MemoryRecallPreview | null> {

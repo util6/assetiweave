@@ -4,26 +4,34 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryTaskProvider, useMemoryTasks } from "./MemoryTaskProvider";
 
-const listeners = vi.hoisted(() => new Map<string, (event: { payload: unknown }) => void>());
-const listenMock = vi.hoisted(() => vi.fn());
+const listeners = vi.hoisted(() => new Map<string, (snapshot: unknown) => void>());
+const subscribeMemoryTasksMock = vi.hoisted(() => vi.fn());
+const subscribeConversationSyncTasksMock = vi.hoisted(() => vi.fn());
 const listTasksMock = vi.hoisted(() => vi.fn());
 const statusMock = vi.hoisted(() => vi.fn());
 const startMock = vi.hoisted(() => vi.fn());
 const cancelMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@tauri-apps/api/event", () => ({ listen: listenMock }));
+vi.mock("../../services/conversations", () => ({
+  subscribeConversationSyncTasks: subscribeConversationSyncTasksMock,
+}));
 vi.mock("../../services/memory", () => ({
   cancelMemoryTask: cancelMock,
   getMemoryDreamStatus: statusMock,
   listMemoryTasks: listTasksMock,
   startMemoryTask: startMock,
+  subscribeMemoryTasks: subscribeMemoryTasksMock,
 }));
 
 describe("MemoryTaskProvider", () => {
   beforeEach(() => {
     listeners.clear();
-    listenMock.mockReset().mockImplementation(async (eventName: string, listener: (event: { payload: unknown }) => void) => {
-      listeners.set(eventName, listener);
+    subscribeMemoryTasksMock.mockReset().mockImplementation(async (listener: (snapshot: unknown) => void) => {
+      listeners.set("memory-task-updated", listener);
+      return vi.fn();
+    });
+    subscribeConversationSyncTasksMock.mockReset().mockImplementation(async (listener: (snapshot: unknown) => void) => {
+      listeners.set("conversation-sync-task-updated", listener);
       return vi.fn();
     });
     listTasksMock.mockReset().mockResolvedValue([]);
@@ -71,10 +79,10 @@ describe("MemoryTaskProvider", () => {
     render(<MemoryTaskProvider><Harness /></MemoryTaskProvider>);
     await act(async () => {});
     await act(async () => {
-      listeners.get("conversation-sync-task-updated")?.({ payload: { status: "completed" } });
+      listeners.get("conversation-sync-task-updated")?.({ status: "completed" });
     });
     await act(async () => {
-      listeners.get("conversation-sync-task-updated")?.({ payload: { status: "completed" } });
+      listeners.get("conversation-sync-task-updated")?.({ status: "completed" });
     });
 
     expect(startMock).toHaveBeenCalledTimes(1);

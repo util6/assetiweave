@@ -1,22 +1,23 @@
-import { listen } from "@tauri-apps/api/event";
 import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
-  useState,
   type ReactNode,
 } from "react";
 import {
   cancelAgentLifecycleTask,
   listAgentLifecycleTasks,
+  subscribeAgentLifecycleTasks,
   type AgentLifecycleTaskSnapshot,
 } from "../../services/agentRuntime";
+import { useBackgroundTaskRuntime, type BackgroundTaskRuntimeAdapter } from "./BackgroundTaskRuntime";
 
-export const AGENT_LIFECYCLE_TASK_UPDATED_EVENT = "agent-market://lifecycle-task-updated";
-const POLL_INTERVAL_MS = 1000;
 const TERMINAL_TASK_LIMIT = 100;
+
+interface AgentLifecycleRuntimeEvent {
+  snapshot: AgentLifecycleTaskSnapshot;
+}
 
 interface AgentLifecycleTaskContextValue {
   tasks: AgentLifecycleTaskSnapshot[];
@@ -29,63 +30,26 @@ interface AgentLifecycleTaskContextValue {
 const AgentLifecycleTaskContext = createContext<AgentLifecycleTaskContextValue | null>(null);
 
 export function AgentLifecycleTaskProvider({ children }: { children: ReactNode }) {
-  const [tasks, setTasks] = useState<AgentLifecycleTaskSnapshot[]>([]);
-
-  const mergeSnapshots = useCallback((snapshots: AgentLifecycleTaskSnapshot[]) => {
-    setTasks((current) => mergeAgentLifecycleTaskSnapshots(current, snapshots));
-  }, []);
-
-  const mergeSnapshot = useCallback((snapshot: AgentLifecycleTaskSnapshot) => {
-    mergeSnapshots([snapshot]);
-  }, [mergeSnapshots]);
-
-  const refresh = useCallback(async () => {
-    mergeSnapshots(await listAgentLifecycleTasks());
-  }, [mergeSnapshots]);
-
-  useEffect(() => {
-    void refresh().catch(() => {});
-  }, [refresh]);
-
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    void listen<AgentLifecycleTaskSnapshot>(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, (event) => {
-      if (!disposed) mergeSnapshot(event.payload);
-    })
-      .then((removeListener) => {
-        if (disposed) removeListener();
-        else unlisten = removeListener;
-      })
-      .catch(() => {});
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [mergeSnapshot]);
-
-  const activeTaskKey = tasks
-    .filter(isActiveAgentLifecycleTask)
-    .map((task) => `${task.id}:${task.updatedAt}`)
-    .join("|");
-  useEffect(() => {
-    if (!activeTaskKey) return;
-    let polling = false;
-    const interval = window.setInterval(() => {
-      if (polling) return;
-      polling = true;
-      void refresh().catch(() => {}).finally(() => {
-        polling = false;
-      });
-    }, POLL_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, [activeTaskKey, refresh]);
+  const adapter = useMemo<BackgroundTaskRuntimeAdapter<AgentLifecycleTaskSnapshot[], AgentLifecycleRuntimeEvent>>(
+    () => ({
+      initialState: [],
+      isRunning: (tasks) => tasks.some(isActiveAgentLifecycleTask),
+      merge: (current, incoming) => mergeAgentLifecycleTaskSnapshots(
+        current,
+        "snapshot" in incoming ? [incoming.snapshot] : incoming,
+      ),
+      refresh: listAgentLifecycleTasks,
+      subscribe: (listener) => subscribeAgentLifecycleTasks((snapshot) => listener({ snapshot })),
+    }),
+    [],
+  );
+  const { merge, refresh, state: tasks } = useBackgroundTaskRuntime(adapter);
 
   const cancelTask = useCallback(async (taskId: string) => {
     const snapshot = await cancelAgentLifecycleTask(taskId);
-    mergeSnapshot(snapshot);
+    merge({ snapshot });
     return snapshot;
-  }, [mergeSnapshot]);
+  }, [merge]);
 
   const getTask = useCallback(
     (taskId: string) => tasks.find((task) => task.id === taskId),
@@ -96,9 +60,11 @@ export function AgentLifecycleTaskProvider({ children }: { children: ReactNode }
     tasks,
     cancelTask,
     getTask,
-    refresh,
-    mergeSnapshot,
-  }), [cancelTask, getTask, mergeSnapshot, refresh, tasks]);
+    refresh: async () => {
+      await refresh();
+    },
+    mergeSnapshot: (snapshot) => merge({ snapshot }),
+  }), [cancelTask, getTask, merge, refresh, tasks]);
 
   return (
     <AgentLifecycleTaskContext.Provider value={value}>
