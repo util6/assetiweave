@@ -55,6 +55,22 @@ check_absent 'legacy_gemini' src-tauri/src/backend/application
 check_absent 'ConversationScriptCatalogItem|ConversationScriptCatalogSource' \
   src-tauri/src/backend/application/conversation_adapter_catalog_v2.rs
 
+# The migrated translation application module uses the runtime error contract
+# explicitly instead of inheriting the DTO String alias through the prelude.
+check_absent '(^|[^A-Za-z0-9_])AppResult<' \
+  src-tauri/src/backend/application/card_translation.rs
+check_absent 'dto::AppResult' \
+  src-tauri/src/backend/application/card_translation.rs
+
+# Installer Core consumes InstallSpec directly. The legacy catalog item may
+# only appear in the reverse-mapping wrapper and catalog discovery code.
+if sed -n '/pub(super) fn install_conversation_adapter_package_from_spec/,/^struct InstalledConversationAdapterPackage/p' \
+  src-tauri/src/backend/application/conversation_script_catalog.rs \
+  | grep -n -E 'ConversationScriptCatalogItem|ConversationScriptCatalogSource'; then
+  printf '%s\n' 'BOUNDARY VIOLATION: Installer Core still depends on legacy catalog types'
+  fail=1
+fi
+
 # The service boundary is runtime-backed in both production and test builders.
 check_absent 'runtime: Option<Arc<AppRuntime>>' src-tauri/src/backend/application/service.rs
 

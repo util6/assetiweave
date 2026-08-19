@@ -1686,6 +1686,7 @@ pub(crate) async fn check_opencode_translation_availability(
     })
     .await
     .map_err(|error| error.to_string())?
+    .map_err(String::from)
 }
 
 #[tauri::command]
@@ -1699,6 +1700,7 @@ pub(crate) async fn translate_conversation_card_with_opencode(
     })
     .await
     .map_err(|error| error.to_string())?
+    .map_err(String::from)
 }
 
 #[tauri::command]
@@ -1712,6 +1714,7 @@ pub(crate) async fn translate_conversation_card(
     })
     .await
     .map_err(|error| error.to_string())?
+    .map_err(String::from)
 }
 
 #[tauri::command]
@@ -1725,6 +1728,7 @@ pub(crate) async fn test_conversation_translation_connection(
     })
     .await
     .map_err(|error| error.to_string())?
+    .map_err(String::from)
 }
 
 #[tauri::command]
@@ -1738,6 +1742,7 @@ pub(crate) async fn list_conversation_translation_models(
     })
     .await
     .map_err(|error| error.to_string())?
+    .map_err(String::from)
 }
 
 trait AiExecutionTaskEmitter: Send + Sync {

@@ -197,7 +197,10 @@ impl LifecycleTaskCoordinator {
                 "扩展生命周期任务未进入运行态: {}",
                 snapshot.task_id
             ))),
-            TaskState::Succeeded | TaskState::Failed | TaskState::Canceled => Ok(snapshot),
+            TaskState::Cancelling
+            | TaskState::Succeeded
+            | TaskState::Failed
+            | TaskState::Canceled => Ok(snapshot),
         }
     }
 
@@ -222,13 +225,7 @@ impl LifecycleTaskCoordinator {
     /// request to race with the still-running first task.
     pub(crate) fn finish_projection(&self, task_id: &str) {
         if let Ok(mut reservations) = self.reservations.lock() {
-            if reservations
-                .get(task_id)
-                .is_some_and(|reservation| !reservation.spawned)
-            {
-                reservations.remove(task_id);
-                let _ = self.runtime.remove(task_id);
-            }
+            reservations.remove(task_id);
         }
     }
 
@@ -239,9 +236,10 @@ impl LifecycleTaskCoordinator {
     fn prune_finished(&self, reservations: &mut HashMap<String, LifecycleReservation>) {
         reservations.retain(|task_id, reservation| {
             !reservation.spawned
-                || self.runtime.get(task_id).is_some_and(|snapshot| {
-                    matches!(snapshot.state, TaskState::Pending | TaskState::Running)
-                })
+                || self
+                    .runtime
+                    .get(task_id)
+                    .is_some_and(|snapshot| snapshot.state.is_active())
         });
     }
 }

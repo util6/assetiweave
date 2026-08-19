@@ -23,7 +23,7 @@ use crate::backend::{
         PackageIdentity, PackageKind, ResourceKey,
     },
     models::{MemoryDreamTrigger, MemoryRunKind, MemoryScope},
-    runtime::tasks::{TaskFn, TaskKind, TaskRuntime, TaskSnapshot, TaskSpec},
+    runtime::tasks::{TaskFn, TaskKind, TaskRuntime, TaskSnapshot, TaskSpec, TaskState},
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -135,6 +135,8 @@ pub(crate) enum ConversationSyncProgressPhase {
     Completed,
     /// 同步过程发生错误
     Failed,
+    /// 同步已被取消
+    Cancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -268,11 +270,12 @@ pub(crate) enum AgentMarketRefreshTaskState {
     Running,
     Succeeded,
     Failed,
+    Cancelled,
 }
 
 impl AgentMarketRefreshTaskState {
     pub(crate) fn is_terminal(self) -> bool {
-        matches!(self, Self::Succeeded | Self::Failed)
+        matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled)
     }
 }
 
@@ -359,23 +362,37 @@ impl BackgroundTaskRegistry {
         }
     }
 
-    fn finish_external_task(&self, task_id: &str, result: Result<Value, String>) {
+    fn finish_external_task(
+        &self,
+        task_id: &str,
+        result: Result<Value, String>,
+    ) -> AppResult<TaskSnapshot> {
         self.finish_external_result(
             task_id,
             result.map_err(crate::backend::runtime::AppError::from),
-        );
+        )
     }
 
     fn finish_external_result(
         &self,
         task_id: &str,
         result: crate::backend::runtime::AppResult<Value>,
-    ) {
-        let _ = self.task_runtime.complete_external(task_id, result);
+    ) -> AppResult<TaskSnapshot> {
+        self.task_runtime
+            .complete_external(task_id, result)
+            .map_err(String::from)
     }
 
-    fn cancel_external_task(&self, task_id: &str) {
-        let _ = self.task_runtime.cancel(task_id);
+    fn cancel_external_task(&self, task_id: &str) -> AppResult<TaskSnapshot> {
+        match self.task_runtime.cancel(task_id) {
+            crate::backend::runtime::tasks::CancelOutcome::Requested(snapshot)
+            | crate::backend::runtime::tasks::CancelOutcome::AlreadyFinished(snapshot) => {
+                Ok(snapshot)
+            }
+            crate::backend::runtime::tasks::CancelOutcome::NotFound => {
+                Err(format!("background task not found: {task_id}"))
+            }
+        }
     }
 
     /// Start work through the same kernel coordinator used by both extension
@@ -435,6 +452,11 @@ impl BackgroundTaskRegistry {
         task_id: &str,
         result: Result<AgentMarketRefreshResult, String>,
     ) -> AppResult<AgentMarketRefreshTaskSnapshot> {
+        let runtime_result = result
+            .as_ref()
+            .map(|value| serde_json::to_value(value).unwrap_or(Value::Null))
+            .map_err(|error| crate::backend::runtime::AppError::from(error.clone()));
+        let runtime_snapshot = self.finish_external_result(task_id, runtime_result)?;
         let mut tasks = self
             .agent_market_refresh_tasks
             .lock()
@@ -442,31 +464,30 @@ impl BackgroundTaskRegistry {
         let entry = tasks
             .get_mut(task_id)
             .ok_or_else(|| "Agent Market refresh task not found".to_string())?;
-        entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
+        entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
         entry.snapshot.updated_at = Utc::now().to_rfc3339();
         entry.terminal_at = Some(Instant::now());
-        match result {
-            Ok(result) => {
+        match (runtime_snapshot.state, result) {
+            (TaskState::Succeeded, Ok(result)) => {
                 entry.snapshot.state = AgentMarketRefreshTaskState::Succeeded;
                 entry.snapshot.result = Some(result);
             }
-            Err(error) => {
+            (TaskState::Canceled, _) => {
+                entry.snapshot.state = AgentMarketRefreshTaskState::Cancelled;
+                entry.snapshot.result = None;
+                entry.snapshot.error = runtime_error_message(&runtime_snapshot);
+            }
+            (_, Err(error)) => {
                 entry.snapshot.state = AgentMarketRefreshTaskState::Failed;
                 entry.snapshot.error = Some(error);
             }
+            (state, Ok(_)) => {
+                entry.snapshot.state = AgentMarketRefreshTaskState::Failed;
+                entry.snapshot.error = Some(format!(
+                    "Agent Market refresh did not reach a terminal state: {state:?}"
+                ));
+            }
         }
-        let runtime_result = match entry.snapshot.state {
-            AgentMarketRefreshTaskState::Succeeded => {
-                Ok(serde_json::to_value(entry.snapshot.result.clone()).unwrap_or(Value::Null))
-            }
-            AgentMarketRefreshTaskState::Failed => {
-                Err(entry.snapshot.error.clone().unwrap_or_default())
-            }
-            AgentMarketRefreshTaskState::Running => {
-                Err("task did not reach a terminal state".to_string())
-            }
-        };
-        self.finish_external_task(task_id, runtime_result);
         Ok(entry.snapshot.clone())
     }
 
@@ -615,6 +636,11 @@ impl BackgroundTaskRegistry {
         task_id: &str,
         result: Result<(Option<Value>, Vec<String>), AgentMarketError>,
     ) -> AppResult<AgentLifecycleTaskSnapshot> {
+        let runtime_result = result
+            .as_ref()
+            .map(|(value, _)| value.clone().unwrap_or(Value::Null))
+            .map_err(|error| crate::backend::runtime::AppError::from(error.to_string()));
+        let runtime_snapshot = self.finish_external_result(task_id, runtime_result)?;
         let mut tasks = self
             .agent_lifecycle_tasks
             .lock()
@@ -622,20 +648,18 @@ impl BackgroundTaskRegistry {
         let entry = tasks
             .get_mut(task_id)
             .ok_or_else(|| "agent lifecycle task not found".to_string())?;
-        if matches!(entry.snapshot.state, LifecycleTaskState::Cancelled) {
+        if runtime_snapshot.state == TaskState::Canceled {
+            entry.snapshot.state = LifecycleTaskState::Cancelled;
             entry.snapshot.phase = LifecycleTaskPhase::Cancelled;
             entry.snapshot.cancellable = false;
-            entry
-                .snapshot
-                .finished_at
-                .get_or_insert_with(|| Utc::now().to_rfc3339());
+            entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
             entry.snapshot.updated_at = Utc::now().to_rfc3339();
         } else {
-            entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
+            entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
             entry.snapshot.updated_at = Utc::now().to_rfc3339();
             entry.snapshot.cancellable = false;
             match result {
-                Ok((result, warnings)) => {
+                Ok((result, warnings)) if runtime_snapshot.state == TaskState::Succeeded => {
                     entry.snapshot.state = LifecycleTaskState::Succeeded;
                     entry.snapshot.phase = LifecycleTaskPhase::Succeeded;
                     entry.snapshot.result = result;
@@ -645,6 +669,14 @@ impl BackgroundTaskRegistry {
                     entry.snapshot.state = LifecycleTaskState::Failed;
                     entry.snapshot.phase = LifecycleTaskPhase::Failed;
                     entry.snapshot.error = Some((&error).into());
+                }
+                Ok(_) => {
+                    entry.snapshot.state = LifecycleTaskState::Failed;
+                    entry.snapshot.phase = LifecycleTaskPhase::Failed;
+                    entry.snapshot.error = Some(
+                        (&AgentMarketError::new("task_state", "扩展生命周期任务未进入终态", false))
+                            .into(),
+                    );
                 }
             }
         }
@@ -682,7 +714,14 @@ impl BackgroundTaskRegistry {
         &self,
         task_id: &str,
     ) -> AppResult<AgentLifecycleTaskSnapshot> {
-        let _ = self.lifecycle.cancel(task_id);
+        let runtime_snapshot = self.lifecycle.cancel(task_id);
+        let runtime_snapshot = match runtime_snapshot {
+            crate::backend::runtime::tasks::CancelOutcome::Requested(snapshot)
+            | crate::backend::runtime::tasks::CancelOutcome::AlreadyFinished(snapshot) => snapshot,
+            crate::backend::runtime::tasks::CancelOutcome::NotFound => {
+                return Err(format!("agent lifecycle task not found: {task_id}"));
+            }
+        };
         let mut tasks = self
             .agent_lifecycle_tasks
             .lock()
@@ -691,14 +730,11 @@ impl BackgroundTaskRegistry {
             .get_mut(task_id)
             .ok_or_else(|| "agent lifecycle task not found".to_string())?;
         entry.cancellation.store(true, Ordering::SeqCst);
-        if matches!(
-            entry.snapshot.state,
-            LifecycleTaskState::Queued | LifecycleTaskState::Running
-        ) {
+        if runtime_snapshot.state.is_active() {
             entry.snapshot.state = LifecycleTaskState::Cancelled;
             entry.snapshot.phase = LifecycleTaskPhase::Cancelled;
             entry.snapshot.cancellable = false;
-            entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
+            entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
             entry.snapshot.updated_at = Utc::now().to_rfc3339();
         }
         Ok(entry.snapshot.clone())
@@ -739,6 +775,7 @@ impl BackgroundTaskRegistry {
         task_id: &str,
         result: AppResult<Value>,
     ) -> AppResult<ConversationSearchIndexTaskSnapshot> {
+        let runtime_snapshot = self.finish_external_task(task_id, result.clone())?;
         let mut current = self
             .conversation_search_index
             .lock()
@@ -747,26 +784,31 @@ impl BackgroundTaskRegistry {
             .as_mut()
             .filter(|snapshot| snapshot.id == task_id)
             .ok_or_else(|| "conversation search index task not found".to_string())?;
-        snapshot.finished_at = Some(Utc::now().to_rfc3339());
-        match result {
-            Ok(value) => {
+        snapshot.finished_at = runtime_snapshot.finished_at.clone();
+        match (runtime_snapshot.state, result) {
+            (TaskState::Succeeded, Ok(value)) => {
                 snapshot.status = BackgroundTaskStatus::Completed;
                 snapshot.result = Some(value);
                 snapshot.error = None;
             }
-            Err(error) => {
+            (TaskState::Canceled, _) => {
+                snapshot.status = BackgroundTaskStatus::Cancelled;
+                snapshot.result = None;
+                snapshot.error = runtime_error_message(&runtime_snapshot);
+            }
+            (_, Err(error)) => {
                 snapshot.status = BackgroundTaskStatus::Failed;
                 snapshot.result = None;
                 snapshot.error = Some(error);
             }
+            (state, Ok(_)) => {
+                snapshot.status = BackgroundTaskStatus::Failed;
+                snapshot.result = None;
+                snapshot.error = Some(format!(
+                    "conversation search index did not reach a terminal state: {state:?}"
+                ));
+            }
         }
-        self.finish_external_task(
-            task_id,
-            snapshot
-                .result
-                .clone()
-                .ok_or_else(|| snapshot.error.clone().unwrap_or_default()),
-        );
         Ok(snapshot.clone())
     }
 
@@ -862,6 +904,7 @@ impl BackgroundTaskRegistry {
         task_id: &str,
         result: AppResult<Value>,
     ) -> AppResult<ConversationSyncTaskSnapshot> {
+        let runtime_snapshot = self.finish_external_task(task_id, result.clone())?;
         let mut current = self
             .conversation_sync
             .lock()
@@ -871,9 +914,9 @@ impl BackgroundTaskRegistry {
             .find(|snapshot| snapshot.id == task_id)
             .ok_or_else(|| "conversation sync task not found".to_string())?;
 
-        snapshot.finished_at = Some(Utc::now().to_rfc3339());
-        match result {
-            Ok(value) => {
+        snapshot.finished_at = runtime_snapshot.finished_at.clone();
+        match (runtime_snapshot.state, result) {
+            (TaskState::Succeeded, Ok(value)) => {
                 snapshot.status = BackgroundTaskStatus::Completed;
                 snapshot.progress.phase = ConversationSyncProgressPhase::Completed;
                 snapshot.progress.completed_source_count = snapshot.progress.total_source_count;
@@ -881,21 +924,30 @@ impl BackgroundTaskRegistry {
                 snapshot.result = Some(value);
                 snapshot.error = None;
             }
-            Err(error) => {
+            (TaskState::Canceled, _) => {
+                snapshot.status = BackgroundTaskStatus::Cancelled;
+                snapshot.progress.phase = ConversationSyncProgressPhase::Cancelled;
+                snapshot.progress.current_source_name = None;
+                snapshot.result = None;
+                snapshot.error = runtime_error_message(&runtime_snapshot);
+            }
+            (_, Err(error)) => {
                 snapshot.status = BackgroundTaskStatus::Failed;
                 snapshot.progress.phase = ConversationSyncProgressPhase::Failed;
                 snapshot.progress.current_source_name = None;
                 snapshot.result = None;
                 snapshot.error = Some(error);
             }
+            (state, Ok(_)) => {
+                snapshot.status = BackgroundTaskStatus::Failed;
+                snapshot.progress.phase = ConversationSyncProgressPhase::Failed;
+                snapshot.progress.current_source_name = None;
+                snapshot.result = None;
+                snapshot.error = Some(format!(
+                    "conversation sync did not reach a terminal state: {state:?}"
+                ));
+            }
         }
-        self.finish_external_task(
-            task_id,
-            snapshot
-                .result
-                .clone()
-                .ok_or_else(|| snapshot.error.clone().unwrap_or_default()),
-        );
         Ok(snapshot.clone())
     }
 
@@ -1137,6 +1189,7 @@ impl BackgroundTaskRegistry {
         task_id: &str,
         result: AppResult<Value>,
     ) -> AppResult<ConversationScriptInstallTaskSnapshot> {
+        let runtime_snapshot = self.finish_external_task(task_id, result.clone())?;
         let mut current = self
             .conversation_script_install
             .lock()
@@ -1150,19 +1203,33 @@ impl BackgroundTaskRegistry {
             ));
         }
 
-        snapshot.finished_at = Some(Utc::now().to_rfc3339());
-        match result {
-            Ok(value) => {
+        snapshot.finished_at = runtime_snapshot.finished_at.clone();
+        match (runtime_snapshot.state, result) {
+            (TaskState::Succeeded, Ok(value)) => {
                 snapshot.status = BackgroundTaskStatus::Completed;
                 snapshot.phase = Some("completed".to_string());
                 snapshot.result = Some(value);
                 snapshot.error = None;
             }
-            Err(error) => {
+            (TaskState::Canceled, _) => {
+                snapshot.status = BackgroundTaskStatus::Cancelled;
+                snapshot.phase = Some("cancelled".to_string());
+                snapshot.result = None;
+                snapshot.error = runtime_error_message(&runtime_snapshot);
+            }
+            (_, Err(error)) => {
                 snapshot.status = BackgroundTaskStatus::Failed;
                 snapshot.phase = Some("failed".to_string());
                 snapshot.result = None;
                 snapshot.error = Some(error);
+            }
+            (state, Ok(_)) => {
+                snapshot.status = BackgroundTaskStatus::Failed;
+                snapshot.phase = Some("failed".to_string());
+                snapshot.result = None;
+                snapshot.error = Some(format!(
+                    "conversation adapter install did not reach a terminal state: {state:?}"
+                ));
             }
         }
         let snapshot = snapshot.clone();
@@ -1249,6 +1316,11 @@ impl BackgroundTaskRegistry {
         task_id: &str,
         result: AppResult<Vec<CatalogAsset>>,
     ) -> AppResult<SkillBackupTaskSnapshot> {
+        let runtime_result = result
+            .as_ref()
+            .map(|assets| serde_json::json!({"asset_count": assets.len()}))
+            .map_err(|error| crate::backend::runtime::AppError::from(error.clone()));
+        let runtime_snapshot = self.finish_external_result(task_id, runtime_result)?;
         let mut current = self
             .skill_backup
             .lock()
@@ -1260,10 +1332,10 @@ impl BackgroundTaskRegistry {
             return Err(format!("skill backup task is no longer current: {task_id}"));
         }
 
-        snapshot.finished_at = Some(Utc::now().to_rfc3339());
+        snapshot.finished_at = runtime_snapshot.finished_at.clone();
         snapshot.current_asset_id = None;
-        match result {
-            Ok(assets) => {
+        match (runtime_snapshot.state, result) {
+            (TaskState::Succeeded, Ok(assets)) => {
                 snapshot.status = BackgroundTaskStatus::Completed;
                 snapshot.completed_count = snapshot.total_count;
                 snapshot.failed_count = 0;
@@ -1271,7 +1343,14 @@ impl BackgroundTaskRegistry {
                 snapshot.errors.clear();
                 snapshot.error = None;
             }
-            Err(error) => {
+            (TaskState::Canceled, _) => {
+                snapshot.status = BackgroundTaskStatus::Cancelled;
+                snapshot.failed_count = 0;
+                snapshot.assets.clear();
+                snapshot.errors.clear();
+                snapshot.error = runtime_error_message(&runtime_snapshot);
+            }
+            (_, Err(error)) => {
                 snapshot.status = BackgroundTaskStatus::Failed;
                 snapshot.failed_count = 1;
                 snapshot.assets.clear();
@@ -1281,16 +1360,16 @@ impl BackgroundTaskRegistry {
                 }];
                 snapshot.error = Some(error);
             }
+            (state, Ok(_)) => {
+                snapshot.status = BackgroundTaskStatus::Failed;
+                snapshot.failed_count = 1;
+                snapshot.assets.clear();
+                snapshot.errors.clear();
+                snapshot.error = Some(format!(
+                    "skill backup did not reach a terminal state: {state:?}"
+                ));
+            }
         }
-        self.finish_external_task(
-            task_id,
-            snapshot
-                .assets
-                .first()
-                .map(|_| serde_json::json!({"asset_count": snapshot.assets.len()}))
-                .or_else(|| snapshot.error.is_none().then_some(Value::Null))
-                .ok_or_else(|| snapshot.error.clone().unwrap_or_default()),
-        );
         Ok(snapshot.clone())
     }
 
@@ -1394,6 +1473,7 @@ impl BackgroundTaskRegistry {
         task_id: &str,
         result: AppResult<Value>,
     ) -> AppResult<MemoryTaskSnapshot> {
+        let runtime_snapshot = self.finish_external_task(task_id, result.clone())?;
         let mut tasks = self
             .memory_tasks
             .lock()
@@ -1401,51 +1481,41 @@ impl BackgroundTaskRegistry {
         let entry = tasks
             .get_mut(task_id)
             .ok_or_else(|| format!("Memory task was not found: {task_id}"))?;
-        entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
-        match result {
-            Ok(value) => {
-                entry.snapshot.status = if entry.snapshot.cancel_requested {
-                    BackgroundTaskStatus::Cancelled
-                } else {
-                    BackgroundTaskStatus::Completed
-                };
-                entry.snapshot.phase = if entry.snapshot.cancel_requested {
-                    "cancelled".to_string()
-                } else {
-                    "completed".to_string()
-                };
+        entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
+        match (runtime_snapshot.state, result) {
+            (TaskState::Succeeded, Ok(value)) => {
+                entry.snapshot.status = BackgroundTaskStatus::Completed;
+                entry.snapshot.phase = "completed".to_string();
                 entry.snapshot.processed_count = entry.snapshot.total_count;
                 entry.snapshot.result = Some(value);
                 entry.snapshot.error = None;
             }
-            Err(error) => {
-                entry.snapshot.status = if entry.snapshot.cancel_requested {
-                    BackgroundTaskStatus::Cancelled
-                } else {
-                    BackgroundTaskStatus::Failed
-                };
-                entry.snapshot.phase = if entry.snapshot.cancel_requested {
-                    "cancelled".to_string()
-                } else {
-                    "failed".to_string()
-                };
+            (TaskState::Canceled, _) => {
+                entry.snapshot.status = BackgroundTaskStatus::Cancelled;
+                entry.snapshot.phase = "cancelled".to_string();
+                entry.snapshot.result = None;
+                entry.snapshot.error = runtime_error_message(&runtime_snapshot);
+            }
+            (_, Err(error)) => {
+                entry.snapshot.status = BackgroundTaskStatus::Failed;
+                entry.snapshot.phase = "failed".to_string();
                 entry.snapshot.result = None;
                 entry.snapshot.error = Some(error);
             }
+            (state, Ok(_)) => {
+                entry.snapshot.status = BackgroundTaskStatus::Failed;
+                entry.snapshot.phase = "failed".to_string();
+                entry.snapshot.result = None;
+                entry.snapshot.error = Some(format!(
+                    "Memory task did not reach a terminal state: {state:?}"
+                ));
+            }
         }
-        self.finish_external_task(
-            task_id,
-            entry
-                .snapshot
-                .result
-                .clone()
-                .ok_or_else(|| entry.snapshot.error.clone().unwrap_or_default()),
-        );
         Ok(entry.snapshot.clone())
     }
 
     pub(crate) fn cancel_memory_task(&self, task_id: &str) -> AppResult<MemoryTaskSnapshot> {
-        self.cancel_external_task(task_id);
+        let runtime_snapshot = self.cancel_external_task(task_id)?;
         let mut tasks = self
             .memory_tasks
             .lock()
@@ -1455,7 +1525,12 @@ impl BackgroundTaskRegistry {
             .ok_or_else(|| format!("Memory task was not found: {task_id}"))?;
         if entry.snapshot.status == BackgroundTaskStatus::Running {
             entry.snapshot.cancel_requested = true;
-            entry.snapshot.phase = "cancelling".to_string();
+            entry.snapshot.phase = if runtime_snapshot.state == TaskState::Canceled {
+                entry.snapshot.status = BackgroundTaskStatus::Cancelled;
+                "cancelled".to_string()
+            } else {
+                "cancelling".to_string()
+            };
             entry.cancellation.cancel();
         }
         Ok(entry.snapshot.clone())
@@ -1556,6 +1631,13 @@ impl BackgroundTaskRegistry {
         task_id: &str,
         result: Result<AiExecutionResult, AiExecutionError>,
     ) -> AppResult<AiExecutionTaskSnapshot> {
+        let runtime_result = match &result {
+            Ok(result) => Ok(serde_json::json!({"text": result.text})),
+            Err(error) => Err(crate::backend::runtime::AppError::from(
+                error.to_view().message,
+            )),
+        };
+        let runtime_snapshot = self.finish_external_result(task_id, runtime_result)?;
         let mut tasks = self
             .ai_executions
             .lock()
@@ -1569,64 +1651,47 @@ impl BackgroundTaskRegistry {
             if entry.snapshot.state.is_terminal() {
                 return Ok(entry.snapshot.clone());
             }
-            let cancelled = entry.cancellation.is_cancelled()
-                || matches!(&result, Err(AiExecutionError::Cancelled { .. }));
             entry.snapshot.phase = AiExecutionPhase::CleaningUp;
             entry.snapshot.updated_at = Utc::now().to_rfc3339();
-            entry.snapshot.finished_at = Some(entry.snapshot.updated_at.clone());
+            entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
             entry.terminal_at = Some(now);
-            match result {
-                Ok(result) if !cancelled => {
+            match (runtime_snapshot.state, result) {
+                (TaskState::Succeeded, Ok(result)) => {
                     entry.snapshot.state = AiExecutionTaskState::Succeeded;
                     entry.snapshot.result = Some(AiExecutionPublicResult { text: result.text });
                     entry.snapshot.error = None;
                 }
-                Ok(_) => {
+                (TaskState::Canceled, _) => {
                     entry.snapshot.state = AiExecutionTaskState::Cancelled;
                     entry.snapshot.result = None;
                     entry.snapshot.error = None;
                 }
-                Err(error) => {
+                (_, Err(error)) => {
                     let mut error = error.to_view();
                     error.phase = Some(entry.snapshot.phase);
-                    entry.snapshot.state = if cancelled {
-                        AiExecutionTaskState::Cancelled
-                    } else {
-                        AiExecutionTaskState::Failed
-                    };
+                    entry.snapshot.state = AiExecutionTaskState::Failed;
                     entry.snapshot.result = None;
                     entry.snapshot.error = Some(error);
+                }
+                (state, Ok(_)) => {
+                    entry.snapshot.state = AiExecutionTaskState::Failed;
+                    entry.snapshot.result = None;
+                    entry.snapshot.error = Some(AiExecutionErrorView {
+                        code: "task_state".to_string(),
+                        message: format!("AI execution did not reach a terminal state: {state:?}"),
+                        phase: Some(entry.snapshot.phase),
+                        retryable: false,
+                    });
                 }
             }
             entry.snapshot.clone()
         };
-        let runtime_result = match snapshot.state {
-            AiExecutionTaskState::Succeeded => {
-                Ok(serde_json::to_value(snapshot.result.clone()).unwrap_or(Value::Null))
-            }
-            AiExecutionTaskState::Cancelled => Err(crate::backend::runtime::AppError::Canceled(
-                "AI execution was cancelled".to_string(),
-            )),
-            AiExecutionTaskState::Failed => Err(crate::backend::runtime::AppError::from(
-                snapshot
-                    .error
-                    .as_ref()
-                    .map(|error| format!("{}: {}", error.code, error.message))
-                    .unwrap_or_else(|| "AI execution failed".to_string()),
-            )),
-            AiExecutionTaskState::Queued | AiExecutionTaskState::Running => {
-                Err(crate::backend::runtime::AppError::from(
-                    "AI execution did not reach a terminal state".to_string(),
-                ))
-            }
-        };
-        self.finish_external_result(task_id, runtime_result);
         prune_ai_executions(&mut tasks, now);
         Ok(snapshot)
     }
 
     pub(crate) fn cancel_ai_execution(&self, task_id: &str) -> AppResult<AiExecutionTaskSnapshot> {
-        self.cancel_external_task(task_id);
+        let runtime_snapshot = self.cancel_external_task(task_id)?;
         let mut tasks = self
             .ai_executions
             .lock()
@@ -1636,9 +1701,21 @@ impl BackgroundTaskRegistry {
             .ok_or_else(|| format!("AI execution task was not found: {task_id}"))?;
         if !entry.snapshot.state.is_terminal() {
             entry.cancellation.cancel();
-            entry.snapshot.state = AiExecutionTaskState::Running;
-            entry.snapshot.phase = AiExecutionPhase::Cancelling;
+            entry.snapshot.state = if runtime_snapshot.state == TaskState::Canceled {
+                AiExecutionTaskState::Cancelled
+            } else {
+                AiExecutionTaskState::Running
+            };
+            entry.snapshot.phase = if runtime_snapshot.state == TaskState::Canceled {
+                AiExecutionPhase::CleaningUp
+            } else {
+                AiExecutionPhase::Cancelling
+            };
             entry.snapshot.updated_at = Utc::now().to_rfc3339();
+            if runtime_snapshot.state == TaskState::Canceled {
+                entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
+                entry.terminal_at = Some(Instant::now());
+            }
         }
         Ok(entry.snapshot.clone())
     }
@@ -1680,11 +1757,23 @@ impl BackgroundTaskRegistry {
         let mut cancelled = Vec::new();
         for entry in tasks.values_mut() {
             if !entry.snapshot.state.is_terminal() {
-                self.cancel_external_task(&entry.snapshot.id);
+                let runtime_snapshot = self.cancel_external_task(&entry.snapshot.id)?;
                 entry.cancellation.cancel();
-                entry.snapshot.state = AiExecutionTaskState::Running;
-                entry.snapshot.phase = AiExecutionPhase::Cancelling;
+                entry.snapshot.state = if runtime_snapshot.state == TaskState::Canceled {
+                    AiExecutionTaskState::Cancelled
+                } else {
+                    AiExecutionTaskState::Running
+                };
+                entry.snapshot.phase = if runtime_snapshot.state == TaskState::Canceled {
+                    AiExecutionPhase::CleaningUp
+                } else {
+                    AiExecutionPhase::Cancelling
+                };
                 entry.snapshot.updated_at = now.clone();
+                if runtime_snapshot.state == TaskState::Canceled {
+                    entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
+                    entry.terminal_at = Some(Instant::now());
+                }
                 cancelled.push(entry.snapshot.clone());
             }
         }
@@ -1734,6 +1823,10 @@ impl BackgroundTaskRegistry {
     pub(crate) fn has_running_tasks(&self) -> bool {
         self.task_runtime.has_active_tasks()
     }
+}
+
+fn runtime_error_message(snapshot: &TaskSnapshot) -> Option<String> {
+    snapshot.error.as_ref().map(|error| error.message.clone())
 }
 
 fn prune_agent_lifecycle_tasks(tasks: &mut HashMap<String, AgentLifecycleTaskEntry>) {
@@ -2111,6 +2204,29 @@ mod tests {
         assert_eq!(failed.status, BackgroundTaskStatus::Failed);
         assert_eq!(failed.error.as_deref(), Some("sync failed"));
         assert!(!registry.has_running_tasks());
+    }
+
+    #[test]
+    fn sync_projection_uses_task_runtime_cancellation_before_domain_result() {
+        let registry = BackgroundTaskRegistry::default();
+        let (running, _) = registry
+            .begin_conversation_sync(&params(Some("session")))
+            .unwrap();
+        let runtime = registry.task_runtime().expect("shared task runtime");
+        assert!(matches!(
+            runtime.cancel(&running.id),
+            crate::backend::runtime::tasks::CancelOutcome::Requested(_)
+        ));
+
+        let finished = registry
+            .finish_conversation_sync(&running.id, Ok(serde_json::json!({"results": []})))
+            .unwrap();
+
+        assert_eq!(finished.status, BackgroundTaskStatus::Cancelled);
+        assert_eq!(
+            runtime.get(&running.id).unwrap().state,
+            crate::backend::runtime::tasks::TaskState::Canceled
+        );
     }
 
     #[test]

@@ -97,6 +97,10 @@ fn external_task_runtime_owns_id_deduplication_and_terminal_state() {
         .iter()
         .any(|snapshot| snapshot.task_id == "same-task"));
     tasks.cancel("same-task");
+    assert_eq!(
+        tasks.get("same-task").expect("cancelling task").state,
+        tasks::TaskState::Cancelling
+    );
     let finished = tasks
         .complete_external("same-task", Ok(serde_json::json!({"done": true})))
         .expect("complete external task");
@@ -134,7 +138,9 @@ fn task_runtime_shutdown_is_bounded_and_reports_unfinished_tasks() {
         .all(|snapshot| {
             !matches!(
                 snapshot.state,
-                tasks::TaskState::Pending | tasks::TaskState::Running
+                tasks::TaskState::Pending
+                    | tasks::TaskState::Running
+                    | tasks::TaskState::Cancelling
             )
         }));
 }

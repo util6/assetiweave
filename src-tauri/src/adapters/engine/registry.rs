@@ -3,7 +3,7 @@
 //! 定义 CLI Engine 暴露的所有命令契约元数据（规范方法名、风险等级 CommandRisk、暴露范围 CommandExposure、参数 Schema 及处理器绑定）。
 
 use super::protocol;
-use crate::backend::{application::AppService, dto::AppResult};
+use crate::backend::application::AppService;
 use schemars::{generate::SchemaSettings, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -4198,17 +4198,20 @@ fn validate_typed_params<T: DeserializeOwned>(params: &Value) -> Result<(), Stri
         .map_err(|error| format!("params do not match the Rust request type: {error}"))
 }
 
-fn dispatch_service<P, T>(
+fn dispatch_service<P, T, E>(
     params: Value,
-    handler: fn(&AppService, P) -> AppResult<T>,
+    handler: fn(&AppService, P) -> Result<T, E>,
 ) -> DispatchResult
 where
     P: DeserializeOwned,
     T: Serialize,
+    E: Into<String>,
 {
     let params = deserialize_dispatch_params(params)?;
     let service = AppService::open_for_engine().map_err(DispatchFailure::OpenService)?;
-    serialize_dispatch_result(handler(&service, params).map_err(DispatchFailure::App)?)
+    serialize_dispatch_result(
+        handler(&service, params).map_err(|error| DispatchFailure::App(error.into()))?,
+    )
 }
 
 fn dispatch_system<P, T>(params: Value, handler: fn(P) -> T) -> DispatchResult

@@ -32,9 +32,20 @@ pub(crate) enum TaskKind {
 pub(crate) enum TaskState {
     Pending,
     Running,
+    Cancelling,
     Succeeded,
     Failed,
     Canceled,
+}
+
+impl TaskState {
+    pub(crate) fn is_active(self) -> bool {
+        matches!(self, Self::Pending | Self::Running | Self::Cancelling)
+    }
+
+    pub(crate) fn is_terminal(self) -> bool {
+        matches!(self, Self::Succeeded | Self::Failed | Self::Canceled)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,10 +204,7 @@ impl TaskRuntime {
             tasks.values().find(|entry| {
                 entry.snapshot.kind == spec.kind
                     && entry.snapshot.dedup_key.as_ref() == Some(key)
-                    && matches!(
-                        entry.snapshot.state,
-                        TaskState::Pending | TaskState::Running
-                    )
+                    && entry.snapshot.state.is_active()
             })
         }) {
             return Ok(SpawnOutcome::Existing(existing.snapshot.clone()));
@@ -257,10 +265,7 @@ impl TaskRuntime {
             tasks.values().find(|entry| {
                 entry.snapshot.kind == spec.kind
                     && entry.snapshot.dedup_key.as_ref() == Some(key)
-                    && matches!(
-                        entry.snapshot.state,
-                        TaskState::Pending | TaskState::Running
-                    )
+                    && entry.snapshot.state.is_active()
             })
         }) {
             return Ok(Err(existing.snapshot.clone()));
@@ -329,6 +334,11 @@ impl TaskRuntime {
         };
         if snapshot.state == TaskState::Running {
             self.launch_task(task_id.to_string(), cancellation, task)?;
+        } else if snapshot.state == TaskState::Cancelling {
+            return self.complete_external(
+                task_id,
+                Err(AppError::Canceled("后台任务在启动前已取消".to_string())),
+            );
         }
         Ok(snapshot)
     }
@@ -345,10 +355,7 @@ impl TaskRuntime {
         let entry = tasks
             .get_mut(task_id)
             .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
-        if matches!(
-            entry.snapshot.state,
-            TaskState::Succeeded | TaskState::Failed | TaskState::Canceled
-        ) {
+        if entry.snapshot.state.is_terminal() {
             return Ok(entry.snapshot.clone());
         }
         entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
@@ -362,6 +369,11 @@ impl TaskRuntime {
                     entry.snapshot.state = TaskState::Succeeded;
                     entry.snapshot.detail = detail;
                 }
+            }
+            Err(_error) if entry.cancellation.is_cancelled() => {
+                entry.snapshot.state = TaskState::Canceled;
+                entry.snapshot.error =
+                    Some(AppError::Canceled("后台任务已取消".to_string()).into());
             }
             Err(error) if matches!(error, AppError::Canceled(_)) => {
                 entry.snapshot.state = TaskState::Canceled;
@@ -380,12 +392,10 @@ impl TaskRuntime {
 
     pub(crate) fn remove(&self, task_id: &str) -> Option<TaskSnapshot> {
         let removed = self.tasks.lock().ok()?.remove(task_id);
-        if removed.as_ref().is_some_and(|entry| {
-            matches!(
-                entry.snapshot.state,
-                TaskState::Pending | TaskState::Running
-            )
-        }) {
+        if removed
+            .as_ref()
+            .is_some_and(|entry| entry.snapshot.state.is_active())
+        {
             self.release_active_slot();
         }
         removed.map(|entry| entry.snapshot)
@@ -394,14 +404,7 @@ impl TaskRuntime {
     pub(crate) fn has_active_tasks(&self) -> bool {
         self.tasks
             .lock()
-            .map(|tasks| {
-                tasks.values().any(|entry| {
-                    matches!(
-                        entry.snapshot.state,
-                        TaskState::Pending | TaskState::Running
-                    )
-                })
-            })
+            .map(|tasks| tasks.values().any(|entry| entry.snapshot.state.is_active()))
             .unwrap_or(true)
     }
 
@@ -422,8 +425,9 @@ impl TaskRuntime {
         let run_task_id = task_id.clone();
         let thread_name = format!("aiw-task-{task_id}");
         let run = move || {
+            let cancellation = cancellation;
             let context = TaskContext {
-                cancellation,
+                cancellation: cancellation.clone(),
                 progress: ProgressHandle {
                     task_id: run_task_id.clone(),
                     runtime: runtime.clone(),
@@ -436,17 +440,32 @@ impl TaskRuntime {
                 if let Some(entry) = tasks.get_mut(&run_task_id) {
                     if matches!(
                         entry.snapshot.state,
-                        TaskState::Pending | TaskState::Running
+                        TaskState::Pending | TaskState::Running | TaskState::Cancelling
                     ) {
                         entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
                         match result {
+                            Ok(_detail) if cancellation.is_cancelled() => {
+                                entry.snapshot.state = TaskState::Canceled;
+                                entry.snapshot.error =
+                                    Some(AppError::Canceled("后台任务已取消".to_string()).into());
+                            }
                             Ok(detail) => {
                                 entry.snapshot.state = TaskState::Succeeded;
                                 entry.snapshot.detail = detail;
                             }
-                            Err(error) if matches!(error, AppError::Canceled(_)) => {
+                            Err(error)
+                                if cancellation.is_cancelled()
+                                    || matches!(error, AppError::Canceled(_)) =>
+                            {
                                 entry.snapshot.state = TaskState::Canceled;
-                                entry.snapshot.error = Some(error.into());
+                                entry.snapshot.error = Some(
+                                    if matches!(error, AppError::Canceled(_)) {
+                                        error
+                                    } else {
+                                        AppError::Canceled("后台任务已取消".to_string())
+                                    }
+                                    .into(),
+                                );
                             }
                             Err(error) => {
                                 entry.snapshot.state = TaskState::Failed;
@@ -497,7 +516,7 @@ impl TaskRuntime {
                 !filter.active_only
                     || matches!(
                         entry.snapshot.state,
-                        TaskState::Pending | TaskState::Running
+                        TaskState::Pending | TaskState::Running | TaskState::Cancelling
                     )
             })
             .map(|entry| entry.snapshot.clone())
@@ -517,11 +536,9 @@ impl TaskRuntime {
         let Some(entry) = tasks.get_mut(task_id) else {
             return CancelOutcome::NotFound;
         };
-        if matches!(
-            entry.snapshot.state,
-            TaskState::Pending | TaskState::Running
-        ) {
+        if entry.snapshot.state.is_active() {
             entry.cancellation.cancel();
+            entry.snapshot.state = TaskState::Cancelling;
             return CancelOutcome::Requested(entry.snapshot.clone());
         }
         CancelOutcome::AlreadyFinished(entry.snapshot.clone())
@@ -538,12 +555,10 @@ impl TaskRuntime {
     pub(crate) fn shutdown_with_grace(&self, grace: Duration) -> ShutdownReport {
         self.stop_accepting();
         if let Ok(tasks) = self.tasks.lock() {
-            for entry in tasks.values().filter(|entry| {
-                matches!(
-                    entry.snapshot.state,
-                    TaskState::Pending | TaskState::Running
-                )
-            }) {
+            for entry in tasks
+                .values()
+                .filter(|entry| entry.snapshot.state.is_active())
+            {
                 entry.cancellation.cancel();
             }
         }
@@ -568,12 +583,7 @@ impl TaskRuntime {
             .map(|tasks| {
                 tasks
                     .values()
-                    .filter(|entry| {
-                        matches!(
-                            entry.snapshot.state,
-                            TaskState::Pending | TaskState::Running
-                        )
-                    })
+                    .filter(|entry| entry.snapshot.state.is_active())
                     .map(|entry| entry.snapshot.task_id.clone())
                     .collect()
             })

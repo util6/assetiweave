@@ -1,10 +1,11 @@
 use super::prelude::*;
+use crate::backend::runtime::AppResult as RuntimeAppResult;
 
 impl AppService {
     pub(crate) fn check_action_availability(
         &self,
         action: &crate::backend::ai_execution::composition::ActionId,
-    ) -> AppResult<crate::backend::card_translation::ActionAvailability> {
+    ) -> RuntimeAppResult<crate::backend::card_translation::ActionAvailability> {
         Ok(crate::backend::card_translation::check_action_availability(
             self.agent_runtime()?.as_ref(),
             action,
@@ -13,7 +14,7 @@ impl AppService {
 
     pub(crate) fn check_opencode_translation_availability(
         &self,
-    ) -> AppResult<crate::backend::card_translation::OpencodeTranslationAvailability> {
+    ) -> RuntimeAppResult<crate::backend::card_translation::OpencodeTranslationAvailability> {
         Ok(
             crate::backend::card_translation::check_opencode_translation_availability(
                 self.agent_runtime()?.as_ref(),
@@ -24,24 +25,31 @@ impl AppService {
     pub(crate) fn translate_conversation_card_with_opencode(
         &self,
         params: crate::backend::card_translation::OpencodeTranslationRequest,
-    ) -> AppResult<crate::backend::card_translation::OpencodeTranslationResult> {
-        crate::backend::card_translation::translate_conversation_card_with_opencode(
-            self.agent_runtime()?,
-            params,
+    ) -> RuntimeAppResult<crate::backend::card_translation::OpencodeTranslationResult> {
+        Ok(
+            crate::backend::card_translation::translate_conversation_card_with_opencode(
+                self.agent_runtime()?,
+                params,
+            )?,
         )
     }
 
     pub(crate) fn translate_conversation_card(
         &self,
         params: crate::backend::card_translation::ConversationTranslationRequest,
-    ) -> AppResult<crate::backend::card_translation::OpencodeTranslationResult> {
-        crate::backend::card_translation::translate_conversation_card(self.agent_runtime()?, params)
+    ) -> RuntimeAppResult<crate::backend::card_translation::OpencodeTranslationResult> {
+        Ok(
+            crate::backend::card_translation::translate_conversation_card(
+                self.agent_runtime()?,
+                params,
+            )?,
+        )
     }
 
     pub(crate) fn test_conversation_translation_connection(
         &self,
         params: crate::backend::card_translation::ConversationTranslationConnectionRequest,
-    ) -> AppResult<crate::backend::card_translation::OpencodeTranslationAvailability> {
+    ) -> RuntimeAppResult<crate::backend::card_translation::OpencodeTranslationAvailability> {
         Ok(
             crate::backend::card_translation::test_conversation_translation_connection(
                 self.agent_runtime()?,
@@ -53,7 +61,8 @@ impl AppService {
     pub(crate) fn list_conversation_translation_models(
         &self,
         params: crate::backend::card_translation::ConversationTranslationModelsRequest,
-    ) -> AppResult<crate::backend::card_translation::ConversationTranslationModelsResult> {
+    ) -> RuntimeAppResult<crate::backend::card_translation::ConversationTranslationModelsResult>
+    {
         Ok(
             crate::backend::card_translation::list_conversation_translation_models(
                 self.agent_runtime()?.as_ref(),
@@ -64,7 +73,8 @@ impl AppService {
 
     fn agent_runtime(
         &self,
-    ) -> AppResult<std::sync::Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>> {
+    ) -> RuntimeAppResult<std::sync::Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>>
+    {
         Ok(self.agent_runtime.clone())
     }
 }
@@ -72,7 +82,7 @@ impl AppService {
 impl super::service::AgentAppService {
     pub(crate) fn check_opencode_translation_availability(
         &self,
-    ) -> AppResult<crate::backend::card_translation::OpencodeTranslationAvailability> {
+    ) -> RuntimeAppResult<crate::backend::card_translation::OpencodeTranslationAvailability> {
         Ok(
             crate::backend::card_translation::check_opencode_translation_availability(
                 self.agent_runtime.as_ref(),
@@ -83,27 +93,31 @@ impl super::service::AgentAppService {
     pub(crate) fn translate_conversation_card_with_opencode(
         &self,
         params: crate::backend::card_translation::OpencodeTranslationRequest,
-    ) -> AppResult<crate::backend::card_translation::OpencodeTranslationResult> {
-        crate::backend::card_translation::translate_conversation_card_with_opencode(
-            self.agent_runtime.clone(),
-            params,
+    ) -> RuntimeAppResult<crate::backend::card_translation::OpencodeTranslationResult> {
+        Ok(
+            crate::backend::card_translation::translate_conversation_card_with_opencode(
+                self.agent_runtime.clone(),
+                params,
+            )?,
         )
     }
 
     pub(crate) fn translate_conversation_card(
         &self,
         params: crate::backend::card_translation::ConversationTranslationRequest,
-    ) -> AppResult<crate::backend::card_translation::OpencodeTranslationResult> {
-        crate::backend::card_translation::translate_conversation_card(
-            self.agent_runtime.clone(),
-            params,
+    ) -> RuntimeAppResult<crate::backend::card_translation::OpencodeTranslationResult> {
+        Ok(
+            crate::backend::card_translation::translate_conversation_card(
+                self.agent_runtime.clone(),
+                params,
+            )?,
         )
     }
 
     pub(crate) fn test_conversation_translation_connection(
         &self,
         params: crate::backend::card_translation::ConversationTranslationConnectionRequest,
-    ) -> AppResult<crate::backend::card_translation::OpencodeTranslationAvailability> {
+    ) -> RuntimeAppResult<crate::backend::card_translation::OpencodeTranslationAvailability> {
         Ok(
             crate::backend::card_translation::test_conversation_translation_connection(
                 self.agent_runtime.clone(),
@@ -115,7 +129,8 @@ impl super::service::AgentAppService {
     pub(crate) fn list_conversation_translation_models(
         &self,
         params: crate::backend::card_translation::ConversationTranslationModelsRequest,
-    ) -> AppResult<crate::backend::card_translation::ConversationTranslationModelsResult> {
+    ) -> RuntimeAppResult<crate::backend::card_translation::ConversationTranslationModelsResult>
+    {
         Ok(
             crate::backend::card_translation::list_conversation_translation_models(
                 self.agent_runtime.as_ref(),
