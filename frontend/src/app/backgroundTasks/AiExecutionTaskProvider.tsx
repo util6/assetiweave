@@ -1,23 +1,24 @@
-import { listen } from "@tauri-apps/api/event";
 import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
-  useState,
   type ReactNode,
 } from "react";
 import {
   cancelAiExecutionTask,
   listAiExecutionTasks,
   startConversationCardTranslation,
+  subscribeAiExecutionTasks,
   type AiExecutionTaskSnapshot,
   type ConversationCardTranslationRequest,
 } from "../../services/cardTranslation";
+import { useBackgroundTaskRuntime, type BackgroundTaskRuntimeAdapter } from "./BackgroundTaskRuntime";
 
-export const AI_EXECUTION_TASK_UPDATED_EVENT = "ai-execution://task-updated";
-const POLL_INTERVAL_MS = 1000;
+interface AiExecutionRuntimeEvent {
+  snapshot: AiExecutionTaskSnapshot;
+}
+
 const TERMINAL_TASK_LIMIT = 100;
 
 interface AiExecutionTaskContextValue {
@@ -33,71 +34,29 @@ interface AiExecutionTaskContextValue {
 const AiExecutionTaskContext = createContext<AiExecutionTaskContextValue | null>(null);
 
 export function AiExecutionTaskProvider({ children }: { children: ReactNode }) {
-  const [tasks, setTasks] = useState<AiExecutionTaskSnapshot[]>([]);
-
-  const mergeSnapshots = useCallback((snapshots: AiExecutionTaskSnapshot[]) => {
-    setTasks((current) => mergeAiExecutionTaskSnapshots(current, snapshots));
-  }, []);
-
-  const mergeSnapshot = useCallback((snapshot: AiExecutionTaskSnapshot) => {
-    mergeSnapshots([snapshot]);
-  }, [mergeSnapshots]);
-
-  const refresh = useCallback(async () => {
-    mergeSnapshots(await listAiExecutionTasks());
-  }, [mergeSnapshots]);
-
-  useEffect(() => {
-    void refresh().catch(() => {});
-  }, [refresh]);
-
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    void listen<AiExecutionTaskSnapshot>(AI_EXECUTION_TASK_UPDATED_EVENT, (event) => {
-      if (!disposed) mergeSnapshot(event.payload);
-    })
-      .then((removeListener) => {
-        if (disposed) removeListener();
-        else unlisten = removeListener;
-      })
-      .catch(() => {});
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [mergeSnapshot]);
-
-  const activeTaskKey = tasks
-    .filter(isActiveAiExecutionTask)
-    .map((task) => `${task.id}:${task.updated_at}`)
-    .join("|");
-  useEffect(() => {
-    if (!activeTaskKey) return;
-    let polling = false;
-    const interval = window.setInterval(() => {
-      if (polling) return;
-      polling = true;
-      void refresh()
-        .catch(() => {})
-        .finally(() => {
-          polling = false;
-        });
-    }, POLL_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, [activeTaskKey, refresh]);
+  const adapter = useMemo<BackgroundTaskRuntimeAdapter<AiExecutionTaskSnapshot[], AiExecutionRuntimeEvent>>(() => ({
+    initialState: [],
+    isRunning: (tasks: AiExecutionTaskSnapshot[]) => tasks.some(isActiveAiExecutionTask),
+    merge: (current, incoming) => mergeAiExecutionTaskSnapshots(
+      current,
+      "snapshot" in incoming ? [incoming.snapshot] : incoming,
+    ),
+    refresh: listAiExecutionTasks,
+    subscribe: (listener) => subscribeAiExecutionTasks((snapshot) => listener({ snapshot })),
+  }), []);
+  const { merge, refresh, state: tasks } = useBackgroundTaskRuntime(adapter);
 
   const startTranslation = useCallback(async (request: ConversationCardTranslationRequest) => {
     const snapshot = await startConversationCardTranslation(request);
-    mergeSnapshot(snapshot);
+    merge({ snapshot });
     return snapshot;
-  }, [mergeSnapshot]);
+  }, [merge]);
 
   const cancelTask = useCallback(async (taskId: string) => {
     const snapshot = await cancelAiExecutionTask(taskId);
-    mergeSnapshot(snapshot);
+    merge({ snapshot });
     return snapshot;
-  }, [mergeSnapshot]);
+  }, [merge]);
 
   const getTask = useCallback(
     (taskId: string) => tasks.find((task) => task.id === taskId),
@@ -109,7 +68,9 @@ export function AiExecutionTaskProvider({ children }: { children: ReactNode }) {
     startTranslation,
     cancelTask,
     getTask,
-    refresh,
+    refresh: async () => {
+      await refresh();
+    },
   }), [cancelTask, getTask, refresh, startTranslation, tasks]);
 
   return (

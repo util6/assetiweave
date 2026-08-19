@@ -4,21 +4,21 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SearchIndexProvider, useSearchIndex } from "./SearchIndexProvider";
 
-const listenMock = vi.hoisted(() => vi.fn());
+const subscribeSearchIndexTasksMock = vi.hoisted(() => vi.fn());
 const statusMock = vi.hoisted(() => vi.fn());
 const taskMock = vi.hoisted(() => vi.fn());
 const rebuildMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@tauri-apps/api/event", () => ({ listen: listenMock }));
 vi.mock("../../services/conversations", () => ({
   getConversationSearchIndexStatus: statusMock,
   getConversationSearchIndexTask: taskMock,
   startConversationSearchIndexRebuild: rebuildMock,
+  subscribeConversationSearchIndexTasks: subscribeSearchIndexTasksMock,
 }));
 
 describe("SearchIndexProvider", () => {
   beforeEach(() => {
-    listenMock.mockReset().mockResolvedValue(vi.fn());
+    subscribeSearchIndexTasksMock.mockReset().mockResolvedValue(vi.fn());
     statusMock.mockReset().mockResolvedValue({ health: "ready", source_revision: 0 });
     taskMock.mockReset().mockResolvedValue(null);
     rebuildMock.mockReset();

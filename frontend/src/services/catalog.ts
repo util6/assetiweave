@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   fallbackAppShortcuts,
@@ -143,6 +144,8 @@ export interface SkillBackupTaskSnapshot {
   error: string | null;
 }
 
+const SKILL_BACKUP_TASK_UPDATED_EVENT = "skill-backup-task-updated";
+
 export async function startSkillBackupTask(assetIds: string[]): Promise<SkillBackupTaskSnapshot> {
   const uniqueAssetIds = [...new Set(assetIds.map((assetId) => assetId.trim()).filter(Boolean))];
   if (uniqueAssetIds.length === 0) {
@@ -183,6 +186,17 @@ export async function getSkillBackupTask(): Promise<SkillBackupTaskSnapshot | nu
     }
     return null;
   }
+}
+
+export function subscribeSkillBackupTasks(
+  listener: (snapshot: SkillBackupTaskSnapshot) => void,
+) {
+  if (!isTauriRuntime()) {
+    return Promise.resolve(() => undefined);
+  }
+  return listen<SkillBackupTaskSnapshot>(SKILL_BACKUP_TASK_UPDATED_EVENT, (event) => {
+    listener(event.payload);
+  });
 }
 
 export async function searchSkills(query: string, limit = 8, provider = "github"): Promise<SkillSearchResult> {

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { isTauriRuntime } from "./appUpdater";
 import {
   DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
@@ -24,6 +25,8 @@ export type AiExecutionTaskState =
   | "succeeded"
   | "failed"
   | "cancelled";
+
+const AI_EXECUTION_TASK_UPDATED_EVENT = "ai-execution://task-updated";
 
 export type AiExecutionPhase =
   | "queued"
@@ -196,6 +199,15 @@ export async function getAiExecutionTask(
 export async function listAiExecutionTasks(): Promise<AiExecutionTaskSnapshot[]> {
   assertDesktopTranslationRuntime();
   return invoke<AiExecutionTaskSnapshot[]>("list_ai_execution_tasks");
+}
+
+export function subscribeAiExecutionTasks(listener: (snapshot: AiExecutionTaskSnapshot) => void) {
+  if (!isTauriRuntime()) {
+    return Promise.resolve(() => undefined);
+  }
+  return listen<AiExecutionTaskSnapshot>(AI_EXECUTION_TASK_UPDATED_EVENT, (event) => {
+    listener(event.payload);
+  });
 }
 
 export async function cancelAiExecutionTask(

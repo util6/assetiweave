@@ -2,22 +2,18 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
-  useState,
   type ReactNode,
 } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { useBackgroundTaskRuntime, type BackgroundTaskRuntimeAdapter } from "./BackgroundTaskRuntime";
 import {
   listConversationSyncTasks,
+  subscribeConversationSyncTasks,
   syncConversations,
   type ConversationSyncTaskSnapshot,
   type ConversationSyncMode,
 } from "../../services/conversations";
 import type { ConversationRecordKind } from "../../types";
-
-const CONVERSATION_SYNC_TASK_UPDATED_EVENT = "conversation-sync-task-updated";
-const SYNC_STATUS_POLL_INTERVAL_MS = 1000;
 
 interface ConversationSyncContextValue {
   startSync: (params: {
@@ -34,93 +30,42 @@ interface ConversationSyncContextValue {
 
 type ConversationSyncTaskScope = ConversationRecordKind | "all";
 type ConversationSyncTaskMap = Record<ConversationSyncTaskScope, ConversationSyncTaskSnapshot | null>;
+type ConversationSyncRuntimeEvent = {
+  fallbackScope?: ConversationSyncTaskScope;
+  snapshot?: ConversationSyncTaskSnapshot;
+  snapshots?: ConversationSyncTaskSnapshot[];
+};
 
 const EMPTY_TASKS: ConversationSyncTaskMap = { all: null, session: null, web: null };
 
 const ConversationSyncContext = createContext<ConversationSyncContextValue | null>(null);
 
 export function ConversationSyncProvider({ children }: { children: ReactNode }) {
-  const [taskMap, setTaskMap] = useState<ConversationSyncTaskMap>(EMPTY_TASKS);
-
-  const refreshTasks = useCallback(async () => {
-    const snapshots = await listConversationSyncTasks();
-    setTaskMap((current) => mergeConversationTaskSnapshots(snapshots, current));
-    return snapshots;
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void listConversationSyncTasks()
-      .then((snapshots) => {
-        if (!cancelled) {
-          setTaskMap((current) => mergeConversationTaskSnapshots(snapshots, current));
+  const adapter = useMemo<BackgroundTaskRuntimeAdapter<ConversationSyncTaskMap, ConversationSyncRuntimeEvent>>(
+    () => ({
+      initialState: EMPTY_TASKS,
+      isRunning: (state) => Object.values(state).some((task) => task?.status === "running"),
+      merge: (current, incoming) => {
+        if (isConversationSyncRuntimeEvent(incoming)) {
+          if (incoming.snapshots) {
+            return mergeConversationTaskSnapshots(incoming.snapshots, current);
+          }
+          return incoming.snapshot
+            ? mergeConversationTaskIntoMap(incoming.snapshot, current, incoming.fallbackScope)
+            : current;
         }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    void listen<ConversationSyncTaskSnapshot>(
-      CONVERSATION_SYNC_TASK_UPDATED_EVENT,
-      (event) => {
-        if (!cancelled) {
-          setTaskMap((current) => mergeConversationTaskIntoMap(event.payload, current));
-        }
+        return Object.values(incoming).reduce(
+          (next, snapshot) => snapshot ? mergeConversationTaskIntoMap(snapshot, next) : next,
+          current,
+        );
       },
-    )
-      .then((removeListener) => {
-        if (cancelled) {
-          removeListener();
-        } else {
-          unlisten = removeListener;
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
-
-  useEffect(() => {
-    const runningTaskKey = Object.values(taskMap)
-      .filter((task) => task?.status === "running")
-      .map((task) => task?.id)
-      .join(":");
-    if (!runningTaskKey) {
-      return;
-    }
-
-    let polling = false;
-    const intervalId = window.setInterval(() => {
-      if (polling) {
-        return;
-      }
-      polling = true;
-      void refreshTasks()
-        .catch(() => {})
-        .finally(() => {
-          polling = false;
-        });
-    }, SYNC_STATUS_POLL_INTERVAL_MS);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [
-    refreshTasks,
-    taskMap.all?.id,
-    taskMap.all?.status,
-    taskMap.session?.id,
-    taskMap.session?.status,
-    taskMap.web?.id,
-    taskMap.web?.status,
-  ]);
+      refresh: async () => mergeConversationTaskSnapshots(await listConversationSyncTasks(), EMPTY_TASKS),
+      subscribe: (listener) => subscribeConversationSyncTasks((snapshot) => listener({ snapshot })),
+    }),
+    [],
+  );
+  const { merge, state: taskMap } = useBackgroundTaskRuntime(adapter);
 
   const startSync = useCallback(
     async (params: {
@@ -136,14 +81,13 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
         null,
         params.record_kind ?? (params.mode === "full" ? "all" : "session"),
       ) ?? snapshot;
-      setTaskMap((current) => mergeConversationTaskIntoMap(
-        nextSnapshot,
-        current,
-        params.record_kind ?? (params.mode === "full" ? "all" : "session"),
-      ));
+      merge({
+        snapshot: nextSnapshot,
+        fallbackScope: params.record_kind ?? (params.mode === "full" ? "all" : "session"),
+      });
       return nextSnapshot;
     },
-    [],
+    [merge],
   );
 
   const taskFor = useCallback(
@@ -183,6 +127,12 @@ function mergeConversationTaskSnapshots(
     (next, snapshot) => mergeConversationTaskIntoMap(snapshot, next),
     current,
   );
+}
+
+function isConversationSyncRuntimeEvent(
+  incoming: ConversationSyncTaskMap | ConversationSyncRuntimeEvent,
+): incoming is ConversationSyncRuntimeEvent {
+  return "snapshot" in incoming || "snapshots" in incoming;
 }
 
 function mergeConversationTaskIntoMap(

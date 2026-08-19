@@ -190,6 +190,24 @@ export function GlobalSettingsDialog({
   } | null>(null);
 
   useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const documentElement = document.documentElement;
+    const body = document.body;
+    const previousDocumentOverflow = documentElement.style.overflow;
+    const previousBodyOverflow = body.style.overflow;
+    documentElement.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+
+    return () => {
+      documentElement.style.overflow = previousDocumentOverflow;
+      body.style.overflow = previousBodyOverflow;
+    };
+  }, [open]);
+
+  useEffect(() => {
     if (open) {
       const nextPanel = normalizeSettingsPanelId(initialPanel);
       setActivePanel(nextPanel);

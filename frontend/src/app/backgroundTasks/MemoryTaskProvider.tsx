@@ -1,4 +1,3 @@
-import { listen } from "@tauri-apps/api/event";
 import {
   createContext,
   useCallback,
@@ -9,11 +8,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { subscribeConversationSyncTasks } from "../../services/conversations";
 import {
   cancelMemoryTask,
   getMemoryDreamStatus,
   listMemoryTasks,
   startMemoryTask,
+  subscribeMemoryTasks,
 } from "../../services/memory";
 import type {
   MemoryDreamPreview,
@@ -21,12 +22,11 @@ import type {
   MemoryScope,
   MemoryTaskSnapshot,
 } from "../../types/memory";
+import { useBackgroundTaskRuntime, type BackgroundTaskRuntimeAdapter } from "./BackgroundTaskRuntime";
 
-const MEMORY_TASK_UPDATED_EVENT = "memory-task-updated";
-const CONVERSATION_SYNC_TASK_UPDATED_EVENT = "conversation-sync-task-updated";
-const POLL_INTERVAL_MS = 1000;
-const STARTUP_CHECK_DELAY_MS = 5000;
-const AUTO_CHECK_INTERVAL_MS = 15 * 60 * 1000;
+interface MemoryTaskRuntimeEvent {
+  snapshot: MemoryTaskSnapshot;
+}
 
 interface MemoryTaskContextValue {
   autoDreamStatus: MemoryDreamPreview | null;
@@ -42,23 +42,24 @@ interface MemoryTaskContextValue {
 const MemoryTaskContext = createContext<MemoryTaskContextValue | null>(null);
 
 export function MemoryTaskProvider({ children }: { children: ReactNode }) {
-  const [tasks, setTasks] = useState<MemoryTaskSnapshot[]>([]);
   const [autoDreamStatus, setAutoDreamStatus] = useState<MemoryDreamPreview | null>(null);
   const autoStartAttemptRef = useRef<string | null>(null);
-
-  const mergeTask = useCallback((snapshot: MemoryTaskSnapshot) => {
-    setTasks((current) => {
-      const next = current.filter((task) => task.id !== snapshot.id);
-      next.push(snapshot);
-      next.sort((left, right) => left.started_at.localeCompare(right.started_at));
-      return next;
-    });
-  }, []);
-
-  const refresh = useCallback(async () => {
-    const snapshots = await listMemoryTasks();
-    setTasks(snapshots);
-  }, []);
+  const adapter = useMemo<BackgroundTaskRuntimeAdapter<MemoryTaskSnapshot[], MemoryTaskRuntimeEvent>>(
+    () => ({
+      initialState: [],
+      isRunning: (state) => state.some((task) => task.status === "running"),
+      merge: (current, incoming) => {
+        if (isMemoryTaskRuntimeEvent(incoming)) {
+          return upsertMemoryTask(current, incoming.snapshot);
+        }
+        return incoming.reduce(upsertMemoryTask, current);
+      },
+      refresh: listMemoryTasks,
+      subscribe: (listener) => subscribeMemoryTasks((snapshot) => listener({ snapshot })),
+    }),
+    [],
+  );
+  const { merge, refresh, state: tasks } = useBackgroundTaskRuntime(adapter);
 
   const refreshAutoDreamStatus = useCallback(async (scope?: MemoryScope) => {
     const status = await getMemoryDreamStatus(scope);
@@ -82,80 +83,40 @@ export function MemoryTaskProvider({ children }: { children: ReactNode }) {
       scope: status.scope,
       trigger: "automatic",
     });
-    mergeTask(snapshot);
+    merge({ snapshot });
     return snapshot;
-  }, [mergeTask, refreshAutoDreamStatus]);
+  }, [merge, refreshAutoDreamStatus]);
 
   useEffect(() => {
-    void Promise.all([refresh(), refreshAutoDreamStatus()]).catch(() => {});
-  }, [refresh, refreshAutoDreamStatus]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    void listen<MemoryTaskSnapshot>(MEMORY_TASK_UPDATED_EVENT, (event) => {
-      if (cancelled) return;
-      mergeTask(event.payload);
-      if (event.payload.status !== "running") {
-        void refreshAutoDreamStatus(event.payload.scope).catch(() => {});
-      }
-    })
-      .then((removeListener) => {
-        if (cancelled) removeListener();
-        else unlisten = removeListener;
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [mergeTask, refreshAutoDreamStatus]);
+    void refreshAutoDreamStatus().catch(() => {});
+  }, [refreshAutoDreamStatus]);
 
   useEffect(() => {
     let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    void listen<{ status?: string }>(CONVERSATION_SYNC_TASK_UPDATED_EVENT, (event) => {
-      if (!cancelled && event.payload.status === "completed") {
+    let unsubscribe: (() => void) | undefined;
+    void subscribeConversationSyncTasks((snapshot) => {
+      if (!cancelled && snapshot.status === "completed") {
         void maybeStartAutoDream().catch(() => {});
       }
     })
       .then((removeListener) => {
         if (cancelled) removeListener();
-        else unlisten = removeListener;
+        else unsubscribe = removeListener;
       })
       .catch(() => {});
     return () => {
       cancelled = true;
-      unlisten?.();
+      unsubscribe?.();
     };
   }, [maybeStartAutoDream]);
-
-  const runningKey = tasks
-    .filter((task) => task.status === "running")
-    .map((task) => task.id)
-    .join(":");
-  useEffect(() => {
-    if (!runningKey) return;
-    let polling = false;
-    const interval = window.setInterval(() => {
-      if (polling) return;
-      polling = true;
-      void refresh()
-        .catch(() => {})
-        .finally(() => {
-          polling = false;
-        });
-    }, POLL_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, [refresh, runningKey]);
 
   useEffect(() => {
     const startupTimer = window.setTimeout(() => {
       void maybeStartAutoDream().catch(() => {});
-    }, STARTUP_CHECK_DELAY_MS);
+    }, 5000);
     const interval = window.setInterval(() => {
       void maybeStartAutoDream().catch(() => {});
-    }, AUTO_CHECK_INTERVAL_MS);
+    }, 15 * 60 * 1000);
     return () => {
       window.clearTimeout(startupTimer);
       window.clearInterval(interval);
@@ -169,15 +130,15 @@ export function MemoryTaskProvider({ children }: { children: ReactNode }) {
       trigger: "manual",
       dry_run: params.dryRun,
     });
-    mergeTask(snapshot);
+    merge({ snapshot });
     return snapshot;
-  }, [mergeTask]);
+  }, [merge]);
 
   const cancelTask = useCallback(async (taskId: string) => {
     const snapshot = await cancelMemoryTask(taskId);
-    mergeTask(snapshot);
+    merge({ snapshot });
     return snapshot;
-  }, [mergeTask]);
+  }, [merge]);
 
   const startRecall = useCallback(async (params: MemoryRecallPreviewParams & { synthesize?: boolean; dryRun?: boolean }) => {
     const snapshot = await startMemoryTask({
@@ -188,15 +149,17 @@ export function MemoryTaskProvider({ children }: { children: ReactNode }) {
       recall: params,
       synthesize: params.synthesize ?? false,
     });
-    mergeTask(snapshot);
+    merge({ snapshot });
     return snapshot;
-  }, [mergeTask]);
+  }, [merge]);
 
   const task = tasks[tasks.length - 1] ?? null;
   const value = useMemo<MemoryTaskContextValue>(() => ({
     autoDreamStatus,
     cancelTask,
-    refresh,
+    refresh: async () => {
+      await refresh();
+    },
     refreshAutoDreamStatus,
     startDream,
     startRecall,
@@ -211,4 +174,16 @@ export function useMemoryTasks() {
   const context = useContext(MemoryTaskContext);
   if (!context) throw new Error("useMemoryTasks must be used inside MemoryTaskProvider");
   return context;
+}
+
+function isMemoryTaskRuntimeEvent(
+  incoming: MemoryTaskSnapshot[] | MemoryTaskRuntimeEvent,
+): incoming is MemoryTaskRuntimeEvent {
+  return "snapshot" in incoming;
+}
+
+function upsertMemoryTask(tasks: MemoryTaskSnapshot[], snapshot: MemoryTaskSnapshot) {
+  return [...tasks.filter((task) => task.id !== snapshot.id), snapshot].sort((left, right) => (
+    left.started_at.localeCompare(right.started_at)
+  ));
 }

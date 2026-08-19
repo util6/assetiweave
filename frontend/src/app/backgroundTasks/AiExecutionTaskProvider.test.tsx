@@ -12,27 +12,24 @@ import type {
   ConversationCardTranslationRequest,
 } from "../../services/cardTranslation";
 
-const listeners = vi.hoisted(() => new Map<string, (event: { payload: unknown }) => void>());
-const listenMock = vi.hoisted(() => vi.fn());
+const listeners = vi.hoisted(() => new Map<string, (snapshot: unknown) => void>());
+const subscribeTasksMock = vi.hoisted(() => vi.fn());
 const listTasksMock = vi.hoisted(() => vi.fn());
 const startTaskMock = vi.hoisted(() => vi.fn());
 const cancelTaskMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@tauri-apps/api/event", () => ({ listen: listenMock }));
 vi.mock("../../services/cardTranslation", () => ({
   cancelAiExecutionTask: cancelTaskMock,
   listAiExecutionTasks: listTasksMock,
   startConversationCardTranslation: startTaskMock,
+  subscribeAiExecutionTasks: subscribeTasksMock,
 }));
 
 describe("AiExecutionTaskProvider", () => {
   beforeEach(() => {
     listeners.clear();
-    listenMock.mockReset().mockImplementation(async (
-      eventName: string,
-      listener: (event: { payload: unknown }) => void,
-    ) => {
-      listeners.set(eventName, listener);
+    subscribeTasksMock.mockReset().mockImplementation(async (listener: (snapshot: unknown) => void) => {
+      listeners.set("ai-execution://task-updated", listener);
       return vi.fn();
     });
     listTasksMock.mockReset().mockResolvedValue([]);
@@ -55,12 +52,8 @@ describe("AiExecutionTaskProvider", () => {
     expect(screen.getByTestId("state").textContent).toBe("running:prompting");
 
     await act(async () => {
-      listeners.get("ai-execution://task-updated")?.({
-        payload: taskSnapshot("succeeded", "cleaning_up", "2026-08-13T00:00:03Z"),
-      });
-      listeners.get("ai-execution://task-updated")?.({
-        payload: taskSnapshot("running", "initializing", "2026-08-13T00:00:01Z"),
-      });
+      listeners.get("ai-execution://task-updated")?.(taskSnapshot("succeeded", "cleaning_up", "2026-08-13T00:00:03Z"));
+      listeners.get("ai-execution://task-updated")?.(taskSnapshot("running", "initializing", "2026-08-13T00:00:01Z"));
     });
 
     expect(screen.getByTestId("state").textContent).toBe("succeeded:cleaning_up");
@@ -113,7 +106,7 @@ describe("AiExecutionTaskProvider", () => {
   it("cleans up its listener and polling timer on unmount", async () => {
     vi.useFakeTimers();
     const unlisten = vi.fn();
-    listenMock.mockResolvedValue(unlisten);
+    subscribeTasksMock.mockResolvedValue(unlisten);
     listTasksMock.mockResolvedValue([
       taskSnapshot("running", "prompting", "2026-08-13T00:00:02Z"),
     ]);

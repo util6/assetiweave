@@ -4,22 +4,19 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationSyncProvider, useConversationSync } from "./ConversationSyncProvider";
 
-const listenMock = vi.hoisted(() => vi.fn());
+const subscribeConversationSyncTasksMock = vi.hoisted(() => vi.fn());
 const listConversationSyncTasksMock = vi.hoisted(() => vi.fn());
 const syncConversationsMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@tauri-apps/api/event", () => ({
-  listen: listenMock,
-}));
-
 vi.mock("../../services/conversations", () => ({
   listConversationSyncTasks: listConversationSyncTasksMock,
+  subscribeConversationSyncTasks: subscribeConversationSyncTasksMock,
   syncConversations: syncConversationsMock,
 }));
 
 describe("ConversationSyncProvider", () => {
   beforeEach(() => {
-    listenMock.mockReset().mockResolvedValue(vi.fn());
+    subscribeConversationSyncTasksMock.mockReset().mockResolvedValue(vi.fn());
     listConversationSyncTasksMock.mockReset().mockResolvedValue([]);
     syncConversationsMock.mockReset();
   });
@@ -43,9 +40,9 @@ describe("ConversationSyncProvider", () => {
       error: null,
     } as const;
     syncConversationsMock.mockResolvedValue(runningTask);
-    let syncListener: ((event: { payload: unknown }) => void) | undefined;
-    listenMock.mockImplementation(
-      async (_eventName: string, listener: (event: { payload: unknown }) => void) => {
+    let syncListener: ((snapshot: unknown) => void) | undefined;
+    subscribeConversationSyncTasksMock.mockImplementation(
+      async (listener: (snapshot: unknown) => void) => {
         syncListener = listener;
         return vi.fn();
       },
@@ -66,12 +63,10 @@ describe("ConversationSyncProvider", () => {
 
     await act(async () => {
       syncListener?.({
-        payload: {
-          ...runningTask,
-          status: "completed",
-          finished_at: "2026-06-15T00:00:05Z",
-          result: { results: [] },
-        },
+        ...runningTask,
+        status: "completed",
+        finished_at: "2026-06-15T00:00:05Z",
+        result: { results: [] },
       });
     });
     expect(screen.getByTestId("sync-status").textContent).toBe("completed");
