@@ -23,7 +23,10 @@ use crate::backend::{
         PackageIdentity, PackageKind, ResourceKey,
     },
     models::{MemoryDreamTrigger, MemoryRunKind, MemoryScope},
-    runtime::tasks::{TaskFn, TaskKind, TaskRuntime, TaskSnapshot, TaskSpec, TaskState},
+    runtime::tasks::{
+        ExternalRegistrationOutcome, TaskFn, TaskKind, TaskRuntime, TaskSnapshot, TaskSpec,
+        TaskState,
+    },
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -201,6 +204,17 @@ impl ConversationSyncScope {
             Self::Web => "conversation-sync:web",
         }
     }
+
+    fn conflict_keys(self) -> Vec<String> {
+        match self {
+            Self::All => vec![
+                "conversation-sync:session".to_string(),
+                "conversation-sync:web".to_string(),
+            ],
+            Self::Session => vec!["conversation-sync:session".to_string()],
+            Self::Web => vec!["conversation-sync:web".to_string()],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -350,25 +364,25 @@ impl BackgroundTaskRegistry {
         kind: TaskKind,
         task_id: &str,
         dedup_key: Option<String>,
+        conflict_keys: impl IntoIterator<Item = String>,
         detail: Value,
-    ) -> AppResult<(TaskSnapshot, bool)> {
+    ) -> AppResult<ExternalRegistrationOutcome> {
         let runtime = &self.task_runtime;
-        let mut spec = TaskSpec::new(kind, dedup_key).with_task_id(task_id.to_string());
+        let mut spec = TaskSpec::new(kind, dedup_key)
+            .with_task_id(task_id.to_string())
+            .with_conflict_keys(conflict_keys);
         spec.detail = detail;
         match runtime
             .register_external(spec)
             .map_err(|error| error.to_string())?
         {
-            Ok(_snapshot) => runtime
+            ExternalRegistrationOutcome::Started(_) => runtime
                 .start_external(task_id)
-                .map(|snapshot| (snapshot, true))
+                .map(ExternalRegistrationOutcome::Started)
                 .map_err(|error| error.to_string()),
-            Err(existing) => Ok((existing, false)),
+            outcome @ ExternalRegistrationOutcome::Existing(_)
+            | outcome @ ExternalRegistrationOutcome::Conflict(_) => Ok(outcome),
         }
-    }
-
-    fn discard_external_task(&self, task_id: &str) {
-        let _ = self.task_runtime.remove(task_id);
     }
 
     fn finish_external_task(
@@ -404,6 +418,12 @@ impl BackgroundTaskRegistry {
         }
     }
 
+    fn external_task_snapshot(&self, task_id: &str) -> AppResult<TaskSnapshot> {
+        self.task_runtime
+            .get(task_id)
+            .ok_or_else(|| format!("background task not found: {task_id}"))
+    }
+
     /// Start work through the same kernel coordinator used by both extension
     /// domains. The domain projection remains responsible for its rich UI
     /// snapshot, while TaskRuntime owns execution and shutdown accounting.
@@ -430,12 +450,18 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        let (runtime_snapshot, started) = self.register_external_task(
+        let registration = self.register_external_task(
             TaskKind::Other,
             &snapshot.id,
             Some("agent-market-refresh".to_string()),
+            Vec::new(),
             serde_json::json!({"domain": "agent_market_refresh"}),
         )?;
+        let (runtime_snapshot, started) = match registration {
+            ExternalRegistrationOutcome::Started(snapshot) => (snapshot, true),
+            ExternalRegistrationOutcome::Existing(snapshot)
+            | ExternalRegistrationOutcome::Conflict(snapshot) => (snapshot, false),
+        };
         let mut tasks = self
             .agent_market_refresh_tasks
             .lock()
@@ -540,11 +566,6 @@ impl BackgroundTaskRegistry {
         distribution_type: Option<crate::backend::agent_market::types::DistributionType>,
         ownership: Option<crate::backend::agent_market::types::Ownership>,
     ) -> AppResult<(AgentLifecycleTaskSnapshot, Arc<AtomicBool>, bool)> {
-        let mut tasks = self
-            .agent_lifecycle_tasks
-            .lock()
-            .map_err(|error| error.to_string())?;
-        prune_agent_lifecycle_tasks(&mut tasks);
         let lifecycle_key = extension_lifecycle_key(
             PackageKind::Agent,
             &agent_id,
@@ -577,11 +598,16 @@ impl BackgroundTaskRegistry {
             error: None,
             warnings: Vec::new(),
         };
-        match self
+        let reservation = self
             .lifecycle
             .reserve(snapshot.id.clone(), lifecycle_key)
-            .map_err(|error| error.to_string())?
-        {
+            .map_err(|error| error.to_string())?;
+        let mut tasks = self
+            .agent_lifecycle_tasks
+            .lock()
+            .map_err(|error| error.to_string())?;
+        prune_agent_lifecycle_tasks(&mut tasks);
+        match reservation {
             LifecycleReservationOutcome::Started => {}
             LifecycleReservationOutcome::Existing(existing_id) => {
                 let existing = tasks.get(&existing_id).ok_or_else(|| {
@@ -593,21 +619,6 @@ impl BackgroundTaskRegistry {
                     false,
                 ));
             }
-        }
-        if tasks.values().any(|entry| {
-            entry.snapshot.agent_id == snapshot.agent_id
-                && matches!(
-                    entry.snapshot.state,
-                    LifecycleTaskState::Queued
-                        | LifecycleTaskState::Running
-                        | LifecycleTaskState::Cancelling
-                )
-        }) {
-            self.lifecycle.release(&snapshot.id);
-            return Err(format!(
-                "agent lifecycle task already running for {}",
-                snapshot.agent_id
-            ));
         }
         let cancellation = Arc::new(AtomicBool::new(false));
         tasks.insert(
@@ -628,6 +639,7 @@ impl BackgroundTaskRegistry {
         downloaded_bytes: Option<u64>,
         warnings: Vec<String>,
     ) -> AppResult<AgentLifecycleTaskSnapshot> {
+        let runtime_snapshot = self.external_task_snapshot(task_id)?;
         let mut tasks = self
             .agent_lifecycle_tasks
             .lock()
@@ -635,16 +647,32 @@ impl BackgroundTaskRegistry {
         let entry = tasks
             .get_mut(task_id)
             .ok_or_else(|| "agent lifecycle task not found".to_string())?;
-        if !matches!(
-            entry.snapshot.state,
-            LifecycleTaskState::Cancelling | LifecycleTaskState::Cancelled
-        ) {
-            entry.snapshot.state = LifecycleTaskState::Running;
-            entry.snapshot.phase = phase;
-            entry.snapshot.progress.completed_units = completed_units;
-            entry.snapshot.progress.downloaded_bytes = downloaded_bytes;
-            entry.snapshot.warnings = warnings;
-            entry.snapshot.updated_at = Utc::now().to_rfc3339();
+        match runtime_snapshot.state {
+            TaskState::Cancelling => {
+                entry.snapshot.state = LifecycleTaskState::Cancelling;
+                entry.snapshot.phase = LifecycleTaskPhase::Cancelling;
+                entry.snapshot.cancellable = false;
+            }
+            TaskState::Canceled => {
+                entry.snapshot.state = LifecycleTaskState::Cancelled;
+                entry.snapshot.phase = LifecycleTaskPhase::Cancelled;
+                entry.snapshot.cancellable = false;
+                entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
+            }
+            TaskState::Pending | TaskState::Running
+                if !matches!(
+                    entry.snapshot.state,
+                    LifecycleTaskState::Cancelling | LifecycleTaskState::Cancelled
+                ) =>
+            {
+                entry.snapshot.state = LifecycleTaskState::Running;
+                entry.snapshot.phase = phase;
+                entry.snapshot.progress.completed_units = completed_units;
+                entry.snapshot.progress.downloaded_bytes = downloaded_bytes;
+                entry.snapshot.warnings = warnings;
+                entry.snapshot.updated_at = Utc::now().to_rfc3339();
+            }
+            TaskState::Succeeded | TaskState::Failed | TaskState::Pending | TaskState::Running => {}
         }
         Ok(entry.snapshot.clone())
     }
@@ -700,7 +728,6 @@ impl BackgroundTaskRegistry {
         }
         let snapshot = entry.snapshot.clone();
         drop(tasks);
-        self.lifecycle.finish_projection(task_id);
         Ok(snapshot)
     }
 
@@ -774,12 +801,18 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        let (runtime_snapshot, started) = self.register_external_task(
+        let registration = self.register_external_task(
             TaskKind::SearchIndexRebuild,
             &snapshot.id,
             Some("conversation-search-index".to_string()),
+            Vec::new(),
             serde_json::json!({"domain": "conversation_search_index"}),
         )?;
+        let (runtime_snapshot, started) = match registration {
+            ExternalRegistrationOutcome::Started(snapshot) => (snapshot, true),
+            ExternalRegistrationOutcome::Existing(snapshot)
+            | ExternalRegistrationOutcome::Conflict(snapshot) => (snapshot, false),
+        };
         let mut current = self
             .conversation_search_index
             .lock()
@@ -856,29 +889,6 @@ impl BackgroundTaskRegistry {
         params: &ConversationSyncParams,
     ) -> AppResult<(ConversationSyncTaskSnapshot, bool)> {
         let scope = ConversationSyncScope::from_record_kind(params.record_kind.as_deref())?;
-        let conflicting_snapshot =
-            |current: &HashMap<ConversationSyncScope, ConversationSyncTaskSnapshot>| match scope {
-                ConversationSyncScope::All => current
-                    .values()
-                    .find(|snapshot| {
-                        snapshot.status == BackgroundTaskStatus::Running
-                            && snapshot.record_kind.is_some()
-                    })
-                    .cloned(),
-                _ => current
-                    .get(&ConversationSyncScope::All)
-                    .filter(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
-                    .cloned(),
-            };
-        let current = self
-            .conversation_sync
-            .lock()
-            .map_err(|error| error.to_string())?;
-        if let Some(snapshot) = conflicting_snapshot(&current) {
-            return Ok((snapshot, false));
-        }
-        drop(current);
-
         let snapshot = ConversationSyncTaskSnapshot {
             id: Uuid::new_v4().to_string(),
             status: BackgroundTaskStatus::Running,
@@ -898,36 +908,36 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        let (runtime_snapshot, started) = self.register_external_task(
+        let registration = self.register_external_task(
             TaskKind::ConversationSync,
             &snapshot.id,
             Some(scope.dedup_key().to_string()),
+            scope.conflict_keys(),
             serde_json::json!({"domain": "conversation_sync"}),
         )?;
         let mut current = self
             .conversation_sync
             .lock()
             .map_err(|error| error.to_string())?;
-        if let Some(conflicting) = conflicting_snapshot(&current) {
-            if started {
-                self.discard_external_task(&snapshot.id);
+        match registration {
+            ExternalRegistrationOutcome::Started(_) => {
+                current.insert(scope, snapshot.clone());
+                Ok((snapshot, true))
             }
-            return Ok((conflicting, false));
+            ExternalRegistrationOutcome::Existing(runtime_snapshot)
+            | ExternalRegistrationOutcome::Conflict(runtime_snapshot) => {
+                let existing = current
+                    .values()
+                    .find(|snapshot| snapshot.id == runtime_snapshot.task_id)
+                    .ok_or_else(|| {
+                        format!(
+                            "conversation sync task projection not found: {}",
+                            runtime_snapshot.task_id
+                        )
+                    })?;
+                Ok((existing.clone(), false))
+            }
         }
-        if !started {
-            let existing = current
-                .values()
-                .find(|snapshot| snapshot.id == runtime_snapshot.task_id)
-                .ok_or_else(|| {
-                    format!(
-                        "conversation sync task projection not found: {}",
-                        runtime_snapshot.task_id
-                    )
-                })?;
-            return Ok((existing.clone(), false));
-        }
-        current.insert(scope, snapshot.clone());
-        Ok((snapshot, true))
     }
 
     pub(crate) fn update_conversation_sync_progress(
@@ -937,6 +947,7 @@ impl BackgroundTaskRegistry {
         total_source_count: usize,
         current_source_name: Option<String>,
     ) -> AppResult<ConversationSyncTaskSnapshot> {
+        let runtime_snapshot = self.external_task_snapshot(task_id)?;
         let mut current = self
             .conversation_sync
             .lock()
@@ -945,12 +956,16 @@ impl BackgroundTaskRegistry {
             .values_mut()
             .find(|snapshot| snapshot.id == task_id)
             .ok_or_else(|| "conversation sync task not found".to_string())?;
-        snapshot.progress = ConversationSyncTaskProgress {
-            phase: ConversationSyncProgressPhase::Syncing,
-            completed_source_count: completed_source_count.min(total_source_count),
-            total_source_count,
-            current_source_name,
-        };
+        if runtime_snapshot.state == TaskState::Running
+            && snapshot.status == BackgroundTaskStatus::Running
+        {
+            snapshot.progress = ConversationSyncTaskProgress {
+                phase: ConversationSyncProgressPhase::Syncing,
+                completed_source_count: completed_source_count.min(total_source_count),
+                total_source_count,
+                current_source_name,
+            };
+        }
         Ok(snapshot.clone())
     }
 
@@ -1086,13 +1101,6 @@ impl BackgroundTaskRegistry {
                 return Ok((existing.clone(), false));
             }
         }
-        if current
-            .as_ref()
-            .is_some_and(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
-        {
-            self.lifecycle.release(&snapshot.id);
-            return Err("conversation lifecycle task already running".to_string());
-        }
         *current = Some(snapshot.clone());
         Ok((snapshot, true))
     }
@@ -1166,13 +1174,6 @@ impl BackgroundTaskRegistry {
                 return Ok((existing.clone(), false));
             }
         }
-        if current
-            .as_ref()
-            .is_some_and(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
-        {
-            self.lifecycle.release(&snapshot.id);
-            return Err("conversation lifecycle task already running".to_string());
-        }
         *current = Some(snapshot.clone());
         Ok((snapshot, true))
     }
@@ -1228,13 +1229,6 @@ impl BackgroundTaskRegistry {
                 return Ok((existing.clone(), false));
             }
         }
-        if current
-            .as_ref()
-            .is_some_and(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
-        {
-            self.lifecycle.release(&snapshot.id);
-            return Err("conversation lifecycle task already running".to_string());
-        }
         *current = Some(snapshot.clone());
         Ok((snapshot, true))
     }
@@ -1289,7 +1283,6 @@ impl BackgroundTaskRegistry {
         }
         let snapshot = snapshot.clone();
         drop(current);
-        self.lifecycle.finish_projection(task_id);
         Ok(snapshot)
     }
 
@@ -1325,12 +1318,18 @@ impl BackgroundTaskRegistry {
             errors: Vec::new(),
             error: None,
         };
-        let (runtime_snapshot, started) = self.register_external_task(
+        let registration = self.register_external_task(
             TaskKind::Backup,
             &snapshot.id,
             Some("skill-backup".to_string()),
+            Vec::new(),
             serde_json::json!({"domain": "skill_backup"}),
         )?;
+        let (runtime_snapshot, started) = match registration {
+            ExternalRegistrationOutcome::Started(snapshot) => (snapshot, true),
+            ExternalRegistrationOutcome::Existing(snapshot)
+            | ExternalRegistrationOutcome::Conflict(snapshot) => (snapshot, false),
+        };
         let mut current = self
             .skill_backup
             .lock()
@@ -1357,6 +1356,7 @@ impl BackgroundTaskRegistry {
         completed_count: usize,
         current_asset_id: Option<String>,
     ) -> AppResult<SkillBackupTaskSnapshot> {
+        let runtime_snapshot = self.external_task_snapshot(task_id)?;
         let mut current = self
             .skill_backup
             .lock()
@@ -1367,8 +1367,12 @@ impl BackgroundTaskRegistry {
         if snapshot.id != task_id {
             return Err(format!("skill backup task is no longer current: {task_id}"));
         }
-        snapshot.completed_count = completed_count.min(snapshot.total_count);
-        snapshot.current_asset_id = current_asset_id;
+        if runtime_snapshot.state == TaskState::Running
+            && snapshot.status == BackgroundTaskStatus::Running
+        {
+            snapshot.completed_count = completed_count.min(snapshot.total_count);
+            snapshot.current_asset_id = current_asset_id;
+        }
         Ok(snapshot.clone())
     }
 
@@ -1467,50 +1471,52 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        let (runtime_snapshot, started) = self.register_external_task(
+        let registration = self.register_external_task(
             TaskKind::Other,
             &snapshot.id,
             Some(dedup_key),
+            vec![format!("memory-scope:{scope_fingerprint}")],
             serde_json::json!({"domain": "memory", "kind": format!("{:?}", params.kind)}),
         )?;
         let mut tasks = self
             .memory_tasks
             .lock()
             .map_err(|error| error.to_string())?;
-        if let Some(entry) = tasks.values().find(|entry| {
-            entry.snapshot.status == BackgroundTaskStatus::Running
-                && entry.snapshot.scope_fingerprint == scope_fingerprint
-                && entry.snapshot.kind != params.kind
-        }) {
-            if started {
-                self.discard_external_task(&snapshot.id);
+        match registration {
+            ExternalRegistrationOutcome::Started(_) => {
+                tasks.insert(
+                    id,
+                    MemoryTaskEntry {
+                        snapshot: snapshot.clone(),
+                        cancellation: cancellation.clone(),
+                    },
+                );
+                Ok((snapshot, cancellation, true))
             }
-            return Err(format!(
-                "Memory scope is already running task {} ({:?})",
-                entry.snapshot.id, entry.snapshot.kind
-            ));
-        }
-        if !started {
-            let existing = tasks.get(&runtime_snapshot.task_id).ok_or_else(|| {
-                format!(
-                    "memory task projection not found: {}",
+            ExternalRegistrationOutcome::Existing(runtime_snapshot) => {
+                let existing = tasks.get(&runtime_snapshot.task_id).ok_or_else(|| {
+                    format!(
+                        "memory task projection not found: {}",
+                        runtime_snapshot.task_id
+                    )
+                })?;
+                Ok((
+                    existing.snapshot.clone(),
+                    existing.cancellation.clone(),
+                    false,
+                ))
+            }
+            ExternalRegistrationOutcome::Conflict(runtime_snapshot) => {
+                let kind = tasks
+                    .get(&runtime_snapshot.task_id)
+                    .map(|entry| format!("{:?}", entry.snapshot.kind))
+                    .unwrap_or_else(|| "unknown".to_string());
+                Err(format!(
+                    "Memory scope is already running task {} ({kind})",
                     runtime_snapshot.task_id
-                )
-            })?;
-            return Ok((
-                existing.snapshot.clone(),
-                existing.cancellation.clone(),
-                false,
-            ));
+                ))
+            }
         }
-        tasks.insert(
-            id,
-            MemoryTaskEntry {
-                snapshot: snapshot.clone(),
-                cancellation: cancellation.clone(),
-            },
-        );
-        Ok((snapshot, cancellation, true))
     }
 
     pub(crate) fn update_memory_task(
@@ -1521,6 +1527,7 @@ impl BackgroundTaskRegistry {
         total_count: usize,
         run_id: Option<String>,
     ) -> AppResult<MemoryTaskSnapshot> {
+        let runtime_snapshot = self.external_task_snapshot(task_id)?;
         let mut tasks = self
             .memory_tasks
             .lock()
@@ -1528,14 +1535,26 @@ impl BackgroundTaskRegistry {
         let entry = tasks
             .get_mut(task_id)
             .ok_or_else(|| format!("Memory task was not found: {task_id}"))?;
-        if entry.snapshot.status != BackgroundTaskStatus::Running {
-            return Ok(entry.snapshot.clone());
-        }
-        entry.snapshot.phase = phase.to_string();
-        entry.snapshot.processed_count = processed_count.min(total_count);
-        entry.snapshot.total_count = total_count;
-        if run_id.is_some() {
-            entry.snapshot.run_id = run_id;
+        match runtime_snapshot.state {
+            TaskState::Cancelling => {
+                entry.snapshot.cancel_requested = true;
+                entry.snapshot.phase = "cancelling".to_string();
+            }
+            TaskState::Canceled => {
+                entry.snapshot.cancel_requested = true;
+                entry.snapshot.status = BackgroundTaskStatus::Cancelled;
+                entry.snapshot.phase = "cancelled".to_string();
+                entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
+            }
+            TaskState::Running if entry.snapshot.status == BackgroundTaskStatus::Running => {
+                entry.snapshot.phase = phase.to_string();
+                entry.snapshot.processed_count = processed_count.min(total_count);
+                entry.snapshot.total_count = total_count;
+                if run_id.is_some() {
+                    entry.snapshot.run_id = run_id;
+                }
+            }
+            TaskState::Pending | TaskState::Running | TaskState::Succeeded | TaskState::Failed => {}
         }
         Ok(entry.snapshot.clone())
     }
@@ -1657,12 +1676,23 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        self.register_external_task(
+        let registration = self.register_external_task(
             TaskKind::AiExecution,
             &snapshot.id,
             None,
+            Vec::new(),
             serde_json::json!({"domain": "ai_execution", "purpose": format!("{:?}", purpose)}),
         )?;
+        match registration {
+            ExternalRegistrationOutcome::Started(_) => {}
+            ExternalRegistrationOutcome::Existing(existing)
+            | ExternalRegistrationOutcome::Conflict(existing) => {
+                return Err(format!(
+                    "AI execution task id was already registered: {}",
+                    existing.task_id
+                ));
+            }
+        }
         tasks.insert(
             id,
             AiExecutionTaskEntry {
@@ -1679,6 +1709,7 @@ impl BackgroundTaskRegistry {
         task_id: &str,
         phase: AiExecutionPhase,
     ) -> AppResult<AiExecutionTaskSnapshot> {
+        let runtime_snapshot = self.external_task_snapshot(task_id)?;
         let mut tasks = self
             .ai_executions
             .lock()
@@ -1686,16 +1717,28 @@ impl BackgroundTaskRegistry {
         let entry = tasks
             .get_mut(task_id)
             .ok_or_else(|| format!("AI execution task was not found: {task_id}"))?;
-        if entry.snapshot.state.is_terminal() {
-            return Ok(entry.snapshot.clone());
+        match runtime_snapshot.state {
+            TaskState::Cancelling => {
+                entry.snapshot.state = AiExecutionTaskState::Running;
+                entry.snapshot.phase = AiExecutionPhase::Cancelling;
+            }
+            TaskState::Canceled => {
+                entry.snapshot.state = AiExecutionTaskState::Cancelled;
+                entry.snapshot.phase = AiExecutionPhase::CleaningUp;
+                entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
+                entry.terminal_at = Some(Instant::now());
+            }
+            TaskState::Pending | TaskState::Running if !entry.snapshot.state.is_terminal() => {
+                entry.snapshot.state = if phase == AiExecutionPhase::Queued {
+                    AiExecutionTaskState::Queued
+                } else {
+                    AiExecutionTaskState::Running
+                };
+                entry.snapshot.phase = phase;
+                entry.snapshot.updated_at = Utc::now().to_rfc3339();
+            }
+            TaskState::Pending | TaskState::Running | TaskState::Succeeded | TaskState::Failed => {}
         }
-        entry.snapshot.state = if phase == AiExecutionPhase::Queued {
-            AiExecutionTaskState::Queued
-        } else {
-            AiExecutionTaskState::Running
-        };
-        entry.snapshot.phase = phase;
-        entry.snapshot.updated_at = Utc::now().to_rfc3339();
         Ok(entry.snapshot.clone())
     }
 
@@ -2313,6 +2356,42 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_projection_does_not_resume_after_runtime_cancellation() {
+        let registry = BackgroundTaskRegistry::default();
+        let (running, _, _) = registry
+            .begin_agent_lifecycle(
+                "runtime-cancelled-agent".to_string(),
+                "install".to_string(),
+                None,
+                Some("1.0.0".to_string()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let runtime = registry.task_runtime().expect("shared task runtime");
+        assert!(matches!(
+            runtime.cancel(&running.id),
+            crate::backend::runtime::tasks::CancelOutcome::Requested(_)
+        ));
+
+        let projected = registry
+            .update_agent_lifecycle(
+                &running.id,
+                LifecycleTaskPhase::Downloading,
+                7,
+                Some(512),
+                vec!["late update".to_string()],
+            )
+            .unwrap();
+
+        assert_eq!(projected.state, LifecycleTaskState::Cancelling);
+        assert_eq!(projected.phase, LifecycleTaskPhase::Cancelling);
+        assert_eq!(projected.progress.completed_units, 0);
+        assert!(projected.warnings.is_empty());
+    }
+
+    #[test]
     fn skill_backup_tracks_progress_and_blocks_duplicate_start() {
         let registry = BackgroundTaskRegistry::default();
 
@@ -2792,7 +2871,7 @@ mod tests {
                 None,
             )
             .expect_err("a different active operation must not reuse the install task");
-        assert!(error.contains("already running"));
+        assert!(error.contains("conflicts"));
     }
 
     #[test]
@@ -2830,6 +2909,12 @@ mod tests {
         assert!(registry.has_running_tasks());
         assert!(runtime.remove(&task.id).is_some());
         assert!(!registry.has_running_tasks());
+
+        let (replacement, should_start) = registry
+            .begin_conversation_sync(&params(Some("session")))
+            .unwrap();
+        assert!(should_start);
+        assert_ne!(replacement.id, task.id);
     }
 
     fn opencode_id() -> AgentId {

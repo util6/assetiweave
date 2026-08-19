@@ -60,6 +60,7 @@ pub(crate) struct TaskSpec {
     pub(crate) kind: TaskKind,
     pub(crate) task_id: Option<String>,
     pub(crate) dedup_key: Option<String>,
+    pub(crate) conflict_keys: Vec<String>,
     pub(crate) detail: Value,
 }
 
@@ -69,12 +70,27 @@ impl TaskSpec {
             kind,
             task_id: None,
             dedup_key,
+            conflict_keys: Vec::new(),
             detail: Value::Null,
         }
     }
 
     pub(crate) fn with_task_id(mut self, task_id: impl Into<String>) -> Self {
         self.task_id = Some(task_id.into());
+        self
+    }
+
+    pub(crate) fn with_conflict_key(mut self, conflict_key: impl Into<String>) -> Self {
+        self.conflict_keys.push(conflict_key.into());
+        self
+    }
+
+    pub(crate) fn with_conflict_keys(
+        mut self,
+        conflict_keys: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.conflict_keys
+            .extend(conflict_keys.into_iter().map(Into::into));
         self
     }
 }
@@ -134,6 +150,8 @@ pub(crate) type TaskFn = Box<dyn FnOnce(TaskContext) -> AppResult<Value> + Send 
 struct TaskEntry {
     snapshot: TaskSnapshot,
     cancellation: CancellationToken,
+    conflict_keys: Vec<String>,
+    started: bool,
 }
 
 #[derive(Clone, Default)]
@@ -148,6 +166,12 @@ pub(crate) struct TaskRuntime {
 pub(crate) enum SpawnOutcome {
     Started(TaskSnapshot),
     Existing(TaskSnapshot),
+}
+
+pub(crate) enum ExternalRegistrationOutcome {
+    Started(TaskSnapshot),
+    Existing(TaskSnapshot),
+    Conflict(TaskSnapshot),
 }
 
 pub(crate) enum CancelOutcome {
@@ -225,6 +249,8 @@ impl TaskRuntime {
             TaskEntry {
                 snapshot: snapshot.clone(),
                 cancellation: cancellation.clone(),
+                conflict_keys: spec.conflict_keys,
+                started: true,
             },
         );
         drop(tasks);
@@ -243,7 +269,7 @@ impl TaskRuntime {
     pub(crate) fn register_external(
         &self,
         spec: TaskSpec,
-    ) -> Result<Result<TaskSnapshot, TaskSnapshot>, AppError> {
+    ) -> Result<ExternalRegistrationOutcome, AppError> {
         if !self.accepting.load(Ordering::Acquire) {
             return Err(AppError::Canceled(
                 "应用正在关闭，不再接受新任务".to_string(),
@@ -259,7 +285,9 @@ impl TaskRuntime {
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
         if let Some(existing) = tasks.get(&task_id) {
-            return Ok(Err(existing.snapshot.clone()));
+            return Ok(ExternalRegistrationOutcome::Existing(
+                existing.snapshot.clone(),
+            ));
         }
         if let Some(existing) = spec.dedup_key.as_ref().and_then(|key| {
             tasks.values().find(|entry| {
@@ -268,7 +296,20 @@ impl TaskRuntime {
                     && entry.snapshot.state.is_active()
             })
         }) {
-            return Ok(Err(existing.snapshot.clone()));
+            return Ok(ExternalRegistrationOutcome::Existing(
+                existing.snapshot.clone(),
+            ));
+        }
+        if let Some(existing) = tasks.values().find(|entry| {
+            entry.snapshot.state.is_active()
+                && spec
+                    .conflict_keys
+                    .iter()
+                    .any(|key| entry.conflict_keys.iter().any(|existing| existing == key))
+        }) {
+            return Ok(ExternalRegistrationOutcome::Conflict(
+                existing.snapshot.clone(),
+            ));
         }
         let snapshot = TaskSnapshot {
             task_id: task_id.clone(),
@@ -286,13 +327,15 @@ impl TaskRuntime {
             TaskEntry {
                 snapshot: snapshot.clone(),
                 cancellation: cancellation.clone(),
+                conflict_keys: spec.conflict_keys,
+                started: false,
             },
         );
         drop(tasks);
         if let Ok(mut active) = self.active.0.lock() {
             *active += 1;
         }
-        Ok(Ok(snapshot))
+        Ok(ExternalRegistrationOutcome::Started(snapshot))
     }
 
     pub(crate) fn start_external(&self, task_id: &str) -> AppResult<TaskSnapshot> {
@@ -305,6 +348,7 @@ impl TaskRuntime {
             .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
         if entry.snapshot.state == TaskState::Pending {
             entry.snapshot.state = TaskState::Running;
+            entry.started = true;
         }
         Ok(entry.snapshot.clone())
     }
@@ -318,7 +362,7 @@ impl TaskRuntime {
         detail: Value,
         task: TaskFn,
     ) -> AppResult<TaskSnapshot> {
-        let (snapshot, cancellation) = {
+        let (snapshot, cancellation, should_launch) = {
             let mut tasks = self
                 .tasks
                 .lock()
@@ -330,9 +374,17 @@ impl TaskRuntime {
                 entry.snapshot.state = TaskState::Running;
                 entry.snapshot.detail = detail;
             }
-            (entry.snapshot.clone(), entry.cancellation.clone())
+            let should_launch = entry.snapshot.state == TaskState::Running && !entry.started;
+            if should_launch {
+                entry.started = true;
+            }
+            (
+                entry.snapshot.clone(),
+                entry.cancellation.clone(),
+                should_launch,
+            )
         };
-        if snapshot.state == TaskState::Running {
+        if should_launch {
             self.launch_task(task_id.to_string(), cancellation, task)?;
         } else if snapshot.state == TaskState::Cancelling {
             return self.complete_external(

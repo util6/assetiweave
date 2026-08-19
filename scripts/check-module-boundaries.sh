@@ -76,6 +76,14 @@ check_absent 'ConversationScriptCatalog(Item|Source)' \
 check_absent 'pub\(super\) fn install_conversation_adapter_package_from_spec' \
   src-tauri/src/backend/application/conversation_script_catalog.rs
 
+# TaskRuntime is the only lifecycle authority. The extension coordinator may
+# translate keys, but it must not grow a second reservation map or projection
+# cleanup path.
+check_absent 'collections::(HashMap|BTreeMap)|sync::.*(Mutex|RwLock)' \
+  src-tauri/src/backend/extension_kernel/lifecycle.rs
+check_absent 'lifecycle\.(release|finish_projection)' \
+  src-tauri/src/adapters/tauri/background_tasks.rs
+
 # The service boundary is runtime-backed in both production and test builders.
 check_absent 'runtime: Option<Arc<AppRuntime>>' src-tauri/src/backend/application/service.rs
 
