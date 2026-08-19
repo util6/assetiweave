@@ -4,6 +4,7 @@ mod assets;
 pub(crate) mod bootstrap;
 mod card_translation;
 mod conversation_adapter_catalog_v2;
+mod conversation_adapter_installer;
 mod conversation_adapters;
 mod conversation_records;
 mod conversation_script_catalog;

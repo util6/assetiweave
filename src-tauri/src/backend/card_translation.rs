@@ -9,7 +9,7 @@ use crate::backend::{
         execute_agent_blocking, AgentExecutionRuntime, AiExecutionCancellation, AiExecutionError,
         AiExecutionLimits, AiExecutionPurpose, AiExecutionRequest,
     },
-    dto::AppResult,
+    runtime::{AppError, AppResult},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -203,7 +203,7 @@ pub(crate) fn test_conversation_translation_connection(
         Err(error) => OpencodeTranslationAvailability {
             available: false,
             version: None,
-            error: Some(error),
+            error: Some(error.to_string()),
         },
     }
 }
@@ -266,12 +266,12 @@ pub(crate) fn translate_conversation_card(
                 translate_with_cli(runtime, params.cli, model, params.prompt)
             }
         }
-        ConversationTranslationProvider::Google => {
-            Err("Google Translate provider is reserved but not implemented yet".to_string())
-        }
-        ConversationTranslationProvider::Apple => {
-            Err("Apple Translate provider is reserved but not implemented yet".to_string())
-        }
+        ConversationTranslationProvider::Google => Err(AppError::Validation(
+            "Google Translate provider is reserved but not implemented yet".to_string(),
+        )),
+        ConversationTranslationProvider::Apple => Err(AppError::Validation(
+            "Apple Translate provider is reserved but not implemented yet".to_string(),
+        )),
     }
 }
 
@@ -279,7 +279,9 @@ pub(crate) fn prepare_opencode_agent_translation(
     params: ConversationTranslationRequest,
 ) -> AppResult<(AgentId, String, Option<String>)> {
     let ConversationTranslationProvider::Cli = params.provider else {
-        return Err("AI execution tasks require a CLI translation provider".to_string());
+        return Err(AppError::Validation(
+            "AI execution tasks require a CLI translation provider".to_string(),
+        ));
     };
     validate_translation_prompt(&params.prompt)?;
     let model = normalize_model(&params.model)?;
@@ -328,13 +330,13 @@ fn translate_with_cli(
 
 fn resolve_agent_id(agent_id: Option<&str>, cli: ConversationTranslationCli) -> AppResult<AgentId> {
     if let Some(agent_id) = agent_id.map(str::trim).filter(|value| !value.is_empty()) {
-        return AgentId::parse(agent_id).map_err(|error| error.to_string());
+        return AgentId::parse(agent_id).map_err(|error| AppError::Validation(error.to_string()));
     }
     let legacy_id = match cli {
         ConversationTranslationCli::Opencode => "opencode",
         ConversationTranslationCli::Gemini => "gemini",
     };
-    AgentId::parse(legacy_id).map_err(|error| error.to_string())
+    AgentId::parse(legacy_id).map_err(|error| AppError::Validation(error.to_string()))
 }
 
 fn default_translation_cli() -> ConversationTranslationCli {
@@ -360,8 +362,8 @@ fn execute_agent_translation(
         cancellation: AiExecutionCancellation::default(),
         progress: None,
     };
-    request.validate().map_err(agent_execution_error_message)?;
-    let result = execute_agent_blocking(runtime, request).map_err(agent_execution_error_message)?;
+    request.validate().map_err(app_error_from_ai)?;
+    let result = execute_agent_blocking(runtime, request).map_err(app_error_from_ai)?;
     Ok(OpencodeTranslationResult {
         translated_text: result.text,
     })
@@ -393,10 +395,14 @@ fn connection_test_limits() -> AiExecutionLimits {
 fn validate_translation_prompt(prompt: &str) -> AppResult<()> {
     let prompt = prompt.trim();
     if prompt.is_empty() {
-        return Err("translation prompt is empty".to_string());
+        return Err(AppError::Validation(
+            "translation prompt is empty".to_string(),
+        ));
     }
     if prompt.len() > 200_000 {
-        return Err("translation prompt is too large".to_string());
+        return Err(AppError::Validation(
+            "translation prompt is too large".to_string(),
+        ));
     }
     Ok(())
 }
@@ -407,14 +413,21 @@ fn normalize_model(model: &str) -> AppResult<Option<String>> {
         return Ok(None);
     }
     if model.len() > 120 || model.contains(['\n', '\r', '\0']) {
-        return Err("translation model is invalid".to_string());
+        return Err(AppError::Validation(
+            "translation model is invalid".to_string(),
+        ));
     }
     Ok(Some(model.to_string()))
 }
 
-fn agent_execution_error_message(error: AiExecutionError) -> String {
+fn app_error_from_ai(error: AiExecutionError) -> AppError {
     let view = error.to_view();
-    format!("{}: {}", view.code, view.message)
+    let message = format!("{}: {}", view.code, view.message);
+    match view.code.as_str() {
+        "invalid_prompt" | "invalid_model" => AppError::Validation(message),
+        "cancelled" => AppError::Canceled(message),
+        _ => AppError::Extension(message),
+    }
 }
 
 #[cfg(test)]
@@ -650,8 +663,14 @@ mod tests {
             },
         );
 
-        assert_eq!(oversized.unwrap_err(), "translation prompt is too large");
-        assert_eq!(invalid_model.unwrap_err(), "translation model is invalid");
+        assert!(matches!(
+            oversized.unwrap_err(),
+            AppError::Validation(message) if message == "translation prompt is too large"
+        ));
+        assert!(matches!(
+            invalid_model.unwrap_err(),
+            AppError::Validation(message) if message == "translation model is invalid"
+        ));
         assert!(runtime.requests.lock().unwrap().is_empty());
     }
 
@@ -741,11 +760,11 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(
-            google,
+            google.to_string(),
             "Google Translate provider is reserved but not implemented yet"
         );
         assert_eq!(
-            apple,
+            apple.to_string(),
             "Apple Translate provider is reserved but not implemented yet"
         );
         assert!(runtime.requests.lock().unwrap().is_empty());

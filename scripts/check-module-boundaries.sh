@@ -62,14 +62,19 @@ check_absent '(^|[^A-Za-z0-9_])AppResult<' \
 check_absent 'dto::AppResult' \
   src-tauri/src/backend/application/card_translation.rs
 
-# Installer Core consumes InstallSpec directly. The legacy catalog item may
-# only appear in the reverse-mapping wrapper and catalog discovery code.
-if sed -n '/pub(super) fn install_conversation_adapter_package_from_spec/,/^struct InstalledConversationAdapterPackage/p' \
-  src-tauri/src/backend/application/conversation_script_catalog.rs \
-  | grep -n -E 'ConversationScriptCatalogItem|ConversationScriptCatalogSource'; then
-  printf '%s\n' 'BOUNDARY VIOLATION: Installer Core still depends on legacy catalog types'
-  fail=1
-fi
+# Card translation is the first backend/domain typed-error vertical slice;
+# transport-facing String conversion must stay outside the backend module.
+check_absent 'dto::AppResult' \
+  src-tauri/src/backend/card_translation.rs
+check_absent 'Result<[^>]*, ?String>' \
+  src-tauri/src/backend/card_translation.rs
+
+# Installer Core is a module-level boundary: it consumes InstallSpec directly
+# and must not import legacy Script Catalog item/source types anywhere.
+check_absent 'ConversationScriptCatalog(Item|Source)' \
+  src-tauri/src/backend/application/conversation_adapter_installer.rs
+check_absent 'pub\(super\) fn install_conversation_adapter_package_from_spec' \
+  src-tauri/src/backend/application/conversation_script_catalog.rs
 
 # The service boundary is runtime-backed in both production and test builders.
 check_absent 'runtime: Option<Arc<AppRuntime>>' src-tauri/src/backend/application/service.rs

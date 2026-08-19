@@ -172,11 +172,12 @@ export interface AgentUninstallPreview {
   previewToken: string;
 }
 
-export type AgentLifecycleTaskState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type AgentLifecycleTaskState = "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
 export type AgentLifecycleTaskPhase =
   | "queued" | "preparing" | "probing_runtime" | "downloading" | "installing"
   | "validating_integrity" | "validating_layout" | "probing_protocol"
   | "activating_database" | "reloading_registry" | "cleaning_up"
+  | "cancelling"
   | "succeeded" | "failed" | "cancelled";
 
 export interface AgentLifecycleTaskSnapshot {

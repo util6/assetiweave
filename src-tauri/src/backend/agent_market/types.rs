@@ -671,6 +671,7 @@ impl std::error::Error for AgentMarketError {}
 pub(crate) enum LifecycleTaskState {
     Queued,
     Running,
+    Cancelling,
     Succeeded,
     Failed,
     Cancelled,
@@ -696,6 +697,7 @@ pub(crate) enum LifecycleTaskPhase {
     ActivatingDatabase,
     ReloadingRegistry,
     CleaningUp,
+    Cancelling,
     Succeeded,
     Failed,
     Cancelled,

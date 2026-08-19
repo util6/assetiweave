@@ -77,7 +77,7 @@ impl AppService {
                 path: None,
             },
         };
-        super::conversation_script_catalog::install_conversation_adapter_package_from_spec(
+        super::conversation_adapter_installer::install_conversation_adapter_package_from_spec(
             self,
             &spec,
             params.dry_run,

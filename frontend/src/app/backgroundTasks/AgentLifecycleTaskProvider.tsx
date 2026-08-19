@@ -86,7 +86,7 @@ export function useOptionalAgentLifecycleTasks() {
 }
 
 export function isActiveAgentLifecycleTask(task: AgentLifecycleTaskSnapshot) {
-  return task.state === "queued" || task.state === "running";
+  return task.state === "queued" || task.state === "running" || task.state === "cancelling";
 }
 
 export function mergeAgentLifecycleTaskSnapshots(
@@ -139,6 +139,7 @@ function lifecycleProgress(task: AgentLifecycleTaskSnapshot) {
     activating_database: 85,
     reloading_registry: 90,
     cleaning_up: 95,
+    cancelling: 97,
     succeeded: 100,
     failed: 100,
     cancelled: 100,
