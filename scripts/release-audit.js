@@ -88,6 +88,10 @@ requireIncludes("Windows CI job", windowsCiJob, "pnpm bundle:cli");
 
 const releaseWorkflow = read(".github/workflows/release.yml");
 requireIncludes("release workflow", releaseWorkflow, "node scripts/release-audit.js --static-only");
+requireIncludes("release workflow", releaseWorkflow, 'github.ref_type == \'tag\'');
+requireIncludes("release workflow", releaseWorkflow, "github.event.created == true");
+requireIncludes("release workflow", releaseWorkflow, "skip_release");
+requireNotIncludes("release workflow", releaseWorkflow, "workflow_dispatch:");
 requireIncludes("release workflow", releaseWorkflow, "--bundles appimage,deb");
 requireIncludes("release workflow", releaseWorkflow, "--bundles nsis");
 requireIncludes("release workflow", releaseWorkflow, "--bundles app,dmg");
