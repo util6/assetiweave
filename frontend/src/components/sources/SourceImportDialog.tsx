@@ -114,7 +114,8 @@ export function SourceImportDialog({
       iconClassName="border-status-update/25 bg-status-update/15 text-status-update"
       initialFocusRef={rootPathInputRef}
       onClose={onClose}
-      overlayClassName="z-40 px-6 py-8"
+      containerClassName="px-6 py-8"
+      layer="base"
       size="lg"
       title={t("source.import.title")}
     >

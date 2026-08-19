@@ -2,7 +2,11 @@ import { RefreshCw, X } from "lucide-react";
 import type { Translator } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
 import type { ConversationSyncTaskSnapshot } from "../../services/conversations";
-import type { ConversationRecordKind } from "../../types";
+import type {
+  ConversationRecordKind,
+  ConversationSyncPhase,
+  ConversationSyncProgressState,
+} from "../../types";
 import {
   DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
   type ConversationContentCardColorSettings,
@@ -19,28 +23,6 @@ import {
   useConversationCardKindRegistry,
 } from "./ConversationCardKindRegistry";
 import { iconButtonRecipe } from "../../theme/recipes";
-
-export type ConversationSyncPhase =
-  | "preparing"
-  | "importing"
-  | "refreshing"
-  | "completed"
-  | "failed";
-
-export interface ConversationSyncProgressState {
-  advice?: string;
-  failureItems?: ConversationSyncFailureItem[];
-  phase: ConversationSyncPhase;
-  sourceLabel: string;
-  failedStep?: 1 | 2 | 3;
-  summary?: string;
-  taskId?: string;
-}
-
-export interface ConversationSyncFailureItem {
-  message: string;
-  source: string;
-}
 
 export function ConversationBackgroundTaskIndicator({
   task,

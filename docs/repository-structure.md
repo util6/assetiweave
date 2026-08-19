@@ -107,7 +107,7 @@ Go CLI
 | `components/common/` | 跨领域复合组件，例如确认框、数据工具栏 |
 | `components/assets/`、`groups/`、`sources/` 等 | 领域组件，只服务对应业务概念 |
 
-新增弹窗必须使用 `components/foundation/DialogFrame.tsx`。不要在领域目录重新实现 overlay、header、close button、滚动 body 或固定 footer。
+新增弹窗必须使用 `components/foundation/DialogFrame.tsx`。不要在领域目录重新实现 overlay、header、close button、滚动 body、全局 scroll lock 或固定 footer。层级使用 `layer`，overlay、container、panel 分别使用 `overlayClassName`、`containerClassName`、`className`，不要从 overlay class 反推其他层的语义。
 
 组件落点顺序：
 

@@ -87,7 +87,8 @@ function MountStateHelpDialog({
       icon={<Info className="size-5" aria-hidden="true" />}
       initialFocusRef={closeButtonRef}
       onClose={onClose}
-      overlayClassName="z-[70] px-4 py-8"
+      containerClassName="px-4 py-8"
+      layer="top"
       size="xl"
       title={t("mount.stateHelp.title")}
     >

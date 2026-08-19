@@ -431,7 +431,8 @@ export function SkillGroupEditDialog({
           icon={<Code2 size={18} />}
           iconClassName="border-primary-strong/25 bg-primary/15 text-primary"
           onClose={closeSvgEditor}
-          overlayClassName="z-[60] px-6"
+          containerClassName="px-6"
+          layer="nested"
           size="xl"
           title={t("group.icon.svgEditorTitle")}
         >

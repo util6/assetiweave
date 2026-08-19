@@ -1238,7 +1238,8 @@ function AppProfileDialog({
       icon={<Boxes size={18} />}
       iconClassName="border-status-update/25 bg-status-update/15 text-status-update"
       onClose={onClose}
-      overlayClassName="z-40 px-6 py-8"
+      containerClassName="px-6 py-8"
+      layer="base"
       size="lg"
       title={profile ? t("appMount.dialog.editTitle") : t("appMount.dialog.importTitle")}
     >

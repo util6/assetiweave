@@ -99,11 +99,13 @@ describe("DialogFrame", () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
-  it("propagates z-index and padding classes from overlayClassName to the content container", () => {
+  it("keeps overlay, container, and panel classes on their semantic layers", () => {
     render(
       <DialogFrame
+        containerClassName="px-6 py-8"
+        layer="top"
         onClose={() => undefined}
-        overlayClassName="z-[70] px-6 py-8"
+        overlayClassName="custom-overlay"
         title="Custom Layer Dialog"
       >
         <p>Layer content</p>
@@ -112,10 +114,14 @@ describe("DialogFrame", () => {
 
     const dialog = screen.getByRole("dialog");
     const container = dialog.parentElement;
+    const overlay = container?.previousElementSibling;
 
-    expect(container?.className).toContain("z-[70]");
     expect(container?.className).toContain("px-6");
     expect(container?.className).toContain("py-8");
+    expect(container?.className).toContain("z-[70]");
+    expect(container?.className).not.toContain("custom-overlay");
+    expect(overlay?.className).toContain("custom-overlay");
+    expect(overlay?.className).toContain("z-[70]");
   });
 
   it("applies containerClassName to the dialog content container", () => {

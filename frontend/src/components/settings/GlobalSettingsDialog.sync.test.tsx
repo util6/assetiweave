@@ -242,7 +242,7 @@ describe("GlobalSettingsDialog", () => {
     expect(dialogList.parentElement?.parentElement?.className).toContain("overflow-y-auto");
   });
 
-  it("locks the underlying document scroll while settings are open", () => {
+  it("does not add a feature-level document scroll lock", () => {
     const previousDocumentOverflow = document.documentElement.style.overflow;
     const previousBodyOverflow = document.body.style.overflow;
     document.documentElement.style.overflow = "scroll";
@@ -261,8 +261,9 @@ describe("GlobalSettingsDialog", () => {
     );
 
     try {
-      expect(document.documentElement.style.overflow).toBe("hidden");
-      expect(document.body.style.overflow).toBe("hidden");
+      expect(document.documentElement.style.overflow).toBe("scroll");
+      expect(document.body.style.overflow).toBe("auto");
+      expect(document.body.dataset.scrollLocked).toBe("1");
     } finally {
       unmount();
       document.documentElement.style.overflow = previousDocumentOverflow;

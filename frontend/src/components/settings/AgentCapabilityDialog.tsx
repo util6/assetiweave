@@ -124,7 +124,8 @@ export function AgentCapabilityDialog({
       icon={<PlugZap size={18} />}
       onBackdropClick={onClose}
       onClose={onClose}
-      overlayClassName="z-[60] px-4 py-6"
+      containerClassName="px-4 py-6"
+      layer="nested"
       size="lg"
       title={t("settings.agentCapabilities.dialogTitle")}
     >

@@ -429,6 +429,35 @@ export interface ConversationSessionDetail {
 
 export type ConversationRecordKind = "session" | "web";
 
+export type ConversationContentType = string;
+
+export type ConversationContentVisibility = Record<ConversationContentType, boolean>;
+
+export const DEFAULT_CONVERSATION_CONTENT_VISIBILITY: ConversationContentVisibility = {
+  answer: true,
+  tool: true,
+  command: true,
+  code: true,
+  result: true,
+};
+
+export type ConversationSyncPhase = "preparing" | "importing" | "refreshing" | "completed" | "failed";
+
+export interface ConversationSyncFailureItem {
+  message: string;
+  source: string;
+}
+
+export interface ConversationSyncProgressState {
+  advice?: string;
+  failureItems?: ConversationSyncFailureItem[];
+  phase: ConversationSyncPhase;
+  sourceLabel: string;
+  failedStep?: 1 | 2 | 3;
+  summary?: string;
+  taskId?: string;
+}
+
 export type ConversationSearchCardType = string;
 
 export interface ConversationSearchScope {

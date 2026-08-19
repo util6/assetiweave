@@ -64,7 +64,6 @@ import {
 import {
   ConversationContentFilter,
   ConversationSyncProgress,
-  type ConversationSyncProgressState,
 } from "../../components/conversations/ConversationToolbarControls";
 import { ConversationImportDialog } from "../../components/conversations/ConversationImportDialog";
 import {
@@ -104,7 +103,15 @@ import {
   type ConversationSyncTaskSnapshot,
 } from "../../services/conversations";
 import { selectTargetDirectory } from "../../services/catalog";
-import { useConversationsController } from "../../hooks/conversations/useConversationsController";
+import {
+  useConversationsController,
+  type ConversationExportDialogState,
+  type ConversationExportMode,
+  type ConversationQuestionSortBy,
+  type ConversationSearchResultState,
+  type ConversationSearchTarget,
+  type ConversationSessionSortBy,
+} from "../../hooks/conversations/useConversationsController";
 import { iconButtonRecipe } from "../../theme/recipes";
 import type {
   AppKind,
@@ -141,31 +148,12 @@ type ListConversationSessionPage = (params: {
   offset?: number;
 }) => Promise<ConversationSessionListItem[]>;
 
-interface ConversationSearchResultState {
-  cardKinds: string[];
-  semanticRoles: string[];
-  includeQuestions: boolean;
-  recordKind: ConversationRecordKind;
-  query: string;
-  totalCount: number;
-  hits: ConversationSearchHit[];
-}
-
-interface ConversationSearchTarget {
-  blockId: string;
-  cardType?: ConversationSearchCardType;
-  questionId: string;
-  sessionId: string;
-}
-
 interface ConversationSearchAppChipMeta {
   accentColor?: string | null;
   name: string;
 }
 
 type ConversationPageNotification = Omit<NotificationMessage, "id">;
-type ConversationSessionSortBy = "updated" | "started" | "title" | "question-count" | "turn-count";
-type ConversationQuestionSortBy = "index" | "updated" | "title";
 
 export async function loadAllConversationSessionPages(
   listSessions: ListConversationSessionPage,
@@ -213,10 +201,72 @@ export function ConversationsPage({
   recordKind?: "session" | "web";
 }) {
   const { t } = useI18n();
-  const { appSettings, conversationSync, searchIndex } = useConversationsController();
+  const currentRecordKind: ConversationRecordKind = recordKind;
+  const {
+    activeSearchTarget,
+    appSettings,
+    clearSessionDetail: clearConversationSelection,
+    closeSession,
+    contentQuery,
+    contentSearchCardKinds,
+    contentSearchIncludesQuestions,
+    contentSearchLoading,
+    contentSearchResult,
+    contentSearchSemanticRoles,
+    contentVisibility,
+    conversationSync,
+    ensureContentVisibility,
+    exportDialog,
+    exportVisibility,
+    exporting,
+    focusSearchTarget,
+    importDialogOpen,
+    openConversationTarget,
+    openSession,
+    outputRoot,
+    query,
+    reconcileAppSelection,
+    reconcileProjectSelection,
+    reconcileQuestionSelection,
+    reconcileSessionSelection,
+    searchIndex,
+    selectApp,
+    selectProject,
+    selectQuestion,
+    selectedAppId,
+    selectedProjectKey,
+    selectedQuestionId,
+    selectedQuestionIds,
+    selectedSessionId,
+    sessionSortBy,
+    sessionSortDirection,
+    sessionView,
+    setContentQuery,
+    setContentSearchIncludesQuestions,
+    setContentSearchLoading,
+    setContentSearchResult,
+    setExportDialog,
+    setExportVisibility,
+    setExporting,
+    setImportDialogOpen,
+    setOutputRoot,
+    setQuery,
+    setSessionSortBy,
+    setSessionSortDirection,
+    setSyncProgress,
+    setSyncProgressDismissed,
+    showAllContentSearchCardTypes,
+    showSessionBrowser,
+    syncProgress,
+    syncProgressDismissed,
+    toggleContentSearchCardKind,
+    toggleContentSearchSemanticRole,
+    toggleQuestionSelection,
+    updateQuestionSelectionAfterMerge,
+    updateContentVisibility,
+  } = useConversationsController({ recordKind: currentRecordKind });
   const { startSync, taskFor } = conversationSync;
   const { rebuild: rebuildSearchIndex, status: searchIndexStatus, task: searchIndexTask } = searchIndex;
-  const currentRecordKind: ConversationRecordKind = recordKind;
   const syncTask = taskFor(currentRecordKind);
   const webRecordMode = currentRecordKind === "web";
   const [adapters, setAdapters] = useState<ConversationAdapter[]>(
@@ -225,42 +275,12 @@ export function ConversationsPage({
   const [sessions, setSessions] = useState<ConversationSessionListItem[]>(
     () => readSharedResource<ConversationSessionListItem[]>(conversationSessionCacheKey(currentRecordKind, "")) ?? [],
   );
-  const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
-  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [selectedQuestionId, setSelectedQuestionId] = useState<string | null>(null);
   const [sessionDetail, setSessionDetail] = useState<ConversationSessionDetail | null>(null);
-  const [sessionView, setSessionView] = useState<"browser" | "detail">("browser");
-  const [contentVisibility, setContentVisibility] = useState<ConversationContentVisibility>({
-    ...DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
-  });
-  const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<string>>(() => new Set());
-  const [exportDialog, setExportDialog] = useState<ConversationExportDialogState | null>(null);
-  const [exportVisibility, setExportVisibility] = useState<ConversationContentVisibility>({
-    ...DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
-  });
-  const [importDialogOpen, setImportDialogOpen] = useState(false);
-  const [syncProgress, setSyncProgress] = useState<ConversationSyncProgressState | null>(null);
-  const [syncProgressDismissed, setSyncProgressDismissed] = useState(false);
-  const [query, setQuery] = useState("");
-  const [outputRoot, setOutputRoot] = useState(
-    webRecordMode ? "~/Desktop/assetiweave-web-records" : "~/Desktop/assetiweave-conversations",
-  );
-  const [exporting, setExporting] = useState(false);
   const handledSyncTaskIdRef = useRef<string | null>(null);
   const sessionSearchRequestIdRef = useRef(0);
   const syncRunning = syncTask?.status === "running";
   const searchIndexRunning = searchIndexTask?.status === "running";
   const [sessionSearchLoading, setSessionSearchLoading] = useState(false);
-  const [contentQuery, setContentQuery] = useState("");
-  const [contentSearchCardKinds, setContentSearchCardKinds] = useState<string[]>([]);
-  const [contentSearchSemanticRoles, setContentSearchSemanticRoles] = useState<string[]>([]);
-  const [contentSearchIncludesQuestions, setContentSearchIncludesQuestions] = useState(true);
-  const [sessionSortBy, setSessionSortBy] = useState<ConversationSessionSortBy>("updated");
-  const [sessionSortDirection, setSessionSortDirection] = useState<"asc" | "desc">("desc");
-  const [contentSearchResult, setContentSearchResult] = useState<ConversationSearchResultState | null>(null);
-  const [contentSearchLoading, setContentSearchLoading] = useState(false);
-  const [activeSearchTarget, setActiveSearchTarget] = useState<ConversationSearchTarget | null>(null);
   const sessionDetailRequestIdRef = useRef(0);
   const [sessionCatalogReady, setSessionCatalogReady] = useState(
     () => readSharedResource<ConversationSessionListItem[]>(conversationSessionCacheKey(currentRecordKind, "")) !== undefined,
@@ -273,8 +293,7 @@ export function ConversationsPage({
   function clearSessionDetail() {
     sessionDetailRequestIdRef.current += 1;
     setSessionDetail(null);
-    setSelectedQuestionId(null);
-    setSelectedQuestionIds(new Set());
+    clearConversationSelection();
   }
 
   const sessionQuestionCount = useMemo(() => sessions.reduce((total, session) => total + session.question_count, 0), [sessions]);
@@ -340,30 +359,12 @@ export function ConversationsPage({
   );
 
   useEffect(() => {
-    setSelectedAppId(null);
-    setSelectedProjectKey(null);
-    setSelectedSessionId(null);
-    setSelectedQuestionId(null);
     setSessionDetail(null);
-    setSessionView("browser");
-    setSelectedQuestionIds(new Set());
-    setContentQuery("");
-    setContentSearchCardKinds([]);
-    setContentSearchSemanticRoles([]);
-    setContentSearchIncludesQuestions(true);
-    setContentSearchResult(null);
     sessionSearchRequestIdRef.current += 1;
     setSessionSearchLoading(false);
-    setActiveSearchTarget(null);
-    setImportDialogOpen(false);
-    setSyncProgress(null);
-    setSyncProgressDismissed(false);
     setSessionCatalogReady(false);
     sessionDetailRequestIdRef.current += 1;
     handledSyncTaskIdRef.current = null;
-    setOutputRoot(
-      webRecordMode ? "~/Desktop/assetiweave-web-records" : "~/Desktop/assetiweave-conversations",
-    );
     void refreshCatalog();
   }, [currentRecordKind]);
 
@@ -390,14 +391,8 @@ export function ConversationsPage({
       question.cards?.map((card) => conversationCardPresentationKind(card.kind, card.semantic_role)) ?? []
     ) ?? [];
     if (kinds.length === 0) return;
-    setContentVisibility((current) => {
-      const next = { ...current };
-      for (const kind of kinds) {
-        if (!(kind in next)) next[kind] = true;
-      }
-      return next;
-    });
-  }, [sessionDetail]);
+    ensureContentVisibility(kinds);
+  }, [ensureContentVisibility, sessionDetail]);
 
   useEffect(() => {
     const trimmedQuery = contentQuery.trim();
@@ -455,51 +450,34 @@ export function ConversationsPage({
     onNotifyError,
   ]);
 
-  const handleShowAllContentSearchCardTypes = useCallback(() => {
-    setContentSearchCardKinds([]);
-    setContentSearchSemanticRoles([]);
-    setContentSearchIncludesQuestions(true);
-  }, []);
-
-  const handleToggleContentSearchCardKind = useCallback((kind: string) => {
-    setContentSearchCardKinds((current) => toggleStringFilter(current, kind));
-  }, []);
-
-  const handleToggleContentSearchSemanticRole = useCallback((role: string) => {
-    setContentSearchSemanticRoles((current) => toggleStringFilter(current, role));
-  }, []);
-
   useEffect(() => {
-    setSelectedAppId((current) => {
-      if (current && appGroups.some((group) => group.app.id === current)) return current;
-      return appGroups.find((group) => group.sessions.length > 0)?.app.id ?? appGroups[0]?.app.id ?? null;
-    });
-  }, [appGroups]);
+    reconcileAppSelection(
+      appGroups.map((group) => group.app.id),
+      appGroups.find((group) => group.sessions.length > 0)?.app.id ?? appGroups[0]?.app.id ?? null,
+    );
+  }, [appGroups, reconcileAppSelection]);
 
   useEffect(() => {
     if (!selectedAppGroup || !selectedSessionId) return;
     if (!selectedAppGroup.sessions.some((session) => session.id === selectedSessionId)) {
-      setSelectedSessionId(null);
-      clearSessionDetail();
-      setSessionView("browser");
+      closeSession();
     }
-  }, [selectedAppGroup, selectedSessionId]);
+  }, [closeSession, selectedAppGroup, selectedSessionId]);
 
   useEffect(() => {
     if (!selectedAppGroup) {
-      setSelectedProjectKey(null);
+      selectProject(null);
       return;
     }
     if (webRecordMode) {
-      setSelectedProjectKey(null);
+      selectProject(null);
       return;
     }
-    setSelectedProjectKey((current) =>
-      current && selectedAppGroup.projectGroups.some((group) => group.key === current)
-        ? current
-        : selectedAppGroup.projectGroups[0]?.key ?? null,
+    reconcileProjectSelection(
+      selectedAppGroup.projectGroups.map((group) => group.key),
+      selectedAppGroup.projectGroups[0]?.key ?? null,
     );
-  }, [selectedAppGroup, webRecordMode]);
+  }, [reconcileProjectSelection, selectProject, selectedAppGroup, webRecordMode]);
 
   useEffect(() => {
     if (!selectedSessionId) {
@@ -511,9 +489,9 @@ export function ConversationsPage({
 
   useEffect(() => {
     if (!selectedSessionId && sessionView === "detail") {
-      setSessionView("browser");
+      showSessionBrowser();
     }
-  }, [selectedSessionId, sessionView]);
+  }, [selectedSessionId, sessionView, showSessionBrowser]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "auto" });
@@ -521,26 +499,23 @@ export function ConversationsPage({
 
   useEffect(() => {
     if (!sessionDetail) {
-      setSelectedQuestionId(null);
-      setSelectedQuestionIds(new Set());
+      clearConversationSelection();
       return;
     }
-    setSelectedQuestionId((current) => preferredConversationQuestionId(sessionDetail.questions, current));
-    setSelectedQuestionIds((current) => {
-      const availableIds = new Set(sessionDetail.questions.map((question) => question.question.id));
-      const next = new Set([...current].filter((questionId) => availableIds.has(questionId)));
-      return next.size === current.size ? current : next;
-    });
-  }, [sessionDetail]);
+    reconcileQuestionSelection(
+      sessionDetail.questions.map((question) => question.question.id),
+      preferredConversationQuestionId(sessionDetail.questions, selectedQuestionId),
+    );
+  }, [clearConversationSelection, reconcileQuestionSelection, selectedQuestionId, sessionDetail]);
 
   useEffect(() => {
     if (!activeSearchTarget || sessionDetail?.session.id !== activeSearchTarget.sessionId) {
       return;
     }
     if (sessionDetail.questions.some((question) => question.question.id === activeSearchTarget.questionId)) {
-      setSelectedQuestionId(activeSearchTarget.questionId);
+      selectQuestion(activeSearchTarget.questionId);
     }
-  }, [activeSearchTarget, sessionDetail]);
+  }, [activeSearchTarget, selectQuestion, sessionDetail]);
 
   const consumeNavigationTarget = useCallback((nonce: string) => {
     if (consumedNavigationNonceRef.current === nonce) return;
@@ -566,29 +541,27 @@ export function ConversationsPage({
     }
 
     startedNavigationNonceRef.current = navigationTarget.nonce;
-    clearSessionDetail();
-    setSelectedAppId(targetSession.adapter_id);
-    setSelectedProjectKey(
-      currentRecordKind === "web" ? null : normalizedProjectPath(targetSession) ?? NO_PROJECT_GROUP_KEY,
-    );
-    setSelectedSessionId(targetSession.id);
-    setSelectedQuestionId(navigationTarget.questionId ?? null);
-    setSelectedQuestionIds(new Set());
-    setSessionView("detail");
-    setActiveSearchTarget(
-      navigationTarget.blockId && navigationTarget.questionId
+    openConversationTarget({
+      appId: targetSession.adapter_id,
+      projectKey: currentRecordKind === "web"
+        ? null
+        : normalizedProjectPath(targetSession) ?? NO_PROJECT_GROUP_KEY,
+      questionId: navigationTarget.questionId ?? null,
+      searchTarget: navigationTarget.blockId && navigationTarget.questionId
         ? {
             blockId: navigationTarget.blockId,
             questionId: navigationTarget.questionId,
             sessionId: navigationTarget.sessionId,
           }
         : null,
-    );
+      sessionId: targetSession.id,
+    });
   }, [
     consumeNavigationTarget,
     currentRecordKind,
     navigationTarget,
     onNotifyError,
+    openConversationTarget,
     sessionCatalogReady,
     sessions,
     t,
@@ -611,29 +584,33 @@ export function ConversationsPage({
       return;
     }
 
-    setSelectedQuestionId(resolved.questionId);
+    selectQuestion(resolved.questionId);
     if (navigationTarget.blockId) {
       if (!resolved.blockFound) {
         onNotifyError(t("conversation.navigation.blockMissing"));
       } else {
-        setActiveSearchTarget({
+        const searchTarget = {
           blockId: resolved.blockId ?? navigationTarget.blockId,
           cardType: resolved.cardType ?? undefined,
           questionId: resolved.questionId,
           sessionId: navigationTarget.sessionId,
-        });
-        if (resolved.cardType && resolved.cardType !== "question") {
-          const presentationType = conversationCardPresentationKind(resolved.cardType);
-          setContentVisibility((current) => ({ ...current, [presentationType]: true }));
-        }
+        };
+        focusSearchTarget(
+          searchTarget,
+          resolved.cardType && resolved.cardType !== "question"
+            ? conversationCardPresentationKind(resolved.cardType)
+            : undefined,
+        );
       }
     }
     consumeNavigationTarget(navigationTarget.nonce);
   }, [
     consumeNavigationTarget,
     currentRecordKind,
+    focusSearchTarget,
     navigationTarget,
     onNotifyError,
+    selectQuestion,
     sessionDetail,
     t,
   ]);
@@ -737,7 +714,7 @@ export function ConversationsPage({
       );
       if (sessionSearchRequestIdRef.current !== requestId) return;
       setSessions(nextSessions);
-      setSelectedSessionId((current) => current && nextSessions.some((session) => session.id === current) ? current : null);
+      reconcileSessionSelection(nextSessions.map((session) => session.id));
     } catch (error) {
       if (options.rethrow) throw error;
       if (sessionSearchRequestIdRef.current === requestId) {
@@ -755,8 +732,7 @@ export function ConversationsPage({
     const requestId = sessionDetailRequestIdRef.current + 1;
     sessionDetailRequestIdRef.current = requestId;
     setSessionDetail(null);
-    setSelectedQuestionId(null);
-    setSelectedQuestionIds(new Set());
+    clearConversationSelection();
 
     try {
       const getSession = webRecordMode ? getWebRecordSession : getConversationSession;
@@ -825,14 +801,8 @@ export function ConversationsPage({
   async function handleMerge(previous: ConversationQuestionDetail, current: ConversationQuestionDetail) {
     try {
       await mergeConversationQuestions([previous.question.id, current.question.id], false);
-      setSelectedQuestionId(previous.question.id);
-      setSelectedQuestionIds((selectedIds) => {
-        const next = new Set(selectedIds);
-        if (next.delete(current.question.id)) {
-          next.add(previous.question.id);
-        }
-        return next;
-      });
+      selectQuestion(previous.question.id);
+      updateQuestionSelectionAfterMerge(previous.question.id, current.question.id);
       onNotify({ messageKey: "conversation.status.merged", tone: "success" });
       if (selectedSessionId) await loadSession(selectedSessionId);
       await refreshSessions();
@@ -882,54 +852,34 @@ export function ConversationsPage({
   }
 
   const handleOpenSession = useCallback((sessionId: string) => {
-    clearSessionDetail();
-    setSelectedSessionId(sessionId);
-    setActiveSearchTarget(null);
-    setSessionView("detail");
+    openSession(sessionId);
     if (sessionId === selectedSessionId) {
       void loadSession(sessionId);
     }
-  }, [selectedSessionId]);
-
-  const handleAppSelect = useCallback((appId: string) => {
-    setSelectedAppId(appId);
-    setSelectedProjectKey(null);
-  }, []);
+  }, [openSession, selectedSessionId]);
 
   const handleOpenSearchHit = useCallback((hit: ConversationSearchHit) => {
-    clearSessionDetail();
-    setSelectedAppId(hit.session.adapter_id);
-    setSelectedProjectKey(
-      currentRecordKind === "web" ? null : normalizedProjectPath(hit.session) ?? NO_PROJECT_GROUP_KEY,
-    );
-    setSelectedSessionId(hit.session.id);
-    setSelectedQuestionId(hit.question_id);
-    setSessionView("detail");
-    setActiveSearchTarget({
-      blockId: hit.block_id,
-      cardType: hit.card_type,
+    openConversationTarget({
+      appId: hit.session.adapter_id,
+      projectKey: currentRecordKind === "web" ? null : normalizedProjectPath(hit.session) ?? NO_PROJECT_GROUP_KEY,
       questionId: hit.question_id,
+      searchTarget: {
+        blockId: hit.block_id,
+        cardType: hit.card_type,
+        questionId: hit.question_id,
+        sessionId: hit.session.id,
+      },
       sessionId: hit.session.id,
     });
     if (hit.card_type !== "question") {
-      setContentVisibility((current) => ({ ...current, [hit.card_type]: true }));
+      updateContentVisibility(hit.card_type, true);
     }
     if (hit.session.id === selectedSessionId) {
       void loadSession(hit.session.id);
     }
-  }, [currentRecordKind, selectedSessionId]);
+  }, [currentRecordKind, openConversationTarget, selectedSessionId, updateContentVisibility]);
 
-  function handleQuestionSelectionChange(questionId: string, checked: boolean) {
-    setSelectedQuestionIds((current) => {
-      const next = new Set(current);
-      if (checked) {
-        next.add(questionId);
-      } else {
-        next.delete(questionId);
-      }
-      return next;
-    });
-  }
+  const handleQuestionSelectionChange = toggleQuestionSelection;
 
   function handleBulkExport() {
     if (!sessionDetail || selectedQuestionIds.size === 0) return;
@@ -1073,14 +1023,14 @@ export function ConversationsPage({
               label={t("conversation.session.backToBrowser")}
               onClick={() => {
                 clearSessionDetail();
-                setSessionView("browser");
+                showSessionBrowser();
               }}
             />
             <ConversationContentFilter
               availableTypes={availableContentTypes}
               colors={appSettings.conversations.contentCardColors}
               onChange={(type, checked) =>
-                setContentVisibility((current) => ({ ...current, [type]: checked }))
+                updateContentVisibility(type, checked)
               }
               t={t}
               visibility={contentVisibility}
@@ -1107,10 +1057,10 @@ export function ConversationsPage({
           contentCardColors={appSettings.conversations.contentCardColors}
           includeQuestions={contentSearchIncludesQuestions}
           loading={contentSearchLoading}
-          onCardKindToggle={handleToggleContentSearchCardKind}
+          onCardKindToggle={toggleContentSearchCardKind}
           onQuestionToggle={() => setContentSearchIncludesQuestions((current) => !current)}
-          onSemanticRoleToggle={handleToggleContentSearchSemanticRole}
-          onShowAllCardTypes={handleShowAllContentSearchCardTypes}
+          onSemanticRoleToggle={toggleContentSearchSemanticRole}
+          onShowAllCardTypes={showAllContentSearchCardTypes}
           onOpenHit={handleOpenSearchHit}
           result={contentSearchResult}
           selectedCardKinds={contentSearchCardKinds}
@@ -1157,8 +1107,8 @@ export function ConversationsPage({
           appShortcuts={appShortcuts}
           columnMinWidth={appSettings.columnMinWidth}
           groups={appGroups}
-          onAppSelect={handleAppSelect}
-          onProjectSelect={setSelectedProjectKey}
+          onAppSelect={selectApp}
+          onProjectSelect={selectProject}
           onSessionOpen={handleOpenSession}
           recordKind={currentRecordKind}
           selectedAppId={selectedAppId}
@@ -1173,7 +1123,7 @@ export function ConversationsPage({
           onCopyError={onNotifyError}
           onMerge={webRecordMode ? undefined : handleMerge}
           onPickOutputRoot={() => selectTargetDirectory(t("conversation.export.pickOutputRoot"))}
-          onQuestionSelect={setSelectedQuestionId}
+          onQuestionSelect={selectQuestion}
           onQuestionSelectionChange={handleQuestionSelectionChange}
           onSplit={webRecordMode ? undefined : handleSplit}
           columnMinWidth={appSettings.columnMinWidth}
@@ -1325,13 +1275,6 @@ export function conversationContentTypesForQuestions(
       buildConversationContentBlocks(question.parts, question.cards).map((block) => block.type)
     ),
   ));
-}
-
-type ConversationExportMode = "session" | "questions";
-
-interface ConversationExportDialogState {
-  mode: ConversationExportMode;
-  questionIds: string[];
 }
 
 export function groupConversationSessionsByApp(
@@ -1776,12 +1719,6 @@ function ProjectListItem({
 
 function projectGroupLabel(group: ConversationProjectSessionGroup, t: Translator) {
   return group.projectPath ? abbreviateHomePath(group.projectPath) : t("conversation.session.noProject");
-}
-
-function toggleStringFilter(values: string[], value: string) {
-  return values.includes(value)
-    ? values.filter((candidate) => candidate !== value)
-    : [...values, value];
 }
 
 function conversationSearchCardKinds(result: ConversationSearchResult) {

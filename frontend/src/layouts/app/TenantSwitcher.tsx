@@ -133,7 +133,8 @@ export function TenantSwitcherDialog({
       icon={<Building2 size={18} />}
       initialFocusRef={selectRef}
       onClose={onClose}
-      overlayClassName="z-40 px-6 py-8"
+      containerClassName="px-6 py-8"
+      layer="base"
       size="md"
       title={t("tenant.open")}
     >

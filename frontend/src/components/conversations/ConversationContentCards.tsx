@@ -11,13 +11,16 @@ import {
   type ConversationPartTranslationUpdateRequest,
 } from "../../services/cardTranslation";
 import { revealPath } from "../../services/catalog";
-import type {
-  ConversationCard,
-  ConversationCardRenderer,
-  ConversationContentNode,
-  ConversationPart,
-  ConversationPartRole,
-  ConversationRecordKind,
+import {
+  DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
+  type ConversationCard,
+  type ConversationCardRenderer,
+  type ConversationContentNode,
+  type ConversationContentType,
+  type ConversationContentVisibility,
+  type ConversationPart,
+  type ConversationPartRole,
+  type ConversationRecordKind,
 } from "../../types";
 import {
   DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
@@ -39,10 +42,10 @@ import {
 } from "./ConversationCardKindRegistry";
 import { ConversationDiff, summarizeConversationDiff } from "./ConversationDiff";
 
-export type ConversationContentType = string;
-
-export type ConversationContentVisibility = Record<ConversationContentType, boolean>;
 export type ConversationContentFormat = "plain" | "markdown";
+
+export { DEFAULT_CONVERSATION_CONTENT_VISIBILITY } from "../../types";
+export type { ConversationContentType, ConversationContentVisibility } from "../../types";
 import {
   useConversationContentController,
   type ConversationContentController,
@@ -88,14 +91,6 @@ export type ConversationDisplayNode =
       command?: ConversationContentBlock;
       results: ConversationContentBlock[];
     };
-
-export const DEFAULT_CONVERSATION_CONTENT_VISIBILITY: ConversationContentVisibility = {
-  answer: true,
-  tool: true,
-  command: true,
-  code: true,
-  result: true,
-};
 
 export function conversationCardDomId(blockId: string) {
   return `conversation-card-${blockId}`;

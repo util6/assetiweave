@@ -160,7 +160,8 @@ export function SkillAcquireDialog({
       iconClassName="border-status-create/25 bg-status-create/15 text-status-create"
       initialFocusRef={queryInputRef}
       onClose={onClose}
-      overlayClassName="z-40 px-6 py-8"
+      containerClassName="px-6 py-8"
+      layer="base"
       size="2xl"
       title={t("skillAcquire.dialog.title")}
     >

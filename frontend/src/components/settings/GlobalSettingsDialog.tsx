@@ -47,7 +47,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -164,15 +164,57 @@ export function GlobalSettingsDialog({
   open: boolean;
 }) {
   const { locale, setLocale, t } = useI18n();
+  const settingGroups = useMemo<SettingsGroupConfig[]>(() => [
+    {
+      id: "general",
+      label: t("settings.group.general"),
+      scope: t("settings.scope.general"),
+      panels: [
+        { id: "general.appearance", icon: Palette, label: t("settings.section.appearance") },
+        { id: "general.memory", icon: Cpu, label: t("settings.section.memory") },
+        { id: "general.promptOptimization", icon: Sparkles, label: t("settings.section.promptOptimization") },
+        { id: "general.typography", icon: Type, label: t("settings.section.typography") },
+        { id: "general.storage", icon: FileJson, label: t("settings.section.storage") },
+      ],
+    },
+    {
+      id: "workspace",
+      label: t("settings.group.workspace"),
+      scope: t("settings.scope.workspace"),
+      panels: [
+        { id: "workspace.menu", icon: Menu, label: t("settings.section.menu") },
+        { id: "workspace.shortcuts", icon: MousePointerClick, label: t("settings.section.shortcuts") },
+      ],
+    },
+    {
+      id: "agents",
+      label: t("settings.group.agents"),
+      scope: t("settings.scope.agents"),
+      panels: [
+        { id: "agents.market", icon: Bot, label: t("settings.section.acpMarket") },
+        { id: "agents.settings", icon: Settings, label: t("settings.section.acpSettings") },
+      ],
+    },
+    {
+      id: "conversations",
+      label: t("settings.group.conversations"),
+      scope: t("settings.scope.conversations"),
+      panels: [
+        { id: "conversations.sessions", icon: ListTree, label: t("settings.section.conversationSessions") },
+        { id: "conversations.translation", icon: Languages, label: t("settings.section.conversationTranslation") },
+        { id: "conversations.adapters", icon: Puzzle, label: t("settings.section.conversationAdapters") },
+      ],
+    },
+  ], [t]);
   const { resetSettings, settings, storageInfo, updateSetting } = useAppSettings();
   const { startSync: startConversationSync, tasks: conversationSyncTasks } = useConversationSync();
   const {
     activePanel,
     collapsedGroups,
-    ensureGroupExpanded,
-    setActivePanel,
+    openPanel,
     toggleGroupCollapsed,
   } = useSettingsPanelController({
+    groups: settingGroups,
     initialPanel,
     normalizePanel: normalizeSettingsPanelId,
     open,
@@ -199,32 +241,6 @@ export function GlobalSettingsDialog({
     model?: string;
     serviceId: AgentCapabilityServiceId;
   } | null>(null);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const documentElement = document.documentElement;
-    const body = document.body;
-    const previousDocumentOverflow = documentElement.style.overflow;
-    const previousBodyOverflow = body.style.overflow;
-    documentElement.style.overflow = "hidden";
-    body.style.overflow = "hidden";
-
-    return () => {
-      documentElement.style.overflow = previousDocumentOverflow;
-      body.style.overflow = previousBodyOverflow;
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (open) {
-      const nextPanel = normalizeSettingsPanelId(initialPanel);
-      setActivePanel(nextPanel);
-      ensureGroupExpanded(nextPanel, settingGroups);
-    }
-  }, [initialPanel, open]);
 
   useEffect(() => {
     if (!open) {
@@ -290,48 +306,6 @@ export function GlobalSettingsDialog({
     return null;
   }
 
-  const settingGroups: SettingsGroupConfig[] = [
-    {
-      id: "general",
-      label: t("settings.group.general"),
-      scope: t("settings.scope.general"),
-      panels: [
-        { id: "general.appearance", icon: Palette, label: t("settings.section.appearance") },
-        { id: "general.memory", icon: Cpu, label: t("settings.section.memory") },
-        { id: "general.promptOptimization", icon: Sparkles, label: t("settings.section.promptOptimization") },
-        { id: "general.typography", icon: Type, label: t("settings.section.typography") },
-        { id: "general.storage", icon: FileJson, label: t("settings.section.storage") },
-      ],
-    },
-    {
-      id: "workspace",
-      label: t("settings.group.workspace"),
-      scope: t("settings.scope.workspace"),
-      panels: [
-        { id: "workspace.menu", icon: Menu, label: t("settings.section.menu") },
-        { id: "workspace.shortcuts", icon: MousePointerClick, label: t("settings.section.shortcuts") },
-      ],
-    },
-    {
-      id: "agents",
-      label: t("settings.group.agents"),
-      scope: t("settings.scope.agents"),
-      panels: [
-        { id: "agents.market", icon: Bot, label: t("settings.section.acpMarket") },
-        { id: "agents.settings", icon: Settings, label: t("settings.section.acpSettings") },
-      ],
-    },
-    {
-      id: "conversations",
-      label: t("settings.group.conversations"),
-      scope: t("settings.scope.conversations"),
-      panels: [
-        { id: "conversations.sessions", icon: ListTree, label: t("settings.section.conversationSessions") },
-        { id: "conversations.translation", icon: Languages, label: t("settings.section.conversationTranslation") },
-        { id: "conversations.adapters", icon: Puzzle, label: t("settings.section.conversationAdapters") },
-      ],
-    },
-  ];
   const activePanelConfig =
     settingGroups.flatMap((group) => group.panels).find((panel) => panel.id === activePanel) ??
     settingGroups[0].panels[0];
@@ -351,8 +325,7 @@ export function GlobalSettingsDialog({
   function openAgentSettings(agentId: string) {
     setAgentCapabilityDialog(null);
     setAgentFocusId(agentId);
-    setActivePanel("agents.market");
-    ensureGroupExpanded("agents.market", settingGroups);
+    openPanel("agents.market");
   }
 
   function openAgentCapabilityDialog(serviceId: AgentCapabilityServiceId) {
@@ -737,7 +710,7 @@ export function GlobalSettingsDialog({
                                 : "text-on-surface-variant hover:bg-theme-nav-hover hover:text-theme-nav-active-fg",
                             )}
                             key={panel.id}
-                            onClick={() => setActivePanel(panel.id)}
+                            onClick={() => openPanel(panel.id)}
                             type="button"
                           >
                             <Icon size={17} />
@@ -1902,7 +1875,8 @@ function ShortcutIconSvgDialog({
       }
       iconClassName="size-10 border-0 bg-transparent p-0"
       onClose={onCancel}
-      overlayClassName="z-[60] px-6"
+      containerClassName="px-6"
+      layer="nested"
       size="xl"
       title={t("settings.shortcuts.svgEditorTitle")}
     >

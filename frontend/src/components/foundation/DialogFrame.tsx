@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { iconButtonRecipe, panelRecipe } from "../../theme/recipes";
 
 export type DialogSize = "sm" | "md" | "lg" | "xl" | "2xl";
+export type DialogLayer = "base" | "default" | "nested" | "top";
 
 const dialogSizeClasses: Record<DialogSize, string> = {
   sm: "max-w-md",
@@ -13,6 +14,13 @@ const dialogSizeClasses: Record<DialogSize, string> = {
   lg: "max-w-2xl",
   xl: "max-w-4xl",
   "2xl": "max-w-5xl",
+};
+
+const dialogLayerClasses: Record<DialogLayer, string> = {
+  base: "z-40",
+  default: "z-50",
+  nested: "z-[60]",
+  top: "z-[70]",
 };
 
 export interface DialogFrameProps extends Omit<React.HTMLAttributes<HTMLElement>, "title"> {
@@ -23,6 +31,7 @@ export interface DialogFrameProps extends Omit<React.HTMLAttributes<HTMLElement>
   containerClassName?: string;
   contentClassName?: string;
   description?: React.ReactNode;
+  layer?: DialogLayer;
   footer?: React.ReactNode;
   footerClassName?: string;
   headerActions?: React.ReactNode;
@@ -59,6 +68,7 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
       icon,
       iconClassName,
       initialFocusRef,
+      layer = "default",
       onClose,
       onBackdropClick,
       overlayClassName,
@@ -91,50 +101,23 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
       };
     }, []);
 
-    React.useEffect(() => {
-      if (typeof document === "undefined") {
-        return;
-      }
-
-      const documentElement = document.documentElement;
-      const body = document.body;
-      const previousDocumentOverflow = documentElement.style.overflow;
-      const previousBodyOverflow = body.style.overflow;
-      documentElement.style.overflow = "hidden";
-      body.style.overflow = "hidden";
-
-      return () => {
-        documentElement.style.overflow = previousDocumentOverflow;
-        body.style.overflow = previousBodyOverflow;
-      };
-    }, []);
-
     const isClient = typeof document !== "undefined";
     const usePortal = portal && isClient && mounted;
-
-    const zIndexClasses = overlayClassName
-      ?.split(/\s+/)
-      .filter((cls) => /^z-(?:\[.+\]|\d+|auto)$/.test(cls))
-      .join(" ");
-
-    const paddingClasses = overlayClassName
-      ?.split(/\s+/)
-      .filter((cls) => /^p[xytbrl]?-(?:\[.+\]|\d+(?:\.\d+)?)$/.test(cls))
-      .join(" ");
+    const layerClassName = dialogLayerClasses[layer];
 
     const dialogContent = (
       <>
         <DialogPrimitive.Overlay
           className={cn(
-            "fixed inset-0 z-50 bg-[rgb(var(--theme-scrim)/0.62)] backdrop-blur-md transition-opacity duration-200",
+            "fixed inset-0 bg-[rgb(var(--theme-scrim)/0.62)] backdrop-blur-md transition-opacity duration-200",
+            layerClassName,
             overlayClassName,
           )}
         />
         <div
           className={cn(
-            "fixed inset-0 z-50 grid place-items-center overflow-y-auto p-4 sm:p-6",
-            zIndexClasses,
-            paddingClasses,
+            "fixed inset-0 grid place-items-center overflow-y-auto p-4 sm:p-6",
+            layerClassName,
             containerClassName,
           )}
         >
