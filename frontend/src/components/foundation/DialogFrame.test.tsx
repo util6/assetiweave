@@ -98,4 +98,40 @@ describe("DialogFrame", () => {
 
     await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
+
+  it("propagates z-index and padding classes from overlayClassName to the content container", () => {
+    render(
+      <DialogFrame
+        onClose={() => undefined}
+        overlayClassName="z-[70] px-6 py-8"
+        title="Custom Layer Dialog"
+      >
+        <p>Layer content</p>
+      </DialogFrame>,
+    );
+
+    const dialog = screen.getByRole("dialog");
+    const container = dialog.parentElement;
+
+    expect(container?.className).toContain("z-[70]");
+    expect(container?.className).toContain("px-6");
+    expect(container?.className).toContain("py-8");
+  });
+
+  it("applies containerClassName to the dialog content container", () => {
+    render(
+      <DialogFrame
+        containerClassName="custom-container-class"
+        onClose={() => undefined}
+        title="Custom Container Dialog"
+      >
+        <p>Content</p>
+      </DialogFrame>,
+    );
+
+    const dialog = screen.getByRole("dialog");
+    const container = dialog.parentElement;
+
+    expect(container?.className).toContain("custom-container-class");
+  });
 });

@@ -267,7 +267,6 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
       icon={<FileText size={18} />}
       iconClassName="border-status-update/25 bg-status-update/15 text-status-update"
       onClose={onClose}
-      overlayClassName="z-[12020]"
       size="2xl"
       title={logsLabel}
     >

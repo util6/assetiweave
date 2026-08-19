@@ -20,6 +20,7 @@ export interface DialogFrameProps extends Omit<React.HTMLAttributes<HTMLElement>
   closeButtonRef?: React.Ref<HTMLButtonElement>;
   closeLabel?: string;
   container?: HTMLElement | null;
+  containerClassName?: string;
   contentClassName?: string;
   description?: React.ReactNode;
   footer?: React.ReactNode;
@@ -46,6 +47,7 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
       closeButtonRef,
       closeLabel = "Close",
       container,
+      containerClassName,
       contentClassName,
       description,
       footer,
@@ -90,6 +92,16 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
     const isClient = typeof document !== "undefined";
     const usePortal = portal && isClient && mounted;
 
+    const zIndexClasses = overlayClassName
+      ?.split(/\s+/)
+      .filter((cls) => /^z-(?:\[.+\]|\d+|auto)$/.test(cls))
+      .join(" ");
+
+    const paddingClasses = overlayClassName
+      ?.split(/\s+/)
+      .filter((cls) => /^p[xytbrl]?-(?:\[.+\]|\d+(?:\.\d+)?)$/.test(cls))
+      .join(" ");
+
     const dialogContent = (
       <>
         <DialogPrimitive.Overlay
@@ -98,7 +110,14 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
             overlayClassName,
           )}
         />
-        <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto p-4 sm:p-6">
+        <div
+          className={cn(
+            "fixed inset-0 z-50 grid place-items-center overflow-y-auto p-4 sm:p-6",
+            zIndexClasses,
+            paddingClasses,
+            containerClassName,
+          )}
+        >
           <DialogPrimitive.Content
             asChild
             onEscapeKeyDown={(event) => {

@@ -242,6 +242,34 @@ describe("GlobalSettingsDialog", () => {
     expect(dialogList.parentElement?.parentElement?.className).toContain("overflow-y-auto");
   });
 
+  it("locks the underlying document scroll while settings are open", () => {
+    const previousDocumentOverflow = document.documentElement.style.overflow;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.documentElement.style.overflow = "scroll";
+    document.body.style.overflow = "auto";
+
+    const { unmount } = render(
+      <GlobalSettingsDialog
+        appShortcuts={[]}
+        initialPanel="general.appearance"
+        navigationModel={navigationModel}
+        onAppShortcutsChange={vi.fn()}
+        onClose={vi.fn()}
+        onNavigationModelChange={vi.fn()}
+        open
+      />,
+    );
+
+    try {
+      expect(document.documentElement.style.overflow).toBe("hidden");
+      expect(document.body.style.overflow).toBe("hidden");
+    } finally {
+      unmount();
+      document.documentElement.style.overflow = previousDocumentOverflow;
+      document.body.style.overflow = previousBodyOverflow;
+    }
+  });
+
   it("requires explicit confirmation before restoring default settings", () => {
     render(
       <GlobalSettingsDialog
