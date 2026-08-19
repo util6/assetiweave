@@ -45,7 +45,15 @@ vi.mock("../../store/settings/AppSettingsProvider", async (importOriginal) => {
 });
 
 vi.mock("../../services/catalog", () => ({
-  getSkillBackupSettings: vi.fn().mockResolvedValue(null),
+  getSkillBackupSettings: vi.fn().mockResolvedValue({
+    default_root_path: "~/.assetiweave/library/skills",
+    display_default_root_path: "~/.assetiweave/library/skills",
+    display_root_path: "~/.assetiweave/library/skills",
+    exists: true,
+    expanded_root_path: "~/.assetiweave/library/skills",
+    is_default_root: true,
+    root_path: "~/.assetiweave/library/skills",
+  }),
   revealPath: vi.fn(),
   selectTargetDirectory: vi.fn(),
 }));
@@ -287,7 +295,9 @@ describe("GlobalSettingsDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "settings.reset" }));
 
     expect(resetSettingsMock).not.toHaveBeenCalled();
-    expect(screen.getByRole("heading", { name: "settings.resetConfirmTitle" })).toBeTruthy();
+    const resetConfirmTitle = screen.getByRole("heading", { name: "settings.resetConfirmTitle" });
+    expect(resetConfirmTitle).toBeTruthy();
+    expect(resetConfirmTitle.closest('[role="dialog"]')?.parentElement?.className).toContain("z-[60]");
 
     fireEvent.click(screen.getByRole("button", { name: "settings.resetConfirmAction" }));
 
@@ -382,6 +392,8 @@ describe("GlobalSettingsDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "settings.conversation.fullSyncAction" }));
     expect(startSyncMock).not.toHaveBeenCalled();
+    const fullSyncConfirmTitle = screen.getByRole("heading", { name: "settings.conversation.fullSyncConfirmTitle" });
+    expect(fullSyncConfirmTitle.closest('[role="dialog"]')?.parentElement?.className).toContain("z-[60]");
 
     fireEvent.click(screen.getByRole("button", { name: "settings.conversation.fullSyncConfirmAction" }));
 
@@ -459,5 +471,24 @@ describe("GlobalSettingsDialog", () => {
       ...defaultSettings.conversations,
       autoFullSyncOnStartup: false,
     });
+  });
+
+  it("opens the Skill backup library above the settings surface", async () => {
+    render(
+      <GlobalSettingsDialog
+        appShortcuts={[]}
+        initialPanel="general.storage"
+        navigationModel={navigationModel}
+        onAppShortcutsChange={vi.fn()}
+        onClose={vi.fn()}
+        onNavigationModelChange={vi.fn()}
+        open
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "backup.action.changeDirectory" }));
+
+    const backupDialogTitle = await screen.findByRole("heading", { name: "backup.dialog.title" });
+    expect(backupDialogTitle.closest('[role="dialog"]')?.parentElement?.className).toContain("z-[60]");
   });
 });

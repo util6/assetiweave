@@ -1,6 +1,6 @@
 import { AlertTriangle } from "lucide-react";
 import type { ReactNode } from "react";
-import { DialogFrame } from "../foundation/DialogFrame";
+import { DialogFrame, type DialogLayer } from "../foundation/DialogFrame";
 import { useI18n } from "../../i18n/I18nProvider";
 import { Button } from "../ui/button";
 
@@ -15,6 +15,7 @@ export function ConfirmDialog({
   open,
   title,
   tone = "default",
+  layer = "default",
 }: {
   busy: boolean;
   cancelLabel?: string;
@@ -26,6 +27,7 @@ export function ConfirmDialog({
   open: boolean;
   title: string;
   tone?: "default" | "danger";
+  layer?: DialogLayer;
 }) {
   const { t } = useI18n();
 
@@ -57,6 +59,7 @@ export function ConfirmDialog({
           : "border-status-update/30 bg-status-update/15 text-status-update"
       }
       onClose={onClose}
+      layer={layer}
       size="md"
       title={title}
     >

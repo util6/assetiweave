@@ -9,7 +9,7 @@ import {
 import type { SkillBackupSettings } from "../../types";
 import { abbreviateHomePath } from "../../utils/path";
 import { PathPickerInput } from "../common/PathPickerInput";
-import { DialogFrame } from "../foundation/DialogFrame";
+import { DialogFrame, type DialogLayer } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
 
 export function SkillBackupLibraryDialog({
@@ -17,11 +17,13 @@ export function SkillBackupLibraryDialog({
   onNotifyError,
   onSaved,
   open,
+  layer = "default",
 }: {
   onClose: () => void;
   onNotifyError: (message: string) => void;
   onSaved?: (settings: SkillBackupSettings) => Promise<void> | void;
   open: boolean;
+  layer?: DialogLayer;
 }) {
   const { t } = useI18n();
   const formId = useId();
@@ -108,7 +110,7 @@ export function SkillBackupLibraryDialog({
       initialFocusRef={inputRef}
       onClose={onClose}
       containerClassName="px-6 py-8"
-      layer="base"
+      layer={layer}
       size="lg"
       title={t("backup.dialog.title")}
     >

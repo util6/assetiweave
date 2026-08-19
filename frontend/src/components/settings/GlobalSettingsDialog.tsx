@@ -1469,6 +1469,7 @@ export function GlobalSettingsDialog({
           setBackupSettings(nextSettings);
           await onSkillBackupLibraryChange?.();
         }}
+        layer="nested"
         open={backupDialogOpen}
       />
       <ConfirmDialog
@@ -1480,6 +1481,7 @@ export function GlobalSettingsDialog({
           resetSettings();
           setResetConfirmOpen(false);
         }}
+        layer="nested"
         open={resetConfirmOpen}
         title={t("settings.resetConfirmTitle")}
         tone="danger"
@@ -1494,6 +1496,7 @@ export function GlobalSettingsDialog({
           }
         }}
         onConfirm={() => void startFullConversationSync()}
+        layer="nested"
         open={fullSyncConfirmOpen}
         title={t("settings.conversation.fullSyncConfirmTitle")}
       />
