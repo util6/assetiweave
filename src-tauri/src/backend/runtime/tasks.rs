@@ -186,6 +186,9 @@ impl TaskRuntime {
             .tasks
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        if let Some(existing) = tasks.get(&task_id) {
+            return Ok(SpawnOutcome::Existing(existing.snapshot.clone()));
+        }
         if let Some(existing) = spec.dedup_key.as_ref().and_then(|key| {
             tasks.values().find(|entry| {
                 entry.snapshot.kind == spec.kind
@@ -221,6 +224,200 @@ impl TaskRuntime {
             *active += 1;
         }
 
+        self.launch_task(task_id.clone(), cancellation, task)?;
+        Ok(SpawnOutcome::Started(snapshot))
+    }
+
+    /// Register an externally-driven task without moving its domain work into
+    /// the kernel.  This keeps task lifecycle, deduplication, cancellation and
+    /// shutdown accounting in one authority while allowing adapters to retain
+    /// domain-specific progress and result projections.
+    pub(crate) fn register_external(
+        &self,
+        spec: TaskSpec,
+    ) -> Result<Result<TaskSnapshot, TaskSnapshot>, AppError> {
+        if !self.accepting.load(Ordering::Acquire) {
+            return Err(AppError::Canceled(
+                "应用正在关闭，不再接受新任务".to_string(),
+            ));
+        }
+        let task_id = spec.task_id.unwrap_or_else(|| {
+            format!("task-{}", self.sequence.fetch_add(1, Ordering::Relaxed) + 1)
+        });
+        let started_at = Utc::now().to_rfc3339();
+        let cancellation = CancellationToken::new();
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        if let Some(existing) = tasks.get(&task_id) {
+            return Ok(Err(existing.snapshot.clone()));
+        }
+        if let Some(existing) = spec.dedup_key.as_ref().and_then(|key| {
+            tasks.values().find(|entry| {
+                entry.snapshot.kind == spec.kind
+                    && entry.snapshot.dedup_key.as_ref() == Some(key)
+                    && matches!(
+                        entry.snapshot.state,
+                        TaskState::Pending | TaskState::Running
+                    )
+            })
+        }) {
+            return Ok(Err(existing.snapshot.clone()));
+        }
+        let snapshot = TaskSnapshot {
+            task_id: task_id.clone(),
+            kind: spec.kind,
+            state: TaskState::Pending,
+            dedup_key: spec.dedup_key,
+            progress: None,
+            error: None,
+            started_at,
+            finished_at: None,
+            detail: spec.detail,
+        };
+        tasks.insert(
+            task_id,
+            TaskEntry {
+                snapshot: snapshot.clone(),
+                cancellation: cancellation.clone(),
+            },
+        );
+        drop(tasks);
+        if let Ok(mut active) = self.active.0.lock() {
+            *active += 1;
+        }
+        Ok(Ok(snapshot))
+    }
+
+    pub(crate) fn start_external(&self, task_id: &str) -> AppResult<TaskSnapshot> {
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+        if entry.snapshot.state == TaskState::Pending {
+            entry.snapshot.state = TaskState::Running;
+        }
+        Ok(entry.snapshot.clone())
+    }
+
+    /// Start a task that was registered before its adapter had assembled the
+    /// actual closure. This is used by lifecycle coordinators that need a
+    /// pending task id for deduplication and cancellation before spawning.
+    pub(crate) fn start_external_with(
+        &self,
+        task_id: &str,
+        detail: Value,
+        task: TaskFn,
+    ) -> AppResult<TaskSnapshot> {
+        let (snapshot, cancellation) = {
+            let mut tasks = self
+                .tasks
+                .lock()
+                .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            let entry = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+            if entry.snapshot.state == TaskState::Pending {
+                entry.snapshot.state = TaskState::Running;
+                entry.snapshot.detail = detail;
+            }
+            (entry.snapshot.clone(), entry.cancellation.clone())
+        };
+        if snapshot.state == TaskState::Running {
+            self.launch_task(task_id.to_string(), cancellation, task)?;
+        }
+        Ok(snapshot)
+    }
+
+    pub(crate) fn complete_external(
+        &self,
+        task_id: &str,
+        result: AppResult<Value>,
+    ) -> AppResult<TaskSnapshot> {
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+        if matches!(
+            entry.snapshot.state,
+            TaskState::Succeeded | TaskState::Failed | TaskState::Canceled
+        ) {
+            return Ok(entry.snapshot.clone());
+        }
+        entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
+        match result {
+            Ok(detail) => {
+                if entry.cancellation.is_cancelled() {
+                    entry.snapshot.state = TaskState::Canceled;
+                    entry.snapshot.error =
+                        Some(AppError::Canceled("后台任务已取消".to_string()).into());
+                } else {
+                    entry.snapshot.state = TaskState::Succeeded;
+                    entry.snapshot.detail = detail;
+                }
+            }
+            Err(error) if matches!(error, AppError::Canceled(_)) => {
+                entry.snapshot.state = TaskState::Canceled;
+                entry.snapshot.error = Some(error.into());
+            }
+            Err(error) => {
+                entry.snapshot.state = TaskState::Failed;
+                entry.snapshot.error = Some(error.into());
+            }
+        }
+        let snapshot = entry.snapshot.clone();
+        drop(tasks);
+        self.release_active_slot();
+        Ok(snapshot)
+    }
+
+    pub(crate) fn remove(&self, task_id: &str) -> Option<TaskSnapshot> {
+        let removed = self.tasks.lock().ok()?.remove(task_id);
+        if removed.as_ref().is_some_and(|entry| {
+            matches!(
+                entry.snapshot.state,
+                TaskState::Pending | TaskState::Running
+            )
+        }) {
+            self.release_active_slot();
+        }
+        removed.map(|entry| entry.snapshot)
+    }
+
+    pub(crate) fn has_active_tasks(&self) -> bool {
+        self.tasks
+            .lock()
+            .map(|tasks| {
+                tasks.values().any(|entry| {
+                    matches!(
+                        entry.snapshot.state,
+                        TaskState::Pending | TaskState::Running
+                    )
+                })
+            })
+            .unwrap_or(true)
+    }
+
+    fn release_active_slot(&self) {
+        if let Ok(mut active) = self.active.0.lock() {
+            *active = active.saturating_sub(1);
+            self.active.1.notify_all();
+        }
+    }
+
+    fn launch_task(
+        &self,
+        task_id: String,
+        cancellation: CancellationToken,
+        task: TaskFn,
+    ) -> AppResult<()> {
         let runtime = self.clone();
         let run_task_id = task_id.clone();
         let thread_name = format!("aiw-task-{task_id}");
@@ -234,50 +431,51 @@ impl TaskRuntime {
             };
             let result = catch_unwind(AssertUnwindSafe(|| task(context)))
                 .unwrap_or_else(|_| Err(AppError::Legacy("后台任务发生 panic".to_string())));
+            let mut release_slot = false;
             if let Ok(mut tasks) = runtime.tasks.lock() {
                 if let Some(entry) = tasks.get_mut(&run_task_id) {
-                    entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
-                    match result {
-                        Ok(detail) => {
-                            entry.snapshot.state = TaskState::Succeeded;
-                            entry.snapshot.detail = detail;
+                    if matches!(
+                        entry.snapshot.state,
+                        TaskState::Pending | TaskState::Running
+                    ) {
+                        entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
+                        match result {
+                            Ok(detail) => {
+                                entry.snapshot.state = TaskState::Succeeded;
+                                entry.snapshot.detail = detail;
+                            }
+                            Err(error) if matches!(error, AppError::Canceled(_)) => {
+                                entry.snapshot.state = TaskState::Canceled;
+                                entry.snapshot.error = Some(error.into());
+                            }
+                            Err(error) => {
+                                entry.snapshot.state = TaskState::Failed;
+                                entry.snapshot.error = Some(error.into());
+                            }
                         }
-                        Err(error) if matches!(error, AppError::Canceled(_)) => {
-                            entry.snapshot.state = TaskState::Canceled;
-                            entry.snapshot.error = Some(error.into());
-                        }
-                        Err(error) => {
-                            entry.snapshot.state = TaskState::Failed;
-                            entry.snapshot.error = Some(error.into());
-                        }
+                        release_slot = true;
                     }
                 }
             }
-            if let Ok(mut active) = runtime.active.0.lock() {
-                *active = active.saturating_sub(1);
-                runtime.active.1.notify_all();
+            if release_slot {
+                runtime.release_active_slot();
             }
         };
         if let Some(handle) = self.runtime_handle.clone() {
             handle.spawn_blocking(run);
-        } else {
-            if let Err(error) = std::thread::Builder::new().name(thread_name).spawn(run) {
-                if let Ok(mut tasks) = self.tasks.lock() {
-                    if let Some(entry) = tasks.get_mut(&task_id) {
-                        entry.snapshot.state = TaskState::Failed;
-                        entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
-                        entry.snapshot.error =
-                            Some(AppError::Legacy(format!("启动后台任务失败: {error}")).into());
-                    }
+        } else if let Err(error) = std::thread::Builder::new().name(thread_name).spawn(run) {
+            if let Ok(mut tasks) = self.tasks.lock() {
+                if let Some(entry) = tasks.get_mut(&task_id) {
+                    entry.snapshot.state = TaskState::Failed;
+                    entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
+                    entry.snapshot.error =
+                        Some(AppError::Legacy(format!("启动后台任务失败: {error}")).into());
                 }
-                if let Ok(mut active) = self.active.0.lock() {
-                    *active = active.saturating_sub(1);
-                    self.active.1.notify_all();
-                }
-                return Err(AppError::Legacy(format!("启动后台任务失败: {error}")));
             }
+            self.release_active_slot();
+            return Err(AppError::Legacy(format!("启动后台任务失败: {error}")));
         }
-        Ok(SpawnOutcome::Started(snapshot))
+        Ok(())
     }
 
     pub(crate) fn get(&self, task_id: &str) -> Option<TaskSnapshot> {

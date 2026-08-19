@@ -4,6 +4,97 @@ use walkdir::WalkDir;
 const PACKAGE_MANIFEST_FILE: &str = "conversation-adapter-package.json";
 const SUPPORTED_CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Version-independent input contract for installing a conversation adapter
+/// package. Catalogs provide discovery metadata; the package installer only
+/// consumes this normalized spec.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct ConversationAdapterPackageInstallSpec {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) version: String,
+    pub(crate) record_kind: ConversationAdapterPackageRecordKind,
+    #[serde(default)]
+    pub(crate) provider: Option<String>,
+    #[serde(default)]
+    pub(crate) adapter_id: Option<String>,
+    #[serde(default)]
+    pub(crate) description: Option<String>,
+    #[serde(default)]
+    pub(crate) homepage_url: Option<String>,
+    #[serde(default)]
+    pub(crate) repository_url: Option<String>,
+    #[serde(default)]
+    pub(crate) tags: Vec<String>,
+    #[serde(default)]
+    pub(crate) manifest_file: Option<String>,
+    #[serde(default)]
+    pub(crate) package_manifest_file: Option<String>,
+    #[serde(default)]
+    pub(crate) expected_content_hash: Option<String>,
+    #[serde(default)]
+    pub(crate) expected_package_hash: Option<String>,
+    #[serde(default)]
+    pub(crate) expected_artifact_hash: Option<String>,
+    #[serde(default)]
+    pub(crate) artifact_size: Option<u64>,
+    pub(crate) source: ConversationAdapterPackageInstallSource,
+}
+
+impl ConversationAdapterPackageInstallSpec {
+    pub(crate) fn package_id(&self) -> &str {
+        &self.id
+    }
+
+    pub(crate) fn adapter_key(&self) -> &str {
+        self.adapter_id.as_deref().unwrap_or(&self.id)
+    }
+
+    pub(crate) fn manifest_file_name(&self) -> AppResult<String> {
+        clean_package_file_name(self.manifest_file.as_deref(), "conversation-adapter.json")
+    }
+
+    pub(crate) fn package_manifest_file_name(&self) -> AppResult<String> {
+        clean_package_file_name(
+            self.package_manifest_file.as_deref(),
+            "conversation-adapter-package.json",
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct ConversationAdapterPackageInstallSource {
+    #[serde(rename = "type")]
+    pub(crate) kind: ConversationAdapterPackageInstallSourceKind,
+    pub(crate) url: String,
+    #[serde(default)]
+    pub(crate) branch: Option<String>,
+    #[serde(default)]
+    pub(crate) path: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ConversationAdapterPackageInstallSourceKind {
+    Github,
+    ArtifactZip,
+    LocalDirectory,
+}
+
+fn clean_package_file_name(value: Option<&str>, default: &str) -> AppResult<String> {
+    let value = value.unwrap_or(default);
+    let path = Path::new(value);
+    if path.is_absolute()
+        || path.components().count() != 1
+        || path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_none_or(|name| name.is_empty() || name == "." || name == "..")
+    {
+        return Err(format!("package manifest file name is invalid: {value}"));
+    }
+    Ok(value.to_string())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct ConversationAdapterPackageManifest {
     #[serde(alias = "schemaVersion")]

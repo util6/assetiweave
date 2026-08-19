@@ -52,6 +52,59 @@ fn task_runtime_deduplicates_and_cancels_cooperatively() {
 }
 
 #[test]
+fn external_task_runtime_owns_id_deduplication_and_terminal_state() {
+    let tasks = tasks::TaskRuntime::new();
+    let first = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::Other, Some("same-key".to_string()))
+                .with_task_id("same-task"),
+        )
+        .expect("register external task")
+        .expect("first task must be accepted");
+    let duplicate = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::Other, Some("same-key".to_string()))
+                .with_task_id("different-task"),
+        )
+        .expect("deduplicate external task");
+    assert_eq!(
+        duplicate
+            .expect_err("deduplication must return existing task")
+            .task_id,
+        "same-task"
+    );
+
+    let same_id = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::Scan, None).with_task_id("same-task"),
+        )
+        .expect("same id check");
+    assert_eq!(
+        same_id
+            .expect_err("task ids must never be replaced")
+            .task_id,
+        first.task_id
+    );
+
+    tasks
+        .start_external("same-task")
+        .expect("start external task");
+    assert!(tasks
+        .list(tasks::TaskFilter {
+            kind: None,
+            active_only: true,
+        })
+        .iter()
+        .any(|snapshot| snapshot.task_id == "same-task"));
+    tasks.cancel("same-task");
+    let finished = tasks
+        .complete_external("same-task", Ok(serde_json::json!({"done": true})))
+        .expect("complete external task");
+    assert_eq!(finished.state, tasks::TaskState::Canceled);
+    assert!(!tasks.has_active_tasks());
+}
+
+#[test]
 fn task_runtime_shutdown_is_bounded_and_reports_unfinished_tasks() {
     let tasks = tasks::TaskRuntime::new();
     let outcome = tasks

@@ -58,6 +58,22 @@ impl From<AppError> for String {
     }
 }
 
+/// Compatibility conversion for repository and legacy helper APIs that still
+/// expose plain messages. New internal APIs should return `AppError` directly;
+/// this bridge keeps the migration monotonic without losing the error code at
+/// the application boundary.
+impl From<String> for AppError {
+    fn from(error: String) -> Self {
+        Self::Legacy(error)
+    }
+}
+
+impl From<&str> for AppError {
+    fn from(error: &str) -> Self {
+        Self::Legacy(error.to_string())
+    }
+}
+
 impl From<io::ErrorKind> for AppError {
     fn from(kind: io::ErrorKind) -> Self {
         Self::Io(io::Error::from(kind))

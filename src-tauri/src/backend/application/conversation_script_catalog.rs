@@ -6,7 +6,10 @@ use crate::backend::models::{
     ConversationAdapterRuntimeGateStatus, ConversationPackageUpdatePolicy,
 };
 use sha2::{Digest, Sha256};
-use std::io::{Cursor, Read};
+use std::{
+    io::{Cursor, Read},
+    time::Duration,
+};
 
 const DEFAULT_CONVERSATION_SCRIPT_CATALOG_URL: &str =
     "https://raw.githubusercontent.com/util6/assetiweave/main/builtin-assets/catalog.json";
@@ -66,9 +69,7 @@ impl AppService {
             )?);
         }
         if !params.dry_run {
-            if let Some(runtime) = self.runtime.as_ref() {
-                runtime.refresh_conversation_adapter_catalog()?;
-            }
+            self.runtime.refresh_conversation_adapter_catalog()?;
         }
         Ok(json!({
             "dry_run": params.dry_run,
@@ -265,9 +266,7 @@ impl AppService {
             .await
         })?;
         self.save_conversation_adapter_package(&package)?;
-        if let Some(runtime) = self.runtime.as_ref() {
-            runtime.refresh_conversation_adapter_catalog()?;
-        }
+        self.runtime.refresh_conversation_adapter_catalog()?;
 
         Ok(json!({
             "dry_run": false,
@@ -491,9 +490,7 @@ impl AppService {
             .is_some()
         {
             let result = self.install_conversation_adapter_package_release(params)?;
-            if let Some(runtime) = self.runtime.as_ref() {
-                runtime.refresh_conversation_adapter_catalog()?;
-            }
+            self.runtime.refresh_conversation_adapter_catalog()?;
             return Ok(result);
         }
 
@@ -513,9 +510,7 @@ impl AppService {
             params.catalog_url.as_deref(),
         )?;
         if !params.dry_run {
-            if let Some(runtime) = self.runtime.as_ref() {
-                runtime.refresh_conversation_adapter_catalog()?;
-            }
+            self.runtime.refresh_conversation_adapter_catalog()?;
         }
         Ok(result)
     }
@@ -542,9 +537,7 @@ impl AppService {
             .is_some()
         {
             let result = self.install_conversation_adapter_package_release(params)?;
-            if let Some(runtime) = self.runtime.as_ref() {
-                runtime.refresh_conversation_adapter_catalog()?;
-            }
+            self.runtime.refresh_conversation_adapter_catalog()?;
             return Ok(result);
         }
 
@@ -563,9 +556,7 @@ impl AppService {
             params.catalog_url.as_deref(),
         )?;
         if !params.dry_run {
-            if let Some(runtime) = self.runtime.as_ref() {
-                runtime.refresh_conversation_adapter_catalog()?;
-            }
+            self.runtime.refresh_conversation_adapter_catalog()?;
         }
         Ok(result)
     }
@@ -625,9 +616,7 @@ impl AppService {
             )
             .await
         })?;
-        if let Some(runtime) = self.runtime.as_ref() {
-            runtime.refresh_conversation_adapter_catalog()?;
-        }
+        self.runtime.refresh_conversation_adapter_catalog()?;
         Ok(json!({
             "dry_run": false,
             "uninstalled": true,
@@ -835,9 +824,7 @@ impl AppService {
                 return Err(error);
             }
         }
-        if let Some(runtime) = self.runtime.as_ref() {
-            runtime.refresh_conversation_adapter_catalog()?;
-        }
+        self.runtime.refresh_conversation_adapter_catalog()?;
         Ok(json!({
             "dry_run": false,
             "deleted": true,
@@ -933,9 +920,7 @@ impl AppService {
             )
             .await
         })?;
-        if let Some(runtime) = self.runtime.as_ref() {
-            runtime.refresh_conversation_adapter_catalog()?;
-        }
+        self.runtime.refresh_conversation_adapter_catalog()?;
         Ok(
             json!({"dry_run": false, "activated": true, "package_id": package_id, "version": version}),
         )
@@ -1712,6 +1697,56 @@ pub(super) fn install_conversation_adapter_package_from_item(
         "validation": installed.validation,
         "security_notice": CONVERSATION_SCRIPT_SECURITY_NOTICE,
     }))
+}
+
+/// Canonical package installer entry point. Catalog implementations must
+/// normalize their metadata into `ConversationAdapterPackageInstallSpec`; the
+/// catalog-shaped item below is kept only as a compatibility mapper for the
+/// existing installer core and is not part of the Catalog v2 boundary.
+pub(super) fn install_conversation_adapter_package_from_spec(
+    service: &AppService,
+    spec: &crate::backend::conversations::ConversationAdapterPackageInstallSpec,
+    dry_run: bool,
+    catalog_url: Option<&str>,
+) -> AppResult<Value> {
+    let item = ConversationScriptCatalogItem {
+        id: spec.id.clone(),
+        name: spec.name.clone(),
+        version: spec.version.clone(),
+        record_kind: match spec.record_kind {
+            ConversationAdapterPackageRecordKind::Session => ConversationScriptRecordKind::Session,
+            ConversationAdapterPackageRecordKind::Web => ConversationScriptRecordKind::Web,
+        },
+        provider: spec.provider.clone(),
+        adapter_id: spec.adapter_id.clone(),
+        description: spec.description.clone(),
+        homepage_url: spec.homepage_url.clone(),
+        repository_url: spec.repository_url.clone(),
+        tags: spec.tags.clone(),
+        manifest_file: spec.manifest_file.clone(),
+        package_manifest_file: spec.package_manifest_file.clone(),
+        expected_content_hash: spec.expected_content_hash.clone(),
+        expected_package_hash: spec.expected_package_hash.clone(),
+        expected_artifact_hash: spec.expected_artifact_hash.clone(),
+        artifact_size: spec.artifact_size,
+        source: ConversationScriptCatalogSource {
+            kind: match spec.source.kind {
+                crate::backend::conversations::ConversationAdapterPackageInstallSourceKind::Github => {
+                    ConversationScriptCatalogSourceKind::Github
+                }
+                crate::backend::conversations::ConversationAdapterPackageInstallSourceKind::ArtifactZip => {
+                    ConversationScriptCatalogSourceKind::ArtifactZip
+                }
+                crate::backend::conversations::ConversationAdapterPackageInstallSourceKind::LocalDirectory => {
+                    ConversationScriptCatalogSourceKind::LocalDirectory
+                }
+            },
+            url: spec.source.url.clone(),
+            branch: spec.source.branch.clone(),
+            path: spec.source.path.clone(),
+        },
+    };
+    install_conversation_adapter_package_from_item(service, &item, dry_run, catalog_url)
 }
 
 struct InstalledConversationAdapterPackage {
@@ -2872,16 +2907,23 @@ fn clone_github_catalog_source(location: &GitHubCatalogLocation, target: &Path) 
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
 
-    let mut command = Command::new("git");
-    command.arg("clone").arg("--depth").arg("1");
+    let mut command_args = vec!["clone".to_string(), "--depth".to_string(), "1".to_string()];
     if let Some(branch) = &location.branch {
-        command.arg("--branch").arg(branch);
+        command_args.extend(["--branch".to_string(), branch.clone()]);
     }
-    let output = command
-        .arg(&location.repo_url)
-        .arg(target)
-        .output()
-        .map_err(|error| format!("failed to run git clone: {error}"))?;
+    command_args.extend([
+        location.repo_url.clone(),
+        target.to_string_lossy().to_string(),
+    ]);
+    let output = crate::backend::host_process::run_program_with_timeout(
+        Path::new("git"),
+        &command_args,
+        None,
+        Duration::from_secs(120),
+        1024 * 1024,
+        256 * 1024,
+    )
+    .map_err(|error| format!("failed to run git clone: {error:?}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(format!("git clone failed: {stderr}"));
@@ -3420,6 +3462,10 @@ mod tests {
                 AppResult::Ok(())
             })
             .expect("seed preflight records");
+        service
+            .runtime
+            .refresh_conversation_adapter_catalog()
+            .expect("refresh test adapter catalog");
 
         let preflight = service
             .prepare_conversation_adapter_package_change(ConversationAdapterPackageChangeParams {
@@ -3461,6 +3507,10 @@ mod tests {
                     .await
             })
             .expect("seed built-in adapter");
+        service
+            .runtime
+            .refresh_conversation_adapter_catalog()
+            .expect("refresh test adapter catalog");
 
         let preflight = service
             .prepare_conversation_adapter_package_change(ConversationAdapterPackageChangeParams {

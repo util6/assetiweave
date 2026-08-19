@@ -1,5 +1,4 @@
 use std::{
-    process::{Command, Stdio},
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
@@ -213,10 +212,10 @@ impl AppService {
             })?;
         let now = chrono::Utc::now().to_rfc3339();
         let probe = if installation.resolved_program.is_file() {
-            let mut command = Command::new(&installation.resolved_program);
-            command.arg("--version").stdin(Stdio::null());
-            Some(crate::backend::host_process::run_command_with_timeout(
-                &mut command,
+            Some(crate::backend::host_process::run_program_with_timeout(
+                &installation.resolved_program,
+                &["--version".to_string()],
+                None,
                 Duration::from_secs(8),
                 1024 * 1024,
                 256 * 1024,

@@ -23,7 +23,7 @@ use crate::backend::{
         PackageIdentity, PackageKind, ResourceKey,
     },
     models::{MemoryDreamTrigger, MemoryRunKind, MemoryScope},
-    runtime::tasks::{TaskFn, TaskRuntime, TaskSnapshot},
+    runtime::tasks::{TaskFn, TaskKind, TaskRuntime, TaskSnapshot, TaskSpec},
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -296,7 +296,7 @@ struct AgentMarketRefreshTaskEntry {
 pub(crate) struct BackgroundTaskRegistry {
     /// Compatibility projections remain here while migrated task execution is
     /// owned by the backend TaskRuntime.
-    task_runtime: Option<TaskRuntime>,
+    task_runtime: TaskRuntime,
     lifecycle: LifecycleTaskCoordinator,
     conversation_sync: Mutex<HashMap<ConversationSyncScope, ConversationSyncTaskSnapshot>>,
     conversation_script_install: Mutex<Option<ConversationScriptInstallTaskSnapshot>>,
@@ -318,7 +318,7 @@ impl BackgroundTaskRegistry {
     pub(crate) fn with_task_runtime(task_runtime: TaskRuntime) -> Self {
         Self {
             lifecycle: LifecycleTaskCoordinator::new(task_runtime.clone()),
-            task_runtime: Some(task_runtime),
+            task_runtime,
             conversation_sync: Mutex::new(HashMap::new()),
             conversation_script_install: Mutex::new(None),
             skill_backup: Mutex::new(None),
@@ -331,7 +331,51 @@ impl BackgroundTaskRegistry {
     }
 
     pub(crate) fn task_runtime(&self) -> Option<TaskRuntime> {
-        self.task_runtime.clone()
+        Some(self.task_runtime.clone())
+    }
+
+    fn register_external_task(
+        &self,
+        kind: TaskKind,
+        task_id: &str,
+        detail: Value,
+    ) -> AppResult<()> {
+        let runtime = &self.task_runtime;
+        let mut spec =
+            TaskSpec::new(kind, Some(format!("tauri:{task_id}"))).with_task_id(task_id.to_string());
+        spec.detail = detail;
+        match runtime
+            .register_external(spec)
+            .map_err(|error| error.to_string())?
+        {
+            Ok(_) => runtime
+                .start_external(task_id)
+                .map(|_| ())
+                .map_err(|error| error.to_string()),
+            Err(existing) => Err(format!(
+                "TaskRuntime already owns task {}",
+                existing.task_id
+            )),
+        }
+    }
+
+    fn finish_external_task(&self, task_id: &str, result: Result<Value, String>) {
+        self.finish_external_result(
+            task_id,
+            result.map_err(crate::backend::runtime::AppError::from),
+        );
+    }
+
+    fn finish_external_result(
+        &self,
+        task_id: &str,
+        result: crate::backend::runtime::AppResult<Value>,
+    ) {
+        let _ = self.task_runtime.complete_external(task_id, result);
+    }
+
+    fn cancel_external_task(&self, task_id: &str) {
+        let _ = self.task_runtime.cancel(task_id);
     }
 
     /// Start work through the same kernel coordinator used by both extension
@@ -371,6 +415,11 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
+        self.register_external_task(
+            TaskKind::Other,
+            &snapshot.id,
+            serde_json::json!({"domain": "agent_market_refresh"}),
+        )?;
         tasks.insert(
             snapshot.id.clone(),
             AgentMarketRefreshTaskEntry {
@@ -406,6 +455,18 @@ impl BackgroundTaskRegistry {
                 entry.snapshot.error = Some(error);
             }
         }
+        let runtime_result = match entry.snapshot.state {
+            AgentMarketRefreshTaskState::Succeeded => {
+                Ok(serde_json::to_value(entry.snapshot.result.clone()).unwrap_or(Value::Null))
+            }
+            AgentMarketRefreshTaskState::Failed => {
+                Err(entry.snapshot.error.clone().unwrap_or_default())
+            }
+            AgentMarketRefreshTaskState::Running => {
+                Err("task did not reach a terminal state".to_string())
+            }
+        };
+        self.finish_external_task(task_id, runtime_result);
         Ok(entry.snapshot.clone())
     }
 
@@ -664,6 +725,11 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
+        self.register_external_task(
+            TaskKind::SearchIndexRebuild,
+            &snapshot.id,
+            serde_json::json!({"domain": "conversation_search_index"}),
+        )?;
         *current = Some(snapshot.clone());
         Ok((snapshot, true))
     }
@@ -694,6 +760,13 @@ impl BackgroundTaskRegistry {
                 snapshot.error = Some(error);
             }
         }
+        self.finish_external_task(
+            task_id,
+            snapshot
+                .result
+                .clone()
+                .ok_or_else(|| snapshot.error.clone().unwrap_or_default()),
+        );
         Ok(snapshot.clone())
     }
 
@@ -751,6 +824,11 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
+        self.register_external_task(
+            TaskKind::ConversationSync,
+            &snapshot.id,
+            serde_json::json!({"domain": "conversation_sync"}),
+        )?;
         current.insert(scope, snapshot.clone());
         Ok((snapshot, true))
     }
@@ -811,6 +889,13 @@ impl BackgroundTaskRegistry {
                 snapshot.error = Some(error);
             }
         }
+        self.finish_external_task(
+            task_id,
+            snapshot
+                .result
+                .clone()
+                .ok_or_else(|| snapshot.error.clone().unwrap_or_default()),
+        );
         Ok(snapshot.clone())
     }
 
@@ -1129,6 +1214,11 @@ impl BackgroundTaskRegistry {
             errors: Vec::new(),
             error: None,
         };
+        self.register_external_task(
+            TaskKind::Backup,
+            &snapshot.id,
+            serde_json::json!({"domain": "skill_backup"}),
+        )?;
         *current = Some(snapshot.clone());
         Ok((snapshot, true))
     }
@@ -1192,6 +1282,15 @@ impl BackgroundTaskRegistry {
                 snapshot.error = Some(error);
             }
         }
+        self.finish_external_task(
+            task_id,
+            snapshot
+                .assets
+                .first()
+                .map(|_| serde_json::json!({"asset_count": snapshot.assets.len()}))
+                .or_else(|| snapshot.error.is_none().then_some(Value::Null))
+                .ok_or_else(|| snapshot.error.clone().unwrap_or_default()),
+        );
         Ok(snapshot.clone())
     }
 
@@ -1248,6 +1347,11 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
+        self.register_external_task(
+            TaskKind::Other,
+            &snapshot.id,
+            serde_json::json!({"domain": "memory", "kind": format!("{:?}", params.kind)}),
+        )?;
         tasks.insert(
             id,
             MemoryTaskEntry {
@@ -1329,10 +1433,19 @@ impl BackgroundTaskRegistry {
                 entry.snapshot.error = Some(error);
             }
         }
+        self.finish_external_task(
+            task_id,
+            entry
+                .snapshot
+                .result
+                .clone()
+                .ok_or_else(|| entry.snapshot.error.clone().unwrap_or_default()),
+        );
         Ok(entry.snapshot.clone())
     }
 
     pub(crate) fn cancel_memory_task(&self, task_id: &str) -> AppResult<MemoryTaskSnapshot> {
+        self.cancel_external_task(task_id);
         let mut tasks = self
             .memory_tasks
             .lock()
@@ -1397,6 +1510,11 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
+        self.register_external_task(
+            TaskKind::AiExecution,
+            &snapshot.id,
+            serde_json::json!({"domain": "ai_execution", "purpose": format!("{:?}", purpose)}),
+        )?;
         tasks.insert(
             id,
             AiExecutionTaskEntry {
@@ -1482,11 +1600,33 @@ impl BackgroundTaskRegistry {
             }
             entry.snapshot.clone()
         };
+        let runtime_result = match snapshot.state {
+            AiExecutionTaskState::Succeeded => {
+                Ok(serde_json::to_value(snapshot.result.clone()).unwrap_or(Value::Null))
+            }
+            AiExecutionTaskState::Cancelled => Err(crate::backend::runtime::AppError::Canceled(
+                "AI execution was cancelled".to_string(),
+            )),
+            AiExecutionTaskState::Failed => Err(crate::backend::runtime::AppError::from(
+                snapshot
+                    .error
+                    .as_ref()
+                    .map(|error| format!("{}: {}", error.code, error.message))
+                    .unwrap_or_else(|| "AI execution failed".to_string()),
+            )),
+            AiExecutionTaskState::Queued | AiExecutionTaskState::Running => {
+                Err(crate::backend::runtime::AppError::from(
+                    "AI execution did not reach a terminal state".to_string(),
+                ))
+            }
+        };
+        self.finish_external_result(task_id, runtime_result);
         prune_ai_executions(&mut tasks, now);
         Ok(snapshot)
     }
 
     pub(crate) fn cancel_ai_execution(&self, task_id: &str) -> AppResult<AiExecutionTaskSnapshot> {
+        self.cancel_external_task(task_id);
         let mut tasks = self
             .ai_executions
             .lock()
@@ -1540,6 +1680,7 @@ impl BackgroundTaskRegistry {
         let mut cancelled = Vec::new();
         for entry in tasks.values_mut() {
             if !entry.snapshot.state.is_terminal() {
+                self.cancel_external_task(&entry.snapshot.id);
                 entry.cancellation.cancel();
                 entry.snapshot.state = AiExecutionTaskState::Running;
                 entry.snapshot.phase = AiExecutionPhase::Cancelling;
@@ -1581,91 +1722,17 @@ impl BackgroundTaskRegistry {
     }
 
     fn active_ai_execution_count(&self) -> AppResult<usize> {
-        self.ai_executions
-            .lock()
-            .map(|tasks| {
-                tasks
-                    .values()
-                    .filter(|entry| !entry.snapshot.state.is_terminal())
-                    .count()
+        Ok(self
+            .task_runtime
+            .list(crate::backend::runtime::tasks::TaskFilter {
+                kind: Some(TaskKind::AiExecution),
+                active_only: true,
             })
-            .map_err(|_| "AI execution task registry is unavailable".to_string())
+            .len())
     }
 
     pub(crate) fn has_running_tasks(&self) -> bool {
-        let conversation_sync_running = self
-            .conversation_sync
-            .lock()
-            .map(|snapshots| {
-                snapshots
-                    .values()
-                    .any(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
-            })
-            .unwrap_or(true);
-        let skill_backup_running = self
-            .skill_backup
-            .lock()
-            .map(|snapshot| {
-                snapshot
-                    .as_ref()
-                    .is_some_and(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
-            })
-            .unwrap_or(true);
-        let conversation_script_install_running = self
-            .conversation_script_install
-            .lock()
-            .map(|snapshot| {
-                snapshot
-                    .as_ref()
-                    .is_some_and(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
-            })
-            .unwrap_or(true);
-        let conversation_search_index_running = self
-            .conversation_search_index
-            .lock()
-            .map(|snapshot| {
-                snapshot
-                    .as_ref()
-                    .is_some_and(|snapshot| snapshot.status == BackgroundTaskStatus::Running)
-            })
-            .unwrap_or(true);
-        let memory_running = self
-            .memory_tasks
-            .lock()
-            .map(|tasks| {
-                tasks
-                    .values()
-                    .any(|entry| entry.snapshot.status == BackgroundTaskStatus::Running)
-            })
-            .unwrap_or(true);
-        let ai_execution_running = self
-            .ai_executions
-            .lock()
-            .map(|tasks| {
-                tasks
-                    .values()
-                    .any(|entry| !entry.snapshot.state.is_terminal())
-            })
-            .unwrap_or(true);
-        let agent_lifecycle_running = self
-            .agent_lifecycle_tasks
-            .lock()
-            .map(|tasks| {
-                tasks.values().any(|entry| {
-                    matches!(
-                        entry.snapshot.state,
-                        LifecycleTaskState::Queued | LifecycleTaskState::Running
-                    )
-                })
-            })
-            .unwrap_or(true);
-        conversation_sync_running
-            || conversation_script_install_running
-            || skill_backup_running
-            || conversation_search_index_running
-            || memory_running
-            || ai_execution_running
-            || agent_lifecycle_running
+        self.task_runtime.has_active_tasks()
     }
 }
 
@@ -1893,7 +1960,7 @@ mod tests {
                     agent_wait
                         .recv_timeout(Duration::from_secs(1))
                         .map_err(|error| {
-                            crate::backend::runtime::AppError::Legacy(error.to_string())
+                            crate::backend::runtime::AppError::from(error.to_string())
                         })?;
                     Ok(serde_json::json!({ "domain": "agent" }))
                 }),
@@ -1906,7 +1973,7 @@ mod tests {
                     adapter_wait
                         .recv_timeout(Duration::from_secs(1))
                         .map_err(|error| {
-                            crate::backend::runtime::AppError::Legacy(error.to_string())
+                            crate::backend::runtime::AppError::from(error.to_string())
                         })?;
                     Ok(serde_json::json!({ "domain": "conversation" }))
                 }),
@@ -2542,20 +2609,16 @@ mod tests {
     }
 
     #[test]
-    fn task_15_poisoned_ai_registry_returns_errors_and_running_check_fails_closed() {
-        let registry = std::sync::Arc::new(BackgroundTaskRegistry::default());
-        let poison_target = registry.clone();
-        let _ = std::thread::spawn(move || {
-            let _guard = poison_target.ai_executions.lock().unwrap();
-            panic!("poison AI task registry");
-        })
-        .join();
+    fn task_runtime_deletion_removes_running_authority_from_the_projection() {
+        let registry = BackgroundTaskRegistry::default();
+        let (task, _) = registry
+            .begin_conversation_sync(&params(Some("session")))
+            .unwrap();
+        let runtime = registry.task_runtime().expect("shared task runtime");
 
-        assert!(registry.ai_execution_snapshots().is_err());
-        assert!(registry
-            .begin_ai_execution(AiExecutionPurpose::Translation, &opencode_id())
-            .is_err());
         assert!(registry.has_running_tasks());
+        assert!(runtime.remove(&task.id).is_some());
+        assert!(!registry.has_running_tasks());
     }
 
     fn opencode_id() -> AgentId {

@@ -35,7 +35,6 @@ pub(super) use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     env, fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 pub(super) use uuid::Uuid;
 

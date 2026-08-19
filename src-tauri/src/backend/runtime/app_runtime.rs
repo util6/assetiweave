@@ -186,6 +186,48 @@ impl AppRuntime {
         Ok(app_runtime)
     }
 
+    /// Test-only runtime builder. Tests still construct the same resident
+    /// runtime boundary as production, but inject their temporary database and
+    /// agent backend instead of reopening a second application service path.
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        db_path: PathBuf,
+        db: Database,
+        context: RequestContext,
+        agent_runtime_manager: Arc<AgentRuntimeManager>,
+        agent_runtime: Arc<dyn AgentExecutionRuntime>,
+    ) -> Arc<Self> {
+        let adapters = db
+            .block_on(crate::backend::store::list_conversation_adapters_sqlx(
+                db.pool(),
+                &context.tenant.id,
+            ))
+            .unwrap_or_default();
+        Arc::new(Self {
+            db_path,
+            db,
+            context: ArcSwap::from_pointee(RequestContextSnapshot {
+                tenant: context.tenant.clone(),
+                generation: 0,
+                request_context: context,
+            }),
+            generation: AtomicU64::new(0),
+            agent_runtime_manager,
+            agent_runtime,
+            locks: RuntimeLocks::default(),
+            task_runtime: TaskRuntime::new(),
+            shutdown: ShutdownState::new(),
+            role: RuntimeRole::OneShot,
+            dispatcher: Mutex::new(None),
+            target_catalog: RegistrySnapshot::new(
+                TargetCatalog::builtin().expect("test target catalog must be valid"),
+            ),
+            conversation_adapter_catalog: RegistrySnapshot::new(ConversationAdapterCatalog::new(
+                adapters,
+            )),
+        })
+    }
+
     fn start_resident_services(&self) {
         let dispatcher = Arc::new(EventDispatcher::new(self.db.clone(), self.db_path.clone()));
         if let Err(error) = dispatcher.initialize_all_tenants() {

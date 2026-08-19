@@ -1,4 +1,8 @@
 use super::prelude::*;
+use crate::backend::conversations::{
+    ConversationAdapterPackageInstallSource, ConversationAdapterPackageInstallSourceKind,
+    ConversationAdapterPackageInstallSpec,
+};
 use crate::backend::models::{
     ConversationAdapterCatalogRelease, ConversationAdapterPackageRecordKind,
     ConversationAdapterReleaseChannel,
@@ -49,18 +53,11 @@ impl AppService {
                 release.package_id, release.version, release.core_compatibility
             ));
         }
-        let item = super::ConversationScriptCatalogItem {
+        let spec = ConversationAdapterPackageInstallSpec {
             id: release.package_id.clone(),
             name: release.name.clone(),
             version: release.version.clone(),
-            record_kind: match release.record_kind {
-                ConversationAdapterPackageRecordKind::Session => {
-                    super::ConversationScriptRecordKind::Session
-                }
-                ConversationAdapterPackageRecordKind::Web => {
-                    super::ConversationScriptRecordKind::Web
-                }
-            },
+            record_kind: release.record_kind,
             provider: Some(release.publisher.clone()),
             adapter_id: Some(release.adapter_id.clone()),
             description: None,
@@ -73,16 +70,16 @@ impl AppService {
             expected_package_hash: None,
             expected_artifact_hash: Some(release.artifact_sha256.clone()),
             artifact_size: release.artifact_size.map(|size| size as u64),
-            source: super::ConversationScriptCatalogSource {
-                kind: super::ConversationScriptCatalogSourceKind::ArtifactZip,
+            source: ConversationAdapterPackageInstallSource {
+                kind: ConversationAdapterPackageInstallSourceKind::ArtifactZip,
                 url: release.artifact_url.clone(),
                 branch: None,
                 path: None,
             },
         };
-        super::conversation_script_catalog::install_conversation_adapter_package_from_item(
+        super::conversation_script_catalog::install_conversation_adapter_package_from_spec(
             self,
-            &item,
+            &spec,
             params.dry_run,
             Some(&catalog_url),
         )
@@ -357,7 +354,26 @@ struct CatalogV2Release {
     breaking_change: bool,
     runtime_protocol: String,
     adapter_manifest: Option<Value>,
-    source: Option<super::ConversationScriptCatalogSource>,
+    source: Option<CatalogV2Source>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CatalogV2Source {
+    #[serde(rename = "type")]
+    kind: CatalogV2SourceKind,
+    url: String,
+    #[serde(default)]
+    branch: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum CatalogV2SourceKind {
+    Github,
+    ArtifactZip,
+    LocalDirectory,
 }
 
 impl CatalogV2Release {

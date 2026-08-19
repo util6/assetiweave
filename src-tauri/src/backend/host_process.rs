@@ -155,6 +155,30 @@ pub(crate) fn run_command_with_timeout(
     )
 }
 
+/// Build and execute a host command inside the process boundary. Application
+/// code should use this helper instead of constructing `std::process::Command`
+/// so executable lookup, output limits and timeout behavior remain uniform.
+pub(crate) fn run_program_with_timeout(
+    program: &Path,
+    args: &[String],
+    current_dir: Option<&Path>,
+    timeout: Duration,
+    stdout_cap: usize,
+    stderr_cap: usize,
+) -> Result<HostProcessOutput, HostProcessError> {
+    let resolved = if program.components().count() > 1 {
+        program.to_path_buf()
+    } else {
+        resolve_host_executable(&program.to_string_lossy()).unwrap_or_else(|| program.to_path_buf())
+    };
+    let mut command = Command::new(resolved);
+    command.args(args);
+    if let Some(current_dir) = current_dir {
+        command.current_dir(current_dir);
+    }
+    run_command_with_timeout(&mut command, timeout, stdout_cap, stderr_cap)
+}
+
 pub(crate) fn run_command_with_control(
     command: &mut Command,
     control: HostProcessControl<'_>,

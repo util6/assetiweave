@@ -19,8 +19,10 @@ pub(crate) use external::{
 pub(crate) use harvester::run_conversation_harvester_for_adapter_source;
 pub(crate) use official::ensure_official_conversation_adapters;
 pub(crate) use package::{
-    validate_conversation_adapter_package_dir, ConversationAdapterPackageRuntimeProtocol,
-    ConversationAdapterPackageSystem, ConversationAdapterPackageValidationResult,
+    validate_conversation_adapter_package_dir, ConversationAdapterPackageInstallSource,
+    ConversationAdapterPackageInstallSourceKind, ConversationAdapterPackageInstallSpec,
+    ConversationAdapterPackageRuntimeProtocol, ConversationAdapterPackageSystem,
+    ConversationAdapterPackageValidationResult,
 };
 #[allow(unused_imports)]
 pub(crate) use readers::{

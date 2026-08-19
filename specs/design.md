@@ -81,6 +81,23 @@ Kernel 只提供共享机制，不理解领域 manifest，也不实现进程内�
 - 前端和 Go CLI 不能直接写 SQLite、不能自行判断挂载安全、不能复制扫描/计划/执行规则。
 - Engine contract、CLI schema 和 Tauri command DTO 需要随公共能力同步演进。
 
+#### Capabilities Architectural Contract
+
+`backend/capabilities/` 是跨多个 repository 或 infrastructure operation 的稳定领域能力层，不是所有业务函数的必经中转层。
+
+- 需要跨多个 store、文件系统或外部边界协调，并且会被多个 Application workflow 复用的事务性行为进入 capability。
+- 单表 CRUD、单一查询和纯持久化映射保留在 `backend/store/`。
+- 跨领域 workflow 编排、权限/确认策略和 transport DTO 组装保留在 `backend/application/`。
+- Capability 只能依赖稳定的 domain model、store contract 和 infrastructure boundary；不得反向依赖 Tauri/Engine adapter。
+- 新增 capability 必须说明输入不变量、输出不变量、错误边界和事务/副作用范围；无需为了形式统一给简单 CRUD 增加 capability 包装。
+
+因此推荐的数据流是：
+
+```text
+Transport -> AppService workflow -> Capability (when cross-boundary) -> Store / Host boundary
+Transport -> AppService workflow -> Store (when simple CRUD)
+```
+
 ### 3.3 当前开发状态
 
 当前 Git 历史已经进入 `0.5.0` 后的具体功能扩展阶段。近期提交显示重点集中在版本同步、Engine/CLI contract、批量 catalog/mount 刷新、harvester register probe、source display assets、Conversation 搜索筛选和翻译 provider/CLI/model/prompt 模式。

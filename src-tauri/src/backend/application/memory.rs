@@ -595,11 +595,18 @@ mod tests {
                 db_path.with_extension("agent-executions"),
             ));
         let agent_runtime = runtime_manager.runtime();
+        let app_runtime = crate::backend::runtime::AppRuntime::for_test(
+            db_path.clone(),
+            db.clone(),
+            context.clone(),
+            runtime_manager.clone(),
+            agent_runtime.clone(),
+        );
         let service = AppService {
             db,
             db_path: db_path.clone(),
             context,
-            runtime: None,
+            runtime: app_runtime,
             agent_runtime_manager: runtime_manager,
             agent_runtime,
         };

@@ -6,8 +6,8 @@ impl AppService {
             return Ok(Self::from_runtime(&runtime));
         }
 
-        // Unit tests dispatch engine commands without starting the resident host.
-        // Production always installs the process runtime before this path is used.
+        // Engine unit tests use the same mandatory AppRuntime shape with a
+        // temporary database. Production has no database fallback here.
         #[cfg(test)]
         {
             return Self::open_with_db_path(engine_db_path()?);
@@ -25,7 +25,7 @@ impl AppService {
     ) -> Self {
         let snapshot = runtime.context();
         Self {
-            runtime: Some(runtime.clone()),
+            runtime: runtime.clone(),
             db: runtime.db().clone(),
             db_path: runtime.db_path().to_path_buf(),
             context: snapshot.request_context.clone(),
@@ -77,8 +77,15 @@ impl AppService {
         }
         db.block_on(runtime_manager.reload(&context.tenant.id))?;
         let agent_runtime = runtime_manager.runtime();
+        let runtime = crate::backend::runtime::AppRuntime::for_test(
+            db_path.clone(),
+            db.clone(),
+            context.clone(),
+            runtime_manager.clone(),
+            agent_runtime.clone(),
+        );
         Ok(Self {
-            runtime: None,
+            runtime,
             db,
             db_path,
             context,
@@ -261,6 +268,16 @@ impl AppService {
     }
 }
 
+#[cfg(test)]
+fn engine_db_path() -> AppResult<PathBuf> {
+    if let Ok(path) = env::var("ASSETIWEAVE_DB_PATH") {
+        if !path.trim().is_empty() {
+            return Ok(PathBuf::from(path));
+        }
+    }
+    crate::backend::path_utils::app_db_path()
+}
+
 fn conversation_runtime_doctor_summary(
     runtime_statuses: &[crate::backend::conversations::ConversationAdapterRuntimeStatus],
 ) -> (&'static str, String) {
@@ -294,16 +311,6 @@ fn conversation_runtime_doctor_summary(
             ),
         )
     }
-}
-
-#[cfg(test)]
-fn engine_db_path() -> AppResult<PathBuf> {
-    if let Ok(path) = env::var("ASSETIWEAVE_DB_PATH") {
-        if !path.trim().is_empty() {
-            return Ok(PathBuf::from(path));
-        }
-    }
-    crate::backend::path_utils::app_db_path()
 }
 
 #[cfg(test)]

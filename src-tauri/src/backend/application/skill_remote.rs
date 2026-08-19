@@ -1,4 +1,5 @@
 use super::prelude::*;
+use std::time::Duration;
 
 const SKILL_REMOTE_SECURITY_NOTICE: &str =
     "Review remote Skill contents before importing; AssetIWeave does not execute or trust remote code automatically.";
@@ -758,16 +759,23 @@ fn clone_github_skill(location: &GitHubSkillLocation, target: &Path) -> AppResul
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
 
-    let mut command = Command::new("git");
-    command.arg("clone").arg("--depth").arg("1");
+    let mut command_args = vec!["clone".to_string(), "--depth".to_string(), "1".to_string()];
     if let Some(branch) = &location.branch {
-        command.arg("--branch").arg(branch);
+        command_args.extend(["--branch".to_string(), branch.clone()]);
     }
-    let output = command
-        .arg(&location.repo_url)
-        .arg(target)
-        .output()
-        .map_err(|error| format!("failed to run git clone: {error}"))?;
+    command_args.extend([
+        location.repo_url.clone(),
+        target.to_string_lossy().to_string(),
+    ]);
+    let output = crate::backend::host_process::run_program_with_timeout(
+        Path::new("git"),
+        &command_args,
+        None,
+        Duration::from_secs(120),
+        1024 * 1024,
+        256 * 1024,
+    )
+    .map_err(|error| format!("failed to run git clone: {error:?}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(format!("git clone failed: {stderr}"));
@@ -788,12 +796,17 @@ fn git_skill_tree_sha(repo: &Path, skill_path: Option<&str>) -> Option<String> {
 }
 
 fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .output()
-        .ok()?;
+    let mut command_args = vec!["-C".to_string(), repo.to_string_lossy().to_string()];
+    command_args.extend(args.iter().map(|arg| (*arg).to_string()));
+    let output = crate::backend::host_process::run_program_with_timeout(
+        Path::new("git"),
+        &command_args,
+        None,
+        Duration::from_secs(30),
+        64 * 1024,
+        64 * 1024,
+    )
+    .ok()?;
     if !output.status.success() {
         return None;
     }

@@ -1,3 +1,10 @@
+//! OneShot / Shutdown Infrastructure Path.
+//!
+//! This module intentionally owns an independent Tokio runtime and SQLite
+//! pool because it may run while the resident `AppRuntime` is closing or
+//! before it has been created. It is a database close/recovery exception, not
+//! a pattern for ordinary Application Service work.
+
 use crate::backend::{
     app_settings::read_app_settings_value,
     dto::AppResult,
@@ -145,6 +152,8 @@ fn ensure_backup_directory(directory: &Path) -> AppResult<()> {
 }
 
 fn snapshot_sqlite_database(db_path: &Path, target_path: &Path) -> AppResult<()> {
+    // OneShot / Shutdown Infrastructure Path: VACUUM INTO needs a short-lived
+    // independent connection so the resident pool can be closing safely.
     let temp_path = temporary_target_path(target_path);
     if temp_path.exists() {
         fs::remove_file(&temp_path).map_err(|error| error.to_string())?;

@@ -45,12 +45,29 @@ check_absent 'std::fs|tokio::fs|std::process|crate::adapters' src-tauri/src/back
 # Generated contract metadata remains the only risk/confirmation source.
 check_absent 'SurfaceMapping.*risk|SurfaceMapping.*confirmation' src-tauri/src/adapters/engine/surface_mapping.rs
 
+# Application code must use host/runtime seams for platform-sensitive work and
+# must not retain a provider-specific Gemini process path.
+check_absent 'std::process::Command|process::Command|Command::new' src-tauri/src/backend/application
+check_absent 'legacy_gemini' src-tauri/src/backend/application
+
+# Catalog v2 consumes the version-neutral installer spec directly. A legacy
+# catalog item may remain behind the compatibility mapper, but not in v2.
+check_absent 'ConversationScriptCatalogItem|ConversationScriptCatalogSource' \
+  src-tauri/src/backend/application/conversation_adapter_catalog_v2.rs
+
+# The service boundary is runtime-backed in both production and test builders.
+check_absent 'runtime: Option<Arc<AppRuntime>>' src-tauri/src/backend/application/service.rs
+
 # Monotonic migration baselines from SPEC-01/SPEC-02. A touched module may
 # reduce these counts, but cannot silently add new synchronous bridges or
 # legacy string-error construction sites.
 check_max 333 'block_on' src-tauri/src
 check_max 18 'Legacy\(' src-tauri/src
 check_max 0 'open_with_db_path' src-tauri/src/adapters
+# Application has no explicit Result<T, String> declarations; the remaining
+# DTO alias is a tracked compatibility seam until the transport-wide migration.
+check_max 0 'Result<[^>]*, ?String>' src-tauri/src/backend/application
+check_max 1 'type AppResult<T> = Result<T, String>' src-tauri/src/backend/dto
 
 rm -f /tmp/assetiweave-boundary-check.out
 if [ "$fail" -ne 0 ]; then

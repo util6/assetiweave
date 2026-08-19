@@ -2,6 +2,10 @@
 
 ## Runtime Extension Refactor 后续项（2026-08-19）
 
+- [X] 后端里程碑审计收口：TaskRuntime 统一任务生命周期，AppService 强制绑定
+  AppRuntime，Gemini translation 统一进入 AgentExecutionRuntime，Catalog v2 直接
+  使用版本无关的 InstallSpec，Application 进程调用经过 HostProcess，并补充可执行
+  的模块边界守卫与 OneShot/Shutdown backup 说明。
 - [ ] SPEC-06 B：收口 provider-neutral Availability；统一
   `check_opencode_translation_availability`、`configured_agent_capability` 与
   `legacy_gemini.rs`，避免与已落地的 Agent Runtime 能力长期双轨并存。

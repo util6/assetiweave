@@ -6,9 +6,8 @@ use crate::backend::host_process::{
 use crate::backend::{
     agents::types::AgentId,
     ai_execution::{
-        execute_agent_blocking, legacy_gemini, AgentExecutionRuntime, AiCommandOptions,
-        AiCommandOutput, AiExecutionCancellation, AiExecutionError, AiExecutionLimits,
-        AiExecutionPurpose, AiExecutionRequest,
+        execute_agent_blocking, AgentExecutionRuntime, AiExecutionCancellation, AiExecutionError,
+        AiExecutionLimits, AiExecutionPurpose, AiExecutionRequest,
     },
     dto::AppResult,
 };
@@ -25,8 +24,6 @@ use std::{sync::Arc, time::Duration};
 const OPENCODE_COMMAND: &str = "opencode";
 #[cfg(test)]
 const GEMINI_COMMAND: &str = "gemini";
-const TRANSLATION_STDOUT_CAP: usize = 1024 * 1024;
-const TRANSLATION_STDERR_CAP: usize = 256 * 1024;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct OpencodeTranslationAvailability {
@@ -173,21 +170,14 @@ pub(crate) fn test_conversation_translation_connection(
                             AiExecutionPurpose::ConnectionTest,
                             connection_test_limits(),
                         ),
-                        ConversationTranslationCli::Gemini => {
-                            let translated_text = legacy_gemini::execute_translation(
-                                model,
-                                params.prompt,
-                                translation_command_options(Duration::from_secs(30)),
-                            )
-                            .map_err(|error| {
-                                translation_execution_error_message(
-                                    "gemini",
-                                    "gemini connection test",
-                                    error,
-                                )
-                            })?;
-                            Ok(OpencodeTranslationResult { translated_text })
-                        }
+                        cli => execute_agent_translation(
+                            runtime,
+                            resolve_agent_id(None, cli)?,
+                            params.prompt,
+                            model,
+                            AiExecutionPurpose::ConnectionTest,
+                            connection_test_limits(),
+                        ),
                     }
                 }
             })
@@ -325,17 +315,14 @@ fn translate_with_cli(
             AiExecutionPurpose::Translation,
             AiExecutionLimits::default(),
         ),
-        ConversationTranslationCli::Gemini => {
-            let translated_text = legacy_gemini::execute_translation(
-                model,
-                prompt,
-                translation_command_options(Duration::from_secs(180)),
-            )
-            .map_err(|error| {
-                translation_execution_error_message("gemini", "gemini translation", error)
-            })?;
-            Ok(OpencodeTranslationResult { translated_text })
-        }
+        cli => execute_agent_translation(
+            runtime,
+            resolve_agent_id(None, cli)?,
+            prompt,
+            model,
+            AiExecutionPurpose::Translation,
+            AiExecutionLimits::default(),
+        ),
     }
 }
 
@@ -425,24 +412,6 @@ fn normalize_model(model: &str) -> AppResult<Option<String>> {
     Ok(Some(model.to_string()))
 }
 
-fn translation_command_options(timeout: Duration) -> AiCommandOptions {
-    AiCommandOptions::new(timeout, TRANSLATION_STDOUT_CAP, TRANSLATION_STDERR_CAP)
-}
-
-fn translation_execution_error_message(
-    program: &str,
-    failure_label: &str,
-    error: AiExecutionError,
-) -> String {
-    match error {
-        AiExecutionError::CommandFailed(output) => command_failure_message(failure_label, &output),
-        AiExecutionError::EmptyOutput { .. } => {
-            format!("{program} returned an empty translation")
-        }
-        other => other.to_string(),
-    }
-}
-
 fn agent_execution_error_message(error: AiExecutionError) -> String {
     let view = error.to_view();
     format!("{}: {}", view.code, view.message)
@@ -478,13 +447,6 @@ fn parse_model_lines(bytes: &[u8]) -> Vec<String> {
     models.dedup();
     models.truncate(500);
     models
-}
-
-fn command_failure_message(command_name: &str, output: &AiCommandOutput) -> String {
-    let detail = first_nonempty_line(&output.stderr)
-        .or_else(|| first_nonempty_line(&output.stdout))
-        .unwrap_or_else(|| output.status.to_string());
-    format!("{command_name} failed: {detail}")
 }
 
 #[cfg(test)]
@@ -597,6 +559,52 @@ mod tests {
         assert_eq!(requests[0].purpose, AiExecutionPurpose::Translation);
         assert_eq!(requests[0].model.as_deref(), Some("model/a"));
         assert_eq!(requests[0].prompt, "translate this");
+    }
+
+    #[test]
+    fn tr_01_gemini_translation_maps_to_agent_runtime_without_special_process_logic() {
+        let runtime = FakeRuntime::new("Gemini 译文");
+
+        let result = translate_conversation_card(
+            runtime.clone(),
+            ConversationTranslationRequest {
+                agent_id: None,
+                provider: ConversationTranslationProvider::Cli,
+                cli: ConversationTranslationCli::Gemini,
+                model: "gemini-2.5-pro".to_string(),
+                prompt: "translate with Gemini".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.translated_text, "Gemini 译文");
+        let requests = runtime.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].agent_id.as_str(), "gemini");
+        assert_eq!(requests[0].purpose, AiExecutionPurpose::Translation);
+        assert_eq!(requests[0].model.as_deref(), Some("gemini-2.5-pro"));
+    }
+
+    #[test]
+    fn tr_01_gemini_connection_test_uses_the_same_agent_runtime() {
+        let runtime = FakeRuntime::new("connection ok");
+
+        let availability = test_conversation_translation_connection(
+            runtime.clone(),
+            ConversationTranslationConnectionRequest {
+                agent_id: None,
+                provider: ConversationTranslationProvider::Cli,
+                cli: ConversationTranslationCli::Gemini,
+                model: "gemini-2.5-pro".to_string(),
+                prompt: "connection test".to_string(),
+            },
+        );
+
+        assert!(availability.available);
+        let requests = runtime.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].agent_id.as_str(), "gemini");
+        assert_eq!(requests[0].purpose, AiExecutionPurpose::ConnectionTest);
     }
 
     #[test]

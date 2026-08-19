@@ -6,10 +6,7 @@ use std::{
 
 use super::{PackageIdentity, PackageKind};
 use crate::backend::runtime::{
-    tasks::{
-        CancelOutcome, SpawnOutcome, TaskFn, TaskKind, TaskRuntime, TaskSnapshot, TaskSpec,
-        TaskState,
-    },
+    tasks::{CancelOutcome, TaskFn, TaskKind, TaskRuntime, TaskSnapshot, TaskSpec, TaskState},
     AppError,
 };
 
@@ -151,6 +148,14 @@ impl LifecycleTaskCoordinator {
             ));
         }
 
+        let task_spec = TaskSpec::new(TaskKind::ExtensionLifecycle, Some(key.dedup_key()))
+            .with_task_id(task_id.clone());
+        match self.runtime.register_external(task_spec)? {
+            Ok(_) => {}
+            Err(existing) => {
+                return Ok(LifecycleReservationOutcome::Existing(existing.task_id));
+            }
+        }
         reservations.insert(
             task_id,
             LifecycleReservation {
@@ -167,22 +172,20 @@ impl LifecycleTaskCoordinator {
         detail: serde_json::Value,
         task: TaskFn,
     ) -> Result<TaskSnapshot, AppError> {
-        let key = {
-            let reservations = self
-                .reservations
-                .lock()
-                .map_err(|_| AppError::Conflict("扩展生命周期注册表不可用".to_string()))?;
-            reservations
-                .get(task_id)
-                .map(|reservation| reservation.key.clone())
-                .ok_or_else(|| AppError::Conflict(format!("扩展生命周期预留不存在: {task_id}")))?
-        };
+        if !self
+            .reservations
+            .lock()
+            .map_err(|_| AppError::Conflict("扩展生命周期注册表不可用".to_string()))?
+            .contains_key(task_id)
+        {
+            return Err(AppError::Conflict(format!(
+                "扩展生命周期预留不存在: {task_id}"
+            )));
+        }
 
-        let spec = TaskSpec::new(TaskKind::ExtensionLifecycle, Some(key.dedup_key()))
-            .with_task_id(task_id.to_string());
-        let outcome = self.runtime.spawn(TaskSpec { detail, ..spec }, task);
-        match outcome {
-            Ok(SpawnOutcome::Started(snapshot)) => {
+        let snapshot = self.runtime.start_external_with(task_id, detail, task)?;
+        match snapshot.state {
+            TaskState::Running => {
                 if let Ok(mut reservations) = self.reservations.lock() {
                     if let Some(reservation) = reservations.get_mut(task_id) {
                         reservation.spawned = true;
@@ -190,17 +193,11 @@ impl LifecycleTaskCoordinator {
                 }
                 Ok(snapshot)
             }
-            Ok(SpawnOutcome::Existing(snapshot)) => {
-                self.release(task_id);
-                Err(AppError::Conflict(format!(
-                    "扩展生命周期任务已由 TaskRuntime 占用: {}",
-                    snapshot.task_id
-                )))
-            }
-            Err(error) => {
-                self.release(task_id);
-                Err(error)
-            }
+            TaskState::Pending => Err(AppError::Conflict(format!(
+                "扩展生命周期任务未进入运行态: {}",
+                snapshot.task_id
+            ))),
+            TaskState::Succeeded | TaskState::Failed | TaskState::Canceled => Ok(snapshot),
         }
     }
 
@@ -216,6 +213,7 @@ impl LifecycleTaskCoordinator {
         if let Ok(mut reservations) = self.reservations.lock() {
             reservations.remove(task_id);
         }
+        let _ = self.runtime.remove(task_id);
     }
 
     /// Drop a projection-only reservation immediately. A reservation that is
@@ -229,6 +227,7 @@ impl LifecycleTaskCoordinator {
                 .is_some_and(|reservation| !reservation.spawned)
             {
                 reservations.remove(task_id);
+                let _ = self.runtime.remove(task_id);
             }
         }
     }
