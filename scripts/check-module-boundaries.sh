@@ -171,14 +171,13 @@ check_max 1 'type AppResult<T> = Result<T, String>' \
 check_absent 'AppError::Legacy|map_err\([^)]*to_string' \
   "$ROOT/src-tauri/src/backend/application/agent_market.rs"
 
-# These are temporary compatibility counts, not permissions for new code.
-# BA-020 removes the symbols; until then, an increase fails the guard.
-check_max 1 'legacy_gemini' "$ROOT/src-tauri/src/backend/ai_execution"
-check_max 1 'configured_agent_capability' "$ROOT/src-tauri/src/backend/ai_execution"
-check_max 13 'AiCliRuntime' "$ROOT/src-tauri/src/backend/ai_execution"
-check_max 4 'AiStructuredTextRequest' "$ROOT/src-tauri/src/backend/ai_execution"
-check_max 3 'execute_structured_text' "$ROOT/src-tauri/src/backend/ai_execution"
-check_max 5 'run_cli_command' "$ROOT/src-tauri/src/backend/ai_execution"
+# BA-020 removes the provider-specific CLI execution compatibility seam.
+check_max 0 'legacy_gemini' "$ROOT/src-tauri/src/backend/ai_execution"
+check_max 0 'configured_agent_capability' "$ROOT/src-tauri/src/backend/ai_execution"
+check_max 0 'AiCliRuntime' "$ROOT/src-tauri/src/backend/ai_execution"
+check_max 0 'AiStructuredTextRequest' "$ROOT/src-tauri/src/backend/ai_execution"
+check_max 0 'execute_structured_text' "$ROOT/src-tauri/src/backend/ai_execution"
+check_max 0 'run_cli_command' "$ROOT/src-tauri/src/backend/ai_execution"
 
 # TargetCatalog is not yet fully wired into defaults/detection. Bound the
 # remaining two compatibility constructors until BA-017/018 removes them.
