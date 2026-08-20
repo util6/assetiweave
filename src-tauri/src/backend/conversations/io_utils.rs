@@ -1,5 +1,4 @@
 use super::prelude::*;
-use std::io::ErrorKind;
 
 const CONVERSATION_RUNTIME_OVERRIDES_KEY: &str = "conversationRuntimeOverrides";
 const ADAPTER_RUNTIME_PROBE_TIMEOUT_MS: u64 = 3_000;
@@ -7,7 +6,7 @@ const ADAPTER_RUNTIME_PROBE_OUTPUT_CAP: usize = 16 * 1024;
 pub(super) const LEGACY_JAVASCRIPT_COMMAND_NODE_VERSION: &str = ">=20";
 
 enum RuntimeProbeError {
-    Spawn(std::io::Error),
+    Spawn(String),
     Output(String),
     Timeout { stdout: Vec<u8>, stderr: Vec<u8> },
 }
@@ -272,11 +271,10 @@ pub(super) fn probe_adapter_runtime_status_with_requirement(
     program: PathBuf,
     required_version: Option<&str>,
 ) -> ConversationAdapterRuntimeStatus {
-    let mut command = Command::new(&program);
-    command.args(runtime_version_args(kind));
     let required_version = required_version.map(str::to_string);
     match run_runtime_probe(
-        command,
+        program.clone(),
+        runtime_version_args(kind),
         Duration::from_millis(ADAPTER_RUNTIME_PROBE_TIMEOUT_MS),
     ) {
         Ok((status, stdout, stderr)) if status.success() => {
@@ -297,7 +295,10 @@ pub(super) fn probe_adapter_runtime_status_with_requirement(
             )),
             hint: Some(runtime_remediation_hint(kind, &program)),
         },
-        Err(RuntimeProbeError::Spawn(error)) if error.kind() == ErrorKind::NotFound => {
+        Err(RuntimeProbeError::Spawn(error))
+            if error.to_ascii_lowercase().contains("not found")
+                || error.to_ascii_lowercase().contains("no such file") =>
+        {
             let requirement = required_version
                 .as_deref()
                 .map(|version| format!(" {version}"))
@@ -427,66 +428,39 @@ fn runtime_version_mismatch_error(
 }
 
 fn run_runtime_probe(
-    mut command: Command,
+    program: PathBuf,
+    args: Vec<&str>,
     timeout: Duration,
 ) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>), RuntimeProbeError> {
-    let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(RuntimeProbeError::Spawn)?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| RuntimeProbeError::Output("runtime stdout was not available".to_string()))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| RuntimeProbeError::Output("runtime stderr was not available".to_string()))?;
-    let stdout_reader =
-        thread::spawn(move || read_capped(stdout, ADAPTER_RUNTIME_PROBE_OUTPUT_CAP));
-    let stderr_reader =
-        thread::spawn(move || read_capped(stderr, ADAPTER_RUNTIME_PROBE_OUTPUT_CAP));
-
-    let started = Instant::now();
-    loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| RuntimeProbeError::Output(error.to_string()))?
-        {
-            let stdout = stdout_reader
-                .join()
-                .map_err(|_| {
-                    RuntimeProbeError::Output("runtime stdout reader panicked".to_string())
-                })?
-                .map_err(RuntimeProbeError::Output)?;
-            let stderr = stderr_reader
-                .join()
-                .map_err(|_| {
-                    RuntimeProbeError::Output("runtime stderr reader panicked".to_string())
-                })?
-                .map_err(RuntimeProbeError::Output)?;
-            return Ok((status, stdout, stderr));
+    let args = args.into_iter().map(str::to_string).collect::<Vec<_>>();
+    let output = crate::backend::host_process::run_program_with_timeout(
+        &program,
+        &args,
+        None,
+        timeout,
+        ADAPTER_RUNTIME_PROBE_OUTPUT_CAP,
+        ADAPTER_RUNTIME_PROBE_OUTPUT_CAP,
+    )
+    .map_err(|error| match error {
+        crate::backend::host_process::HostProcessError::Spawn(reason) => {
+            RuntimeProbeError::Spawn(reason)
         }
-        if started.elapsed() > timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            let stdout = stdout_reader
-                .join()
-                .map_err(|_| {
-                    RuntimeProbeError::Output("runtime stdout reader panicked".to_string())
-                })?
-                .map_err(RuntimeProbeError::Output)?;
-            let stderr = stderr_reader
-                .join()
-                .map_err(|_| {
-                    RuntimeProbeError::Output("runtime stderr reader panicked".to_string())
-                })?
-                .map_err(RuntimeProbeError::Output)?;
-            return Err(RuntimeProbeError::Timeout { stdout, stderr });
+        crate::backend::host_process::HostProcessError::Output(reason) => {
+            RuntimeProbeError::Output(reason)
         }
-        thread::sleep(Duration::from_millis(50));
+        crate::backend::host_process::HostProcessError::Timeout { stdout, stderr, .. } => {
+            RuntimeProbeError::Timeout { stdout, stderr }
+        }
+        crate::backend::host_process::HostProcessError::Cancelled { .. } => {
+            RuntimeProbeError::Output("runtime probe was cancelled".to_string())
+        }
+    })?;
+    if output.stdout_truncated || output.stderr_truncated {
+        return Err(RuntimeProbeError::Output(format!(
+            "runtime probe output exceeded cap of {ADAPTER_RUNTIME_PROBE_OUTPUT_CAP} bytes"
+        )));
     }
+    Ok((output.status, output.stdout, output.stderr))
 }
 
 fn adapter_runtime_missing_message(runtime: &ConversationAdapterRuntime, program: &Path) -> String {
@@ -728,24 +702,6 @@ fn is_javascript_adapter_command(path: &Path) -> bool {
                 "cjs" | "js" | "mjs"
             )
         })
-}
-
-pub(super) fn read_capped<R: Read>(mut reader: R, cap: usize) -> AppResult<Vec<u8>> {
-    let mut output = Vec::new();
-    let mut buffer = [0u8; 8192];
-    loop {
-        let read = reader
-            .read(&mut buffer)
-            .map_err(|error| error.to_string())?;
-        if read == 0 {
-            break;
-        }
-        output.extend_from_slice(&buffer[..read]);
-        if output.len() > cap {
-            return Err(format!("adapter output exceeded cap of {cap} bytes"));
-        }
-    }
-    Ok(output)
 }
 
 pub(super) fn hash_file(path: &Path) -> AppResult<String> {

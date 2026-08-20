@@ -845,66 +845,56 @@ pub(super) fn run_external_adapter(
     if let Some(runtime) = execution_runtime.as_ref() {
         ensure_adapter_runtime_available(runtime, &invocation)?;
     }
-    let mut child = Command::new(&invocation.program)
-        .args(&invocation.args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| {
+    let request_text = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
+    let output = crate::backend::host_process::run_host_command_blocking(
+        crate::backend::host_process::HostCommandSpec {
+            program: invocation.program.clone(),
+            args: invocation.args.clone(),
+            env: Vec::new(),
+            working_dir: None,
+            stdin: crate::backend::host_process::HostInput::Bytes(
+                request_text.into_iter().chain([b'\n']).collect(),
+            ),
+            timeout,
+            stdout_limit: DEFAULT_MAX_TOTAL_BYTES,
+            stderr_limit: 1024 * 1024,
+        },
+    )
+    .map_err(|error| match error {
+        crate::backend::host_process::HostProcessError::Spawn(reason) => {
             format!(
-                "failed to start adapter {}: {error}",
+                "failed to start adapter {}: {reason}",
                 invocation.display_path.display()
             )
-        })?;
-
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| "adapter stdin was not available".to_string())?;
-    let request_text = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
-    thread::spawn(move || {
-        let _ = stdin.write_all(&request_text);
-        let _ = stdin.write_all(b"\n");
-    });
-
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "adapter stdout was not available".to_string())?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| "adapter stderr was not available".to_string())?;
-    let stdout_reader = thread::spawn(move || read_capped(stdout, DEFAULT_MAX_TOTAL_BYTES));
-    let stderr_reader = thread::spawn(move || read_capped(stderr, 1024 * 1024));
-
-    let started = Instant::now();
-    loop {
-        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
-            let stdout = stdout_reader
-                .join()
-                .map_err(|_| "adapter stdout reader panicked".to_string())??;
-            let stderr = stderr_reader
-                .join()
-                .map_err(|_| "adapter stderr reader panicked".to_string())??;
-            if !status.success() {
-                return Err(format!(
-                    "adapter exited with status {status}: {}",
-                    String::from_utf8_lossy(&stderr)
-                ));
-            }
-            return parse_external_adapter_output_with_manifest(method, stdout, stderr, manifest);
         }
-        if started.elapsed() > timeout {
-            let _ = child.kill();
-            return Err(format!(
-                "adapter timed out after {} ms",
-                timeout.as_millis()
-            ));
+        crate::backend::host_process::HostProcessError::Output(reason) => {
+            format!(
+                "failed to capture adapter {} output: {reason}",
+                invocation.display_path.display()
+            )
         }
-        thread::sleep(Duration::from_millis(50));
+        crate::backend::host_process::HostProcessError::Timeout { .. } => {
+            format!("adapter timed out after {} ms", timeout.as_millis())
+        }
+        crate::backend::host_process::HostProcessError::Cancelled { .. } => {
+            "adapter process was cancelled".to_string()
+        }
+    })?;
+    if output.stdout_truncated || output.stderr_truncated {
+        return Err(format!(
+            "adapter output exceeded configured cap (stdout={} bytes, stderr={} bytes)",
+            DEFAULT_MAX_TOTAL_BYTES,
+            1024 * 1024
+        ));
     }
+    if !output.status.success() {
+        return Err(format!(
+            "adapter exited with status {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    parse_external_adapter_output_with_manifest(method, output.stdout, output.stderr, manifest)
 }
 
 pub(super) fn parse_external_adapter_output(

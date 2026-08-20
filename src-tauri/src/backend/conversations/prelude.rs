@@ -22,9 +22,7 @@ pub(super) use serde_json::{json, Value};
 pub(super) use sha2::{Digest, Sha256};
 pub(super) use std::{
     fs,
-    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
