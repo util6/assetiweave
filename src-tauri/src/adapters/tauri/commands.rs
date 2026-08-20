@@ -2713,23 +2713,24 @@ pub(crate) async fn search_recent_incremental_conversation_records(
 #[tauri::command]
 pub(crate) async fn get_conversation_search_index_status(
     state: State<'_, AppState>,
-) -> AppResult<ConversationSearchIndexStatus> {
+) -> RuntimeAppResult<ConversationSearchIndexStatus> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).get_conversation_search_index_status()
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
 pub(crate) fn start_conversation_search_index_rebuild(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> AppResult<ConversationSearchIndexTaskSnapshot> {
+) -> RuntimeAppResult<ConversationSearchIndexTaskSnapshot> {
     let (snapshot, should_start) = state
         .background_tasks
-        .begin_conversation_search_index_rebuild()?;
+        .begin_conversation_search_index_rebuild()
+        .map_err(AppError::External)?;
     if !should_start {
         return Ok(snapshot);
     }
@@ -2751,11 +2752,22 @@ pub(crate) fn start_conversation_search_index_rebuild(
                     AppService::from_runtime(&runtime)
                         .rebuild_conversation_search_index()
                         .and_then(|report| {
-                            serde_json::to_value(report).map_err(|error| error.to_string())
+                            serde_json::to_value(report).map_err(|error| {
+                                AppError::External(format!(
+                                    "serialize conversation search index report: {error}"
+                                ))
+                            })
                         })
                 }))
-                .unwrap_or_else(|_| Err("conversation search index rebuild panicked".to_string()));
-                let projection_result = result.clone();
+                .unwrap_or_else(|_| {
+                    Err(AppError::Process(
+                        "conversation search index rebuild panicked".to_string(),
+                    ))
+                });
+                let projection_result = match &result {
+                    Ok(value) => Ok(value.clone()),
+                    Err(error) => Err(error.to_string()),
+                };
                 match background_tasks_for_runtime.finish_conversation_search_index_rebuild(
                     &task_id_for_runtime,
                     projection_result,
@@ -2779,20 +2791,20 @@ pub(crate) fn start_conversation_search_index_rebuild(
                         &[("task_id", task_id_for_runtime.clone())],
                     ),
                 }
-                result.map_err(AppError::Legacy)
+                result
             }),
         );
         match outcome {
             Ok(SpawnOutcome::Started(_)) => {}
             Ok(SpawnOutcome::Existing(_)) => {
-                return Err(
+                return Err(AppError::Conflict(
                     "conversation search index task is already running in TaskRuntime".to_string(),
-                );
+                ));
             }
             Err(error) => {
                 let _ = background_tasks
                     .finish_conversation_search_index_rebuild(&task_id, Err(error.to_string()));
-                return Err(error.into());
+                return Err(error);
             }
         }
     } else {
@@ -2801,11 +2813,25 @@ pub(crate) fn start_conversation_search_index_rebuild(
                 AppService::from_runtime(&runtime)
                     .rebuild_conversation_search_index()
                     .and_then(|report| {
-                        serde_json::to_value(report).map_err(|error| error.to_string())
+                        serde_json::to_value(report).map_err(|error| {
+                            AppError::External(format!(
+                                "serialize conversation search index report: {error}"
+                            ))
+                        })
                     })
             }))
-            .unwrap_or_else(|_| Err("conversation search index rebuild panicked".to_string()));
-            match background_tasks.finish_conversation_search_index_rebuild(&task_id, result) {
+            .unwrap_or_else(|_| {
+                Err(AppError::Process(
+                    "conversation search index rebuild panicked".to_string(),
+                ))
+            });
+            let projection_result = match &result {
+                Ok(value) => Ok(value.clone()),
+                Err(error) => Err(error.to_string()),
+            };
+            match background_tasks
+                .finish_conversation_search_index_rebuild(&task_id, projection_result)
+            {
                 Ok(snapshot) => {
                     if let Err(error) =
                         app.emit("conversation-search-index-task-updated", &snapshot)

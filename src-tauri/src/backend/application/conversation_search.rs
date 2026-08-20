@@ -1,6 +1,7 @@
 use super::prelude::*;
 use crate::backend::dto::ConversationSearchIndexRebuildReport;
 use crate::backend::dto::ConversationSearchIndexStatus;
+use crate::backend::runtime::{AppError, AppResult};
 
 impl AppService {
     pub(crate) fn rebuild_conversation_search_index(
@@ -11,6 +12,7 @@ impl AppService {
             &self.db_path,
             self.tenant_id(),
         )
+        .map_err(AppError::Storage)
     }
 
     pub(crate) fn get_conversation_search_index_status(
@@ -18,12 +20,15 @@ impl AppService {
     ) -> AppResult<ConversationSearchIndexStatus> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        let state = self.db.block_on(async move {
-            crate::backend::store::load_or_create_conversation_search_index_state_sqlx(
-                &pool, &tenant_id,
-            )
-            .await
-        })?;
+        let state = self
+            .db
+            .block_on(async move {
+                crate::backend::store::load_or_create_conversation_search_index_state_sqlx(
+                    &pool, &tenant_id,
+                )
+                .await
+            })
+            .map_err(AppError::Storage)?;
 
         Ok(status_from_state(state))
     }
