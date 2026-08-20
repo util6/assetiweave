@@ -1,5 +1,6 @@
+use crate::backend::compat::LegacyResult;
 use crate::backend::dto::{
-    AppResult, ConversationQuestionDetail, ConversationSessionDetail, ConversationSessionListItem,
+    ConversationQuestionDetail, ConversationSessionDetail, ConversationSessionListItem,
 };
 use crate::backend::models::{
     conversation_turn_fingerprint, group_turn_ids_by_question, ConversationPart,
@@ -27,7 +28,7 @@ pub(crate) async fn import_web_record_sessions_sqlx(
     source: &ConversationSource,
     sessions: &[NormalizedConversationSession],
     dry_run: bool,
-) -> AppResult<ConversationImportResult> {
+) -> LegacyResult<ConversationImportResult> {
     let turn_count = sessions.iter().map(|session| session.turns.len()).sum();
     if dry_run {
         return Ok(ConversationImportResult {
@@ -174,7 +175,7 @@ pub(crate) async fn list_web_record_sessions_sqlx(
     query: Option<&str>,
     limit: usize,
     offset: usize,
-) -> AppResult<Vec<ConversationSessionListItem>> {
+) -> LegacyResult<Vec<ConversationSessionListItem>> {
     let needle = normalize_query(query);
     let id_needle = query.and_then(crate::backend::models::conversation_id_search_term);
     let rows = sqlx::query(
@@ -257,7 +258,7 @@ pub(crate) async fn resolve_web_record_session_id_prefix_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     input: &str,
-) -> AppResult<String> {
+) -> LegacyResult<String> {
     if input.len() >= 36 {
         return Ok(input.to_string());
     }
@@ -296,7 +297,7 @@ pub(crate) async fn resolve_web_record_part_id_prefix_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     input: &str,
-) -> AppResult<String> {
+) -> LegacyResult<String> {
     if input.len() >= 36 {
         return Ok(input.to_string());
     }
@@ -335,7 +336,7 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     session_id: &str,
-) -> AppResult<ConversationSessionDetail> {
+) -> LegacyResult<ConversationSessionDetail> {
     let session_row = sqlx::query(
         r#"
         SELECT id, source_id, adapter_id, external_id, title, NULL AS project_path,
@@ -370,7 +371,7 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
     let questions = question_rows
         .iter()
         .map(map_sqlx_conversation_question)
-        .collect::<AppResult<Vec<_>>>()?;
+        .collect::<LegacyResult<Vec<_>>>()?;
 
     let turn_rows = sqlx::query(
         r#"
@@ -462,7 +463,7 @@ pub(crate) async fn update_web_record_part_translation_sqlx(
     tenant_id: &str,
     part_id: &str,
     translated_text: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let result = sqlx::query(
         r#"
         UPDATE web_record_parts
@@ -543,7 +544,7 @@ async fn delete_web_record_session_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session_id: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(
         r#"
         DELETE FROM web_record_question_turns
@@ -600,7 +601,7 @@ async fn web_record_session_is_unchanged_sqlx_tx(
     tenant_id: &str,
     session: &ConversationSession,
     normalized: &NormalizedConversationSession,
-) -> AppResult<bool> {
+) -> LegacyResult<bool> {
     let Some(source_fingerprint) = session.source_fingerprint.as_deref() else {
         return Ok(false);
     };
@@ -641,7 +642,7 @@ async fn web_record_session_exists_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session_id: &str,
-) -> AppResult<bool> {
+) -> LegacyResult<bool> {
     let exists = sqlx::query_scalar::<_, i64>(
         "SELECT EXISTS(SELECT 1 FROM web_record_sessions WHERE tenant_id = ?1 AND id = ?2)",
     )
@@ -658,7 +659,7 @@ async fn web_record_session_turns_are_unchanged_sqlx_tx(
     tenant_id: &str,
     session_id: &str,
     normalized: &NormalizedConversationSession,
-) -> AppResult<bool> {
+) -> LegacyResult<bool> {
     let rows = sqlx::query(
         r#"
         SELECT external_id, fingerprint, missing
@@ -693,7 +694,7 @@ async fn clear_legacy_conversation_records_for_source_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     source_id: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(
         r#"
         DELETE FROM conversation_question_fts
@@ -786,7 +787,7 @@ async fn insert_web_record_session_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session: &ConversationSession,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(
         r#"
         INSERT INTO web_record_sessions (
@@ -819,7 +820,7 @@ async fn insert_web_record_turn_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     turn: &ConversationTurn,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(
         r#"
         INSERT INTO web_record_turns (
@@ -853,7 +854,7 @@ async fn insert_web_record_parts_sqlx_tx(
     turn_id: &str,
     parts: &[crate::backend::models::NormalizedConversationPart],
     translation_state: &BTreeMap<String, (Option<String>, Option<String>, Option<String>)>,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     for (index, part) in parts.iter().enumerate() {
         let part_id = stable_id("web-record-part", &[turn_id, &index.to_string()]);
         let content_card_json = part.content_card.as_ref().map(encode_json).transpose()?;
@@ -899,7 +900,7 @@ async fn load_web_record_part_translation_state_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session_id: &str,
-) -> AppResult<BTreeMap<String, (Option<String>, Option<String>, Option<String>)>> {
+) -> LegacyResult<BTreeMap<String, (Option<String>, Option<String>, Option<String>)>> {
     let rows = sqlx::query(
         r#"
         SELECT p.id, p.text, p.command, p.translated_text
@@ -933,7 +934,7 @@ async fn insert_web_record_questions_sqlx_tx(
     session_id: &str,
     turns: &[ConversationTurn],
     now: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let groups = group_turn_ids_by_question(
         turns
             .iter()
@@ -995,7 +996,7 @@ async fn build_question_aggregate_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     turn_ids: &[String],
-) -> AppResult<QuestionAggregate> {
+) -> LegacyResult<QuestionAggregate> {
     let mut question_text = Vec::new();
     let mut answer_text = Vec::new();
     let mut code_text = Vec::new();
@@ -1031,7 +1032,7 @@ async fn load_web_record_parts_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     turn_id: &str,
-) -> AppResult<Vec<ConversationPart>> {
+) -> LegacyResult<Vec<ConversationPart>> {
     let rows = sqlx::query(
         r#"
         SELECT id, turn_id, part_index, role, kind, text, language, command,
@@ -1054,7 +1055,7 @@ async fn insert_sync_run_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     run: &ConversationSyncRun,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(
         r#"
         INSERT INTO conversation_sync_runs (
@@ -1176,7 +1177,7 @@ mod tests {
                     &sessions[0].session.id,
                 )
                 .await?;
-                AppResult::Ok((
+                LegacyResult::Ok((
                     legacy_count_before_import,
                     legacy_count_after_import,
                     sessions,
@@ -1247,7 +1248,7 @@ mod tests {
                     &sessions[0].session.id,
                 )
                 .await?;
-                AppResult::Ok((columns, sessions, detail))
+                LegacyResult::Ok((columns, sessions, detail))
             })
             .expect("import web records without persisting project paths");
 
@@ -1345,7 +1346,7 @@ mod tests {
                     .await?
                     .len();
 
-                AppResult::Ok((beta_before, beta_after, alpha_legacy_count))
+                LegacyResult::Ok((beta_before, beta_after, alpha_legacy_count))
             })
             .expect("web record legacy cleanup stays tenant-scoped");
 
@@ -1470,7 +1471,7 @@ mod tests {
                     &retained_id,
                 )
                 .await?;
-                AppResult::Ok((listed, retained_detail))
+                LegacyResult::Ok((listed, retained_detail))
             })
             .expect("retain omitted web record sessions through SQLx");
 
@@ -1553,7 +1554,7 @@ mod tests {
                 .fetch_one(database.pool())
                 .await
                 .map_err(|error| error.to_string())?;
-                AppResult::Ok((result, imported_at, metadata_json))
+                LegacyResult::Ok((result, imported_at, metadata_json))
             })
             .expect("refresh normalized web parts through SQLx");
 
@@ -1617,7 +1618,7 @@ mod tests {
                     &sessions[0].session.id,
                 )
                 .await?;
-                AppResult::Ok((sessions, detail))
+                LegacyResult::Ok((sessions, detail))
             })
             .expect("read web records through SQLx");
 
@@ -1691,7 +1692,7 @@ mod tests {
                     0,
                 )
                 .await?;
-                AppResult::Ok((fragment_matches, direct_fragment_matches, full_matches))
+                LegacyResult::Ok((fragment_matches, direct_fragment_matches, full_matches))
             })
             .expect("list web record sessions by display id fragment");
 
@@ -1893,7 +1894,7 @@ mod tests {
                     None,
                 )
                 .await?;
-                AppResult::Ok((session_id, alpha_detail, beta_detail, alpha_page, beta_page))
+                LegacyResult::Ok((session_id, alpha_detail, beta_detail, alpha_page, beta_page))
             })
             .expect("isolate web records by tenant");
 
@@ -1977,7 +1978,7 @@ mod tests {
                     &session_id,
                 )
                 .await?;
-                AppResult::Ok((part_id, detail))
+                LegacyResult::Ok((part_id, detail))
             })
             .expect("round trip web record card");
 
@@ -2002,7 +2003,7 @@ mod tests {
     async fn count_legacy_conversation_sessions_sqlx(
         pool: &SqlitePool,
         source_id: &str,
-    ) -> AppResult<i64> {
+    ) -> LegacyResult<i64> {
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM conversation_sessions WHERE source_id = ?1",
         )

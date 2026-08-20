@@ -1,4 +1,4 @@
-use crate::backend::dto::AppResult;
+use crate::backend::compat::LegacyResult;
 use crate::backend::models::DeploymentState;
 use sqlx::{Row, SqlitePool};
 
@@ -8,7 +8,7 @@ pub(crate) async fn upsert_deployment_state_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     state: &DeploymentState,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(sql::UPSERT_DEPLOYMENT_STATE)
         .bind(tenant_id)
         .bind(&state.profile_id)
@@ -30,7 +30,7 @@ pub(crate) async fn is_managed_deployment_sqlx(
     profile_id: &str,
     asset_id: &str,
     target_path: &str,
-) -> AppResult<bool> {
+) -> LegacyResult<bool> {
     let managed_by: Option<String> = sqlx::query_scalar(sql::GET_MANAGED_DEPLOYMENT)
         .bind(tenant_id)
         .bind(profile_id)
@@ -46,7 +46,7 @@ pub(crate) async fn count_deployment_state_by_profile_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     profile_id: &str,
-) -> AppResult<usize> {
+) -> LegacyResult<usize> {
     let count: i64 = sqlx::query_scalar(sql::COUNT_DEPLOYMENT_STATE_BY_PROFILE)
         .bind(tenant_id)
         .bind(profile_id)
@@ -60,7 +60,7 @@ pub(crate) async fn load_managed_deployment_targets_by_profile_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     profile_id: &str,
-) -> AppResult<Vec<(String, String)>> {
+) -> LegacyResult<Vec<(String, String)>> {
     let rows = sqlx::query(sql::LIST_MANAGED_DEPLOYMENT_TARGETS_BY_PROFILE)
         .bind(tenant_id)
         .bind(profile_id)
@@ -84,7 +84,7 @@ pub(crate) async fn delete_deployment_state_sqlx(
     profile_id: &str,
     asset_id: &str,
     target_path: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(sql::DELETE_DEPLOYMENT_STATE)
         .bind(tenant_id)
         .bind(profile_id)
@@ -99,7 +99,7 @@ pub(crate) async fn delete_deployment_state_sqlx(
 pub(crate) async fn delete_orphan_deployment_state_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(sql::DELETE_ORPHAN_DEPLOYMENT_STATE)
         .bind(tenant_id)
         .execute(pool)
@@ -204,7 +204,7 @@ mod tests {
                     .fetch_one(database.pool())
                     .await
                     .map_err(|error| error.to_string())?;
-                AppResult::Ok(rows)
+                LegacyResult::Ok(rows)
             })
             .map(|rows| assert_eq!(rows, 2))
             .expect("query SQLx deployment repo");
@@ -229,7 +229,7 @@ mod tests {
         }
     }
 
-    async fn insert_asset(pool: &SqlitePool, asset_id: &str) -> AppResult<()> {
+    async fn insert_asset(pool: &SqlitePool, asset_id: &str) -> LegacyResult<()> {
         sqlx::query(
             r#"
             INSERT INTO assets (

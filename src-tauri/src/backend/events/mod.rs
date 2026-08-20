@@ -5,7 +5,7 @@
 //! ordered range. Otherwise it belongs on the task-progress or transport
 //! channel instead of this closed enum.
 
-use crate::backend::{dto::AppResult, runtime::AppError};
+use crate::backend::{compat::LegacyResult, runtime::AppError};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::{Sqlite, Transaction};
@@ -82,7 +82,7 @@ pub(crate) fn cap_changed_session_ids(
 pub(crate) async fn append_outbox_event_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     event: &DomainEvent,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let (tenant_id, event_type, source_id, revision_start, revision_end) = event.metadata();
     let payload = serde_json::to_string(event).map_err(|error| error.to_string())?;
     let event_id = match event {

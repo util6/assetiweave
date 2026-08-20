@@ -1,5 +1,8 @@
-use crate::backend::dto::{AppResult, AppShortcut, AppShortcutIconSvg};
 use crate::backend::models::{AppKind, TargetProfile};
+use crate::backend::{
+    compat::LegacyResult,
+    dto::{AppShortcut, AppShortcutIconSvg},
+};
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 use std::collections::HashSet;
 
@@ -12,7 +15,7 @@ pub(crate) async fn seed_app_shortcuts_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     shortcuts: &[(&str, &str, &str, bool)],
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     for (sort_order, (profile_id, display_icon, accent_color, enabled)) in
         shortcuts.iter().enumerate()
     {
@@ -35,7 +38,7 @@ pub(crate) async fn ensure_default_app_shortcuts_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     shortcuts: &[(&str, &str, &str, bool)],
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let existing_ids = sqlx::query_scalar::<_, String>(
         "SELECT profile_id FROM app_shortcut_items WHERE tenant_id = ?1",
     )
@@ -78,7 +81,7 @@ pub(crate) async fn ensure_default_app_shortcuts_sqlx(
 pub(crate) async fn load_app_shortcuts_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<Vec<AppShortcut>> {
+) -> LegacyResult<Vec<AppShortcut>> {
     let rows = sqlx::query(sql::LIST_APP_SHORTCUTS)
         .bind(tenant_id)
         .fetch_all(pool)
@@ -90,7 +93,7 @@ pub(crate) async fn load_app_shortcuts_sqlx(
 pub(crate) async fn load_app_shortcut_settings_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<Vec<AppShortcut>> {
+) -> LegacyResult<Vec<AppShortcut>> {
     let rows = sqlx::query(sql::LIST_APP_SHORTCUT_SETTINGS)
         .bind(tenant_id)
         .fetch_all(pool)
@@ -103,7 +106,7 @@ pub(crate) async fn save_app_shortcuts_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     shortcuts: &[AppShortcut],
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     for (sort_order, shortcut) in shortcuts.iter().enumerate() {
         let icon_svg = shortcut.icon_svg.as_ref().map(encode_json).transpose()?;
@@ -123,11 +126,11 @@ pub(crate) async fn save_app_shortcuts_sqlx(
     Ok(())
 }
 
-fn decode_icon_svg_sqlx(value: Option<String>) -> AppResult<Option<AppShortcutIconSvg>> {
+fn decode_icon_svg_sqlx(value: Option<String>) -> LegacyResult<Option<AppShortcutIconSvg>> {
     value.map(decode_json).transpose()
 }
 
-fn map_sqlx_app_shortcut(row: &SqliteRow) -> AppResult<AppShortcut> {
+fn map_sqlx_app_shortcut(row: &SqliteRow) -> LegacyResult<AppShortcut> {
     let profile: TargetProfile = decode_json(
         row.try_get::<String, _>(5)
             .map_err(|error| error.to_string())?,
@@ -146,7 +149,7 @@ fn map_sqlx_app_shortcut(row: &SqliteRow) -> AppResult<AppShortcut> {
     })
 }
 
-fn map_sqlx_app_shortcut_setting(row: &SqliteRow) -> AppResult<AppShortcut> {
+fn map_sqlx_app_shortcut_setting(row: &SqliteRow) -> LegacyResult<AppShortcut> {
     let profile: TargetProfile = decode_json(
         row.try_get::<String, _>(1)
             .map_err(|error| error.to_string())?,
@@ -185,7 +188,9 @@ mod tests {
             Uuid::new_v4()
         ));
         let database = crate::backend::store::Database::open(&db_path).expect("open database");
-        let profiles = crate::backend::defaults::default_profiles()
+        let catalog = crate::backend::target_catalog::TargetCatalog::builtin_for_tests()
+            .expect("builtin target descriptors");
+        let profiles = crate::backend::defaults::default_profiles_from_catalog(&catalog)
             .into_iter()
             .take(2)
             .collect::<Vec<_>>();
@@ -210,7 +215,7 @@ mod tests {
                     view_box: Some("0 0 1 1".to_string()),
                 });
                 save_app_shortcuts_sqlx(database.pool(), "default", &settings).await?;
-                AppResult::Ok((
+                LegacyResult::Ok((
                     load_app_shortcut_settings_sqlx(database.pool(), "default").await?,
                     load_app_shortcuts_sqlx(database.pool(), "default").await?,
                 ))

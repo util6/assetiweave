@@ -2,7 +2,7 @@ use super::schema::{
     build_conversation_schema, register_conversation_tokenizers, ConversationSearchSchema,
     JIEBA_TOKENIZER,
 };
-use crate::backend::dto::AppResult;
+use crate::backend::compat::LegacyResult;
 use crate::backend::models::{conversation_id_fragment, conversation_id_search_term};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -176,7 +176,7 @@ pub(super) struct InMemoryConversationIndex {
 
 #[cfg(test)]
 impl InMemoryConversationIndex {
-    pub(super) fn new() -> AppResult<Self> {
+    pub(super) fn new() -> LegacyResult<Self> {
         let fields = build_conversation_schema();
         let index = Index::create_in_ram(fields.schema.clone());
         register_conversation_tokenizers(&index);
@@ -186,14 +186,14 @@ impl InMemoryConversationIndex {
     pub(super) fn replace_documents(
         &self,
         documents: &[ConversationSearchDocument],
-    ) -> AppResult<()> {
+    ) -> LegacyResult<()> {
         replace_documents(&self.index, &self.fields, documents)
     }
 
     pub(super) fn search_cards(
         &self,
         request: &ConversationCardQuery,
-    ) -> AppResult<ConversationSearchMatches> {
+    ) -> LegacyResult<ConversationSearchMatches> {
         search_cards(&self.index, &self.fields, request)
     }
 }
@@ -204,7 +204,7 @@ pub(super) struct DiskConversationIndex {
 }
 
 impl DiskConversationIndex {
-    pub(super) fn create(path: &Path) -> AppResult<Self> {
+    pub(super) fn create(path: &Path) -> LegacyResult<Self> {
         std::fs::create_dir_all(path).map_err(|error| error.to_string())?;
         let fields = build_conversation_schema();
         let index =
@@ -216,11 +216,11 @@ impl DiskConversationIndex {
     pub(super) fn replace_documents(
         &self,
         documents: &[ConversationSearchDocument],
-    ) -> AppResult<()> {
+    ) -> LegacyResult<()> {
         replace_documents(&self.index, &self.fields, documents)
     }
 
-    pub(super) fn open(path: &Path) -> AppResult<Self> {
+    pub(super) fn open(path: &Path) -> LegacyResult<Self> {
         let fields = build_conversation_schema();
         let index = Index::open_in_dir(path).map_err(|error| error.to_string())?;
         register_conversation_tokenizers(&index);
@@ -230,7 +230,7 @@ impl DiskConversationIndex {
     pub(super) fn search_cards(
         &self,
         request: &ConversationCardQuery,
-    ) -> AppResult<ConversationSearchMatches> {
+    ) -> LegacyResult<ConversationSearchMatches> {
         search_cards(&self.index, &self.fields, request)
     }
 }
@@ -239,7 +239,7 @@ fn replace_documents(
     index: &Index,
     fields: &ConversationSearchSchema,
     documents: &[ConversationSearchDocument],
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let mut writer = index
         .writer(50_000_000)
         .map_err(|error| error.to_string())?;
@@ -282,7 +282,7 @@ fn search_cards(
     index: &Index,
     fields: &ConversationSearchSchema,
     request: &ConversationCardQuery,
-) -> AppResult<ConversationSearchMatches> {
+) -> LegacyResult<ConversationSearchMatches> {
     let query = request.query.trim();
     if query.is_empty() {
         return Err("conversation search query is required".to_string());
@@ -368,7 +368,7 @@ fn build_card_query(
     fields: &ConversationSearchSchema,
     query: &str,
     request: &ConversationCardQuery,
-) -> AppResult<BooleanQuery> {
+) -> LegacyResult<BooleanQuery> {
     let mut clauses: Vec<(Occur, Box<dyn Query>)> =
         vec![exact_clause(fields.record_kind, &request.record_kind)];
     let has_card_filters = !request.card_kinds.is_empty() || !request.semantic_roles.is_empty();
@@ -476,7 +476,7 @@ fn build_card_query(
     Ok(BooleanQuery::new(clauses))
 }
 
-fn tokens_for(index: &Index, tokenizer_name: &str, query: &str) -> AppResult<Vec<String>> {
+fn tokens_for(index: &Index, tokenizer_name: &str, query: &str) -> LegacyResult<Vec<String>> {
     let mut tokens = BTreeSet::new();
     let mut analyzer = index
         .tokenizers()
@@ -543,7 +543,7 @@ fn text_branch(
     )
 }
 
-fn stored_text(document: &TantivyDocument, field: tantivy::schema::Field) -> AppResult<String> {
+fn stored_text(document: &TantivyDocument, field: tantivy::schema::Field) -> LegacyResult<String> {
     document
         .get_first(field)
         .and_then(|value| value.as_str())

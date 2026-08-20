@@ -1,5 +1,6 @@
 use crate::backend::{
-    dto::{AppResult, ExecutionResult},
+    compat::LegacyResult,
+    dto::ExecutionResult,
     models::{
         Asset, DeploymentAction, DeploymentActionType, DeploymentPlan, DeploymentState,
         DeploymentStrategy, TargetProfile,
@@ -73,7 +74,7 @@ pub(crate) async fn execute_deployment_plan(
     plan: &DeploymentPlan,
     requested_action_ids: Option<&[String]>,
     target_catalog: &crate::backend::target_catalog::TargetCatalog,
-) -> AppResult<ExecutionResult> {
+) -> LegacyResult<ExecutionResult> {
     let requested: Option<HashSet<&str>> =
         requested_action_ids.map(|ids| ids.iter().map(String::as_str).collect());
     let asset_map: HashMap<&str, &Asset> = assets

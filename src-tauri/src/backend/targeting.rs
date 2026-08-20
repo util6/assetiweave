@@ -1,6 +1,6 @@
 use crate::backend::models::{Asset, AssetFormat, TargetProfile};
 use crate::backend::{
-    dto::AppResult,
+    compat::LegacyResult,
     path_utils::{expand_path, hash_path},
 };
 use std::{
@@ -25,7 +25,7 @@ pub(crate) struct MountInspection {
     pub(crate) linked_source: Option<String>,
 }
 
-pub(crate) fn target_dir(profile: &TargetProfile) -> AppResult<PathBuf> {
+pub(crate) fn target_dir(profile: &TargetProfile) -> LegacyResult<PathBuf> {
     let target_root = profile
         .target_paths
         .first()
@@ -33,11 +33,14 @@ pub(crate) fn target_dir(profile: &TargetProfile) -> AppResult<PathBuf> {
     expand_path(target_root)
 }
 
-pub(crate) fn target_path(profile: &TargetProfile, asset: &Asset) -> AppResult<PathBuf> {
+pub(crate) fn target_path(profile: &TargetProfile, asset: &Asset) -> LegacyResult<PathBuf> {
     Ok(target_dir(profile)?.join(target_link_name(asset)))
 }
 
-pub(crate) fn inspect_mount(profile: &TargetProfile, asset: &Asset) -> AppResult<MountInspection> {
+pub(crate) fn inspect_mount(
+    profile: &TargetProfile,
+    asset: &Asset,
+) -> LegacyResult<MountInspection> {
     let target_dir_path = target_dir(profile)?;
     let target_path = target_path(profile, asset)?;
     let target_dir_label = profile
@@ -122,18 +125,21 @@ fn same_path(left: &Path, right: &Path) -> bool {
     crate::backend::host_filesystem::HostFilesystem::current().same_path(left, right)
 }
 
-pub(crate) fn canonical_source_path(asset: &Asset) -> AppResult<PathBuf> {
+pub(crate) fn canonical_source_path(asset: &Asset) -> LegacyResult<PathBuf> {
     expand_path(&asset.absolute_path)?
         .canonicalize()
         .map_err(|error| error.to_string())
 }
 
-pub(crate) fn target_is_asset_source(asset: &Asset, target_path: &Path) -> AppResult<bool> {
+pub(crate) fn target_is_asset_source(asset: &Asset, target_path: &Path) -> LegacyResult<bool> {
     let source_path = canonical_source_path(asset)?;
     Ok(same_path(target_path, &source_path))
 }
 
-pub(crate) fn target_content_matches_asset(asset: &Asset, target_path: &Path) -> AppResult<bool> {
+pub(crate) fn target_content_matches_asset(
+    asset: &Asset,
+    target_path: &Path,
+) -> LegacyResult<bool> {
     let source_path = canonical_source_path(asset)?;
     let metadata = fs::symlink_metadata(target_path).map_err(|error| error.to_string())?;
     target_content_matches_asset_source(asset, &source_path, target_path, &metadata)
@@ -144,7 +150,7 @@ fn target_content_matches_asset_source(
     source_path: &Path,
     target_path: &Path,
     target_metadata: &Metadata,
-) -> AppResult<bool> {
+) -> LegacyResult<bool> {
     if target_metadata.file_type().is_symlink() {
         return Ok(false);
     }

@@ -1009,30 +1009,31 @@ impl AppService {
         let evaluated = crate::backend::conversations::validate_conversation_adapter_package_dir(
             &install_dir,
         )
+        .map_err(AppError::Validation)
         .and_then(|validation| {
             if validation.manifest.package_id != package.package_id {
-                return Err(format!(
+                return Err(AppError::Validation(format!(
                     "conversation adapter package manifest id {} does not match registered package {}",
                     validation.manifest.package_id, package.package_id
-                ));
+                )));
             }
             if validation.manifest.version != package.version {
-                return Err(format!(
+                return Err(AppError::Validation(format!(
                     "conversation adapter package manifest version {} does not match active version {}",
                     validation.manifest.version, package.version
-                ));
+                )));
             }
             let adapter = adapter.ok_or_else(|| {
-                format!(
+                AppError::NotFound(format!(
                     "conversation adapter runtime is not registered: {}",
                     package.adapter_id
-                )
+                ))
             })?;
             if validation.adapter_validation.manifest.id != adapter.id {
-                return Err(format!(
+                return Err(AppError::Validation(format!(
                     "conversation adapter package {} manifest adapter id {} does not match registered adapter {}",
                     package.package_id, validation.adapter_validation.manifest.id, adapter.id
-                ));
+                )));
             }
             if package.origin != ConversationAdapterPackageOrigin::DevOverride {
                 let trusted_hash = package
@@ -1040,16 +1041,16 @@ impl AppService {
                     .as_deref()
                     .or(package.installed_content_hash.as_deref())
                     .ok_or_else(|| {
-                        format!(
+                        AppError::Validation(format!(
                             "conversation adapter package has no trusted hash: {}",
                             package.package_id
-                        )
+                        ))
                     })?;
                 if validation.content_hash != trusted_hash {
-                    return Err(format!(
+                    return Err(AppError::Validation(format!(
                         "conversation adapter package content hash mismatch: {}",
                         package.package_id
-                    ));
+                    )));
                 }
             }
             Ok(validation.content_hash)
@@ -1064,9 +1065,11 @@ impl AppService {
                 package.error_message = None;
             }
             Err(error) => {
+                let error_message = error.to_string();
                 package.runtime_ready = false;
-                package.runtime_gate_status = classify_runtime_gate_error(&install_dir, &error);
-                package.error_message = Some(error);
+                package.runtime_gate_status =
+                    classify_runtime_gate_error(&install_dir, &error_message);
+                package.error_message = Some(error_message);
             }
         }
         package.runtime_validated_at = Some(now.clone());

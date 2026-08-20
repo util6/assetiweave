@@ -1,6 +1,6 @@
 use crate::backend::{
     app_settings::conversation_adapter_dir,
-    dto::AppResult,
+    compat::LegacyResult,
     models::{ConversationAdapter, ConversationAdapterKind, ConversationAdapterTrustState},
 };
 use chrono::Utc;
@@ -69,7 +69,7 @@ const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
     },
 ];
 
-pub(crate) fn ensure_official_conversation_adapters() -> AppResult<Vec<ConversationAdapter>> {
+pub(crate) fn ensure_official_conversation_adapters() -> LegacyResult<Vec<ConversationAdapter>> {
     let root = conversation_adapter_dir()?;
     let mut adapters = Vec::new();
     for asset in OFFICIAL_ADAPTERS {
@@ -119,7 +119,7 @@ pub(crate) fn ensure_official_conversation_adapters() -> AppResult<Vec<Conversat
     Ok(adapters)
 }
 
-fn write_if_missing(path: &Path, bytes: &[u8]) -> AppResult<()> {
+fn write_if_missing(path: &Path, bytes: &[u8]) -> LegacyResult<()> {
     if path.exists() {
         return Ok(());
     }
@@ -127,7 +127,7 @@ fn write_if_missing(path: &Path, bytes: &[u8]) -> AppResult<()> {
 }
 
 #[cfg(unix)]
-fn make_executable(path: &Path) -> AppResult<()> {
+fn make_executable(path: &Path) -> LegacyResult<()> {
     use std::os::unix::fs::PermissionsExt;
 
     let mut permissions = fs::metadata(path)
@@ -138,7 +138,7 @@ fn make_executable(path: &Path) -> AppResult<()> {
 }
 
 #[cfg(not(unix))]
-fn make_executable(_path: &Path) -> AppResult<()> {
+fn make_executable(_path: &Path) -> LegacyResult<()> {
     Ok(())
 }
 

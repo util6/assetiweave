@@ -1,4 +1,4 @@
-use crate::backend::dto::AppResult;
+use crate::backend::compat::LegacyResult;
 #[cfg(test)]
 use crate::backend::path_utils::ensure_app_library_dirs;
 use crate::backend::target_catalog::TargetCatalog;
@@ -31,14 +31,14 @@ struct DatabaseInner {
 
 impl Database {
     #[cfg(test)]
-    pub(crate) fn open(db_path: &Path) -> AppResult<Self> {
+    pub(crate) fn open(db_path: &Path) -> LegacyResult<Self> {
         let runtime = build_runtime()?;
         let pool = runtime.block_on(open_migrated_pool(db_path))?;
         Ok(Self::from_parts(pool, runtime))
     }
 
     #[cfg(test)]
-    pub(crate) fn open_initialized(db_path: &Path) -> AppResult<Self> {
+    pub(crate) fn open_initialized(db_path: &Path) -> LegacyResult<Self> {
         let runtime = build_runtime()?;
         let pool = runtime.block_on(open_migrated_pool(db_path))?;
         let initialized_paths = INITIALIZED_DB_PATHS.get_or_init(|| Mutex::new(BTreeSet::new()));
@@ -80,7 +80,7 @@ impl Database {
     }
 }
 
-pub(crate) async fn latest_scan_status(pool: &SqlitePool, tenant_id: &str) -> AppResult<String> {
+pub(crate) async fn latest_scan_status(pool: &SqlitePool, tenant_id: &str) -> LegacyResult<String> {
     let status: Option<String> = sqlx::query_scalar(
         "SELECT last_scan_status FROM sources WHERE tenant_id = ?1 ORDER BY last_scanned_at DESC NULLS LAST LIMIT 1",
     )
@@ -96,7 +96,7 @@ pub(crate) async fn count_rows(
     pool: &SqlitePool,
     tenant_id: &str,
     table: &str,
-) -> AppResult<usize> {
+) -> LegacyResult<usize> {
     let count: i64 = match table {
         "sources" => sqlx::query_scalar("SELECT COUNT(*) FROM sources WHERE tenant_id = ?1")
             .bind(tenant_id)
@@ -133,7 +133,7 @@ pub(crate) async fn count_rows(
 }
 
 #[cfg(test)]
-pub(crate) fn migrate_database(db_path: &Path) -> AppResult<()> {
+pub(crate) fn migrate_database(db_path: &Path) -> LegacyResult<()> {
     let db_path = db_path.to_path_buf();
     std::thread::spawn(move || {
         let runtime = build_runtime()?;
@@ -145,7 +145,7 @@ pub(crate) fn migrate_database(db_path: &Path) -> AppResult<()> {
     .map_err(|_| "SQLx migration worker panicked".to_string())?
 }
 
-pub(crate) fn build_runtime() -> AppResult<Runtime> {
+pub(crate) fn build_runtime() -> LegacyResult<Runtime> {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .thread_name("aiw-rt")
@@ -154,7 +154,7 @@ pub(crate) fn build_runtime() -> AppResult<Runtime> {
         .map_err(|error| error.to_string())
 }
 
-pub(crate) async fn open_migrated_pool(db_path: &Path) -> AppResult<SqlitePool> {
+pub(crate) async fn open_migrated_pool(db_path: &Path) -> LegacyResult<SqlitePool> {
     let options = SqliteConnectOptions::new()
         .filename(db_path)
         .create_if_missing(true)
@@ -180,7 +180,7 @@ pub(crate) async fn open_migrated_pool(db_path: &Path) -> AppResult<SqlitePool> 
 }
 
 #[cfg(test)]
-pub(crate) async fn seed_defaults_sqlx(pool: &SqlitePool) -> AppResult<()> {
+pub(crate) async fn seed_defaults_sqlx(pool: &SqlitePool) -> LegacyResult<()> {
     let catalog = TargetCatalog::builtin()?;
     seed_defaults_sqlx_with_catalog(pool, &catalog).await
 }
@@ -188,7 +188,7 @@ pub(crate) async fn seed_defaults_sqlx(pool: &SqlitePool) -> AppResult<()> {
 pub(crate) async fn seed_defaults_sqlx_with_catalog(
     pool: &SqlitePool,
     catalog: &TargetCatalog,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     super::tenant_repo::ensure_local_identity_sqlx(pool).await?;
     let tenant_id = super::tenant_repo::DEFAULT_TENANT_ID;
 
@@ -199,7 +199,10 @@ pub(crate) async fn seed_defaults_sqlx_with_catalog(
 }
 
 #[cfg(test)]
-pub(crate) async fn seed_tenant_defaults_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+pub(crate) async fn seed_tenant_defaults_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> LegacyResult<()> {
     let catalog = TargetCatalog::builtin()?;
     seed_tenant_defaults_sqlx_with_catalog(pool, tenant_id, &catalog).await
 }
@@ -208,7 +211,7 @@ pub(crate) async fn seed_tenant_defaults_sqlx_with_catalog(
     pool: &SqlitePool,
     tenant_id: &str,
     catalog: &TargetCatalog,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     if count_rows(pool, tenant_id, "sources").await? == 0 {
         for source in crate::backend::defaults::default_sources_for_tenant(tenant_id) {
             super::source_repo::upsert_source_sqlx(pool, tenant_id, &source).await?;
@@ -264,7 +267,7 @@ async fn ensure_default_profiles_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     catalog: &TargetCatalog,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let existing_profiles = super::profile_repo::load_profiles_sqlx(pool, tenant_id).await?;
     for profile in crate::backend::defaults::default_profiles_from_catalog(catalog) {
         if existing_profiles
@@ -278,7 +281,7 @@ async fn ensure_default_profiles_sqlx(
     Ok(())
 }
 
-async fn ensure_library_source_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+async fn ensure_library_source_sqlx(pool: &SqlitePool, tenant_id: &str) -> LegacyResult<()> {
     if super::source_repo::load_source_sqlx(pool, tenant_id, "assetiweave-library-skills")
         .await?
         .is_some()
@@ -294,26 +297,26 @@ async fn ensure_library_source_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppRe
     Ok(())
 }
 
-async fn ensure_system_skill_source_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+async fn ensure_system_skill_source_sqlx(pool: &SqlitePool, tenant_id: &str) -> LegacyResult<()> {
     let source = crate::backend::builtin_skills::system_skill_source()?;
     super::source_repo::upsert_source_sqlx(pool, tenant_id, &source).await
 }
 
-async fn normalize_existing_sources_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+async fn normalize_existing_sources_sqlx(pool: &SqlitePool, tenant_id: &str) -> LegacyResult<()> {
     for source in super::source_repo::load_sources_sqlx(pool, tenant_id).await? {
         super::source_repo::upsert_source_sqlx(pool, tenant_id, &source).await?;
     }
     Ok(())
 }
 
-async fn normalize_existing_profiles_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+async fn normalize_existing_profiles_sqlx(pool: &SqlitePool, tenant_id: &str) -> LegacyResult<()> {
     for profile in super::profile_repo::load_profiles_sqlx(pool, tenant_id).await? {
         super::profile_repo::upsert_profile_sqlx(pool, tenant_id, &profile).await?;
     }
     Ok(())
 }
 
-async fn normalize_all_tenant_paths_sqlx(pool: &SqlitePool) -> AppResult<()> {
+async fn normalize_all_tenant_paths_sqlx(pool: &SqlitePool) -> LegacyResult<()> {
     let tenant_ids = sqlx::query_scalar::<_, String>("SELECT id FROM tenants")
         .fetch_all(pool)
         .await
@@ -333,7 +336,7 @@ async fn normalize_default_profiles_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     catalog: &TargetCatalog,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let defaults = crate::backend::defaults::default_profiles_from_catalog(catalog);
     for mut profile in super::profile_repo::load_profiles_sqlx(pool, tenant_id).await? {
         let Some(default_profile) = defaults.iter().find(|candidate| candidate.id == profile.id)
@@ -367,11 +370,11 @@ fn legacy_profile_target_paths(profile_id: &str) -> Vec<Vec<String>> {
     paths
 }
 
-async fn is_untracked_legacy_database(pool: &SqlitePool) -> AppResult<bool> {
+async fn is_untracked_legacy_database(pool: &SqlitePool) -> LegacyResult<bool> {
     Ok(table_exists(pool, "sources").await? && !table_exists(pool, "_sqlx_migrations").await?)
 }
 
-async fn table_exists(pool: &SqlitePool, table: &str) -> AppResult<bool> {
+async fn table_exists(pool: &SqlitePool, table: &str) -> LegacyResult<bool> {
     let count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
             .bind(table)
@@ -381,7 +384,7 @@ async fn table_exists(pool: &SqlitePool, table: &str) -> AppResult<bool> {
     Ok(count == 1)
 }
 
-async fn upgrade_legacy_schema(pool: &SqlitePool) -> AppResult<()> {
+async fn upgrade_legacy_schema(pool: &SqlitePool) -> LegacyResult<()> {
     for (table, column, statement) in LEGACY_COLUMN_MIGRATIONS {
         if table_exists(pool, table).await? && !column_exists(pool, table, column).await? {
             sqlx::query(*statement)
@@ -393,7 +396,7 @@ async fn upgrade_legacy_schema(pool: &SqlitePool) -> AppResult<()> {
     Ok(())
 }
 
-async fn repair_known_modified_catalog_release_migration(pool: &SqlitePool) -> AppResult<()> {
+async fn repair_known_modified_catalog_release_migration(pool: &SqlitePool) -> LegacyResult<()> {
     if !table_exists(pool, "_sqlx_migrations").await? {
         return Ok(());
     }
@@ -432,7 +435,7 @@ async fn repair_known_modified_catalog_release_migration(pool: &SqlitePool) -> A
 const KNOWN_MODIFIED_CATALOG_RELEASE_DETAILS_CHECKSUM: &str =
     "863286E8B8E292E94EB63E42AC751D8EAD340500965B16ADCB4EEF61BEB38187B9E8FF4F19379B7C817F18DDD3BF0A83";
 
-async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> AppResult<bool> {
+async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> LegacyResult<bool> {
     let statement = format!("PRAGMA table_info({table})");
     let rows = sqlx::query(AssertSqlSafe(statement))
         .fetch_all(pool)
@@ -803,7 +806,7 @@ mod tests {
                         .fetch_one(database.pool())
                         .await
                         .map_err(|error| error.to_string())?;
-                AppResult::Ok((
+                LegacyResult::Ok((
                     source_count,
                     profile_count,
                     navigation_count,
@@ -885,14 +888,16 @@ mod tests {
                 .fetch_one(reopened.pool())
                 .await
                 .map_err(|error| error.to_string())?;
-                AppResult::Ok((profile_count, shortcut_count, codex_accent, hermes_accent))
+                LegacyResult::Ok((profile_count, shortcut_count, codex_accent, hermes_accent))
             })
             .expect("query restored app defaults");
 
-        assert_eq!(
-            profile_count,
-            crate::backend::defaults::default_profiles().len() as i64
-        );
+        let expected_profile_count = crate::backend::defaults::default_profiles_from_catalog(
+            &crate::backend::target_catalog::TargetCatalog::builtin_for_tests()
+                .expect("builtin target descriptors"),
+        )
+        .len() as i64;
+        assert_eq!(profile_count, expected_profile_count);
         assert_eq!(
             shortcut_count,
             crate::backend::defaults::default_app_shortcuts().len() as i64
@@ -932,7 +937,7 @@ mod tests {
                 .fetch_one(database.pool())
                 .await
                 .map_err(|error| error.to_string())?;
-                AppResult::Ok((
+                LegacyResult::Ok((
                     principal_count,
                     tenant_count,
                     membership_count,

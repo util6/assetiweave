@@ -1,4 +1,4 @@
-use crate::backend::dto::{AppResult, SearchRetrievalMode};
+use crate::backend::{compat::LegacyResult, dto::SearchRetrievalMode};
 use chrono::Utc;
 use sqlx::{AssertSqlSafe, Row, SqliteConnection, SqlitePool};
 use uuid::Uuid;
@@ -80,7 +80,7 @@ impl ConversationSearchIndexState {
 pub(crate) async fn load_or_create_conversation_search_index_state_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<ConversationSearchIndexState> {
+) -> LegacyResult<ConversationSearchIndexState> {
     let now = Utc::now().to_rfc3339();
     sqlx::query(
         r#"
@@ -120,7 +120,7 @@ pub(crate) async fn load_or_create_conversation_search_index_state_sqlx(
 pub(crate) async fn bump_conversation_search_source_revision_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<i64> {
+) -> LegacyResult<i64> {
     load_or_create_conversation_search_index_state_sqlx(pool, tenant_id).await?;
     let revision = sqlx::query_scalar::<_, i64>(
         r#"
@@ -143,7 +143,7 @@ pub(crate) async fn bump_conversation_search_source_revision_sqlx(
 pub(crate) async fn bump_conversation_search_source_revision_sqlx_tx(
     connection: &mut SqliteConnection,
     tenant_id: &str,
-) -> AppResult<i64> {
+) -> LegacyResult<i64> {
     let tenant_exists =
         sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM tenants WHERE id = ?1)")
             .bind(tenant_id)
@@ -193,7 +193,7 @@ pub(crate) async fn try_acquire_conversation_search_writer_lease_sqlx(
     owner: &str,
     now: &str,
     expires_at: &str,
-) -> AppResult<bool> {
+) -> LegacyResult<bool> {
     load_or_create_conversation_search_index_state_sqlx(pool, tenant_id).await?;
     let result = sqlx::query(
         r#"
@@ -221,7 +221,7 @@ pub(crate) async fn try_acquire_conversation_search_writer_lease_sqlx(
 pub(crate) async fn load_conversation_search_index_documents_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<Vec<ConversationSearchIndexDocumentRow>> {
+) -> LegacyResult<Vec<ConversationSearchIndexDocumentRow>> {
     let mut documents = Vec::new();
     for tables in [SearchDocumentTables::session(), SearchDocumentTables::web()] {
         let question_sql = format!(
@@ -362,7 +362,7 @@ pub(crate) async fn complete_conversation_search_index_rebuild_sqlx(
     generation: &str,
     document_count: i64,
     size_bytes: i64,
-) -> AppResult<bool> {
+) -> LegacyResult<bool> {
     complete_conversation_search_index_rebuild_with_offset_sqlx(
         pool,
         tenant_id,
@@ -383,7 +383,7 @@ pub(crate) async fn complete_conversation_search_index_rebuild_with_offset_sqlx(
     document_count: i64,
     size_bytes: i64,
     consumer_offset: Option<(&str, i64)>,
-) -> AppResult<bool> {
+) -> LegacyResult<bool> {
     let now = Utc::now().to_rfc3339();
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     let result = sqlx::query(
@@ -430,7 +430,7 @@ pub(crate) async fn fail_conversation_search_index_rebuild_sqlx(
     tenant_id: &str,
     owner: &str,
     error: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(
         r#"
         UPDATE conversation_search_index_state
@@ -453,7 +453,7 @@ pub(crate) async fn mark_conversation_search_index_unusable_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     error: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(
         r#"
         UPDATE conversation_search_index_state
@@ -521,7 +521,7 @@ fn search_question_title(title: Option<String>, question_text: &str) -> String {
 
 fn map_search_index_state(
     row: &sqlx::sqlite::SqliteRow,
-) -> AppResult<ConversationSearchIndexState> {
+) -> LegacyResult<ConversationSearchIndexState> {
     Ok(ConversationSearchIndexState {
         tenant_id: row.try_get(0).map_err(|error| error.to_string())?,
         index_instance_id: row.try_get(1).map_err(|error| error.to_string())?,
@@ -544,7 +544,7 @@ fn map_search_index_state(
     })
 }
 
-fn decode_search_index_health(value: &str) -> AppResult<ConversationSearchIndexHealth> {
+fn decode_search_index_health(value: &str) -> LegacyResult<ConversationSearchIndexHealth> {
     match value {
         "missing" => Ok(ConversationSearchIndexHealth::Missing),
         "ready" => Ok(ConversationSearchIndexHealth::Ready),
@@ -647,7 +647,7 @@ mod tests {
                 assert!(rebuilt.is_compatible());
                 assert_eq!(rebuilt.health, ConversationSearchIndexHealth::Ready);
                 assert_eq!(rebuilt.active_generation.as_deref(), Some("generation-upgraded"));
-                crate::backend::dto::AppResult::Ok(())
+                crate::backend::compat::LegacyResult::Ok(())
             })
             .expect("track search state");
 

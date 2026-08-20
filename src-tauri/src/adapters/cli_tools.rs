@@ -3,7 +3,7 @@
 //! 负责检查应用随包附带的 CLI / Engine 二进制文件状态，
 //! 并提供将其安装（或创建 Shim 脚本）到系统 PATH 路径及更新用户 Shell 配置文件（如 `.zshrc`, `.profile` 等）的功能。
 
-use crate::backend::dto::AppResult;
+use crate::backend::compat::LegacyResult;
 use serde::Serialize;
 #[cfg(windows)]
 use std::process::Command;
@@ -49,7 +49,7 @@ pub(crate) struct CliToolsStatus {
 }
 
 /// 查询当前 CLI 工具在本地系统中的安装与环境变量配置状态
-pub(crate) fn status(app: &AppHandle) -> AppResult<CliToolsStatus> {
+pub(crate) fn status(app: &AppHandle) -> LegacyResult<CliToolsStatus> {
     let resource_dir = app
         .path()
         .resource_dir()
@@ -58,7 +58,7 @@ pub(crate) fn status(app: &AppHandle) -> AppResult<CliToolsStatus> {
 }
 
 /// 将随包附带的 CLI 工具安装/链接到本地系统，并自动写 Shell 配置添加环境变量 PATH
-pub(crate) fn install(app: &AppHandle) -> AppResult<CliToolsStatus> {
+pub(crate) fn install(app: &AppHandle) -> LegacyResult<CliToolsStatus> {
     let resource_dir = app
         .path()
         .resource_dir()
@@ -162,7 +162,7 @@ fn executable_name(name: &str) -> String {
     }
 }
 
-fn default_install_dir() -> AppResult<PathBuf> {
+fn default_install_dir() -> LegacyResult<PathBuf> {
     #[cfg(windows)]
     {
         dirs::data_local_dir()
@@ -199,7 +199,7 @@ fn shim_path(install_dir: &Path, tool_name: &str) -> PathBuf {
     }
 }
 
-fn write_shim(install_dir: &Path, tool_name: &str, target: &Path) -> AppResult<()> {
+fn write_shim(install_dir: &Path, tool_name: &str, target: &Path) -> LegacyResult<()> {
     let path = shim_path(install_dir, tool_name);
     #[cfg(windows)]
     let contents = windows_cmd_contents(target);
@@ -230,7 +230,7 @@ fn windows_cmd_contents(target: &Path) -> String {
     format!("@echo off\r\n\"{}\" %*\r\n", target.display())
 }
 
-fn configure_user_path(install_dir: &Path) -> AppResult<()> {
+fn configure_user_path(install_dir: &Path) -> LegacyResult<()> {
     #[cfg(windows)]
     {
         configure_windows_user_path(install_dir)
@@ -242,7 +242,7 @@ fn configure_user_path(install_dir: &Path) -> AppResult<()> {
 }
 
 #[cfg(not(windows))]
-fn configure_unix_user_path(install_dir: &Path) -> AppResult<()> {
+fn configure_unix_user_path(install_dir: &Path) -> LegacyResult<()> {
     let home = dirs::home_dir().ok_or_else(|| "resolve home directory".to_string())?;
     let profiles = shell_profile_paths(&home);
     let path_text = install_dir.to_string_lossy();
@@ -292,7 +292,7 @@ fn shell_profile_paths(home: &Path) -> Vec<PathBuf> {
 }
 
 #[cfg(windows)]
-fn configure_windows_user_path(install_dir: &Path) -> AppResult<()> {
+fn configure_windows_user_path(install_dir: &Path) -> LegacyResult<()> {
     let script = format!(
         "$dir = '{}'; $current = [Environment]::GetEnvironmentVariable('Path', 'User'); if ([string]::IsNullOrWhiteSpace($current)) {{ [Environment]::SetEnvironmentVariable('Path', $dir, 'User') }} elseif (((';' + $current + ';').ToLowerInvariant()).IndexOf((';' + $dir + ';').ToLowerInvariant()) -lt 0) {{ [Environment]::SetEnvironmentVariable('Path', $dir + ';' + $current, 'User') }}",
         powershell_single_quote(&install_dir.to_string_lossy())

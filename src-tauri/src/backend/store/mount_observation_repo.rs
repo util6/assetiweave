@@ -1,5 +1,6 @@
 use crate::backend::{
-    dto::{AppResult, AssetMountObservation, AssetMountStatus, PhysicalMountStateDto},
+    compat::LegacyResult,
+    dto::{AssetMountObservation, AssetMountStatus, PhysicalMountStateDto},
     models::{Asset, DeploymentState, TargetProfile},
 };
 use chrono::Utc;
@@ -16,7 +17,7 @@ async fn upsert_asset_mount_observations_connection(
     conn: &mut SqliteConnection,
     tenant_id: &str,
     observations: &[AssetMountObservation],
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     for observation in observations {
         sqlx::query(sql::UPSERT_ASSET_MOUNT_OBSERVATION)
             .bind(tenant_id)
@@ -39,7 +40,7 @@ pub(crate) async fn upsert_asset_mount_observations_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     observations: &[AssetMountObservation],
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     upsert_asset_mount_observations_connection(&mut tx, tenant_id, observations).await?;
     tx.commit().await.map_err(|error| error.to_string())?;
@@ -53,7 +54,7 @@ pub(crate) async fn persist_asset_mount_snapshot_sqlx(
     assets: &[Asset],
     profiles: &[TargetProfile],
     statuses: &[AssetMountStatus],
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let asset_by_id = assets
         .iter()
         .map(|asset| (asset.id.as_str(), asset))
@@ -141,7 +142,7 @@ pub(crate) async fn persist_asset_mount_snapshot_sqlx(
 pub(crate) async fn load_asset_mount_observations_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<Vec<AssetMountObservation>> {
+) -> LegacyResult<Vec<AssetMountObservation>> {
     let rows = sqlx::query(sql::LIST_ASSET_MOUNT_OBSERVATIONS)
         .bind(tenant_id)
         .fetch_all(pool)
@@ -155,7 +156,7 @@ pub(crate) async fn load_asset_mount_observations_sqlx(
 pub(crate) async fn delete_orphan_asset_mount_observations_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(sql::DELETE_ORPHAN_ASSET_MOUNT_OBSERVATIONS)
         .bind(tenant_id)
         .execute(pool)
@@ -165,7 +166,7 @@ pub(crate) async fn delete_orphan_asset_mount_observations_sqlx(
 }
 
 #[cfg(test)]
-fn map_sqlx_observation(row: &SqliteRow) -> AppResult<AssetMountObservation> {
+fn map_sqlx_observation(row: &SqliteRow) -> LegacyResult<AssetMountObservation> {
     Ok(AssetMountObservation {
         asset_id: row.try_get(0).map_err(|error| error.to_string())?,
         profile_id: row.try_get(1).map_err(|error| error.to_string())?,
@@ -234,7 +235,7 @@ mod tests {
                 let after_cleanup =
                     load_asset_mount_observations_sqlx(database.pool(), "default").await?;
 
-                AppResult::Ok((before_cleanup, after_cleanup))
+                LegacyResult::Ok((before_cleanup, after_cleanup))
             })
             .map(|(before_cleanup, after_cleanup)| {
                 assert_eq!(before_cleanup.len(), 2);
@@ -317,7 +318,7 @@ mod tests {
         }
     }
 
-    async fn insert_asset(pool: &SqlitePool, asset_id: &str) -> AppResult<()> {
+    async fn insert_asset(pool: &SqlitePool, asset_id: &str) -> LegacyResult<()> {
         sqlx::query(
             r#"
             INSERT INTO assets (

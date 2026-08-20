@@ -1,4 +1,4 @@
-use crate::backend::dto::AppResult;
+use crate::backend::compat::LegacyResult;
 use crate::backend::models::{
     Asset, AssetGroup, AssetGroupDetail, AssetGroupMemberOrigin, AssetGroupResolvedMember,
     AssetGroupRules, AssetKind,
@@ -17,7 +17,7 @@ pub(crate) async fn load_skill_group_details_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     assets: &[Asset],
-) -> AppResult<Vec<AssetGroupDetail>> {
+) -> LegacyResult<Vec<AssetGroupDetail>> {
     let groups = load_asset_groups_by_kind_sqlx(pool, tenant_id, AssetKind::Skill).await?;
     let manual_members = load_group_members_sqlx(pool, tenant_id).await?;
     groups
@@ -31,7 +31,7 @@ pub(crate) async fn load_skill_group_details_by_ids_sqlx(
     tenant_id: &str,
     group_ids: &BTreeSet<String>,
     assets: &[Asset],
-) -> AppResult<Vec<AssetGroupDetail>> {
+) -> LegacyResult<Vec<AssetGroupDetail>> {
     let groups = load_asset_groups_by_kind_sqlx(pool, tenant_id, AssetKind::Skill)
         .await?
         .into_iter()
@@ -49,7 +49,7 @@ pub(crate) async fn load_skill_group_detail_sqlx(
     tenant_id: &str,
     group_id: &str,
     assets: &[Asset],
-) -> AppResult<AssetGroupDetail> {
+) -> LegacyResult<AssetGroupDetail> {
     let group = load_asset_group_sqlx(pool, tenant_id, group_id)
         .await?
         .ok_or_else(|| format!("asset group not found: {group_id}"))?;
@@ -64,7 +64,7 @@ pub(crate) async fn upsert_asset_group_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     group: &AssetGroup,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     validate_asset_group(group)?;
     let icon_svg = group.icon_svg.as_ref().map(encode_json).transpose()?;
     sqlx::query(sql::UPSERT_ASSET_GROUP)
@@ -103,7 +103,7 @@ pub(crate) async fn delete_asset_group_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     group_id: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     sqlx::query(sql::DELETE_ASSET_GROUP_MEMBERS)
         .bind(tenant_id)
@@ -127,7 +127,7 @@ pub(crate) async fn replace_asset_group_members_sqlx(
     group_id: &str,
     asset_ids: &[String],
     assets: &[Asset],
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let group = load_asset_group_sqlx(pool, tenant_id, group_id)
         .await?
         .ok_or_else(|| format!("asset group not found: {group_id}"))?;
@@ -180,7 +180,7 @@ pub(crate) async fn replace_asset_group_members_sqlx(
 pub(crate) async fn delete_orphan_asset_group_members_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(sql::DELETE_ORPHAN_ASSET_GROUP_MEMBERS)
         .bind(tenant_id)
         .execute(pool)
@@ -189,7 +189,7 @@ pub(crate) async fn delete_orphan_asset_group_members_sqlx(
     Ok(())
 }
 
-pub(crate) fn validate_asset_group(group: &AssetGroup) -> AppResult<()> {
+pub(crate) fn validate_asset_group(group: &AssetGroup) -> LegacyResult<()> {
     if group.name.trim().is_empty() {
         return Err("asset group name is required".to_string());
     }
@@ -219,7 +219,7 @@ pub(crate) fn build_group_detail(
     group: AssetGroup,
     assets: &[Asset],
     manual_members: &BTreeMap<String, BTreeSet<String>>,
-) -> AppResult<AssetGroupDetail> {
+) -> LegacyResult<AssetGroupDetail> {
     let manual_asset_ids = manual_members
         .get(&group.id)
         .cloned()
@@ -253,7 +253,7 @@ async fn load_asset_groups_by_kind_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     kind: AssetKind,
-) -> AppResult<Vec<AssetGroup>> {
+) -> LegacyResult<Vec<AssetGroup>> {
     let rows = sqlx::query(sql::LIST_ASSET_GROUPS_BY_KIND)
         .bind(tenant_id)
         .bind(encode_enum(kind)?)
@@ -267,7 +267,7 @@ async fn load_asset_group_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     group_id: &str,
-) -> AppResult<Option<AssetGroup>> {
+) -> LegacyResult<Option<AssetGroup>> {
     let row = sqlx::query(sql::GET_ASSET_GROUP)
         .bind(tenant_id)
         .bind(group_id)
@@ -280,7 +280,7 @@ async fn load_asset_group_sqlx(
 async fn load_group_members_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<BTreeMap<String, BTreeSet<String>>> {
+) -> LegacyResult<BTreeMap<String, BTreeSet<String>>> {
     let rows = sqlx::query(sql::LIST_ASSET_GROUP_MEMBERS)
         .bind(tenant_id)
         .fetch_all(pool)
@@ -302,7 +302,7 @@ async fn load_group_members_sqlx(
     Ok(grouped)
 }
 
-fn map_sqlx_asset_group_row(row: &SqliteRow) -> AppResult<AssetGroup> {
+fn map_sqlx_asset_group_row(row: &SqliteRow) -> LegacyResult<AssetGroup> {
     let rules_payload: String = row.try_get(9).map_err(|error| error.to_string())?;
     Ok(AssetGroup {
         id: row.try_get(0).map_err(|error| error.to_string())?,
@@ -330,7 +330,7 @@ fn map_sqlx_asset_group_row(row: &SqliteRow) -> AppResult<AssetGroup> {
     })
 }
 
-fn resolve_rule_asset_ids(rules: &AssetGroupRules, assets: &[Asset]) -> AppResult<Vec<String>> {
+fn resolve_rule_asset_ids(rules: &AssetGroupRules, assets: &[Asset]) -> LegacyResult<Vec<String>> {
     let rules = normalize_rules(rules);
     if rules.source_ids.is_empty()
         && rules.relative_path_globs.is_empty()
@@ -363,7 +363,7 @@ fn resolve_rule_asset_ids(rules: &AssetGroupRules, assets: &[Asset]) -> AppResul
         .collect())
 }
 
-fn build_glob_set(patterns: &[String]) -> AppResult<Option<GlobSet>> {
+fn build_glob_set(patterns: &[String]) -> LegacyResult<Option<GlobSet>> {
     let patterns = normalize_string_list(patterns);
     if patterns.is_empty() {
         return Ok(None);
@@ -535,7 +535,7 @@ mod tests {
                 delete_asset_group_sqlx(database.pool(), "default", &group.id).await?;
                 let after_delete =
                     load_skill_group_details_sqlx(database.pool(), "default", &assets).await?;
-                AppResult::Ok((details, detail, cleaned_detail, after_delete))
+                LegacyResult::Ok((details, detail, cleaned_detail, after_delete))
             })
             .expect("round trip SQLx asset groups");
 

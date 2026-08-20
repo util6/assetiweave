@@ -1,5 +1,6 @@
+use crate::backend::compat::LegacyResult;
 use crate::backend::dto::{
-    AppResult, ConversationBlockDetail, ConversationBlockLocator, ConversationCardRenderer,
+    ConversationBlockDetail, ConversationBlockLocator, ConversationCardRenderer,
     ConversationContentNode, ConversationMutationResult, ConversationQuestionDetail,
     ConversationRecordKind, ConversationSearchCardType, ConversationSearchHit,
     ConversationSearchPage, ConversationSessionDetail, ConversationSessionListItem,
@@ -217,7 +218,7 @@ pub(crate) async fn seed_prepared_builtin_conversation_adapters_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     adapters: Vec<ConversationAdapter>,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let now = Utc::now().to_rfc3339();
     for mut adapter in adapters {
         match load_conversation_adapter_sqlx(pool, tenant_id, &adapter.id).await? {
@@ -243,7 +244,7 @@ pub(crate) async fn seed_prepared_builtin_conversation_adapters_sqlx(
 pub(crate) async fn migrate_legacy_conversation_adapter_hashes_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     for mut adapter in list_conversation_adapters_sqlx(pool, tenant_id).await? {
         if adapter.kind != ConversationAdapterKind::External {
             continue;
@@ -281,7 +282,7 @@ pub(crate) async fn migrate_legacy_conversation_adapter_hashes_sqlx(
 pub(crate) async fn list_conversation_adapters_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<Vec<ConversationAdapter>> {
+) -> LegacyResult<Vec<ConversationAdapter>> {
     let rows = sqlx::query(LIST_CONVERSATION_ADAPTERS_SQL)
         .bind(tenant_id)
         .fetch_all(pool)
@@ -294,14 +295,14 @@ pub(crate) async fn upsert_conversation_adapter_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     adapter: &ConversationAdapter,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     upsert_conversation_adapter_with_executor(pool, tenant_id, adapter).await
 }
 
 pub(crate) async fn normalize_conversation_paths_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     for adapter in list_conversation_adapters_sqlx(pool, tenant_id).await? {
         upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter).await?;
     }
@@ -346,7 +347,7 @@ async fn upsert_conversation_adapter_with_executor<'e, E>(
     executor: E,
     tenant_id: &str,
     adapter: &ConversationAdapter,
-) -> AppResult<()>
+) -> LegacyResult<()>
 where
     E: Executor<'e, Database = Sqlite>,
 {
@@ -382,7 +383,7 @@ pub(crate) async fn delete_conversation_adapter_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     adapter_id: &str,
-) -> AppResult<ConversationAdapter> {
+) -> LegacyResult<ConversationAdapter> {
     delete_conversation_adapter_registration_sqlx(pool, tenant_id, adapter_id, None)
         .await?
         .ok_or_else(|| format!("conversation adapter not found: {adapter_id}"))
@@ -393,7 +394,7 @@ pub(crate) async fn delete_conversation_adapter_registration_sqlx(
     tenant_id: &str,
     adapter_id: &str,
     package_id: Option<&str>,
-) -> AppResult<Option<ConversationAdapter>> {
+) -> LegacyResult<Option<ConversationAdapter>> {
     let adapter = load_conversation_adapter_sqlx(pool, tenant_id, adapter_id).await?;
     if let Some(adapter) = adapter.as_ref() {
         if adapter.trust_state == ConversationAdapterTrustState::BuiltIn {
@@ -439,7 +440,7 @@ pub(crate) async fn disable_builtin_conversation_adapter_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     adapter_id: &str,
-) -> AppResult<ConversationAdapter> {
+) -> LegacyResult<ConversationAdapter> {
     let mut adapter = load_conversation_adapter_sqlx(pool, tenant_id, adapter_id)
         .await?
         .ok_or_else(|| format!("conversation adapter not found: {adapter_id}"))?;
@@ -474,7 +475,7 @@ pub(crate) async fn enable_conversation_sources_by_adapter_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     adapter_id: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(ENABLE_CONVERSATION_SOURCES_BY_ADAPTER_SQL)
         .bind(Utc::now().to_rfc3339())
         .bind(tenant_id)
@@ -489,7 +490,7 @@ pub(crate) async fn load_conversation_adapter_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     adapter_id: &str,
-) -> AppResult<Option<ConversationAdapter>> {
+) -> LegacyResult<Option<ConversationAdapter>> {
     sqlx::query(LOAD_CONVERSATION_ADAPTER_SQL)
         .bind(tenant_id)
         .bind(adapter_id)
@@ -504,7 +505,7 @@ pub(crate) async fn load_conversation_adapter_sqlx(
 pub(crate) async fn list_conversation_adapter_packages_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<Vec<ConversationAdapterPackage>> {
+) -> LegacyResult<Vec<ConversationAdapterPackage>> {
     let rows = sqlx::query(LIST_CONVERSATION_ADAPTER_PACKAGES_SQL)
         .bind(tenant_id)
         .fetch_all(pool)
@@ -519,7 +520,7 @@ pub(crate) async fn load_conversation_adapter_package_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     package_id: &str,
-) -> AppResult<Option<ConversationAdapterPackage>> {
+) -> LegacyResult<Option<ConversationAdapterPackage>> {
     sqlx::query(LOAD_CONVERSATION_ADAPTER_PACKAGE_SQL)
         .bind(tenant_id)
         .bind(package_id)
@@ -535,7 +536,7 @@ pub(crate) async fn load_conversation_adapter_package_by_adapter_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     adapter_id: &str,
-) -> AppResult<Option<ConversationAdapterPackage>> {
+) -> LegacyResult<Option<ConversationAdapterPackage>> {
     sqlx::query(LOAD_CONVERSATION_ADAPTER_PACKAGE_BY_ADAPTER_SQL)
         .bind(tenant_id)
         .bind(adapter_id)
@@ -551,7 +552,7 @@ pub(crate) async fn upsert_conversation_adapter_package_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     package: &ConversationAdapterPackage,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     upsert_conversation_adapter_package_with_executor(pool, tenant_id, package).await
 }
 
@@ -559,7 +560,7 @@ async fn upsert_conversation_adapter_package_with_executor<'e, E>(
     executor: E,
     tenant_id: &str,
     package: &ConversationAdapterPackage,
-) -> AppResult<()>
+) -> LegacyResult<()>
 where
     E: Executor<'e, Database = Sqlite>,
 {
@@ -605,7 +606,7 @@ pub(crate) async fn activate_conversation_adapter_package_sqlx(
     adapter: &ConversationAdapter,
     package: &ConversationAdapterPackage,
     version: &ConversationAdapterPackageVersion,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     let existing = sqlx::query(
         r#"
@@ -664,7 +665,7 @@ pub(crate) async fn activate_conversation_adapter_workspace_sqlx(
     tenant_id: &str,
     adapter: &ConversationAdapter,
     package: &ConversationAdapterPackage,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     upsert_conversation_adapter_with_executor(&mut *tx, tenant_id, adapter).await?;
     upsert_conversation_adapter_package_with_executor(&mut *tx, tenant_id, package).await?;
@@ -684,7 +685,7 @@ pub(crate) async fn deactivate_conversation_adapter_package_sqlx(
     tenant_id: &str,
     package_id: &str,
     adapter_id: &str,
-) -> AppResult<ConversationAdapterPackage> {
+) -> LegacyResult<ConversationAdapterPackage> {
     let mut package = load_conversation_adapter_package_sqlx(pool, tenant_id, package_id)
         .await?
         .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))?;
@@ -743,7 +744,7 @@ pub(crate) async fn upsert_conversation_adapter_catalog_release_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     release: &ConversationAdapterCatalogRelease,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(
         r#"
         INSERT INTO conversation_adapter_catalog_releases (
@@ -812,7 +813,7 @@ pub(crate) async fn list_conversation_adapter_catalog_releases_sqlx(
     tenant_id: &str,
     catalog_url: &str,
     package_id: Option<&str>,
-) -> AppResult<Vec<ConversationAdapterCatalogRelease>> {
+) -> LegacyResult<Vec<ConversationAdapterCatalogRelease>> {
     let rows = sqlx::query(
         r#"
         SELECT catalog_url, package_id, adapter_id, name, publisher, version,
@@ -842,7 +843,7 @@ pub(crate) async fn list_conversation_adapter_package_versions_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     package_id: &str,
-) -> AppResult<Vec<ConversationAdapterPackageVersion>> {
+) -> LegacyResult<Vec<ConversationAdapterPackageVersion>> {
     let rows = sqlx::query(
         r#"
         SELECT package_id, version, install_dir, artifact_hash, content_hash,
@@ -885,7 +886,7 @@ pub(crate) async fn delete_conversation_adapter_package_version_sqlx(
     version: &str,
     replacement_package: Option<&ConversationAdapterPackage>,
     delete_package: bool,
-) -> AppResult<bool> {
+) -> LegacyResult<bool> {
     if replacement_package.is_some() && delete_package {
         return Err(
             "package version deletion cannot replace and delete the package record".to_string(),
@@ -921,7 +922,7 @@ pub(crate) async fn delete_conversation_adapter_package_version_sqlx(
 
 fn map_sqlx_conversation_adapter_catalog_release(
     row: &SqliteRow,
-) -> AppResult<ConversationAdapterCatalogRelease> {
+) -> LegacyResult<ConversationAdapterCatalogRelease> {
     Ok(ConversationAdapterCatalogRelease {
         catalog_url: row.try_get(0).map_err(|error| error.to_string())?,
         package_id: row.try_get(1).map_err(|error| error.to_string())?,
@@ -962,7 +963,7 @@ pub(crate) async fn delete_conversation_adapter_package_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     package_id: &str,
-) -> AppResult<Option<ConversationAdapterPackage>> {
+) -> LegacyResult<Option<ConversationAdapterPackage>> {
     let package = load_conversation_adapter_package_sqlx(pool, tenant_id, package_id).await?;
     sqlx::query(DELETE_CONVERSATION_ADAPTER_PACKAGE_SQL)
         .bind(tenant_id)
@@ -977,7 +978,7 @@ pub(crate) async fn has_running_conversation_sync_for_adapter_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     adapter_id: &str,
-) -> AppResult<bool> {
+) -> LegacyResult<bool> {
     sqlx::query_scalar::<_, i64>(
         r#"
         SELECT EXISTS(
@@ -998,7 +999,7 @@ pub(crate) async fn has_running_conversation_sync_for_adapter_sqlx(
 pub(crate) async fn list_conversation_sources_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<Vec<ConversationSource>> {
+) -> LegacyResult<Vec<ConversationSource>> {
     let rows = sqlx::query(LIST_CONVERSATION_SOURCES_SQL)
         .bind(tenant_id)
         .fetch_all(pool)
@@ -1011,7 +1012,7 @@ pub(crate) async fn load_conversation_source_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     source_id: &str,
-) -> AppResult<Option<ConversationSource>> {
+) -> LegacyResult<Option<ConversationSource>> {
     sqlx::query(LOAD_CONVERSATION_SOURCE_SQL)
         .bind(tenant_id)
         .bind(source_id)
@@ -1027,7 +1028,7 @@ pub(crate) async fn upsert_conversation_source_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     source: &ConversationSource,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let mut source = source.clone();
     source.location = normalize_conversation_source_location(&source.location)?;
     sqlx::query(UPSERT_CONVERSATION_SOURCE_SQL)
@@ -1053,7 +1054,7 @@ pub(crate) async fn disable_conversation_source_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     source_id: &str,
-) -> AppResult<ConversationSource> {
+) -> LegacyResult<ConversationSource> {
     let mut source = load_conversation_source_sqlx(pool, tenant_id, source_id)
         .await?
         .ok_or_else(|| format!("conversation source not found: {source_id}"))?;
@@ -1069,7 +1070,7 @@ pub(crate) async fn import_conversation_sessions_sqlx(
     source: &ConversationSource,
     sessions: &[NormalizedConversationSession],
     dry_run: bool,
-) -> AppResult<ConversationImportResult> {
+) -> LegacyResult<ConversationImportResult> {
     import_conversation_sessions_with_presence_sqlx(
         pool, tenant_id, source, sessions, None, dry_run,
     )
@@ -1083,7 +1084,7 @@ pub(crate) async fn import_incremental_conversation_sessions_sqlx(
     sessions: &[NormalizedConversationSession],
     discovered_external_ids: &BTreeSet<String>,
     dry_run: bool,
-) -> AppResult<ConversationImportResult> {
+) -> LegacyResult<ConversationImportResult> {
     import_conversation_sessions_with_presence_sqlx(
         pool,
         tenant_id,
@@ -1102,7 +1103,7 @@ async fn import_conversation_sessions_with_presence_sqlx(
     sessions: &[NormalizedConversationSession],
     discovered_external_ids: Option<&BTreeSet<String>>,
     dry_run: bool,
-) -> AppResult<ConversationImportResult> {
+) -> LegacyResult<ConversationImportResult> {
     let turn_count = sessions.iter().map(|session| session.turns.len()).sum();
     if dry_run {
         return Ok(ConversationImportResult {
@@ -1285,7 +1286,7 @@ pub(crate) async fn list_conversation_sessions_sqlx(
     query: Option<&str>,
     limit: usize,
     offset: usize,
-) -> AppResult<Vec<ConversationSessionListItem>> {
+) -> LegacyResult<Vec<ConversationSessionListItem>> {
     let needle = normalize_query(query);
     let id_needle = query.and_then(crate::backend::models::conversation_id_search_term);
     let rows = sqlx::query(
@@ -1367,7 +1368,7 @@ pub(crate) async fn load_conversation_session_detail_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     session_id: &str,
-) -> AppResult<ConversationSessionDetail> {
+) -> LegacyResult<ConversationSessionDetail> {
     let session_row = sqlx::query(
         r#"
         SELECT id, source_id, adapter_id, external_id, title, project_path,
@@ -1396,7 +1397,7 @@ pub(crate) async fn list_conversation_question_details_sqlx(
     query: Option<&str>,
     limit: usize,
     offset: usize,
-) -> AppResult<Vec<ConversationQuestionDetail>> {
+) -> LegacyResult<Vec<ConversationQuestionDetail>> {
     let needle = normalize_query(query);
     let details =
         load_conversation_question_details_for_session_sqlx(pool, tenant_id, session_id).await?;
@@ -1425,7 +1426,7 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     question_id: &str,
-) -> AppResult<ConversationQuestionDetail> {
+) -> LegacyResult<ConversationQuestionDetail> {
     let question_row = sqlx::query(
         r#"
         SELECT id, session_id, question_index, title, question_text, answer_text,
@@ -1460,7 +1461,7 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
     let turns = turn_rows
         .iter()
         .map(map_sqlx_conversation_turn)
-        .collect::<AppResult<Vec<_>>>()?;
+        .collect::<LegacyResult<Vec<_>>>()?;
 
     let part_rows = sqlx::query(
         r#"
@@ -1481,7 +1482,7 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
     let parts = part_rows
         .iter()
         .map(map_sqlx_conversation_part)
-        .collect::<AppResult<Vec<_>>>()?;
+        .collect::<LegacyResult<Vec<_>>>()?;
     let (adapter_id, card_kinds) =
         load_conversation_card_projection_context_sqlx(pool, tenant_id, &question.session_id)
             .await?;
@@ -1501,7 +1502,7 @@ pub(crate) async fn list_conversation_block_locators_sqlx(
     tenant_id: &str,
     record_kind: ConversationRecordKind,
     question_id: &str,
-) -> AppResult<Vec<ConversationBlockLocator>> {
+) -> LegacyResult<Vec<ConversationBlockLocator>> {
     let tables = record_kind.tables();
     let question_row = sqlx::query(AssertSqlSafe(format!(
         "SELECT session_id FROM {} WHERE tenant_id = ?1 AND id = ?2",
@@ -1535,7 +1536,7 @@ pub(crate) async fn list_conversation_block_locators_sqlx(
     let turns = turn_rows
         .iter()
         .map(map_sqlx_conversation_turn)
-        .collect::<AppResult<Vec<_>>>()?;
+        .collect::<LegacyResult<Vec<_>>>()?;
 
     let part_rows = sqlx::query(AssertSqlSafe(format!(
         r#"
@@ -1558,7 +1559,7 @@ pub(crate) async fn list_conversation_block_locators_sqlx(
     let parts = part_rows
         .iter()
         .map(map_sqlx_conversation_part)
-        .collect::<AppResult<Vec<_>>>()?;
+        .collect::<LegacyResult<Vec<_>>>()?;
     let (adapter_id, card_kinds) = load_conversation_card_projection_context_for_record_sqlx(
         pool,
         tenant_id,
@@ -1600,7 +1601,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
     tenant_id: &str,
     record_kind: ConversationRecordKind,
     block_id: &str,
-) -> AppResult<ConversationBlockDetail> {
+) -> LegacyResult<ConversationBlockDetail> {
     let tables = record_kind.tables();
     if let Some(turn_id) = block_id.strip_suffix("-question") {
         let row = sqlx::query(AssertSqlSafe(format!(
@@ -1681,7 +1682,7 @@ pub(crate) async fn merge_conversation_questions_sqlx(
     tenant_id: &str,
     question_ids: &[String],
     dry_run: bool,
-) -> AppResult<ConversationMutationResult> {
+) -> LegacyResult<ConversationMutationResult> {
     if question_ids.len() < 2 {
         return Err("at least two question ids are required".to_string());
     }
@@ -1788,7 +1789,7 @@ pub(crate) async fn split_conversation_question_sqlx(
     question_id: &str,
     before_turn_id: &str,
     dry_run: bool,
-) -> AppResult<ConversationMutationResult> {
+) -> LegacyResult<ConversationMutationResult> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     let question = load_conversation_question_sqlx_tx(&mut tx, tenant_id, question_id)
         .await?
@@ -1887,7 +1888,7 @@ pub(crate) async fn update_conversation_part_translation_sqlx(
     tenant_id: &str,
     part_id: &str,
     translated_text: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     let result = sqlx::query(
         r#"
@@ -1916,7 +1917,7 @@ async fn load_conversation_question_details_for_session_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     session_id: &str,
-) -> AppResult<Vec<ConversationQuestionDetail>> {
+) -> LegacyResult<Vec<ConversationQuestionDetail>> {
     let (adapter_id, card_kinds) =
         load_conversation_card_projection_context_sqlx(pool, tenant_id, session_id).await?;
     let question_rows = sqlx::query(
@@ -1936,7 +1937,7 @@ async fn load_conversation_question_details_for_session_sqlx(
     let questions = question_rows
         .iter()
         .map(map_sqlx_conversation_question)
-        .collect::<AppResult<Vec<_>>>()?;
+        .collect::<LegacyResult<Vec<_>>>()?;
 
     let turn_rows = sqlx::query(
         r#"
@@ -2015,7 +2016,7 @@ async fn load_conversation_card_projection_context_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     session_id: &str,
-) -> AppResult<(String, Vec<ConversationCardKindDefinition>)> {
+) -> LegacyResult<(String, Vec<ConversationCardKindDefinition>)> {
     load_conversation_card_projection_context_for_record_sqlx(
         pool,
         tenant_id,
@@ -2030,7 +2031,7 @@ async fn load_conversation_card_projection_context_for_record_sqlx(
     tenant_id: &str,
     record_kind: ConversationRecordKind,
     session_id: &str,
-) -> AppResult<(String, Vec<ConversationCardKindDefinition>)> {
+) -> LegacyResult<(String, Vec<ConversationCardKindDefinition>)> {
     let tables = record_kind.tables();
     let adapter_id = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!(
         "SELECT adapter_id FROM {} WHERE tenant_id = ?1 AND id = ?2",
@@ -2115,7 +2116,7 @@ pub(super) fn project_conversation_cards(
     parts: &[ConversationPart],
     adapter_id: &str,
     card_kinds: &[ConversationCardKindDefinition],
-) -> AppResult<Vec<crate::backend::dto::ConversationCard>> {
+) -> LegacyResult<Vec<crate::backend::dto::ConversationCard>> {
     project_conversation_cards_and_nodes(parts, adapter_id, card_kinds).map(|(cards, _)| cards)
 }
 
@@ -2123,7 +2124,7 @@ pub(super) fn project_conversation_cards_and_nodes(
     parts: &[ConversationPart],
     adapter_id: &str,
     card_kinds: &[ConversationCardKindDefinition],
-) -> AppResult<(
+) -> LegacyResult<(
     Vec<crate::backend::dto::ConversationCard>,
     Vec<ConversationContentNode>,
 )> {
@@ -2225,7 +2226,7 @@ pub(crate) async fn load_recent_conversation_sync_deltas_sqlx(
     source_id: Option<&str>,
     adapter_id: Option<&str>,
     recent_run_limit: usize,
-) -> AppResult<Vec<ConversationSyncDelta>> {
+) -> LegacyResult<Vec<ConversationSyncDelta>> {
     let record_kind = match record_kind {
         ConversationRecordKind::Session => "session",
         ConversationRecordKind::Web => "web",
@@ -2294,7 +2295,7 @@ pub(crate) async fn search_conversation_cards_sqlx(
     limit: usize,
     offset: usize,
     allowed_session_ids: Option<&BTreeSet<String>>,
-) -> AppResult<ConversationSearchPage> {
+) -> LegacyResult<ConversationSearchPage> {
     let needle = normalize_query(Some(query))
         .ok_or_else(|| "conversation search query is required".to_string())?;
     let id_fragment = crate::backend::models::conversation_id_search_term(query)
@@ -2497,7 +2498,7 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
     source_id: Option<&str>,
     query: &str,
     matches: crate::backend::search::conversation::ConversationSearchMatches,
-) -> AppResult<ConversationSearchPage> {
+) -> LegacyResult<ConversationSearchPage> {
     let tables = record_kind.tables();
     let session_ids = matches
         .hits
@@ -2683,7 +2684,7 @@ fn builtin_sources(now: &str) -> Vec<ConversationSource> {
     ]
 }
 
-fn map_sqlx_conversation_adapter(row: &SqliteRow) -> AppResult<ConversationAdapter> {
+fn map_sqlx_conversation_adapter(row: &SqliteRow) -> LegacyResult<ConversationAdapter> {
     let protocol_version = row
         .try_get::<Option<i64>, _>(10)
         .map_err(|error| error.to_string())?
@@ -2742,7 +2743,9 @@ fn map_sqlx_conversation_adapter(row: &SqliteRow) -> AppResult<ConversationAdapt
     })
 }
 
-fn map_sqlx_conversation_adapter_package(row: &SqliteRow) -> AppResult<ConversationAdapterPackage> {
+fn map_sqlx_conversation_adapter_package(
+    row: &SqliteRow,
+) -> LegacyResult<ConversationAdapterPackage> {
     let install_dir: String = row.try_get(5).map_err(|error| error.to_string())?;
     let manifest_path: String = row.try_get(6).map_err(|error| error.to_string())?;
     let adapter_manifest_path: String = row.try_get(7).map_err(|error| error.to_string())?;
@@ -2790,7 +2793,7 @@ fn map_sqlx_conversation_adapter_package(row: &SqliteRow) -> AppResult<Conversat
     })
 }
 
-fn map_sqlx_conversation_source(row: &SqliteRow) -> AppResult<ConversationSource> {
+fn map_sqlx_conversation_source(row: &SqliteRow) -> LegacyResult<ConversationSource> {
     let location: String = row.try_get(4).map_err(|error| error.to_string())?;
     Ok(ConversationSource {
         id: row.try_get(0).map_err(|error| error.to_string())?,
@@ -2813,22 +2816,22 @@ fn map_sqlx_conversation_source(row: &SqliteRow) -> AppResult<ConversationSource
     })
 }
 
-fn normalize_conversation_source_location(location: &str) -> AppResult<String> {
+fn normalize_conversation_source_location(location: &str) -> LegacyResult<String> {
     if location.contains("://") {
         return Ok(location.to_string());
     }
     crate::backend::path_utils::normalize_path_for_storage(location)
 }
 
-fn normalize_conversation_path(path: &str) -> AppResult<String> {
+fn normalize_conversation_path(path: &str) -> LegacyResult<String> {
     crate::backend::path_utils::normalize_path_for_storage(path)
 }
 
-fn normalize_optional_conversation_path(path: Option<&str>) -> AppResult<Option<String>> {
+fn normalize_optional_conversation_path(path: Option<&str>) -> LegacyResult<Option<String>> {
     path.map(normalize_conversation_path).transpose()
 }
 
-pub(super) fn map_sqlx_conversation_session(row: &SqliteRow) -> AppResult<ConversationSession> {
+pub(super) fn map_sqlx_conversation_session(row: &SqliteRow) -> LegacyResult<ConversationSession> {
     Ok(ConversationSession {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         source_id: row.try_get(1).map_err(|error| error.to_string())?,
@@ -2849,7 +2852,7 @@ pub(super) fn map_sqlx_conversation_session(row: &SqliteRow) -> AppResult<Conver
     })
 }
 
-pub(super) fn map_sqlx_conversation_turn(row: &SqliteRow) -> AppResult<ConversationTurn> {
+pub(super) fn map_sqlx_conversation_turn(row: &SqliteRow) -> LegacyResult<ConversationTurn> {
     Ok(ConversationTurn {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         session_id: row.try_get(1).map_err(|error| error.to_string())?,
@@ -2868,7 +2871,7 @@ pub(super) fn map_sqlx_conversation_turn(row: &SqliteRow) -> AppResult<Conversat
     })
 }
 
-pub(super) fn map_sqlx_conversation_part(row: &SqliteRow) -> AppResult<ConversationPart> {
+pub(super) fn map_sqlx_conversation_part(row: &SqliteRow) -> LegacyResult<ConversationPart> {
     Ok(ConversationPart {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         turn_id: row.try_get(1).map_err(|error| error.to_string())?,
@@ -2903,7 +2906,9 @@ pub(super) fn map_sqlx_conversation_part(row: &SqliteRow) -> AppResult<Conversat
     })
 }
 
-pub(super) fn map_sqlx_conversation_question(row: &SqliteRow) -> AppResult<ConversationQuestion> {
+pub(super) fn map_sqlx_conversation_question(
+    row: &SqliteRow,
+) -> LegacyResult<ConversationQuestion> {
     Ok(ConversationQuestion {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         session_id: row.try_get(1).map_err(|error| error.to_string())?,
@@ -2978,7 +2983,7 @@ async fn conversation_session_is_unchanged_sqlx_tx(
     tenant_id: &str,
     session: &ConversationSession,
     normalized: &NormalizedConversationSession,
-) -> AppResult<bool> {
+) -> LegacyResult<bool> {
     let Some(source_fingerprint) = session.source_fingerprint.as_deref() else {
         return Ok(false);
     };
@@ -3023,7 +3028,7 @@ async fn conversation_session_exists_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session_id: &str,
-) -> AppResult<bool> {
+) -> LegacyResult<bool> {
     let exists = sqlx::query_scalar::<_, i64>(
         "SELECT EXISTS(SELECT 1 FROM conversation_sessions WHERE tenant_id = ?1 AND id = ?2)",
     )
@@ -3040,7 +3045,7 @@ async fn conversation_session_turns_are_unchanged_sqlx_tx(
     tenant_id: &str,
     session_id: &str,
     normalized: &NormalizedConversationSession,
-) -> AppResult<bool> {
+) -> LegacyResult<bool> {
     let rows = sqlx::query(
         r#"
         SELECT external_id, fingerprint, missing
@@ -3075,7 +3080,7 @@ async fn upsert_conversation_session_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session: &ConversationSession,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(
         r#"
         INSERT INTO conversation_sessions (
@@ -3119,7 +3124,7 @@ async fn upsert_conversation_turn_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     turn: &ConversationTurn,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(
         r#"
         INSERT INTO conversation_turns (
@@ -3161,7 +3166,7 @@ async fn replace_conversation_parts_sqlx_tx(
     tenant_id: &str,
     turn_id: &str,
     parts: &[crate::backend::models::NormalizedConversationPart],
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let existing_ids = sqlx::query_scalar::<_, String>(
         "SELECT id FROM conversation_parts WHERE tenant_id = ?1 AND turn_id = ?2",
     )
@@ -3246,7 +3251,7 @@ async fn mark_missing_conversation_sessions_sqlx_tx(
     incoming_session_ids: &BTreeSet<String>,
     sync_run_id: &str,
     now: &str,
-) -> AppResult<Vec<String>> {
+) -> LegacyResult<Vec<String>> {
     let mut changed_session_ids = Vec::new();
     let existing_sessions = sqlx::query_as::<_, (String, i64)>(
         "SELECT id, missing FROM conversation_sessions WHERE tenant_id = ?1 AND source_id = ?2",
@@ -3322,7 +3327,7 @@ async fn prune_conversation_turns_sqlx_tx(
     tenant_id: &str,
     session_id: &str,
     normalized: &NormalizedConversationSession,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let retained_turn_ids = normalized
         .turns
         .iter()
@@ -3415,7 +3420,7 @@ async fn ensure_question_groups_for_session_sqlx_tx(
     tenant_id: &str,
     session_id: &str,
     now: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let turns = load_session_turns_sqlx_tx(tx, tenant_id, session_id).await?;
     let existing_memberships =
         load_turn_question_memberships_sqlx_tx(tx, tenant_id, session_id).await?;
@@ -3493,7 +3498,7 @@ async fn rebuild_session_question_aggregates_sqlx_tx(
     tenant_id: &str,
     session_id: &str,
     now: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let question_ids = question_ids_for_session_sqlx_tx(tx, tenant_id, session_id).await?;
     for question_id in question_ids {
         rebuild_question_aggregate_sqlx_tx(tx, tenant_id, &question_id, now).await?;
@@ -3506,7 +3511,7 @@ async fn rebuild_question_aggregate_sqlx_tx(
     tenant_id: &str,
     question_id: &str,
     now: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let turns = load_question_turns_sqlx_tx(tx, tenant_id, question_id).await?;
     let mut question_text = Vec::new();
     let mut answer_text = Vec::new();
@@ -3593,7 +3598,7 @@ async fn insert_sync_run_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     run: &ConversationSyncRun,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(
         r#"
         INSERT INTO conversation_sync_runs (
@@ -3628,7 +3633,7 @@ pub(crate) async fn insert_conversation_sync_delta_sqlx_tx(
     session_id: &str,
     change_kind: &str,
     observed_at: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(
         r#"
         INSERT INTO conversation_sync_deltas (
@@ -3653,7 +3658,7 @@ async fn load_session_turns_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session_id: &str,
-) -> AppResult<Vec<ConversationTurn>> {
+) -> LegacyResult<Vec<ConversationTurn>> {
     let rows = sqlx::query(
         r#"
         SELECT id, session_id, external_id, turn_index, user_text, title,
@@ -3675,7 +3680,7 @@ async fn load_question_turns_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     question_id: &str,
-) -> AppResult<Vec<ConversationTurn>> {
+) -> LegacyResult<Vec<ConversationTurn>> {
     let rows = sqlx::query(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
@@ -3698,7 +3703,7 @@ async fn load_turn_parts_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     turn_id: &str,
-) -> AppResult<Vec<ConversationPart>> {
+) -> LegacyResult<Vec<ConversationPart>> {
     let rows = sqlx::query(
         r#"
         SELECT id, turn_id, part_index, role, kind, text, language, command,
@@ -3721,7 +3726,7 @@ async fn load_turn_question_memberships_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session_id: &str,
-) -> AppResult<BTreeMap<String, String>> {
+) -> LegacyResult<BTreeMap<String, String>> {
     let rows = sqlx::query(
         r#"
         SELECT qt.turn_id, qt.question_id
@@ -3750,7 +3755,7 @@ async fn previous_question_id_for_turn_sqlx_tx(
     tenant_id: &str,
     session_id: &str,
     turn_id: &str,
-) -> AppResult<Option<String>> {
+) -> LegacyResult<Option<String>> {
     sqlx::query_scalar::<_, String>(
         r#"
         SELECT qt.question_id
@@ -3778,7 +3783,7 @@ async fn next_question_index_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session_id: &str,
-) -> AppResult<i64> {
+) -> LegacyResult<i64> {
     let max_index: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
         "SELECT MAX(question_index) FROM conversation_questions WHERE tenant_id = ?1 AND session_id = ?2",
     )
@@ -3794,7 +3799,7 @@ async fn max_question_turn_order_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     question_id: &str,
-) -> AppResult<i64> {
+) -> LegacyResult<i64> {
     let max_order: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
         "SELECT MAX(turn_order) FROM conversation_question_turns WHERE tenant_id = ?1 AND question_id = ?2",
     )
@@ -3810,7 +3815,7 @@ async fn load_conversation_question_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     question_id: &str,
-) -> AppResult<Option<ConversationQuestion>> {
+) -> LegacyResult<Option<ConversationQuestion>> {
     sqlx::query(
         r#"
         SELECT id, session_id, question_index, title, question_text, answer_text,
@@ -3833,7 +3838,7 @@ async fn question_ids_for_session_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session_id: &str,
-) -> AppResult<Vec<String>> {
+) -> LegacyResult<Vec<String>> {
     sqlx::query_scalar::<_, String>(
         r#"
         SELECT q.id
@@ -3853,7 +3858,7 @@ async fn load_question_turn_ids_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     question_id: &str,
-) -> AppResult<Vec<String>> {
+) -> LegacyResult<Vec<String>> {
     sqlx::query_scalar::<_, String>(
         r#"
         SELECT turn_id
@@ -3873,7 +3878,7 @@ async fn renumber_question_turns_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     question_id: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let turn_ids = load_question_turn_ids_sqlx_tx(tx, tenant_id, question_id).await?;
     for (index, turn_id) in turn_ids.iter().enumerate() {
         sqlx::query(
@@ -3899,7 +3904,7 @@ async fn ensure_question_ids_are_adjacent_sqlx_tx(
     tenant_id: &str,
     session_id: &str,
     question_ids: &[String],
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let ordered = question_ids_for_session_sqlx_tx(tx, tenant_id, session_id).await?;
     let selected = question_ids.iter().collect::<BTreeSet<_>>();
     let positions = ordered
@@ -3931,7 +3936,7 @@ async fn renumber_questions_for_session_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session_id: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let question_ids = sqlx::query_scalar::<_, String>(
         r#"
         SELECT q.id
@@ -4025,7 +4030,7 @@ async fn load_search_session_ids_by_id_fragment_sqlx(
     tenant_id: &str,
     tables: ConversationRecordTables,
     fragment: &str,
-) -> AppResult<BTreeSet<String>> {
+) -> LegacyResult<BTreeSet<String>> {
     let (session_lower, session_upper) =
         conversation_id_fragment_range(tables.session_id_prefix, fragment);
     let (question_lower, question_upper) =
@@ -4093,7 +4098,7 @@ pub(crate) async fn list_conversation_sessions_by_id_fragment_sqlx(
     query: &str,
     limit: usize,
     offset: usize,
-) -> AppResult<Vec<ConversationSessionListItem>> {
+) -> LegacyResult<Vec<ConversationSessionListItem>> {
     if query.trim().len() != 8 {
         return Err("conversation short ID must be exactly 8 hexadecimal characters".to_string());
     }
@@ -4129,7 +4134,7 @@ async fn load_search_sessions_sqlx(
     adapter_id: Option<&str>,
     source_id: Option<&str>,
     session_ids_json: Option<&str>,
-) -> AppResult<Vec<ConversationSessionListItem>> {
+) -> LegacyResult<Vec<ConversationSessionListItem>> {
     let query = format!(
         r#"
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, {project_path_expr} AS project_path,
@@ -4193,7 +4198,7 @@ async fn load_search_questions_sqlx(
     adapter_id: Option<&str>,
     source_id: Option<&str>,
     session_ids_json: Option<&str>,
-) -> AppResult<BTreeMap<String, Vec<ConversationQuestion>>> {
+) -> LegacyResult<BTreeMap<String, Vec<ConversationQuestion>>> {
     let query = format!(
         r#"
         SELECT q.id, q.session_id, q.question_index, q.title, q.question_text,
@@ -4236,7 +4241,7 @@ async fn load_search_turns_sqlx(
     adapter_id: Option<&str>,
     source_id: Option<&str>,
     session_ids_json: Option<&str>,
-) -> AppResult<BTreeMap<String, Vec<ConversationTurn>>> {
+) -> LegacyResult<BTreeMap<String, Vec<ConversationTurn>>> {
     let query = format!(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
@@ -4283,7 +4288,7 @@ async fn load_search_parts_sqlx(
     adapter_id: Option<&str>,
     source_id: Option<&str>,
     session_ids_json: Option<&str>,
-) -> AppResult<BTreeMap<String, Vec<ConversationPart>>> {
+) -> LegacyResult<BTreeMap<String, Vec<ConversationPart>>> {
     let query = format!(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
@@ -4384,7 +4389,7 @@ enum SearchTimeBound {
 fn parse_search_time_bound(
     value: Option<&str>,
     bound: SearchTimeBound,
-) -> AppResult<Option<DateTime<Utc>>> {
+) -> LegacyResult<Option<DateTime<Utc>>> {
     let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
     };
@@ -4533,7 +4538,7 @@ fn search_entries_for_part(
 async fn load_search_adapter_card_kinds_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<BTreeMap<String, Vec<ConversationCardKindDefinition>>> {
+) -> LegacyResult<BTreeMap<String, Vec<ConversationCardKindDefinition>>> {
     let rows =
         sqlx::query("SELECT id, card_kinds_json FROM conversation_adapters WHERE tenant_id = ?1")
             .bind(tenant_id)
@@ -4963,7 +4968,7 @@ mod tests {
                 )
                 .await?;
 
-                AppResult::Ok((
+                LegacyResult::Ok((
                     adapters,
                     loaded_adapter,
                     sources,
@@ -5074,7 +5079,7 @@ mod tests {
                     &package.package_id,
                 )
                 .await?;
-                AppResult::Ok((listed, by_package, by_adapter, deleted, missing))
+                LegacyResult::Ok((listed, by_package, by_adapter, deleted, missing))
             })
             .expect("round trip package");
 
@@ -5229,7 +5234,7 @@ mod tests {
                 let missing_adapter =
                     load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter.id)
                         .await?;
-                AppResult::Ok((
+                LegacyResult::Ok((
                     uninstalled,
                     remaining_versions,
                     retained_source,
@@ -5275,7 +5280,7 @@ mod tests {
                         load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
                             .await?
                             .expect("source remains after deleting package files");
-                    AppResult::Ok((
+                    LegacyResult::Ok((
                         deleted_version,
                         missing_package,
                         versions_after_delete,
@@ -5377,7 +5382,7 @@ mod tests {
 
         let (stored_adapter, stored_package) = database
             .block_on(async {
-                AppResult::Ok((
+                LegacyResult::Ok((
                     load_conversation_adapter_sqlx(
                         database.pool(),
                         TEST_TENANT_ID,
@@ -5480,7 +5485,7 @@ mod tests {
                     load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
                         .await?
                         .expect("source retained");
-                AppResult::Ok((adapter, source))
+                LegacyResult::Ok((adapter, source))
             })
             .expect("disable built-in adapter");
 
@@ -5561,7 +5566,7 @@ mod tests {
                     &sessions[0].session.id,
                 )
                 .await?;
-                AppResult::Ok((
+                LegacyResult::Ok((
                     initial_question_count,
                     initial_first_question_turn_count,
                     detail,
@@ -5741,7 +5746,7 @@ mod tests {
                 .fetch_all(database.pool())
                 .await
                 .map_err(|error| error.to_string())?;
-                AppResult::Ok((
+                LegacyResult::Ok((
                     result,
                     imported_at,
                     metadata_json,
@@ -5821,7 +5826,7 @@ mod tests {
                 .fetch_one(database.pool())
                 .await
                 .map_err(|error| error.to_string())?;
-                AppResult::Ok((detail, stale_parts))
+                LegacyResult::Ok((detail, stale_parts))
             })
             .expect("prune stale turns through SQLx");
 
@@ -5891,7 +5896,7 @@ mod tests {
                 .fetch_one(database.pool())
                 .await
                 .map_err(|error| error.to_string())?;
-                AppResult::Ok((listed, missing_count))
+                LegacyResult::Ok((listed, missing_count))
             })
             .expect("mark omitted sessions missing through SQLx");
 
@@ -6063,7 +6068,7 @@ mod tests {
                     &filtered_questions[0].question.id,
                 )
                 .await?;
-                AppResult::Ok((sessions, detail, filtered_questions, question))
+                LegacyResult::Ok((sessions, detail, filtered_questions, question))
             })
             .expect("read conversations through SQLx");
 
@@ -6179,7 +6184,7 @@ mod tests {
                     0,
                 )
                 .await?;
-                AppResult::Ok((fragment_matches, direct_fragment_matches, full_matches))
+                LegacyResult::Ok((fragment_matches, direct_fragment_matches, full_matches))
             })
             .expect("list conversation sessions by display id fragment");
 
@@ -6421,7 +6426,7 @@ mod tests {
                     &fragment,
                 )
                 .await?;
-                AppResult::Ok((session_page, web_page, fragment_page, fragment_session_ids))
+                LegacyResult::Ok((session_page, web_page, fragment_page, fragment_session_ids))
             })
             .expect("search session and web records through SQLx");
 
@@ -6561,7 +6566,7 @@ mod tests {
                     None,
                 )
                 .await?;
-                AppResult::Ok((detail, undeclared_list, undeclared_page, declared_page))
+                LegacyResult::Ok((detail, undeclared_list, undeclared_page, declared_page))
             })
             .expect("search declared content cards through SQLx");
 
@@ -6695,7 +6700,7 @@ mod tests {
                     None,
                 )
                 .await?;
-                AppResult::Ok((session_id, alpha_detail, beta_detail, alpha_page, beta_page))
+                LegacyResult::Ok((session_id, alpha_detail, beta_detail, alpha_page, beta_page))
             })
             .expect("isolate conversation records by tenant");
 
@@ -6808,7 +6813,7 @@ mod tests {
                     load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter.id)
                         .await?
                         .expect("stored adapter");
-                AppResult::Ok((stored_adapter, part_id, detail))
+                LegacyResult::Ok((stored_adapter, part_id, detail))
             })
             .expect("round trip structured card");
 
@@ -6905,7 +6910,7 @@ mod tests {
                     crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION + 1,
                 )
                 .await?;
-                AppResult::Ok((
+                LegacyResult::Ok((
                     same,
                     adapter_changed,
                     contract_changed,
@@ -6967,7 +6972,7 @@ mod tests {
                     crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
                 )
                 .await?;
-                AppResult::Ok((required_before, required_after))
+                LegacyResult::Ok((required_before, required_after))
             })
             .expect("track payload policy reparse state");
 
@@ -7123,7 +7128,7 @@ pub(crate) async fn resolve_conversation_session_id_prefix_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     prefix_or_id: &str,
-) -> AppResult<String> {
+) -> LegacyResult<String> {
     if prefix_or_id.len() >= 36 {
         return Ok(prefix_or_id.to_string());
     }
@@ -7169,7 +7174,7 @@ pub(crate) async fn resolve_conversation_question_id_prefix_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     prefix_or_id: &str,
-) -> AppResult<String> {
+) -> LegacyResult<String> {
     if prefix_or_id.len() >= 36 {
         return Ok(prefix_or_id.to_string());
     }
@@ -7215,7 +7220,7 @@ pub(crate) async fn resolve_conversation_turn_id_prefix_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     prefix_or_id: &str,
-) -> AppResult<String> {
+) -> LegacyResult<String> {
     if prefix_or_id.len() >= 36 {
         return Ok(prefix_or_id.to_string());
     }
@@ -7261,7 +7266,7 @@ pub(crate) async fn resolve_conversation_part_id_prefix_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     prefix_or_id: &str,
-) -> AppResult<String> {
+) -> LegacyResult<String> {
     if prefix_or_id.len() >= 36 {
         return Ok(prefix_or_id.to_string());
     }
@@ -7311,7 +7316,7 @@ pub(crate) async fn load_conversation_session_versions_sqlx(
     adapter_content_hash: Option<&str>,
     card_contract_version: Option<u32>,
     payload_policy_version: u32,
-) -> AppResult<std::collections::BTreeMap<String, String>> {
+) -> LegacyResult<std::collections::BTreeMap<String, String>> {
     let kind_str = match record_kind {
         crate::backend::dto::ConversationRecordKind::Session => "session",
         crate::backend::dto::ConversationRecordKind::Web => "web",
@@ -7350,7 +7355,7 @@ pub(crate) async fn conversation_payload_policy_reparse_required_sqlx(
     pool: &sqlx::SqlitePool,
     tenant_id: &str,
     payload_policy_version: u32,
-) -> AppResult<bool> {
+) -> LegacyResult<bool> {
     let applied_version = sqlx::query_scalar::<_, i64>(
         "SELECT applied_version FROM conversation_payload_policy_state WHERE tenant_id = ?1",
     )
@@ -7400,7 +7405,7 @@ pub(crate) async fn mark_conversation_payload_policy_applied_sqlx(
     pool: &sqlx::SqlitePool,
     tenant_id: &str,
     payload_policy_version: u32,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(
         r#"
         INSERT INTO conversation_payload_policy_state (tenant_id, applied_version, updated_at)
@@ -7429,7 +7434,7 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
     adapter_content_hash: Option<&str>,
     card_contract_version: Option<u32>,
     payload_policy_version: u32,
-) -> AppResult<usize> {
+) -> LegacyResult<usize> {
     let kind_str = match record_kind {
         crate::backend::dto::ConversationRecordKind::Session => "session",
         crate::backend::dto::ConversationRecordKind::Web => "web",

@@ -1303,7 +1303,7 @@ mod tests {
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
         env::remove_var("HOME");
-        assert_eq!(error.kind, "operation_error");
+        assert_eq!(error.kind, "validation");
         assert!(error
             .message
             .contains("only AssetIWeave backup library skills"));

@@ -13,7 +13,7 @@ pub(crate) fn build_plan_with_catalog(
     enabled_mounts: &[AssetMount],
     requested_profile_id: Option<&str>,
     catalog: &crate::backend::target_catalog::TargetCatalog,
-) -> crate::backend::dto::AppResult<DeploymentPlan> {
+) -> crate::backend::compat::LegacyResult<DeploymentPlan> {
     for profile in profiles
         .iter()
         .filter(|profile| requested_profile_id.is_none_or(|requested| requested == profile.id))

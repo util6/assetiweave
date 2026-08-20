@@ -1,5 +1,5 @@
 use crate::backend::{
-    dto::AppResult,
+    compat::LegacyResult,
     models::{AssetKind, Source, SourceKind, SourceOrigin, SourceScannerKind},
     path_utils::normalize_path_for_storage,
 };
@@ -153,16 +153,16 @@ pub(crate) struct BuiltinSkillInstallResult {
     pub(crate) changed: bool,
 }
 
-pub(crate) fn system_skill_root() -> AppResult<PathBuf> {
+pub(crate) fn system_skill_root() -> LegacyResult<PathBuf> {
     let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
     Ok(home.join(".assetiweave").join("skills").join(".system"))
 }
 
-pub(crate) fn install_builtin_skills() -> AppResult<BuiltinSkillInstallResult> {
+pub(crate) fn install_builtin_skills() -> LegacyResult<BuiltinSkillInstallResult> {
     install_builtin_skills_at(&system_skill_root()?)
 }
 
-pub(crate) fn system_skill_source() -> AppResult<Source> {
+pub(crate) fn system_skill_source() -> LegacyResult<Source> {
     let root = system_skill_root()?;
     let root_path = normalize_path_for_storage(&root.to_string_lossy())?;
     Ok(Source {
@@ -191,7 +191,7 @@ pub(crate) fn system_skill_source() -> AppResult<Source> {
     })
 }
 
-fn install_builtin_skills_at(root: &Path) -> AppResult<BuiltinSkillInstallResult> {
+fn install_builtin_skills_at(root: &Path) -> LegacyResult<BuiltinSkillInstallResult> {
     validate_embedded_skills()?;
     let fingerprint = embedded_fingerprint();
     if installed_tree_matches(root, &fingerprint)? {
@@ -268,7 +268,7 @@ fn install_builtin_skills_at(root: &Path) -> AppResult<BuiltinSkillInstallResult
     })
 }
 
-fn validate_embedded_skills() -> AppResult<()> {
+fn validate_embedded_skills() -> LegacyResult<()> {
     for embedded in EMBEDDED_SKILLS {
         let skill = std::str::from_utf8(embedded.skill)
             .map_err(|error| format!("decode {}/SKILL.md: {error}", embedded.directory))?;
@@ -295,7 +295,7 @@ fn validate_embedded_skill_frontmatter(
     skill: &str,
     expected_name: &str,
     directory: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let normalized = normalize_embedded_skill_text(skill);
     let frontmatter = normalized.strip_prefix("---\n").and_then(|body| {
         body.split_once("\n---\n")
@@ -347,7 +347,7 @@ fn embedded_fingerprint() -> String {
     format!("{:x}", digest.finalize())
 }
 
-fn installed_tree_matches(root: &Path, fingerprint: &str) -> AppResult<bool> {
+fn installed_tree_matches(root: &Path, fingerprint: &str) -> LegacyResult<bool> {
     if !root.is_dir() {
         return Ok(false);
     }
@@ -396,7 +396,7 @@ fn installed_tree_matches(root: &Path, fingerprint: &str) -> AppResult<bool> {
     Ok(true)
 }
 
-fn write_embedded_tree(root: &Path, fingerprint: &str) -> AppResult<()> {
+fn write_embedded_tree(root: &Path, fingerprint: &str) -> LegacyResult<()> {
     if path_is_present(root) {
         remove_path(root)?;
     }
@@ -420,7 +420,7 @@ fn path_is_present(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok()
 }
 
-fn remove_path(path: &Path) -> AppResult<()> {
+fn remove_path(path: &Path) -> LegacyResult<()> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -437,11 +437,11 @@ fn remove_path(path: &Path) -> AppResult<()> {
     }
 }
 
-fn rename_path(from: &Path, to: &Path, description: &str) -> AppResult<()> {
+fn rename_path(from: &Path, to: &Path, description: &str) -> LegacyResult<()> {
     retry_io(description, || fs::rename(from, to))
 }
 
-fn retry_io<T, F>(description: &str, mut operation: F) -> AppResult<T>
+fn retry_io<T, F>(description: &str, mut operation: F) -> LegacyResult<T>
 where
     F: FnMut() -> io::Result<T>,
 {
@@ -465,7 +465,7 @@ where
 }
 
 #[cfg(unix)]
-fn set_executable_if_needed(path: &Path, executable: bool) -> AppResult<()> {
+fn set_executable_if_needed(path: &Path, executable: bool) -> LegacyResult<()> {
     use std::os::unix::fs::PermissionsExt;
     if executable {
         let mut permissions = fs::metadata(path)
@@ -478,7 +478,7 @@ fn set_executable_if_needed(path: &Path, executable: bool) -> AppResult<()> {
 }
 
 #[cfg(unix)]
-fn executable_mode_matches(path: &Path, expected: bool) -> AppResult<bool> {
+fn executable_mode_matches(path: &Path, expected: bool) -> LegacyResult<bool> {
     use std::os::unix::fs::PermissionsExt;
     let executable = fs::metadata(path)
         .map_err(|error| error.to_string())?
@@ -490,12 +490,12 @@ fn executable_mode_matches(path: &Path, expected: bool) -> AppResult<bool> {
 }
 
 #[cfg(not(unix))]
-fn set_executable_if_needed(_path: &Path, _executable: bool) -> AppResult<()> {
+fn set_executable_if_needed(_path: &Path, _executable: bool) -> LegacyResult<()> {
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn executable_mode_matches(_path: &Path, _expected: bool) -> AppResult<bool> {
+fn executable_mode_matches(_path: &Path, _expected: bool) -> LegacyResult<bool> {
     Ok(true)
 }
 

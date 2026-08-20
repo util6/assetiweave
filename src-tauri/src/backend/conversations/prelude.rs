@@ -9,7 +9,7 @@ pub(super) use super::external::{
 };
 pub(super) use super::io_utils::*;
 pub(super) use super::types::*;
-pub(super) use crate::backend::dto::AppResult;
+pub(super) use crate::backend::compat::LegacyResult as AppResult;
 pub(super) use crate::backend::models::{
     ConversationAdapter, ConversationAdapterKind, ConversationAdapterPackageRecordKind,
     ConversationAdapterTrustState, ConversationCardKindDefinition, ConversationSource,

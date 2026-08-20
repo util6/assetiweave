@@ -1,4 +1,4 @@
-use crate::backend::dto::AppResult;
+use crate::backend::compat::LegacyResult;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -33,14 +33,14 @@ struct AppSettingsDocument {
     settings: Value,
 }
 
-pub(crate) fn get_app_settings() -> AppResult<AppSettingsFile> {
+pub(crate) fn get_app_settings() -> LegacyResult<AppSettingsFile> {
     let paths = app_settings_paths()?;
     ensure_settings_dirs(&paths)?;
     let settings = read_normalized_settings_document(&paths.config_path)?.settings;
     Ok(paths.into_file(settings))
 }
 
-pub(crate) fn save_app_settings(settings: Value) -> AppResult<AppSettingsFile> {
+pub(crate) fn save_app_settings(settings: Value) -> LegacyResult<AppSettingsFile> {
     let paths = app_settings_paths()?;
     ensure_settings_dirs(&paths)?;
     let document = AppSettingsDocument {
@@ -51,7 +51,7 @@ pub(crate) fn save_app_settings(settings: Value) -> AppResult<AppSettingsFile> {
     Ok(paths.into_file(document.settings))
 }
 
-pub(crate) fn read_app_settings_value() -> AppResult<Value> {
+pub(crate) fn read_app_settings_value() -> LegacyResult<Value> {
     let paths = app_settings_paths()?;
     if !paths.config_path.exists() {
         return normalize_settings_paths(json!({}));
@@ -59,13 +59,13 @@ pub(crate) fn read_app_settings_value() -> AppResult<Value> {
     Ok(read_normalized_settings_document(&paths.config_path)?.settings)
 }
 
-pub(crate) fn conversation_full_sync_on_startup_enabled() -> AppResult<bool> {
+pub(crate) fn conversation_full_sync_on_startup_enabled() -> LegacyResult<bool> {
     Ok(conversation_full_sync_on_startup_enabled_from_value(
         &read_app_settings_value()?,
     ))
 }
 
-pub(crate) fn conversation_adapter_dir() -> AppResult<PathBuf> {
+pub(crate) fn conversation_adapter_dir() -> LegacyResult<PathBuf> {
     Ok(app_settings_paths()?.conversation_adapter_dir)
 }
 
@@ -94,7 +94,7 @@ impl AppSettingsPaths {
     }
 }
 
-fn app_settings_paths() -> AppResult<AppSettingsPaths> {
+fn app_settings_paths() -> LegacyResult<AppSettingsPaths> {
     let config_dir = app_config_dir()?;
     Ok(AppSettingsPaths {
         config_path: config_dir.join(CONFIG_FILE_NAME),
@@ -103,7 +103,7 @@ fn app_settings_paths() -> AppResult<AppSettingsPaths> {
     })
 }
 
-fn app_config_dir() -> AppResult<PathBuf> {
+fn app_config_dir() -> LegacyResult<PathBuf> {
     if let Ok(home) = env::var("ASSETIWEAVE_HOME") {
         let home = home.trim();
         if !home.is_empty() {
@@ -114,12 +114,12 @@ fn app_config_dir() -> AppResult<PathBuf> {
     Ok(home.join(CONFIG_DIR_NAME))
 }
 
-fn ensure_settings_dirs(paths: &AppSettingsPaths) -> AppResult<()> {
+fn ensure_settings_dirs(paths: &AppSettingsPaths) -> LegacyResult<()> {
     fs::create_dir_all(&paths.config_dir).map_err(|error| error.to_string())?;
     fs::create_dir_all(&paths.conversation_adapter_dir).map_err(|error| error.to_string())
 }
 
-fn read_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
+fn read_settings_document(path: &Path) -> LegacyResult<AppSettingsDocument> {
     if !path.exists() {
         let document = default_document();
         write_settings_document(path, &document)?;
@@ -132,7 +132,7 @@ fn read_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
     Ok(normalize_document(parsed))
 }
 
-fn read_normalized_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
+fn read_normalized_settings_document(path: &Path) -> LegacyResult<AppSettingsDocument> {
     let mut document = read_settings_document(path)?;
     let normalized = normalize_settings_paths(document.settings.clone())?;
     let schema_changed = document.schema_version != SETTINGS_SCHEMA_VERSION;
@@ -144,7 +144,7 @@ fn read_normalized_settings_document(path: &Path) -> AppResult<AppSettingsDocume
     Ok(document)
 }
 
-fn normalize_settings_paths(mut settings: Value) -> AppResult<Value> {
+fn normalize_settings_paths(mut settings: Value) -> LegacyResult<Value> {
     normalize_shared_ai_settings(&mut settings);
     for path in [
         &["dataBackup", "customDirectory"][..],
@@ -401,7 +401,7 @@ fn normalize_integer_setting(value: Option<&Value>, min: i64, max: i64, fallback
         .unwrap_or(fallback)
 }
 
-fn normalize_json_path_setting(value: &mut Value, path: &[&str]) -> AppResult<()> {
+fn normalize_json_path_setting(value: &mut Value, path: &[&str]) -> LegacyResult<()> {
     let Some((key, parents)) = path.split_last() else {
         return Ok(());
     };
@@ -428,7 +428,7 @@ fn normalize_json_path_setting(value: &mut Value, path: &[&str]) -> AppResult<()
     Ok(())
 }
 
-fn write_settings_document(path: &Path, document: &AppSettingsDocument) -> AppResult<()> {
+fn write_settings_document(path: &Path, document: &AppSettingsDocument) -> LegacyResult<()> {
     let parent = path
         .parent()
         .ok_or_else(|| "设置文件缺少父目录".to_string())?;

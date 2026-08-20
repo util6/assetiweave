@@ -2,7 +2,7 @@
 //!
 //! 提供在操作系统文件管理器（Finder / Explorer / xdg-open）中定位与打开指定路径的能力。
 
-use crate::backend::{dto::AppResult, path_utils::expand_path};
+use crate::backend::{compat::LegacyResult, path_utils::expand_path};
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -30,7 +30,7 @@ enum FileManagerPlatform {
 ///
 /// # 参数
 /// * `path` - 目标文件或目录的绝对路径或含 `~` 缩写的路径字符串
-pub(crate) fn reveal_path(path: String) -> AppResult<()> {
+pub(crate) fn reveal_path(path: String) -> LegacyResult<()> {
     let path = resolve_reveal_path(&path)?;
 
     #[cfg(target_os = "macos")]
@@ -59,7 +59,7 @@ pub(crate) fn reveal_path(path: String) -> AppResult<()> {
 }
 
 /// 解析路径并校验其是否存在
-fn resolve_reveal_path(path: &str) -> AppResult<PathBuf> {
+fn resolve_reveal_path(path: &str) -> LegacyResult<PathBuf> {
     let path = expand_path(path)?;
     if !path.exists() {
         return Err(format!("path does not exist: {}", path.display()));
@@ -105,7 +105,7 @@ fn build_file_manager_invocation(
 }
 
 /// 执行文件管理器命令并检查返回状态
-fn command_status(invocation: &FileManagerInvocation) -> AppResult<()> {
+fn command_status(invocation: &FileManagerInvocation) -> LegacyResult<()> {
     let status = Command::new(invocation.program)
         .args(&invocation.args)
         .status()

@@ -1,4 +1,4 @@
-use crate::backend::dto::AppResult;
+use crate::backend::compat::LegacyResult;
 use crate::backend::models::TargetProfile;
 use crate::backend::path_utils::normalize_path_for_storage;
 use sqlx::SqlitePool;
@@ -11,7 +11,7 @@ use super::{
 pub(crate) async fn load_profiles_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<Vec<TargetProfile>> {
+) -> LegacyResult<Vec<TargetProfile>> {
     let payloads = sqlx::query_scalar::<_, String>(sql::LIST_PROFILES)
         .bind(tenant_id)
         .fetch_all(pool)
@@ -27,7 +27,7 @@ pub(crate) async fn load_profile_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     profile_id: &str,
-) -> AppResult<Option<TargetProfile>> {
+) -> LegacyResult<Option<TargetProfile>> {
     sqlx::query_scalar::<_, String>(sql::LOAD_PROFILE)
         .bind(tenant_id)
         .bind(profile_id)
@@ -42,7 +42,7 @@ pub(crate) async fn upsert_profile_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     profile: &TargetProfile,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let profile = normalize_profile_paths(profile.clone())?;
     sqlx::query(sql::UPSERT_PROFILE)
         .bind(tenant_id)
@@ -54,7 +54,7 @@ pub(crate) async fn upsert_profile_sqlx(
     Ok(())
 }
 
-fn normalize_profile_paths(mut profile: TargetProfile) -> AppResult<TargetProfile> {
+fn normalize_profile_paths(mut profile: TargetProfile) -> LegacyResult<TargetProfile> {
     if profile.target_provider_id.trim().is_empty() {
         profile.target_provider_id = profile
             .app_kind
@@ -65,7 +65,7 @@ fn normalize_profile_paths(mut profile: TargetProfile) -> AppResult<TargetProfil
         .target_paths
         .iter()
         .map(|path| normalize_path_for_storage(path))
-        .collect::<AppResult<Vec<_>>>()?;
+        .collect::<LegacyResult<Vec<_>>>()?;
     Ok(profile)
 }
 
@@ -73,7 +73,7 @@ pub(crate) async fn delete_profile_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     profile_id: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     sqlx::query(sql::DELETE_APP_SHORTCUT_BY_PROFILE)
         .bind(tenant_id)
@@ -168,7 +168,7 @@ mod tests {
                             .fetch_one(database.pool())
                             .await
                             .map_err(|error| error.to_string())?;
-                    AppResult::Ok((
+                    LegacyResult::Ok((
                         profiles,
                         loaded_profile,
                         missing_profile,
@@ -207,7 +207,7 @@ mod tests {
                     load_profile_sqlx(database.pool(), "default", "profile-a").await?;
                 let tenant_loaded =
                     load_profile_sqlx(database.pool(), "tenant-a", "profile-a").await?;
-                AppResult::Ok((default_loaded, tenant_loaded))
+                LegacyResult::Ok((default_loaded, tenant_loaded))
             })
             .expect("query tenant-scoped profiles");
 

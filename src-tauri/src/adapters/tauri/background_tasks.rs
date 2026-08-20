@@ -17,7 +17,8 @@ use crate::backend::{
         ConversationAdapterPackageUninstallParams, ConversationScriptInstallParams,
         ConversationSyncMode, ConversationSyncParams, MemoryTaskStartParams,
     },
-    dto::{AppResult, CatalogAsset},
+    compat::LegacyResult,
+    dto::CatalogAsset,
     extension_kernel::{
         LifecycleOp, LifecycleRequestKey, LifecycleReservationOutcome, LifecycleTaskCoordinator,
         PackageIdentity, PackageKind, ResourceKey,
@@ -245,7 +246,7 @@ enum ConversationSyncScope {
 }
 
 impl ConversationSyncScope {
-    fn from_record_kind(record_kind: Option<&str>) -> AppResult<Self> {
+    fn from_record_kind(record_kind: Option<&str>) -> LegacyResult<Self> {
         let Some(record_kind) = record_kind.map(str::trim).filter(|value| !value.is_empty()) else {
             return Ok(Self::All);
         };
@@ -439,7 +440,7 @@ impl BackgroundTaskRegistry {
         dedup_key: Option<String>,
         conflict_keys: impl IntoIterator<Item = String>,
         detail: Value,
-    ) -> AppResult<ExternalRegistrationOutcome> {
+    ) -> LegacyResult<ExternalRegistrationOutcome> {
         let runtime = &self.task_runtime;
         let mut spec = TaskSpec::new(kind, dedup_key)
             .with_task_id(task_id.to_string())
@@ -462,7 +463,7 @@ impl BackgroundTaskRegistry {
         &self,
         task_id: &str,
         result: Result<Value, String>,
-    ) -> AppResult<TaskSnapshot> {
+    ) -> LegacyResult<TaskSnapshot> {
         self.finish_external_result(
             task_id,
             result.map_err(crate::backend::runtime::AppError::from),
@@ -473,13 +474,13 @@ impl BackgroundTaskRegistry {
         &self,
         task_id: &str,
         result: crate::backend::runtime::AppResult<Value>,
-    ) -> AppResult<TaskSnapshot> {
+    ) -> LegacyResult<TaskSnapshot> {
         self.task_runtime
             .complete_external(task_id, result)
             .map_err(String::from)
     }
 
-    fn cancel_external_task(&self, task_id: &str) -> AppResult<TaskSnapshot> {
+    fn cancel_external_task(&self, task_id: &str) -> LegacyResult<TaskSnapshot> {
         match self.task_runtime.cancel(task_id) {
             crate::backend::runtime::tasks::CancelOutcome::Requested(snapshot)
             | crate::backend::runtime::tasks::CancelOutcome::AlreadyFinished(snapshot) => {
@@ -491,7 +492,7 @@ impl BackgroundTaskRegistry {
         }
     }
 
-    fn external_task_snapshot(&self, task_id: &str) -> AppResult<TaskSnapshot> {
+    fn external_task_snapshot(&self, task_id: &str) -> LegacyResult<TaskSnapshot> {
         self.task_runtime
             .get(task_id)
             .ok_or_else(|| format!("background task not found: {task_id}"))
@@ -502,7 +503,7 @@ impl BackgroundTaskRegistry {
         tenant_id: &str,
         scope: SourceScanScope,
         kind: Option<crate::backend::models::AssetKind>,
-    ) -> AppResult<(SourceScanTaskSnapshot, bool)> {
+    ) -> LegacyResult<(SourceScanTaskSnapshot, bool)> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         let snapshot = SourceScanTaskSnapshot {
@@ -572,7 +573,7 @@ impl BackgroundTaskRegistry {
         &self,
         task_id: &str,
         result: Result<crate::backend::application::SourceScanResult, String>,
-    ) -> AppResult<SourceScanTaskSnapshot> {
+    ) -> LegacyResult<SourceScanTaskSnapshot> {
         let runtime_result = result
             .as_ref()
             .map(|value| serde_json::to_value(&value.assets).unwrap_or(Value::Null))
@@ -613,7 +614,10 @@ impl BackgroundTaskRegistry {
         Ok(entry.snapshot.clone())
     }
 
-    pub(crate) fn source_scan_snapshot(&self, task_id: &str) -> AppResult<SourceScanTaskSnapshot> {
+    pub(crate) fn source_scan_snapshot(
+        &self,
+        task_id: &str,
+    ) -> LegacyResult<SourceScanTaskSnapshot> {
         let runtime = self.external_task_snapshot(task_id)?;
         self.source_scan_tasks
             .lock()
@@ -623,7 +627,7 @@ impl BackgroundTaskRegistry {
             .ok_or_else(|| format!("source scan task not found: {task_id}"))
     }
 
-    pub(crate) fn source_scan_snapshots(&self) -> AppResult<Vec<SourceScanTaskSnapshot>> {
+    pub(crate) fn source_scan_snapshots(&self) -> LegacyResult<Vec<SourceScanTaskSnapshot>> {
         let mut snapshots = self
             .source_scan_tasks
             .lock()
@@ -639,7 +643,7 @@ impl BackgroundTaskRegistry {
         Ok(snapshots)
     }
 
-    pub(crate) fn cancel_source_scan(&self, task_id: &str) -> AppResult<SourceScanTaskSnapshot> {
+    pub(crate) fn cancel_source_scan(&self, task_id: &str) -> LegacyResult<SourceScanTaskSnapshot> {
         match self.task_runtime.cancel(task_id) {
             crate::backend::runtime::tasks::CancelOutcome::Requested(snapshot)
             | crate::backend::runtime::tasks::CancelOutcome::AlreadyFinished(snapshot) => {
@@ -657,7 +661,7 @@ impl BackgroundTaskRegistry {
         mode: &str,
         profile_id: &str,
         dedup_suffix: &str,
-    ) -> AppResult<(BatchMountTaskSnapshot, bool)> {
+    ) -> LegacyResult<(BatchMountTaskSnapshot, bool)> {
         let id = Uuid::new_v4().to_string();
         let snapshot = BatchMountTaskSnapshot {
             id: id.clone(),
@@ -725,7 +729,7 @@ impl BackgroundTaskRegistry {
         completed: u64,
         total: Option<u64>,
         current_id: Option<&str>,
-    ) -> AppResult<BatchMountTaskSnapshot> {
+    ) -> LegacyResult<BatchMountTaskSnapshot> {
         self.task_runtime
             .set_progress(task_id, completed, total, current_id)?;
         self.batch_mount_snapshot(task_id)
@@ -735,7 +739,7 @@ impl BackgroundTaskRegistry {
         &self,
         task_id: &str,
         result: Result<Value, String>,
-    ) -> AppResult<BatchMountTaskSnapshot> {
+    ) -> LegacyResult<BatchMountTaskSnapshot> {
         let runtime_result = result
             .as_ref()
             .map(|value| value.clone())
@@ -780,7 +784,10 @@ impl BackgroundTaskRegistry {
         Ok(entry.snapshot.clone())
     }
 
-    pub(crate) fn batch_mount_snapshot(&self, task_id: &str) -> AppResult<BatchMountTaskSnapshot> {
+    pub(crate) fn batch_mount_snapshot(
+        &self,
+        task_id: &str,
+    ) -> LegacyResult<BatchMountTaskSnapshot> {
         let runtime = self.external_task_snapshot(task_id)?;
         self.batch_mount_tasks
             .lock()
@@ -790,7 +797,7 @@ impl BackgroundTaskRegistry {
             .ok_or_else(|| format!("batch mount task not found: {task_id}"))
     }
 
-    pub(crate) fn batch_mount_snapshots(&self) -> AppResult<Vec<BatchMountTaskSnapshot>> {
+    pub(crate) fn batch_mount_snapshots(&self) -> LegacyResult<Vec<BatchMountTaskSnapshot>> {
         let mut snapshots = self
             .batch_mount_tasks
             .lock()
@@ -806,7 +813,7 @@ impl BackgroundTaskRegistry {
         Ok(snapshots)
     }
 
-    pub(crate) fn cancel_batch_mount(&self, task_id: &str) -> AppResult<BatchMountTaskSnapshot> {
+    pub(crate) fn cancel_batch_mount(&self, task_id: &str) -> LegacyResult<BatchMountTaskSnapshot> {
         match self.task_runtime.cancel(task_id) {
             crate::backend::runtime::tasks::CancelOutcome::Requested(snapshot)
             | crate::backend::runtime::tasks::CancelOutcome::AlreadyFinished(snapshot) => {
@@ -831,7 +838,7 @@ impl BackgroundTaskRegistry {
 
     pub(crate) fn begin_agent_market_refresh(
         &self,
-    ) -> AppResult<(AgentMarketRefreshTaskSnapshot, bool)> {
+    ) -> LegacyResult<(AgentMarketRefreshTaskSnapshot, bool)> {
         let now = Utc::now().to_rfc3339();
         let snapshot = AgentMarketRefreshTaskSnapshot {
             id: Uuid::new_v4().to_string(),
@@ -882,7 +889,7 @@ impl BackgroundTaskRegistry {
         &self,
         task_id: &str,
         result: Result<AgentMarketRefreshResult, String>,
-    ) -> AppResult<AgentMarketRefreshTaskSnapshot> {
+    ) -> LegacyResult<AgentMarketRefreshTaskSnapshot> {
         let runtime_result = result
             .as_ref()
             .map(|value| serde_json::to_value(value).unwrap_or(Value::Null))
@@ -925,7 +932,7 @@ impl BackgroundTaskRegistry {
     pub(crate) fn agent_market_refresh_snapshot(
         &self,
         task_id: &str,
-    ) -> AppResult<AgentMarketRefreshTaskSnapshot> {
+    ) -> LegacyResult<AgentMarketRefreshTaskSnapshot> {
         let runtime_snapshot = self.external_task_snapshot(task_id)?;
         self.agent_market_refresh_tasks
             .lock()
@@ -937,7 +944,7 @@ impl BackgroundTaskRegistry {
 
     pub(crate) fn agent_market_refresh_snapshots(
         &self,
-    ) -> AppResult<Vec<AgentMarketRefreshTaskSnapshot>> {
+    ) -> LegacyResult<Vec<AgentMarketRefreshTaskSnapshot>> {
         let mut snapshots = self
             .agent_market_refresh_tasks
             .lock()
@@ -962,7 +969,7 @@ impl BackgroundTaskRegistry {
         distribution_id: Option<String>,
         distribution_type: Option<crate::backend::agent_market::types::DistributionType>,
         ownership: Option<crate::backend::agent_market::types::Ownership>,
-    ) -> AppResult<(AgentLifecycleTaskSnapshot, Arc<AtomicBool>, bool)> {
+    ) -> LegacyResult<(AgentLifecycleTaskSnapshot, Arc<AtomicBool>, bool)> {
         let lifecycle_key = extension_lifecycle_key(
             PackageKind::Agent,
             &agent_id,
@@ -1035,7 +1042,7 @@ impl BackgroundTaskRegistry {
         completed_units: u64,
         downloaded_bytes: Option<u64>,
         warnings: Vec<String>,
-    ) -> AppResult<AgentLifecycleTaskSnapshot> {
+    ) -> LegacyResult<AgentLifecycleTaskSnapshot> {
         let runtime_snapshot = self.external_task_snapshot(task_id)?;
         let mut tasks = self
             .agent_lifecycle_tasks
@@ -1078,7 +1085,7 @@ impl BackgroundTaskRegistry {
         &self,
         task_id: &str,
         result: Result<(Option<Value>, Vec<String>), AgentMarketError>,
-    ) -> AppResult<AgentLifecycleTaskSnapshot> {
+    ) -> LegacyResult<AgentLifecycleTaskSnapshot> {
         let runtime_result = result
             .as_ref()
             .map(|(value, _)| value.clone().unwrap_or(Value::Null))
@@ -1131,7 +1138,7 @@ impl BackgroundTaskRegistry {
     pub(crate) fn agent_lifecycle_snapshot(
         &self,
         task_id: &str,
-    ) -> AppResult<AgentLifecycleTaskSnapshot> {
+    ) -> LegacyResult<AgentLifecycleTaskSnapshot> {
         let runtime_snapshot = self.external_task_snapshot(task_id)?;
         self.agent_lifecycle_tasks
             .lock()
@@ -1141,7 +1148,9 @@ impl BackgroundTaskRegistry {
             .ok_or_else(|| "agent lifecycle task not found".to_string())
     }
 
-    pub(crate) fn agent_lifecycle_snapshots(&self) -> AppResult<Vec<AgentLifecycleTaskSnapshot>> {
+    pub(crate) fn agent_lifecycle_snapshots(
+        &self,
+    ) -> LegacyResult<Vec<AgentLifecycleTaskSnapshot>> {
         let mut snapshots = self
             .agent_lifecycle_tasks
             .lock()
@@ -1160,7 +1169,7 @@ impl BackgroundTaskRegistry {
     pub(crate) fn cancel_agent_lifecycle(
         &self,
         task_id: &str,
-    ) -> AppResult<AgentLifecycleTaskSnapshot> {
+    ) -> LegacyResult<AgentLifecycleTaskSnapshot> {
         let runtime_snapshot = self.lifecycle.cancel(task_id);
         let runtime_snapshot = match runtime_snapshot {
             crate::backend::runtime::tasks::CancelOutcome::Requested(snapshot)
@@ -1194,7 +1203,7 @@ impl BackgroundTaskRegistry {
 
     pub(crate) fn begin_conversation_search_index_rebuild(
         &self,
-    ) -> AppResult<(ConversationSearchIndexTaskSnapshot, bool)> {
+    ) -> LegacyResult<(ConversationSearchIndexTaskSnapshot, bool)> {
         let snapshot = ConversationSearchIndexTaskSnapshot {
             id: Uuid::new_v4().to_string(),
             status: BackgroundTaskStatus::Running,
@@ -1238,8 +1247,8 @@ impl BackgroundTaskRegistry {
     pub(crate) fn finish_conversation_search_index_rebuild(
         &self,
         task_id: &str,
-        result: AppResult<Value>,
-    ) -> AppResult<ConversationSearchIndexTaskSnapshot> {
+        result: LegacyResult<Value>,
+    ) -> LegacyResult<ConversationSearchIndexTaskSnapshot> {
         let runtime_snapshot = self.finish_external_task(task_id, result.clone())?;
         let mut current = self
             .conversation_search_index
@@ -1279,7 +1288,7 @@ impl BackgroundTaskRegistry {
 
     pub(crate) fn conversation_search_index_snapshot(
         &self,
-    ) -> AppResult<Option<ConversationSearchIndexTaskSnapshot>> {
+    ) -> LegacyResult<Option<ConversationSearchIndexTaskSnapshot>> {
         self.conversation_search_index
             .lock()
             .map(|snapshot| {
@@ -1295,7 +1304,7 @@ impl BackgroundTaskRegistry {
     pub(crate) fn begin_conversation_sync(
         &self,
         params: &ConversationSyncParams,
-    ) -> AppResult<(ConversationSyncTaskSnapshot, bool)> {
+    ) -> LegacyResult<(ConversationSyncTaskSnapshot, bool)> {
         let scope = ConversationSyncScope::from_record_kind(params.record_kind.as_deref())?;
         let snapshot = ConversationSyncTaskSnapshot {
             id: Uuid::new_v4().to_string(),
@@ -1354,7 +1363,7 @@ impl BackgroundTaskRegistry {
         completed_source_count: usize,
         total_source_count: usize,
         current_source_name: Option<String>,
-    ) -> AppResult<ConversationSyncTaskSnapshot> {
+    ) -> LegacyResult<ConversationSyncTaskSnapshot> {
         let runtime_snapshot = self.external_task_snapshot(task_id)?;
         let mut current = self
             .conversation_sync
@@ -1380,8 +1389,8 @@ impl BackgroundTaskRegistry {
     pub(crate) fn finish_conversation_sync(
         &self,
         task_id: &str,
-        result: AppResult<Value>,
-    ) -> AppResult<ConversationSyncTaskSnapshot> {
+        result: LegacyResult<Value>,
+    ) -> LegacyResult<ConversationSyncTaskSnapshot> {
         let runtime_snapshot = self.finish_external_task(task_id, result.clone())?;
         let mut current = self
             .conversation_sync
@@ -1431,7 +1440,7 @@ impl BackgroundTaskRegistry {
 
     pub(crate) fn conversation_sync_snapshot(
         &self,
-    ) -> AppResult<Option<ConversationSyncTaskSnapshot>> {
+    ) -> LegacyResult<Option<ConversationSyncTaskSnapshot>> {
         self.conversation_sync
             .lock()
             .map(|snapshots| {
@@ -1449,7 +1458,7 @@ impl BackgroundTaskRegistry {
 
     pub(crate) fn conversation_sync_snapshots(
         &self,
-    ) -> AppResult<Vec<ConversationSyncTaskSnapshot>> {
+    ) -> LegacyResult<Vec<ConversationSyncTaskSnapshot>> {
         self.conversation_sync
             .lock()
             .map(|snapshots| {
@@ -1470,7 +1479,7 @@ impl BackgroundTaskRegistry {
     pub(crate) fn begin_conversation_script_install(
         &self,
         params: &ConversationScriptInstallParams,
-    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
+    ) -> LegacyResult<(ConversationScriptInstallTaskSnapshot, bool)> {
         let mut current = self
             .conversation_script_install
             .lock()
@@ -1527,14 +1536,14 @@ impl BackgroundTaskRegistry {
     pub(crate) fn begin_conversation_adapter_package_install(
         &self,
         params: &ConversationAdapterPackageInstallParams,
-    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
+    ) -> LegacyResult<(ConversationScriptInstallTaskSnapshot, bool)> {
         self.begin_conversation_adapter_package_change(params, "install", "installing")
     }
 
     pub(crate) fn begin_conversation_adapter_package_update(
         &self,
         params: &ConversationAdapterPackageInstallParams,
-    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
+    ) -> LegacyResult<(ConversationScriptInstallTaskSnapshot, bool)> {
         self.begin_conversation_adapter_package_change(params, "update", "updating")
     }
 
@@ -1543,7 +1552,7 @@ impl BackgroundTaskRegistry {
         params: &ConversationAdapterPackageInstallParams,
         action: &str,
         phase: &str,
-    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
+    ) -> LegacyResult<(ConversationScriptInstallTaskSnapshot, bool)> {
         let mut current = self
             .conversation_script_install
             .lock()
@@ -1600,7 +1609,7 @@ impl BackgroundTaskRegistry {
     pub(crate) fn begin_conversation_adapter_package_uninstall(
         &self,
         params: &ConversationAdapterPackageUninstallParams,
-    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
+    ) -> LegacyResult<(ConversationScriptInstallTaskSnapshot, bool)> {
         let mut current = self
             .conversation_script_install
             .lock()
@@ -1655,8 +1664,8 @@ impl BackgroundTaskRegistry {
     pub(crate) fn finish_conversation_script_install(
         &self,
         task_id: &str,
-        result: AppResult<Value>,
-    ) -> AppResult<ConversationScriptInstallTaskSnapshot> {
+        result: LegacyResult<Value>,
+    ) -> LegacyResult<ConversationScriptInstallTaskSnapshot> {
         let runtime_snapshot = self.finish_external_task(task_id, result.clone())?;
         let mut current = self
             .conversation_script_install
@@ -1707,7 +1716,7 @@ impl BackgroundTaskRegistry {
 
     pub(crate) fn conversation_script_install_snapshot(
         &self,
-    ) -> AppResult<Option<ConversationScriptInstallTaskSnapshot>> {
+    ) -> LegacyResult<Option<ConversationScriptInstallTaskSnapshot>> {
         self.conversation_script_install
             .lock()
             .map(|snapshot| {
@@ -1723,7 +1732,7 @@ impl BackgroundTaskRegistry {
     pub(crate) fn begin_skill_backup(
         &self,
         asset_ids: Vec<String>,
-    ) -> AppResult<(SkillBackupTaskSnapshot, bool)> {
+    ) -> LegacyResult<(SkillBackupTaskSnapshot, bool)> {
         let asset_ids = dedupe_non_empty(asset_ids);
         if asset_ids.is_empty() {
             return Err("skill backup requires at least one asset id".to_string());
@@ -1780,7 +1789,7 @@ impl BackgroundTaskRegistry {
         task_id: &str,
         completed_count: usize,
         current_asset_id: Option<String>,
-    ) -> AppResult<SkillBackupTaskSnapshot> {
+    ) -> LegacyResult<SkillBackupTaskSnapshot> {
         let runtime_snapshot = self.external_task_snapshot(task_id)?;
         let mut current = self
             .skill_backup
@@ -1804,8 +1813,8 @@ impl BackgroundTaskRegistry {
     pub(crate) fn finish_skill_backup(
         &self,
         task_id: &str,
-        result: AppResult<Vec<CatalogAsset>>,
-    ) -> AppResult<SkillBackupTaskSnapshot> {
+        result: LegacyResult<Vec<CatalogAsset>>,
+    ) -> LegacyResult<SkillBackupTaskSnapshot> {
         let runtime_result = result
             .as_ref()
             .map(|assets| serde_json::json!({"asset_count": assets.len()}))
@@ -1863,7 +1872,7 @@ impl BackgroundTaskRegistry {
         Ok(snapshot.clone())
     }
 
-    pub(crate) fn skill_backup_snapshot(&self) -> AppResult<Option<SkillBackupTaskSnapshot>> {
+    pub(crate) fn skill_backup_snapshot(&self) -> LegacyResult<Option<SkillBackupTaskSnapshot>> {
         self.skill_backup
             .lock()
             .map(|snapshot| {
@@ -1879,7 +1888,7 @@ impl BackgroundTaskRegistry {
     pub(crate) fn begin_memory_task(
         &self,
         params: &MemoryTaskStartParams,
-    ) -> AppResult<(MemoryTaskSnapshot, AiExecutionCancellation, bool)> {
+    ) -> LegacyResult<(MemoryTaskSnapshot, AiExecutionCancellation, bool)> {
         let scope_fingerprint = params.scope.fingerprint()?;
         let id = Uuid::new_v4().to_string();
         let cancellation = AiExecutionCancellation::default();
@@ -1957,7 +1966,7 @@ impl BackgroundTaskRegistry {
         processed_count: usize,
         total_count: usize,
         run_id: Option<String>,
-    ) -> AppResult<MemoryTaskSnapshot> {
+    ) -> LegacyResult<MemoryTaskSnapshot> {
         let runtime_snapshot = self.external_task_snapshot(task_id)?;
         let mut tasks = self
             .memory_tasks
@@ -1993,8 +2002,8 @@ impl BackgroundTaskRegistry {
     pub(crate) fn finish_memory_task(
         &self,
         task_id: &str,
-        result: AppResult<Value>,
-    ) -> AppResult<MemoryTaskSnapshot> {
+        result: LegacyResult<Value>,
+    ) -> LegacyResult<MemoryTaskSnapshot> {
         let runtime_snapshot = self.finish_external_task(task_id, result.clone())?;
         let mut tasks = self
             .memory_tasks
@@ -2036,7 +2045,7 @@ impl BackgroundTaskRegistry {
         Ok(entry.snapshot.clone())
     }
 
-    pub(crate) fn cancel_memory_task(&self, task_id: &str) -> AppResult<MemoryTaskSnapshot> {
+    pub(crate) fn cancel_memory_task(&self, task_id: &str) -> LegacyResult<MemoryTaskSnapshot> {
         let runtime_snapshot = self.cancel_external_task(task_id)?;
         let mut tasks = self
             .memory_tasks
@@ -2061,7 +2070,7 @@ impl BackgroundTaskRegistry {
     pub(crate) fn memory_task_snapshot(
         &self,
         task_id: &str,
-    ) -> AppResult<Option<MemoryTaskSnapshot>> {
+    ) -> LegacyResult<Option<MemoryTaskSnapshot>> {
         self.memory_tasks
             .lock()
             .map(|tasks| {
@@ -2074,7 +2083,7 @@ impl BackgroundTaskRegistry {
             .map_err(|error| error.to_string())
     }
 
-    pub(crate) fn memory_task_snapshots(&self) -> AppResult<Vec<MemoryTaskSnapshot>> {
+    pub(crate) fn memory_task_snapshots(&self) -> LegacyResult<Vec<MemoryTaskSnapshot>> {
         self.memory_tasks
             .lock()
             .map(|tasks| {
@@ -2096,7 +2105,7 @@ impl BackgroundTaskRegistry {
         &self,
         purpose: AiExecutionPurpose,
         agent_id: &AgentId,
-    ) -> AppResult<(AiExecutionTaskSnapshot, AiExecutionCancellation)> {
+    ) -> LegacyResult<(AiExecutionTaskSnapshot, AiExecutionCancellation)> {
         let mut tasks = self
             .ai_executions
             .lock()
@@ -2149,7 +2158,7 @@ impl BackgroundTaskRegistry {
         &self,
         task_id: &str,
         phase: AiExecutionPhase,
-    ) -> AppResult<AiExecutionTaskSnapshot> {
+    ) -> LegacyResult<AiExecutionTaskSnapshot> {
         let runtime_snapshot = self.external_task_snapshot(task_id)?;
         let mut tasks = self
             .ai_executions
@@ -2187,7 +2196,7 @@ impl BackgroundTaskRegistry {
         &self,
         task_id: &str,
         result: Result<AiExecutionResult, AiExecutionError>,
-    ) -> AppResult<AiExecutionTaskSnapshot> {
+    ) -> LegacyResult<AiExecutionTaskSnapshot> {
         let runtime_result = match &result {
             Ok(result) => Ok(serde_json::json!({"text": result.text})),
             Err(error) => Err(crate::backend::runtime::AppError::from(
@@ -2247,7 +2256,10 @@ impl BackgroundTaskRegistry {
         Ok(snapshot)
     }
 
-    pub(crate) fn cancel_ai_execution(&self, task_id: &str) -> AppResult<AiExecutionTaskSnapshot> {
+    pub(crate) fn cancel_ai_execution(
+        &self,
+        task_id: &str,
+    ) -> LegacyResult<AiExecutionTaskSnapshot> {
         let runtime_snapshot = self.cancel_external_task(task_id)?;
         let mut tasks = self
             .ai_executions
@@ -2280,7 +2292,7 @@ impl BackgroundTaskRegistry {
     pub(crate) fn ai_execution_snapshot(
         &self,
         task_id: &str,
-    ) -> AppResult<Option<AiExecutionTaskSnapshot>> {
+    ) -> LegacyResult<Option<AiExecutionTaskSnapshot>> {
         self.ai_executions
             .lock()
             .map(|tasks| {
@@ -2293,7 +2305,7 @@ impl BackgroundTaskRegistry {
             .map_err(|_| "AI execution task registry is unavailable".to_string())
     }
 
-    pub(crate) fn ai_execution_snapshots(&self) -> AppResult<Vec<AiExecutionTaskSnapshot>> {
+    pub(crate) fn ai_execution_snapshots(&self) -> LegacyResult<Vec<AiExecutionTaskSnapshot>> {
         let mut tasks = self
             .ai_executions
             .lock()
@@ -2315,7 +2327,7 @@ impl BackgroundTaskRegistry {
         Ok(snapshots)
     }
 
-    pub(crate) fn cancel_all_ai_executions(&self) -> AppResult<Vec<AiExecutionTaskSnapshot>> {
+    pub(crate) fn cancel_all_ai_executions(&self) -> LegacyResult<Vec<AiExecutionTaskSnapshot>> {
         let task_ids = self
             .ai_executions
             .lock()
@@ -2362,7 +2374,7 @@ impl BackgroundTaskRegistry {
         &self,
         timeout: Duration,
         poll_interval: Duration,
-    ) -> AppResult<AiExecutionShutdownReport> {
+    ) -> LegacyResult<AiExecutionShutdownReport> {
         let cancelled_count = self.cancel_all_ai_executions()?.len();
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
@@ -2387,7 +2399,7 @@ impl BackgroundTaskRegistry {
         }
     }
 
-    fn active_ai_execution_count(&self) -> AppResult<usize> {
+    fn active_ai_execution_count(&self) -> LegacyResult<usize> {
         Ok(self
             .task_runtime
             .list(crate::backend::runtime::tasks::TaskFilter {
@@ -2657,7 +2669,7 @@ fn extension_lifecycle_key(
     package_id: &str,
     version: Option<&str>,
     action: &str,
-) -> AppResult<LifecycleRequestKey> {
+) -> LegacyResult<LifecycleRequestKey> {
     let version = version
         .map(str::trim)
         .filter(|value| !value.is_empty())

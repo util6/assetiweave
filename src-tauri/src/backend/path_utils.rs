@@ -1,12 +1,12 @@
-use crate::backend::dto::{AppResult, GitRepositoryInfo};
 use crate::backend::host_paths::HostPathResolver;
 use crate::backend::models::AppKind;
 use crate::backend::target_catalog::TargetCatalog;
+use crate::backend::{compat::LegacyResult, dto::GitRepositoryInfo};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path, path::PathBuf, process::Command};
 use walkdir::WalkDir;
 
-pub(crate) fn app_db_path() -> AppResult<PathBuf> {
+pub(crate) fn app_db_path() -> LegacyResult<PathBuf> {
     if let Some(path) = std::env::var_os("ASSETIWEAVE_DB_PATH").filter(|path| !path.is_empty()) {
         let path = PathBuf::from(path);
         if let Some(parent) = path
@@ -24,16 +24,16 @@ pub(crate) fn app_db_path() -> AppResult<PathBuf> {
     Ok(data_dir.join("app.db"))
 }
 
-pub(crate) fn ensure_app_library_dirs() -> AppResult<()> {
+pub(crate) fn ensure_app_library_dirs() -> LegacyResult<()> {
     fs::create_dir_all(default_skill_backup_root()?).map_err(|error| error.to_string())?;
     fs::create_dir_all(default_database_backup_root()?).map_err(|error| error.to_string())
 }
 
-pub(crate) fn default_skill_backup_root() -> AppResult<PathBuf> {
+pub(crate) fn default_skill_backup_root() -> LegacyResult<PathBuf> {
     default_skill_backup_root_for_tenant("default")
 }
 
-pub(crate) fn default_skill_backup_root_for_tenant(tenant_id: &str) -> AppResult<PathBuf> {
+pub(crate) fn default_skill_backup_root_for_tenant(tenant_id: &str) -> LegacyResult<PathBuf> {
     let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
     Ok(home
         .join(".assetiweave")
@@ -43,12 +43,12 @@ pub(crate) fn default_skill_backup_root_for_tenant(tenant_id: &str) -> AppResult
         .join("skills"))
 }
 
-pub(crate) fn legacy_skill_backup_root() -> AppResult<PathBuf> {
+pub(crate) fn legacy_skill_backup_root() -> LegacyResult<PathBuf> {
     let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
     Ok(home.join(".assetiweave").join("library").join("skills"))
 }
 
-pub(crate) fn default_database_backup_root() -> AppResult<PathBuf> {
+pub(crate) fn default_database_backup_root() -> LegacyResult<PathBuf> {
     let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
     Ok(home
         .join(".assetiweave")
@@ -56,19 +56,19 @@ pub(crate) fn default_database_backup_root() -> AppResult<PathBuf> {
         .join("database-backups"))
 }
 
-pub(crate) fn expand_path(path: &str) -> AppResult<PathBuf> {
+pub(crate) fn expand_path(path: &str) -> LegacyResult<PathBuf> {
     let resolver = HostPathResolver::current()?;
     let stored = resolver.normalize_input(path)?;
     Ok(resolver.resolve(&stored)?.into_path_buf())
 }
 
-pub(crate) fn normalize_path_for_storage(path: &str) -> AppResult<String> {
+pub(crate) fn normalize_path_for_storage(path: &str) -> LegacyResult<String> {
     HostPathResolver::current()
         .and_then(|resolver| resolver.normalize_input(path))
         .map(|path| path.as_str().to_string())
 }
 
-pub(crate) fn display_path(path: &str) -> AppResult<String> {
+pub(crate) fn display_path(path: &str) -> LegacyResult<String> {
     let resolver = HostPathResolver::current()?;
     let stored = resolver.normalize_input(path)?;
     Ok(resolver.display(&stored)?.as_str().to_string())
@@ -294,14 +294,14 @@ fn safe_tenant_path_segment(tenant_id: &str) -> String {
     }
 }
 
-pub(crate) fn hash_file(path: &Path) -> AppResult<String> {
+pub(crate) fn hash_file(path: &Path) -> LegacyResult<String> {
     let bytes = fs::read(path).map_err(|error| error.to_string())?;
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-pub(crate) fn hash_path(path: &Path) -> AppResult<String> {
+pub(crate) fn hash_path(path: &Path) -> LegacyResult<String> {
     if path.is_dir() {
         hash_dir(path)
     } else {
@@ -309,7 +309,7 @@ pub(crate) fn hash_path(path: &Path) -> AppResult<String> {
     }
 }
 
-fn hash_dir(path: &Path) -> AppResult<String> {
+fn hash_dir(path: &Path) -> LegacyResult<String> {
     let mut files = Vec::new();
     for entry in WalkDir::new(path).follow_links(false) {
         let entry = entry.map_err(|error| error.to_string())?;

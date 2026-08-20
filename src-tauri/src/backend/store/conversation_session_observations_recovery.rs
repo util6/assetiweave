@@ -1,6 +1,6 @@
 use sqlx::SqlitePool;
 use std::collections::{BTreeMap, BTreeSet};
-use crate::backend::dto::{AppResult, ConversationRecordKind};
+use crate::backend::{compat::LegacyResult, dto::ConversationRecordKind};
 use crate::backend::conversations::types::ConversationSessionDescriptor;
 
 pub(crate) async fn load_conversation_session_versions_sqlx(
@@ -8,7 +8,7 @@ pub(crate) async fn load_conversation_session_versions_sqlx(
     tenant_id: &str,
     source_id: &str,
     record_kind: ConversationRecordKind,
-) -> AppResult<BTreeMap<String, String>> {
+) -> LegacyResult<BTreeMap<String, String>> {
     let kind_str = match record_kind {
         ConversationRecordKind::Session => "session",
         ConversationRecordKind::Web => "web",
@@ -44,7 +44,7 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
     record_kind: ConversationRecordKind,
     session_descriptors: &[ConversationSessionDescriptor],
     hydrated_external_ids: &BTreeSet<String>,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let kind_str = match record_kind {
         ConversationRecordKind::Session => "session",
         ConversationRecordKind::Web => "web",

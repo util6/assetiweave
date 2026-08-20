@@ -32,6 +32,15 @@ run_rejected_fixture application-command \
 run_rejected_fixture agent-market-legacy \
   src-tauri/src/backend/application/agent_market.rs \
   'let _error = AppError::Legacy("fixture".to_string());'
+run_rejected_fixture application-legacy-result-alias \
+  src-tauri/src/backend/application/prelude.rs \
+  'use crate::backend::dto::LegacyResult;'
+run_rejected_fixture dto-result-alias \
+  src-tauri/src/backend/dto/types.rs \
+  'pub(crate) type AppResult<T> = Result<T, String>;'
+run_rejected_fixture dto-legacy-result-alias \
+  src-tauri/src/backend/dto/types.rs \
+  'pub(crate) type LegacyResult<T> = Result<T, String>;'
 run_rejected_fixture new-legacy-site \
   src-tauri/src/backend/runtime/new_error.rs \
   'let _error = AppError::Legacy("fixture".to_string());'

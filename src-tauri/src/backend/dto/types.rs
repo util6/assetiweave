@@ -12,8 +12,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub(crate) type AppResult<T> = Result<T, String>;
-
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub(crate) struct MemoryItemPage {
     pub(crate) total_count: usize,

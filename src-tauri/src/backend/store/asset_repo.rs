@@ -1,4 +1,4 @@
-use crate::backend::dto::AppResult;
+use crate::backend::compat::LegacyResult;
 use crate::backend::models::{Asset, AssetFormat, AssetKind};
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 
@@ -11,7 +11,7 @@ pub(crate) async fn load_assets_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     kind: Option<AssetKind>,
-) -> AppResult<Vec<Asset>> {
+) -> LegacyResult<Vec<Asset>> {
     let rows = if let Some(kind) = kind {
         sqlx::query(sql::LIST_ASSETS_BY_KIND)
             .bind(tenant_id)
@@ -33,7 +33,7 @@ pub(crate) async fn load_asset_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     asset_id: &str,
-) -> AppResult<Option<Asset>> {
+) -> LegacyResult<Option<Asset>> {
     sqlx::query(sql::LOAD_ASSET)
         .bind(tenant_id)
         .bind(asset_id)
@@ -45,7 +45,7 @@ pub(crate) async fn load_asset_sqlx(
         .transpose()
 }
 
-fn map_sqlx_asset_row(row: &SqliteRow) -> AppResult<Asset> {
+fn map_sqlx_asset_row(row: &SqliteRow) -> LegacyResult<Asset> {
     Ok(Asset {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         source_id: row.try_get(1).map_err(|error| error.to_string())?,
@@ -77,7 +77,7 @@ pub(crate) async fn replace_source_assets_sqlx(
     tenant_id: &str,
     source_id: &str,
     assets: &[Asset],
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     sqlx::query(sql::DELETE_ASSETS_BY_SOURCE)
         .bind(tenant_id)
@@ -114,7 +114,7 @@ pub(crate) async fn update_asset_description_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     asset: &Asset,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let result = sqlx::query(sql::UPDATE_ASSET_DESCRIPTION)
         .bind(&asset.description)
         .bind(&asset.updated_at)
@@ -159,7 +159,7 @@ mod tests {
                 skill.description = Some("Updated".to_string());
                 update_asset_description_sqlx(database.pool(), "default", &skill).await?;
                 let all_assets = load_assets_sqlx(database.pool(), "default", None).await?;
-                AppResult::Ok((scoped_assets, loaded_skill, missing_asset, all_assets))
+                LegacyResult::Ok((scoped_assets, loaded_skill, missing_asset, all_assets))
             })
             .map(|(scoped_assets, loaded_skill, missing_asset, all_assets)| {
                 assert_eq!(scoped_assets.len(), 1);
@@ -210,7 +210,7 @@ mod tests {
                 replace_source_assets_sqlx(database.pool(), "default", "source-a", &[]).await?;
                 let default_assets = load_assets_sqlx(database.pool(), "default", None).await?;
                 let tenant_assets = load_assets_sqlx(database.pool(), "tenant-a", None).await?;
-                AppResult::Ok((default_assets, tenant_assets))
+                LegacyResult::Ok((default_assets, tenant_assets))
             })
             .expect("query tenant-scoped assets");
 

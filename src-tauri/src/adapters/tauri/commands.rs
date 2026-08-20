@@ -62,16 +62,17 @@ use crate::{
         ConversationTranslationRequest, OpencodeTranslationAvailability,
         OpencodeTranslationRequest, OpencodeTranslationResult,
     },
+    backend::compat::LegacyResult,
     backend::conversations::{
         ExternalAdapterRegisterParams, ExternalAdapterScaffoldParams, ExternalAdapterTryRunParams,
         ExternalAdapterValidateParams,
     },
     backend::dto::{
-        AppOverview, AppResult, AppShortcut, ApplyAssetGroupMountResult,
-        ApplySkillGroupExclusiveMountResult, AssetGroupInput, AssetMountStatus,
-        AssetMountUpdateResult, CatalogAsset, ConversationSearchIndexStatus, ExecutionResult,
-        MemoryItemPage, NavigationModel, SkillBackupSettings, SkillGroupExclusiveMountInput,
-        SkillGroupExclusiveMountPreview, SkillRemoteSource, SourceInput, TargetProfileInput,
+        AppOverview, AppShortcut, ApplyAssetGroupMountResult, ApplySkillGroupExclusiveMountResult,
+        AssetGroupInput, AssetMountStatus, AssetMountUpdateResult, CatalogAsset,
+        ConversationSearchIndexStatus, ExecutionResult, MemoryItemPage, NavigationModel,
+        SkillBackupSettings, SkillGroupExclusiveMountInput, SkillGroupExclusiveMountPreview,
+        SkillRemoteSource, SourceInput, TargetProfileInput,
     },
     backend::models::{
         Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
@@ -96,7 +97,7 @@ type RuntimeAppResult<T> = crate::backend::runtime::AppResult<T>;
 pub(crate) const AI_EXECUTION_TASK_UPDATED_EVENT: &str = "ai-execution://task-updated";
 
 #[tauri::command]
-pub(crate) async fn set_app_window_icon(app: AppHandle, icon: Vec<u8>) -> AppResult<()> {
+pub(crate) async fn set_app_window_icon(app: AppHandle, icon: Vec<u8>) -> LegacyResult<()> {
     set_application_icon(app, icon).map_err(Into::into)
 }
 
@@ -167,7 +168,7 @@ pub(crate) fn save_app_settings(
 }
 
 #[tauri::command]
-pub(crate) fn cancel_app_close_prompt(state: State<'_, AppState>) -> AppResult<()> {
+pub(crate) fn cancel_app_close_prompt(state: State<'_, AppState>) -> LegacyResult<()> {
     state
         .exit_prompt_open
         .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -179,7 +180,7 @@ pub(crate) async fn complete_app_close(
     app: AppHandle,
     state: State<'_, AppState>,
     backup_database: bool,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let shutdown_sync_done = state.shutdown_sync_done.clone();
     let exit_prompt_open = state.exit_prompt_open.clone();
     let allow_close = state.allow_close.clone();
@@ -443,7 +444,7 @@ pub(crate) fn start_memory_task(
     app: AppHandle,
     state: State<'_, AppState>,
     params: MemoryTaskStartParams,
-) -> AppResult<MemoryTaskSnapshot> {
+) -> LegacyResult<MemoryTaskSnapshot> {
     if params.kind != MemoryRunKind::AutoDream && params.recall.is_none() {
         return Err(
             "deep Recall and full organize background tasks require Recall parameters".to_string(),
@@ -538,12 +539,14 @@ pub(crate) fn start_memory_task(
 pub(crate) fn get_memory_task(
     state: State<'_, AppState>,
     params: MemoryTaskGetParams,
-) -> AppResult<Option<MemoryTaskSnapshot>> {
+) -> LegacyResult<Option<MemoryTaskSnapshot>> {
     state.background_tasks.memory_task_snapshot(&params.task_id)
 }
 
 #[tauri::command]
-pub(crate) fn list_memory_tasks(state: State<'_, AppState>) -> AppResult<Vec<MemoryTaskSnapshot>> {
+pub(crate) fn list_memory_tasks(
+    state: State<'_, AppState>,
+) -> LegacyResult<Vec<MemoryTaskSnapshot>> {
     state.background_tasks.memory_task_snapshots()
 }
 
@@ -552,7 +555,7 @@ pub(crate) fn cancel_memory_task(
     app: AppHandle,
     state: State<'_, AppState>,
     params: MemoryTaskGetParams,
-) -> AppResult<MemoryTaskSnapshot> {
+) -> LegacyResult<MemoryTaskSnapshot> {
     let snapshot = state.background_tasks.cancel_memory_task(&params.task_id)?;
     emit_memory_task(&app, &snapshot);
     Ok(snapshot)
@@ -638,7 +641,7 @@ pub(crate) fn backup_skills(
     app: AppHandle,
     state: State<'_, AppState>,
     asset_ids: Vec<String>,
-) -> AppResult<SkillBackupTaskSnapshot> {
+) -> LegacyResult<SkillBackupTaskSnapshot> {
     let (snapshot, should_start) = state.background_tasks.begin_skill_backup(asset_ids)?;
     if !should_start {
         return Ok(snapshot);
@@ -704,7 +707,7 @@ pub(crate) fn backup_skills(
 #[tauri::command]
 pub(crate) fn get_skill_backup_task(
     state: State<'_, AppState>,
-) -> AppResult<Option<SkillBackupTaskSnapshot>> {
+) -> LegacyResult<Option<SkillBackupTaskSnapshot>> {
     state.background_tasks.skill_backup_snapshot()
 }
 
@@ -1646,7 +1649,7 @@ pub(crate) fn start_source_scan(
     state: State<'_, AppState>,
     kind: Option<AssetKind>,
     scope: Option<SourceScanScope>,
-) -> AppResult<SourceScanTaskSnapshot> {
+) -> LegacyResult<SourceScanTaskSnapshot> {
     let scope = scope.unwrap_or(SourceScanScope::All);
     let scan_kind = if scope == SourceScanScope::Skills {
         Some(AssetKind::Skill)
@@ -1703,14 +1706,14 @@ pub(crate) fn start_source_scan(
 pub(crate) fn get_source_scan_task(
     state: State<'_, AppState>,
     task_id: String,
-) -> AppResult<SourceScanTaskSnapshot> {
+) -> LegacyResult<SourceScanTaskSnapshot> {
     state.background_tasks.source_scan_snapshot(&task_id)
 }
 
 #[tauri::command]
 pub(crate) fn list_source_scan_tasks(
     state: State<'_, AppState>,
-) -> AppResult<Vec<SourceScanTaskSnapshot>> {
+) -> LegacyResult<Vec<SourceScanTaskSnapshot>> {
     state.background_tasks.source_scan_snapshots()
 }
 
@@ -1719,7 +1722,7 @@ pub(crate) fn cancel_source_scan(
     app: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
-) -> AppResult<SourceScanTaskSnapshot> {
+) -> LegacyResult<SourceScanTaskSnapshot> {
     let snapshot = state.background_tasks.cancel_source_scan(&task_id)?;
     let _ = app.emit(SOURCE_SCAN_TASK_UPDATED_EVENT, &snapshot);
     Ok(snapshot)
@@ -1736,7 +1739,7 @@ pub(crate) fn start_batch_mount(
     profile_id: String,
     enabled: Option<bool>,
     group_ids: Option<Vec<String>>,
-) -> AppResult<BatchMountTaskSnapshot> {
+) -> LegacyResult<BatchMountTaskSnapshot> {
     let mode = mode.trim().to_ascii_lowercase();
     if !matches!(mode.as_str(), "group" | "exclusive") {
         return Err(format!("unsupported batch mount mode: {mode}"));
@@ -1875,14 +1878,14 @@ pub(crate) fn start_batch_mount(
 pub(crate) fn get_batch_mount_task(
     state: State<'_, AppState>,
     task_id: String,
-) -> AppResult<BatchMountTaskSnapshot> {
+) -> LegacyResult<BatchMountTaskSnapshot> {
     state.background_tasks.batch_mount_snapshot(&task_id)
 }
 
 #[tauri::command]
 pub(crate) fn list_batch_mount_tasks(
     state: State<'_, AppState>,
-) -> AppResult<Vec<BatchMountTaskSnapshot>> {
+) -> LegacyResult<Vec<BatchMountTaskSnapshot>> {
     state.background_tasks.batch_mount_snapshots()
 }
 
@@ -1891,7 +1894,7 @@ pub(crate) fn cancel_batch_mount(
     app: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
-) -> AppResult<BatchMountTaskSnapshot> {
+) -> LegacyResult<BatchMountTaskSnapshot> {
     let snapshot = state.background_tasks.cancel_batch_mount(&task_id)?;
     let _ = app.emit(BATCH_MOUNT_TASK_UPDATED_EVENT, &snapshot);
     Ok(snapshot)
@@ -1968,7 +1971,7 @@ pub(crate) async fn list_agent_models(
 #[tauri::command]
 pub(crate) async fn check_opencode_translation_availability(
     state: State<'_, AppState>,
-) -> AppResult<OpencodeTranslationAvailability> {
+) -> LegacyResult<OpencodeTranslationAvailability> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).check_opencode_translation_availability()
@@ -1982,7 +1985,7 @@ pub(crate) async fn check_opencode_translation_availability(
 pub(crate) async fn translate_conversation_card_with_opencode(
     state: State<'_, AppState>,
     params: OpencodeTranslationRequest,
-) -> AppResult<OpencodeTranslationResult> {
+) -> LegacyResult<OpencodeTranslationResult> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).translate_conversation_card_with_opencode(params)
@@ -1996,7 +1999,7 @@ pub(crate) async fn translate_conversation_card_with_opencode(
 pub(crate) async fn translate_conversation_card(
     state: State<'_, AppState>,
     params: ConversationTranslationRequest,
-) -> AppResult<OpencodeTranslationResult> {
+) -> LegacyResult<OpencodeTranslationResult> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).translate_conversation_card(params)
@@ -2010,7 +2013,7 @@ pub(crate) async fn translate_conversation_card(
 pub(crate) async fn test_conversation_translation_connection(
     state: State<'_, AppState>,
     params: ConversationTranslationConnectionRequest,
-) -> AppResult<OpencodeTranslationAvailability> {
+) -> LegacyResult<OpencodeTranslationAvailability> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).test_conversation_translation_connection(params)
@@ -2024,7 +2027,7 @@ pub(crate) async fn test_conversation_translation_connection(
 pub(crate) async fn list_conversation_translation_models(
     state: State<'_, AppState>,
     params: ConversationTranslationModelsRequest,
-) -> AppResult<ConversationTranslationModelsResult> {
+) -> LegacyResult<ConversationTranslationModelsResult> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).list_conversation_translation_models(params)
@@ -2079,7 +2082,7 @@ fn prepare_ai_execution_task(
     tasks: Arc<BackgroundTaskRegistry>,
     params: ConversationTranslationRequest,
     emitter: Arc<dyn AiExecutionTaskEmitter>,
-) -> AppResult<(AiExecutionTaskSnapshot, AiExecutionRequest)> {
+) -> LegacyResult<(AiExecutionTaskSnapshot, AiExecutionRequest)> {
     let (agent_id, prompt, model) = prepare_opencode_agent_translation(params)?;
     let (snapshot, cancellation) =
         tasks.begin_ai_execution(AiExecutionPurpose::Translation, &agent_id)?;
@@ -2132,7 +2135,7 @@ pub(crate) async fn start_conversation_card_translation(
     app: AppHandle,
     state: State<'_, AppState>,
     params: ConversationTranslationRequest,
-) -> AppResult<AiExecutionTaskSnapshot> {
+) -> LegacyResult<AiExecutionTaskSnapshot> {
     let emitter: Arc<dyn AiExecutionTaskEmitter> = Arc::new(TauriAiExecutionTaskEmitter { app });
     let tasks = state.background_tasks.clone();
     let (snapshot, request) = prepare_ai_execution_task(tasks.clone(), params, emitter.clone())?;
@@ -2148,7 +2151,7 @@ pub(crate) async fn start_conversation_card_translation(
 pub(crate) fn get_ai_execution_task(
     state: State<'_, AppState>,
     params: AiExecutionTaskGetParams,
-) -> AppResult<Option<AiExecutionTaskSnapshot>> {
+) -> LegacyResult<Option<AiExecutionTaskSnapshot>> {
     state
         .background_tasks
         .ai_execution_snapshot(&params.task_id)
@@ -2157,7 +2160,7 @@ pub(crate) fn get_ai_execution_task(
 #[tauri::command]
 pub(crate) fn list_ai_execution_tasks(
     state: State<'_, AppState>,
-) -> AppResult<Vec<AiExecutionTaskSnapshot>> {
+) -> LegacyResult<Vec<AiExecutionTaskSnapshot>> {
     state.background_tasks.ai_execution_snapshots()
 }
 
@@ -2166,7 +2169,7 @@ pub(crate) fn cancel_ai_execution_task(
     app: AppHandle,
     state: State<'_, AppState>,
     params: AiExecutionTaskGetParams,
-) -> AppResult<AiExecutionTaskSnapshot> {
+) -> LegacyResult<AiExecutionTaskSnapshot> {
     let snapshot = state
         .background_tasks
         .cancel_ai_execution(&params.task_id)?;
@@ -2516,7 +2519,7 @@ pub(crate) fn sync_conversations(
     app: AppHandle,
     state: State<'_, AppState>,
     params: ConversationSyncParams,
-) -> AppResult<ConversationSyncTaskSnapshot> {
+) -> LegacyResult<ConversationSyncTaskSnapshot> {
     start_conversation_sync_background(
         app,
         state.runtime.clone(),
@@ -2532,7 +2535,7 @@ pub(crate) fn start_conversation_sync_background(
         crate::adapters::tauri::background_tasks::BackgroundTaskRegistry,
     >,
     params: ConversationSyncParams,
-) -> AppResult<ConversationSyncTaskSnapshot> {
+) -> LegacyResult<ConversationSyncTaskSnapshot> {
     let (snapshot, should_start) = background_tasks.begin_conversation_sync(&params)?;
     if !should_start {
         return Ok(snapshot);
@@ -2622,14 +2625,14 @@ pub(crate) fn start_conversation_sync_background(
 #[tauri::command]
 pub(crate) fn get_conversation_sync_task(
     state: State<'_, AppState>,
-) -> AppResult<Option<ConversationSyncTaskSnapshot>> {
+) -> LegacyResult<Option<ConversationSyncTaskSnapshot>> {
     state.background_tasks.conversation_sync_snapshot()
 }
 
 #[tauri::command]
 pub(crate) fn list_conversation_sync_tasks(
     state: State<'_, AppState>,
-) -> AppResult<Vec<ConversationSyncTaskSnapshot>> {
+) -> LegacyResult<Vec<ConversationSyncTaskSnapshot>> {
     state.background_tasks.conversation_sync_snapshots()
 }
 
@@ -2869,7 +2872,7 @@ pub(crate) fn start_conversation_search_index_rebuild(
 #[tauri::command]
 pub(crate) fn get_conversation_search_index_task(
     state: State<'_, AppState>,
-) -> AppResult<Option<ConversationSearchIndexTaskSnapshot>> {
+) -> LegacyResult<Option<ConversationSearchIndexTaskSnapshot>> {
     state.background_tasks.conversation_search_index_snapshot()
 }
 
@@ -3011,7 +3014,7 @@ pub(crate) fn execute_plan(
 }
 
 #[tauri::command]
-pub(crate) fn reveal_path(path: String) -> AppResult<()> {
+pub(crate) fn reveal_path(path: String) -> LegacyResult<()> {
     let fields = vec![("path", path.clone())];
     let result = crate::adapters::platform::reveal_path(path);
     match &result {
@@ -3024,14 +3027,14 @@ pub(crate) fn reveal_path(path: String) -> AppResult<()> {
 #[tauri::command]
 pub(crate) fn get_cli_tools_status(
     app: AppHandle,
-) -> AppResult<crate::adapters::cli_tools::CliToolsStatus> {
+) -> LegacyResult<crate::adapters::cli_tools::CliToolsStatus> {
     crate::adapters::cli_tools::status(&app)
 }
 
 #[tauri::command]
 pub(crate) fn install_cli_tools(
     app: AppHandle,
-) -> AppResult<crate::adapters::cli_tools::CliToolsStatus> {
+) -> LegacyResult<crate::adapters::cli_tools::CliToolsStatus> {
     let result = crate::adapters::cli_tools::install(&app);
     match &result {
         Ok(status) => log_info(
@@ -3051,12 +3054,12 @@ pub(crate) fn install_cli_tools(
 pub(crate) fn logs_get_snapshot(
     file_name: Option<String>,
     line_limit: Option<usize>,
-) -> AppResult<crate::backend::logs::LogSnapshot> {
+) -> LegacyResult<crate::backend::logs::LogSnapshot> {
     crate::backend::logs::logs_get_snapshot(file_name, line_limit)
 }
 
 #[tauri::command]
-pub(crate) fn logs_open_log_directory() -> AppResult<()> {
+pub(crate) fn logs_open_log_directory() -> LegacyResult<()> {
     crate::backend::logs::logs_open_log_directory()
 }
 
@@ -3066,12 +3069,12 @@ pub(crate) fn logs_write_operation(
     operation: String,
     message: String,
     fields: Option<BTreeMap<String, String>>,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     crate::backend::logs::logs_write_operation(level, operation, message, fields)
 }
 
 #[tauri::command]
-pub(crate) fn copy_prompt_card_to_clipboard(params: PromptClipboardParams) -> AppResult<()> {
+pub(crate) fn copy_prompt_card_to_clipboard(params: PromptClipboardParams) -> LegacyResult<()> {
     copy_prompt_card_to_clipboard_impl(params)
 }
 

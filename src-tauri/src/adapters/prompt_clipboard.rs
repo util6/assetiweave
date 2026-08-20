@@ -2,7 +2,7 @@
 //!
 //! 负责将带有文本及图片附件的 Prompt 卡片写回系统剪贴板（如 macOS `pbcopy` / AppleScript 等）。
 
-use crate::backend::dto::AppResult;
+use crate::backend::compat::LegacyResult;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
 use std::{
@@ -45,7 +45,7 @@ pub(crate) struct PromptClipboardImageAttachment {
 }
 
 /// 将指定的 Prompt 文本及图片附件一并写入系统剪贴板
-pub(crate) fn copy_prompt_card_to_clipboard(params: PromptClipboardParams) -> AppResult<()> {
+pub(crate) fn copy_prompt_card_to_clipboard(params: PromptClipboardParams) -> LegacyResult<()> {
     if params.attachments.len() > PROMPT_CLIPBOARD_ATTACHMENT_LIMIT {
         return Err(format!(
             "too many prompt image attachments: maximum is {PROMPT_CLIPBOARD_ATTACHMENT_LIMIT}"
@@ -80,7 +80,7 @@ struct DecodedPromptClipboardImage {
 
 fn decode_prompt_clipboard_image(
     attachment: &PromptClipboardImageAttachment,
-) -> AppResult<DecodedPromptClipboardImage> {
+) -> LegacyResult<DecodedPromptClipboardImage> {
     let (metadata, payload) = attachment
         .data_url
         .split_once(',')
@@ -192,7 +192,7 @@ fn prune_prompt_clipboard_cache(cache_root: &Path) {
 }
 
 #[cfg(target_os = "macos")]
-fn write_prompt_clipboard(text_path: &Path, image_paths: &[PathBuf]) -> AppResult<()> {
+fn write_prompt_clipboard(text_path: &Path, image_paths: &[PathBuf]) -> LegacyResult<()> {
     let mut command = Command::new("/usr/bin/osascript");
     command
         .arg("-l")
@@ -219,7 +219,7 @@ fn write_prompt_clipboard(text_path: &Path, image_paths: &[PathBuf]) -> AppResul
 }
 
 #[cfg(not(target_os = "macos"))]
-fn write_prompt_clipboard(_text_path: &Path, _image_paths: &[PathBuf]) -> AppResult<()> {
+fn write_prompt_clipboard(_text_path: &Path, _image_paths: &[PathBuf]) -> LegacyResult<()> {
     Err("native prompt image clipboard copy is currently only available on macOS".to_string())
 }
 

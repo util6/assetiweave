@@ -159,12 +159,11 @@ check_absent 'runtime: Option<Arc<AppRuntime>>' \
 check_absent 'backend::application|crate::backend::application' \
   "$ROOT/src-tauri/src/backend/runtime"
 
-# The DTO String result alias is being removed by vertical slices. Keep the
-# compatibility import bounded to the one explicit bootstrap wrapper until
-# the remaining Application workflows migrate.
-check_max 1 'dto::.*AppResult|dto::\{[^}]*AppResult' \
+# Application workflows and their prelude must not consume the DTO transport
+# alias or its explicitly named legacy infrastructure alias.
+check_absent 'dto::.*(AppResult|LegacyResult)|dto::\{[^}]*([^A-Za-z0-9_]|^)(AppResult|LegacyResult)([^A-Za-z0-9_]|$)' \
   "$ROOT/src-tauri/src/backend/application"
-check_max 1 'type AppResult<T> = Result<T, String>' \
+check_absent 'type (AppResult|LegacyResult)<T> = Result<T, String>' \
   "$ROOT/src-tauri/src/backend/dto"
 
 # Agent Market must preserve typed errors across the Application boundary.
@@ -191,10 +190,12 @@ check_max 333 'block_on' "$ROOT/src-tauri/src"
 check_allowlisted_count 'Legacy\(' "$ROOT/src-tauri/src" \
   "$SCRIPT_DIR/legacy-error-allowlist.txt"
 check_max 0 'open_with_db_path' "$ROOT/src-tauri/src/adapters"
-# Application has no explicit Result<T, String> declarations; the remaining
-# DTO alias is a tracked compatibility seam until the transport-wide migration.
+# Application has no explicit Result<T, String> declarations or legacy result
+# aliases; compatibility string errors stay below the application boundary.
 check_max 0 'Result<[^>]*, ?String>' "$ROOT/src-tauri/src/backend/application"
-check_max 1 'type AppResult<T> = Result<T, String>' \
+check_absent '(^|[^A-Za-z0-9_])LegacyResult([^A-Za-z0-9_]|$)' \
+  "$ROOT/src-tauri/src/backend/application"
+check_absent 'type (AppResult|LegacyResult)<T> = Result<T, String>' \
   "$ROOT/src-tauri/src/backend/dto"
 
 # Keep synchronous bridges monotonic per module, not only in the aggregate.

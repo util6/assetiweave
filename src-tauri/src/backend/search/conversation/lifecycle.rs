@@ -3,8 +3,7 @@ use super::engine::{
     DiskConversationIndex,
 };
 use crate::backend::{
-    dto::{AppResult, ConversationSearchIndexRebuildReport},
-    store::Database,
+    compat::LegacyResult, dto::ConversationSearchIndexRebuildReport, store::Database,
 };
 use chrono::{Duration, Utc};
 use sha2::{Digest, Sha256};
@@ -19,7 +18,7 @@ pub(crate) fn rebuild_conversation_search_index(
     database: &Database,
     db_path: &Path,
     tenant_id: &str,
-) -> AppResult<ConversationSearchIndexRebuildReport> {
+) -> LegacyResult<ConversationSearchIndexRebuildReport> {
     rebuild_conversation_search_index_inner(database, db_path, tenant_id, None)
 }
 
@@ -29,7 +28,7 @@ pub(crate) fn rebuild_conversation_search_index_with_offset(
     tenant_id: &str,
     consumer_id: &str,
     last_seq: i64,
-) -> AppResult<ConversationSearchIndexRebuildReport> {
+) -> LegacyResult<ConversationSearchIndexRebuildReport> {
     rebuild_conversation_search_index_inner(
         database,
         db_path,
@@ -43,7 +42,7 @@ fn rebuild_conversation_search_index_inner(
     db_path: &Path,
     tenant_id: &str,
     consumer_offset: Option<(&str, i64)>,
-) -> AppResult<ConversationSearchIndexRebuildReport> {
+) -> LegacyResult<ConversationSearchIndexRebuildReport> {
     let started = Instant::now();
     let pool = database.pool().clone();
     let tenant_id_owned = tenant_id.to_string();
@@ -180,7 +179,7 @@ pub(crate) fn search_ready_conversation_index(
     project_path: Option<String>,
     limit: usize,
     offset: usize,
-) -> AppResult<Option<ConversationSearchMatches>> {
+) -> LegacyResult<Option<ConversationSearchMatches>> {
     let pool = database.pool().clone();
     let tenant = tenant_id.to_string();
     let state = database.block_on(async move {
@@ -258,7 +257,7 @@ fn mark_index_unusable(database: &Database, tenant_id: &str, error: &str) {
     });
 }
 
-fn set_private_directory_permissions(path: &Path) -> AppResult<()> {
+fn set_private_directory_permissions(path: &Path) -> LegacyResult<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -268,7 +267,7 @@ fn set_private_directory_permissions(path: &Path) -> AppResult<()> {
     Ok(())
 }
 
-fn directory_size(path: &Path) -> AppResult<i64> {
+fn directory_size(path: &Path) -> LegacyResult<i64> {
     let mut size = 0_u64;
     for entry in walkdir::WalkDir::new(path) {
         let entry = entry.map_err(|error| error.to_string())?;

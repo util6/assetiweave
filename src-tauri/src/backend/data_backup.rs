@@ -7,7 +7,7 @@
 
 use crate::backend::{
     app_settings::read_app_settings_value,
-    dto::AppResult,
+    compat::LegacyResult,
     path_utils::{default_database_backup_root, expand_path},
 };
 use chrono::Utc;
@@ -48,7 +48,7 @@ pub(crate) struct DatabaseBackupError {
     pub(crate) message: String,
 }
 
-pub(crate) fn backup_database_from_settings(db_path: &Path) -> AppResult<DatabaseBackupReport> {
+pub(crate) fn backup_database_from_settings(db_path: &Path) -> LegacyResult<DatabaseBackupReport> {
     let mut settings_errors = Vec::new();
     let settings = match read_app_settings_value() {
         Ok(value) => value,
@@ -71,7 +71,7 @@ pub(crate) fn backup_database_from_settings(db_path: &Path) -> AppResult<Databas
 pub(crate) fn configured_backup_directories(
     default_root: PathBuf,
     settings: &Value,
-) -> AppResult<Vec<PathBuf>> {
+) -> LegacyResult<Vec<PathBuf>> {
     let mut seen = BTreeSet::new();
     let mut directories = Vec::new();
     push_unique_path(&mut directories, &mut seen, default_root);
@@ -86,7 +86,7 @@ pub(crate) fn configured_backup_directories(
 pub(crate) fn backup_database_to_directories(
     db_path: &Path,
     directories: &[PathBuf],
-) -> AppResult<DatabaseBackupReport> {
+) -> LegacyResult<DatabaseBackupReport> {
     if !db_path.is_file() {
         return Err(format!(
             "database file does not exist: {}",
@@ -131,7 +131,7 @@ fn backup_database_to_directory(
     db_path: &Path,
     directory: &Path,
     file_name: &str,
-) -> AppResult<DatabaseBackupTarget> {
+) -> LegacyResult<DatabaseBackupTarget> {
     ensure_backup_directory(directory)?;
     let target_path = directory.join(file_name);
     snapshot_sqlite_database(db_path, &target_path)?;
@@ -141,7 +141,7 @@ fn backup_database_to_directory(
     })
 }
 
-fn ensure_backup_directory(directory: &Path) -> AppResult<()> {
+fn ensure_backup_directory(directory: &Path) -> LegacyResult<()> {
     if directory.exists() && !directory.is_dir() {
         return Err(format!(
             "database backup target is not a directory: {}",
@@ -151,7 +151,7 @@ fn ensure_backup_directory(directory: &Path) -> AppResult<()> {
     fs::create_dir_all(directory).map_err(|error| error.to_string())
 }
 
-fn snapshot_sqlite_database(db_path: &Path, target_path: &Path) -> AppResult<()> {
+fn snapshot_sqlite_database(db_path: &Path, target_path: &Path) -> LegacyResult<()> {
     // OneShot / Shutdown Infrastructure Path: VACUUM INTO needs a short-lived
     // independent connection so the resident pool can be closing safely.
     let temp_path = temporary_target_path(target_path);
@@ -174,7 +174,7 @@ fn snapshot_sqlite_database(db_path: &Path, target_path: &Path) -> AppResult<()>
     fs::rename(&temp_path, target_path).map_err(|error| error.to_string())
 }
 
-fn vacuum_into(db_path: &Path, target_path: &Path) -> AppResult<()> {
+fn vacuum_into(db_path: &Path, target_path: &Path) -> LegacyResult<()> {
     let target = target_path.to_string_lossy().to_string();
     let runtime = build_backup_runtime()?;
     runtime.block_on(async move {
@@ -185,7 +185,7 @@ fn vacuum_into(db_path: &Path, target_path: &Path) -> AppResult<()> {
     })
 }
 
-fn checkpoint_and_copy(db_path: &Path, target_path: &Path) -> AppResult<()> {
+fn checkpoint_and_copy(db_path: &Path, target_path: &Path) -> LegacyResult<()> {
     let runtime = build_backup_runtime()?;
     runtime.block_on(async move {
         let pool = open_backup_pool(db_path).await?;
@@ -198,7 +198,7 @@ fn checkpoint_and_copy(db_path: &Path, target_path: &Path) -> AppResult<()> {
         .map_err(|error| error.to_string())
 }
 
-async fn open_backup_pool(db_path: &Path) -> AppResult<SqlitePool> {
+async fn open_backup_pool(db_path: &Path) -> LegacyResult<SqlitePool> {
     let options = SqliteConnectOptions::new()
         .filename(db_path)
         .create_if_missing(false)
@@ -210,7 +210,7 @@ async fn open_backup_pool(db_path: &Path) -> AppResult<SqlitePool> {
         .map_err(|error| error.to_string())
 }
 
-fn build_backup_runtime() -> AppResult<Runtime> {
+fn build_backup_runtime() -> LegacyResult<Runtime> {
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()

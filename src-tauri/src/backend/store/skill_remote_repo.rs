@@ -1,4 +1,4 @@
-use crate::backend::dto::{AppResult, SkillRemoteSource};
+use crate::backend::{compat::LegacyResult, dto::SkillRemoteSource};
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 
 use super::sql;
@@ -6,7 +6,7 @@ use super::sql;
 pub(crate) async fn list_skill_remote_sources_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<Vec<SkillRemoteSource>> {
+) -> LegacyResult<Vec<SkillRemoteSource>> {
     let rows = sqlx::query(sql::LIST_SKILL_REMOTE_SOURCES)
         .bind(tenant_id)
         .fetch_all(pool)
@@ -19,7 +19,7 @@ pub(crate) async fn load_skill_remote_source_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     asset_id: &str,
-) -> AppResult<Option<SkillRemoteSource>> {
+) -> LegacyResult<Option<SkillRemoteSource>> {
     sqlx::query(sql::GET_SKILL_REMOTE_SOURCE)
         .bind(tenant_id)
         .bind(asset_id)
@@ -35,7 +35,7 @@ pub(crate) async fn upsert_skill_remote_source_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     source: &SkillRemoteSource,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(sql::UPSERT_SKILL_REMOTE_SOURCE)
         .bind(tenant_id)
         .bind(&source.asset_id)
@@ -61,7 +61,7 @@ pub(crate) async fn update_skill_remote_check_result_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     source: &SkillRemoteSource,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(sql::UPDATE_SKILL_REMOTE_CHECK)
         .bind(tenant_id)
         .bind(&source.asset_id)
@@ -78,7 +78,7 @@ pub(crate) async fn update_skill_remote_check_result_sqlx(
 pub(crate) async fn delete_orphan_skill_remote_sources_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(sql::DELETE_ORPHAN_SKILL_REMOTE_SOURCES)
         .bind(tenant_id)
         .execute(pool)
@@ -87,7 +87,7 @@ pub(crate) async fn delete_orphan_skill_remote_sources_sqlx(
     Ok(())
 }
 
-fn map_sqlx_skill_remote_source(row: &SqliteRow) -> AppResult<SkillRemoteSource> {
+fn map_sqlx_skill_remote_source(row: &SqliteRow) -> LegacyResult<SkillRemoteSource> {
     Ok(SkillRemoteSource {
         asset_id: row.try_get(0).map_err(|error| error.to_string())?,
         provider: row.try_get(1).map_err(|error| error.to_string())?,
@@ -130,7 +130,7 @@ mod tests {
                 let loaded =
                     load_skill_remote_source_sqlx(database.pool(), "default", "asset-a").await?;
                 let listed = list_skill_remote_sources_sqlx(database.pool(), "default").await?;
-                AppResult::Ok((loaded, listed))
+                LegacyResult::Ok((loaded, listed))
             })
             .map(|(loaded, listed)| {
                 assert_eq!(loaded.expect("loaded remote").status, "changed");

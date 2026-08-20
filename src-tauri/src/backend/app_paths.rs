@@ -21,7 +21,7 @@ mod tests {
     use super::*;
 
     fn builtin_catalog() -> TargetCatalog {
-        TargetCatalog::builtin().expect("target catalog")
+        TargetCatalog::builtin_for_tests().expect("target catalog")
     }
 
     #[test]

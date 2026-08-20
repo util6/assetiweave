@@ -105,12 +105,6 @@ pub(crate) fn default_sources_for_tenant(tenant_id: &str) -> Vec<Source> {
     sources
 }
 
-#[cfg(test)]
-pub(crate) fn default_profiles() -> Vec<TargetProfile> {
-    let catalog = TargetCatalog::builtin().expect("builtin target descriptors must be valid");
-    default_profiles_from_catalog(&catalog)
-}
-
 pub(crate) fn default_profiles_from_catalog(catalog: &TargetCatalog) -> Vec<TargetProfile> {
     catalog
         .descriptors()
@@ -278,9 +272,16 @@ fn sub_nav(id: &str, label: &str, route_key: &str) -> SubNavItem {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_app_shortcuts, default_navigation_model, default_profiles,
+        default_app_shortcuts, default_navigation_model, default_profiles_from_catalog,
         default_sources_for_tenant,
     };
+    use crate::backend::models::TargetProfile;
+    use crate::backend::target_catalog::TargetCatalog;
+
+    fn default_profiles() -> Vec<TargetProfile> {
+        let catalog = TargetCatalog::builtin_for_tests().expect("builtin target descriptors");
+        default_profiles_from_catalog(&catalog)
+    }
 
     #[test]
     fn memory_is_an_independent_default_navigation_module() {

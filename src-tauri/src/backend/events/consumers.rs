@@ -1,5 +1,5 @@
 use super::{ConsumerCx, DomainEvent, DomainEventConsumer, InitialPosition, SequencedEvent};
-use crate::backend::{dto::AppResult, runtime::AppError};
+use crate::backend::{compat::LegacyResult, runtime::AppError};
 use std::collections::BTreeSet;
 
 pub(crate) struct SearchIndexAdvanceConsumer;
@@ -91,7 +91,7 @@ async fn mark_evidence_stale(
     sync_run_id: &str,
     changed_session_ids: Option<&[String]>,
     revision: i64,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let session_ids = if let Some(ids) = changed_session_ids {
         ids.to_vec()
     } else {

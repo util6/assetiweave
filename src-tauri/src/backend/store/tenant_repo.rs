@@ -1,4 +1,4 @@
-use crate::backend::dto::AppResult;
+use crate::backend::compat::LegacyResult;
 use crate::backend::models::{
     AuthMode, Principal, PrincipalKind, RequestContext, Tenant, TenantKind, TenantMembership,
     TenantRole, TenantStatus,
@@ -11,7 +11,7 @@ use super::{codec::decode_enum, sql};
 pub(crate) const LOCAL_PRINCIPAL_ID: &str = "local";
 pub(crate) const DEFAULT_TENANT_ID: &str = "default";
 
-pub(crate) async fn ensure_local_identity_sqlx(pool: &SqlitePool) -> AppResult<()> {
+pub(crate) async fn ensure_local_identity_sqlx(pool: &SqlitePool) -> LegacyResult<()> {
     let now = Utc::now().to_rfc3339();
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     sqlx::query(sql::UPSERT_LOCAL_PRINCIPAL)
@@ -41,7 +41,7 @@ pub(crate) async fn ensure_local_identity_sqlx(pool: &SqlitePool) -> AppResult<(
 pub(crate) async fn load_principal_sqlx(
     pool: &SqlitePool,
     principal_id: &str,
-) -> AppResult<Option<Principal>> {
+) -> LegacyResult<Option<Principal>> {
     sqlx::query(sql::LOAD_PRINCIPAL)
         .bind(principal_id)
         .fetch_optional(pool)
@@ -55,7 +55,7 @@ pub(crate) async fn load_principal_sqlx(
 pub(crate) async fn load_tenant_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<Option<Tenant>> {
+) -> LegacyResult<Option<Tenant>> {
     sqlx::query(sql::LOAD_TENANT)
         .bind(tenant_id)
         .fetch_optional(pool)
@@ -70,7 +70,7 @@ pub(crate) async fn load_tenant_membership_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     principal_id: &str,
-) -> AppResult<Option<TenantMembership>> {
+) -> LegacyResult<Option<TenantMembership>> {
     sqlx::query(sql::LOAD_TENANT_MEMBERSHIP)
         .bind(tenant_id)
         .bind(principal_id)
@@ -85,7 +85,7 @@ pub(crate) async fn load_tenant_membership_sqlx(
 pub(crate) async fn list_tenants_for_principal_sqlx(
     pool: &SqlitePool,
     principal_id: &str,
-) -> AppResult<Vec<Tenant>> {
+) -> LegacyResult<Vec<Tenant>> {
     let rows = sqlx::query(sql::LIST_TENANTS_BY_PRINCIPAL)
         .bind(principal_id)
         .fetch_all(pool)
@@ -97,7 +97,7 @@ pub(crate) async fn list_tenants_for_principal_sqlx(
 pub(crate) async fn load_active_tenant_id_sqlx(
     pool: &SqlitePool,
     principal_id: &str,
-) -> AppResult<Option<String>> {
+) -> LegacyResult<Option<String>> {
     sqlx::query_scalar::<_, String>(sql::LOAD_ACTIVE_TENANT_ID)
         .bind(principal_id)
         .fetch_optional(pool)
@@ -109,7 +109,7 @@ pub(crate) async fn set_active_tenant_sqlx(
     pool: &SqlitePool,
     principal_id: &str,
     tenant_id: &str,
-) -> AppResult<Tenant> {
+) -> LegacyResult<Tenant> {
     let tenant = load_tenant_sqlx(pool, tenant_id)
         .await?
         .ok_or_else(|| format!("tenant not found: {tenant_id}"))?;
@@ -135,7 +135,7 @@ pub(crate) async fn create_local_tenant_sqlx(
     principal_id: &str,
     name: &str,
     slug: Option<&str>,
-) -> AppResult<Tenant> {
+) -> LegacyResult<Tenant> {
     let name = clean_tenant_name(name)?;
     let slug = normalize_tenant_slug(slug.unwrap_or(&name))?;
     if load_tenant_sqlx(pool, &slug).await?.is_some() {
@@ -171,7 +171,7 @@ pub(crate) async fn create_local_tenant_sqlx(
 
 pub(crate) async fn load_local_request_context_sqlx(
     pool: &SqlitePool,
-) -> AppResult<RequestContext> {
+) -> LegacyResult<RequestContext> {
     ensure_local_identity_sqlx(pool).await?;
     let principal = load_principal_sqlx(pool, LOCAL_PRINCIPAL_ID)
         .await?
@@ -198,7 +198,7 @@ pub(crate) async fn load_local_request_context_sqlx(
     })
 }
 
-fn clean_tenant_name(name: &str) -> AppResult<String> {
+fn clean_tenant_name(name: &str) -> LegacyResult<String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("tenant name is required".to_string());
@@ -206,7 +206,7 @@ fn clean_tenant_name(name: &str) -> AppResult<String> {
     Ok(name.to_string())
 }
 
-fn normalize_tenant_slug(value: &str) -> AppResult<String> {
+fn normalize_tenant_slug(value: &str) -> LegacyResult<String> {
     let mut slug = value
         .trim()
         .to_ascii_lowercase()
@@ -229,7 +229,7 @@ fn normalize_tenant_slug(value: &str) -> AppResult<String> {
     Ok(slug)
 }
 
-fn map_principal_row(row: &SqliteRow) -> AppResult<Principal> {
+fn map_principal_row(row: &SqliteRow) -> LegacyResult<Principal> {
     Ok(Principal {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         kind: decode_enum::<PrincipalKind>(
@@ -242,7 +242,7 @@ fn map_principal_row(row: &SqliteRow) -> AppResult<Principal> {
     })
 }
 
-fn map_tenant_row(row: &SqliteRow) -> AppResult<Tenant> {
+fn map_tenant_row(row: &SqliteRow) -> LegacyResult<Tenant> {
     Ok(Tenant {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         slug: row.try_get(1).map_err(|error| error.to_string())?,
@@ -260,7 +260,7 @@ fn map_tenant_row(row: &SqliteRow) -> AppResult<Tenant> {
     })
 }
 
-fn map_tenant_membership_row(row: &SqliteRow) -> AppResult<TenantMembership> {
+fn map_tenant_membership_row(row: &SqliteRow) -> LegacyResult<TenantMembership> {
     Ok(TenantMembership {
         tenant_id: row.try_get(0).map_err(|error| error.to_string())?,
         principal_id: row.try_get(1).map_err(|error| error.to_string())?,

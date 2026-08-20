@@ -3,7 +3,7 @@ pub(super) use super::classifier::{classify_asset, detect_format, extract_descri
 pub(super) use super::glob::build_glob_set;
 pub(super) use super::{mixed, skill};
 pub(super) use crate::backend::{
-    dto::AppResult,
+    compat::LegacyResult as AppResult,
     models::{stable_asset_id, Asset, AssetFormat, AssetKind, Source, SourceScannerKind},
     path_utils::{expand_path, hash_path, normalize_relative_path},
 };

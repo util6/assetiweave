@@ -2,14 +2,15 @@ pub(super) use super::catalog::*;
 pub(super) use super::fs_utils::*;
 pub(super) use super::mounts::*;
 pub(super) use super::mounts::{asset_mount_status, load_mount_asset_and_profile_sqlx};
+pub(super) use crate::backend::compat::LegacyResult as AppResult;
 pub(super) use crate::backend::{
     dto::{
-        AppResult, ApplyAssetGroupMountResult, ApplySkillGroupExclusiveMountResult,
-        AssetGroupInput, AssetGroupMountError, AssetMountObservation, AssetMountStatus,
-        AssetMountUpdateResult, CatalogAsset, PhysicalMountStateDto, SkillBackupAssetStatus,
-        SkillBackupSettings, SkillBackupState, SkillGroupExclusiveMountError,
-        SkillGroupExclusiveMountInput, SkillGroupExclusiveMountItem,
-        SkillGroupExclusiveMountPreview, SkillGroupExclusiveMountSkippedItem, TargetProfileInput,
+        ApplyAssetGroupMountResult, ApplySkillGroupExclusiveMountResult, AssetGroupInput,
+        AssetGroupMountError, AssetMountObservation, AssetMountStatus, AssetMountUpdateResult,
+        CatalogAsset, PhysicalMountStateDto, SkillBackupAssetStatus, SkillBackupSettings,
+        SkillBackupState, SkillGroupExclusiveMountError, SkillGroupExclusiveMountInput,
+        SkillGroupExclusiveMountItem, SkillGroupExclusiveMountPreview,
+        SkillGroupExclusiveMountSkippedItem, TargetProfileInput,
     },
     models::{
         AppKind, Asset, AssetGroup, AssetGroupDetail, AssetGroupRules, AssetKind, AssetMount,

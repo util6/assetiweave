@@ -1,4 +1,4 @@
-use crate::backend::{dto::AppResult, host_paths::HostPlatform};
+use crate::backend::{compat::LegacyResult, host_paths::HostPlatform};
 use std::{
     ffi::OsString,
     fs,
@@ -65,7 +65,7 @@ impl HostFilesystem {
         .then(|| path.components[root.components.len()..].to_vec())
     }
 
-    pub(crate) fn validate_path_segment(&self, segment: &str) -> AppResult<String> {
+    pub(crate) fn validate_path_segment(&self, segment: &str) -> LegacyResult<String> {
         if segment.ends_with([' ', '.']) {
             return Err(format!(
                 "path segment must not end with a space or period: {segment}"
@@ -106,7 +106,7 @@ impl HostFilesystem {
     pub(crate) fn validate_portable_relative_path(
         &self,
         raw: &str,
-    ) -> AppResult<PortableRelativePath> {
+    ) -> LegacyResult<PortableRelativePath> {
         let normalized = raw.replace('\\', "/");
         let normalized = normalized.trim_end_matches('/');
         let bytes = normalized.as_bytes();
@@ -136,7 +136,7 @@ impl HostFilesystem {
         })
     }
 
-    pub(crate) fn create_symlink(&self, source: &Path, target: &Path) -> AppResult<()> {
+    pub(crate) fn create_symlink(&self, source: &Path, target: &Path) -> LegacyResult<()> {
         let kind = if fs::metadata(source)
             .map_err(|error| error.to_string())?
             .is_dir()
@@ -153,16 +153,16 @@ impl HostFilesystem {
         source: &Path,
         target: &Path,
         kind: SymlinkKind,
-    ) -> AppResult<()> {
+    ) -> LegacyResult<()> {
         create_symlink_with_kind(source, target, kind)
     }
 
-    pub(crate) fn symlink_kind(&self, path: &Path) -> AppResult<SymlinkKind> {
+    pub(crate) fn symlink_kind(&self, path: &Path) -> LegacyResult<SymlinkKind> {
         let metadata = fs::symlink_metadata(path).map_err(|error| error.to_string())?;
         symlink_kind(path, &metadata)
     }
 
-    pub(crate) fn remove_symlink(&self, path: &Path) -> AppResult<()> {
+    pub(crate) fn remove_symlink(&self, path: &Path) -> LegacyResult<()> {
         let kind = self.symlink_kind(path)?;
         match symlink_removal(self.platform, kind) {
             SymlinkRemoval::File => fs::remove_file(path),
@@ -171,7 +171,7 @@ impl HostFilesystem {
         .map_err(|error| error.to_string())
     }
 
-    pub(crate) fn remove_path(&self, path: &Path) -> AppResult<()> {
+    pub(crate) fn remove_path(&self, path: &Path) -> LegacyResult<()> {
         let metadata = fs::symlink_metadata(path).map_err(|error| error.to_string())?;
         if metadata.file_type().is_symlink() {
             return self.remove_symlink(path);
@@ -185,7 +185,7 @@ impl HostFilesystem {
         Err(format!("unsupported filesystem entry: {}", path.display()))
     }
 
-    pub(crate) fn copy_dir(&self, source: &Path, target: &Path) -> AppResult<()> {
+    pub(crate) fn copy_dir(&self, source: &Path, target: &Path) -> LegacyResult<()> {
         for entry in WalkDir::new(source) {
             let entry = entry.map_err(|error| error.to_string())?;
             let relative = entry
@@ -205,7 +205,11 @@ impl HostFilesystem {
         Ok(())
     }
 
-    pub(crate) fn copy_dir_without_conflicts(&self, source: &Path, target: &Path) -> AppResult<()> {
+    pub(crate) fn copy_dir_without_conflicts(
+        &self,
+        source: &Path,
+        target: &Path,
+    ) -> LegacyResult<()> {
         if !source.exists() {
             return Ok(());
         }
@@ -281,12 +285,12 @@ fn symlink_removal(platform: HostPlatform, kind: SymlinkKind) -> SymlinkRemoval 
 }
 
 #[cfg(unix)]
-fn create_symlink_with_kind(source: &Path, target: &Path, _kind: SymlinkKind) -> AppResult<()> {
+fn create_symlink_with_kind(source: &Path, target: &Path, _kind: SymlinkKind) -> LegacyResult<()> {
     std::os::unix::fs::symlink(source, target).map_err(|error| error.to_string())
 }
 
 #[cfg(windows)]
-fn create_symlink_with_kind(source: &Path, target: &Path, kind: SymlinkKind) -> AppResult<()> {
+fn create_symlink_with_kind(source: &Path, target: &Path, kind: SymlinkKind) -> LegacyResult<()> {
     match kind {
         SymlinkKind::Directory => std::os::windows::fs::symlink_dir(source, target),
         SymlinkKind::File => std::os::windows::fs::symlink_file(source, target),
@@ -305,7 +309,7 @@ fn format_symlink_error(platform: HostPlatform, error: std::io::Error) -> String
 }
 
 #[cfg(unix)]
-fn symlink_kind(path: &Path, metadata: &fs::Metadata) -> AppResult<SymlinkKind> {
+fn symlink_kind(path: &Path, metadata: &fs::Metadata) -> LegacyResult<SymlinkKind> {
     if !metadata.file_type().is_symlink() {
         return Err(format!("target is not a symlink: {}", path.display()));
     }
@@ -322,7 +326,7 @@ fn symlink_kind(path: &Path, metadata: &fs::Metadata) -> AppResult<SymlinkKind> 
 }
 
 #[cfg(windows)]
-fn symlink_kind(path: &Path, metadata: &fs::Metadata) -> AppResult<SymlinkKind> {
+fn symlink_kind(path: &Path, metadata: &fs::Metadata) -> LegacyResult<SymlinkKind> {
     use std::os::windows::fs::FileTypeExt;
 
     let file_type = metadata.file_type();

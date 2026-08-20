@@ -1,4 +1,4 @@
-use crate::backend::dto::AppResult;
+use crate::backend::compat::LegacyResult;
 use crate::backend::models::{AssetMount, DeploymentState, DeploymentStrategy};
 use chrono::Utc;
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, Sqlite, SqlitePool, Transaction};
@@ -12,7 +12,7 @@ pub(crate) async fn load_asset_mounts_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     asset_id: Option<&str>,
-) -> AppResult<Vec<AssetMount>> {
+) -> LegacyResult<Vec<AssetMount>> {
     let rows = sqlx::query(sql::LIST_ASSET_MOUNTS)
         .bind(tenant_id)
         .bind(asset_id)
@@ -27,7 +27,7 @@ pub(crate) async fn load_enabled_asset_mounts_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     profile_id: Option<&str>,
-) -> AppResult<Vec<AssetMount>> {
+) -> LegacyResult<Vec<AssetMount>> {
     let rows = sqlx::query(sql::LIST_ENABLED_ASSET_MOUNTS)
         .bind(tenant_id)
         .bind(profile_id)
@@ -41,7 +41,7 @@ pub(crate) async fn load_enabled_asset_mounts_sqlx(
 pub(crate) async fn delete_orphan_asset_mounts_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(sql::DELETE_ORPHAN_ASSET_MOUNTS)
         .bind(tenant_id)
         .execute(pool)
@@ -57,7 +57,7 @@ pub(crate) async fn set_asset_mount_sqlx(
     profile_id: &str,
     enabled: bool,
     strategy: DeploymentStrategy,
-) -> AppResult<AssetMount> {
+) -> LegacyResult<AssetMount> {
     let now = Utc::now().to_rfc3339();
     let created_at = load_asset_mount_sqlx(pool, tenant_id, asset_id, profile_id)
         .await?
@@ -80,7 +80,7 @@ pub(crate) async fn persist_verified_mount_sqlx(
     tenant_id: &str,
     state: &DeploymentState,
     strategy: DeploymentStrategy,
-) -> AppResult<AssetMount> {
+) -> LegacyResult<AssetMount> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     upsert_deployment_state_tx(&mut tx, tenant_id, state).await?;
     let mount = set_asset_mount_tx(
@@ -103,7 +103,7 @@ pub(crate) async fn persist_verified_unmount_sqlx(
     profile_id: &str,
     target_path: &str,
     strategy: DeploymentStrategy,
-) -> AppResult<AssetMount> {
+) -> LegacyResult<AssetMount> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     delete_deployment_state_tx(&mut tx, tenant_id, profile_id, asset_id, target_path).await?;
     let mount =
@@ -117,7 +117,7 @@ async fn load_asset_mount_sqlx(
     tenant_id: &str,
     asset_id: &str,
     profile_id: &str,
-) -> AppResult<Option<AssetMount>> {
+) -> LegacyResult<Option<AssetMount>> {
     sqlx::query(sql::GET_ASSET_MOUNT)
         .bind(tenant_id)
         .bind(asset_id)
@@ -134,7 +134,7 @@ async fn load_asset_mount_tx(
     tenant_id: &str,
     asset_id: &str,
     profile_id: &str,
-) -> AppResult<Option<AssetMount>> {
+) -> LegacyResult<Option<AssetMount>> {
     sqlx::query(sql::GET_ASSET_MOUNT)
         .bind(tenant_id)
         .bind(asset_id)
@@ -153,7 +153,7 @@ async fn set_asset_mount_tx(
     profile_id: &str,
     enabled: bool,
     strategy: DeploymentStrategy,
-) -> AppResult<AssetMount> {
+) -> LegacyResult<AssetMount> {
     let now = Utc::now().to_rfc3339();
     let created_at = load_asset_mount_tx(tx, tenant_id, asset_id, profile_id)
         .await?
@@ -175,7 +175,7 @@ async fn upsert_asset_mount_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     mount: &AssetMount,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(sql::UPSERT_ASSET_MOUNT)
         .bind(tenant_id)
         .bind(&mount.asset_id)
@@ -194,7 +194,7 @@ async fn upsert_asset_mount_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     mount: &AssetMount,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(sql::UPSERT_ASSET_MOUNT)
         .bind(tenant_id)
         .bind(&mount.asset_id)
@@ -213,7 +213,7 @@ async fn upsert_deployment_state_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     state: &DeploymentState,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(sql::UPSERT_DEPLOYMENT_STATE)
         .bind(tenant_id)
         .bind(&state.profile_id)
@@ -235,7 +235,7 @@ async fn delete_deployment_state_tx(
     profile_id: &str,
     asset_id: &str,
     target_path: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     sqlx::query(sql::DELETE_DEPLOYMENT_STATE)
         .bind(tenant_id)
         .bind(profile_id)
@@ -247,7 +247,7 @@ async fn delete_deployment_state_tx(
     Ok(())
 }
 
-fn map_sqlx_mount(row: &SqliteRow) -> AppResult<AssetMount> {
+fn map_sqlx_mount(row: &SqliteRow) -> LegacyResult<AssetMount> {
     Ok(AssetMount {
         asset_id: row.try_get(0).map_err(|error| error.to_string())?,
         profile_id: row.try_get(1).map_err(|error| error.to_string())?,
@@ -315,7 +315,7 @@ mod tests {
                 let all_after_cleanup =
                     load_asset_mounts_sqlx(database.pool(), "default", None).await?;
 
-                AppResult::Ok((initial, updated, scoped, enabled, all_after_cleanup))
+                LegacyResult::Ok((initial, updated, scoped, enabled, all_after_cleanup))
             })
             .map(|(initial, updated, scoped, enabled, all_after_cleanup)| {
                 assert_eq!(initial.created_at, updated.created_at);
@@ -388,7 +388,7 @@ mod tests {
                 let stored_mounts =
                     load_asset_mounts_sqlx(database.pool(), "default", Some("asset-a")).await?;
 
-                AppResult::Ok((
+                LegacyResult::Ok((
                     mounted,
                     managed_after_mount,
                     unmounted,
@@ -424,7 +424,7 @@ mod tests {
         profile_id: &str,
         asset_id: &str,
         target_path: &str,
-    ) -> AppResult<Option<String>> {
+    ) -> LegacyResult<Option<String>> {
         sqlx::query_scalar(sql::GET_MANAGED_DEPLOYMENT)
             .bind(tenant_id)
             .bind(profile_id)
@@ -435,7 +435,7 @@ mod tests {
             .map_err(|error| error.to_string())
     }
 
-    async fn insert_asset(pool: &SqlitePool, asset_id: &str) -> AppResult<()> {
+    async fn insert_asset(pool: &SqlitePool, asset_id: &str) -> LegacyResult<()> {
         sqlx::query(
             r#"
             INSERT INTO assets (

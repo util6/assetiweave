@@ -1,4 +1,4 @@
-use crate::backend::dto::AppResult;
+use crate::backend::compat::LegacyResult;
 use crate::backend::models::{
     MemoryDreamCandidateDraft, MemoryDreamCursor, MemoryDreamNote, MemoryDreamNoteDetail,
     MemoryDreamNoteStatus, MemoryDreamPersistInput, MemoryDreamQuestionDeltaRow, MemoryDreamState,
@@ -27,7 +27,7 @@ pub(crate) async fn list_memory_recall_question_refs_sqlx(
     include_unavailable: bool,
     limit: usize,
     offset: usize,
-) -> AppResult<(usize, Vec<MemoryRecallQuestionRef>)> {
+) -> LegacyResult<(usize, Vec<MemoryRecallQuestionRef>)> {
     if scope.project_path.is_some() {
         return list_session_memory_recall_question_refs_sqlx(
             pool,
@@ -123,7 +123,7 @@ pub(crate) async fn list_memory_recall_question_refs_sqlx(
     let selected = rows
         .iter()
         .map(map_memory_recall_question_ref)
-        .collect::<AppResult<Vec<_>>>()?;
+        .collect::<LegacyResult<Vec<_>>>()?;
     Ok((total, selected))
 }
 
@@ -136,7 +136,7 @@ async fn list_session_memory_recall_question_refs_sqlx(
     include_unavailable: bool,
     limit: usize,
     offset: usize,
-) -> AppResult<(usize, Vec<MemoryRecallQuestionRef>)> {
+) -> LegacyResult<(usize, Vec<MemoryRecallQuestionRef>)> {
     let mut count = QueryBuilder::<Sqlite>::new(
         "SELECT COUNT(*) FROM conversation_questions q JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id WHERE q.tenant_id=",
     );
@@ -166,7 +166,7 @@ async fn list_session_memory_recall_question_refs_sqlx(
         usize::try_from(total_count).map_err(|_| "invalid Recall question count".to_string())?,
         rows.iter()
             .map(map_memory_recall_question_ref)
-            .collect::<AppResult<Vec<_>>>()?,
+            .collect::<LegacyResult<Vec<_>>>()?,
     ))
 }
 
@@ -200,7 +200,7 @@ fn push_session_recall_scope(
     }
 }
 
-fn map_memory_recall_question_ref(row: &SqliteRow) -> AppResult<MemoryRecallQuestionRef> {
+fn map_memory_recall_question_ref(row: &SqliteRow) -> LegacyResult<MemoryRecallQuestionRef> {
     let kind: String = row
         .try_get("record_kind")
         .map_err(|error| error.to_string())?;
@@ -241,7 +241,7 @@ pub(crate) async fn create_memory_recall_run_sqlx(
     provider: &str,
     model: Option<&str>,
     total_count: usize,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let now = Utc::now().to_rfc3339();
     let scope_json = encode_json(scope)?;
     let fingerprint = scope.fingerprint()?;
@@ -277,7 +277,7 @@ pub(crate) async fn persist_memory_extraction_sqlx(
     input_char_count: usize,
     attempt_count: usize,
     evidence: &[MemoryRecallEvidence],
-) -> AppResult<MemoryExtraction> {
+) -> LegacyResult<MemoryExtraction> {
     let id = Uuid::new_v4().to_string();
     let now = Utc::now();
     let now_text = now.to_rfc3339();
@@ -373,7 +373,7 @@ pub(crate) async fn load_memory_run_evidence_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     run_id: &str,
-) -> AppResult<Vec<MemoryEvidenceSnapshot>> {
+) -> LegacyResult<Vec<MemoryEvidenceSnapshot>> {
     let rows = sqlx::query(
         r#"SELECT e.id, e.record_kind, e.source_id, e.session_id, e.question_id, e.turn_id,
           e.part_id, e.block_id, e.content_hash, e.excerpt, e.translated_excerpt,
@@ -398,7 +398,7 @@ pub(crate) async fn persist_memory_recall_success_sqlx(
     result: &serde_json::Value,
     source_revision: i64,
     failed_count: usize,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let now = Utc::now().to_rfc3339();
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     let running: i64 = sqlx::query_scalar(
@@ -441,7 +441,7 @@ pub(crate) async fn fail_memory_recall_run_sqlx(
     run_id: &str,
     message: &str,
     cancelled: bool,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let now = Utc::now().to_rfc3339();
     sqlx::query("UPDATE memory_runs SET phase='completed',status=?1,error_kind=?2,error_message=?3,finished_at=?4,updated_at=?4 WHERE tenant_id=?5 AND id=?6")
       .bind(if cancelled { "cancelled" } else { "failed" })
@@ -455,7 +455,7 @@ pub(crate) async fn set_memory_run_phase_sqlx(
     tenant_id: &str,
     run_id: &str,
     phase: &str,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     if !matches!(phase, "phase1" | "phase2" | "finalizing") {
         return Err("invalid Memory run phase".to_string());
     }
@@ -469,7 +469,7 @@ pub(crate) async fn memory_evidence_stale_reason_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     evidence: &MemoryEvidenceSnapshot,
-) -> AppResult<Option<crate::backend::models::MemoryStaleReason>> {
+) -> LegacyResult<Option<crate::backend::models::MemoryStaleReason>> {
     use crate::backend::models::MemoryStaleReason;
 
     let session_sql = match evidence.record_kind {
@@ -553,7 +553,7 @@ pub(crate) async fn memory_evidence_stale_reason_sqlx(
     Ok((!matches).then_some(MemoryStaleReason::EvidenceChanged))
 }
 
-fn memory_evidence_part_texts(row: &SqliteRow) -> AppResult<Vec<String>> {
+fn memory_evidence_part_texts(row: &SqliteRow) -> LegacyResult<Vec<String>> {
     let mut base_values = Vec::new();
     for key in ["command", "text"] {
         if let Some(value) = row
@@ -663,7 +663,7 @@ pub(crate) async fn load_memory_dream_state_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     scope: &MemoryScope,
-) -> AppResult<Option<MemoryDreamState>> {
+) -> LegacyResult<Option<MemoryDreamState>> {
     let scope_fingerprint = scope.fingerprint()?;
     let row = sqlx::query(
         r#"
@@ -718,7 +718,7 @@ pub(crate) async fn load_memory_dream_delta_rows_sqlx(
     cursor: Option<&MemoryDreamCursor>,
     stable_before: &str,
     row_limit: usize,
-) -> AppResult<Vec<MemoryDreamQuestionDeltaRow>> {
+) -> LegacyResult<Vec<MemoryDreamQuestionDeltaRow>> {
     let cursor_key = cursor.map(|cursor| cursor.session_sort_key.as_str());
     let row_limit =
         i64::try_from(row_limit).map_err(|_| "memory dream row limit is invalid".to_string())?;
@@ -838,7 +838,7 @@ pub(crate) async fn has_active_memory_scope_lock_sqlx(
     tenant_id: &str,
     scope_fingerprint: &str,
     exclude_run_id: Option<&str>,
-) -> AppResult<bool> {
+) -> LegacyResult<bool> {
     let value = sqlx::query_scalar::<_, i64>(
         r#"
         SELECT EXISTS(
@@ -862,7 +862,7 @@ pub(crate) async fn has_active_memory_scope_lock_sqlx(
 pub(crate) async fn load_memory_source_revision_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<i64> {
+) -> LegacyResult<i64> {
     let state = super::search_index_repo::load_or_create_conversation_search_index_state_sqlx(
         pool, tenant_id,
     )
@@ -873,7 +873,7 @@ pub(crate) async fn load_memory_source_revision_sqlx(
 pub(crate) async fn interrupt_stale_memory_runs_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<u64> {
+) -> LegacyResult<u64> {
     let now = Utc::now().to_rfc3339();
     let result = sqlx::query(
         r#"
@@ -900,7 +900,7 @@ pub(crate) async fn list_memory_dream_notes_sqlx(
     scope_fingerprint: Option<&str>,
     limit: usize,
     offset: usize,
-) -> AppResult<Vec<MemoryDreamNote>> {
+) -> LegacyResult<Vec<MemoryDreamNote>> {
     let mut query = QueryBuilder::<Sqlite>::new(format!(
         "SELECT {MEMORY_DREAM_NOTE_COLUMNS} FROM memory_dream_notes WHERE tenant_id = "
     ));
@@ -934,7 +934,7 @@ pub(crate) async fn count_memory_dream_notes_sqlx(
     tenant_id: &str,
     statuses: &[MemoryDreamNoteStatus],
     scope_fingerprint: Option<&str>,
-) -> AppResult<usize> {
+) -> LegacyResult<usize> {
     let mut query =
         QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM memory_dream_notes WHERE tenant_id = ");
     query.push_bind(tenant_id);
@@ -962,7 +962,7 @@ pub(crate) async fn load_memory_dream_note_detail_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     note_id: &str,
-) -> AppResult<Option<MemoryDreamNoteDetail>> {
+) -> LegacyResult<Option<MemoryDreamNoteDetail>> {
     let note_row = sqlx::query(
         r#"
         SELECT id, run_id, scope_json, scope_fingerprint, markdown, session_count,
@@ -1002,7 +1002,7 @@ pub(crate) async fn load_memory_dream_note_detail_sqlx(
         evidence: evidence_rows
             .iter()
             .map(map_memory_evidence)
-            .collect::<AppResult<Vec<_>>>()?,
+            .collect::<LegacyResult<Vec<_>>>()?,
     }))
 }
 
@@ -1010,7 +1010,7 @@ pub(crate) async fn archive_memory_dream_note_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     note_id: &str,
-) -> AppResult<MemoryDreamNoteDetail> {
+) -> LegacyResult<MemoryDreamNoteDetail> {
     let result = sqlx::query(
         "UPDATE memory_dream_notes SET status = 'archived', updated_at = ?1 WHERE tenant_id = ?2 AND id = ?3",
     )
@@ -1033,7 +1033,7 @@ pub(crate) async fn promote_memory_dream_note_sqlx(
     tenant_id: &str,
     note_id: &str,
     candidates: &[MemoryDreamCandidateDraft],
-) -> AppResult<Vec<MemoryItemDetail>> {
+) -> LegacyResult<Vec<MemoryItemDetail>> {
     if candidates.is_empty() {
         return Err("memory Dream note contains no promotable bullets".to_string());
     }
@@ -1198,7 +1198,7 @@ pub(crate) async fn create_memory_dream_run_sqlx(
     model: Option<&str>,
     prompt_version: &str,
     total_count: usize,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let scope_json = encode_json(scope)?;
     let scope_fingerprint = scope.fingerprint()?;
     let total_count = i64::try_from(total_count)
@@ -1260,7 +1260,7 @@ pub(crate) async fn finish_memory_dream_error_sqlx(
     error_kind: &str,
     error_message: &str,
     cancelled: bool,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     let scope_json = encode_json(scope)?;
     let scope_fingerprint = scope.fingerprint()?;
     let now = Utc::now().to_rfc3339();
@@ -1311,7 +1311,7 @@ pub(crate) async fn persist_memory_dream_success_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     input: &MemoryDreamPersistInput,
-) -> AppResult<String> {
+) -> LegacyResult<String> {
     if input.markdown.chars().count() > 6144 {
         return Err("memory dream note exceeds 6144 characters".to_string());
     }
@@ -1472,7 +1472,7 @@ pub(crate) async fn upsert_memory_evidence_snapshot_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     draft: &NewMemoryEvidenceSnapshot,
-) -> AppResult<MemoryEvidenceSnapshot> {
+) -> LegacyResult<MemoryEvidenceSnapshot> {
     validate_evidence(draft)?;
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
@@ -1505,7 +1505,7 @@ pub(crate) async fn create_memory_item_sqlx(
     tenant_id: &str,
     draft: &NewMemoryItem,
     evidence_ids: &[String],
-) -> AppResult<MemoryItemDetail> {
+) -> LegacyResult<MemoryItemDetail> {
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
     let item_id = insert_memory_item_tx(&mut tx, tenant_id, draft, evidence_ids).await?;
     tx.commit().await.map_err(|error| error.to_string())?;
@@ -1519,7 +1519,7 @@ async fn insert_memory_item_tx(
     tenant_id: &str,
     draft: &NewMemoryItem,
     evidence_ids: &[String],
-) -> AppResult<String> {
+) -> LegacyResult<String> {
     validate_new_item(draft)?;
     let item_id = Uuid::new_v4().to_string();
     let revision_id = Uuid::new_v4().to_string();
@@ -1640,7 +1640,7 @@ pub(crate) async fn load_memory_item_detail_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     item_id: &str,
-) -> AppResult<Option<MemoryItemDetail>> {
+) -> LegacyResult<Option<MemoryItemDetail>> {
     let Some(item_row) = sqlx::query(LOAD_MEMORY_ITEM_SQL)
         .bind(tenant_id)
         .bind(item_id)
@@ -1668,11 +1668,11 @@ pub(crate) async fn load_memory_item_detail_sqlx(
         evidence: evidence_rows
             .iter()
             .map(map_memory_evidence)
-            .collect::<AppResult<Vec<_>>>()?,
+            .collect::<LegacyResult<Vec<_>>>()?,
         revisions: revision_rows
             .iter()
             .map(map_memory_revision)
-            .collect::<AppResult<Vec<_>>>()?,
+            .collect::<LegacyResult<Vec<_>>>()?,
     }))
 }
 
@@ -1680,7 +1680,7 @@ pub(crate) async fn list_memory_items_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     filter: &MemoryItemFilter,
-) -> AppResult<Vec<MemoryItem>> {
+) -> LegacyResult<Vec<MemoryItem>> {
     let mut query = QueryBuilder::<Sqlite>::new(format!(
         "SELECT {MEMORY_ITEM_COLUMNS} FROM memory_items WHERE tenant_id = "
     ));
@@ -1702,7 +1702,7 @@ pub(crate) async fn count_memory_items_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     filter: &MemoryItemFilter,
-) -> AppResult<usize> {
+) -> LegacyResult<usize> {
     let mut query =
         QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM memory_items WHERE tenant_id = ");
     query.push_bind(tenant_id);
@@ -1722,7 +1722,7 @@ pub(crate) async fn update_memory_item_sqlx(
     item: &MemoryItem,
     evidence_ids: Option<&[String]>,
     change_kind: MemoryRevisionChangeKind,
-) -> AppResult<MemoryItemDetail> {
+) -> LegacyResult<MemoryItemDetail> {
     validate_item_values(
         &item.title,
         &item.content_markdown,
@@ -1885,7 +1885,7 @@ fn push_enum_filter<T: serde::Serialize + Copy>(
     query: &mut QueryBuilder<Sqlite>,
     column: &str,
     values: &[T],
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     if values.is_empty() {
         return Ok(());
     }
@@ -1901,7 +1901,7 @@ fn push_enum_filter<T: serde::Serialize + Copy>(
 fn push_memory_item_filter(
     query: &mut QueryBuilder<Sqlite>,
     filter: &MemoryItemFilter,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     push_enum_filter(query, "kind", &filter.kinds)?;
     push_enum_filter(query, "status", &filter.statuses)?;
     push_enum_filter(query, "origin", &filter.origins)?;
@@ -1915,7 +1915,7 @@ fn push_memory_item_filter(
     Ok(())
 }
 
-fn map_memory_item(row: &SqliteRow) -> AppResult<MemoryItem> {
+fn map_memory_item(row: &SqliteRow) -> LegacyResult<MemoryItem> {
     Ok(MemoryItem {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         kind: decode_enum(row.try_get(1).map_err(|error| error.to_string())?)?,
@@ -1938,7 +1938,7 @@ fn map_memory_item(row: &SqliteRow) -> AppResult<MemoryItem> {
     })
 }
 
-fn map_memory_dream_note(row: &SqliteRow) -> AppResult<MemoryDreamNote> {
+fn map_memory_dream_note(row: &SqliteRow) -> LegacyResult<MemoryDreamNote> {
     Ok(MemoryDreamNote {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         run_id: row.try_get(1).map_err(|error| error.to_string())?,
@@ -1973,7 +1973,7 @@ fn map_memory_dream_note(row: &SqliteRow) -> AppResult<MemoryDreamNote> {
     })
 }
 
-fn map_memory_evidence(row: &SqliteRow) -> AppResult<MemoryEvidenceSnapshot> {
+fn map_memory_evidence(row: &SqliteRow) -> LegacyResult<MemoryEvidenceSnapshot> {
     Ok(MemoryEvidenceSnapshot {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         record_kind: decode_enum(row.try_get(1).map_err(|error| error.to_string())?)?,
@@ -1997,7 +1997,7 @@ fn map_memory_evidence(row: &SqliteRow) -> AppResult<MemoryEvidenceSnapshot> {
     })
 }
 
-fn map_memory_revision(row: &SqliteRow) -> AppResult<MemoryItemRevision> {
+fn map_memory_revision(row: &SqliteRow) -> LegacyResult<MemoryItemRevision> {
     Ok(MemoryItemRevision {
         id: row.try_get(0).map_err(|error| error.to_string())?,
         item_id: row.try_get(1).map_err(|error| error.to_string())?,
@@ -2019,7 +2019,7 @@ fn map_memory_revision(row: &SqliteRow) -> AppResult<MemoryItemRevision> {
     })
 }
 
-fn validate_evidence(draft: &NewMemoryEvidenceSnapshot) -> AppResult<()> {
+fn validate_evidence(draft: &NewMemoryEvidenceSnapshot) -> LegacyResult<()> {
     if draft.session_id.trim().is_empty() {
         return Err("memory evidence session_id is required".to_string());
     }
@@ -2038,7 +2038,7 @@ fn validate_evidence(draft: &NewMemoryEvidenceSnapshot) -> AppResult<()> {
     Ok(())
 }
 
-fn validate_new_item(draft: &NewMemoryItem) -> AppResult<()> {
+fn validate_new_item(draft: &NewMemoryItem) -> LegacyResult<()> {
     validate_item_values(
         &draft.title,
         &draft.content_markdown,
@@ -2054,7 +2054,7 @@ fn validate_item_values(
     source_revision: i64,
     verified_revision: i64,
     confidence: Option<f64>,
-) -> AppResult<()> {
+) -> LegacyResult<()> {
     if title.trim().is_empty() {
         return Err("memory item title is required".to_string());
     }
@@ -2105,7 +2105,7 @@ mod tests {
                 .fetch_one(database.pool())
                 .await
                 .map_err(|error| error.to_string())?;
-                AppResult::Ok((first, second, count))
+                LegacyResult::Ok((first, second, count))
             })
             .expect("deduplicate evidence");
 
@@ -2170,7 +2170,7 @@ mod tests {
                 .fetch_one(database.pool())
                 .await
                 .map_err(|error| error.to_string())?;
-                AppResult::Ok((error, tenant_b_count))
+                LegacyResult::Ok((error, tenant_b_count))
             })
             .expect("verify tenant boundary");
 
@@ -2206,7 +2206,7 @@ mod tests {
                     },
                 )
                 .await?;
-                AppResult::Ok(filtered)
+                LegacyResult::Ok(filtered)
             })
             .expect("filter memory items");
 
@@ -2416,7 +2416,7 @@ mod tests {
                 );
                 assert_eq!(completed_runs, 2);
                 assert_eq!(notes, 2);
-                AppResult::Ok(())
+                LegacyResult::Ok(())
             })
             .expect("persist and retry Dream transactions");
         cleanup(database, &db_path);
@@ -2478,7 +2478,7 @@ mod tests {
                 .map_err(|error| error.to_string())?;
                 assert_eq!(item_count, 0);
                 assert_eq!(status, "running");
-                AppResult::Ok(())
+                LegacyResult::Ok(())
             })
             .expect("verify Recall finalization rollback");
         cleanup(database, &db_path);
@@ -2555,7 +2555,7 @@ mod tests {
                     p95 < std::time::Duration::from_millis(350),
                     "100k Recall page p95 was {p95:?}"
                 );
-                AppResult::Ok(())
+                LegacyResult::Ok(())
             })
             .expect("measure 100k Recall page");
         cleanup(database, &db_path);
@@ -2626,7 +2626,7 @@ mod tests {
                     memory_evidence_stale_reason_sqlx(database.pool(), "default", &snapshot).await?,
                     Some(crate::backend::models::MemoryStaleReason::SourceUnavailable)
                 );
-                AppResult::Ok(())
+                LegacyResult::Ok(())
             })
             .expect("verify freshness reasons");
         cleanup(database, &db_path);
