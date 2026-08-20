@@ -2,10 +2,13 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     fs,
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -20,6 +23,35 @@ pub(crate) struct HostProcessOutput {
     pub(crate) stderr: Vec<u8>,
     pub(crate) stdout_truncated: bool,
     pub(crate) stderr_truncated: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct HostCommandSpec {
+    pub(crate) program: PathBuf,
+    pub(crate) args: Vec<String>,
+    pub(crate) env: Vec<(String, String)>,
+    pub(crate) working_dir: Option<PathBuf>,
+    pub(crate) stdin: HostInput,
+    pub(crate) timeout: Duration,
+    pub(crate) stdout_limit: usize,
+    pub(crate) stderr_limit: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) enum HostInput {
+    #[default]
+    Null,
+    Bytes(Vec<u8>),
+}
+
+#[derive(Debug)]
+pub(crate) struct HostCommandOutput {
+    pub(crate) status: ExitStatus,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
+    pub(crate) stdout_truncated: bool,
+    pub(crate) stderr_truncated: bool,
+    pub(crate) elapsed: Duration,
 }
 
 #[derive(Debug)]
@@ -166,22 +198,122 @@ pub(crate) fn run_program_with_timeout(
     stdout_cap: usize,
     stderr_cap: usize,
 ) -> Result<HostProcessOutput, HostProcessError> {
-    let resolved = if program.components().count() > 1 {
-        program.to_path_buf()
+    run_host_command_blocking(HostCommandSpec {
+        program: program.to_path_buf(),
+        args: args.to_vec(),
+        env: Vec::new(),
+        working_dir: current_dir.map(Path::to_path_buf),
+        // An explicit empty input stream gives one-shot tools a deterministic
+        // EOF while still exercising the same bounded stdin path as callers
+        // that provide request bytes.
+        stdin: HostInput::Bytes(Vec::new()),
+        timeout,
+        stdout_limit: stdout_cap,
+        stderr_limit: stderr_cap,
+    })
+    .map(|output| HostProcessOutput {
+        status: output.status,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        stdout_truncated: output.stdout_truncated,
+        stderr_truncated: output.stderr_truncated,
+    })
+}
+
+pub(crate) fn run_host_command_blocking(
+    spec: HostCommandSpec,
+) -> Result<HostCommandOutput, HostProcessError> {
+    let mut command = build_host_command(&spec);
+    let started = Instant::now();
+    let output = run_command_with_control_and_input(
+        &mut command,
+        HostProcessControl {
+            timeout: spec.timeout,
+            stdout_cap: spec.stdout_limit,
+            stderr_cap: spec.stderr_limit,
+            cancellation: None,
+        },
+        spec.stdin,
+    )?;
+    Ok(HostCommandOutput {
+        status: output.status,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        stdout_truncated: output.stdout_truncated,
+        stderr_truncated: output.stderr_truncated,
+        elapsed: started.elapsed(),
+    })
+}
+
+pub(crate) async fn run_host_command(
+    spec: HostCommandSpec,
+    cancellation: tokio_util::sync::CancellationToken,
+) -> Result<HostCommandOutput, HostProcessError> {
+    let cancellation_flag = Arc::new(AtomicBool::new(cancellation.is_cancelled()));
+    let worker_cancellation_flag = cancellation_flag.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        let mut command = build_host_command(&spec);
+        let started = Instant::now();
+        let output = run_command_with_control_and_input(
+            &mut command,
+            HostProcessControl {
+                timeout: spec.timeout,
+                stdout_cap: spec.stdout_limit,
+                stderr_cap: spec.stderr_limit,
+                cancellation: Some(&worker_cancellation_flag),
+            },
+            spec.stdin,
+        )?;
+        Ok(HostCommandOutput {
+            status: output.status,
+            stdout: output.stdout,
+            stderr: output.stderr,
+            stdout_truncated: output.stdout_truncated,
+            stderr_truncated: output.stderr_truncated,
+            elapsed: started.elapsed(),
+        })
+    });
+    tokio::pin!(join);
+
+    tokio::select! {
+        output = &mut join => output
+            .map_err(|error| HostProcessError::Output(format!("host command worker failed: {error}")))?,
+        _ = cancellation.cancelled() => {
+            cancellation_flag.store(true, Ordering::Release);
+            join.await
+                .map_err(|error| HostProcessError::Output(format!("host command worker failed: {error}")))?
+        }
+    }
+}
+
+fn build_host_command(spec: &HostCommandSpec) -> Command {
+    let resolved = if spec.program.components().count() > 1 {
+        spec.program.clone()
     } else {
-        resolve_host_executable(&program.to_string_lossy()).unwrap_or_else(|| program.to_path_buf())
+        resolve_host_executable(&spec.program.to_string_lossy())
+            .unwrap_or_else(|| spec.program.clone())
     };
     let mut command = Command::new(resolved);
-    command.args(args);
-    if let Some(current_dir) = current_dir {
-        command.current_dir(current_dir);
+    command
+        .args(&spec.args)
+        .envs(spec.env.iter().map(|(key, value)| (key, value)));
+    if let Some(working_dir) = spec.working_dir.as_deref() {
+        command.current_dir(working_dir);
     }
-    run_command_with_timeout(&mut command, timeout, stdout_cap, stderr_cap)
+    command
 }
 
 pub(crate) fn run_command_with_control(
     command: &mut Command,
     control: HostProcessControl<'_>,
+) -> Result<HostProcessOutput, HostProcessError> {
+    run_command_with_control_and_input(command, control, HostInput::Null)
+}
+
+fn run_command_with_control_and_input(
+    command: &mut Command,
+    control: HostProcessControl<'_>,
+    input: HostInput,
 ) -> Result<HostProcessOutput, HostProcessError> {
     if is_cancelled(control.cancellation) {
         return Err(HostProcessError::Cancelled {
@@ -193,12 +325,25 @@ pub(crate) fn run_command_with_control(
     }
 
     configure_process_tree(command);
+    let stdin = if matches!(&input, HostInput::Bytes(_)) {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    };
     let mut child = command
-        .stdin(Stdio::null())
+        .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| HostProcessError::Spawn(error.to_string()))?;
+    let _stdin_writer = match input {
+        HostInput::Null => None,
+        HostInput::Bytes(bytes) => child.stdin.take().map(|mut stdin| {
+            thread::spawn(move || {
+                let _ = stdin.write_all(&bytes);
+            })
+        }),
+    };
     let Some(stdout) = child.stdout.take() else {
         terminate_child_tree(&mut child);
         let _ = child.wait();
@@ -560,6 +705,68 @@ mod tests {
 
         assert!(matches!(error, HostProcessError::Timeout { .. }));
         assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn async_runner_shares_bounded_output_and_reports_elapsed_time() {
+        let output = run_host_command(
+            HostCommandSpec {
+                program: env::current_exe().expect("resolve test binary"),
+                args: vec![
+                    "--exact".to_string(),
+                    "backend::host_process::tests::process_fixture".to_string(),
+                    "--nocapture".to_string(),
+                ],
+                env: vec![(
+                    "ASSETIWEAVE_HOST_PROCESS_FIXTURE".to_string(),
+                    "large-output".to_string(),
+                )],
+                working_dir: None,
+                stdin: HostInput::Null,
+                timeout: Duration::from_secs(5),
+                stdout_limit: 32 * 1024,
+                stderr_limit: 32 * 1024,
+            },
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .expect("async host command should exit");
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout.len(), 32 * 1024);
+        assert!(output.stdout_truncated);
+        assert!(!output.elapsed.is_zero());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn async_runner_cancels_and_reaps_the_process_tree() {
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let task = run_host_command(
+            HostCommandSpec {
+                program: env::current_exe().expect("resolve test binary"),
+                args: vec![
+                    "--exact".to_string(),
+                    "backend::host_process::tests::process_fixture".to_string(),
+                    "--nocapture".to_string(),
+                ],
+                env: vec![(
+                    "ASSETIWEAVE_HOST_PROCESS_FIXTURE".to_string(),
+                    "timeout".to_string(),
+                )],
+                working_dir: None,
+                stdin: HostInput::Null,
+                timeout: Duration::from_secs(5),
+                stdout_limit: 32 * 1024,
+                stderr_limit: 32 * 1024,
+            },
+            cancellation.clone(),
+        );
+        tokio::pin!(task);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancellation.cancel();
+
+        let error = task.await.expect_err("cancelled command should fail");
+        assert!(matches!(error, HostProcessError::Cancelled { .. }));
     }
 
     #[test]

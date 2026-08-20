@@ -1,7 +1,6 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Stdio,
     time::Instant,
 };
 
@@ -14,6 +13,10 @@ use crate::backend::{
         types::{AgentDefinition, AgentModelOption, AgentProtocol},
     },
     ai_execution::{AiExecutionError, AiExecutionPhase, AiExecutionRequest, AiExecutionResult},
+    extension_kernel::{
+        EnvEntry, ExtensionLauncher, InvocationLimits, ProbeKind, ProbeSpec, ProcessInvocation,
+        RuntimeProgramKind,
+    },
     host_process::resolve_host_executable,
     operation_log::log_info,
 };
@@ -111,28 +114,51 @@ impl NativeExecutionBackend {
             .map(|p| p.args.clone())
             .unwrap_or_else(|| vec!["--version".to_string()]);
 
-        let mut cmd = tokio::process::Command::new(program);
-        cmd.args(&probe_args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        let env = definition
+            .env
+            .iter()
+            .map(|entry| EnvEntry {
+                key: entry.name.clone(),
+                value: entry.value.clone(),
+            })
+            .collect::<Vec<_>>();
+        let invocation = ProcessInvocation {
+            kind: RuntimeProgramKind::Executable,
+            entry: program.to_string_lossy().to_string(),
+            args: Vec::new(),
+            env: env.clone(),
+            working_dir: None,
+            version_req: None,
+            immutable_install_dir: PathBuf::from("."),
+        };
+        let probe = ProbeSpec {
+            program: Some(program.to_string_lossy().to_string()),
+            args: probe_args,
+            env,
+            timeout: std::time::Duration::from_secs(5),
+            output_limit: 64 * 1024,
+            kind: ProbeKind::Availability,
+        };
+        let result = ExtensionLauncher::default()
+            .probe(
+                &invocation,
+                &probe,
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .map_err(|error| AiExecutionError::Output {
+                program: PathBuf::from(command_name),
+                message: error.to_string(),
+            })?;
 
-        let output = cmd.output().await.map_err(|e| AiExecutionError::Output {
-            program: PathBuf::from(command_name),
-            message: format!("failed to execute probe: {e}"),
-        })?;
-
-        if output.status.success() {
+        if result.available {
             Ok(())
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
             Err(AiExecutionError::Output {
                 program: PathBuf::from(command_name),
-                message: if stderr.is_empty() {
-                    "probe command exited with non-zero status".to_string()
-                } else {
-                    stderr.trim().to_string()
-                },
+                message: result
+                    .error
+                    .unwrap_or_else(|| "probe command exited with non-zero status".to_string()),
             })
         }
     }
@@ -158,16 +184,52 @@ impl NativeExecutionBackend {
             .map(|p| p.args.clone())
             .unwrap_or_else(|| vec!["models".to_string()]);
 
-        let mut cmd = tokio::process::Command::new(program);
-        cmd.args(&model_args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        let invocation = ProcessInvocation {
+            kind: RuntimeProgramKind::Executable,
+            entry: program.to_string_lossy().to_string(),
+            args: model_args,
+            env: definition
+                .env
+                .iter()
+                .map(|entry| EnvEntry {
+                    key: entry.name.clone(),
+                    value: entry.value.clone(),
+                })
+                .collect(),
+            working_dir: None,
+            version_req: None,
+            immutable_install_dir: PathBuf::from("."),
+        };
+        let output = ExtensionLauncher::default()
+            .invoke(
+                &invocation,
+                crate::backend::host_process::HostInput::Null,
+                InvocationLimits {
+                    timeout: std::time::Duration::from_secs(5),
+                    stdout_limit: 1024 * 1024,
+                    stderr_limit: 64 * 1024,
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .map_err(|error| AiExecutionError::Output {
+                program: PathBuf::from(command_name),
+                message: error.to_string(),
+            })?;
 
-        let output = cmd.output().await.map_err(|e| AiExecutionError::Output {
-            program: PathBuf::from(command_name),
-            message: format!("failed to execute model discovery: {e}"),
-        })?;
+        if output.stdout_truncated || output.stderr_truncated {
+            return Err(AiExecutionError::Output {
+                program: PathBuf::from(command_name),
+                message: "model discovery output exceeded the configured limit".to_string(),
+            });
+        }
+        if !output.status.success() {
+            return Err(AiExecutionError::Output {
+                program: PathBuf::from(command_name),
+                message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+        let _discovery_elapsed = output.elapsed;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let models = parse_agy_models(&stdout);

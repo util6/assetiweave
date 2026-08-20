@@ -17,7 +17,8 @@ pub(crate) use error::ExtensionError;
 pub(crate) use identity::{Compatibility, PackageIdentity, PackageKind};
 #[allow(unused_imports)]
 pub(crate) use launcher::{
-    EnvEntry, ProbeKind, ProbeResult, ProbeSpec, ProcessInvocation, RuntimeProgramKind,
+    EnvEntry, ExtensionLauncher, InvocationLimits, InvocationResult, ProbeKind, ProbeResult,
+    ProbeSpec, ProcessInvocation, RuntimeProgramKind,
 };
 #[allow(unused_imports)]
 pub(crate) use lifecycle::{
