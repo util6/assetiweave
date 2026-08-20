@@ -135,7 +135,7 @@ pub(crate) fn check_opencode_translation_availability(
 ) -> OpencodeTranslationAvailability {
     let availability = check_action_availability(
         runtime,
-        &crate::backend::ai_execution::composition::ActionId::new("translation"),
+        &crate::backend::ai_execution::composition::ActionId::new("translation.card"),
     );
     OpencodeTranslationAvailability {
         available: availability.available,

@@ -19,6 +19,18 @@ export type AgentCapabilityServiceId =
   | "promptOptimization";
 
 export type AgentCapabilityAssignments = Record<AgentCapabilityServiceId, string>;
+export type AgentActionId =
+  | "translation.card"
+  | "memory.extraction"
+  | "memory.dream"
+  | "prompt.optimization";
+
+export interface AgentAssignment {
+  agentId: string;
+  modelId: string | null;
+}
+
+export type AgentAssignments = Record<AgentActionId, AgentAssignment>;
 
 export interface FontFamilySetting {
   customFontFamily: string;
@@ -199,6 +211,7 @@ export const DEFAULT_CONVERSATION_CONTENT_CARD_COLORS: ConversationContentCardCo
 };
 
 export interface AppSettings {
+  agentAssignments: AgentAssignments;
   agentCapabilityAssignments: AgentCapabilityAssignments;
   agentModels: Record<string, string>;
   aiRuntime: AiRuntimeSettings;
@@ -221,11 +234,27 @@ export function resolveAgentCapability(
   settings: AppSettings,
   serviceId: AgentCapabilityServiceId,
 ): { agentId: string; model: string } {
-  const agentId = settings.agentCapabilityAssignments[serviceId];
+  const actionId = serviceToActionId(serviceId);
+  const assignment = settings.agentAssignments[actionId];
+  const agentId = assignment.agentId;
   return {
     agentId,
-    model: settings.agentModels[agentId] ?? "",
+    model: assignment.modelId ?? settings.agentModels[agentId] ?? "",
   };
+}
+
+function serviceToActionId(serviceId: AgentCapabilityServiceId): AgentActionId {
+  switch (serviceId) {
+    case "cardTranslation":
+      return "translation.card";
+    case "memory":
+    case "memory.extraction":
+      return "memory.extraction";
+    case "memory.dream":
+      return "memory.dream";
+    case "promptOptimization":
+      return "prompt.optimization";
+  }
 }
 
 export interface AppSettingsStorageInfo {
@@ -236,6 +265,12 @@ export interface AppSettingsStorageInfo {
 }
 
 export const defaultSettings: AppSettings = {
+  agentAssignments: {
+    "translation.card": { agentId: "opencode", modelId: null },
+    "memory.extraction": { agentId: "opencode", modelId: null },
+    "memory.dream": { agentId: "opencode", modelId: null },
+    "prompt.optimization": { agentId: "opencode", modelId: null },
+  },
   agentCapabilityAssignments: {
     cardTranslation: "opencode",
     memory: "opencode",
@@ -323,6 +358,12 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
   const agentModels = normalizeAgentModels(stored.agentModels);
 
   return {
+    agentAssignments: normalizeAgentAssignments(
+      stored.agentAssignments,
+      stored.agentCapabilityAssignments,
+      agentModels,
+      aiRuntime,
+    ),
     agentCapabilityAssignments: normalizeAgentCapabilityAssignments(
       stored.agentCapabilityAssignments,
       aiRuntime.cli,
@@ -348,6 +389,43 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
     typography,
     conversations,
   };
+}
+
+function normalizeAgentAssignments(
+  value: unknown,
+  legacyValue: unknown,
+  agentModels: Record<string, string>,
+  aiRuntime: AiRuntimeSettings,
+): AgentAssignments {
+  const stored = isRecord(value) ? value : {};
+  const legacy = isRecord(legacyValue) ? legacyValue : {};
+  const legacyMemory = normalizeAgentCapabilityAgentId(legacy.memory, aiRuntime.cli);
+  const specs: Array<[AgentActionId, string, string]> = [
+    ["translation.card", "cardTranslation", aiRuntime.cli],
+    ["memory.extraction", "memory.extraction", legacyMemory],
+    ["memory.dream", "memory.dream", legacyMemory],
+    ["prompt.optimization", "promptOptimization", aiRuntime.cli],
+  ];
+  return Object.fromEntries(
+    specs.map(([actionId, legacyId, fallback]) => {
+      const assignment = isRecord(stored[actionId]) ? stored[actionId] : {};
+      const agentId = normalizeAgentCapabilityAgentId(
+        assignment.agentId,
+        normalizeAgentCapabilityAgentId(legacy[legacyId], fallback),
+      );
+      const modelId = normalizeAssignmentModel(
+        assignment.modelId,
+        agentModels[agentId] ?? (agentId === aiRuntime.cli ? aiRuntime.model : ""),
+      );
+      return [actionId, { agentId, modelId }] as const;
+    }),
+  ) as AgentAssignments;
+}
+
+function normalizeAssignmentModel(value: unknown, fallback: string): string | null {
+  const candidate = typeof value === "string" ? value : fallback;
+  const normalized = normalizeAiRuntimeModel(candidate);
+  return normalized.length > 0 ? normalized : null;
 }
 
 function normalizeAgentModels(value: unknown): Record<string, string> {

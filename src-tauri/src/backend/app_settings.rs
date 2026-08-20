@@ -9,7 +9,7 @@ use std::{
 const CONFIG_DIR_NAME: &str = ".assetiweave";
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONVERSATION_ADAPTER_DIR_NAME: &str = "conversation-adapters";
-const SETTINGS_SCHEMA_VERSION: u32 = 2;
+const SETTINGS_SCHEMA_VERSION: u32 = 3;
 const DEFAULT_AI_RUNTIME_CLI: &str = "opencode";
 const DEFAULT_AUTO_DREAM_MIN_HOURS: i64 = 12;
 const DEFAULT_AUTO_DREAM_MIN_SESSIONS: i64 = 3;
@@ -54,7 +54,7 @@ pub(crate) fn save_app_settings(settings: Value) -> AppResult<AppSettingsFile> {
 pub(crate) fn read_app_settings_value() -> AppResult<Value> {
     let paths = app_settings_paths()?;
     if !paths.config_path.exists() {
-        return Ok(json!({}));
+        return normalize_settings_paths(json!({}));
     }
     Ok(read_normalized_settings_document(&paths.config_path)?.settings)
 }
@@ -239,6 +239,11 @@ fn normalize_shared_ai_settings(settings: &mut Value) {
         "agentCapabilityAssignments".to_string(),
         Value::Object(agent_capabilities),
     );
+    root.insert(
+        "agentAssignments".to_string(),
+        normalize_canonical_agent_assignments(root, cli, &model),
+    );
+    root.insert("settingsSchemaVersion".to_string(), json!(3));
 
     let mut translation = legacy_translation;
     translation.remove("cli");
@@ -272,6 +277,69 @@ fn normalize_shared_ai_settings(settings: &mut Value) {
     memory.insert("minHours".to_string(), json!(min_hours));
     memory.insert("minSessions".to_string(), json!(min_sessions));
     root.insert("memory".to_string(), Value::Object(memory));
+}
+
+fn normalize_canonical_agent_assignments(
+    root: &serde_json::Map<String, Value>,
+    default_agent: &str,
+    runtime_model: &str,
+) -> Value {
+    let legacy = root
+        .get("agentCapabilityAssignments")
+        .and_then(Value::as_object);
+    let agent_models = root.get("agentModels").and_then(Value::as_object);
+    let existing = root.get("agentAssignments").and_then(Value::as_object);
+    let action_sources = [
+        ("translation.card", "cardTranslation"),
+        ("memory.extraction", "memory.extraction"),
+        ("memory.dream", "memory.dream"),
+        ("prompt.optimization", "promptOptimization"),
+    ];
+    let mut assignments = serde_json::Map::new();
+    for (action_id, legacy_id) in action_sources {
+        let existing_assignment = existing
+            .and_then(|values| values.get(action_id))
+            .and_then(Value::as_object);
+        let legacy_agent = legacy
+            .and_then(|values| values.get(legacy_id))
+            .and_then(Value::as_str)
+            .unwrap_or(default_agent);
+        let agent_id = existing_assignment
+            .and_then(|assignment| assignment.get("agentId"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(legacy_agent);
+        let model_id = existing_assignment
+            .and_then(|assignment| assignment.get("modelId"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                agent_models
+                    .and_then(|models| models.get(agent_id))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            })
+            .or_else(|| (agent_id == default_agent).then_some(runtime_model))
+            .filter(|value| !value.is_empty());
+        assignments.insert(
+            action_id.to_string(),
+            json!({ "agentId": agent_id, "modelId": model_id }),
+        );
+    }
+    if let Some(existing) = existing {
+        for key in existing.keys() {
+            if !assignments.contains_key(key) {
+                crate::backend::operation_log::log_warn(
+                    "settings.agent_assignment",
+                    "未知的 Agent action assignment 已隔离",
+                    &[("action", key.clone())],
+                );
+            }
+        }
+    }
+    Value::Object(assignments)
 }
 
 fn normalize_ai_runtime_cli(value: Option<&Value>) -> &'static str {
@@ -530,6 +598,19 @@ mod tests {
         assert_eq!(
             settings["agentCapabilityAssignments"]["memory.dream"],
             "codex"
+        );
+        assert_eq!(settings["settingsSchemaVersion"], 3);
+        assert_eq!(
+            settings["agentAssignments"]["translation.card"]["agentId"],
+            "gemini"
+        );
+        assert_eq!(
+            settings["agentAssignments"]["memory.extraction"]["agentId"],
+            "codex"
+        );
+        assert_eq!(
+            settings["agentAssignments"]["memory.extraction"]["modelId"],
+            "openai/gpt-5-codex"
         );
     }
 }

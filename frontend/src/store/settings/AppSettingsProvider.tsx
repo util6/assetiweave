@@ -49,6 +49,9 @@ export {
   PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH,
 } from "./settingsSchema";
 export type {
+  AgentActionId,
+  AgentAssignment,
+  AgentAssignments,
   AgentCapabilityAssignments,
   AgentCapabilityServiceId,
   AiRuntimeCli,

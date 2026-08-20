@@ -7,7 +7,7 @@ use super::{
     AgentRuntimeManager,
 };
 
-/// Materialize only Agent IDs selected by the legacy settings model.
+/// Materialize only Agent IDs selected by the canonical settings model.
 /// Package-manager based entries are intentionally left for explicit Market
 /// installation, so an upgrade never performs network installation.
 pub(crate) async fn migrate_legacy_assignments(
@@ -23,25 +23,18 @@ pub(crate) async fn migrate_legacy_assignments(
 
     let mut agent_ids = BTreeSet::new();
     if let Some(assignments) = settings
-        .get("agentCapabilityAssignments")
+        .get("agentAssignments")
         .and_then(serde_json::Value::as_object)
     {
-        for agent_id in assignments.values().filter_map(serde_json::Value::as_str) {
+        for agent_id in assignments.values().filter_map(|assignment| {
+            assignment
+                .get("agentId")
+                .and_then(serde_json::Value::as_str)
+        }) {
             let trimmed = agent_id.trim();
             if !trimmed.is_empty() {
                 agent_ids.insert(trimmed.to_string());
             }
-        }
-    }
-    if let Some(legacy_cli) = settings
-        .get("aiRuntime")
-        .and_then(serde_json::Value::as_object)
-        .and_then(|value| value.get("cli"))
-        .and_then(serde_json::Value::as_str)
-    {
-        let legacy_cli = legacy_cli.trim();
-        if !legacy_cli.is_empty() {
-            agent_ids.insert(legacy_cli.to_string());
         }
     }
     if agent_ids.is_empty() {

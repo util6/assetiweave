@@ -71,9 +71,9 @@ pub(crate) fn configured_agent_capability(
 ) -> Result<(AgentId, Option<String>), String> {
     let action = match service_id {
         "memory" => composition::ActionId::new("memory.extraction"),
-        "cardTranslation" | "card_translation" => composition::ActionId::new("translation"),
+        "cardTranslation" | "card_translation" => composition::ActionId::new("translation.card"),
         "promptOptimization" | "prompt_optimization" => {
-            composition::ActionId::new("prompt_optimization")
+            composition::ActionId::new("prompt.optimization")
         }
         other => composition::ActionId::new(other),
     };

@@ -109,6 +109,7 @@ import {
   fontFamilyOptions,
   normalizeConversationTranslationTargetLanguage,
   PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH,
+  resolveAgentCapability,
   resolveFontFamilyCss,
   type AgentCapabilityServiceId,
   TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH,
@@ -329,10 +330,10 @@ export function GlobalSettingsDialog({
   }
 
   function openAgentCapabilityDialog(serviceId: AgentCapabilityServiceId) {
-    const agentId = settings.agentCapabilityAssignments[serviceId];
+    const { agentId, model } = resolveAgentCapability(settings, serviceId);
     setAgentCapabilityDialog({
       agentId,
-      model: settings.agentModels[agentId],
+      model,
       serviceId,
     });
   }
@@ -341,6 +342,14 @@ export function GlobalSettingsDialog({
     if (!agentCapabilityDialog) {
       return;
     }
+    const actionId = agentActionIdForService(agentCapabilityDialog.serviceId);
+    updateSetting("agentAssignments", {
+      ...settings.agentAssignments,
+      [actionId]: {
+        ...settings.agentAssignments[actionId],
+        agentId,
+      },
+    });
     updateSetting("agentCapabilityAssignments", {
       ...settings.agentCapabilityAssignments,
       [agentCapabilityDialog.serviceId]: agentId,
@@ -1512,6 +1521,20 @@ export function GlobalSettingsDialog({
       ) : null}
     </FullscreenDialogFrame>
   );
+}
+
+function agentActionIdForService(serviceId: AgentCapabilityServiceId) {
+  switch (serviceId) {
+    case "cardTranslation":
+      return "translation.card" as const;
+    case "memory":
+    case "memory.extraction":
+      return "memory.extraction" as const;
+    case "memory.dream":
+      return "memory.dream" as const;
+    case "promptOptimization":
+      return "prompt.optimization" as const;
+  }
 }
 
 function SettingsGroup({ children }: { children: ReactNode }) {

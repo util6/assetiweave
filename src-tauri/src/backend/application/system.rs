@@ -169,30 +169,27 @@ impl AppService {
     }
 
     fn validate_agent_capability_assignments(&self, settings: &Value) -> AppResult<()> {
-        let Some(assignments) = settings
-            .get("agentCapabilityAssignments")
-            .and_then(Value::as_object)
-        else {
+        let Some(assignments) = settings.get("agentAssignments").and_then(Value::as_object) else {
             return Ok(());
         };
         let previous = crate::backend::app_settings::read_app_settings_value()?;
-        let previous_assignments = previous
-            .get("agentCapabilityAssignments")
-            .and_then(Value::as_object);
+        let previous_assignments = previous.get("agentAssignments").and_then(Value::as_object);
         let repository =
             crate::backend::agent_market::AgentInstallationRepository::new(self.db.pool().clone());
-        for (service_id, value) in assignments {
+        for (action_id, value) in assignments {
             let Some(agent_id) = value
-                .as_str()
+                .get("agentId")
+                .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             else {
                 return Err(format!(
-                    "agent_not_installed: invalid assignment for {service_id}"
+                    "agent_not_installed: invalid assignment for {action_id}"
                 ));
             };
             if previous_assignments
-                .and_then(|values| values.get(service_id))
+                .and_then(|values| values.get(action_id))
+                .and_then(|assignment| assignment.get("agentId"))
                 .and_then(Value::as_str)
                 == Some(agent_id)
             {
@@ -209,11 +206,15 @@ impl AppService {
             let item = catalog
                 .item(agent_id)
                 .ok_or_else(|| format!("agent_capability_unsupported: {agent_id}"))?;
-            let purpose = match service_id.as_str() {
-                "cardTranslation" | "card_translation" => "card_translation",
-                "memory" => "memory",
-                "promptOptimization" | "prompt_optimization" => "prompt_optimization",
-                other => other,
+            let purpose = match action_id.as_str() {
+                "translation.card" => "card_translation",
+                "memory.extraction" | "memory.dream" => "memory",
+                "prompt.optimization" => "prompt_optimization",
+                other => {
+                    return Err(format!(
+                        "agent_capability_unsupported: unknown action {other}"
+                    ));
+                }
             };
             if !item
                 .capabilities

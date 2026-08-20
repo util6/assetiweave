@@ -34,7 +34,7 @@ pub(crate) struct ActionRegistration {
 
 static ACTIONS: &[ActionRegistration] = &[
     ActionRegistration {
-        id: "translation",
+        id: "translation.card",
         policy: ExecutionPolicyClass::InteractiveAssist,
         description: "Translate a conversation card",
     },
@@ -59,7 +59,7 @@ static ACTIONS: &[ActionRegistration] = &[
         description: "Generate memory dream notes",
     },
     ActionRegistration {
-        id: "prompt_optimization",
+        id: "prompt.optimization",
         policy: ExecutionPolicyClass::InteractiveAssist,
         description: "Optimize a prompt",
     },
@@ -80,47 +80,25 @@ pub(crate) fn resolve_agent_for(action: &ActionId) -> Result<(AgentId, Option<St
     resolve_action(action)?;
     let settings =
         crate::backend::app_settings::read_app_settings_value().map_err(AppError::Legacy)?;
-    let runtime = settings.get("aiRuntime").and_then(Value::as_object);
-    let assignments = settings
-        .get("agentCapabilityAssignments")
-        .and_then(Value::as_object);
-    let configured = assignments
+    let assignments = settings.get("agentAssignments").and_then(Value::as_object);
+    let assignment = assignments
         .and_then(|values| values.get(action.as_str()))
-        .or_else(|| {
-            action
-                .as_str()
-                .starts_with("memory.")
-                .then(|| assignments.and_then(|values| values.get("memory")))
-                .flatten()
-        })
-        .or_else(|| assignments.and_then(|values| values.get("cardTranslation")))
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            AppError::Validation(format!("missing Agent assignment: {}", action.as_str()))
+        })?;
+    let configured_agent_id = assignment
+        .get("agentId")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let legacy_agent_id = match runtime
-        .and_then(|value| value.get("cli"))
+    let agent_id = AgentId::parse(configured_agent_id.ok_or_else(|| {
+        AppError::Validation(format!("invalid Agent assignment: {}", action.as_str()))
+    })?)
+    .map_err(|error| AppError::Validation(error.to_string()))?;
+    let model = assignment
+        .get("modelId")
         .and_then(Value::as_str)
-    {
-        Some("gemini") => "gemini",
-        _ => "opencode",
-    };
-    let configured_agent_id = configured.unwrap_or(legacy_agent_id);
-    let agent_id = AgentId::parse(configured_agent_id)
-        .map_err(|error| AppError::Validation(error.to_string()))?;
-    let model = settings
-        .get("agentModels")
-        .and_then(Value::as_object)
-        .and_then(|models| models.get(agent_id.as_str()))
-        .and_then(Value::as_str)
-        .or_else(|| {
-            if configured.is_none() {
-                runtime
-                    .and_then(|value| value.get("model"))
-                    .and_then(Value::as_str)
-            } else {
-                None
-            }
-        })
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);

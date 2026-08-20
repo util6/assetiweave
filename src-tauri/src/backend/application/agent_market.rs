@@ -750,11 +750,11 @@ fn installation_view(installation: &AgentInstallation) -> AgentInstallationView 
 fn agent_assignment_refs(agent_id: &str) -> AppResult<Vec<String>> {
     let settings = crate::backend::app_settings::read_app_settings_value()?;
     Ok(settings
-        .get("agentCapabilityAssignments")
+        .get("agentAssignments")
         .and_then(Value::as_object)
         .into_iter()
         .flat_map(|assignments| assignments.iter())
-        .filter(|(_, value)| value.as_str() == Some(agent_id))
+        .filter(|(_, value)| value.get("agentId").and_then(Value::as_str) == Some(agent_id))
         .map(|(key, _)| key.clone())
         .collect())
 }
@@ -765,7 +765,7 @@ fn clear_agent_assignments(assignments: &[String]) -> AppResult<()> {
     }
     let mut settings = crate::backend::app_settings::read_app_settings_value()?;
     if let Some(values) = settings
-        .get_mut("agentCapabilityAssignments")
+        .get_mut("agentAssignments")
         .and_then(Value::as_object_mut)
     {
         for assignment in assignments {
