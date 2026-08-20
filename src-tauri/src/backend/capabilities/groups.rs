@@ -7,6 +7,27 @@ pub(crate) fn apply_skill_group_mount_record(
     profile_id: &str,
     enabled: bool,
 ) -> AppResult<ApplyAssetGroupMountResult> {
+    apply_skill_group_mount_record_with_progress(
+        db,
+        tenant_id,
+        group_id,
+        profile_id,
+        enabled,
+        |_, _, _| Ok(()),
+    )
+}
+
+pub(crate) fn apply_skill_group_mount_record_with_progress<BeforeItem>(
+    db: &crate::backend::store::Database,
+    tenant_id: &str,
+    group_id: &str,
+    profile_id: &str,
+    enabled: bool,
+    mut before_item: BeforeItem,
+) -> AppResult<ApplyAssetGroupMountResult>
+where
+    BeforeItem: FnMut(usize, usize, &str) -> AppResult<()>,
+{
     let pool = db.pool().clone();
     let tenant_id_for_query = tenant_id.to_string();
     let group_id_to_load = group_id.to_string();
@@ -32,7 +53,9 @@ pub(crate) fn apply_skill_group_mount_record(
     let mut mounts = Vec::new();
     let mut statuses = Vec::new();
     let mut errors = Vec::new();
-    for member in &detail.members {
+    let total = detail.members.len();
+    for (index, member) in detail.members.iter().enumerate() {
+        before_item(index, total, &member.asset_id)?;
         let result = if enabled {
             mount_asset_mount_record(db, tenant_id, &member.asset_id, profile_id)
         } else {
@@ -68,6 +91,18 @@ pub(crate) fn apply_skill_group_exclusive_mount_record(
     tenant_id: &str,
     input: &SkillGroupExclusiveMountInput,
 ) -> AppResult<ApplySkillGroupExclusiveMountResult> {
+    apply_skill_group_exclusive_mount_record_with_progress(db, tenant_id, input, |_, _, _| Ok(()))
+}
+
+pub(crate) fn apply_skill_group_exclusive_mount_record_with_progress<BeforeItem>(
+    db: &crate::backend::store::Database,
+    tenant_id: &str,
+    input: &SkillGroupExclusiveMountInput,
+    mut before_item: BeforeItem,
+) -> AppResult<ApplySkillGroupExclusiveMountResult>
+where
+    BeforeItem: FnMut(usize, usize, &str) -> AppResult<()>,
+{
     let preview = build_skill_group_exclusive_mount_preview_sqlx(db, tenant_id, input)?;
     let pool = db.pool().clone();
     let tenant_id_for_query = tenant_id.to_string();
@@ -99,7 +134,11 @@ pub(crate) fn apply_skill_group_exclusive_mount_record(
         }
     }
 
+    let total_changes = preview.mount.len() + preview.unmount.len();
+    let mut change_index = 0;
     for item in &preview.mount {
+        before_item(change_index, total_changes, &item.asset_id)?;
+        change_index += 1;
         match mount_asset_mount_record(db, tenant_id, &item.asset_id, &preview.profile_id) {
             Ok(update) => statuses.push(update.status),
             Err(message) => errors.push(SkillGroupExclusiveMountError {
@@ -111,6 +150,8 @@ pub(crate) fn apply_skill_group_exclusive_mount_record(
     }
 
     for item in &preview.unmount {
+        before_item(change_index, total_changes, &item.asset_id)?;
+        change_index += 1;
         match unmount_exclusive_skill_mount_record(
             db,
             tenant_id,

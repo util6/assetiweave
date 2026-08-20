@@ -72,7 +72,11 @@ Extension Kernel（backend/extension_kernel）
         └── Agent Market manifest、ACP 能力、模型发现
 ```
 
-Kernel 只提供共享机制，不理解领域 manifest，也不实现进程内热重载。新增市场型模块必须新增 `PackageKind`、领域 `DomainPackageSystem` 和能力 seam，禁止再建一套垂直注册表/安装流程；部署安全不变量仍属于 Core。
+Kernel 只提供共享机制，不理解领域 manifest，也不实现进程内热重载。
+`DomainPackageSystem` 只声明 `PackageKind` 并执行目录 inspection；安装、升级、卸载和
+运行时重载由 Agent Market/Conversation 各自的 workflow 与 registry 负责，不再通过空的
+生命周期 hook 转发。新增市场型模块必须新增 `PackageKind`、领域 `DomainPackageSystem`
+和能力 seam，禁止再建一套垂直注册表/安装流程；部署安全不变量仍属于 Core。
 
 架构约束：
 
@@ -325,11 +329,11 @@ flowchart TB
 ### 3.1 Extension Kernel 与领域扩展
 
 Conversation Adapter 与 Agent Market 共用 `backend/extension_kernel/`，领域
-manifest、数据库状态和业务流程仍由各自模块持有：
+manifest、数据库状态、生命周期 workflow 和 registry 仍由各自模块持有：
 
 ```mermaid
 flowchart LR
-    Kernel["Extension Kernel\nPackageIdentity / Compatibility\nTrustGate / ProcessInvocation\nProbeSpec / RegistrySnapshot\nLifecycleTask / ExtensionError"]
+    Kernel["Extension Kernel\nPackageIdentity / Compatibility\nTrustGate / ProcessInvocation\nProbeSpec / RegistrySnapshot\nLifecycleTask / ExtensionError\nkind + inspect seam"]
     Conversation["Conversation Adapter\nConversationAdapterManifest\nConversationAdapterCatalog"]
     Agent["Agent Market\nAgentPackageManifest\nAgentRegistry"]
     Runtime["TaskRuntime\n生命周期去重、冲突、关闭"]
@@ -341,7 +345,8 @@ flowchart LR
 
 `PackageKind` 是封闭枚举。新增市场型扩展必须新增对应的
 `DomainPackageSystem`、领域 manifest 和架构决策，不得另起一套注册表、安装
-流程或万能 manifest；本轮不实现新的 package kind，也不引入进程内热重载。
+流程或万能 manifest；本轮不实现新的 package kind，也不引入进程内热重载。Kernel
+不承载安装/移除 hook，领域 workflow 在数据库激活前后自行处理副作用和回滚。
 
 ## 4. 应用信息架构
 

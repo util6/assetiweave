@@ -70,14 +70,21 @@ check_allowlisted_count() {
     fi
   done <"$CHECK_OUTPUT"
 
-  while IFS='|' read -r allowed_path _symbol _owner _removal_task allowed_count; do
+  while IFS='|' read -r allowed_path allowed_symbol _owner _removal_task allowed_count; do
     case "$allowed_path" in
       ''|'#'*) continue ;;
     esac
+    [ -f "$ROOT/$allowed_path" ] || continue
     actual_count=$(grep -n -E --include='*.rs' "$pattern" "$ROOT/$allowed_path" 2>/dev/null | wc -l | tr -d ' ')
     if [ "$actual_count" -gt "$allowed_count" ]; then
       printf '%s\n' "BOUNDARY VIOLATION: $allowed_path has $actual_count $pattern occurrences; allowlist permits $allowed_count"
       grep -n -E --include='*.rs' "$pattern" "$ROOT/$allowed_path" 2>/dev/null || true
+      fail=1
+    fi
+    symbol_count=$(grep -F -n --include='*.rs' "$allowed_symbol(" "$ROOT/$allowed_path" 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$symbol_count" -ne "$allowed_count" ]; then
+      printf '%s\n' "BOUNDARY VIOLATION: $allowed_path symbol $allowed_symbol has $symbol_count occurrences; allowlist requires $allowed_count"
+      grep -F -n --include='*.rs' "$allowed_symbol(" "$ROOT/$allowed_path" 2>/dev/null || true
       fail=1
     fi
   done <"$allowlist"
@@ -178,10 +185,11 @@ check_max 0 'AiStructuredTextRequest' "$ROOT/src-tauri/src/backend/ai_execution"
 check_max 0 'execute_structured_text' "$ROOT/src-tauri/src/backend/ai_execution"
 check_max 0 'run_cli_command' "$ROOT/src-tauri/src/backend/ai_execution"
 
-# TargetCatalog is not yet fully wired into defaults/detection. Bound the
-# remaining two compatibility constructors until BA-017/018 removes them.
-check_max 1 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/app_paths.rs"
-check_max 1 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/defaults.rs"
+# TargetCatalog is runtime-owned. Production defaults/path/application code
+# must receive the active catalog instead of constructing a hidden builtin.
+check_max 0 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/app_paths.rs"
+check_max 0 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/defaults.rs"
+check_absent 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/application"
 
 # Monotonic migration baselines from SPEC-01/SPEC-02. A touched module may
 # reduce these counts, but cannot silently add new synchronous bridges or

@@ -49,6 +49,8 @@ pub(crate) struct AgentMarketItemView {
     pub(crate) protocol: AgentMarketProtocol,
     pub(crate) version: String,
     pub(crate) core_compatible: bool,
+    pub(crate) core_compatibility: crate::backend::agent_market::types::CoreCompatibility,
+    pub(crate) installability: String,
     pub(crate) capabilities: crate::backend::agent_market::types::CatalogCapabilities,
     pub(crate) verification: crate::backend::agent_market::types::Verification,
     pub(crate) distributions: Vec<DistributionCandidate>,
@@ -103,6 +105,8 @@ pub(crate) struct AgentUninstallPreview {
 pub(crate) struct AgentMarketRefreshResult {
     pub(crate) status: String,
     pub(crate) catalog_version: String,
+    pub(crate) active_catalog_version: String,
+    pub(crate) downloaded_catalog_version: String,
     pub(crate) item_count: usize,
     pub(crate) source: String,
     pub(crate) etag: Option<String>,
@@ -119,9 +123,15 @@ impl AppService {
                 ("not_modified", catalog, etag)
             }
         };
+        let active_catalog_version = CatalogCache::best_available()?
+            .catalog()
+            .catalog_version
+            .clone();
         Ok(AgentMarketRefreshResult {
             status: status.to_string(),
-            catalog_version: catalog.catalog_version,
+            catalog_version: catalog.catalog_version.clone(),
+            active_catalog_version,
+            downloaded_catalog_version: catalog.catalog_version,
             item_count: catalog.items.len(),
             source: "remote_curated".to_string(),
             etag,
@@ -182,6 +192,8 @@ impl AppService {
                     protocol: item.protocol.clone(),
                     version: item.version.clone(),
                     core_compatible: is_core_compatible(item),
+                    core_compatibility: item.core_compatibility.clone(),
+                    installability: installability(item, &candidates),
                     capabilities: item.capabilities.clone(),
                     verification: item.verification.clone(),
                     distributions: candidates,
@@ -648,6 +660,22 @@ fn host_distribution_context() -> DistributionSelectionContext {
     context.npm_available = crate::backend::host_process::resolve_host_executable("npm").is_some();
     context.uv_available = crate::backend::host_process::resolve_host_executable("uv").is_some();
     context
+}
+
+fn installability(item: &CatalogItem, candidates: &[DistributionCandidate]) -> String {
+    if !is_core_compatible(item) {
+        return "core-incompatible".to_string();
+    }
+    if candidates.iter().any(|candidate| candidate.selectable) {
+        return "installable".to_string();
+    }
+    if candidates
+        .iter()
+        .any(|candidate| candidate.reason_code.as_deref() == Some("runtime_missing"))
+    {
+        return "runtime-required".to_string();
+    }
+    "unsupported".to_string()
 }
 
 fn probe_item_system_distributions(item: &CatalogItem, context: &mut DistributionSelectionContext) {

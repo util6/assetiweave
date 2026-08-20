@@ -10280,6 +10280,7 @@
       "params_schema": {
         "required": [
           "agentId",
+          "action",
           "catalogVersion",
           "agentVersion",
           "distributionId",
@@ -10293,6 +10294,10 @@
             "aliases": [
               "agent_id"
             ]
+          },
+          "action": {
+            "type": "string",
+            "description": "install, update or reinstall"
           },
           "catalogVersion": {
             "type": "string",

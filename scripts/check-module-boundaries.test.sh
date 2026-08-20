@@ -47,5 +47,8 @@ run_rejected_fixture new-legacy-site \
 run_rejected_fixture new-sync-bridge \
   src-tauri/src/backend/target_catalog.rs \
   'tokio::runtime::Handle::current().block_on(async {});'
+run_rejected_fixture application-target-catalog-bypass \
+  src-tauri/src/backend/application/service.rs \
+  'let _catalog = TargetCatalog::builtin();'
 
 printf '%s\n' 'module boundary self-tests passed'

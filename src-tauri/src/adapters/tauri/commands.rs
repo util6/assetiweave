@@ -1806,12 +1806,28 @@ pub(crate) fn start_batch_mount(
                 }
                 return;
             }
-            let result = if worker_mode == "group" {
+            let mut result = if worker_mode == "group" {
                 service
-                    .apply_skill_group_mount(
+                    .apply_skill_group_mount_with_progress(
                         worker_group_id.as_deref().unwrap_or_default(),
                         &worker_profile_id,
                         worker_enabled,
+                        |completed, total, current_id| {
+                            if task_context.is_cancelled() {
+                                return Err(AppError::Cancelled(
+                                    "batch mount cancelled".to_string(),
+                                ));
+                            }
+                            tasks
+                                .update_batch_mount_progress(
+                                    &worker_task_id,
+                                    completed as u64,
+                                    Some(total as u64),
+                                    Some(current_id),
+                                )
+                                .map(|_| ())
+                                .map_err(AppError::External)
+                        },
                     )
                     .and_then(|value| {
                         serde_json::to_value(value)
@@ -1829,28 +1845,69 @@ pub(crate) fn start_batch_mount(
                     return;
                 }
                 service
-                    .apply_skill_group_exclusive_mount(SkillGroupExclusiveMountInput {
-                        group_ids: worker_group_ids,
-                        profile_id: worker_profile_id,
-                        mount_selected: true,
-                        dry_run: false,
-                    })
+                    .apply_skill_group_exclusive_mount_with_progress(
+                        SkillGroupExclusiveMountInput {
+                            group_ids: worker_group_ids,
+                            profile_id: worker_profile_id,
+                            mount_selected: true,
+                            dry_run: false,
+                        },
+                        |completed, total, current_id| {
+                            if task_context.is_cancelled() {
+                                return Err(AppError::Cancelled(
+                                    "batch mount cancelled".to_string(),
+                                ));
+                            }
+                            tasks
+                                .update_batch_mount_progress(
+                                    &worker_task_id,
+                                    completed as u64,
+                                    Some(total as u64),
+                                    Some(current_id),
+                                )
+                                .map(|_| ())
+                                .map_err(AppError::External)
+                        },
+                    )
                     .and_then(|value| {
                         serde_json::to_value(value)
                             .map_err(|error| AppError::External(error.to_string()))
                     })
             };
+            if let Ok(value) = result.as_mut() {
+                let partial = value
+                    .get("errorCount")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|count| count > 0)
+                    || value
+                        .get("errors")
+                        .and_then(Value::as_array)
+                        .is_some_and(|errors| !errors.is_empty());
+                if let Some(object) = value.as_object_mut() {
+                    object.insert(
+                        "status".to_string(),
+                        Value::String(
+                            if partial {
+                                "partial_failure"
+                            } else {
+                                "succeeded"
+                            }
+                            .to_string(),
+                        ),
+                    );
+                }
+            }
             let (completed, total) = result
                 .as_ref()
                 .ok()
                 .and_then(|value| {
                     let total = value
-                        .get("requested_count")
+                        .get("requestedCount")
                         .and_then(Value::as_u64)
                         .or_else(|| {
                             let preview = value.get("preview")?;
-                            let mount = preview.get("mount_count")?.as_u64()?;
-                            let unmount = preview.get("unmount_count")?.as_u64()?;
+                            let mount = preview.get("mountCount")?.as_u64()?;
+                            let unmount = preview.get("unmountCount")?.as_u64()?;
                             Some(mount + unmount)
                         });
                     total.map(|total| (total, Some(total)))

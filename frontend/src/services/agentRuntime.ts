@@ -106,6 +106,8 @@ export interface AgentMarketItem {
   protocol: AgentMarketProtocol;
   version: string;
   coreCompatible: boolean;
+  coreCompatibility: { min: string; maxExclusive: string };
+  installability: "installable" | "runtime-required" | "core-incompatible" | "unsupported";
   capabilities: {
     purposes: string[];
     textPrompt: boolean;
@@ -125,6 +127,8 @@ export interface AgentMarketItem {
 export interface AgentMarketRefreshResult {
   status: "updated" | "not_modified";
   catalogVersion: string;
+  activeCatalogVersion: string;
+  downloadedCatalogVersion: string;
   itemCount: number;
   source: string;
   etag: string | null;
@@ -223,6 +227,7 @@ export interface AgentInstallPreviewRequest {
 
 export interface AgentInstallStartRequest {
   agentId: string;
+  action: "install" | "update" | "reinstall";
   catalogVersion: string;
   agentVersion: string;
   distributionId: string;

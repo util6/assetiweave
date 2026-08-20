@@ -50,7 +50,9 @@ export function AgentConnectionRow({
   const accentColor = resolveAgentIconAccentColor(agent, appShortcuts);
   const lifecycleBlocked = agent.coreCompatible === false || agent.hasSelectableDistribution === false;
   const lifecycleBlockReason = agent.coreCompatible === false
-    ? t("settings.agents.coreIncompatible")
+    ? agent.coreCompatibility
+      ? t("settings.agents.coreIncompatibleRange", agent.coreCompatibility)
+      : t("settings.agents.coreIncompatible")
     : agent.hasSelectableDistribution === false
       ? t("settings.agents.distributionUnavailable")
       : undefined;

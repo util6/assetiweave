@@ -239,9 +239,6 @@ fn install_conversation_adapter_package_files(
         let kernel_inspection = crate::backend::conversations::ConversationAdapterPackageSystem
             .inspect(&prepared_dir)
             .map_err(|error| AppError::Extension(error.to_string()))?;
-        crate::backend::conversations::ConversationAdapterPackageSystem
-            .on_installed(&kernel_inspection)
-            .map_err(|error| AppError::Extension(error.to_string()))?;
         if kernel_inspection.identity.package_id != spec.package_id()
             || kernel_inspection.identity.version
                 != semver::Version::parse(&spec.version)

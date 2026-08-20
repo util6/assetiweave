@@ -7,7 +7,7 @@ use std::{
 use sha2::{Digest, Sha256};
 
 use super::{
-    catalog::{is_core_compatible, CatalogService},
+    catalog::{is_core_compatible, CatalogRevision, CatalogService},
     types::Catalog,
 };
 
@@ -203,6 +203,28 @@ impl CatalogCache {
         }
         let service = CatalogService::from_bytes(&bytes).map_err(|error| error.to_string())?;
         let catalog = (*service.catalog()).clone();
+        let bundled = CatalogService::bundled().map_err(|error| error.to_string())?;
+        let active = select_active_catalog(
+            (*bundled.catalog()).clone(),
+            cached.as_ref().map(|(catalog, _)| catalog.clone()),
+        );
+        let active_revision =
+            CatalogRevision::parse(&active.catalog_version).map_err(|error| error.to_string())?;
+        let downloaded_revision = service.revision().map_err(|error| error.to_string())?;
+        if downloaded_revision < active_revision {
+            return Err(format!(
+                "catalog revision rollback rejected: {} < {}",
+                catalog.catalog_version, active.catalog_version
+            ));
+        }
+        if downloaded_revision == active_revision
+            && catalog_fingerprint(&catalog) != catalog_fingerprint(&active)
+        {
+            return Err(format!(
+                "catalog revision collision rejected: {}",
+                catalog.catalog_version
+            ));
+        }
         if let Some(cache) = cache {
             cache.write_atomic(&bytes, response_etag.as_deref())?;
         }
@@ -232,27 +254,23 @@ pub(crate) fn select_active_catalog(bundled: Catalog, cached: Option<Catalog>) -
         return bundled;
     }
 
-    let bundled_compatible = bundled
-        .items
-        .iter()
-        .filter(|item| is_core_compatible(item))
-        .count();
-    let cached_compatible = cached
-        .items
-        .iter()
-        .filter(|item| is_core_compatible(item))
-        .count();
+    let bundled_revision = CatalogRevision::parse(&bundled.catalog_version).ok();
+    let cached_revision = CatalogRevision::parse(&cached.catalog_version).ok();
+    let bundled_compatible = bundled.items.iter().any(is_core_compatible);
+    let cached_compatible = cached.items.iter().any(is_core_compatible);
 
-    if cached_compatible == 0 && bundled_compatible > 0 {
-        return bundled;
-    }
-    if cached_compatible > bundled_compatible
-        || (cached_compatible == bundled_compatible
-            && cached.catalog_version > bundled.catalog_version)
-    {
-        cached
-    } else {
-        bundled
+    match (bundled_compatible, cached_compatible) {
+        (true, false) => bundled,
+        (false, true) => cached,
+        (false, false) => bundled,
+        (true, true) => match (bundled_revision, cached_revision) {
+            (Some(bundled_revision), Some(cached_revision))
+                if cached_revision > bundled_revision =>
+            {
+                cached
+            }
+            _ => bundled,
+        },
     }
 }
 
@@ -329,6 +347,25 @@ mod tests {
             catalog_fingerprint(&selected),
             catalog_fingerprint(&bundled)
         );
+    }
+
+    #[test]
+    fn newer_compatible_cache_beats_bundled_catalog_by_parsed_revision() {
+        let bundled = super::super::catalog::bundled_catalog().expect("bundled catalog");
+        let mut cached = bundled.clone();
+        cached.catalog_version = "2099.01.02.3".to_string();
+
+        let selected = select_active_catalog(bundled, Some(cached.clone()));
+
+        assert_eq!(selected.catalog_version, cached.catalog_version);
+    }
+
+    #[test]
+    fn catalog_revision_requires_a_real_calendar_date_and_sequence() {
+        assert!(CatalogRevision::parse("latest").is_err());
+        assert!(CatalogRevision::parse("2026.02.30.1").is_err());
+        assert!(CatalogRevision::parse("2026.08.20.1").is_ok());
+        assert!(CatalogRevision::parse("2026.08.20").is_err());
     }
 }
 

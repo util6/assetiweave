@@ -2,7 +2,6 @@ use super::prelude::*;
 use crate::backend::conversations::{
     ConversationAdapterPackageInstallSourceKind, ConversationAdapterPackageInstallSpec,
 };
-use crate::backend::extension_kernel::DomainPackageSystem;
 use crate::backend::models::{
     ConversationAdapterPackageChangeAction, ConversationAdapterPackageChangeRisk,
     ConversationAdapterPackageOrigin, ConversationAdapterPackageRecordKind,
@@ -599,16 +598,6 @@ impl AppService {
                 "preflight": preflight
             }));
         }
-
-        let package_identity = crate::backend::extension_kernel::PackageIdentity {
-            kind: crate::backend::extension_kernel::PackageKind::ConversationAdapter,
-            package_id: package.package_id.clone(),
-            version: semver::Version::parse(&package.version)
-                .map_err(|error| format!("invalid installed package version: {error}"))?,
-        };
-        crate::backend::conversations::ConversationAdapterPackageSystem
-            .on_removed(&package_identity)
-            .map_err(|error| error.to_string())?;
 
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();

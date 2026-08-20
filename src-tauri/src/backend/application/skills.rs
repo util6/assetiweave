@@ -562,6 +562,28 @@ impl AppService {
         )?)
     }
 
+    pub(crate) fn apply_skill_group_mount_with_progress<BeforeItem>(
+        &self,
+        group_id: &str,
+        profile_id: &str,
+        enabled: bool,
+        mut before_item: BeforeItem,
+    ) -> AppResult<ApplyAssetGroupMountResult>
+    where
+        BeforeItem: FnMut(usize, usize, &str) -> AppResult<()>,
+    {
+        Ok(capabilities::apply_skill_group_mount_record_with_progress(
+            &self.db,
+            self.tenant_id(),
+            group_id,
+            profile_id,
+            enabled,
+            |index, total, asset_id| {
+                before_item(index, total, asset_id).map_err(|error| error.to_string())
+            },
+        )?)
+    }
+
     pub(crate) fn preview_skill_group_exclusive_mount(
         &self,
         input: SkillGroupExclusiveMountInput,
@@ -584,6 +606,26 @@ impl AppService {
             self.tenant_id(),
             &input,
         )?)
+    }
+
+    pub(crate) fn apply_skill_group_exclusive_mount_with_progress<BeforeItem>(
+        &self,
+        input: SkillGroupExclusiveMountInput,
+        mut before_item: BeforeItem,
+    ) -> AppResult<ApplySkillGroupExclusiveMountResult>
+    where
+        BeforeItem: FnMut(usize, usize, &str) -> AppResult<()>,
+    {
+        Ok(
+            capabilities::apply_skill_group_exclusive_mount_record_with_progress(
+                &self.db,
+                self.tenant_id(),
+                &input,
+                |index, total, asset_id| {
+                    before_item(index, total, asset_id).map_err(|error| error.to_string())
+                },
+            )?,
+        )
     }
 
     fn resolve_skill_asset(&self, asset_ref: &str) -> AppResult<Asset> {

@@ -59,20 +59,27 @@ fn run_conversation_harvester_in_dir(source_dir: &Path, full_reparse: bool) -> A
         ensure_adapter_runtime_available(&runtime, &invocation)?;
     }
 
-    let mut command = Command::new(&invocation.program);
-    command
-        .args(&invocation.args)
-        .current_dir(source_dir)
-        .env("ASSETIWEAVE_HARVESTER_DIR", source_dir)
-        .env("ASSETIWEAVE_HARVESTER_ID", &manifest.id);
+    let mut env = vec![
+        (
+            "ASSETIWEAVE_HARVESTER_DIR".to_string(),
+            source_dir.to_string_lossy().into_owned(),
+        ),
+        ("ASSETIWEAVE_HARVESTER_ID".to_string(), manifest.id.clone()),
+    ];
     if full_reparse {
-        command.env("ASSETIWEAVE_FULL_REPARSE", "1");
+        env.push(("ASSETIWEAVE_FULL_REPARSE".to_string(), "1".to_string()));
     }
-    let output = match crate::backend::host_process::run_command_with_timeout(
-        &mut command,
-        Duration::from_millis(HARVESTER_TIMEOUT_MS),
-        OUTPUT_CAPTURE_LIMIT,
-        OUTPUT_CAPTURE_LIMIT,
+    let output = match crate::backend::host_process::run_host_command_blocking(
+        crate::backend::host_process::HostCommandSpec {
+            program: invocation.program.clone(),
+            args: invocation.args.clone(),
+            env,
+            working_dir: Some(source_dir.to_path_buf()),
+            stdin: crate::backend::host_process::HostInput::Null,
+            timeout: Duration::from_millis(HARVESTER_TIMEOUT_MS),
+            stdout_limit: OUTPUT_CAPTURE_LIMIT,
+            stderr_limit: OUTPUT_CAPTURE_LIMIT,
+        },
     ) {
         Ok(output) => output,
         Err(crate::backend::host_process::HostProcessError::Spawn(error)) => {

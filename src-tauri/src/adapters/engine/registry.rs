@@ -3005,6 +3005,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Service => |service, params| service.install_agent(params),
         &[
             param!("agentId", "Curated Agent identifier", ["agent_id"]),
+            param!("action", "install, update or reinstall"),
             param!("catalogVersion", "Catalog version", ["catalog_version"]),
             param!("agentVersion", "Fixed Agent version", ["agent_version"]),
             param!("distributionId", "Selected distribution", ["distribution_id"]),

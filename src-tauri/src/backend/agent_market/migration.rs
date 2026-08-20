@@ -101,6 +101,7 @@ pub(crate) async fn migrate_legacy_assignments(
         };
         let request = AgentInstallStartRequest {
             agent_id: item.id.clone(),
+            action: "install".to_string(),
             catalog_version: catalog_version.clone(),
             agent_version: item.version.clone(),
             distribution_id: distribution.id().to_string(),

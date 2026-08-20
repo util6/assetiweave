@@ -53,6 +53,20 @@ pub(crate) async fn run(
             false,
         )
     })?;
+    if !matches!(request.action.as_str(), "install" | "update" | "reinstall") {
+        return Err(market_error(
+            "invalid_action",
+            "Unsupported Agent installation action.",
+            false,
+        ));
+    }
+    if !crate::backend::agent_market::is_core_compatible(item) {
+        return Err(market_error(
+            "core_incompatible",
+            "The Agent catalog item is incompatible with this AssetIWeave version.",
+            false,
+        ));
+    }
     let catalog = service.catalog.catalog();
     if request.catalog_version != catalog.catalog_version {
         return Err(market_error(
@@ -81,16 +95,8 @@ pub(crate) async fn run(
         })?;
     if service
         .catalog
-        .preview_token(item, &request.distribution_id, "install")
+        .preview_token(item, &request.distribution_id, &request.action)
         != request.preview_token
-        && service
-            .catalog
-            .preview_token(item, &request.distribution_id, "update")
-            != request.preview_token
-        && service
-            .catalog
-            .preview_token(item, &request.distribution_id, "reinstall")
-            != request.preview_token
     {
         return Err(market_error(
             "preview_stale",
@@ -104,22 +110,7 @@ pub(crate) async fn run(
         .get(tenant_id, &request.agent_id)
         .await
         .map_err(|error| market_error("storage_failed", error, true))?;
-    let action = ["install", "update", "reinstall"]
-        .into_iter()
-        .find(|action| {
-            service
-                .catalog
-                .preview_token(item, &request.distribution_id, action)
-                == request.preview_token
-        })
-        .ok_or_else(|| {
-            market_error(
-                "preview_stale",
-                "The installation preview is stale; preview the operation again.",
-                true,
-            )
-        })?;
-    match action {
+    match request.action.as_str() {
         "install" if current.is_some() => {
             return Err(market_error(
                 "agent_already_installed",
@@ -258,11 +249,12 @@ async fn materialize_and_activate(
             std::fs::create_dir_all(parent)
                 .map_err(|error| market_error("activation_failed", error.to_string(), true))?;
         }
-        std::fs::rename(&staging, &target)
-            .map_err(|error| market_error("activation_failed", error.to_string(), true))?;
+        let staging_root = staging.canonicalize().map_err(|error| {
+            market_error("installation_layout_invalid", error.to_string(), false)
+        })?;
         let relative = materialized
             .resolved_program
-            .strip_prefix(&staging)
+            .strip_prefix(&staging_root)
             .map_err(|_| {
                 market_error(
                     "installation_layout_invalid",
@@ -270,6 +262,8 @@ async fn materialize_and_activate(
                     false,
                 )
             })?;
+        std::fs::rename(&staging, &target)
+            .map_err(|error| market_error("activation_failed", error.to_string(), true))?;
         active_program = target.join(relative);
         active_dir = Some(target);
     }
@@ -326,7 +320,18 @@ async fn materialize_and_activate(
         .repository
         .upsert_active(&installation)
         .await
-        .map_err(|error| market_error("activation_failed", error, true))?;
+        .map_err(|error| {
+            if let Some(path) = installation.install_dir.as_ref() {
+                if is_safe_managed_install_path(
+                    &service.runtime_root,
+                    &installation.installation_id,
+                    path,
+                ) {
+                    let _ = std::fs::remove_dir_all(path);
+                }
+            }
+            market_error("activation_failed", error, true)
+        })?;
     context.report_phase(LifecycleTaskPhase::ReloadingRegistry);
     if let Err(error) = service.runtime_manager.reload(tenant_id).await {
         let restore_result = match current {
@@ -388,6 +393,10 @@ fn download_artifact(
     expected_size: Option<u64>,
     context: &InstallContext,
 ) -> Result<Vec<u8>, AgentMarketError> {
+    #[cfg(test)]
+    if let Some(bytes) = test_artifact(url) {
+        return Ok(bytes);
+    }
     if !crate::backend::agent_market::types::is_safe_artifact_url(url) {
         return Err(market_error(
             "artifact_invalid",
@@ -445,6 +454,28 @@ fn download_artifact(
     }
     Ok(bytes)
 }
+
+#[cfg(test)]
+pub(crate) fn register_test_artifact(url: &str, bytes: Vec<u8>) {
+    let artifacts =
+        TEST_ARTIFACTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    artifacts
+        .lock()
+        .expect("test artifact registry")
+        .insert(url.to_string(), bytes);
+}
+
+#[cfg(test)]
+fn test_artifact(url: &str) -> Option<Vec<u8>> {
+    TEST_ARTIFACTS
+        .get()
+        .and_then(|artifacts| artifacts.lock().ok()?.get(url).cloned())
+}
+
+#[cfg(test)]
+static TEST_ARTIFACTS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
+> = std::sync::OnceLock::new();
 
 fn definition_for(
     item: &crate::backend::agent_market::types::CatalogItem,

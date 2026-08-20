@@ -279,6 +279,7 @@ export function AgentSettingsPanel({
     try {
       const request = {
         agentId: agent.id,
+        action,
         catalogVersion: preview.catalogVersion,
         agentVersion: preview.targetVersion,
         distributionId: preview.selectedDistribution.distributionId,

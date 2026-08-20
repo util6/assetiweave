@@ -1,6 +1,6 @@
 # 仓库目录与架构边界
 
-> 最后核对：2026-08-14
+> 最后核对：2026-08-20
 
 本文描述 AssetIWeave **当前代码实际采用的目录结构和职责边界**。它用于回答两个问题：
 
@@ -147,6 +147,10 @@ Go CLI
 | `adapters/platform.rs`、`adapters/cli_tools.rs` | 平台集成和本地 CLI 工具辅助 |
 | `backend/application/` | `AppService` 和按领域拆分的应用工作流入口 |
 | `backend/capabilities/` | catalog、sources、profiles、groups、mounts、fs utils 等可复用能力 |
+| `backend/runtime/` | `AppRuntime`、`AppError`、`TaskRuntime` 和运行时生命周期投影 |
+| `backend/extension_kernel/` | Agent/Conversation 共用的身份、兼容性、Host probe、进程调用、快照与生命周期原语；领域只提供 kind/inspect seam |
+| `backend/agent_market/` | Agent Catalog、缓存、安装/更新/卸载 workflow、运行时 registry 和 ACP/native manifest |
+| `backend/target_catalog/` | Target Provider 描述目录；defaults、detection、planner 和 mount 通过 provider descriptor 工作 |
 | `backend/models/` | 后端共享数据模型和无副作用辅助函数 |
 | `backend/dto/` | 跨 Tauri/Engine 暴露的 DTO |
 | `backend/scanner/` | Source 遍历、分类、描述、Git/source metadata 和 hash |

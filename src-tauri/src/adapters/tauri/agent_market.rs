@@ -199,6 +199,11 @@ fn start_agent_installation_with_action(
     params: AgentInstallStartRequest,
     action: &str,
 ) -> AppResult<AgentLifecycleTaskSnapshot> {
+    if params.action != action {
+        return Err(AppError::Validation(format!(
+            "agent lifecycle action mismatch: expected {action}"
+        )));
+    }
     let (snapshot, cancellation, should_start) = state.background_tasks.begin_agent_lifecycle(
         params.agent_id.clone(),
         action.to_string(),

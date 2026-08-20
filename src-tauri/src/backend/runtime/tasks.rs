@@ -397,6 +397,17 @@ impl TaskRuntime {
             .get_mut(task_id)
             .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
         if entry.snapshot.state.is_active() {
+            if total.is_some_and(|total| current > total) {
+                return Err(AppError::Validation("任务进度不得超过总数".to_string()));
+            }
+            if entry
+                .snapshot
+                .progress
+                .as_ref()
+                .is_some_and(|progress| current < progress.current)
+            {
+                return Err(AppError::Validation("任务进度不得回退".to_string()));
+            }
             entry.snapshot.progress = Some(TaskProgress {
                 current,
                 total,

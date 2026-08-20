@@ -387,3 +387,17 @@
 - [X] 21.4 CLI 增加 `harvester repair --dry-run|--yes`，恢复官方静态文件并保留 `requests/` 与 `output/`
 - [X] 21.5 网页 Harvester 运行时向脚本传递当前 CLI 绝对路径，Qwen/Gemini 认证失效时可安全调用 `auth-detect` 后重试
 - [X] 21.6 增加内置 Skill 安装、Harvester 诊断/修复、Runtime 版本、权限漂移、认证重试和 CLI 元数据测试
+
+## Phase 22：后端架构收口（SPEC-BA）
+
+- [X] 22.1 修复 Agent Market 当前 Core 兼容、Catalog revision/cache 选择和前端生命周期门禁
+- [X] 22.2 将 Agent Market、Conversation、Memory、Session、System/Profile 等 Application workflow 迁移到 runtime `AppResult`
+- [X] 22.3 删除 Runtime 对 Application bootstrap 的反向依赖，并将 DTO 旧结果别名移出正式边界
+- [X] 22.4 让 TaskRuntime 成为后台任务 lifecycle authority，接入 Source scan 与 batch mount 的取消/进度/去重
+- [X] 22.5 统一 HostProcess/Extension Kernel 的 process probe、snapshot、kind/inspect seam
+- [X] 22.6 让 TargetCatalog 驱动 defaults、detection、planner/mount，并收口 canonical Action settings
+- [X] 22.7 删除 legacy Agent executor 生产路径，保留 compatibility API 到 canonical runtime
+- [X] 22.8 增加 Agent Market 本地 fake ACP executable 的 install/update/failed-update/restart-recovery/cancel E2E
+- [X] 22.9 升级 module boundary guard、精确 legacy allowlist 和违规 fixture self-test
+- [ ] 22.10 完成生产 Agent distribution 的可追溯 evidence、发布门禁与真实 package/release 验证
+- [X] 22.11 重新生成 Engine/CLI contract、surface matrix，并完成全仓 Rust/TypeScript/Go/build 验证

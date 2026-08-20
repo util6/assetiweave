@@ -788,6 +788,7 @@ pub(crate) struct AgentInstallPreviewRequest {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentInstallStartRequest {
     pub(crate) agent_id: String,
+    pub(crate) action: String,
     pub(crate) catalog_version: String,
     pub(crate) agent_version: String,
     pub(crate) distribution_id: String,

@@ -1,6 +1,6 @@
 use std::{collections::HashSet, sync::Arc};
 
-use chrono::DateTime;
+use chrono::{DateTime, NaiveDate};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -10,6 +10,44 @@ const CATALOG_SCHEMA: &str = "assetiweave.agent-market/v1";
 const MAX_CATALOG_BYTES: usize = 5 * 1024 * 1024;
 const BUNDLED_CATALOG: &str =
     include_str!("../../../../builtin-assets/agent-market/catalog-v1.json");
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct CatalogRevision {
+    pub(crate) date: NaiveDate,
+    pub(crate) sequence: u32,
+}
+
+impl CatalogRevision {
+    pub(crate) fn parse(value: &str) -> Result<Self, CatalogError> {
+        let mut parts = value.split('.');
+        let year = parts
+            .next()
+            .and_then(|part| part.parse::<i32>().ok())
+            .ok_or_else(|| CatalogError::Invalid("catalogVersion year is invalid".to_string()))?;
+        let month = parts
+            .next()
+            .and_then(|part| part.parse::<u32>().ok())
+            .ok_or_else(|| CatalogError::Invalid("catalogVersion month is invalid".to_string()))?;
+        let day = parts
+            .next()
+            .and_then(|part| part.parse::<u32>().ok())
+            .ok_or_else(|| CatalogError::Invalid("catalogVersion day is invalid".to_string()))?;
+        let sequence = parts
+            .next()
+            .and_then(|part| part.parse::<u32>().ok())
+            .ok_or_else(|| {
+                CatalogError::Invalid("catalogVersion sequence is invalid".to_string())
+            })?;
+        if parts.next().is_some() {
+            return Err(CatalogError::Invalid(
+                "catalogVersion must use YYYY.MM.DD.N".to_string(),
+            ));
+        }
+        let date = NaiveDate::from_ymd_opt(year, month, day)
+            .ok_or_else(|| CatalogError::Invalid("catalogVersion date is invalid".to_string()))?;
+        Ok(Self { date, sequence })
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CatalogError {
@@ -55,6 +93,10 @@ impl CatalogService {
 
     pub(crate) fn catalog(&self) -> Arc<Catalog> {
         Arc::clone(&self.catalog)
+    }
+
+    pub(crate) fn revision(&self) -> Result<CatalogRevision, CatalogError> {
+        CatalogRevision::parse(&self.catalog.catalog_version)
     }
 
     pub(crate) fn item(&self, agent_id: &str) -> Option<&CatalogItem> {
@@ -121,6 +163,7 @@ fn validate_catalog(catalog: &Catalog) -> Result<(), CatalogError> {
             "catalog version must be a fixed non-empty value".to_string(),
         ));
     }
+    CatalogRevision::parse(&catalog.catalog_version)?;
     DateTime::parse_from_rfc3339(&catalog.generated_at)
         .map_err(|_| CatalogError::Invalid("generatedAt must be RFC3339".to_string()))?;
     let mut item_ids = HashSet::new();
@@ -132,6 +175,16 @@ fn validate_catalog(catalog: &Catalog) -> Result<(), CatalogError> {
             )));
         }
         item.validate_basic().map_err(CatalogError::Invalid)?;
+        let min = semver::Version::parse(&item.core_compatibility.min)
+            .map_err(|_| CatalogError::Invalid(format!("invalid core minimum for {}", item.id)))?;
+        let max = semver::Version::parse(&item.core_compatibility.max_exclusive)
+            .map_err(|_| CatalogError::Invalid(format!("invalid core maximum for {}", item.id)))?;
+        if min >= max {
+            return Err(CatalogError::Invalid(format!(
+                "core compatibility range is empty for {}",
+                item.id
+            )));
+        }
         if item.core_compatibility.min.trim().is_empty()
             || item.core_compatibility.max_exclusive.trim().is_empty()
         {
@@ -235,6 +288,19 @@ mod tests {
         );
         assert_ne!(first, second);
         assert_eq!(first.len(), 24);
+    }
+
+    #[test]
+    fn preview_token_is_bound_to_exact_lifecycle_action() {
+        let service = CatalogService::bundled().expect("bundled catalog");
+        let item = service.item("opencode").expect("OpenCode item");
+        let install = service.preview_token(item, item.distributions[0].id(), "install");
+        let update = service.preview_token(item, item.distributions[0].id(), "update");
+        let reinstall = service.preview_token(item, item.distributions[0].id(), "reinstall");
+
+        assert_ne!(install, update);
+        assert_ne!(update, reinstall);
+        assert_ne!(install, reinstall);
     }
 
     #[test]

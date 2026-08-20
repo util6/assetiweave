@@ -14,6 +14,10 @@ Conversation Adapter 与 Agent Market 共享 `backend/extension_kernel/` 的身�
 - `TrustGate` 只提供能力判定，不抹平 Conversation 的 `Changed` 等安全状态。
 - `RegistrySnapshot<T>` 在锁外构建完整快照后原子替换，读方不持有注册表写锁。
 - `ProcessInvocation` 和 `ProbeSpec` 是无损表达层，不替代现有领域 manifest。
+- `DomainPackageSystem` 只负责声明 `PackageKind` 并把领域安装目录解释为
+  `InspectedPackage`；不再提供空的安装/移除 hook。
+- Agent Market 与 Conversation 的安装、升级、卸载和运行时重载由各自的领域
+  workflow/registry 负责，Kernel 只提供共享的身份、探测、进程和快照原语。
 - 迁移阶段保留旧领域 API 作为行为兼容层，完成接入后按边界检查删除重复注册表和生命周期实现。
 
 ## 回滚

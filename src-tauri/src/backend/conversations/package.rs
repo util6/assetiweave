@@ -225,20 +225,6 @@ impl crate::backend::extension_kernel::DomainPackageSystem for ConversationAdapt
             install_dir: dir.to_path_buf(),
         })
     }
-
-    fn on_installed(
-        &self,
-        _pkg: &crate::backend::extension_kernel::InspectedPackage,
-    ) -> Result<(), crate::backend::extension_kernel::ExtensionError> {
-        Ok(())
-    }
-
-    fn on_removed(
-        &self,
-        _id: &crate::backend::extension_kernel::PackageIdentity,
-    ) -> Result<(), crate::backend::extension_kernel::ExtensionError> {
-        Ok(())
-    }
 }
 
 pub(crate) fn validate_conversation_adapter_package_dir(

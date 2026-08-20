@@ -2,7 +2,9 @@
 //!
 //! The kernel owns identity, compatibility, trust gates, process invocation,
 //! probing, snapshots, and lifecycle coordination. Conversation and agent
-//! manifests remain domain-owned and are intentionally opaque here.
+//! manifests remain domain-owned and are intentionally opaque here. A domain
+//! package system only supplies kind and inspection; lifecycle side effects
+//! stay in the owning domain workflow.
 
 mod error;
 mod identity;
@@ -38,8 +40,6 @@ use super::runtime::AppError;
 pub(crate) trait DomainPackageSystem: Send + Sync {
     fn kind(&self) -> PackageKind;
     fn inspect(&self, dir: &Path) -> Result<InspectedPackage, ExtensionError>;
-    fn on_installed(&self, pkg: &InspectedPackage) -> Result<(), ExtensionError>;
-    fn on_removed(&self, id: &PackageIdentity) -> Result<(), ExtensionError>;
 }
 
 impl From<ExtensionError> for AppError {

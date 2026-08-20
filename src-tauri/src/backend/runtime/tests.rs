@@ -123,6 +123,30 @@ fn external_task_runtime_owns_id_deduplication_and_terminal_state() {
 }
 
 #[test]
+fn task_runtime_progress_is_bounded_and_monotonic() {
+    let tasks = tasks::TaskRuntime::new();
+    let registered = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::BatchMount, None).with_task_id("progress-task"),
+        )
+        .expect("register progress task");
+    assert!(matches!(
+        registered,
+        tasks::ExternalRegistrationOutcome::Started(_)
+    ));
+    tasks.start_external("progress-task").expect("start task");
+    tasks
+        .set_progress("progress-task", 1, Some(3), Some("first"))
+        .expect("set initial progress");
+    assert!(tasks
+        .set_progress("progress-task", 0, Some(3), Some("backward"))
+        .is_err());
+    assert!(tasks
+        .set_progress("progress-task", 4, Some(3), Some("overflow"))
+        .is_err());
+}
+
+#[test]
 fn external_task_runtime_owns_cross_operation_conflicts() {
     let tasks = tasks::TaskRuntime::new();
     let first = tasks

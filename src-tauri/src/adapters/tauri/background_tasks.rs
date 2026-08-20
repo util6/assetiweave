@@ -3602,6 +3602,8 @@ mod tests {
         let result = AgentMarketRefreshResult {
             status: "updated".to_string(),
             catalog_version: "catalog-v1".to_string(),
+            active_catalog_version: "catalog-v1".to_string(),
+            downloaded_catalog_version: "catalog-v1".to_string(),
             item_count: 1,
             source: "bundled".to_string(),
             etag: None,
