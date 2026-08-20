@@ -24,6 +24,8 @@ export interface AgentCatalogItem {
   installed?: AgentInstallationView | null;
   marketVersion?: string;
   updateAvailable?: boolean;
+  coreCompatible?: boolean;
+  hasSelectableDistribution?: boolean;
 }
 
 const agentPresentationMetadata: Record<string, { name: string; icon: LucideIcon }> = {
@@ -101,5 +103,7 @@ export function marketItemToCatalogItem(item: AgentMarketItem): AgentCatalogItem
     installed: item.installed,
     marketVersion: item.version,
     updateAvailable: item.updateAvailable,
+    coreCompatible: item.coreCompatible,
+    hasSelectableDistribution: item.distributions.some((distribution) => distribution.selectable),
   };
 }

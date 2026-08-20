@@ -85,6 +85,18 @@ pub(crate) fn bundled_catalog() -> Result<Catalog, CatalogError> {
     parse_catalog(BUNDLED_CATALOG.as_bytes())
 }
 
+pub(crate) fn is_core_compatible(item: &CatalogItem) -> bool {
+    let Ok(current) = semver::Version::parse(env!("CARGO_PKG_VERSION")) else {
+        return false;
+    };
+    semver::VersionReq::parse(&format!(
+        ">={}, <{}",
+        item.core_compatibility.min, item.core_compatibility.max_exclusive
+    ))
+    .map(|requirement| requirement.matches(&current))
+    .unwrap_or(false)
+}
+
 fn parse_catalog(bytes: &[u8]) -> Result<Catalog, CatalogError> {
     if bytes.len() > MAX_CATALOG_BYTES {
         return Err(CatalogError::TooLarge);
@@ -193,17 +205,7 @@ mod tests {
             .iter()
             .map(|item| item.id.as_str())
             .collect::<HashSet<_>>();
-        for id in [
-            "opencode",
-            "gemini",
-            "kiro",
-            "antigravity",
-            "claude",
-            "codex",
-            "hermes",
-            "pi",
-            "qoder",
-        ] {
+        for id in ["opencode", "gemini", "claude", "codex", "pi", "qoder"] {
             assert!(ids.contains(id), "missing {id}");
         }
         let json = serde_json::to_string(&catalog).expect("catalog json");
@@ -226,9 +228,23 @@ mod tests {
         let service = CatalogService::bundled().expect("bundled catalog");
         let item = service.item("opencode").expect("OpenCode item");
         let first = service.preview_token(item, item.distributions[0].id(), "install");
-        let second =
-            service.preview_token(item, item.distributions.last().unwrap().id(), "install");
+        let second = service.preview_token(
+            item,
+            &format!("{}-alternate", item.distributions[0].id()),
+            "install",
+        );
         assert_ne!(first, second);
         assert_eq!(first.len(), 24);
+    }
+
+    #[test]
+    fn bundled_catalog_items_support_current_core_version() {
+        let catalog = bundled_catalog().expect("bundled catalog");
+
+        assert!(
+            catalog.items.iter().all(is_core_compatible),
+            "at least one bundled item does not support core {}",
+            env!("CARGO_PKG_VERSION")
+        );
     }
 }

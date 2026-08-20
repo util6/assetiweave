@@ -4,7 +4,12 @@ use std::{
     time::Duration,
 };
 
-use super::{catalog::CatalogService, types::Catalog};
+use sha2::{Digest, Sha256};
+
+use super::{
+    catalog::{is_core_compatible, CatalogService},
+    types::Catalog,
+};
 
 pub(crate) const MAX_CATALOG_BYTES: usize = 5 * 1024 * 1024;
 pub(crate) const DEFAULT_CATALOG_URL: &str =
@@ -136,12 +141,16 @@ impl CatalogCache {
     }
 
     pub(crate) fn best_available() -> Result<CatalogService, String> {
-        if let Some(cache) = Self::in_app_cache() {
-            if let Ok(Some((catalog, _etag))) = cache.read() {
-                return Ok(CatalogService::from_catalog(catalog));
-            }
-        }
-        CatalogService::bundled().map_err(|error| error.to_string())
+        let bundled = CatalogService::bundled()
+            .map_err(|error| error.to_string())?
+            .catalog();
+        let cached = Self::in_app_cache()
+            .and_then(|cache| cache.read().ok().flatten())
+            .map(|(catalog, _etag)| catalog);
+        Ok(CatalogService::from_catalog(select_active_catalog(
+            (*bundled).clone(),
+            cached,
+        )))
     }
 
     pub(crate) fn refresh_default() -> Result<CatalogRefreshOutcome, String> {
@@ -210,6 +219,51 @@ impl CatalogCache {
     }
 }
 
+pub(crate) fn select_active_catalog(bundled: Catalog, cached: Option<Catalog>) -> Catalog {
+    let Some(cached) = cached else {
+        return bundled;
+    };
+
+    // A cache with the same revision but a different payload is not a valid
+    // candidate. Keep the bundled payload as the deterministic fallback.
+    if cached.catalog_version == bundled.catalog_version
+        && catalog_fingerprint(&cached) != catalog_fingerprint(&bundled)
+    {
+        return bundled;
+    }
+
+    let bundled_compatible = bundled
+        .items
+        .iter()
+        .filter(|item| is_core_compatible(item))
+        .count();
+    let cached_compatible = cached
+        .items
+        .iter()
+        .filter(|item| is_core_compatible(item))
+        .count();
+
+    if cached_compatible == 0 && bundled_compatible > 0 {
+        return bundled;
+    }
+    if cached_compatible > bundled_compatible
+        || (cached_compatible == bundled_compatible
+            && cached.catalog_version > bundled.catalog_version)
+    {
+        cached
+    } else {
+        bundled
+    }
+}
+
+fn catalog_fingerprint(catalog: &Catalog) -> String {
+    let bytes = serde_json::to_vec(catalog).expect("catalog serialization must be infallible");
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,6 +299,36 @@ mod tests {
         std::fs::write(&cache.catalog_path, br#"{"schema":"invalid"}"#).expect("invalid cache");
         assert!(cache.read().is_err());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn incompatible_cache_does_not_mask_compatible_bundled_catalog() {
+        let bundled = super::super::catalog::bundled_catalog().expect("bundled catalog");
+        let mut cached = bundled.clone();
+        cached.catalog_version = "2026.08.16.1".to_string();
+        for item in &mut cached.items {
+            item.core_compatibility.min = "0.5.0".to_string();
+            item.core_compatibility.max_exclusive = "0.6.0".to_string();
+        }
+
+        let selected = select_active_catalog(bundled.clone(), Some(cached));
+
+        assert_eq!(selected.catalog_version, bundled.catalog_version);
+        assert!(selected.items.iter().all(is_core_compatible));
+    }
+
+    #[test]
+    fn same_revision_different_hash_fails_closed_to_bundled_catalog() {
+        let bundled = super::super::catalog::bundled_catalog().expect("bundled catalog");
+        let mut cached = bundled.clone();
+        cached.items[0].description.push_str(" tampered");
+
+        let selected = select_active_catalog(bundled.clone(), Some(cached));
+
+        assert_eq!(
+            catalog_fingerprint(&selected),
+            catalog_fingerprint(&bundled)
+        );
     }
 }
 

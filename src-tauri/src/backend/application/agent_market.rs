@@ -12,8 +12,8 @@ use crate::backend::agent_market::types::{
     RuntimeStatus,
 };
 use crate::backend::agent_market::{
-    default_runtime_root, is_safe_managed_install_path, AgentLifecycleService, CatalogCache,
-    DistributionSelectionContext, DistributionSelector, SystemObservation,
+    default_runtime_root, is_core_compatible, is_safe_managed_install_path, AgentLifecycleService,
+    CatalogCache, DistributionSelectionContext, DistributionSelector, SystemObservation,
 };
 use crate::backend::extension_kernel::TrustGate;
 
@@ -141,7 +141,7 @@ impl AppService {
                         .iter()
                         .any(|installation| installation.agent_id == item.id)
             })
-            .filter(|item| request.include_incompatible || core_compatible(item))
+            .filter(|item| request.include_incompatible || is_core_compatible(item))
             .map(|item| {
                 let candidates = DistributionSelector::select(item, &context, None)?;
                 let installed = installations
@@ -159,7 +159,7 @@ impl AppService {
                     description: item.description.clone(),
                     protocol: item.protocol.clone(),
                     version: item.version.clone(),
-                    core_compatible: core_compatible(item),
+                    core_compatible: is_core_compatible(item),
                     capabilities: item.capabilities.clone(),
                     verification: item.verification.clone(),
                     distributions: candidates,
@@ -356,7 +356,7 @@ impl AppService {
             )
             .to_string());
         }
-        if !core_compatible(item) {
+        if !is_core_compatible(item) {
             return Err(AgentMarketError::new(
                 "core_incompatible",
                 "The Agent catalog item is incompatible with this AssetIWeave version.",
@@ -669,18 +669,6 @@ fn probe_item_system_distributions(item: &CatalogItem, context: &mut Distributio
             context.system.insert(command.clone(), observation);
         }
     }
-}
-
-fn core_compatible(item: &CatalogItem) -> bool {
-    let Ok(current) = semver::Version::parse(env!("CARGO_PKG_VERSION")) else {
-        return true;
-    };
-    semver::VersionReq::parse(&format!(
-        ">={}, <{}",
-        item.core_compatibility.min, item.core_compatibility.max_exclusive
-    ))
-    .map(|requirement| requirement.matches(&current))
-    .unwrap_or(false)
 }
 
 fn installation_view(installation: &AgentInstallation) -> AgentInstallationView {

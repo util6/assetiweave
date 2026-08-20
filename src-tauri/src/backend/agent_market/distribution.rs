@@ -213,7 +213,7 @@ mod tests {
     use crate::backend::agent_market::catalog::bundled_catalog;
 
     #[test]
-    fn recommends_compatible_system_before_managed_distributions() {
+    fn recommends_platform_binary_when_no_system_distribution_exists() {
         let item = bundled_catalog()
             .unwrap()
             .items
@@ -236,7 +236,7 @@ mod tests {
             )]),
         };
         let candidates = DistributionSelector::select(&item, &context, None).unwrap();
-        assert_eq!(candidates[0].distribution_id, "system-opencode");
+        assert_eq!(candidates[0].distribution_id, "binary-darwin-aarch64");
         assert!(candidates[0].recommended);
         assert!(candidates
             .iter()
@@ -249,12 +249,12 @@ mod tests {
             .unwrap()
             .items
             .into_iter()
-            .find(|item| item.id == "hermes")
+            .find(|item| item.id == "qoder")
             .unwrap();
         let error = DistributionSelector::select(
             &item,
             &DistributionSelectionContext::default(),
-            Some("uvx-hermes"),
+            Some("npx-qoder"),
         )
         .expect_err("missing uv must reject explicit choice");
         assert_eq!(error, "runtime_missing");

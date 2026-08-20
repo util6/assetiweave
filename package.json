@@ -21,6 +21,7 @@
     "gen:surface-matrix": "bash scripts/gen-surface-matrix.sh",
     "check:surface-matrix": "bash scripts/gen-surface-matrix.sh --check",
     "check:boundaries": "bash scripts/check-module-boundaries.sh",
+    "agent-catalog:check": "node scripts/check-agent-catalog-release.mjs --static",
     "precli:build": "pnpm artifacts:guard",
     "cli:build": "node scripts/build-cli.js",
     "postcli:build": "pnpm artifacts:check",

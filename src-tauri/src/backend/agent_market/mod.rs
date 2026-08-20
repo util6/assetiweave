@@ -15,6 +15,7 @@ mod runtime;
 pub(crate) mod types;
 
 pub(crate) use cache::{CatalogCache, CatalogRefreshOutcome};
+pub(crate) use catalog::is_core_compatible;
 pub(crate) use distribution::{
     DistributionSelectionContext, DistributionSelector, SystemObservation,
 };
