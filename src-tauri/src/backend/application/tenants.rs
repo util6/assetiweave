@@ -1,12 +1,13 @@
 use super::prelude::*;
+use crate::backend::runtime::{AppError, AppResult};
 
 impl AppService {
     pub(crate) fn list_tenants(&self) -> AppResult<Vec<Tenant>> {
         let pool = self.db.pool().clone();
         let principal_id = self.request_context().principal.id.clone();
-        self.db.block_on(async move {
+        Ok(self.db.block_on(async move {
             crate::backend::store::list_tenants_for_principal_sqlx(&pool, &principal_id).await
-        })
+        })?)
     }
 
     pub(crate) fn active_tenant(&self) -> AppResult<Tenant> {
@@ -49,13 +50,13 @@ impl AppService {
     pub(crate) fn switch_tenant(&self, tenant_id: String) -> AppResult<Tenant> {
         let tenant_id = tenant_id.trim();
         if tenant_id.is_empty() {
-            return Err("tenant id is required".to_string());
+            return Err(AppError::Validation("tenant id is required".to_string()));
         }
         let pool = self.db.pool().clone();
         let principal_id = self.request_context().principal.id.clone();
         let tenant_id = tenant_id.to_string();
-        self.db.block_on(async move {
+        Ok(self.db.block_on(async move {
             crate::backend::store::set_active_tenant_sqlx(&pool, &principal_id, &tenant_id).await
-        })
+        })?)
     }
 }

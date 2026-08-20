@@ -4209,7 +4209,8 @@ where
     E: Into<AppError>,
 {
     let params = deserialize_dispatch_params(params)?;
-    let service = AppService::open_for_engine().map_err(DispatchFailure::OpenService)?;
+    let service = AppService::open_for_engine()
+        .map_err(|error| DispatchFailure::OpenService(error.to_string()))?;
     serialize_dispatch_result(
         handler(&service, params).map_err(|error| DispatchFailure::App(error.into()))?,
     )

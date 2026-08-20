@@ -101,17 +101,17 @@ pub(crate) async fn set_app_window_icon(app: AppHandle, icon: Vec<u8>) -> AppRes
 }
 
 #[tauri::command]
-pub(crate) fn get_app_overview(state: State<'_, AppState>) -> AppResult<AppOverview> {
+pub(crate) fn get_app_overview(state: State<'_, AppState>) -> RuntimeAppResult<AppOverview> {
     AppService::from_runtime(&state.runtime).overview()
 }
 
 #[tauri::command]
-pub(crate) fn list_tenants(state: State<'_, AppState>) -> AppResult<Vec<Tenant>> {
+pub(crate) fn list_tenants(state: State<'_, AppState>) -> RuntimeAppResult<Vec<Tenant>> {
     AppService::from_runtime(&state.runtime).list_tenants()
 }
 
 #[tauri::command]
-pub(crate) fn get_active_tenant(state: State<'_, AppState>) -> AppResult<Tenant> {
+pub(crate) fn get_active_tenant(state: State<'_, AppState>) -> RuntimeAppResult<Tenant> {
     AppService::from_runtime(&state.runtime).active_tenant()
 }
 
@@ -119,7 +119,7 @@ pub(crate) fn get_active_tenant(state: State<'_, AppState>) -> AppResult<Tenant>
 pub(crate) fn create_tenant(
     state: State<'_, AppState>,
     params: TenantCreateParams,
-) -> AppResult<Tenant> {
+) -> RuntimeAppResult<Tenant> {
     let fields = vec![("name", params.name.clone())];
     let result = (|| AppService::from_runtime(&state.runtime).create_tenant(params))();
     match &result {
@@ -134,7 +134,10 @@ pub(crate) fn create_tenant(
 }
 
 #[tauri::command]
-pub(crate) fn switch_tenant(state: State<'_, AppState>, tenant_id: String) -> AppResult<Tenant> {
+pub(crate) fn switch_tenant(
+    state: State<'_, AppState>,
+    tenant_id: String,
+) -> RuntimeAppResult<Tenant> {
     let fields = vec![("tenant_id", tenant_id.clone())];
     let result = (|| AppService::from_runtime(&state.runtime).switch_tenant(tenant_id))();
     match &result {
@@ -151,7 +154,7 @@ pub(crate) fn switch_tenant(state: State<'_, AppState>, tenant_id: String) -> Ap
 #[tauri::command]
 pub(crate) fn get_app_settings(
     state: State<'_, AppState>,
-) -> AppResult<crate::backend::app_settings::AppSettingsFile> {
+) -> RuntimeAppResult<crate::backend::app_settings::AppSettingsFile> {
     AppService::from_runtime(&state.runtime).get_app_settings()
 }
 
@@ -159,7 +162,7 @@ pub(crate) fn get_app_settings(
 pub(crate) fn save_app_settings(
     state: State<'_, AppState>,
     settings: serde_json::Value,
-) -> AppResult<crate::backend::app_settings::AppSettingsFile> {
+) -> RuntimeAppResult<crate::backend::app_settings::AppSettingsFile> {
     AppService::from_runtime(&state.runtime).save_app_settings(settings)
 }
 

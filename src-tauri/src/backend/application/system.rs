@@ -1,4 +1,5 @@
 use super::prelude::*;
+use crate::backend::runtime::{AppError, AppResult};
 
 impl AppService {
     pub(crate) fn open_for_engine() -> AppResult<Self> {
@@ -15,7 +16,9 @@ impl AppService {
 
         #[cfg(not(test))]
         {
-            Err("Engine AppRuntime has not been bootstrapped".to_string())
+            Err(AppError::Validation(
+                "Engine AppRuntime has not been bootstrapped".to_string(),
+            ))
         }
     }
 
@@ -36,8 +39,16 @@ impl AppService {
 
     #[cfg(test)]
     pub(crate) fn open_with_db_path(db_path: PathBuf) -> AppResult<Self> {
-        let manager = crate::backend::ai_execution::agent_runtime_manager(&db_path)
-            .map_err(|error| error.to_string())?;
+        let manager =
+            crate::backend::ai_execution::agent_runtime_manager(&db_path).map_err(|error| {
+                let view = error.to_view();
+                AppError::Domain {
+                    code: view.code,
+                    message: view.message,
+                    retryable: view.retryable,
+                    details: None,
+                }
+            })?;
         Self::open_with_db_path_and_manager(db_path, manager)
     }
 
@@ -63,8 +74,8 @@ impl AppService {
                 &pool, &tenant_id,
             ),
         )?;
-        let runtime_root = crate::backend::agent_market::default_runtime_root()
-            .map_err(|error| error.to_string())?;
+        let runtime_root =
+            crate::backend::agent_market::default_runtime_root().map_err(AppError::from)?;
         db.block_on(runtime_manager.recover_startup(&context.tenant.id, &runtime_root))?;
         let migration_scope = db_path.to_string_lossy().to_string();
         if let Err(error) = db.block_on(crate::backend::agent_market::migrate_legacy_assignments(
@@ -137,11 +148,13 @@ impl AppService {
         file_name: Option<String>,
         line_limit: Option<usize>,
     ) -> AppResult<crate::backend::logs::LogSnapshot> {
-        crate::backend::logs::logs_get_snapshot(file_name, line_limit)
+        Ok(crate::backend::logs::logs_get_snapshot(
+            file_name, line_limit,
+        )?)
     }
 
     pub(crate) fn logs_open_log_directory(&self) -> AppResult<()> {
-        crate::backend::logs::logs_open_log_directory()
+        Ok(crate::backend::logs::logs_open_log_directory()?)
     }
 
     pub(crate) fn logs_write_operation(
@@ -151,13 +164,15 @@ impl AppService {
         message: String,
         fields: Option<BTreeMap<String, String>>,
     ) -> AppResult<()> {
-        crate::backend::logs::logs_write_operation(level, operation, message, fields)
+        Ok(crate::backend::logs::logs_write_operation(
+            level, operation, message, fields,
+        )?)
     }
 
     pub(crate) fn get_app_settings(
         &self,
     ) -> AppResult<crate::backend::app_settings::AppSettingsFile> {
-        crate::backend::app_settings::get_app_settings()
+        Ok(crate::backend::app_settings::get_app_settings()?)
     }
 
     pub(crate) fn save_app_settings(
@@ -165,7 +180,7 @@ impl AppService {
         settings: Value,
     ) -> AppResult<crate::backend::app_settings::AppSettingsFile> {
         self.validate_agent_capability_assignments(&settings)?;
-        crate::backend::app_settings::save_app_settings(settings)
+        Ok(crate::backend::app_settings::save_app_settings(settings)?)
     }
 
     fn validate_agent_capability_assignments(&self, settings: &Value) -> AppResult<()> {
@@ -183,9 +198,9 @@ impl AppService {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             else {
-                return Err(format!(
+                return Err(AppError::Validation(format!(
                     "agent_not_installed: invalid assignment for {action_id}"
-                ));
+                )));
             };
             if previous_assignments
                 .and_then(|values| values.get(action_id))
@@ -198,22 +213,22 @@ impl AppService {
             let installation = self
                 .db
                 .block_on(repository.get(self.tenant_id(), agent_id))?
-                .ok_or_else(|| format!("agent_not_installed: {agent_id}"))?;
+                .ok_or_else(|| AppError::NotFound(format!("agent_not_installed: {agent_id}")))?;
             if !installation.enabled || !installation.execution_ready() {
-                return Err(format!("agent_not_ready: {agent_id}"));
+                return Err(AppError::Conflict(format!("agent_not_ready: {agent_id}")));
             }
             let catalog = crate::backend::agent_market::CatalogCache::best_available()?;
-            let item = catalog
-                .item(agent_id)
-                .ok_or_else(|| format!("agent_capability_unsupported: {agent_id}"))?;
+            let item = catalog.item(agent_id).ok_or_else(|| {
+                AppError::Validation(format!("agent_capability_unsupported: {agent_id}"))
+            })?;
             let purpose = match action_id.as_str() {
                 "translation.card" => "card_translation",
                 "memory.extraction" | "memory.dream" => "memory",
                 "prompt.optimization" => "prompt_optimization",
                 other => {
-                    return Err(format!(
+                    return Err(AppError::Validation(format!(
                         "agent_capability_unsupported: unknown action {other}"
-                    ));
+                    )));
                 }
             };
             if !item
@@ -222,9 +237,9 @@ impl AppService {
                 .iter()
                 .any(|candidate| candidate == purpose)
             {
-                return Err(format!(
+                return Err(AppError::Validation(format!(
                     "agent_capability_unsupported: {agent_id}/{purpose}"
-                ));
+                )));
             }
         }
         Ok(())
@@ -276,7 +291,7 @@ fn engine_db_path() -> AppResult<PathBuf> {
             return Ok(PathBuf::from(path));
         }
     }
-    crate::backend::path_utils::app_db_path()
+    Ok(crate::backend::path_utils::app_db_path()?)
 }
 
 fn conversation_runtime_doctor_summary(
