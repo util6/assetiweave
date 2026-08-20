@@ -254,7 +254,7 @@ pub(crate) fn list_source_assets(
 pub(crate) fn list_memory_items(
     state: State<'_, AppState>,
     params: MemoryItemListParams,
-) -> AppResult<MemoryItemPage> {
+) -> RuntimeAppResult<MemoryItemPage> {
     AppService::from_runtime(&state.runtime).list_memory_items(params)
 }
 
@@ -262,7 +262,7 @@ pub(crate) fn list_memory_items(
 pub(crate) fn get_memory_item(
     state: State<'_, AppState>,
     params: MemoryItemGetParams,
-) -> AppResult<MemoryItemDetail> {
+) -> RuntimeAppResult<MemoryItemDetail> {
     AppService::from_runtime(&state.runtime).get_memory_item(params)
 }
 
@@ -270,7 +270,7 @@ pub(crate) fn get_memory_item(
 pub(crate) fn create_memory_item(
     state: State<'_, AppState>,
     params: MemoryItemCreateParams,
-) -> AppResult<MemoryItemDetail> {
+) -> RuntimeAppResult<MemoryItemDetail> {
     let result = (|| AppService::from_runtime(&state.runtime).create_memory_item(params))();
     match &result {
         Ok(detail) => log_info(
@@ -287,7 +287,7 @@ pub(crate) fn create_memory_item(
 pub(crate) fn update_memory_item(
     state: State<'_, AppState>,
     params: MemoryItemUpdateParams,
-) -> AppResult<MemoryItemDetail> {
+) -> RuntimeAppResult<MemoryItemDetail> {
     let item_id = params.item_id.clone();
     let fields = [("item_id", item_id.clone())];
     let result = (|| AppService::from_runtime(&state.runtime).update_memory_item(params))();
@@ -302,7 +302,7 @@ pub(crate) fn update_memory_item(
 pub(crate) fn archive_memory_item(
     state: State<'_, AppState>,
     params: MemoryItemGetParams,
-) -> AppResult<MemoryItemDetail> {
+) -> RuntimeAppResult<MemoryItemDetail> {
     let fields = [("item_id", params.item_id.clone())];
     let result = (|| AppService::from_runtime(&state.runtime).archive_memory_item(params))();
     match &result {
@@ -316,7 +316,7 @@ pub(crate) fn archive_memory_item(
 pub(crate) fn accept_memory_candidate(
     state: State<'_, AppState>,
     params: MemoryCandidateAcceptParams,
-) -> AppResult<MemoryItemDetail> {
+) -> RuntimeAppResult<MemoryItemDetail> {
     let fields = [("item_id", params.item_id.clone())];
     let result = (|| AppService::from_runtime(&state.runtime).accept_memory_candidate(params))();
     match &result {
@@ -335,7 +335,7 @@ pub(crate) fn accept_memory_candidate(
 pub(crate) fn reject_memory_candidate(
     state: State<'_, AppState>,
     params: MemoryItemGetParams,
-) -> AppResult<MemoryItemDetail> {
+) -> RuntimeAppResult<MemoryItemDetail> {
     let fields = [("item_id", params.item_id.clone())];
     let result = (|| AppService::from_runtime(&state.runtime).reject_memory_candidate(params))();
     match &result {
@@ -434,7 +434,7 @@ pub(crate) fn run_memory_recall(
 pub(crate) fn verify_memory(
     state: State<'_, AppState>,
     params: MemoryVerifyParams,
-) -> AppResult<crate::backend::dto::MemoryVerifyResult> {
+) -> RuntimeAppResult<crate::backend::dto::MemoryVerifyResult> {
     AppService::from_runtime(&state.runtime).verify_memory(params)
 }
 
