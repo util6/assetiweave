@@ -418,7 +418,7 @@ pub(crate) fn run_memory_dream(
 pub(crate) fn preview_memory_recall(
     state: State<'_, AppState>,
     params: MemoryRecallPreviewParams,
-) -> AppResult<crate::backend::dto::MemoryRecallPreview> {
+) -> RuntimeAppResult<crate::backend::dto::MemoryRecallPreview> {
     AppService::from_runtime(&state.runtime).preview_memory_recall(params)
 }
 
@@ -426,7 +426,7 @@ pub(crate) fn preview_memory_recall(
 pub(crate) fn run_memory_recall(
     state: State<'_, AppState>,
     params: MemoryRecallRunParams,
-) -> AppResult<crate::backend::dto::MemoryRecallRunResult> {
+) -> RuntimeAppResult<crate::backend::dto::MemoryRecallRunResult> {
     AppService::from_runtime(&state.runtime).run_memory_recall(params)
 }
 
@@ -512,6 +512,7 @@ pub(crate) fn start_memory_task(
                             Some(cancellation),
                             report,
                         )
+                        .map_err(|error| error.to_string())
                         .and_then(|value| {
                             serde_json::to_value(value).map_err(|error| error.to_string())
                         })
