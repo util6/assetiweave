@@ -52,6 +52,8 @@ const AGENT_LIFECYCLE_TERMINAL_LIMIT: usize = 100;
 pub(crate) enum BackgroundTaskStatus {
     /// 任务正在后台运行中
     Running,
+    /// 任务已收到取消请求，等待 worker 收敛
+    Cancelling,
     /// 任务已成功完成
     Completed,
     /// 任务运行失败
@@ -166,6 +168,73 @@ pub(crate) struct ConversationSearchIndexTaskSnapshot {
     pub(crate) finished_at: Option<String>,
     pub(crate) result: Option<Value>,
     pub(crate) error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SourceScanScope {
+    All,
+    Skills,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SourceScanProgressPhase {
+    Preparing,
+    Scanning,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct SourceScanTaskProgress {
+    pub(crate) phase: SourceScanProgressPhase,
+    pub(crate) completed_source_count: u64,
+    pub(crate) total_source_count: Option<u64>,
+    pub(crate) current_source_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct SourceScanTaskSnapshot {
+    pub(crate) id: String,
+    pub(crate) status: BackgroundTaskStatus,
+    pub(crate) scope: SourceScanScope,
+    pub(crate) kind: Option<crate::backend::models::AssetKind>,
+    pub(crate) progress: SourceScanTaskProgress,
+    pub(crate) started_at: String,
+    pub(crate) finished_at: Option<String>,
+    pub(crate) result: Option<Vec<CatalogAsset>>,
+    pub(crate) error: Option<String>,
+}
+
+struct SourceScanTaskEntry {
+    snapshot: SourceScanTaskSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct BatchMountTaskProgress {
+    pub(crate) phase: String,
+    pub(crate) completed: u64,
+    pub(crate) total: Option<u64>,
+    pub(crate) current_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct BatchMountTaskSnapshot {
+    pub(crate) id: String,
+    pub(crate) status: BackgroundTaskStatus,
+    pub(crate) mode: String,
+    pub(crate) profile_id: String,
+    pub(crate) progress: BatchMountTaskProgress,
+    pub(crate) started_at: String,
+    pub(crate) finished_at: Option<String>,
+    pub(crate) result: Option<Value>,
+    pub(crate) error: Option<String>,
+}
+
+struct BatchMountTaskEntry {
+    snapshot: BatchMountTaskSnapshot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -331,6 +400,8 @@ pub(crate) struct BackgroundTaskRegistry {
     ai_executions: Mutex<HashMap<String, AiExecutionTaskEntry>>,
     agent_lifecycle_tasks: Mutex<HashMap<String, AgentLifecycleTaskEntry>>,
     agent_market_refresh_tasks: Mutex<HashMap<String, AgentMarketRefreshTaskEntry>>,
+    source_scan_tasks: Mutex<HashMap<String, SourceScanTaskEntry>>,
+    batch_mount_tasks: Mutex<HashMap<String, BatchMountTaskEntry>>,
 }
 
 impl Default for BackgroundTaskRegistry {
@@ -352,6 +423,8 @@ impl BackgroundTaskRegistry {
             ai_executions: Mutex::new(HashMap::new()),
             agent_lifecycle_tasks: Mutex::new(HashMap::new()),
             agent_market_refresh_tasks: Mutex::new(HashMap::new()),
+            source_scan_tasks: Mutex::new(HashMap::new()),
+            batch_mount_tasks: Mutex::new(HashMap::new()),
         }
     }
 
@@ -422,6 +495,327 @@ impl BackgroundTaskRegistry {
         self.task_runtime
             .get(task_id)
             .ok_or_else(|| format!("background task not found: {task_id}"))
+    }
+
+    pub(crate) fn begin_source_scan(
+        &self,
+        tenant_id: &str,
+        scope: SourceScanScope,
+        kind: Option<crate::backend::models::AssetKind>,
+    ) -> AppResult<(SourceScanTaskSnapshot, bool)> {
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        let snapshot = SourceScanTaskSnapshot {
+            id: id.clone(),
+            status: BackgroundTaskStatus::Running,
+            scope,
+            kind,
+            progress: SourceScanTaskProgress {
+                phase: SourceScanProgressPhase::Preparing,
+                completed_source_count: 0,
+                total_source_count: None,
+                current_source_name: None,
+            },
+            started_at: now,
+            finished_at: None,
+            result: None,
+            error: None,
+        };
+        let dedup_key = format!(
+            "scan:{tenant_id}:{}:{}",
+            match scope {
+                SourceScanScope::All => "all",
+                SourceScanScope::Skills => "skills",
+            },
+            kind.map(|value| format!("{value:?}"))
+                .unwrap_or_else(|| "all".to_string())
+        );
+        let registration = self.register_external_task(
+            TaskKind::Scan,
+            &id,
+            Some(dedup_key),
+            [format!("catalog-write:{tenant_id}")],
+            serde_json::json!({ "domain": "source_scan", "scope": scope }),
+        )?;
+        let runtime_id = match registration {
+            ExternalRegistrationOutcome::Started(_) => {
+                let mut tasks = self
+                    .source_scan_tasks
+                    .lock()
+                    .map_err(|error| error.to_string())?;
+                tasks.insert(
+                    id,
+                    SourceScanTaskEntry {
+                        snapshot: snapshot.clone(),
+                    },
+                );
+                return Ok((snapshot, true));
+            }
+            ExternalRegistrationOutcome::Existing(runtime_snapshot)
+            | ExternalRegistrationOutcome::Conflict(runtime_snapshot) => runtime_snapshot.task_id,
+        };
+        self.source_scan_tasks
+            .lock()
+            .map_err(|error| error.to_string())?
+            .get(&runtime_id)
+            .map(|entry| {
+                let runtime = self.task_runtime.get(&runtime_id);
+                runtime
+                    .map(|runtime| project_source_scan(&entry.snapshot, &runtime))
+                    .unwrap_or_else(|| entry.snapshot.clone())
+            })
+            .ok_or_else(|| format!("source scan task projection not found: {runtime_id}"))
+            .map(|snapshot| (snapshot, false))
+    }
+
+    pub(crate) fn finish_source_scan(
+        &self,
+        task_id: &str,
+        result: Result<crate::backend::application::SourceScanResult, String>,
+    ) -> AppResult<SourceScanTaskSnapshot> {
+        let runtime_result = result
+            .as_ref()
+            .map(|value| serde_json::to_value(&value.assets).unwrap_or(Value::Null))
+            .map_err(|error| crate::backend::runtime::AppError::from(error.clone()));
+        let runtime_snapshot = self.finish_external_result(task_id, runtime_result)?;
+        let mut tasks = self
+            .source_scan_tasks
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| format!("source scan task not found: {task_id}"))?;
+        entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
+        match (runtime_snapshot.state, result) {
+            (TaskState::Succeeded, Ok(result)) => {
+                entry.snapshot.status = BackgroundTaskStatus::Completed;
+                entry.snapshot.progress.phase = SourceScanProgressPhase::Completed;
+                entry.snapshot.result = Some(result.assets);
+            }
+            (TaskState::Canceled, _) => {
+                entry.snapshot.status = BackgroundTaskStatus::Cancelled;
+                entry.snapshot.progress.phase = SourceScanProgressPhase::Cancelled;
+                entry.snapshot.error = runtime_error_message(&runtime_snapshot);
+            }
+            (_, Err(error)) => {
+                entry.snapshot.status = BackgroundTaskStatus::Failed;
+                entry.snapshot.progress.phase = SourceScanProgressPhase::Failed;
+                entry.snapshot.error = Some(error);
+            }
+            (state, Ok(_)) => {
+                entry.snapshot.status = BackgroundTaskStatus::Failed;
+                entry.snapshot.progress.phase = SourceScanProgressPhase::Failed;
+                entry.snapshot.error = Some(format!(
+                    "source scan did not reach a terminal state: {state:?}"
+                ));
+            }
+        }
+        Ok(entry.snapshot.clone())
+    }
+
+    pub(crate) fn source_scan_snapshot(&self, task_id: &str) -> AppResult<SourceScanTaskSnapshot> {
+        let runtime = self.external_task_snapshot(task_id)?;
+        self.source_scan_tasks
+            .lock()
+            .map_err(|error| error.to_string())?
+            .get(task_id)
+            .map(|entry| project_source_scan(&entry.snapshot, &runtime))
+            .ok_or_else(|| format!("source scan task not found: {task_id}"))
+    }
+
+    pub(crate) fn source_scan_snapshots(&self) -> AppResult<Vec<SourceScanTaskSnapshot>> {
+        let mut snapshots = self
+            .source_scan_tasks
+            .lock()
+            .map_err(|error| error.to_string())?
+            .values()
+            .filter_map(|entry| {
+                self.task_runtime
+                    .get(&entry.snapshot.id)
+                    .map(|runtime| project_source_scan(&entry.snapshot, &runtime))
+            })
+            .collect::<Vec<_>>();
+        snapshots.sort_by(|left, right| left.started_at.cmp(&right.started_at));
+        Ok(snapshots)
+    }
+
+    pub(crate) fn cancel_source_scan(&self, task_id: &str) -> AppResult<SourceScanTaskSnapshot> {
+        match self.task_runtime.cancel(task_id) {
+            crate::backend::runtime::tasks::CancelOutcome::Requested(snapshot)
+            | crate::backend::runtime::tasks::CancelOutcome::AlreadyFinished(snapshot) => {
+                self.source_scan_snapshot(&snapshot.task_id)
+            }
+            crate::backend::runtime::tasks::CancelOutcome::NotFound => {
+                Err(format!("source scan task not found: {task_id}"))
+            }
+        }
+    }
+
+    pub(crate) fn begin_batch_mount(
+        &self,
+        tenant_id: &str,
+        mode: &str,
+        profile_id: &str,
+        dedup_suffix: &str,
+    ) -> AppResult<(BatchMountTaskSnapshot, bool)> {
+        let id = Uuid::new_v4().to_string();
+        let snapshot = BatchMountTaskSnapshot {
+            id: id.clone(),
+            status: BackgroundTaskStatus::Running,
+            mode: mode.to_string(),
+            profile_id: profile_id.to_string(),
+            progress: BatchMountTaskProgress {
+                phase: "preparing".to_string(),
+                completed: 0,
+                total: None,
+                current_id: None,
+            },
+            started_at: Utc::now().to_rfc3339(),
+            finished_at: None,
+            result: None,
+            error: None,
+        };
+        let registration = self.register_external_task(
+            TaskKind::BatchMount,
+            &id,
+            Some(format!(
+                "mount:{tenant_id}:{mode}:{profile_id}:{dedup_suffix}"
+            )),
+            [format!("mount-profile:{tenant_id}:{profile_id}")],
+            serde_json::json!({ "domain": "batch_mount", "mode": mode }),
+        )?;
+        match registration {
+            ExternalRegistrationOutcome::Started(_) => {
+                self.batch_mount_tasks
+                    .lock()
+                    .map_err(|error| error.to_string())?
+                    .insert(
+                        id,
+                        BatchMountTaskEntry {
+                            snapshot: snapshot.clone(),
+                        },
+                    );
+                Ok((snapshot, true))
+            }
+            ExternalRegistrationOutcome::Existing(existing)
+            | ExternalRegistrationOutcome::Conflict(existing) => self
+                .batch_mount_tasks
+                .lock()
+                .map_err(|error| error.to_string())?
+                .get(&existing.task_id)
+                .map(|entry| {
+                    self.task_runtime
+                        .get(&existing.task_id)
+                        .map(|runtime| project_batch_mount(&entry.snapshot, &runtime))
+                        .unwrap_or_else(|| entry.snapshot.clone())
+                })
+                .map(|snapshot| (snapshot, false))
+                .ok_or_else(|| {
+                    format!(
+                        "batch mount task projection not found: {}",
+                        existing.task_id
+                    )
+                }),
+        }
+    }
+
+    pub(crate) fn update_batch_mount_progress(
+        &self,
+        task_id: &str,
+        completed: u64,
+        total: Option<u64>,
+        current_id: Option<&str>,
+    ) -> AppResult<BatchMountTaskSnapshot> {
+        self.task_runtime
+            .set_progress(task_id, completed, total, current_id)?;
+        self.batch_mount_snapshot(task_id)
+    }
+
+    pub(crate) fn finish_batch_mount(
+        &self,
+        task_id: &str,
+        result: Result<Value, String>,
+    ) -> AppResult<BatchMountTaskSnapshot> {
+        let runtime_result = result
+            .as_ref()
+            .map(|value| value.clone())
+            .map_err(|error| crate::backend::runtime::AppError::from(error.clone()));
+        let runtime_snapshot = self.finish_external_result(task_id, runtime_result)?;
+        let mut tasks = self
+            .batch_mount_tasks
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| format!("batch mount task not found: {task_id}"))?;
+        entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
+        match (runtime_snapshot.state, result) {
+            (TaskState::Succeeded, Ok(result)) => {
+                entry.snapshot.status = BackgroundTaskStatus::Completed;
+                entry.snapshot.progress.phase = "completed".to_string();
+                entry.snapshot.progress.current_id = None;
+                entry.snapshot.result = Some(result);
+            }
+            (TaskState::Canceled, _) => {
+                entry.snapshot.status = BackgroundTaskStatus::Cancelled;
+                entry.snapshot.progress.phase = "cancelled".to_string();
+                entry.snapshot.progress.current_id = None;
+                entry.snapshot.error = runtime_error_message(&runtime_snapshot);
+            }
+            (_, Err(error)) => {
+                entry.snapshot.status = BackgroundTaskStatus::Failed;
+                entry.snapshot.progress.phase = "failed".to_string();
+                entry.snapshot.progress.current_id = None;
+                entry.snapshot.error = Some(error);
+            }
+            (state, Ok(_)) => {
+                entry.snapshot.status = BackgroundTaskStatus::Failed;
+                entry.snapshot.progress.phase = "failed".to_string();
+                entry.snapshot.progress.current_id = None;
+                entry.snapshot.error = Some(format!(
+                    "batch mount did not reach a terminal state: {state:?}"
+                ));
+            }
+        }
+        Ok(entry.snapshot.clone())
+    }
+
+    pub(crate) fn batch_mount_snapshot(&self, task_id: &str) -> AppResult<BatchMountTaskSnapshot> {
+        let runtime = self.external_task_snapshot(task_id)?;
+        self.batch_mount_tasks
+            .lock()
+            .map_err(|error| error.to_string())?
+            .get(task_id)
+            .map(|entry| project_batch_mount(&entry.snapshot, &runtime))
+            .ok_or_else(|| format!("batch mount task not found: {task_id}"))
+    }
+
+    pub(crate) fn batch_mount_snapshots(&self) -> AppResult<Vec<BatchMountTaskSnapshot>> {
+        let mut snapshots = self
+            .batch_mount_tasks
+            .lock()
+            .map_err(|error| error.to_string())?
+            .values()
+            .filter_map(|entry| {
+                self.task_runtime
+                    .get(&entry.snapshot.id)
+                    .map(|runtime| project_batch_mount(&entry.snapshot, &runtime))
+            })
+            .collect::<Vec<_>>();
+        snapshots.sort_by(|left, right| left.started_at.cmp(&right.started_at));
+        Ok(snapshots)
+    }
+
+    pub(crate) fn cancel_batch_mount(&self, task_id: &str) -> AppResult<BatchMountTaskSnapshot> {
+        match self.task_runtime.cancel(task_id) {
+            crate::backend::runtime::tasks::CancelOutcome::Requested(snapshot)
+            | crate::backend::runtime::tasks::CancelOutcome::AlreadyFinished(snapshot) => {
+                self.batch_mount_snapshot(&snapshot.task_id)
+            }
+            crate::backend::runtime::tasks::CancelOutcome::NotFound => {
+                Err(format!("batch mount task not found: {task_id}"))
+            }
+        }
     }
 
     /// Start work through the same kernel coordinator used by both extension
@@ -2023,6 +2417,63 @@ fn background_task_status(state: TaskState) -> BackgroundTaskStatus {
     }
 }
 
+fn project_source_scan(
+    snapshot: &SourceScanTaskSnapshot,
+    runtime: &TaskSnapshot,
+) -> SourceScanTaskSnapshot {
+    let mut projected = snapshot.clone();
+    projected.status = match runtime.state {
+        TaskState::Pending | TaskState::Running => BackgroundTaskStatus::Running,
+        TaskState::Cancelling => BackgroundTaskStatus::Cancelling,
+        TaskState::Succeeded => BackgroundTaskStatus::Completed,
+        TaskState::Failed => BackgroundTaskStatus::Failed,
+        TaskState::Canceled => BackgroundTaskStatus::Cancelled,
+    };
+    projected.finished_at = runtime.finished_at.clone();
+    if let Some(progress) = &runtime.progress {
+        projected.progress.completed_source_count = progress.current;
+        projected.progress.total_source_count = progress.total;
+        projected.progress.current_source_name = progress.note.clone();
+        if matches!(runtime.state, TaskState::Pending | TaskState::Running) {
+            projected.progress.phase = SourceScanProgressPhase::Scanning;
+        }
+    }
+    if runtime.state == TaskState::Canceled {
+        projected.progress.phase = SourceScanProgressPhase::Cancelled;
+        projected.error = runtime_error_message(runtime);
+    }
+    projected
+}
+
+fn project_batch_mount(
+    snapshot: &BatchMountTaskSnapshot,
+    runtime: &TaskSnapshot,
+) -> BatchMountTaskSnapshot {
+    let mut projected = snapshot.clone();
+    projected.status = match runtime.state {
+        TaskState::Pending | TaskState::Running => BackgroundTaskStatus::Running,
+        TaskState::Cancelling => BackgroundTaskStatus::Cancelling,
+        TaskState::Succeeded => BackgroundTaskStatus::Completed,
+        TaskState::Failed => BackgroundTaskStatus::Failed,
+        TaskState::Canceled => BackgroundTaskStatus::Cancelled,
+    };
+    projected.finished_at = runtime.finished_at.clone();
+    if let Some(progress) = &runtime.progress {
+        projected.progress.completed = progress.current;
+        projected.progress.total = progress.total;
+        projected.progress.current_id = progress.note.clone();
+        if matches!(runtime.state, TaskState::Pending | TaskState::Running) {
+            projected.progress.phase = "running".to_string();
+        }
+    }
+    if runtime.state == TaskState::Canceled {
+        projected.progress.phase = "cancelled".to_string();
+        projected.progress.current_id = None;
+        projected.error = runtime_error_message(runtime);
+    }
+    projected
+}
+
 trait BackgroundTaskProjection: Clone {
     fn project_with_runtime(&self, runtime: &TaskSnapshot) -> Self;
 }
@@ -2320,6 +2771,46 @@ mod tests {
         assert!(!should_start_second);
         assert_eq!(first.id, second.id);
         assert!(registry.has_running_tasks());
+    }
+
+    #[test]
+    fn source_scan_deduplicates_same_scope_and_projects_cancellation() {
+        let registry = BackgroundTaskRegistry::default();
+        let (first, first_started) = registry
+            .begin_source_scan("tenant-a", SourceScanScope::All, None)
+            .expect("start source scan");
+        let (second, second_started) = registry
+            .begin_source_scan("tenant-a", SourceScanScope::All, None)
+            .expect("deduplicate source scan");
+
+        assert!(first_started);
+        assert!(!second_started);
+        assert_eq!(first.id, second.id);
+        let cancelling = registry
+            .cancel_source_scan(&first.id)
+            .expect("cancel source scan");
+        assert_eq!(cancelling.status, BackgroundTaskStatus::Cancelling);
+    }
+
+    #[test]
+    fn batch_mount_uses_profile_conflict_and_projects_terminal_result() {
+        let registry = BackgroundTaskRegistry::default();
+        let (first, first_started) = registry
+            .begin_batch_mount("tenant-a", "group", "profile-a", "group-a:true")
+            .expect("start batch mount");
+        let (second, second_started) = registry
+            .begin_batch_mount("tenant-a", "exclusive", "profile-a", "group-b")
+            .expect("conflict batch mount");
+
+        assert!(first_started);
+        assert!(!second_started);
+        assert_eq!(first.id, second.id);
+
+        let finished = registry
+            .finish_batch_mount(&first.id, Ok(serde_json::json!({ "updated_count": 1 })))
+            .expect("finish batch mount");
+        assert_eq!(finished.status, BackgroundTaskStatus::Completed);
+        assert_eq!(finished.result.expect("result")["updated_count"], 1);
     }
 
     #[test]

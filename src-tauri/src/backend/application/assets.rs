@@ -114,12 +114,13 @@ impl AppService {
             .await?;
             AppResult::Ok((profiles, mounts))
         })?;
-        Ok(crate::backend::planner::build_plan(
+        crate::backend::planner::build_plan_with_catalog(
             &assets,
             &profiles,
             &mounts,
             profile_filter.as_deref(),
-        ))
+            self.runtime.target_catalog().as_ref(),
+        )
     }
 
     pub(crate) fn mount_asset_by_id(
@@ -193,6 +194,7 @@ impl AppService {
                 &assets,
                 &plan,
                 action_ids.as_deref(),
+                self.runtime.target_catalog().as_ref(),
             )
             .await
         })

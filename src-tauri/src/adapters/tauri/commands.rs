@@ -10,9 +10,9 @@ use crate::adapters::prompt_clipboard::{
 use crate::adapters::tauri::app_icon::set_application_icon;
 use crate::adapters::tauri::background_tasks::{
     AiExecutionTaskGetParams, AiExecutionTaskSnapshot, BackgroundTaskRegistry,
-    BackgroundTaskStatus, ConversationScriptInstallTaskSnapshot,
+    BackgroundTaskStatus, BatchMountTaskSnapshot, ConversationScriptInstallTaskSnapshot,
     ConversationSearchIndexTaskSnapshot, ConversationSyncTaskSnapshot, MemoryTaskSnapshot,
-    SkillBackupTaskSnapshot,
+    SkillBackupTaskSnapshot, SourceScanScope, SourceScanTaskSnapshot,
 };
 #[cfg(test)]
 use crate::backend::capabilities::{
@@ -1608,6 +1608,261 @@ pub(crate) fn scan_skill_sources(state: State<'_, AppState>) -> AppResult<Vec<Ca
     result
 }
 
+pub(crate) const SOURCE_SCAN_TASK_UPDATED_EVENT: &str = "source-scan-task-updated";
+
+#[tauri::command]
+pub(crate) fn start_source_scan(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    kind: Option<AssetKind>,
+    scope: Option<SourceScanScope>,
+) -> AppResult<SourceScanTaskSnapshot> {
+    let scope = scope.unwrap_or(SourceScanScope::All);
+    let scan_kind = if scope == SourceScanScope::Skills {
+        Some(AssetKind::Skill)
+    } else {
+        kind
+    };
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    let (snapshot, started) = state
+        .background_tasks
+        .begin_source_scan(&tenant_id, scope, scan_kind)?;
+    if !started {
+        return state.background_tasks.source_scan_snapshot(&snapshot.id);
+    }
+
+    let task_id = snapshot.id.clone();
+    let runtime = state.runtime.clone();
+    let tasks = state.background_tasks.clone();
+    let task_context = runtime.task_runtime().task_context(&task_id)?;
+    let params = SourceScanParams {
+        kind: scan_kind,
+        dry_run: false,
+    };
+    let skill_sources_only = scope == SourceScanScope::Skills;
+    let worker_app = app.clone();
+    let worker_task_id = task_id.clone();
+    let spawn_result = std::thread::Builder::new()
+        .name(format!("aiw-source-scan-{}", &task_id[..8]))
+        .spawn(move || {
+            let service = AppService::from_runtime(&runtime);
+            let result = crate::backend::application::SourceScanWorkflow::run(
+                &service,
+                params,
+                &task_context,
+                skill_sources_only,
+            );
+            if let Ok(snapshot) =
+                tasks.finish_source_scan(&worker_task_id, result.map_err(|error| error.to_string()))
+            {
+                let _ = worker_app.emit(SOURCE_SCAN_TASK_UPDATED_EVENT, &snapshot);
+            }
+        });
+    if let Err(error) = spawn_result {
+        let failure = state.background_tasks.finish_source_scan(
+            &task_id,
+            Err(format!("启动 source scan worker 失败: {error}")),
+        )?;
+        let _ = app.emit(SOURCE_SCAN_TASK_UPDATED_EVENT, &failure);
+        return Ok(failure);
+    }
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub(crate) fn get_source_scan_task(
+    state: State<'_, AppState>,
+    task_id: String,
+) -> AppResult<SourceScanTaskSnapshot> {
+    state.background_tasks.source_scan_snapshot(&task_id)
+}
+
+#[tauri::command]
+pub(crate) fn list_source_scan_tasks(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<SourceScanTaskSnapshot>> {
+    state.background_tasks.source_scan_snapshots()
+}
+
+#[tauri::command]
+pub(crate) fn cancel_source_scan(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> AppResult<SourceScanTaskSnapshot> {
+    let snapshot = state.background_tasks.cancel_source_scan(&task_id)?;
+    let _ = app.emit(SOURCE_SCAN_TASK_UPDATED_EVENT, &snapshot);
+    Ok(snapshot)
+}
+
+pub(crate) const BATCH_MOUNT_TASK_UPDATED_EVENT: &str = "batch-mount-task-updated";
+
+#[tauri::command]
+pub(crate) fn start_batch_mount(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mode: String,
+    group_id: Option<String>,
+    profile_id: String,
+    enabled: Option<bool>,
+    group_ids: Option<Vec<String>>,
+) -> AppResult<BatchMountTaskSnapshot> {
+    let mode = mode.trim().to_ascii_lowercase();
+    if !matches!(mode.as_str(), "group" | "exclusive") {
+        return Err(format!("unsupported batch mount mode: {mode}"));
+    }
+    if profile_id.trim().is_empty() {
+        return Err("profile_id is required".to_string());
+    }
+    let group_id = group_id.map(|value| value.trim().to_string());
+    let group_ids = group_ids
+        .unwrap_or_default()
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if mode == "group" && group_id.as_deref().is_none_or(str::is_empty) {
+        return Err("group_id is required for group batch mount".to_string());
+    }
+    if mode == "exclusive" && group_ids.is_empty() {
+        return Err("group_ids are required for exclusive batch mount".to_string());
+    }
+
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    let dedup_suffix = if mode == "group" {
+        format!(
+            "{}:{}",
+            group_id.as_deref().unwrap_or_default(),
+            enabled.unwrap_or(true)
+        )
+    } else {
+        group_ids.join(",")
+    };
+    let (snapshot, started) =
+        state
+            .background_tasks
+            .begin_batch_mount(&tenant_id, &mode, &profile_id, &dedup_suffix)?;
+    if !started {
+        return state.background_tasks.batch_mount_snapshot(&snapshot.id);
+    }
+
+    let task_id = snapshot.id.clone();
+    let runtime = state.runtime.clone();
+    let tasks = state.background_tasks.clone();
+    let task_context = runtime.task_runtime().task_context(&task_id)?;
+    let worker_app = app.clone();
+    let worker_mode = mode.clone();
+    let worker_group_id = group_id.clone();
+    let worker_profile_id = profile_id.clone();
+    let worker_group_ids = group_ids.clone();
+    let worker_enabled = enabled.unwrap_or(true);
+    let worker_task_id = task_id.clone();
+    let spawn_result = std::thread::Builder::new()
+        .name(format!("aiw-batch-mount-{}", &task_id[..8]))
+        .spawn(move || {
+            let service = AppService::from_runtime(&runtime);
+            if task_context.is_cancelled() {
+                let result = tasks.finish_batch_mount(
+                    &worker_task_id,
+                    Err("batch mount cancelled before execution".to_string()),
+                );
+                if let Ok(snapshot) = result {
+                    let _ = worker_app.emit(BATCH_MOUNT_TASK_UPDATED_EVENT, &snapshot);
+                }
+                return;
+            }
+            let result = if worker_mode == "group" {
+                service
+                    .apply_skill_group_mount(
+                        worker_group_id.as_deref().unwrap_or_default(),
+                        &worker_profile_id,
+                        worker_enabled,
+                    )
+                    .and_then(|value| {
+                        serde_json::to_value(value).map_err(|error| error.to_string())
+                    })
+            } else {
+                if task_context.is_cancelled() {
+                    let result = tasks.finish_batch_mount(
+                        &worker_task_id,
+                        Err("batch mount cancelled before exclusive execution".to_string()),
+                    );
+                    if let Ok(snapshot) = result {
+                        let _ = worker_app.emit(BATCH_MOUNT_TASK_UPDATED_EVENT, &snapshot);
+                    }
+                    return;
+                }
+                service
+                    .apply_skill_group_exclusive_mount(SkillGroupExclusiveMountInput {
+                        group_ids: worker_group_ids,
+                        profile_id: worker_profile_id,
+                        mount_selected: true,
+                        dry_run: false,
+                    })
+                    .and_then(|value| {
+                        serde_json::to_value(value).map_err(|error| error.to_string())
+                    })
+            };
+            let (completed, total) = result
+                .as_ref()
+                .ok()
+                .and_then(|value| {
+                    let total = value
+                        .get("requested_count")
+                        .and_then(Value::as_u64)
+                        .or_else(|| {
+                            let preview = value.get("preview")?;
+                            let mount = preview.get("mount_count")?.as_u64()?;
+                            let unmount = preview.get("unmount_count")?.as_u64()?;
+                            Some(mount + unmount)
+                        });
+                    total.map(|total| (total, Some(total)))
+                })
+                .unwrap_or((0, None));
+            let _ = tasks.update_batch_mount_progress(&worker_task_id, completed, total, None);
+            if let Ok(snapshot) = tasks.finish_batch_mount(&worker_task_id, result) {
+                let _ = worker_app.emit(BATCH_MOUNT_TASK_UPDATED_EVENT, &snapshot);
+            }
+        });
+    if let Err(error) = spawn_result {
+        let failure = state.background_tasks.finish_batch_mount(
+            &task_id,
+            Err(format!("启动 batch mount worker 失败: {error}")),
+        )?;
+        let _ = app.emit(BATCH_MOUNT_TASK_UPDATED_EVENT, &failure);
+        return Ok(failure);
+    }
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub(crate) fn get_batch_mount_task(
+    state: State<'_, AppState>,
+    task_id: String,
+) -> AppResult<BatchMountTaskSnapshot> {
+    state.background_tasks.batch_mount_snapshot(&task_id)
+}
+
+#[tauri::command]
+pub(crate) fn list_batch_mount_tasks(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<BatchMountTaskSnapshot>> {
+    state.background_tasks.batch_mount_snapshots()
+}
+
+#[tauri::command]
+pub(crate) fn cancel_batch_mount(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> AppResult<BatchMountTaskSnapshot> {
+    let snapshot = state.background_tasks.cancel_batch_mount(&task_id)?;
+    let _ = app.emit(BATCH_MOUNT_TASK_UPDATED_EVENT, &snapshot);
+    Ok(snapshot)
+}
+
 #[tauri::command]
 pub(crate) fn list_conversation_adapters(
     state: State<'_, AppState>,
@@ -3015,6 +3270,14 @@ pub(crate) fn command_handler(
         set_asset_mount,
         scan_sources,
         scan_skill_sources,
+        start_source_scan,
+        get_source_scan_task,
+        list_source_scan_tasks,
+        cancel_source_scan,
+        start_batch_mount,
+        get_batch_mount_task,
+        list_batch_mount_tasks,
+        cancel_batch_mount,
         list_conversation_adapters,
         scaffold_conversation_adapter,
         validate_conversation_adapter,

@@ -6,7 +6,23 @@ pub(crate) fn scan_selected_sources(
     sources: Vec<Source>,
     scan: fn(&Source) -> AppResult<Vec<Asset>>,
 ) -> AppResult<Vec<Asset>> {
-    for mut source in prune_missing_sources(db, tenant_id, sources)? {
+    scan_selected_sources_with_progress(db, tenant_id, sources, scan, |_, _, _| Ok(()))
+}
+
+pub(crate) fn scan_selected_sources_with_progress<F>(
+    db: &crate::backend::store::Database,
+    tenant_id: &str,
+    sources: Vec<Source>,
+    scan: fn(&Source) -> AppResult<Vec<Asset>>,
+    mut before_source: F,
+) -> AppResult<Vec<Asset>>
+where
+    F: FnMut(usize, usize, &Source) -> AppResult<()>,
+{
+    let sources = prune_missing_sources(db, tenant_id, sources)?;
+    let total = sources.len();
+    for (index, mut source) in sources.into_iter().enumerate() {
+        before_source(index, total, &source)?;
         if !source.enabled {
             log_info(
                 "source.scan.skip",

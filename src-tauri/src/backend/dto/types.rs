@@ -372,7 +372,7 @@ pub(crate) struct AppOverview {
     pub(crate) last_scan_status: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct CatalogAsset {
     #[serde(flatten)]
     pub(crate) asset: Asset,
@@ -391,7 +391,7 @@ pub(crate) struct GitRepositoryInfo {
     pub(crate) web_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct SkillBackupAssetStatus {
     pub(crate) state: SkillBackupState,
     pub(crate) backup_path: Option<String>,

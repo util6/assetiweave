@@ -7,6 +7,27 @@ use chrono::Utc;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+pub(crate) fn build_plan_with_catalog(
+    assets: &[Asset],
+    profiles: &[TargetProfile],
+    enabled_mounts: &[AssetMount],
+    requested_profile_id: Option<&str>,
+    catalog: &crate::backend::target_catalog::TargetCatalog,
+) -> crate::backend::dto::AppResult<DeploymentPlan> {
+    for profile in profiles
+        .iter()
+        .filter(|profile| requested_profile_id.is_none_or(|requested| requested == profile.id))
+    {
+        catalog.require_descriptor(&profile.target_provider_id)?;
+    }
+    Ok(build_plan(
+        assets,
+        profiles,
+        enabled_mounts,
+        requested_profile_id,
+    ))
+}
+
 pub(crate) fn build_plan(
     assets: &[Asset],
     profiles: &[TargetProfile],

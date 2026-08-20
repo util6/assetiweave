@@ -639,6 +639,23 @@ export async function applySkillGroupMount(
   enabled: boolean,
 ): Promise<ApplyAssetGroupMountResult> {
   try {
+    if (isTauriRuntime()) {
+      const task = await startBatchMount({
+        mode: "group",
+        groupId,
+        profileId,
+        enabled,
+      });
+      const terminal = await waitForBatchMountTask(task.id);
+      if (terminal.status !== "completed" || !terminal.result) {
+        throw new Error(terminal.error ?? "Batch group mount did not complete");
+      }
+      return parseSchemaOrThrow(
+        applyAssetGroupMountResultSchema,
+        terminal.result,
+        "Invalid skill group mount result",
+      );
+    }
     return parseSchemaOrThrow(
       applyAssetGroupMountResultSchema,
       await invoke<ApplyAssetGroupMountResult>("apply_skill_group_mount", { groupId, profileId, enabled }),
@@ -697,6 +714,22 @@ export async function applySkillGroupExclusiveMount(
   );
 
   try {
+    if (isTauriRuntime()) {
+      const task = await startBatchMount({
+        mode: "exclusive",
+        profileId: parsedInput.profile_id,
+        groupIds: parsedInput.group_ids,
+      });
+      const terminal = await waitForBatchMountTask(task.id);
+      if (terminal.status !== "completed" || !terminal.result) {
+        throw new Error(terminal.error ?? "Exclusive batch mount did not complete");
+      }
+      return parseSchemaOrThrow(
+        applySkillGroupExclusiveMountResultSchema,
+        terminal.result,
+        "Invalid exclusive skill group mount result",
+      );
+    }
     return parseSchemaOrThrow(
       applySkillGroupExclusiveMountResultSchema,
       await invoke<ApplySkillGroupExclusiveMountResult>("apply_skill_group_exclusive_mount", { input: parsedInput }),
@@ -713,6 +746,14 @@ export async function applySkillGroupExclusiveMount(
 
 export async function scanSources(kind?: AssetKind): Promise<Asset[]> {
   try {
+    if (isTauriRuntime()) {
+      const task = await startSourceScan(kind, "all");
+      const terminal = await waitForSourceScanTask(task.id);
+      if (terminal.status !== "completed" || !terminal.result) {
+        throw new Error(terminal.error ?? "Source scan did not complete");
+      }
+      return terminal.result;
+    }
     return await invoke<Asset[]>("scan_sources", { kind: kind ?? null });
   } catch {
     return kind ? fallbackAssets.filter((asset) => asset.kind === kind) : fallbackAssets;
@@ -721,9 +762,139 @@ export async function scanSources(kind?: AssetKind): Promise<Asset[]> {
 
 export async function scanSkillSources(): Promise<Asset[]> {
   try {
+    if (isTauriRuntime()) {
+      const task = await startSourceScan("skill", "skills");
+      const terminal = await waitForSourceScanTask(task.id);
+      if (terminal.status !== "completed" || !terminal.result) {
+        throw new Error(terminal.error ?? "Skill source scan did not complete");
+      }
+      return terminal.result;
+    }
     return await invoke<Asset[]>("scan_skill_sources");
   } catch {
     return fallbackAssets.filter((asset) => asset.kind === "skill");
+  }
+}
+
+export type SourceScanScope = "all" | "skills";
+
+export interface SourceScanTaskSnapshot {
+  id: string;
+  status: "running" | "cancelling" | "completed" | "failed" | "cancelled";
+  scope: SourceScanScope;
+  kind: AssetKind | null;
+  progress: {
+    phase: "preparing" | "scanning" | "completed" | "failed" | "cancelled";
+    completed_source_count: number;
+    total_source_count: number | null;
+    current_source_name: string | null;
+  };
+  started_at: string;
+  finished_at: string | null;
+  result: Asset[] | null;
+  error: string | null;
+}
+
+const SOURCE_SCAN_TASK_UPDATED_EVENT = "source-scan-task-updated";
+
+export async function startSourceScan(
+  kind?: AssetKind,
+  scope: SourceScanScope = "all",
+): Promise<SourceScanTaskSnapshot> {
+  return await invoke<SourceScanTaskSnapshot>("start_source_scan", {
+    kind: kind ?? null,
+    scope,
+  });
+}
+
+export async function getSourceScanTask(taskId: string): Promise<SourceScanTaskSnapshot> {
+  return await invoke<SourceScanTaskSnapshot>("get_source_scan_task", { taskId });
+}
+
+export async function listSourceScanTasks(): Promise<SourceScanTaskSnapshot[]> {
+  return await invoke<SourceScanTaskSnapshot[]>("list_source_scan_tasks");
+}
+
+export async function cancelSourceScan(taskId: string): Promise<SourceScanTaskSnapshot> {
+  return await invoke<SourceScanTaskSnapshot>("cancel_source_scan", { taskId });
+}
+
+export function subscribeSourceScanTasks(listener: (snapshot: SourceScanTaskSnapshot) => void) {
+  return listen<SourceScanTaskSnapshot>(SOURCE_SCAN_TASK_UPDATED_EVENT, (event) => {
+    listener(event.payload);
+  });
+}
+
+export interface BatchMountTaskSnapshot {
+  id: string;
+  status: "running" | "cancelling" | "completed" | "failed" | "cancelled";
+  mode: "group" | "exclusive" | string;
+  profile_id: string;
+  progress: {
+    phase: string;
+    completed: number;
+    total: number | null;
+    current_id: string | null;
+  };
+  started_at: string;
+  finished_at: string | null;
+  result: unknown | null;
+  error: string | null;
+}
+
+const BATCH_MOUNT_TASK_UPDATED_EVENT = "batch-mount-task-updated";
+
+export async function startBatchMount(params: {
+  mode: "group" | "exclusive";
+  groupId?: string;
+  groupIds?: string[];
+  profileId: string;
+  enabled?: boolean;
+}): Promise<BatchMountTaskSnapshot> {
+  return await invoke<BatchMountTaskSnapshot>("start_batch_mount", {
+    mode: params.mode,
+    groupId: params.groupId ?? null,
+    groupIds: params.groupIds ?? null,
+    profileId: params.profileId,
+    enabled: params.enabled ?? null,
+  });
+}
+
+export async function getBatchMountTask(taskId: string): Promise<BatchMountTaskSnapshot> {
+  return await invoke<BatchMountTaskSnapshot>("get_batch_mount_task", { taskId });
+}
+
+export async function listBatchMountTasks(): Promise<BatchMountTaskSnapshot[]> {
+  return await invoke<BatchMountTaskSnapshot[]>("list_batch_mount_tasks");
+}
+
+export async function cancelBatchMount(taskId: string): Promise<BatchMountTaskSnapshot> {
+  return await invoke<BatchMountTaskSnapshot>("cancel_batch_mount", { taskId });
+}
+
+export function subscribeBatchMountTasks(listener: (snapshot: BatchMountTaskSnapshot) => void) {
+  return listen<BatchMountTaskSnapshot>(BATCH_MOUNT_TASK_UPDATED_EVENT, (event) => {
+    listener(event.payload);
+  });
+}
+
+async function waitForBatchMountTask(taskId: string): Promise<BatchMountTaskSnapshot> {
+  for (;;) {
+    const snapshot = await getBatchMountTask(taskId);
+    if (["completed", "failed", "cancelled"].includes(snapshot.status)) {
+      return snapshot;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+  }
+}
+
+async function waitForSourceScanTask(taskId: string): Promise<SourceScanTaskSnapshot> {
+  for (;;) {
+    const snapshot = await getSourceScanTask(taskId);
+    if (["completed", "failed", "cancelled"].includes(snapshot.status)) {
+      return snapshot;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
   }
 }
 

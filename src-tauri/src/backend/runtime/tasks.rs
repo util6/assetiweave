@@ -114,6 +114,16 @@ pub(crate) struct TaskContext {
 }
 
 impl TaskContext {
+    pub(crate) fn detached() -> Self {
+        Self {
+            cancellation: CancellationToken::new(),
+            progress: ProgressHandle {
+                task_id: String::new(),
+                runtime: TaskRuntime::new(),
+            },
+        }
+    }
+
     pub(crate) fn is_cancelled(&self) -> bool {
         self.cancellation.is_cancelled()
     }
@@ -351,6 +361,49 @@ impl TaskRuntime {
             entry.started = true;
         }
         Ok(entry.snapshot.clone())
+    }
+
+    pub(crate) fn cancellation_token(&self, task_id: &str) -> AppResult<CancellationToken> {
+        self.tasks
+            .lock()
+            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?
+            .get(task_id)
+            .map(|entry| entry.cancellation.clone())
+            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))
+    }
+
+    pub(crate) fn task_context(&self, task_id: &str) -> AppResult<TaskContext> {
+        Ok(TaskContext {
+            cancellation: self.cancellation_token(task_id)?,
+            progress: ProgressHandle {
+                task_id: task_id.to_string(),
+                runtime: self.clone(),
+            },
+        })
+    }
+
+    pub(crate) fn set_progress(
+        &self,
+        task_id: &str,
+        current: u64,
+        total: Option<u64>,
+        note: Option<&str>,
+    ) -> AppResult<()> {
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+        if entry.snapshot.state.is_active() {
+            entry.snapshot.progress = Some(TaskProgress {
+                current,
+                total,
+                note: note.map(str::to_string),
+            });
+        }
+        Ok(())
     }
 
     /// Start a task that was registered before its adapter had assembled the

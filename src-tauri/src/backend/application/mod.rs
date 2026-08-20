@@ -35,3 +35,4 @@ pub(crate) use conversation_adapter_catalog_v2::*;
 pub(crate) use conversation_script_catalog::*;
 pub(crate) use params::*;
 pub(crate) use service::AppService;
+pub(crate) use sources::{SourceScanResult, SourceScanWorkflow};

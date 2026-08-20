@@ -72,6 +72,7 @@ pub(crate) async fn execute_deployment_plan(
     assets: &[Asset],
     plan: &DeploymentPlan,
     requested_action_ids: Option<&[String]>,
+    target_catalog: &crate::backend::target_catalog::TargetCatalog,
 ) -> AppResult<ExecutionResult> {
     let requested: Option<HashSet<&str>> =
         requested_action_ids.map(|ids| ids.iter().map(String::as_str).collect());
@@ -138,6 +139,16 @@ pub(crate) async fn execute_deployment_plan(
             );
             continue;
         };
+        if let Err(error) = target_catalog.require_descriptor(&profile.target_provider_id) {
+            let message = error.to_string();
+            result.errors.push(message.clone());
+            log_action_error(
+                "部署动作失败：目标 Provider 不可用",
+                &message,
+                &action_log_fields(action, Some(asset), Some(profile)),
+            );
+            continue;
+        }
 
         match execute_deployment_action(pool, tenant_id, profile, asset, action).await {
             Ok(()) => {

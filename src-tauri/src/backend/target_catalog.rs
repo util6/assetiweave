@@ -46,6 +46,15 @@ impl TargetCatalog {
             .find(|descriptor| descriptor.id == provider_id)
     }
 
+    pub(crate) fn require_descriptor(
+        &self,
+        provider_id: &str,
+    ) -> crate::backend::dto::AppResult<&TargetProfileDescriptor> {
+        self.descriptor(provider_id).ok_or_else(|| {
+            format!("target_provider_missing: target provider is not available: {provider_id}")
+        })
+    }
+
     pub(crate) fn descriptor_for_app_kind(
         &self,
         app_kind: AppKind,

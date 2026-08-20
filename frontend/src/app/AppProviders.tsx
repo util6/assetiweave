@@ -9,6 +9,7 @@ import { SkillBackupProvider } from "./backgroundTasks/SkillBackupProvider";
 import { MemoryTaskProvider } from "./backgroundTasks/MemoryTaskProvider";
 import { AppUpdateProvider } from "./updates/AppUpdateProvider";
 import { ConversationCardKindRegistryProvider } from "../components/conversations/ConversationCardKindRegistry";
+import { CatalogTaskProvider } from "./backgroundTasks/CatalogTaskProvider";
 
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
@@ -20,8 +21,10 @@ export function AppProviders({ children }: { children: ReactNode }) {
               <AgentLifecycleTaskProvider>
                 <MemoryTaskProvider>
                   <SearchIndexProvider>
-                    <SkillBackupProvider>
-                      <AppUpdateProvider>{children}</AppUpdateProvider>
+                  <SkillBackupProvider>
+                      <CatalogTaskProvider>
+                        <AppUpdateProvider>{children}</AppUpdateProvider>
+                      </CatalogTaskProvider>
                     </SkillBackupProvider>
                   </SearchIndexProvider>
                 </MemoryTaskProvider>

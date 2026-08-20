@@ -1,4 +1,83 @@
 use super::prelude::*;
+use crate::backend::runtime::tasks::TaskContext;
+
+#[derive(Debug, Clone)]
+pub(crate) struct SourceScanResult {
+    pub(crate) assets: Vec<CatalogAsset>,
+}
+
+pub(crate) struct SourceScanWorkflow;
+
+impl SourceScanWorkflow {
+    pub(crate) fn run(
+        service: &AppService,
+        params: SourceScanParams,
+        cx: &TaskContext,
+        skill_sources_only: bool,
+    ) -> AppResult<SourceScanResult> {
+        if cx.is_cancelled() {
+            return Err("source scan cancelled".to_string());
+        }
+        if params.dry_run {
+            return Ok(SourceScanResult {
+                assets: capabilities::catalog_assets_sqlx(
+                    &service.db,
+                    service.tenant_id(),
+                    params.kind,
+                )?,
+            });
+        }
+
+        let pool = service.db.pool().clone();
+        let tenant_id = service.tenant_id().to_string();
+        let sources = service.db.block_on(async move {
+            if skill_sources_only {
+                crate::backend::store::load_skill_sources_sqlx(&pool, &tenant_id).await
+            } else {
+                crate::backend::store::load_sources_sqlx(&pool, &tenant_id).await
+            }
+        })?;
+        let total = sources.len();
+        let scan = if skill_sources_only {
+            crate::backend::scanner::scan_skill_source
+        } else {
+            crate::backend::scanner::scan_source
+        };
+        capabilities::scan_selected_sources_with_progress(
+            &service.db,
+            service.tenant_id(),
+            sources,
+            scan,
+            |index, total, source| {
+                if cx.is_cancelled() {
+                    return Err("source scan cancelled".to_string());
+                }
+                cx.progress().progress(
+                    index as u64,
+                    Some(total as u64),
+                    Some(source.name.as_str()),
+                );
+                Ok(())
+            },
+        )?;
+        if cx.is_cancelled() {
+            return Err("source scan cancelled".to_string());
+        }
+        cx.progress()
+            .progress(total as u64, Some(total as u64), Some("completed"));
+        Ok(SourceScanResult {
+            assets: capabilities::catalog_assets_sqlx(
+                &service.db,
+                service.tenant_id(),
+                if skill_sources_only {
+                    Some(AssetKind::Skill)
+                } else {
+                    params.kind
+                },
+            )?,
+        })
+    }
+}
 
 impl AppService {
     pub(crate) fn refresh_recorded_assets(&self) -> AppResult<Vec<Asset>> {
@@ -133,26 +212,20 @@ impl AppService {
     }
 
     pub(crate) fn scan_sources(&self, params: SourceScanParams) -> AppResult<Vec<CatalogAsset>> {
-        if params.dry_run {
-            return capabilities::catalog_assets_sqlx(&self.db, self.tenant_id(), params.kind);
-        }
-        capabilities::refresh_all_sources(&self.db, self.tenant_id())?;
-        capabilities::catalog_assets_sqlx(&self.db, self.tenant_id(), params.kind)
+        Ok(SourceScanWorkflow::run(self, params, &TaskContext::detached(), false)?.assets)
     }
 
     pub(crate) fn scan_skill_sources(&self) -> AppResult<Vec<CatalogAsset>> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let sources = self.db.block_on(async move {
-            crate::backend::store::load_skill_sources_sqlx(&pool, &tenant_id).await
-        })?;
-        capabilities::scan_selected_sources(
-            &self.db,
-            self.tenant_id(),
-            sources,
-            crate::backend::scanner::scan_skill_source,
-        )?;
-        capabilities::catalog_assets_sqlx(&self.db, self.tenant_id(), Some(AssetKind::Skill))
+        Ok(SourceScanWorkflow::run(
+            self,
+            SourceScanParams {
+                kind: Some(AssetKind::Skill),
+                dry_run: false,
+            },
+            &TaskContext::detached(),
+            true,
+        )?
+        .assets)
     }
 }
 

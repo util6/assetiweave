@@ -19,3 +19,13 @@ start_agent_installation
 start_agent_update
 start_agent_reinstallation
 start_agent_uninstall
+# ResidentHost-only long-running catalog workflows; Engine keeps synchronous
+# canonical methods and these commands intentionally remain Tauri-only.
+start_source_scan
+get_source_scan_task
+list_source_scan_tasks
+cancel_source_scan
+start_batch_mount
+get_batch_mount_task
+list_batch_mount_tasks
+cancel_batch_mount
