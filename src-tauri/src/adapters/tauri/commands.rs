@@ -1911,39 +1911,39 @@ pub(crate) fn list_conversation_adapter_runtime_statuses(
 #[tauri::command]
 pub(crate) async fn list_agent_catalog(
     state: State<'_, AppState>,
-) -> AppResult<Vec<AgentCatalogEntry>> {
+) -> RuntimeAppResult<Vec<AgentCatalogEntry>> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).list_agent_catalog()
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
 pub(crate) async fn check_agent_connection(
     state: State<'_, AppState>,
     params: AgentConnectionCheckRequest,
-) -> AppResult<AgentConnectionResult> {
+) -> RuntimeAppResult<AgentConnectionResult> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).check_agent_connection(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
 pub(crate) async fn list_agent_models(
     state: State<'_, AppState>,
     params: AgentModelsRequest,
-) -> AppResult<AgentModelsResult> {
+) -> RuntimeAppResult<AgentModelsResult> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).list_agent_models(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]

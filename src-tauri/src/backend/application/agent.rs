@@ -1,4 +1,5 @@
 use super::prelude::*;
+use crate::backend::runtime::{AppError, AppResult};
 
 use crate::backend::agents::types::{
     AgentConnectionCheckMode, AgentConnectionCheckRequest, AgentConnectionResult, AgentId,
@@ -16,7 +17,8 @@ impl AppService {
         &self,
         params: AgentConnectionCheckRequest,
     ) -> AppResult<AgentConnectionResult> {
-        let agent_id = AgentId::parse(params.agent_id).map_err(|error| error.to_string())?;
+        let agent_id = AgentId::parse(params.agent_id)
+            .map_err(|error| AppError::Validation(error.to_string()))?;
         let mode = params.mode;
         let mut result = crate::backend::ai_execution::check_agent_connection_blocking(
             self.agent_runtime.clone(),
@@ -67,7 +69,8 @@ impl AppService {
         &self,
         params: AgentModelsRequest,
     ) -> AppResult<AgentModelsResult> {
-        let agent_id = AgentId::parse(params.agent_id).map_err(|error| error.to_string())?;
+        let agent_id = AgentId::parse(params.agent_id)
+            .map_err(|error| AppError::Validation(error.to_string()))?;
         Ok(
             crate::backend::ai_execution::discover_agent_models_blocking(
                 self.agent_runtime.clone(),
@@ -88,7 +91,8 @@ impl super::service::AgentAppService {
         &self,
         params: AgentConnectionCheckRequest,
     ) -> AppResult<AgentConnectionResult> {
-        let agent_id = AgentId::parse(params.agent_id).map_err(|error| error.to_string())?;
+        let agent_id = AgentId::parse(params.agent_id)
+            .map_err(|error| AppError::Validation(error.to_string()))?;
         let mode = params.mode;
         let mut result = crate::backend::ai_execution::check_agent_connection_blocking(
             self.agent_runtime.clone(),
@@ -138,7 +142,8 @@ impl super::service::AgentAppService {
         &self,
         params: AgentModelsRequest,
     ) -> AppResult<AgentModelsResult> {
-        let agent_id = AgentId::parse(params.agent_id).map_err(|error| error.to_string())?;
+        let agent_id = AgentId::parse(params.agent_id)
+            .map_err(|error| AppError::Validation(error.to_string()))?;
         Ok(
             crate::backend::ai_execution::discover_agent_models_blocking(
                 self.agent_runtime.clone(),
