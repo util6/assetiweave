@@ -15,8 +15,7 @@ use crate::{
         application::{
             AgentInstallPreview, AgentMarketItemView, AgentUninstallPreview, AppService,
         },
-        dto::AppResult,
-        runtime::AppError,
+        runtime::{AppError, AppResult},
     },
 };
 
@@ -33,7 +32,7 @@ pub(crate) async fn list_agent_market(
         AppService::from_runtime(&runtime).list_agent_market(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 pub(crate) async fn inspect_agent_market_item(
@@ -45,7 +44,7 @@ pub(crate) async fn inspect_agent_market_item(
         AppService::from_runtime(&runtime).inspect_agent_market_item(agent_id)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 pub(crate) fn refresh_agent_market(
@@ -63,8 +62,8 @@ pub(crate) fn refresh_agent_market(
                 AppService::from_runtime(&runtime).refresh_agent_market_catalog()
             })
             .await
-            .map_err(|error| error.to_string())
-            .and_then(|result| result);
+            .map_err(|error| AppError::External(error.to_string()).view().message)
+            .and_then(|result| result.map_err(|error| error.view().message));
             if let Ok(snapshot) = tasks.finish_agent_market_refresh(&task_id, result) {
                 let _ = app.emit(AGENT_MARKET_REFRESH_TASK_UPDATED_EVENT, &snapshot);
             }
@@ -77,15 +76,15 @@ pub(crate) fn get_agent_market_refresh_task(
     state: State<'_, AppState>,
     task_id: String,
 ) -> AppResult<crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot> {
-    state
+    Ok(state
         .background_tasks
-        .agent_market_refresh_snapshot(&task_id)
+        .agent_market_refresh_snapshot(&task_id)?)
 }
 
 pub(crate) fn list_agent_market_refresh_tasks(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot>> {
-    state.background_tasks.agent_market_refresh_snapshots()
+    Ok(state.background_tasks.agent_market_refresh_snapshots()?)
 }
 
 pub(crate) async fn preview_agent_installation(
@@ -97,7 +96,7 @@ pub(crate) async fn preview_agent_installation(
         AppService::from_runtime(&runtime).preview_agent_installation(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 pub(crate) async fn list_installed_agents(
@@ -108,7 +107,7 @@ pub(crate) async fn list_installed_agents(
         AppService::from_runtime(&runtime).list_installed_agents()
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 pub(crate) async fn get_installed_agent(
@@ -120,7 +119,7 @@ pub(crate) async fn get_installed_agent(
         AppService::from_runtime(&runtime).get_installed_agent(agent_id)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 pub(crate) async fn check_agent_runtime(
@@ -132,7 +131,7 @@ pub(crate) async fn check_agent_runtime(
         AppService::from_runtime(&runtime).check_agent_runtime(agent_id)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 pub(crate) async fn preview_agent_uninstall(
@@ -144,20 +143,20 @@ pub(crate) async fn preview_agent_uninstall(
         AppService::from_runtime(&runtime).preview_agent_uninstall(agent_id)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 pub(crate) fn get_agent_lifecycle_task(
     state: State<'_, AppState>,
     task_id: String,
 ) -> AppResult<AgentLifecycleTaskSnapshot> {
-    state.background_tasks.agent_lifecycle_snapshot(&task_id)
+    Ok(state.background_tasks.agent_lifecycle_snapshot(&task_id)?)
 }
 
 pub(crate) fn list_agent_lifecycle_tasks(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<AgentLifecycleTaskSnapshot>> {
-    state.background_tasks.agent_lifecycle_snapshots()
+    Ok(state.background_tasks.agent_lifecycle_snapshots()?)
 }
 
 pub(crate) fn cancel_agent_lifecycle_task(
@@ -251,10 +250,10 @@ pub(crate) async fn enable_agent(
             .list_installed_agents()?
             .into_iter()
             .find(|item| item.agent_id == installation.agent_id)
-            .ok_or_else(|| "Agent installation disappeared".to_string())
+            .ok_or_else(|| AppError::NotFound("Agent installation disappeared".to_string()))
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 pub(crate) async fn disable_agent(
@@ -269,10 +268,10 @@ pub(crate) async fn disable_agent(
             .list_installed_agents()?
             .into_iter()
             .find(|item| item.agent_id == installation.agent_id)
-            .ok_or_else(|| "Agent installation disappeared".to_string())
+            .ok_or_else(|| AppError::NotFound("Agent installation disappeared".to_string()))
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 fn spawn_install_worker(
@@ -304,7 +303,9 @@ fn spawn_install_worker(
                 Vec::new(),
             );
             let result = if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
-                Err("Agent installation cancelled".to_string())
+                Err(AppError::Cancelled(
+                    "Agent installation cancelled".to_string(),
+                ))
             } else {
                 AppService::from_runtime(&runtime).install_agent_with_cancellation_and_progress(
                     params,
@@ -337,7 +338,7 @@ fn spawn_install_worker(
                 Err(error) => worker_tasks
                     .finish_agent_lifecycle(
                         &task_id_for_runtime,
-                        Err(AgentMarketError::new("installation_failed", &error, true)),
+                        Err(market_error_from_app(&error)),
                     )
                     .ok(),
             };
@@ -347,15 +348,12 @@ fn spawn_install_worker(
             match result {
                 Ok(outcome) => serde_json::to_value(&outcome.installation)
                     .map_err(|error| AppError::Legacy(error.to_string())),
-                Err(error) => Err(AppError::Legacy(error)),
+                Err(error) => Err(error),
             }
         }),
     );
     if let Err(error) = result {
-        let _ = tasks.finish_agent_lifecycle(
-            &task_id,
-            Err(AgentMarketError::new("installation_failed", &error, true)),
-        );
+        let _ = tasks.finish_agent_lifecycle(&task_id, Err(market_error_from_app(&error)));
     }
 }
 
@@ -388,7 +386,7 @@ fn spawn_uninstall_worker(
                 Vec::new(),
             );
             let result = if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
-                Err("Agent uninstall cancelled".to_string())
+                Err(AppError::Cancelled("Agent uninstall cancelled".to_string()))
             } else {
                 AppService::from_runtime(&runtime).uninstall_agent_with_cancellation_and_progress(
                     params,
@@ -418,7 +416,7 @@ fn spawn_uninstall_worker(
                 Err(error) => worker_tasks
                     .finish_agent_lifecycle(
                         &task_id_for_runtime,
-                        Err(AgentMarketError::new("uninstall_failed", &error, true)),
+                        Err(market_error_from_app(&error)),
                     )
                     .ok(),
             };
@@ -428,15 +426,12 @@ fn spawn_uninstall_worker(
             match result {
                 Ok(installation) => serde_json::to_value(installation)
                     .map_err(|error| AppError::Legacy(error.to_string())),
-                Err(error) => Err(AppError::Legacy(error)),
+                Err(error) => Err(error),
             }
         }),
     );
     if let Err(error) = result {
-        let _ = tasks.finish_agent_lifecycle(
-            &task_id,
-            Err(AgentMarketError::new("uninstall_failed", &error, true)),
-        );
+        let _ = tasks.finish_agent_lifecycle(&task_id, Err(market_error_from_app(&error)));
     }
 }
 
@@ -460,4 +455,9 @@ fn start_cancellation_bridge(
         }
     });
     (stop, bridge)
+}
+
+fn market_error_from_app(error: &AppError) -> AgentMarketError {
+    let view = error.view();
+    AgentMarketError::new(&view.code, &view.message, view.retryable)
 }

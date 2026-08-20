@@ -4,6 +4,7 @@
 
 use super::protocol;
 use crate::backend::application::AppService;
+use crate::backend::runtime::AppError;
 use schemars::{generate::SchemaSettings, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -144,7 +145,7 @@ pub(crate) type DispatchResult = Result<Value, DispatchFailure>;
 pub(crate) enum DispatchFailure {
     InvalidParams(String),
     OpenService(String),
-    App(String),
+    App(AppError),
     Serialize(String),
 }
 
@@ -4205,7 +4206,7 @@ fn dispatch_service<P, T, E>(
 where
     P: DeserializeOwned,
     T: Serialize,
-    E: Into<String>,
+    E: Into<AppError>,
 {
     let params = deserialize_dispatch_params(params)?;
     let service = AppService::open_for_engine().map_err(DispatchFailure::OpenService)?;

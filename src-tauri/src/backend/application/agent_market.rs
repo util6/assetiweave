@@ -4,6 +4,7 @@ use std::{
 };
 
 use super::prelude::*;
+use crate::backend::runtime::{AppError, AppResult};
 
 use crate::backend::agent_market::types::{
     AgentInstallPreviewRequest, AgentInstallation, AgentInstallationView, AgentMarketError,
@@ -16,6 +17,27 @@ use crate::backend::agent_market::{
     CatalogCache, DistributionSelectionContext, DistributionSelector, SystemObservation,
 };
 use crate::backend::extension_kernel::TrustGate;
+
+impl From<AgentMarketError> for AppError {
+    fn from(error: AgentMarketError) -> Self {
+        let details = if error.agent_id.is_some() || error.phase.is_some() || error.action.is_some()
+        {
+            Some(serde_json::json!({
+                "agentId": error.agent_id,
+                "phase": error.phase,
+                "action": error.action,
+            }))
+        } else {
+            None
+        };
+        Self::Domain {
+            code: error.code,
+            message: error.message,
+            retryable: error.retryable,
+            details,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -170,14 +192,14 @@ impl AppService {
                     installed,
                 })
             })
-            .collect::<Result<Vec<_>, String>>()
+            .collect::<Result<Vec<_>, AppError>>()
     }
 
     pub(crate) fn list_agent_installations(&self) -> AppResult<Vec<AgentInstallation>> {
         let repository =
             crate::backend::agent_market::AgentInstallationRepository::new(self.db.pool().clone());
         let tenant_id = self.tenant_id().to_string();
-        self.db.block_on(repository.list(&tenant_id))
+        Ok(self.db.block_on(repository.list(&tenant_id))?)
     }
 
     pub(crate) fn list_installed_agents(&self) -> AppResult<Vec<AgentInstallationView>> {
@@ -194,8 +216,11 @@ impl AppService {
             .find(|installation| installation.agent_id == agent_id)
             .map(|installation| installation_view(&installation))
             .ok_or_else(|| {
-                AgentMarketError::new("agent_not_installed", "The Agent is not installed.", false)
-                    .to_string()
+                AppError::from(AgentMarketError::new(
+                    "agent_not_installed",
+                    "The Agent is not installed.",
+                    false,
+                ))
             })
     }
 
@@ -207,8 +232,11 @@ impl AppService {
             .db
             .block_on(repository.get(&tenant_id, &agent_id))?
             .ok_or_else(|| {
-                AgentMarketError::new("agent_not_installed", "The Agent is not installed.", false)
-                    .to_string()
+                AppError::from(AgentMarketError::new(
+                    "agent_not_installed",
+                    "The Agent is not installed.",
+                    false,
+                ))
             })?;
         let now = chrono::Utc::now().to_rfc3339();
         let probe = if installation.resolved_program.is_file() {
@@ -310,12 +338,11 @@ impl AppService {
         .into_iter()
         .find(|item| item.id == agent_id)
         .ok_or_else(|| {
-            AgentMarketError::new(
+            AppError::from(AgentMarketError::new(
                 "agent_not_found",
                 "The selected Agent is not in the curated catalog.",
                 false,
-            )
-            .to_string()
+            ))
         })
     }
 
@@ -325,12 +352,11 @@ impl AppService {
     ) -> AppResult<AgentInstallPreview> {
         let catalog = CatalogCache::best_available()?;
         let item = catalog.item(&request.agent_id).ok_or_else(|| {
-            AgentMarketError::new(
+            AppError::from(AgentMarketError::new(
                 "agent_not_found",
                 "The selected Agent is not in the curated catalog.",
                 false,
-            )
-            .to_string()
+            ))
         })?;
         if request
             .catalog_version
@@ -341,28 +367,25 @@ impl AppService {
                 .as_deref()
                 .is_some_and(|version| version != item.version)
         {
-            return Err(AgentMarketError::new(
+            return Err(AppError::from(AgentMarketError::new(
                 "catalog_version_unavailable",
                 "The requested catalog or Agent version is no longer active.",
                 true,
-            )
-            .to_string());
+            )));
         }
         if !matches!(request.action.as_str(), "install" | "update" | "reinstall") {
-            return Err(AgentMarketError::new(
+            return Err(AppError::from(AgentMarketError::new(
                 "invalid_action",
                 "Unsupported Agent installation action.",
                 false,
-            )
-            .to_string());
+            )));
         }
         if !is_core_compatible(item) {
-            return Err(AgentMarketError::new(
+            return Err(AppError::from(AgentMarketError::new(
                 "core_incompatible",
                 "The Agent catalog item is incompatible with this AssetIWeave version.",
                 false,
-            )
-            .to_string());
+            )));
         }
         let mut context = host_distribution_context();
         probe_item_system_distributions(item, &mut context);
@@ -383,40 +406,36 @@ impl AppService {
             .find(|installation| installation.agent_id == request.agent_id);
         match request.action.as_str() {
             "install" if current.is_some() => {
-                return Err(AgentMarketError::new(
+                return Err(AppError::from(AgentMarketError::new(
                     "agent_already_installed",
                     "The Agent is already installed; choose update or reinstall.",
                     false,
-                )
-                .to_string())
+                )))
             }
             "update" if current.is_none() => {
-                return Err(AgentMarketError::new(
+                return Err(AppError::from(AgentMarketError::new(
                     "agent_not_installed",
                     "The Agent is not installed; choose install.",
                     false,
-                )
-                .to_string())
+                )))
             }
             "update"
                 if current
                     .as_ref()
                     .is_some_and(|installation| installation.agent_version == item.version) =>
             {
-                return Err(AgentMarketError::new(
+                return Err(AppError::from(AgentMarketError::new(
                     "update_not_available",
                     "The selected Agent is already at the catalog version.",
                     false,
-                )
-                .to_string())
+                )))
             }
             "reinstall" if current.is_none() => {
-                return Err(AgentMarketError::new(
+                return Err(AppError::from(AgentMarketError::new(
                     "agent_not_installed",
                     "The Agent is not installed; choose install.",
                     false,
-                )
-                .to_string())
+                )))
             }
             _ => {}
         }
@@ -463,17 +482,19 @@ impl AppService {
             .into_iter()
             .find(|installation| installation.agent_id == agent_id)
             .ok_or_else(|| {
-                AgentMarketError::new("agent_not_installed", "The Agent is not installed.", false)
-                    .to_string()
+                AppError::from(AgentMarketError::new(
+                    "agent_not_installed",
+                    "The Agent is not installed.",
+                    false,
+                ))
             })?;
         let catalog = CatalogCache::best_available()?;
         let item = catalog.item(&agent_id).ok_or_else(|| {
-            AgentMarketError::new(
+            AppError::from(AgentMarketError::new(
                 "agent_not_found",
                 "The installed Agent is no longer in the curated catalog.",
                 false,
-            )
-            .to_string()
+            ))
         })?;
         let capability_assignments = agent_assignment_refs(&agent_id)?;
         let mut conflicts = capability_assignments
@@ -542,7 +563,7 @@ impl AppService {
                 installation: installation_view(&outcome.installation),
                 warnings: outcome.warnings,
             })
-            .map_err(|error| error.to_string())
+            .map_err(AppError::from)
     }
 
     pub(crate) fn uninstall_agent(
@@ -575,12 +596,11 @@ impl AppService {
                 .iter()
                 .any(|selected| selected == assignment)
         }) {
-            return Err(AgentMarketError::new(
+            return Err(AppError::from(AgentMarketError::new(
                 "assignment_conflict",
                 "The Agent is still assigned to one or more capabilities.",
                 false,
-            )
-            .to_string());
+            )));
         }
         let lifecycle = self.agent_lifecycle()?;
         let result = self
@@ -592,7 +612,7 @@ impl AppService {
                 phase_sink,
             ))
             .map(|installation| installation_view(&installation))
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::from)?;
         if !assignment_refs.is_empty() {
             clear_agent_assignments(&assignment_refs)?;
         }
@@ -608,16 +628,16 @@ impl AppService {
         self.db
             .block_on(lifecycle.set_enabled(self.tenant_id(), &agent_id, enabled))
             .map(|installation| installation_view(&installation))
-            .map_err(|error| error.to_string())
+            .map_err(AppError::from)
     }
 
     fn agent_lifecycle(&self) -> AppResult<AgentLifecycleService> {
         AgentLifecycleService::new(
             self.db.pool().clone(),
             self.agent_runtime_manager.clone(),
-            default_runtime_root().map_err(|error| error.to_string())?,
+            default_runtime_root().map_err(AppError::from)?,
         )
-        .map_err(|error| error.to_string())
+        .map_err(AppError::from)
     }
 }
 
@@ -752,7 +772,7 @@ fn clear_agent_assignments(assignments: &[String]) -> AppResult<()> {
             values.remove(assignment);
         }
     }
-    crate::backend::app_settings::save_app_settings(settings).map(|_| ())
+    Ok(crate::backend::app_settings::save_app_settings(settings).map(|_| ())?)
 }
 
 #[allow(dead_code)]

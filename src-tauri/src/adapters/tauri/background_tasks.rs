@@ -431,10 +431,8 @@ impl BackgroundTaskRegistry {
         &self,
         task_id: &str,
         task: TaskFn,
-    ) -> AppResult<TaskSnapshot> {
-        self.lifecycle
-            .spawn(task_id, Value::Null, task)
-            .map_err(|error| error.to_string())
+    ) -> crate::backend::runtime::AppResult<TaskSnapshot> {
+        self.lifecycle.spawn(task_id, Value::Null, task)
     }
 
     pub(crate) fn begin_agent_market_refresh(
@@ -685,7 +683,7 @@ impl BackgroundTaskRegistry {
         let runtime_result = result
             .as_ref()
             .map(|(value, _)| value.clone().unwrap_or(Value::Null))
-            .map_err(|error| crate::backend::runtime::AppError::from(error.to_string()));
+            .map_err(|error| crate::backend::runtime::AppError::from(error.clone()));
         let runtime_snapshot = self.finish_external_result(task_id, runtime_result)?;
         let mut tasks = self
             .agent_lifecycle_tasks

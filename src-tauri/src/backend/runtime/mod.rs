@@ -15,7 +15,7 @@ pub(crate) use app_runtime::{
     RuntimeRole, ShutdownReport, ShutdownState,
 };
 #[allow(unused_imports)]
-pub(crate) use error::{AppError, AppErrorView, AppResult};
+pub(crate) use error::{AppError, AppErrorView, AppResult, WireError};
 #[allow(unused_imports)]
 pub(crate) use locks::{PlanScopeGuard, RuntimeLocks};
 

@@ -111,13 +111,9 @@ impl AppRuntime {
             .block_on(store::load_local_request_context_sqlx(&pool))
             .map_err(AppError::Legacy)?;
         let tenant_id = context.tenant.id.clone();
-        runtime
-            .block_on(
-                crate::backend::application::bootstrap::materialize_and_seed_builtin_adapters(
-                    &pool, &tenant_id,
-                ),
-            )
-            .map_err(AppError::Legacy)?;
+        runtime.block_on(
+            crate::backend::bootstrap::materialize_and_seed_builtin_adapters(&pool, &tenant_id),
+        )?;
         let conversation_adapters = runtime
             .block_on(crate::backend::store::list_conversation_adapters_sqlx(
                 &pool, &tenant_id,

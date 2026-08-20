@@ -4,6 +4,7 @@
 //! 最终将格式化的 JSON 响应写回标准输出 (stdout) 的标准 Stdio 协议循环。
 
 use super::{policy, protocol, registry as command_registry, runtime};
+use crate::backend::runtime::AppError;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, Read, Write};
@@ -82,6 +83,8 @@ pub(crate) struct EngineError {
     /// 诊断细节数据 JSON
     #[serde(skip_serializing_if = "Option::is_none")]
     details: Option<Value>,
+    /// 是否建议调用方重试
+    retryable: bool,
 }
 
 pub(crate) fn run_stdio() -> Result<(), String> {
@@ -215,7 +218,7 @@ impl EngineError {
         match failure {
             command_registry::DispatchFailure::InvalidParams(message) => Self::internal(message),
             command_registry::DispatchFailure::OpenService(message) => Self::internal(message),
-            command_registry::DispatchFailure::App(message) => Self::from_app(message),
+            command_registry::DispatchFailure::App(error) => Self::from_app(error),
             command_registry::DispatchFailure::Serialize(message) => Self::internal(message),
         }
     }
@@ -227,6 +230,7 @@ impl EngineError {
             message: message.to_string(),
             hint: Some("install the CLI and Engine from the same AssetIWeave release".to_string()),
             details: Some(details),
+            retryable: false,
         }
     }
 
@@ -237,6 +241,7 @@ impl EngineError {
             message: format!("unknown engine method: {method}"),
             hint: Some("run `assetiweave-cli schema` to list supported methods".to_string()),
             details: Some(json!({ "method": method })),
+            retryable: false,
         }
     }
 
@@ -250,6 +255,7 @@ impl EngineError {
                 "method": method,
                 "risk": risk
             })),
+            retryable: false,
         }
     }
 
@@ -265,6 +271,7 @@ impl EngineError {
                 "method": method,
                 "violations": violations
             })),
+            retryable: false,
         }
     }
 
@@ -278,6 +285,7 @@ impl EngineError {
                     .to_string(),
             ),
             details: Some(failure.details),
+            retryable: false,
         }
     }
 
@@ -288,6 +296,7 @@ impl EngineError {
             message,
             hint,
             details: None,
+            retryable: false,
         }
     }
 
@@ -298,27 +307,32 @@ impl EngineError {
             message,
             hint: None,
             details: None,
+            retryable: false,
         }
     }
 
-    fn from_app(message: String) -> Self {
-        let kind = if message.contains("not found") {
-            "not_found"
-        } else if message.contains("already exists")
-            || message.contains("ambiguous")
-            || message.contains("requires --yes")
-            || message.contains("enabled mounts")
-        {
-            "conflict"
-        } else {
-            "operation_error"
+    fn from_app(error: AppError) -> Self {
+        let view = error.view();
+        let kind = match view.code.as_str() {
+            "validation_error" => "validation",
+            "not_found" => "not_found",
+            "conflict" => "conflict",
+            "cancelled" => "cancelled",
+            "timeout" => "timeout",
+            "storage_error" => "storage",
+            "process_error" => "process",
+            "extension_error" => "extension",
+            "external_error" => "external",
+            "legacy_error" => "legacy",
+            _ => "operation_error",
         };
         Self {
             kind: kind.to_string(),
-            code: kind.to_string(),
-            message,
+            code: view.code,
+            message: view.message,
             hint: None,
-            details: None,
+            details: view.details,
+            retryable: view.retryable,
         }
     }
 }
@@ -349,6 +363,17 @@ mod tests {
         assert_eq!(error.kind, "unknown_method");
         assert_eq!(error.code, "unknown_method");
         assert!(error.hint.as_deref().unwrap_or_default().contains("schema"));
+    }
+
+    #[test]
+    fn engine_error_preserves_same_code_as_tauri() {
+        let app_error = AppError::Validation("bad input".to_string());
+        let tauri_view = app_error.view();
+        let engine_error = EngineError::from_app(app_error);
+
+        assert_eq!(engine_error.code, tauri_view.code);
+        assert_eq!(engine_error.retryable, tauri_view.retryable);
+        assert_eq!(engine_error.message, tauri_view.message);
     }
 
     #[test]
