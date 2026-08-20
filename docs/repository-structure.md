@@ -62,6 +62,7 @@ Go CLI
 - `builtin-assets/adapters/`：官方 Adapter 与发布包的唯一源码；Tauri/Engine 编译时直接嵌入所需文件。
 - `builtin-assets/skills/`：随产品发布的只读系统 Skill 源码；Rust 启动时将其安装到 `~/.assetiweave/skills/.system`。
 - `builtin-assets/index.json`、`history/`、`catalog.json`：Adapter Catalog v2 与 legacy 兼容元数据。
+- `builtin-assets/agent-market/`：固定版本 Agent Catalog、distribution 元数据和 release evidence；发布检查通过后才可更新 bundled catalog。
 - `cli/internal/harvesters/templates/`：为 Go `embed` 保留的网页 Harvester 生成副本，只能通过 `pnpm conversation-adapters:build --update` 更新。
 - `~/.assetiweave/conversation-adapters/`：用户运行时工作区和不可变版本目录，不属于仓库源码。
 

@@ -1,0 +1,147 @@
+{
+  "schema": "assetiweave.agent-market/release-evidence/v1",
+  "catalogVersion": "2026.08.20.2",
+  "catalogContentSha256": "2074ed1aaf12eb94557be5116d7efa99bbf71eb5b88db3d1cd750081d592a497",
+  "coreVersion": "0.6.1",
+  "capturedAt": "2026-08-20T12:28:31Z",
+  "upstream": {
+    "name": "agentclientprotocol/registry",
+    "revision": "066208e41d95e12108fcd7d282b601ed8b2b53c8",
+    "snapshotUrl": "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json",
+    "revisionUrl": "https://github.com/agentclientprotocol/registry/commit/066208e41d95e12108fcd7d282b601ed8b2b53c8"
+  },
+  "items": [
+    {
+      "evidenceId": "acp-registry-066208e4-opencode-1.18.19-binary-darwin-aarch64",
+      "catalogItemId": "opencode",
+      "upstreamAgentId": "opencode",
+      "agentVersion": "1.18.19",
+      "distributionId": "binary-darwin-aarch64",
+      "distributionType": "binary",
+      "target": { "os": "darwin", "arch": "aarch64" },
+      "sourceAgentUrl": "https://raw.githubusercontent.com/agentclientprotocol/registry/066208e41d95e12108fcd7d282b601ed8b2b53c8/opencode/agent.json",
+      "artifact": {
+        "url": "https://github.com/anomalyco/opencode/releases/download/v1.18.19/opencode-darwin-arm64.zip",
+        "sha256": "0026326bd77a3277ab3726be237410b19389f7829e8bb3c82dfaf9044162067c",
+        "sizeBytes": 46154618
+      },
+      "install": {
+        "status": "passed",
+        "steps": ["download", "sha256", "extract", "executable-version"],
+        "versionOutput": "1.18.19"
+      },
+      "acpConformance": {
+        "status": "passed",
+        "initialize": "passed",
+        "sessionNew": "passed",
+        "sessionClose": "passed",
+        "cleanShutdown": "passed"
+      }
+    },
+    {
+      "evidenceId": "acp-registry-066208e4-gemini-0.56.0-npx",
+      "catalogItemId": "gemini",
+      "upstreamAgentId": "gemini",
+      "agentVersion": "0.56.0",
+      "distributionId": "npx-gemini",
+      "distributionType": "npx",
+      "package": "@google/gemini-cli",
+      "bin": "gemini",
+      "sourceAgentUrl": "https://raw.githubusercontent.com/agentclientprotocol/registry/066208e41d95e12108fcd7d282b601ed8b2b53c8/gemini/agent.json",
+      "packageMetadataUrl": "https://registry.npmjs.org/@google%2fgemini-cli/0.56.0",
+      "packageIntegrity": "sha512-q4oBfb/Oh/HNLMYBOJMp88/QQ8hLffnB0ykoVThi6A5isbGHJ/ylWLMosMGqukKY0Q1Jv/XRDpb46Q1BV+zQqw==",
+      "install": { "status": "passed", "method": "npm install --ignore-scripts --save-exact" },
+      "acpConformance": {
+        "status": "partial",
+        "initialize": "passed",
+        "sessionNew": "failed: network_disconnected",
+        "sessionClose": "not_run",
+        "cleanShutdown": "passed"
+      }
+    },
+    {
+      "evidenceId": "acp-registry-066208e4-claude-0.70.0-npx",
+      "catalogItemId": "claude",
+      "upstreamAgentId": "claude-acp",
+      "agentVersion": "0.70.0",
+      "distributionId": "npx-claude",
+      "distributionType": "npx",
+      "package": "@agentclientprotocol/claude-agent-acp",
+      "bin": "claude-agent-acp",
+      "sourceAgentUrl": "https://raw.githubusercontent.com/agentclientprotocol/registry/066208e41d95e12108fcd7d282b601ed8b2b53c8/claude-acp/agent.json",
+      "packageMetadataUrl": "https://registry.npmjs.org/@agentclientprotocol%2fclaude-agent-acp/0.70.0",
+      "packageIntegrity": "sha512-Psqj6fhV4pQ8IM480zpJ+xGiMMIqNLxlsTj5Mzn+T8KSURCVNJdl0ktcqLMjgHJC/QnOvDdDkFf3xTW9VIV9aQ==",
+      "install": { "status": "passed", "method": "npm install --ignore-scripts --save-exact" },
+      "acpConformance": {
+        "status": "passed",
+        "initialize": "passed",
+        "sessionNew": "passed",
+        "sessionClose": "passed",
+        "cleanShutdown": "passed"
+      }
+    },
+    {
+      "evidenceId": "acp-registry-066208e4-codex-1.6.2-npx",
+      "catalogItemId": "codex",
+      "upstreamAgentId": "codex-acp",
+      "agentVersion": "1.6.2",
+      "distributionId": "npx-codex",
+      "distributionType": "npx",
+      "package": "@agentclientprotocol/codex-acp",
+      "bin": "codex-acp",
+      "sourceAgentUrl": "https://raw.githubusercontent.com/agentclientprotocol/registry/066208e41d95e12108fcd7d282b601ed8b2b53c8/codex-acp/agent.json",
+      "packageMetadataUrl": "https://registry.npmjs.org/@agentclientprotocol%2fcodex-acp/1.6.2",
+      "packageIntegrity": "sha512-2eF1mbs1gTqkZJSLYOun/pFDx37sYa7W63HOPezC37b/R8AYms5O1nfQu8lrqFSGDrwDZkASVORymLcqjCNqyA==",
+      "install": { "status": "passed", "method": "npm install --ignore-scripts --save-exact" },
+      "acpConformance": {
+        "status": "passed",
+        "initialize": "passed",
+        "sessionNew": "passed",
+        "sessionClose": "passed",
+        "cleanShutdown": "passed"
+      }
+    },
+    {
+      "evidenceId": "acp-registry-066208e4-pi-0.0.33-npx",
+      "catalogItemId": "pi",
+      "upstreamAgentId": "pi-acp",
+      "agentVersion": "0.0.33",
+      "distributionId": "npx-pi",
+      "distributionType": "npx",
+      "package": "pi-acp",
+      "bin": "pi-acp",
+      "sourceAgentUrl": "https://raw.githubusercontent.com/agentclientprotocol/registry/066208e41d95e12108fcd7d282b601ed8b2b53c8/pi-acp/agent.json",
+      "packageMetadataUrl": "https://registry.npmjs.org/pi-acp/0.0.33",
+      "packageIntegrity": "sha512-vX9kY1tK14E72G4dBAx+RGCk/k7XPjTHls6dLUxA8WSkBav6B6JHuSBv3eusp50LCR/GTRsR2kIKsG0Z5jANzw==",
+      "install": { "status": "passed", "method": "npm install --ignore-scripts --save-exact" },
+      "acpConformance": {
+        "status": "partial",
+        "initialize": "passed",
+        "sessionNew": "failed: external_pi_runtime_missing",
+        "sessionClose": "not_run",
+        "cleanShutdown": "passed"
+      }
+    },
+    {
+      "evidenceId": "acp-registry-066208e4-qoder-0.2.14-npx",
+      "catalogItemId": "qoder",
+      "upstreamAgentId": "qoder",
+      "agentVersion": "0.2.14",
+      "distributionId": "npx-qoder",
+      "distributionType": "npx",
+      "package": "@qoder-ai/qodercli",
+      "bin": "qodercli",
+      "sourceAgentUrl": "https://raw.githubusercontent.com/agentclientprotocol/registry/066208e41d95e12108fcd7d282b601ed8b2b53c8/qoder/agent.json",
+      "packageMetadataUrl": "https://registry.npmjs.org/@qoder-ai%2fqodercli/0.2.14",
+      "packageIntegrity": "sha512-K3vrinxakPv0W8w+KAV1khtlEDjCvjJ8VbAkvxa6L9yLwiljBB4IrG5d7Xs0uge1n/C061FgmCm50WVqh8QRwg==",
+      "install": { "status": "passed", "method": "npm install --ignore-scripts --save-exact" },
+      "acpConformance": {
+        "status": "partial",
+        "initialize": "passed",
+        "sessionNew": "failed: authentication_required",
+        "sessionClose": "not_run",
+        "cleanShutdown": "passed"
+      }
+    }
+  ]
+}

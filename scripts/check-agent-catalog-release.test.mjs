@@ -20,7 +20,7 @@ function run(catalogPath, mode = "--static") {
 test("production catalog passes current-core and release gates", () => {
   const result = run(CATALOG, "--release");
   assert.equal(result.status, 0, result.stdout);
-  assert.match(result.stdout, /catalog 2026\.08\.20\.1/);
+  assert.match(result.stdout, /catalog 2026\.08\.20\.2/);
 });
 
 test("release gate rejects fixture and placeholder catalog data", () => {
@@ -44,5 +44,29 @@ test("release gate rejects a catalog that does not include the current core", ()
   const result = run(fixture);
   assert.notEqual(result.status, 0);
   assert.match(result.stdout, /does not include 0\.6\.1/);
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test("release gate requires evidence to match the bundled catalog content", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "assetiweave-agent-catalog-"));
+  const fixture = path.join(directory, "catalog.json");
+  const catalog = JSON.parse(fs.readFileSync(CATALOG, "utf8"));
+  catalog.items[0].distributions[0].sha256 = "1".repeat(64);
+  fs.writeFileSync(fixture, JSON.stringify(catalog));
+  const result = run(fixture, "--release");
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout, /catalogContentSha256|artifact SHA256/i);
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test("release gate requires the published npm bin to match the catalog", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "assetiweave-agent-catalog-"));
+  const fixture = path.join(directory, "catalog.json");
+  const catalog = JSON.parse(fs.readFileSync(CATALOG, "utf8"));
+  catalog.items.find((item) => item.id === "qoder").distributions[0].bin = "qoder";
+  fs.writeFileSync(fixture, JSON.stringify(catalog));
+  const result = run(fixture, "--release");
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout, /catalogContentSha256|package bin evidence/i);
   fs.rmSync(directory, { recursive: true, force: true });
 });

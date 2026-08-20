@@ -1,11 +1,11 @@
 {
   "schema": "assetiweave.agent-market/v1",
-  "catalogVersion": "2026.08.20.1",
+  "catalogVersion": "2026.08.20.2",
   "generatedAt": "2026-08-20T00:00:00Z",
   "source": {
     "kind": "assetiweave_curated",
     "upstream": "agentclientprotocol/registry",
-    "upstreamRevision": "etag-4fadaa10b5e23ee8f454326af42e7d5a"
+    "upstreamRevision": "066208e41d95e12108fcd7d282b601ed8b2b53c8"
   },
   "items": [
     {
@@ -13,7 +13,7 @@
       "displayName": "OpenCode",
       "description": "The open source coding agent",
       "protocol": "acp",
-      "version": "1.18.18",
+      "version": "1.18.19",
       "coreCompatibility": {
         "min": "0.6.0",
         "maxExclusive": "0.7.0"
@@ -30,7 +30,7 @@
       "verification": {
         "status": "tested",
         "testedAt": "2026-08-20T00:00:00Z",
-        "evidenceId": "acp-registry-opencode-1.18.18"
+        "evidenceId": "acp-registry-066208e4-opencode-1.18.19-binary-darwin-aarch64"
       },
       "upstream": {
         "registryId": "opencode",
@@ -47,8 +47,9 @@
             "arch": "aarch64"
           },
           "archive": "zip",
-          "url": "https://github.com/anomalyco/opencode/releases/download/v1.18.18/opencode-darwin-arm64.zip",
-          "sha256": "7d668bf26496fec8686d4e51ebb1ac2bd2e393f0c1620aa696c4c242a9e5806a",
+          "url": "https://github.com/anomalyco/opencode/releases/download/v1.18.19/opencode-darwin-arm64.zip",
+          "sha256": "0026326bd77a3277ab3726be237410b19389f7829e8bb3c82dfaf9044162067c",
+          "size": 46154618,
           "executable": "opencode",
           "launchArgs": [
             "acp"
@@ -61,7 +62,7 @@
       "displayName": "Gemini CLI",
       "description": "Google's official CLI for Gemini",
       "protocol": "acp",
-      "version": "0.55.1",
+      "version": "0.56.0",
       "coreCompatibility": {
         "min": "0.6.0",
         "maxExclusive": "0.7.0"
@@ -75,9 +76,9 @@
         "modelDiscovery": false
       },
       "verification": {
-        "status": "tested",
+        "status": "experimental",
         "testedAt": "2026-08-20T00:00:00Z",
-        "evidenceId": "acp-registry-gemini-0.55.1"
+        "evidenceId": "acp-registry-066208e4-gemini-0.56.0-npx"
       },
       "upstream": {
         "registryId": "gemini",
@@ -90,7 +91,7 @@
           "type": "npx",
           "priority": 30,
           "package": "@google/gemini-cli",
-          "version": "0.55.1",
+          "version": "0.56.0",
           "bin": "gemini",
           "launchArgs": [
             "--acp"
@@ -121,7 +122,7 @@
       "verification": {
         "status": "tested",
         "testedAt": "2026-08-20T00:00:00Z",
-        "evidenceId": "acp-registry-claude-0.70.0"
+        "evidenceId": "acp-registry-066208e4-claude-0.70.0-npx"
       },
       "upstream": {
         "registryId": "claude-acp",
@@ -146,7 +147,7 @@
       "displayName": "Codex",
       "description": "ACP adapter for OpenAI's coding assistant",
       "protocol": "acp",
-      "version": "1.6.0",
+      "version": "1.6.2",
       "coreCompatibility": {
         "min": "0.6.0",
         "maxExclusive": "0.7.0"
@@ -163,7 +164,7 @@
       "verification": {
         "status": "tested",
         "testedAt": "2026-08-20T00:00:00Z",
-        "evidenceId": "acp-registry-codex-1.6.0"
+        "evidenceId": "acp-registry-066208e4-codex-1.6.2-npx"
       },
       "upstream": {
         "registryId": "codex-acp",
@@ -176,7 +177,7 @@
           "type": "npx",
           "priority": 30,
           "package": "@agentclientprotocol/codex-acp",
-          "version": "1.6.0",
+          "version": "1.6.2",
           "bin": "codex-acp",
           "launchArgs": [],
           "nodeRange": ">=20"
@@ -202,9 +203,9 @@
         "modelDiscovery": false
       },
       "verification": {
-        "status": "tested",
+        "status": "experimental",
         "testedAt": "2026-08-20T00:00:00Z",
-        "evidenceId": "acp-registry-pi-0.0.33"
+        "evidenceId": "acp-registry-066208e4-pi-0.0.33-npx"
       },
       "upstream": {
         "registryId": "pi-acp",
@@ -243,9 +244,9 @@
         "modelDiscovery": false
       },
       "verification": {
-        "status": "tested",
+        "status": "experimental",
         "testedAt": "2026-08-20T00:00:00Z",
-        "evidenceId": "acp-registry-qoder-0.2.14"
+        "evidenceId": "acp-registry-066208e4-qoder-0.2.14-npx"
       },
       "upstream": {
         "registryId": "qoder",
@@ -259,7 +260,7 @@
           "priority": 30,
           "package": "@qoder-ai/qodercli",
           "version": "0.2.14",
-          "bin": "qoder",
+          "bin": "qodercli",
           "launchArgs": [
             "--acp"
           ],

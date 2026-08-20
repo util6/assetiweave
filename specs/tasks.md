@@ -399,5 +399,5 @@
 - [X] 22.7 删除 legacy Agent executor 生产路径，保留 compatibility API 到 canonical runtime
 - [X] 22.8 增加 Agent Market 本地 fake ACP executable 的 install/update/failed-update/restart-recovery/cancel E2E
 - [X] 22.9 升级 module boundary guard、精确 legacy allowlist 和违规 fixture self-test
-- [ ] 22.10 完成生产 Agent distribution 的可追溯 evidence、发布门禁与真实 package/release 验证
+- [X] 22.10 完成生产 Agent distribution 的可追溯 evidence、发布门禁与真实 package/release 验证
 - [X] 22.11 重新生成 Engine/CLI contract、surface matrix，并完成全仓 Rust/TypeScript/Go/build 验证

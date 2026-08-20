@@ -23,6 +23,7 @@
     "check:boundaries": "bash scripts/check-module-boundaries.sh",
     "test:boundaries": "bash scripts/check-module-boundaries.test.sh",
     "agent-catalog:check": "node scripts/check-agent-catalog-release.mjs --static",
+    "agent-catalog:release": "node scripts/check-agent-catalog-release.mjs --release --network",
     "precli:build": "pnpm artifacts:guard",
     "cli:build": "node scripts/build-cli.js",
     "postcli:build": "pnpm artifacts:check",
