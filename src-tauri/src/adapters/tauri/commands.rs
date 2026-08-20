@@ -2620,33 +2620,33 @@ pub(crate) fn list_conversation_sync_tasks(
 pub(crate) async fn list_conversation_sessions(
     state: State<'_, AppState>,
     params: ConversationSessionListParams,
-) -> AppResult<Vec<crate::backend::dto::ConversationSessionListItem>> {
+) -> RuntimeAppResult<Vec<crate::backend::dto::ConversationSessionListItem>> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).list_conversation_sessions(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
 pub(crate) async fn get_conversation_session(
     state: State<'_, AppState>,
     params: ConversationSessionGetParams,
-) -> AppResult<crate::backend::dto::ConversationSessionDetail> {
+) -> RuntimeAppResult<crate::backend::dto::ConversationSessionDetail> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).get_conversation_session(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
 pub(crate) fn export_conversation_session(
     state: State<'_, AppState>,
     params: ConversationSessionExportParams,
-) -> AppResult<serde_json::Value> {
+) -> RuntimeAppResult<serde_json::Value> {
     AppService::from_runtime(&state.runtime).export_conversation_session(params)
 }
 
@@ -2654,39 +2654,39 @@ pub(crate) fn export_conversation_session(
 pub(crate) async fn list_web_record_sessions(
     state: State<'_, AppState>,
     params: ConversationSessionListParams,
-) -> AppResult<Vec<crate::backend::dto::ConversationSessionListItem>> {
+) -> RuntimeAppResult<Vec<crate::backend::dto::ConversationSessionListItem>> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).list_web_record_sessions(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
 pub(crate) async fn get_web_record_session(
     state: State<'_, AppState>,
     params: ConversationSessionGetParams,
-) -> AppResult<crate::backend::dto::ConversationSessionDetail> {
+) -> RuntimeAppResult<crate::backend::dto::ConversationSessionDetail> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).get_web_record_session(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
 pub(crate) async fn search_conversation_records(
     state: State<'_, AppState>,
     params: ConversationSearchParams,
-) -> AppResult<ConversationSearchResult> {
+) -> RuntimeAppResult<ConversationSearchResult> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).search_conversation_records(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 /// 检索最近增量同步变动的会话卡片记录
@@ -2694,13 +2694,13 @@ pub(crate) async fn search_conversation_records(
 pub(crate) async fn search_recent_incremental_conversation_records(
     state: State<'_, AppState>,
     params: crate::backend::application::ConversationIncrementalSearchParams,
-) -> AppResult<ConversationSearchResult> {
+) -> RuntimeAppResult<ConversationSearchResult> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).search_recent_incremental_conversation_records(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
@@ -2834,7 +2834,7 @@ pub(crate) fn get_conversation_search_index_task(
 pub(crate) fn export_web_record_session(
     state: State<'_, AppState>,
     params: ConversationSessionExportParams,
-) -> AppResult<serde_json::Value> {
+) -> RuntimeAppResult<serde_json::Value> {
     AppService::from_runtime(&state.runtime).export_web_record_session(params)
 }
 
@@ -2842,7 +2842,7 @@ pub(crate) fn export_web_record_session(
 pub(crate) fn list_conversation_questions(
     state: State<'_, AppState>,
     params: ConversationQuestionListParams,
-) -> AppResult<Vec<crate::backend::dto::ConversationQuestionDetail>> {
+) -> RuntimeAppResult<Vec<crate::backend::dto::ConversationQuestionDetail>> {
     AppService::from_runtime(&state.runtime).list_conversation_questions(params)
 }
 
@@ -2850,7 +2850,7 @@ pub(crate) fn list_conversation_questions(
 pub(crate) fn get_conversation_question(
     state: State<'_, AppState>,
     params: ConversationQuestionGetParams,
-) -> AppResult<crate::backend::dto::ConversationQuestionDetail> {
+) -> RuntimeAppResult<crate::backend::dto::ConversationQuestionDetail> {
     AppService::from_runtime(&state.runtime).get_conversation_question(params)
 }
 
@@ -2858,7 +2858,7 @@ pub(crate) fn get_conversation_question(
 pub(crate) fn list_conversation_blocks(
     state: State<'_, AppState>,
     params: ConversationBlockListParams,
-) -> AppResult<Vec<crate::backend::dto::ConversationBlockLocator>> {
+) -> RuntimeAppResult<Vec<crate::backend::dto::ConversationBlockLocator>> {
     AppService::from_runtime(&state.runtime).list_conversation_blocks(params)
 }
 
@@ -2866,7 +2866,7 @@ pub(crate) fn list_conversation_blocks(
 pub(crate) fn get_conversation_block(
     state: State<'_, AppState>,
     params: ConversationBlockGetParams,
-) -> AppResult<crate::backend::dto::ConversationBlockDetail> {
+) -> RuntimeAppResult<crate::backend::dto::ConversationBlockDetail> {
     AppService::from_runtime(&state.runtime).get_conversation_block(params)
 }
 
@@ -2874,7 +2874,7 @@ pub(crate) fn get_conversation_block(
 pub(crate) fn merge_conversation_questions(
     state: State<'_, AppState>,
     params: ConversationQuestionMergeParams,
-) -> AppResult<crate::backend::dto::ConversationMutationResult> {
+) -> RuntimeAppResult<crate::backend::dto::ConversationMutationResult> {
     AppService::from_runtime(&state.runtime).merge_conversation_questions(params)
 }
 
@@ -2882,7 +2882,7 @@ pub(crate) fn merge_conversation_questions(
 pub(crate) fn split_conversation_question(
     state: State<'_, AppState>,
     params: ConversationQuestionSplitParams,
-) -> AppResult<crate::backend::dto::ConversationMutationResult> {
+) -> RuntimeAppResult<crate::backend::dto::ConversationMutationResult> {
     AppService::from_runtime(&state.runtime).split_conversation_question(params)
 }
 
@@ -2890,7 +2890,7 @@ pub(crate) fn split_conversation_question(
 pub(crate) fn update_conversation_part_translation(
     state: State<'_, AppState>,
     params: ConversationPartTranslationUpdateParams,
-) -> AppResult<()> {
+) -> RuntimeAppResult<()> {
     AppService::from_runtime(&state.runtime).update_conversation_part_translation(params)
 }
 

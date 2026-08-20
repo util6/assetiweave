@@ -261,11 +261,13 @@ impl AppService {
         reference: &MemoryRecallQuestionRef,
     ) -> AppResult<crate::backend::dto::ConversationQuestionDetail> {
         match reference.record_kind {
-            MemoryEvidenceRecordKind::Session => self.get_conversation_question(
-                crate::backend::application::ConversationQuestionGetParams {
-                    question_id: reference.question_id.clone(),
-                },
-            ),
+            MemoryEvidenceRecordKind::Session => self
+                .get_conversation_question(
+                    crate::backend::application::ConversationQuestionGetParams {
+                        question_id: reference.question_id.clone(),
+                    },
+                )
+                .map_err(|error| error.to_string()),
             MemoryEvidenceRecordKind::Web => self
                 .get_web_record_session(
                     crate::backend::application::ConversationSessionGetParams {

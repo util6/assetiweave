@@ -996,7 +996,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         })
         .expect_err("unsafe adapter relative path should fail");
 
-    assert!(error.contains("relative_path"));
+    assert!(error.to_string().contains("relative_path"));
     assert!(!root.join("escape.md").exists());
     drop(service);
     fs::remove_dir_all(root).ok();
@@ -1056,7 +1056,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         })
         .expect_err("manifest missing export_markdown should fail");
 
-    assert!(error.contains("export_markdown"));
+    assert!(error.to_string().contains("export_markdown"));
     drop(service);
     fs::remove_dir_all(root).ok();
 }
@@ -1112,7 +1112,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         })
         .expect_err("trusted hash mismatch should fail");
 
-    assert!(error.contains("trusted hash mismatch"));
+    assert!(error.to_string().contains("trusted hash mismatch"));
     drop(service);
     fs::remove_dir_all(root).ok();
 }
@@ -1196,7 +1196,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         })
         .expect_err("manifest tampering should fail trusted hash check");
 
-    assert!(error.contains("trusted hash mismatch"));
+    assert!(error.to_string().contains("trusted hash mismatch"));
     drop(service);
     fs::remove_dir_all(root).ok();
 }
@@ -1344,7 +1344,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         })
         .expect_err("symlink escape under output root should fail");
 
-    assert!(error.contains("symlink") || error.contains("output_root"));
+    assert!(error.to_string().contains("symlink") || error.to_string().contains("output_root"));
     assert!(!outside_root.join("export.md").exists());
     drop(service);
     fs::remove_dir_all(root).ok();
