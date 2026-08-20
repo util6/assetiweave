@@ -354,7 +354,7 @@ pub(crate) fn reject_memory_candidate(
 pub(crate) fn memory_dream_status(
     state: State<'_, AppState>,
     params: MemoryDreamScopeParams,
-) -> AppResult<crate::backend::dto::MemoryDreamPreview> {
+) -> RuntimeAppResult<crate::backend::dto::MemoryDreamPreview> {
     AppService::from_runtime(&state.runtime).memory_dream_status(params)
 }
 
@@ -362,7 +362,7 @@ pub(crate) fn memory_dream_status(
 pub(crate) fn memory_overview(
     state: State<'_, AppState>,
     params: MemoryDreamScopeParams,
-) -> AppResult<crate::backend::dto::MemoryOverview> {
+) -> RuntimeAppResult<crate::backend::dto::MemoryOverview> {
     AppService::from_runtime(&state.runtime).memory_overview(params)
 }
 
@@ -370,7 +370,7 @@ pub(crate) fn memory_overview(
 pub(crate) fn list_memory_dream_notes(
     state: State<'_, AppState>,
     params: MemoryDreamListParams,
-) -> AppResult<crate::backend::dto::MemoryDreamNotePage> {
+) -> RuntimeAppResult<crate::backend::dto::MemoryDreamNotePage> {
     AppService::from_runtime(&state.runtime).list_memory_dream_notes(params)
 }
 
@@ -378,7 +378,7 @@ pub(crate) fn list_memory_dream_notes(
 pub(crate) fn get_memory_dream_note(
     state: State<'_, AppState>,
     params: MemoryDreamGetParams,
-) -> AppResult<crate::backend::models::MemoryDreamNoteDetail> {
+) -> RuntimeAppResult<crate::backend::models::MemoryDreamNoteDetail> {
     AppService::from_runtime(&state.runtime).get_memory_dream_note(params)
 }
 
@@ -386,7 +386,7 @@ pub(crate) fn get_memory_dream_note(
 pub(crate) fn archive_memory_dream_note(
     state: State<'_, AppState>,
     params: MemoryDreamGetParams,
-) -> AppResult<crate::backend::models::MemoryDreamNoteDetail> {
+) -> RuntimeAppResult<crate::backend::models::MemoryDreamNoteDetail> {
     AppService::from_runtime(&state.runtime).archive_memory_dream_note(params)
 }
 
@@ -394,7 +394,7 @@ pub(crate) fn archive_memory_dream_note(
 pub(crate) fn promote_memory_dream_note(
     state: State<'_, AppState>,
     params: MemoryDreamGetParams,
-) -> AppResult<Vec<MemoryItemDetail>> {
+) -> RuntimeAppResult<Vec<MemoryItemDetail>> {
     AppService::from_runtime(&state.runtime).promote_memory_dream_note(params)
 }
 
@@ -402,7 +402,7 @@ pub(crate) fn promote_memory_dream_note(
 pub(crate) fn preview_memory_dream(
     state: State<'_, AppState>,
     params: MemoryDreamPreviewParams,
-) -> AppResult<crate::backend::dto::MemoryDreamPreview> {
+) -> RuntimeAppResult<crate::backend::dto::MemoryDreamPreview> {
     AppService::from_runtime(&state.runtime).preview_memory_dream(params)
 }
 
@@ -410,7 +410,7 @@ pub(crate) fn preview_memory_dream(
 pub(crate) fn run_memory_dream(
     state: State<'_, AppState>,
     params: MemoryDreamRunParams,
-) -> AppResult<crate::backend::dto::MemoryDreamRunResult> {
+) -> RuntimeAppResult<crate::backend::dto::MemoryDreamRunResult> {
     AppService::from_runtime(&state.runtime).run_memory_dream(params)
 }
 
@@ -489,6 +489,7 @@ pub(crate) fn start_memory_task(
                         Some(cancellation),
                         report,
                     )
+                    .map_err(|error| error.to_string())
                     .and_then(|value| {
                         serde_json::to_value(value).map_err(|error| error.to_string())
                     }),
