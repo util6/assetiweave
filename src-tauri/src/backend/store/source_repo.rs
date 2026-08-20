@@ -2,9 +2,10 @@ use crate::backend::models::{AssetKind, Source, SourceOrigin, SourceScannerKind}
 use crate::backend::{
     dto::AppResult,
     path_utils::{
-        detect_app_target, expand_path, find_git_root, is_app_library_path,
+        detect_target_provider, expand_path, find_git_root, is_app_library_path,
         normalize_path_for_storage, normalize_relative_path,
     },
+    target_catalog::TargetCatalog,
 };
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
@@ -108,7 +109,28 @@ pub(crate) async fn upsert_source_sqlx(
     tenant_id: &str,
     source: &Source,
 ) -> AppResult<()> {
-    let source = normalize_source(source);
+    upsert_source_sqlx_normalized(pool, tenant_id, normalize_source(source)).await
+}
+
+pub(crate) async fn upsert_source_sqlx_with_catalog(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    source: &Source,
+    catalog: &TargetCatalog,
+) -> AppResult<()> {
+    upsert_source_sqlx_normalized(
+        pool,
+        tenant_id,
+        normalize_source_with_catalog(source, catalog),
+    )
+    .await
+}
+
+async fn upsert_source_sqlx_normalized(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    source: Source,
+) -> AppResult<()> {
     sqlx::query(sql::UPSERT_SOURCE)
         .bind(tenant_id)
         .bind(&source.id)
@@ -135,14 +157,16 @@ pub(crate) async fn upsert_source_sqlx(
 }
 
 pub(crate) fn normalize_source(source: &Source) -> Source {
+    normalize_source_inner(source, None)
+}
+
+pub(crate) fn normalize_source_with_catalog(source: &Source, catalog: &TargetCatalog) -> Source {
+    normalize_source_inner(source, Some(catalog))
+}
+
+fn normalize_source_inner(source: &Source, catalog: Option<&TargetCatalog>) -> Source {
     let mut source = source.clone();
-    if let Ok(root_path) = normalize_path_for_storage(&source.root_path) {
-        source.root_path = root_path;
-    }
-    source.repo_root = source
-        .repo_root
-        .as_deref()
-        .map(|path| normalize_path_for_storage(path).unwrap_or_else(|_| path.to_string()));
+    normalize_source_paths(&mut source);
 
     if matches!(source.scanner_kind, SourceScannerKind::Mixed) && is_skill_like_source(&source) {
         source.scanner_kind = SourceScannerKind::Skill;
@@ -176,16 +200,16 @@ pub(crate) fn normalize_source(source: &Source) -> Source {
         return source;
     }
 
-    if let Some(app_kind) = detect_app_target(&root_path) {
-        source.source_origin = SourceOrigin::AppTarget;
-        source.scanner_kind = SourceScannerKind::Skill;
-        source.repo_root = None;
-        source.scan_root = String::new();
-        source.origin_app_kind = Some(app_kind);
-        if source.origin_provider_id.is_none() {
-            source.origin_provider_id = Some(format!("{app_kind:?}").to_ascii_lowercase());
+    if let Some(catalog) = catalog {
+        if let Some((provider_id, app_kind)) = detect_target_provider(&root_path, catalog) {
+            source.source_origin = SourceOrigin::AppTarget;
+            source.scanner_kind = SourceScannerKind::Skill;
+            source.repo_root = None;
+            source.scan_root = String::new();
+            source.origin_app_kind = app_kind;
+            source.origin_provider_id = Some(provider_id);
+            return source;
         }
-        return source;
     }
 
     if let Some(git_root) = find_git_root(&root_path) {
@@ -196,13 +220,18 @@ pub(crate) fn normalize_source(source: &Source) -> Source {
             .ok()
             .map(normalize_relative_path)
             .unwrap_or_default();
-        return source;
-    }
-
-    if source.scan_root.is_empty() {
-        source.scan_root = String::new();
     }
     source
+}
+
+fn normalize_source_paths(source: &mut Source) {
+    if let Ok(root_path) = normalize_path_for_storage(&source.root_path) {
+        source.root_path = root_path;
+    }
+    source.repo_root = source
+        .repo_root
+        .as_deref()
+        .map(|path| normalize_path_for_storage(path).unwrap_or_else(|_| path.to_string()));
 }
 
 fn is_skill_like_source(source: &Source) -> bool {

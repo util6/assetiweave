@@ -109,7 +109,7 @@ pub(crate) use skill_remote_repo::{
 };
 pub(crate) use source_repo::{
     delete_source_sqlx, load_skill_sources_sqlx, load_source_sqlx, load_sources_sqlx,
-    normalize_source, upsert_source_sqlx,
+    normalize_source_with_catalog, upsert_source_sqlx, upsert_source_sqlx_with_catalog,
 };
 pub(crate) use tenant_repo::{
     create_local_tenant_sqlx, list_tenants_for_principal_sqlx, load_local_request_context_sqlx,

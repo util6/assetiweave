@@ -1,6 +1,7 @@
 use crate::backend::dto::{AppResult, GitRepositoryInfo};
 use crate::backend::host_paths::HostPathResolver;
 use crate::backend::models::AppKind;
+use crate::backend::target_catalog::TargetCatalog;
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path, path::PathBuf, process::Command};
 use walkdir::WalkDir;
@@ -226,32 +227,25 @@ fn encode_url_component(value: &str) -> String {
     encoded
 }
 
-pub(crate) fn detect_app_target(path: &Path) -> Option<AppKind> {
-    let home = dirs::home_dir()?;
+pub(crate) fn detect_target_provider(
+    path: &Path,
+    catalog: &TargetCatalog,
+) -> Option<(String, Option<AppKind>)> {
     let filesystem = crate::backend::host_filesystem::HostFilesystem::current();
-    let candidates = [
-        (home.join(".codex").join("skills"), AppKind::Codex),
-        (home.join(".claude").join("skills"), AppKind::Claude),
-        (
-            home.join(".config").join("opencode").join("skills"),
-            AppKind::OpenCode,
-        ),
-        (home.join(".gemini").join("skills"), AppKind::Gemini),
-        (
-            home.join(".antigravity").join("skills"),
-            AppKind::Antigravity,
-        ),
-        (home.join(".openclaw").join("skills"), AppKind::OpenClaw),
-        (home.join(".kiro").join("skills"), AppKind::Kiro),
-        (home.join(".zcode").join("skills"), AppKind::Zcode),
-        (home.join(".qoder").join("skills"), AppKind::Qoder),
-        (home.join(".hermes").join("skills"), AppKind::Hermes),
-    ];
+    catalog.descriptors().iter().find_map(|descriptor| {
+        descriptor.default_targets.iter().find_map(|target| {
+            let target_path = expand_path(&target.path).ok()?;
+            filesystem
+                .is_within(path, &target_path)
+                .then(|| (descriptor.id.clone(), descriptor.app_kind_compat))
+        })
+    })
+}
 
-    candidates
-        .into_iter()
-        .find(|(candidate, _)| filesystem.is_within(path, candidate))
-        .map(|(_, app_kind)| app_kind)
+#[cfg(test)]
+pub(crate) fn detect_app_target(path: &Path) -> Option<AppKind> {
+    let catalog = TargetCatalog::builtin().ok()?;
+    detect_target_provider(path, &catalog).and_then(|(_, app_kind)| app_kind)
 }
 
 pub(crate) fn is_app_library_path(path: &Path) -> bool {
@@ -339,7 +333,14 @@ fn hash_dir(path: &Path) -> AppResult<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{expand_path, git_repository_for_path, hash_path, sanitize_git_remote};
+    use super::{
+        detect_target_provider, expand_path, git_repository_for_path, hash_path,
+        sanitize_git_remote,
+    };
+    use crate::backend::models::{
+        AppKind, AssetKind, DeploymentStrategy, TargetPathRule, TargetProfileDescriptor,
+    };
+    use crate::backend::target_catalog::TargetCatalog;
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -358,6 +359,33 @@ mod tests {
             .components()
             .any(|component| component.as_os_str() == std::ffi::OsStr::new("~")));
         assert!(child.ends_with(Path::new(".codex").join("skills")));
+    }
+
+    #[test]
+    fn runtime_catalog_drives_target_detection_for_new_provider() {
+        let root = unique_temp_dir("assetiweave-target-provider-test");
+        let target = root.join("skills");
+        let nested = target.join("nested");
+        fs::create_dir_all(&nested).expect("create target fixture");
+        let catalog = TargetCatalog::from_descriptors(vec![TargetProfileDescriptor {
+            id: "fixture-provider".to_string(),
+            name: "Fixture Provider".to_string(),
+            app_kind_compat: Some(AppKind::Custom),
+            default_targets: vec![TargetPathRule {
+                asset_kind: AssetKind::Skill,
+                path: target.to_string_lossy().to_string(),
+            }],
+            supported_kinds: vec![AssetKind::Skill],
+            deployment_strategy: DeploymentStrategy::SymlinkToSource,
+            icon: None,
+        }])
+        .expect("fixture target catalog");
+
+        assert_eq!(
+            detect_target_provider(&nested, &catalog),
+            Some(("fixture-provider".to_string(), Some(AppKind::Custom)))
+        );
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

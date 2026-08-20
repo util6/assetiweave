@@ -29,12 +29,19 @@ impl AppService {
     }
 
     pub(crate) fn add_source(&self, source: SourceInput) -> AppResult<Source> {
-        let source = source_from_input(source);
+        let catalog = self.runtime.target_catalog();
+        let source = source_from_input(source, catalog.as_ref());
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let source_to_save = source.clone();
         self.db.block_on(async move {
-            crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, &source_to_save).await
+            crate::backend::store::upsert_source_sqlx_with_catalog(
+                &pool,
+                &tenant_id,
+                &source_to_save,
+                catalog.as_ref(),
+            )
+            .await
         })?;
         Ok(source)
     }
@@ -43,7 +50,9 @@ impl AppService {
         if is_protected_source(&source) {
             return Err("AssetIWeave-managed Skill sources cannot be edited".to_string());
         }
-        let source = crate::backend::store::normalize_source(&source);
+        let catalog = self.runtime.target_catalog();
+        let source =
+            crate::backend::store::normalize_source_with_catalog(&source, catalog.as_ref());
         if !self
             .list_sources()?
             .iter()
@@ -55,7 +64,13 @@ impl AppService {
         let tenant_id = self.tenant_id().to_string();
         let source_to_save = source.clone();
         self.db.block_on(async move {
-            crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, &source_to_save).await
+            crate::backend::store::upsert_source_sqlx_with_catalog(
+                &pool,
+                &tenant_id,
+                &source_to_save,
+                catalog.as_ref(),
+            )
+            .await
         })?;
         Ok(source)
     }
@@ -70,7 +85,8 @@ impl AppService {
     }
 
     pub(crate) fn add_source_with_options(&self, params: SourceAddParams) -> AppResult<Value> {
-        let source = source_from_input(params.source);
+        let catalog = self.runtime.target_catalog();
+        let source = source_from_input(params.source, catalog.as_ref());
         if params.dry_run {
             return Ok(json!({ "dry_run": true, "source": source }));
         }
@@ -78,7 +94,13 @@ impl AppService {
         let tenant_id = self.tenant_id().to_string();
         let source_to_save = source.clone();
         self.db.block_on(async move {
-            crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, &source_to_save).await
+            crate::backend::store::upsert_source_sqlx_with_catalog(
+                &pool,
+                &tenant_id,
+                &source_to_save,
+                catalog.as_ref(),
+            )
+            .await
         })?;
         Ok(json!({ "dry_run": false, "source": source }))
     }
@@ -143,7 +165,10 @@ fn is_protected_source(source: &Source) -> bool {
         )
 }
 
-fn source_from_input(source: SourceInput) -> Source {
+fn source_from_input(
+    source: SourceInput,
+    catalog: &crate::backend::target_catalog::TargetCatalog,
+) -> Source {
     let source = Source {
         id: source.id.unwrap_or_else(|| Uuid::new_v4().to_string()),
         name: source.name,
@@ -163,5 +188,5 @@ fn source_from_input(source: SourceInput) -> Source {
         last_scanned_at: None,
         last_scan_status: Some("pending".to_string()),
     };
-    crate::backend::store::normalize_source(&source)
+    crate::backend::store::normalize_source_with_catalog(&source, catalog)
 }
