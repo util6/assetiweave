@@ -64,7 +64,13 @@ pub(super) fn install_conversation_adapter_package_from_spec(
         Ok(installed) => installed,
         Err(error) => {
             if previous_package.is_none() {
-                persist_failed_conversation_adapter_package(service, spec, &version_dir, &error)?;
+                let error_message = error.to_string();
+                persist_failed_conversation_adapter_package(
+                    service,
+                    spec,
+                    &version_dir,
+                    &error_message,
+                )?;
             }
             return Err(error);
         }
@@ -151,9 +157,15 @@ pub(super) fn install_conversation_adapter_package_from_spec(
             let _ = fs::remove_dir_all(&version_dir);
         }
         if previous_package.is_none() {
-            persist_failed_conversation_adapter_package(service, spec, &version_dir, &error)?;
+            let error_message = error.to_string();
+            persist_failed_conversation_adapter_package(
+                service,
+                spec,
+                &version_dir,
+                &error_message,
+            )?;
         }
-        return Err(error);
+        return Err(AppError::Storage(error));
     }
 
     Ok(json!({
@@ -193,29 +205,31 @@ fn install_conversation_adapter_package_files(
                 download_and_extract_install_artifact(spec, &staging_dir)?
             }
             ConversationAdapterPackageInstallSourceKind::LocalDirectory => {
-                return Err("local registered packages cannot be installed from Catalog".to_string())
+                return Err(AppError::Validation(
+                    "local registered packages cannot be installed from Catalog".to_string(),
+                ))
             }
         };
         if !source_dir.is_dir() {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "conversation adapter package source path is not a directory: {}",
                 source_dir.display()
-            ));
+            )));
         }
         let package_manifest_file = spec.package_manifest_file_name()?;
         if !source_dir.join(&package_manifest_file).is_file() {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "conversation adapter package source does not contain {}: {}",
                 package_manifest_file,
                 source_dir.display()
-            ));
+            )));
         }
 
         if prepared_dir.exists() {
-            return Err(format!(
+            return Err(AppError::Conflict(format!(
                 "conversation adapter package prepared path already exists: {}",
                 prepared_dir.display()
-            ));
+            )));
         }
         capabilities::copy_dir(&source_dir, &prepared_dir)?;
         let prepared_validation =
@@ -224,17 +238,18 @@ fn install_conversation_adapter_package_files(
             )?;
         let kernel_inspection = crate::backend::conversations::ConversationAdapterPackageSystem
             .inspect(&prepared_dir)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| AppError::Extension(error.to_string()))?;
         crate::backend::conversations::ConversationAdapterPackageSystem
             .on_installed(&kernel_inspection)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| AppError::Extension(error.to_string()))?;
         if kernel_inspection.identity.package_id != spec.package_id()
             || kernel_inspection.identity.version
-                != semver::Version::parse(&spec.version).map_err(|error| error.to_string())?
+                != semver::Version::parse(&spec.version)
+                    .map_err(|error| AppError::Validation(error.to_string()))?
         {
-            return Err(
+            return Err(AppError::Validation(
                 "conversation adapter kernel identity differs from install spec".to_string(),
-            );
+            ));
         }
         validate_installed_package_for_spec(spec, &prepared_validation)?;
 
@@ -245,23 +260,25 @@ fn install_conversation_adapter_package_files(
                 )?;
             validate_installed_package_for_spec(spec, &existing)?;
             if existing.content_hash != prepared_validation.content_hash {
-                return Err(format!(
+                return Err(AppError::Conflict(format!(
                     "conversation adapter package version is immutable: {}@{}",
                     spec.package_id(),
                     spec.version
-                ));
+                )));
             }
-            fs::remove_dir_all(&prepared_dir).map_err(|error| error.to_string())?;
+            fs::remove_dir_all(&prepared_dir)
+                .map_err(|error| AppError::Storage(error.to_string()))?;
             return Ok(InstalledConversationAdapterPackage {
                 validation: existing,
                 created_version_dir: false,
             });
         }
-        let parent = version_dir
-            .parent()
-            .ok_or_else(|| "conversation adapter version directory has no parent".to_string())?;
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        fs::rename(&prepared_dir, version_dir).map_err(|error| error.to_string())?;
+        let parent = version_dir.parent().ok_or_else(|| {
+            AppError::Validation("conversation adapter version directory has no parent".to_string())
+        })?;
+        fs::create_dir_all(parent).map_err(|error| AppError::Storage(error.to_string()))?;
+        fs::rename(&prepared_dir, version_dir)
+            .map_err(|error| AppError::Storage(error.to_string()))?;
         let final_validation =
             crate::backend::conversations::validate_conversation_adapter_package_dir(version_dir)
                 .and_then(|validation| {
@@ -275,7 +292,7 @@ fn install_conversation_adapter_package_files(
             }),
             Err(error) => {
                 let _ = fs::remove_dir_all(version_dir);
-                Err(error)
+                Err(AppError::Storage(error))
             }
         }
     })();
@@ -292,13 +309,19 @@ fn download_and_extract_install_artifact(
     staging_dir: &Path,
 ) -> AppResult<PathBuf> {
     if !spec.source.url.starts_with("https://") {
-        return Err("conversation adapter package artifacts require HTTPS".to_string());
+        return Err(AppError::Validation(
+            "conversation adapter package artifacts require HTTPS".to_string(),
+        ));
     }
     let expected_hash = spec
         .expected_artifact_hash
         .as_deref()
         .and_then(clean_non_empty_string)
-        .ok_or_else(|| "conversation adapter package artifact sha256 is required".to_string())?;
+        .ok_or_else(|| {
+            AppError::Validation(
+                "conversation adapter package artifact sha256 is required".to_string(),
+            )
+        })?;
     let response = ureq::get(&spec.source.url)
         .set(
             "User-Agent",
@@ -306,25 +329,33 @@ fn download_and_extract_install_artifact(
         )
         .call()
         .map_err(|error| {
-            format!("download conversation adapter package artifact failed: {error}")
+            AppError::External(format!(
+                "download conversation adapter package artifact failed: {error}"
+            ))
         })?;
     let mut bytes = Vec::new();
     response
         .into_reader()
         .take(512 * 1024 * 1024)
         .read_to_end(&mut bytes)
-        .map_err(|error| format!("read conversation adapter package artifact failed: {error}"))?;
+        .map_err(|error| {
+            AppError::External(format!(
+                "read conversation adapter package artifact failed: {error}"
+            ))
+        })?;
     if let Some(expected_size) = spec.artifact_size {
         if bytes.len() as u64 != expected_size {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "conversation adapter package artifact size mismatch: expected {expected_size}, got {}",
                 bytes.len()
-            ));
+            )));
         }
     }
     let actual_hash = format!("{:x}", Sha256::digest(&bytes));
     if !actual_hash.eq_ignore_ascii_case(&expected_hash) {
-        return Err("conversation adapter package artifact hash mismatch".to_string());
+        return Err(AppError::Validation(
+            "conversation adapter package artifact hash mismatch".to_string(),
+        ));
     }
 
     extract_install_artifact_bytes(spec, bytes, staging_dir)
@@ -336,11 +367,16 @@ pub(super) fn extract_install_artifact_bytes(
     staging_dir: &Path,
 ) -> AppResult<PathBuf> {
     let extract_root = staging_dir.join("extracted");
-    fs::create_dir_all(&extract_root).map_err(|error| error.to_string())?;
-    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
-        .map_err(|error| format!("open conversation adapter package artifact failed: {error}"))?;
+    fs::create_dir_all(&extract_root).map_err(|error| AppError::Storage(error.to_string()))?;
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|error| {
+        AppError::Validation(format!(
+            "open conversation adapter package artifact failed: {error}"
+        ))
+    })?;
     if archive.len() > 10_000 {
-        return Err("conversation adapter package artifact contains too many entries".to_string());
+        return Err(AppError::Validation(
+            "conversation adapter package artifact contains too many entries".to_string(),
+        ));
     }
     let portable_filesystem = crate::backend::host_filesystem::HostFilesystem::new(
         crate::backend::host_paths::HostPlatform::Windows,
@@ -350,56 +386,67 @@ pub(super) fn extract_install_artifact_bytes(
     let mut seen_paths = HashMap::<String, String>::new();
     for index in 0..archive.len() {
         let entry = archive.by_index(index).map_err(|error| {
-            format!("read conversation adapter package artifact entry failed: {error}")
+            AppError::Validation(format!(
+                "read conversation adapter package artifact entry failed: {error}"
+            ))
         })?;
         let validated = portable_filesystem
             .validate_portable_relative_path(entry.name())
             .map_err(|error| {
-                format!("conversation adapter package artifact contains an unsafe path: {error}")
+                AppError::Validation(format!(
+                    "conversation adapter package artifact contains an unsafe path: {error}"
+                ))
             })?;
         if let Some(previous) = seen_paths.insert(
             validated.comparison_key().to_string(),
             entry.name().to_string(),
         ) {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "conversation adapter package artifact contains colliding paths: {previous} and {}",
                 entry.name()
-            ));
+            )));
         }
         if entry
             .unix_mode()
             .is_some_and(|mode| mode & 0o170000 == 0o120000)
         {
-            return Err(
+            return Err(AppError::Validation(
                 "conversation adapter package artifact must not contain symlinks".to_string(),
-            );
+            ));
         }
         extracted_size = extracted_size.saturating_add(entry.size());
         if extracted_size > 1024 * 1024 * 1024 {
-            return Err("conversation adapter package artifact expands beyond 1 GiB".to_string());
+            return Err(AppError::Validation(
+                "conversation adapter package artifact expands beyond 1 GiB".to_string(),
+            ));
         }
         validated_paths.push(validated);
     }
 
     for (index, validated) in validated_paths.iter().enumerate() {
         let mut entry = archive.by_index(index).map_err(|error| {
-            format!("read conversation adapter package artifact entry failed: {error}")
+            AppError::Validation(format!(
+                "read conversation adapter package artifact entry failed: {error}"
+            ))
         })?;
         let destination = extract_root.join(validated.as_path());
         if entry.is_dir() {
-            fs::create_dir_all(&destination).map_err(|error| error.to_string())?;
+            fs::create_dir_all(&destination)
+                .map_err(|error| AppError::Storage(error.to_string()))?;
             continue;
         }
         if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            fs::create_dir_all(parent).map_err(|error| AppError::Storage(error.to_string()))?;
         }
-        let mut output = fs::File::create(&destination).map_err(|error| error.to_string())?;
-        std::io::copy(&mut entry, &mut output).map_err(|error| error.to_string())?;
+        let mut output =
+            fs::File::create(&destination).map_err(|error| AppError::Storage(error.to_string()))?;
+        std::io::copy(&mut entry, &mut output)
+            .map_err(|error| AppError::Storage(error.to_string()))?;
         #[cfg(unix)]
         if let Some(mode) = entry.unix_mode() {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&destination, fs::Permissions::from_mode(mode & 0o777))
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| AppError::Storage(error.to_string()))?;
         }
     }
 
@@ -408,8 +455,12 @@ pub(super) fn extract_install_artifact_bytes(
         return Ok(extract_root);
     }
     let mut candidates = Vec::new();
-    for entry in fs::read_dir(&extract_root).map_err(|error| error.to_string())? {
-        let path = entry.map_err(|error| error.to_string())?.path();
+    for entry in
+        fs::read_dir(&extract_root).map_err(|error| AppError::Storage(error.to_string()))?
+    {
+        let path = entry
+            .map_err(|error| AppError::Storage(error.to_string()))?
+            .path();
         if path.is_dir() && path.join(&package_manifest).is_file() {
             candidates.push(path);
         }
@@ -417,7 +468,9 @@ pub(super) fn extract_install_artifact_bytes(
     if candidates.len() == 1 {
         Ok(candidates[0].clone())
     } else {
-        Err("conversation adapter package artifact must contain one package root".to_string())
+        Err(AppError::Validation(
+            "conversation adapter package artifact must contain one package root".to_string(),
+        ))
     }
 }
 
@@ -472,31 +525,31 @@ fn validate_installed_package_for_spec(
     validation: &crate::backend::conversations::ConversationAdapterPackageValidationResult,
 ) -> AppResult<()> {
     if validation.manifest.package_id != spec.package_id() {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "installed package id {} does not match install package id {}",
             validation.manifest.package_id,
             spec.package_id()
-        ));
+        )));
     }
     if validation.manifest.version != spec.version {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "installed package version {} does not match install package version {}",
             validation.manifest.version, spec.version
-        ));
+        )));
     }
     if validation.manifest.record_kind != spec.record_kind {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "installed package record kind does not match install spec: {}",
             spec.id
-        ));
+        )));
     }
     if validation.manifest.runtime.protocol
         != crate::backend::conversations::ConversationAdapterPackageRuntimeProtocol::StdioNdjsonV1
     {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "conversation adapter package {} only supports stdio-ndjson-v1 in this release",
             spec.id
-        ));
+        )));
     }
     validate_installed_manifest_for_spec(spec, &validation.adapter_validation)?;
     if let Some(expected) = spec
@@ -505,10 +558,10 @@ fn validate_installed_package_for_spec(
         .and_then(clean_non_empty_string)
     {
         if validation.content_hash != expected {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "conversation adapter package {} content hash mismatch",
                 spec.id
-            ));
+            )));
         }
     }
     Ok(())
@@ -519,11 +572,11 @@ fn validate_installed_manifest_for_spec(
     validation: &crate::backend::conversations::ExternalAdapterValidationResult,
 ) -> AppResult<()> {
     if validation.manifest.id != spec.adapter_key() {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "installed adapter id {} does not match install adapter id {}",
             validation.manifest.id,
             spec.adapter_key()
-        ));
+        )));
     }
     if !validation
         .manifest
@@ -531,10 +584,10 @@ fn validate_installed_manifest_for_spec(
         .iter()
         .any(|capability| capability == "read_session")
     {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "conversation adapter package {} must declare read_session",
             spec.id
-        ));
+        )));
     }
     if spec.record_kind == ConversationAdapterPackageRecordKind::Web
         && !validation
@@ -543,10 +596,10 @@ fn validate_installed_manifest_for_spec(
             .iter()
             .any(|capability| capability == "web_records")
     {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "web conversation adapter package {} must declare web_records",
             spec.id
-        ));
+        )));
     }
     if let Some(expected) = spec
         .expected_content_hash
@@ -554,10 +607,10 @@ fn validate_installed_manifest_for_spec(
         .and_then(clean_non_empty_string)
     {
         if validation.content_hash != expected {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "conversation adapter {} content hash mismatch",
                 spec.id
-            ));
+            )));
         }
     }
     Ok(())
@@ -566,7 +619,8 @@ fn validate_installed_manifest_for_spec(
 fn conversation_adapter_package_dir(
     spec: &ConversationAdapterPackageInstallSpec,
 ) -> AppResult<PathBuf> {
-    Ok(crate::backend::app_settings::conversation_adapter_dir()?
+    Ok(crate::backend::app_settings::conversation_adapter_dir()
+        .map_err(AppError::Storage)?
         .join("packages")
         .join(spec.package_id()))
 }
@@ -582,7 +636,11 @@ fn conversation_adapter_package_version_dir(
 fn validated_package_version(value: &str) -> AppResult<String> {
     semver::Version::parse(value.trim())
         .map(|version| version.to_string())
-        .map_err(|error| format!("conversation adapter package version must be SemVer: {error}"))
+        .map_err(|error| {
+            AppError::Validation(format!(
+                "conversation adapter package version must be SemVer: {error}"
+            ))
+        })
 }
 
 fn conversation_adapter_package_prepared_dir(
@@ -596,7 +654,8 @@ fn conversation_adapter_package_prepared_dir(
 fn conversation_script_staging_dir(
     spec: &ConversationAdapterPackageInstallSpec,
 ) -> AppResult<PathBuf> {
-    Ok(crate::backend::app_settings::conversation_adapter_dir()?
+    Ok(crate::backend::app_settings::conversation_adapter_dir()
+        .map_err(AppError::Storage)?
         .join("staging")
         .join(format!(
             "{}-{}",
@@ -609,7 +668,9 @@ pub(super) fn parse_github_install_source(
     source: &crate::backend::conversations::ConversationAdapterPackageInstallSource,
 ) -> AppResult<GitHubInstallLocation> {
     if source.kind != ConversationAdapterPackageInstallSourceKind::Github {
-        return Err("conversation adapter package source must be github".to_string());
+        return Err(AppError::Validation(
+            "conversation adapter package source must be github".to_string(),
+        ));
     }
     let trimmed = source
         .url
@@ -622,17 +683,23 @@ pub(super) fn parse_github_install_source(
         .unwrap_or_default()
         .trim_end_matches('/');
     let path = trimmed.strip_prefix("https://github.com/").ok_or_else(|| {
-        "conversation adapter package source only supports https://github.com URLs".to_string()
+        AppError::Validation(
+            "conversation adapter package source only supports https://github.com URLs".to_string(),
+        )
     })?;
     let parts = path.split('/').collect::<Vec<_>>();
     if parts.len() < 2 || parts[0].is_empty() || parts[1].is_empty() {
-        return Err("GitHub URL must include owner and repository".to_string());
+        return Err(AppError::Validation(
+            "GitHub URL must include owner and repository".to_string(),
+        ));
     }
 
     let owner = parts[0];
     let repo = parts[1].trim_end_matches(".git");
     if repo.is_empty() {
-        return Err("GitHub URL must include repository name".to_string());
+        return Err(AppError::Validation(
+            "GitHub URL must include repository name".to_string(),
+        ));
     }
 
     let mut branch = source.branch.as_deref().and_then(clean_non_empty_string);
@@ -653,13 +720,13 @@ pub(super) fn parse_github_install_source(
 
 fn clone_github_catalog_source(location: &GitHubInstallLocation, target: &Path) -> AppResult<()> {
     if target.exists() {
-        return Err(format!(
+        return Err(AppError::Conflict(format!(
             "conversation adapter package staging path already exists: {}",
             target.display()
-        ));
+        )));
     }
     if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        fs::create_dir_all(parent).map_err(|error| AppError::Storage(error.to_string()))?;
     }
 
     let mut command_args = vec!["clone".to_string(), "--depth".to_string(), "1".to_string()];
@@ -678,10 +745,10 @@ fn clone_github_catalog_source(location: &GitHubInstallLocation, target: &Path) 
         1024 * 1024,
         256 * 1024,
     )
-    .map_err(|error| format!("failed to run git clone: {error:?}"))?;
+    .map_err(|error| AppError::Process(format!("failed to run git clone: {error:?}")))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(format!("git clone failed: {stderr}"));
+        return Err(AppError::External(format!("git clone failed: {stderr}")));
     }
     Ok(())
 }

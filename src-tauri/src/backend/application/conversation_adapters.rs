@@ -444,7 +444,7 @@ impl AppService {
                 .as_ref()
                 .map(|adapter| {
                     self.ensure_conversation_adapter_package_runtime_ready(adapter)
-                        .map_err(conversation_external_error)
+                        .map_err(|error| AppError::External(error.to_string()))
                 })
                 .unwrap_or(Ok(()))
                 .and_then(|_| {

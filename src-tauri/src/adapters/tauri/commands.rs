@@ -739,9 +739,9 @@ fn spawn_conversation_lifecycle_task<F>(
     task_id: String,
     operation: &'static str,
     work: F,
-) -> AppResult<()>
+) -> RuntimeAppResult<()>
 where
-    F: FnOnce() -> Result<Value, String> + Send + 'static,
+    F: FnOnce() -> RuntimeAppResult<Value> + Send + 'static,
 {
     let task_id_for_runtime = task_id.clone();
     let background_tasks_for_runtime = background_tasks.clone();
@@ -749,10 +749,15 @@ where
     let operation_for_runtime = operation;
     let task = Box::new(move |context: TaskContext| {
         let result = if context.is_cancelled() {
-            Err(format!("{operation_for_runtime} task cancelled"))
+            Err(AppError::Canceled(format!(
+                "{operation_for_runtime} task cancelled"
+            )))
         } else {
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
-                .unwrap_or_else(|_| Err(format!("{operation_for_runtime} task panicked")))
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|_| {
+                Err(AppError::Process(format!(
+                    "{operation_for_runtime} task panicked"
+                )))
+            })
         };
         match &result {
             Ok(value) => log_info(
@@ -770,7 +775,10 @@ where
                 &[("task_id", task_id_for_runtime.clone())],
             ),
         }
-        let projection_result = result.clone();
+        let projection_result = match &result {
+            Ok(value) => Ok(value.clone()),
+            Err(error) => Err(error.to_string()),
+        };
         match background_tasks_for_runtime
             .finish_conversation_script_install(&task_id_for_runtime, projection_result)
         {
@@ -782,12 +790,12 @@ where
                 &[("task_id", task_id_for_runtime.clone())],
             ),
         }
-        result.map_err(AppError::Legacy)
+        result
     });
     if let Err(error) = background_tasks.spawn_extension_lifecycle(&task_id, task) {
         let _ =
             background_tasks.finish_conversation_script_install(&task_id, Err(error.to_string()));
-        return Err(error.to_string());
+        return Err(AppError::External(error.to_string()));
     }
     Ok(())
 }
@@ -2217,7 +2225,7 @@ pub(crate) fn disable_conversation_source(
 pub(crate) fn list_conversation_script_catalog(
     state: State<'_, AppState>,
     params: ConversationScriptCatalogParams,
-) -> AppResult<Vec<crate::backend::application::ConversationScriptCatalogEntry>> {
+) -> RuntimeAppResult<Vec<crate::backend::application::ConversationScriptCatalogEntry>> {
     AppService::from_runtime(&state.runtime).list_conversation_script_catalog(params)
 }
 
@@ -2225,7 +2233,7 @@ pub(crate) fn list_conversation_script_catalog(
 pub(crate) fn register_conversation_adapter_local(
     state: State<'_, AppState>,
     params: ConversationAdapterLocalRegisterParams,
-) -> AppResult<serde_json::Value> {
+) -> RuntimeAppResult<serde_json::Value> {
     AppService::from_runtime(&state.runtime).register_conversation_adapter_local(params)
 }
 
@@ -2233,26 +2241,26 @@ pub(crate) fn register_conversation_adapter_local(
 pub(crate) async fn inspect_conversation_adapter_package(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageInspectParams,
-) -> AppResult<crate::backend::application::ConversationAdapterPackageInspection> {
+) -> RuntimeAppResult<crate::backend::application::ConversationAdapterPackageInspection> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).inspect_conversation_adapter_package(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
 pub(crate) async fn prepare_conversation_adapter_package_change(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageChangeParams,
-) -> AppResult<crate::backend::application::ConversationAdapterPackageChangePreflight> {
+) -> RuntimeAppResult<crate::backend::application::ConversationAdapterPackageChangePreflight> {
     let runtime = state.runtime.clone();
     let mut preflight = tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).prepare_conversation_adapter_package_change(params)
     })
     .await
-    .map_err(|error| error.to_string())??;
+    .map_err(|error| AppError::External(error.to_string()))??;
     if state
         .background_tasks
         .conversation_script_install_snapshot()?
@@ -2267,118 +2275,118 @@ pub(crate) async fn prepare_conversation_adapter_package_change(
 pub(crate) async fn list_conversation_adapter_packages(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageCatalogParams,
-) -> AppResult<Vec<crate::backend::application::ConversationAdapterPackageCatalogEntry>> {
+) -> RuntimeAppResult<Vec<crate::backend::application::ConversationAdapterPackageCatalogEntry>> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).list_conversation_adapter_packages(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
 pub(crate) async fn list_conversation_adapter_package_releases(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageReleaseListParams,
-) -> AppResult<Vec<crate::backend::models::ConversationAdapterCatalogRelease>> {
+) -> RuntimeAppResult<Vec<crate::backend::models::ConversationAdapterCatalogRelease>> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).list_conversation_adapter_package_releases(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
 pub(crate) async fn list_installed_conversation_adapter_package_versions(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageVersionChangeParams,
-) -> AppResult<Vec<crate::backend::models::ConversationAdapterPackageVersion>> {
+) -> RuntimeAppResult<Vec<crate::backend::models::ConversationAdapterPackageVersion>> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime)
             .list_installed_conversation_adapter_package_versions(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
 pub(crate) async fn switch_conversation_adapter_package_version(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageVersionChangeParams,
-) -> AppResult<serde_json::Value> {
+) -> RuntimeAppResult<serde_json::Value> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).switch_conversation_adapter_package_version(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
 pub(crate) async fn rollback_conversation_adapter_package_version(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageVersionChangeParams,
-) -> AppResult<serde_json::Value> {
+) -> RuntimeAppResult<serde_json::Value> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).rollback_conversation_adapter_package_version(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
 pub(crate) async fn delete_conversation_adapter_package_version(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageVersionChangeParams,
-) -> AppResult<serde_json::Value> {
+) -> RuntimeAppResult<serde_json::Value> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).delete_conversation_adapter_package_version(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
 pub(crate) async fn refresh_conversation_adapter_catalogs(
     state: State<'_, AppState>,
     params: ConversationAdapterCatalogRefreshParams,
-) -> AppResult<Vec<crate::backend::models::ConversationAdapterCatalogRelease>> {
+) -> RuntimeAppResult<Vec<crate::backend::models::ConversationAdapterCatalogRelease>> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).refresh_conversation_adapter_catalogs(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
 pub(crate) async fn check_conversation_adapter_package_updates(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageUpdateCheckParams,
-) -> AppResult<Vec<crate::backend::application::ConversationAdapterPackageUpdateStatus>> {
+) -> RuntimeAppResult<Vec<crate::backend::application::ConversationAdapterPackageUpdateStatus>> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).check_conversation_adapter_package_updates(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
 pub(crate) async fn set_conversation_adapter_package_update_policy(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageUpdatePolicyParams,
-) -> AppResult<crate::backend::models::ConversationAdapterPackage> {
+) -> RuntimeAppResult<crate::backend::models::ConversationAdapterPackage> {
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).set_conversation_adapter_package_update_policy(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 #[tauri::command]
@@ -2386,7 +2394,7 @@ pub(crate) fn install_conversation_adapter_package(
     app: AppHandle,
     state: State<'_, AppState>,
     params: ConversationAdapterPackageInstallParams,
-) -> AppResult<ConversationScriptInstallTaskSnapshot> {
+) -> RuntimeAppResult<ConversationScriptInstallTaskSnapshot> {
     let (snapshot, should_start) = state
         .background_tasks
         .begin_conversation_adapter_package_install(&params)?;
@@ -2412,7 +2420,7 @@ pub(crate) fn update_conversation_adapter_package(
     app: AppHandle,
     state: State<'_, AppState>,
     params: ConversationAdapterPackageInstallParams,
-) -> AppResult<ConversationScriptInstallTaskSnapshot> {
+) -> RuntimeAppResult<ConversationScriptInstallTaskSnapshot> {
     let (snapshot, should_start) = state
         .background_tasks
         .begin_conversation_adapter_package_update(&params)?;
@@ -2438,7 +2446,7 @@ pub(crate) fn uninstall_conversation_adapter_package(
     app: AppHandle,
     state: State<'_, AppState>,
     params: ConversationAdapterPackageUninstallParams,
-) -> AppResult<ConversationScriptInstallTaskSnapshot> {
+) -> RuntimeAppResult<ConversationScriptInstallTaskSnapshot> {
     let (snapshot, should_start) = state
         .background_tasks
         .begin_conversation_adapter_package_uninstall(&params)?;
@@ -2460,10 +2468,11 @@ pub(crate) fn uninstall_conversation_adapter_package(
 #[tauri::command]
 pub(crate) fn get_conversation_adapter_package_task(
     state: State<'_, AppState>,
-) -> AppResult<Option<ConversationScriptInstallTaskSnapshot>> {
+) -> RuntimeAppResult<Option<ConversationScriptInstallTaskSnapshot>> {
     state
         .background_tasks
         .conversation_script_install_snapshot()
+        .map_err(AppError::External)
 }
 
 #[tauri::command]
@@ -2471,7 +2480,7 @@ pub(crate) fn install_conversation_script(
     app: AppHandle,
     state: State<'_, AppState>,
     params: ConversationScriptInstallParams,
-) -> AppResult<ConversationScriptInstallTaskSnapshot> {
+) -> RuntimeAppResult<ConversationScriptInstallTaskSnapshot> {
     let (snapshot, should_start) = state
         .background_tasks
         .begin_conversation_script_install(&params)?;
@@ -2495,10 +2504,11 @@ pub(crate) fn install_conversation_script(
 #[tauri::command]
 pub(crate) fn get_conversation_script_install_task(
     state: State<'_, AppState>,
-) -> AppResult<Option<ConversationScriptInstallTaskSnapshot>> {
+) -> RuntimeAppResult<Option<ConversationScriptInstallTaskSnapshot>> {
     state
         .background_tasks
         .conversation_script_install_snapshot()
+        .map_err(AppError::External)
 }
 
 #[tauri::command]
