@@ -1892,7 +1892,7 @@ pub(crate) fn cancel_batch_mount(
 #[tauri::command]
 pub(crate) fn list_conversation_adapters(
     state: State<'_, AppState>,
-) -> AppResult<Vec<ConversationAdapter>> {
+) -> RuntimeAppResult<Vec<ConversationAdapter>> {
     AppService::from_runtime(&state.runtime).list_conversation_adapters()
 }
 
@@ -1900,7 +1900,7 @@ pub(crate) fn list_conversation_adapters(
 pub(crate) fn scaffold_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterScaffoldParams,
-) -> AppResult<crate::backend::conversations::ExternalAdapterScaffoldResult> {
+) -> RuntimeAppResult<crate::backend::conversations::ExternalAdapterScaffoldResult> {
     AppService::from_runtime(&state.runtime).scaffold_conversation_adapter(params)
 }
 
@@ -1908,14 +1908,14 @@ pub(crate) fn scaffold_conversation_adapter(
 pub(crate) fn validate_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterValidateParams,
-) -> AppResult<crate::backend::conversations::ExternalAdapterValidationResult> {
+) -> RuntimeAppResult<crate::backend::conversations::ExternalAdapterValidationResult> {
     AppService::from_runtime(&state.runtime).validate_conversation_adapter(params)
 }
 
 #[tauri::command]
 pub(crate) fn list_conversation_adapter_runtime_statuses(
     state: State<'_, AppState>,
-) -> AppResult<Vec<crate::backend::conversations::ConversationAdapterRuntimeStatus>> {
+) -> RuntimeAppResult<Vec<crate::backend::conversations::ConversationAdapterRuntimeStatus>> {
     AppService::from_runtime(&state.runtime).list_conversation_adapter_runtime_statuses()
 }
 
@@ -2170,7 +2170,7 @@ pub(crate) fn cancel_ai_execution_task(
 pub(crate) fn register_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterRegisterParams,
-) -> AppResult<serde_json::Value> {
+) -> RuntimeAppResult<serde_json::Value> {
     AppService::from_runtime(&state.runtime).register_conversation_adapter(params)
 }
 
@@ -2178,7 +2178,7 @@ pub(crate) fn register_conversation_adapter(
 pub(crate) fn unregister_conversation_adapter(
     state: State<'_, AppState>,
     params: ConversationAdapterUnregisterParams,
-) -> AppResult<serde_json::Value> {
+) -> RuntimeAppResult<serde_json::Value> {
     AppService::from_runtime(&state.runtime).unregister_conversation_adapter(params)
 }
 
@@ -2186,14 +2186,14 @@ pub(crate) fn unregister_conversation_adapter(
 pub(crate) fn try_run_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterTryRunParams,
-) -> AppResult<crate::backend::conversations::ExternalAdapterRunResult> {
+) -> RuntimeAppResult<crate::backend::conversations::ExternalAdapterRunResult> {
     AppService::from_runtime(&state.runtime).try_run_conversation_adapter(params)
 }
 
 #[tauri::command]
 pub(crate) fn list_conversation_sources(
     state: State<'_, AppState>,
-) -> AppResult<Vec<ConversationSource>> {
+) -> RuntimeAppResult<Vec<ConversationSource>> {
     AppService::from_runtime(&state.runtime).list_conversation_sources()
 }
 
@@ -2201,7 +2201,7 @@ pub(crate) fn list_conversation_sources(
 pub(crate) fn upsert_conversation_source(
     state: State<'_, AppState>,
     params: ConversationSourceUpsertParams,
-) -> AppResult<serde_json::Value> {
+) -> RuntimeAppResult<serde_json::Value> {
     AppService::from_runtime(&state.runtime).upsert_conversation_source(params)
 }
 
@@ -2209,7 +2209,7 @@ pub(crate) fn upsert_conversation_source(
 pub(crate) fn disable_conversation_source(
     state: State<'_, AppState>,
     params: ConversationSourceDisableParams,
-) -> AppResult<serde_json::Value> {
+) -> RuntimeAppResult<serde_json::Value> {
     AppService::from_runtime(&state.runtime).disable_conversation_source(params)
 }
 
@@ -2565,7 +2565,12 @@ pub(crate) fn start_conversation_sync_background(
                 },
             )
         }))
-        .unwrap_or_else(|_| Err("conversation sync task panicked".to_string()));
+        .unwrap_or_else(|_| {
+            Err(AppError::Process(
+                "conversation sync task panicked".to_string(),
+            ))
+        });
+        let result = result.map_err(|error| error.to_string());
         match &result {
             Ok(value) => log_info(
                 "conversation.sync",

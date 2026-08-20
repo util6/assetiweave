@@ -1,17 +1,29 @@
 use super::prelude::*;
+use crate::backend::runtime::{AppError, AppResult};
+
+fn conversation_storage_error(error: String) -> AppError {
+    AppError::Storage(error)
+}
+
+fn conversation_external_error(error: String) -> AppError {
+    AppError::External(error)
+}
 
 impl AppService {
     pub(crate) fn conversation_payload_policy_reparse_required(&self) -> AppResult<bool> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        self.db.block_on(async move {
-            crate::backend::store::conversation_payload_policy_reparse_required_sqlx(
-                &pool,
-                &tenant_id,
-                crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-            )
-            .await
-        })
+        Ok(self
+            .db
+            .block_on(async move {
+                crate::backend::store::conversation_payload_policy_reparse_required_sqlx(
+                    &pool,
+                    &tenant_id,
+                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+                )
+                .await
+            })
+            .map_err(conversation_storage_error)?)
     }
 
     pub(crate) fn list_conversation_adapters(&self) -> AppResult<Vec<ConversationAdapter>> {
@@ -23,6 +35,7 @@ impl AppService {
         params: crate::backend::conversations::ExternalAdapterScaffoldParams,
     ) -> AppResult<crate::backend::conversations::ExternalAdapterScaffoldResult> {
         crate::backend::conversations::scaffold_external_adapter(params)
+            .map_err(conversation_external_error)
     }
 
     pub(crate) fn validate_conversation_adapter(
@@ -30,6 +43,7 @@ impl AppService {
         params: crate::backend::conversations::ExternalAdapterValidateParams,
     ) -> AppResult<crate::backend::conversations::ExternalAdapterValidationResult> {
         crate::backend::conversations::validate_external_adapter(params)
+            .map_err(AppError::Validation)
     }
 
     pub(crate) fn list_conversation_adapter_runtime_statuses(
@@ -40,6 +54,7 @@ impl AppService {
         crate::backend::conversations::list_conversation_adapter_runtime_statuses(
             &adapters, &sources,
         )
+        .map_err(conversation_external_error)
     }
 
     pub(crate) fn register_conversation_adapter(
@@ -47,16 +62,25 @@ impl AppService {
         params: crate::backend::conversations::ExternalAdapterRegisterParams,
     ) -> AppResult<Value> {
         let dry_run = params.dry_run;
-        let preview = crate::backend::conversations::register_external_adapter(params)?;
+        let preview = crate::backend::conversations::register_external_adapter(params)
+            .map_err(conversation_external_error)?;
         let mut adapter =
-            crate::backend::conversations::adapter_from_registration_preview(preview.clone())?;
+            crate::backend::conversations::adapter_from_registration_preview(preview.clone())
+                .map_err(AppError::Validation)?;
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let adapter_id = adapter.id.clone();
-        let existing = self.db.block_on(async move {
-            crate::backend::store::load_conversation_adapter_sqlx(&pool, &tenant_id, &adapter_id)
+        let existing = self
+            .db
+            .block_on(async move {
+                crate::backend::store::load_conversation_adapter_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &adapter_id,
+                )
                 .await
-        })?;
+            })
+            .map_err(conversation_storage_error)?;
         let reactivating_builtin = existing.as_ref().is_some_and(|existing| {
             existing.trust_state == crate::backend::models::ConversationAdapterTrustState::BuiltIn
         });
@@ -72,10 +96,10 @@ impl AppService {
             },
         )?;
         if !preflight.task_conflicts.is_empty() {
-            return Err(format!(
+            return Err(AppError::Conflict(format!(
                 "conversation adapter registration conflicts with running tasks: {}",
                 preflight.task_conflicts.join(", ")
-            ));
+            )));
         }
         if !dry_run {
             let pool = self.db.pool().clone();
@@ -84,16 +108,18 @@ impl AppService {
                 crate::backend::store::upsert_conversation_adapter_sqlx(
                     &pool, &tenant_id, &adapter,
                 )
-                .await?;
+                .await
+                .map_err(conversation_storage_error)?;
                 if reactivating_builtin {
                     crate::backend::store::enable_conversation_sources_by_adapter_sqlx(
                         &pool,
                         &tenant_id,
                         &adapter.id,
                     )
-                    .await?;
+                    .await
+                    .map_err(conversation_storage_error)?;
                 }
-                AppResult::Ok(())
+                Ok::<(), AppError>(())
             })?;
             self.runtime.refresh_conversation_adapter_catalog()?;
         }
@@ -112,13 +138,15 @@ impl AppService {
             },
         )?;
         if !preflight.task_conflicts.is_empty() {
-            return Err(format!(
+            return Err(AppError::Conflict(format!(
                 "conversation adapter unregister conflicts with running tasks: {}",
                 preflight.task_conflicts.join(", ")
-            ));
+            )));
         }
         if !params.dry_run && !params.yes {
-            return Err("conversation.adapter.unregister requires --yes".to_string());
+            return Err(AppError::Validation(
+                "conversation.adapter.unregister requires --yes".to_string(),
+            ));
         }
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
@@ -132,8 +160,14 @@ impl AppService {
                     &adapter_id,
                 )
                 .await
-            })?
-            .ok_or_else(|| format!("conversation adapter not found: {}", params.adapter_id))?;
+            })
+            .map_err(conversation_storage_error)?
+            .ok_or_else(|| {
+                AppError::NotFound(format!(
+                    "conversation adapter not found: {}",
+                    params.adapter_id
+                ))
+            })?;
         if params.dry_run {
             return Ok(json!({
                 "dry_run": true,
@@ -146,14 +180,17 @@ impl AppService {
             let pool = self.db.pool().clone();
             let tenant_id = self.tenant_id().to_string();
             let adapter_id = params.adapter_id.clone();
-            let adapter = self.db.block_on(async move {
-                crate::backend::store::disable_builtin_conversation_adapter_sqlx(
-                    &pool,
-                    &tenant_id,
-                    &adapter_id,
-                )
-                .await
-            })?;
+            let adapter = self
+                .db
+                .block_on(async move {
+                    crate::backend::store::disable_builtin_conversation_adapter_sqlx(
+                        &pool,
+                        &tenant_id,
+                        &adapter_id,
+                    )
+                    .await
+                })
+                .map_err(conversation_storage_error)?;
             self.runtime.refresh_conversation_adapter_catalog()?;
             return Ok(json!({
                 "dry_run": false,
@@ -176,8 +213,14 @@ impl AppService {
                     package_id.as_deref(),
                 )
                 .await
-            })?
-            .ok_or_else(|| format!("conversation adapter not found: {}", params.adapter_id))?;
+            })
+            .map_err(conversation_storage_error)?
+            .ok_or_else(|| {
+                AppError::NotFound(format!(
+                    "conversation adapter not found: {}",
+                    params.adapter_id
+                ))
+            })?;
         self.runtime.refresh_conversation_adapter_catalog()?;
         Ok(json!({
             "dry_run": false,
@@ -191,14 +234,18 @@ impl AppService {
         params: crate::backend::conversations::ExternalAdapterTryRunParams,
     ) -> AppResult<crate::backend::conversations::ExternalAdapterRunResult> {
         crate::backend::conversations::try_run_external_adapter(params)
+            .map_err(conversation_external_error)
     }
 
     pub(crate) fn list_conversation_sources(&self) -> AppResult<Vec<ConversationSource>> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        self.db.block_on(async move {
-            crate::backend::store::list_conversation_sources_sqlx(&pool, &tenant_id).await
-        })
+        Ok(self
+            .db
+            .block_on(async move {
+                crate::backend::store::list_conversation_sources_sqlx(&pool, &tenant_id).await
+            })
+            .map_err(conversation_storage_error)?)
     }
 
     pub(crate) fn upsert_conversation_source(
@@ -217,13 +264,14 @@ impl AppService {
                     &adapter_id,
                 )
                 .await
-            })?
+            })
+            .map_err(conversation_storage_error)?
             .is_none()
         {
-            return Err(format!(
+            return Err(AppError::NotFound(format!(
                 "conversation adapter not found: {}",
                 params.source.adapter_id
-            ));
+            )));
         }
         if params.dry_run {
             return Ok(json!({
@@ -234,9 +282,12 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let source = params.source.clone();
-        self.db.block_on(async move {
-            crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source).await
-        })?;
+        self.db
+            .block_on(async move {
+                crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source)
+                    .await
+            })
+            .map_err(conversation_storage_error)?;
         Ok(json!({
             "dry_run": false,
             "source": params.source
@@ -255,8 +306,11 @@ impl AppService {
             .block_on(async move {
                 crate::backend::store::load_conversation_source_sqlx(&pool, &tenant_id, &source_id)
                     .await
-            })?
-            .ok_or_else(|| format!("conversation source not found: {}", params.id))?;
+            })
+            .map_err(conversation_storage_error)?
+            .ok_or_else(|| {
+                AppError::NotFound(format!("conversation source not found: {}", params.id))
+            })?;
         if params.dry_run {
             return Ok(json!({
                 "dry_run": true,
@@ -267,10 +321,15 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let source_id = params.id.clone();
-        let source = self.db.block_on(async move {
-            crate::backend::store::disable_conversation_source_sqlx(&pool, &tenant_id, &source_id)
+        let source = self
+            .db
+            .block_on(async move {
+                crate::backend::store::disable_conversation_source_sqlx(
+                    &pool, &tenant_id, &source_id,
+                )
                 .await
-        })?;
+            })
+            .map_err(conversation_storage_error)?;
         Ok(json!({
             "dry_run": false,
             "disabled": true,
@@ -297,7 +356,8 @@ impl AppService {
             .db
             .block_on(async move {
                 crate::backend::store::list_conversation_sources_sqlx(&pool, &tenant_id).await
-            })?
+            })
+            .map_err(conversation_storage_error)?
             .into_iter()
             .filter(|source| params.source_id.as_deref().is_none_or(|id| id == source.id))
             .filter(|source| {
@@ -309,7 +369,9 @@ impl AppService {
             .filter(|source| source.enabled)
             .collect::<Vec<_>>();
         if sources.is_empty() {
-            return Err("no matching conversation sources".to_string());
+            return Err(AppError::NotFound(
+                "no matching conversation sources".to_string(),
+            ));
         }
 
         let total_source_count = sources.len();
@@ -326,14 +388,17 @@ impl AppService {
             let pool = self.db.pool().clone();
             let tenant_id = self.tenant_id().to_string();
             let adapter_id = source.adapter_id.clone();
-            let adapter = self.db.block_on(async move {
-                crate::backend::store::load_conversation_adapter_sqlx(
-                    &pool,
-                    &tenant_id,
-                    &adapter_id,
-                )
-                .await
-            })?;
+            let adapter = self
+                .db
+                .block_on(async move {
+                    crate::backend::store::load_conversation_adapter_sqlx(
+                        &pool,
+                        &tenant_id,
+                        &adapter_id,
+                    )
+                    .await
+                })
+                .map_err(conversation_storage_error)?;
             if !sync_source_matches_record_kind(adapter.as_ref(), &source.adapter_id, record_kind) {
                 completed_source_count += 1;
                 on_progress(completed_source_count, total_source_count, None);
@@ -358,24 +423,29 @@ impl AppService {
             let source_id = source.id.clone();
             let known_adapter_content_hash = adapter_content_hash.clone();
             let known_versions = if params.mode.uses_known_versions() {
-                self.db.block_on(async move {
-                    crate::backend::store::load_conversation_session_versions_sqlx(
-                        &pool,
-                        &tenant_id,
-                        &source_id,
-                        source_record_kind,
-                        known_adapter_content_hash.as_deref(),
-                        card_contract_version,
-                        payload_policy_version,
-                    )
-                    .await
-                })?
+                self.db
+                    .block_on(async move {
+                        crate::backend::store::load_conversation_session_versions_sqlx(
+                            &pool,
+                            &tenant_id,
+                            &source_id,
+                            source_record_kind,
+                            known_adapter_content_hash.as_deref(),
+                            card_contract_version,
+                            payload_policy_version,
+                        )
+                        .await
+                    })
+                    .map_err(conversation_storage_error)?
             } else {
                 BTreeMap::new()
             };
             let read_result = adapter
                 .as_ref()
-                .map(|adapter| self.ensure_conversation_adapter_package_runtime_ready(adapter))
+                .map(|adapter| {
+                    self.ensure_conversation_adapter_package_runtime_ready(adapter)
+                        .map_err(conversation_external_error)
+                })
                 .unwrap_or(Ok(()))
                 .and_then(|_| {
                     if !params.dry_run && web_record_source {
@@ -384,12 +454,14 @@ impl AppService {
                             &source,
                             matches!(params.mode, ConversationSyncMode::Full),
                         )
+                        .map_err(conversation_external_error)
                         .and_then(|_| {
                             crate::backend::conversations::read_source_sessions_incrementally_with_adapter(
                                 adapter.as_ref(),
                                 &source,
                                 &known_versions,
                             )
+                            .map_err(conversation_external_error)
                         })
                     } else {
                         crate::backend::conversations::read_source_sessions_incrementally_with_adapter(
@@ -397,6 +469,7 @@ impl AppService {
                             &source,
                             &known_versions,
                         )
+                        .map_err(conversation_external_error)
                     }
                 });
             let sync_result = match read_result {
@@ -412,7 +485,8 @@ impl AppService {
                             &read.sessions,
                             params.dry_run,
                         )
-                        .await?;
+                        .await
+                        .map_err(conversation_storage_error)?;
                         let retained_session_count = persist_successful_conversation_observation(
                             &pool,
                             &tenant_id,
@@ -452,7 +526,8 @@ impl AppService {
                                 &discovered_external_ids,
                                 params.dry_run,
                             )
-                            .await?
+                            .await
+                            .map_err(conversation_storage_error)?
                         } else {
                             crate::backend::store::import_conversation_sessions_sqlx(
                                 &pool,
@@ -461,7 +536,8 @@ impl AppService {
                                 &read.sessions,
                                 params.dry_run,
                             )
-                            .await?
+                            .await
+                            .map_err(conversation_storage_error)?
                         };
                         let retained_session_count = persist_successful_conversation_observation(
                             &pool,
@@ -510,7 +586,9 @@ impl AppService {
             }
         }
         if results.is_empty() && errors.is_empty() {
-            return Err("no matching conversation sources".to_string());
+            return Err(AppError::NotFound(
+                "no matching conversation sources".to_string(),
+            ));
         }
         if !params.dry_run
             && params.source_id.is_none()
@@ -520,14 +598,16 @@ impl AppService {
         {
             let pool = self.db.pool().clone();
             let tenant_id = self.tenant_id().to_string();
-            self.db.block_on(async move {
-                crate::backend::store::mark_conversation_payload_policy_applied_sqlx(
-                    &pool,
-                    &tenant_id,
-                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-                )
-                .await
-            })?;
+            self.db
+                .block_on(async move {
+                    crate::backend::store::mark_conversation_payload_policy_applied_sqlx(
+                        &pool,
+                        &tenant_id,
+                        crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+                    )
+                    .await
+                })
+                .map_err(conversation_storage_error)?;
         }
         let legacy_cards_upgraded = results
             .iter()
@@ -589,6 +669,7 @@ async fn persist_successful_conversation_observation(
         payload_policy_version,
     )
     .await
+    .map_err(conversation_storage_error)
 }
 
 fn conversation_sync_result_value(
@@ -643,9 +724,9 @@ fn normalize_sync_record_kind(
         "web" | "web-record" | "web_record" | "web-records" | "web_records" => {
             Ok(Some(crate::backend::dto::ConversationRecordKind::Web))
         }
-        _ => Err(format!(
+        _ => Err(AppError::Validation(format!(
             "unsupported conversation record kind: {record_kind}"
-        )),
+        ))),
     }
 }
 
@@ -730,6 +811,9 @@ mod tests {
             "qwen-web",
             normalize_sync_record_kind(Some("web")).unwrap(),
         ));
-        assert!(normalize_sync_record_kind(Some("assets")).is_err());
+        assert!(matches!(
+            normalize_sync_record_kind(Some("assets")),
+            Err(AppError::Validation(_))
+        ));
     }
 }
