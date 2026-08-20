@@ -1448,7 +1448,7 @@ fn profile_delete_guard_blocks_sqlx_deployment_state() {
         .delete_profile(profile.id)
         .expect_err("delete blocked by deployment state");
 
-    assert!(error.contains("managed deployments"));
+    assert!(error.to_string().contains("managed deployments"));
     drop(service);
     fs::remove_dir_all(root).ok();
 }

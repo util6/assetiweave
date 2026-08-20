@@ -1014,7 +1014,7 @@ pub(crate) fn delete_source(state: State<'_, AppState>, id: String) -> RuntimeAp
 }
 
 #[tauri::command]
-pub(crate) fn list_profiles(state: State<'_, AppState>) -> AppResult<Vec<TargetProfile>> {
+pub(crate) fn list_profiles(state: State<'_, AppState>) -> RuntimeAppResult<Vec<TargetProfile>> {
     AppService::from_runtime(&state.runtime).list_profiles()
 }
 
@@ -1022,7 +1022,7 @@ pub(crate) fn list_profiles(state: State<'_, AppState>) -> AppResult<Vec<TargetP
 pub(crate) fn create_profile(
     state: State<'_, AppState>,
     input: TargetProfileInput,
-) -> AppResult<TargetProfile> {
+) -> RuntimeAppResult<TargetProfile> {
     let mut input_fields = vec![("profile_name", input.name.clone())];
     if let Some(target_paths) = &input.target_paths {
         input_fields.push(("target_paths", target_paths.join(",")));
@@ -1052,7 +1052,7 @@ pub(crate) fn create_profile(
 pub(crate) fn update_profile(
     state: State<'_, AppState>,
     profile: TargetProfile,
-) -> AppResult<TargetProfile> {
+) -> RuntimeAppResult<TargetProfile> {
     let input_fields = profile_log_fields(&profile);
     let result = (|| AppService::from_runtime(&state.runtime).update_profile(profile))();
 
@@ -1073,7 +1073,7 @@ pub(crate) fn update_profile(
 }
 
 #[tauri::command]
-pub(crate) fn delete_profile(state: State<'_, AppState>, id: String) -> AppResult<()> {
+pub(crate) fn delete_profile(state: State<'_, AppState>, id: String) -> RuntimeAppResult<()> {
     let fields = vec![("profile_id", id.clone())];
     let result = (|| AppService::from_runtime(&state.runtime).delete_profile(id))();
 
@@ -1085,7 +1085,9 @@ pub(crate) fn delete_profile(state: State<'_, AppState>, id: String) -> AppResul
 }
 
 #[tauri::command]
-pub(crate) fn get_navigation_model(state: State<'_, AppState>) -> AppResult<NavigationModel> {
+pub(crate) fn get_navigation_model(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<NavigationModel> {
     AppService::from_runtime(&state.runtime).navigation_model()
 }
 
@@ -1093,7 +1095,7 @@ pub(crate) fn get_navigation_model(state: State<'_, AppState>) -> AppResult<Navi
 pub(crate) fn update_navigation_model(
     state: State<'_, AppState>,
     model: NavigationModel,
-) -> AppResult<NavigationModel> {
+) -> RuntimeAppResult<NavigationModel> {
     let fields = vec![
         ("active_rail_id", model.active_rail_id.clone()),
         ("active_header_tab_id", model.active_header_tab_id.clone()),
@@ -1110,14 +1112,14 @@ pub(crate) fn update_navigation_model(
 }
 
 #[tauri::command]
-pub(crate) fn list_app_shortcuts(state: State<'_, AppState>) -> AppResult<Vec<AppShortcut>> {
+pub(crate) fn list_app_shortcuts(state: State<'_, AppState>) -> RuntimeAppResult<Vec<AppShortcut>> {
     AppService::from_runtime(&state.runtime).list_app_shortcuts()
 }
 
 #[tauri::command]
 pub(crate) fn list_app_shortcut_settings(
     state: State<'_, AppState>,
-) -> AppResult<Vec<AppShortcut>> {
+) -> RuntimeAppResult<Vec<AppShortcut>> {
     AppService::from_runtime(&state.runtime).list_app_shortcut_settings()
 }
 
@@ -1125,7 +1127,7 @@ pub(crate) fn list_app_shortcut_settings(
 pub(crate) fn update_app_shortcuts(
     state: State<'_, AppState>,
     shortcuts: Vec<AppShortcut>,
-) -> AppResult<Vec<AppShortcut>> {
+) -> RuntimeAppResult<Vec<AppShortcut>> {
     let fields = vec![("shortcut_count", shortcuts.len().to_string())];
     let result = (|| AppService::from_runtime(&state.runtime).update_app_shortcuts(shortcuts))();
 
