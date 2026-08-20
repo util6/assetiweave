@@ -570,7 +570,7 @@ fn emit_memory_task(app: &AppHandle, snapshot: &MemoryTaskSnapshot) {
 #[tauri::command]
 pub(crate) fn get_skill_backup_settings(
     state: State<'_, AppState>,
-) -> AppResult<SkillBackupSettings> {
+) -> RuntimeAppResult<SkillBackupSettings> {
     AppService::from_runtime(&state.runtime).get_skill_backup_settings()
 }
 
@@ -579,7 +579,7 @@ pub(crate) fn update_skill_backup_settings(
     state: State<'_, AppState>,
     root_path: String,
     migrate: Option<bool>,
-) -> AppResult<SkillBackupSettings> {
+) -> RuntimeAppResult<SkillBackupSettings> {
     let fields = vec![
         ("root_path", root_path.clone()),
         ("migrate", migrate.unwrap_or(true).to_string()),
@@ -616,7 +616,7 @@ pub(crate) fn update_skill_backup_settings(
 pub(crate) fn backup_skill(
     state: State<'_, AppState>,
     asset_id: String,
-) -> AppResult<CatalogAsset> {
+) -> RuntimeAppResult<CatalogAsset> {
     let fields = vec![("asset_id", asset_id.clone())];
     let result = (|| AppService::from_runtime(&state.runtime).backup_skill(asset_id))();
 
@@ -668,7 +668,7 @@ pub(crate) fn backup_skills(
                 },
             )
         }))
-        .unwrap_or_else(|_| Err("skill backup task panicked".to_string()));
+        .unwrap_or_else(|_| Err(AppError::Process("skill backup task panicked".to_string())));
         match &result {
             Ok(assets) => log_info(
                 "skill.backup.background",
@@ -685,7 +685,7 @@ pub(crate) fn backup_skills(
                 &[("task_id", task_id.clone())],
             ),
         }
-        match background_tasks.finish_skill_backup(&task_id, result) {
+        match background_tasks.finish_skill_backup(&task_id, result.map_err(String::from)) {
             Ok(snapshot) => emit_skill_backup_task(&app, &snapshot),
             Err(error) => log_error(
                 "skill.backup.background",
@@ -1191,7 +1191,9 @@ pub(crate) fn refresh_asset_mount_statuses(
 }
 
 #[tauri::command]
-pub(crate) fn list_skill_groups(state: State<'_, AppState>) -> AppResult<Vec<AssetGroupDetail>> {
+pub(crate) fn list_skill_groups(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Vec<AssetGroupDetail>> {
     AppService::from_runtime(&state.runtime).list_skill_groups()
 }
 
@@ -1199,7 +1201,7 @@ pub(crate) fn list_skill_groups(state: State<'_, AppState>) -> AppResult<Vec<Ass
 pub(crate) fn create_skill_group(
     state: State<'_, AppState>,
     input: AssetGroupInput,
-) -> AppResult<AssetGroupDetail> {
+) -> RuntimeAppResult<AssetGroupDetail> {
     let input_fields = vec![("group_name", input.name.clone())];
     let result = (|| AppService::from_runtime(&state.runtime).create_skill_group(input))();
 
@@ -1227,7 +1229,7 @@ pub(crate) fn create_skill_group(
 pub(crate) fn update_skill_group(
     state: State<'_, AppState>,
     group: AssetGroup,
-) -> AppResult<AssetGroupDetail> {
+) -> RuntimeAppResult<AssetGroupDetail> {
     let input_fields = vec![
         ("group_id", group.id.clone()),
         ("group_name", group.name.clone()),
@@ -1255,7 +1257,10 @@ pub(crate) fn update_skill_group(
 }
 
 #[tauri::command]
-pub(crate) fn delete_skill_group(state: State<'_, AppState>, group_id: String) -> AppResult<()> {
+pub(crate) fn delete_skill_group(
+    state: State<'_, AppState>,
+    group_id: String,
+) -> RuntimeAppResult<()> {
     let fields = vec![("group_id", group_id.clone())];
     let result = (|| AppService::from_runtime(&state.runtime).delete_skill_group(group_id))();
 
@@ -1271,7 +1276,7 @@ pub(crate) fn set_skill_group_manual_members(
     state: State<'_, AppState>,
     group_id: String,
     asset_ids: Vec<String>,
-) -> AppResult<AssetGroupDetail> {
+) -> RuntimeAppResult<AssetGroupDetail> {
     let fields = vec![
         ("group_id", group_id.clone()),
         ("asset_count", asset_ids.len().to_string()),
@@ -1306,7 +1311,7 @@ pub(crate) fn apply_skill_group_mount(
     group_id: String,
     profile_id: String,
     enabled: bool,
-) -> AppResult<ApplyAssetGroupMountResult> {
+) -> RuntimeAppResult<ApplyAssetGroupMountResult> {
     let fields = vec![
         ("group_id", group_id.clone()),
         ("profile_id", profile_id.clone()),
@@ -1368,7 +1373,7 @@ pub(crate) fn apply_skill_group_mount(
 pub(crate) fn preview_skill_group_exclusive_mount(
     state: State<'_, AppState>,
     input: SkillGroupExclusiveMountInput,
-) -> AppResult<SkillGroupExclusiveMountPreview> {
+) -> RuntimeAppResult<SkillGroupExclusiveMountPreview> {
     let fields = vec![
         ("profile_id", input.profile_id.clone()),
         ("group_count", input.group_ids.len().to_string()),
@@ -1421,7 +1426,7 @@ pub(crate) fn preview_skill_group_exclusive_mount(
 pub(crate) fn apply_skill_group_exclusive_mount(
     state: State<'_, AppState>,
     input: SkillGroupExclusiveMountInput,
-) -> AppResult<ApplySkillGroupExclusiveMountResult> {
+) -> RuntimeAppResult<ApplySkillGroupExclusiveMountResult> {
     let fields = vec![
         ("profile_id", input.profile_id.clone()),
         ("group_count", input.group_ids.len().to_string()),
@@ -1796,7 +1801,8 @@ pub(crate) fn start_batch_mount(
                         worker_enabled,
                     )
                     .and_then(|value| {
-                        serde_json::to_value(value).map_err(|error| error.to_string())
+                        serde_json::to_value(value)
+                            .map_err(|error| AppError::External(error.to_string()))
                     })
             } else {
                 if task_context.is_cancelled() {
@@ -1817,7 +1823,8 @@ pub(crate) fn start_batch_mount(
                         dry_run: false,
                     })
                     .and_then(|value| {
-                        serde_json::to_value(value).map_err(|error| error.to_string())
+                        serde_json::to_value(value)
+                            .map_err(|error| AppError::External(error.to_string()))
                     })
             };
             let (completed, total) = result
@@ -1837,7 +1844,9 @@ pub(crate) fn start_batch_mount(
                 })
                 .unwrap_or((0, None));
             let _ = tasks.update_batch_mount_progress(&worker_task_id, completed, total, None);
-            if let Ok(snapshot) = tasks.finish_batch_mount(&worker_task_id, result) {
+            if let Ok(snapshot) =
+                tasks.finish_batch_mount(&worker_task_id, result.map_err(String::from))
+            {
                 let _ = worker_app.emit(BATCH_MOUNT_TASK_UPDATED_EVENT, &snapshot);
             }
         });

@@ -188,7 +188,7 @@ fn system_skill_cannot_be_copied_into_the_user_backup_library() {
         .backup_skill(asset.id)
         .expect_err("system Skill backup should fail");
 
-    assert!(error.contains("cannot be backed up"));
+    assert!(error.to_string().contains("cannot be backed up"));
 
     drop(service);
     fs::remove_dir_all(root).ok();
