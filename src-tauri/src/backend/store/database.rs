@@ -1,6 +1,7 @@
 use crate::backend::dto::AppResult;
 #[cfg(test)]
 use crate::backend::path_utils::ensure_app_library_dirs;
+use crate::backend::target_catalog::TargetCatalog;
 use sqlx::{
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
@@ -178,17 +179,36 @@ pub(crate) async fn open_migrated_pool(db_path: &Path) -> AppResult<SqlitePool> 
     Ok(pool)
 }
 
+#[cfg(test)]
 pub(crate) async fn seed_defaults_sqlx(pool: &SqlitePool) -> AppResult<()> {
+    let catalog = TargetCatalog::builtin()?;
+    seed_defaults_sqlx_with_catalog(pool, &catalog).await
+}
+
+pub(crate) async fn seed_defaults_sqlx_with_catalog(
+    pool: &SqlitePool,
+    catalog: &TargetCatalog,
+) -> AppResult<()> {
     super::tenant_repo::ensure_local_identity_sqlx(pool).await?;
     let tenant_id = super::tenant_repo::DEFAULT_TENANT_ID;
 
-    seed_tenant_defaults_sqlx(pool, tenant_id).await?;
+    seed_tenant_defaults_sqlx_with_catalog(pool, tenant_id, catalog).await?;
     normalize_all_tenant_paths_sqlx(pool).await?;
 
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) async fn seed_tenant_defaults_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+    let catalog = TargetCatalog::builtin()?;
+    seed_tenant_defaults_sqlx_with_catalog(pool, tenant_id, &catalog).await
+}
+
+pub(crate) async fn seed_tenant_defaults_sqlx_with_catalog(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    catalog: &TargetCatalog,
+) -> AppResult<()> {
     if count_rows(pool, tenant_id, "sources").await? == 0 {
         for source in crate::backend::defaults::default_sources_for_tenant(tenant_id) {
             super::source_repo::upsert_source_sqlx(pool, tenant_id, &source).await?;
@@ -199,14 +219,14 @@ pub(crate) async fn seed_tenant_defaults_sqlx(pool: &SqlitePool, tenant_id: &str
     normalize_existing_sources_sqlx(pool, tenant_id).await?;
 
     if count_rows(pool, tenant_id, "profiles").await? == 0 {
-        for profile in crate::backend::defaults::default_profiles() {
+        for profile in crate::backend::defaults::default_profiles_from_catalog(catalog) {
             super::profile_repo::upsert_profile_sqlx(pool, tenant_id, &profile).await?;
         }
     } else {
-        ensure_default_profiles_sqlx(pool, tenant_id).await?;
+        ensure_default_profiles_sqlx(pool, tenant_id, catalog).await?;
     }
     normalize_existing_profiles_sqlx(pool, tenant_id).await?;
-    normalize_default_profiles_sqlx(pool, tenant_id).await?;
+    normalize_default_profiles_sqlx(pool, tenant_id, catalog).await?;
 
     let default_navigation_model = crate::backend::defaults::default_navigation_model();
     if count_rows(pool, tenant_id, "navigation_state").await? == 0 {
@@ -240,9 +260,13 @@ pub(crate) async fn seed_tenant_defaults_sqlx(pool: &SqlitePool, tenant_id: &str
     Ok(())
 }
 
-async fn ensure_default_profiles_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+async fn ensure_default_profiles_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    catalog: &TargetCatalog,
+) -> AppResult<()> {
     let existing_profiles = super::profile_repo::load_profiles_sqlx(pool, tenant_id).await?;
-    for profile in crate::backend::defaults::default_profiles() {
+    for profile in crate::backend::defaults::default_profiles_from_catalog(catalog) {
         if existing_profiles
             .iter()
             .any(|existing| existing.id == profile.id)
@@ -305,8 +329,12 @@ async fn normalize_all_tenant_paths_sqlx(pool: &SqlitePool) -> AppResult<()> {
     Ok(())
 }
 
-async fn normalize_default_profiles_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
-    let defaults = crate::backend::defaults::default_profiles();
+async fn normalize_default_profiles_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    catalog: &TargetCatalog,
+) -> AppResult<()> {
+    let defaults = crate::backend::defaults::default_profiles_from_catalog(catalog);
     for mut profile in super::profile_repo::load_profiles_sqlx(pool, tenant_id).await? {
         let Some(default_profile) = defaults.iter().find(|candidate| candidate.id == profile.id)
         else {

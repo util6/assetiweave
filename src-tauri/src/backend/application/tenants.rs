@@ -19,6 +19,7 @@ impl AppService {
         let name = params.name;
         let slug = params.slug;
         let set_active = params.set_active;
+        let target_catalog = self.runtime.target_catalog();
         self.db.block_on(async move {
             let tenant = crate::backend::store::create_local_tenant_sqlx(
                 &pool,
@@ -27,7 +28,12 @@ impl AppService {
                 slug.as_deref(),
             )
             .await?;
-            crate::backend::store::seed_tenant_defaults_sqlx(&pool, &tenant.id).await?;
+            crate::backend::store::seed_tenant_defaults_sqlx_with_catalog(
+                &pool,
+                &tenant.id,
+                &target_catalog,
+            )
+            .await?;
             crate::backend::application::bootstrap::materialize_and_seed_builtin_adapters(
                 &pool, &tenant.id,
             )

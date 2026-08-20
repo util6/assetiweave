@@ -3,6 +3,7 @@ use crate::backend::models::{
     AssetKind, ProfileSafety, RuleSet, Source, SourceKind, SourceOrigin, SourceScannerKind,
     TargetProfile,
 };
+use crate::backend::target_catalog::TargetCatalog;
 use std::collections::BTreeMap;
 
 pub(crate) const DEFAULT_APP_PROFILE_IDS: &[&str] = &[
@@ -104,9 +105,14 @@ pub(crate) fn default_sources_for_tenant(tenant_id: &str) -> Vec<Source> {
     sources
 }
 
+#[cfg(test)]
 pub(crate) fn default_profiles() -> Vec<TargetProfile> {
-    crate::backend::target_catalog::TargetCatalog::builtin()
-        .expect("builtin target descriptors must be valid")
+    let catalog = TargetCatalog::builtin().expect("builtin target descriptors must be valid");
+    default_profiles_from_catalog(&catalog)
+}
+
+pub(crate) fn default_profiles_from_catalog(catalog: &TargetCatalog) -> Vec<TargetProfile> {
+    catalog
         .descriptors()
         .iter()
         .map(|descriptor| TargetProfile {

@@ -101,11 +101,15 @@ impl AppRuntime {
             .block_on(store::open_migrated_pool(&db_path))
             .map_err(AppError::Legacy)?;
         ensure_app_library_dirs().map_err(AppError::Legacy)?;
+        let target_catalog = TargetCatalog::builtin().map_err(AppError::Legacy)?;
 
         // Bootstrap is the only production path that opens the migrated pool. The
         // old Database::open_initialized remains a test/migration compatibility API.
         runtime
-            .block_on(store::seed_defaults_sqlx(&pool))
+            .block_on(store::seed_defaults_sqlx_with_catalog(
+                &pool,
+                &target_catalog,
+            ))
             .map_err(AppError::Legacy)?;
         let context = runtime
             .block_on(store::load_local_request_context_sqlx(&pool))
@@ -150,7 +154,6 @@ impl AppRuntime {
             .map_err(AppError::Legacy)?;
 
         let task_runtime = TaskRuntime::with_runtime_handle(runtime.handle().clone());
-        let target_catalog = TargetCatalog::builtin().map_err(AppError::Legacy)?;
         let db = Database::from_parts(pool, runtime);
         let snapshot = RequestContextSnapshot {
             tenant: context.tenant.clone(),

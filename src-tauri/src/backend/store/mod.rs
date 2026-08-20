@@ -51,8 +51,11 @@ pub(crate) use conversation_repo::{
 };
 pub(crate) use database::{
     build_runtime, count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx,
-    open_migrated_pool, seed_defaults_sqlx, seed_tenant_defaults_sqlx, Database,
+    open_migrated_pool, seed_defaults_sqlx_with_catalog, seed_tenant_defaults_sqlx_with_catalog,
+    Database,
 };
+#[cfg(test)]
+pub(crate) use database::{seed_defaults_sqlx, seed_tenant_defaults_sqlx};
 pub(crate) use deployment_repo::{
     count_deployment_state_by_profile_sqlx, delete_orphan_deployment_state_sqlx,
     is_managed_deployment_sqlx, load_managed_deployment_targets_by_profile_sqlx,
