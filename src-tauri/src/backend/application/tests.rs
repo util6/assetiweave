@@ -2473,16 +2473,20 @@ fn github_code_item() -> Value {
 #[test]
 fn skill_search_provider_supports_github_code_aliases() {
     assert_eq!(
-        normalize_skill_search_provider(None).as_deref(),
-        Ok("github")
+        normalize_skill_search_provider(None).as_deref().ok(),
+        Some("github")
     );
     assert_eq!(
-        normalize_skill_search_provider(Some("github_code")).as_deref(),
-        Ok("github-code")
+        normalize_skill_search_provider(Some("github_code"))
+            .as_deref()
+            .ok(),
+        Some("github-code")
     );
     assert_eq!(
-        normalize_skill_search_provider(Some("code")).as_deref(),
-        Ok("github-code")
+        normalize_skill_search_provider(Some("code"))
+            .as_deref()
+            .ok(),
+        Some("github-code")
     );
     assert!(normalize_skill_search_provider(Some("unknown")).is_err());
 }
@@ -2525,12 +2529,14 @@ fn github_tree_sha_for_skill_path_reads_root_and_nested_tree() {
     });
 
     assert_eq!(
-        github_tree_sha_for_skill_path(&value, None).as_deref(),
-        Ok("root-tree")
+        github_tree_sha_for_skill_path(&value, None).as_deref().ok(),
+        Some("root-tree")
     );
     assert_eq!(
-        github_tree_sha_for_skill_path(&value, Some("skills/browser")).as_deref(),
-        Ok("browser-tree")
+        github_tree_sha_for_skill_path(&value, Some("skills/browser"))
+            .as_deref()
+            .ok(),
+        Some("browser-tree")
     );
     assert!(github_tree_sha_for_skill_path(&value, Some("missing")).is_err());
 }

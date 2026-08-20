@@ -794,7 +794,7 @@ where
 pub(crate) fn search_skills(
     state: State<'_, AppState>,
     params: SkillSearchParams,
-) -> AppResult<SkillSearchResult> {
+) -> RuntimeAppResult<SkillSearchResult> {
     let fields = vec![("query", params.query.clone())];
     let result = (|| AppService::from_runtime(&state.runtime).search_skills(params))();
 
@@ -816,7 +816,7 @@ pub(crate) fn search_skills(
 pub(crate) fn acquire_skill(
     state: State<'_, AppState>,
     params: SkillAcquireParams,
-) -> AppResult<Value> {
+) -> RuntimeAppResult<Value> {
     let fields = vec![("url", params.url.clone())];
     let result = (|| AppService::from_runtime(&state.runtime).acquire_skill(params))();
 
@@ -851,7 +851,7 @@ pub(crate) fn acquire_skill(
 #[tauri::command]
 pub(crate) fn list_skill_remote_sources(
     state: State<'_, AppState>,
-) -> AppResult<Vec<SkillRemoteSource>> {
+) -> RuntimeAppResult<Vec<SkillRemoteSource>> {
     let result = (|| AppService::from_runtime(&state.runtime).list_skill_remote_sources())();
 
     match &result {
@@ -869,7 +869,7 @@ pub(crate) fn list_skill_remote_sources(
 pub(crate) fn check_skill_remote_sources(
     state: State<'_, AppState>,
     params: SkillRemoteCheckParams,
-) -> AppResult<Vec<SkillRemoteSource>> {
+) -> RuntimeAppResult<Vec<SkillRemoteSource>> {
     let fields = params
         .asset_id
         .as_ref()
