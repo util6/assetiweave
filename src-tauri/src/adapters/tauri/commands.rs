@@ -91,6 +91,8 @@ use serde_json::Value;
 use std::{collections::BTreeMap, sync::Arc};
 use tauri::{AppHandle, Emitter, State};
 
+type RuntimeAppResult<T> = crate::backend::runtime::AppResult<T>;
+
 pub(crate) const AI_EXECUTION_TASK_UPDATED_EVENT: &str = "ai-execution://task-updated";
 
 #[tauri::command]
@@ -233,7 +235,7 @@ pub(crate) async fn complete_app_close(
 pub(crate) fn list_assets(
     state: State<'_, AppState>,
     kind: Option<AssetKind>,
-) -> AppResult<Vec<CatalogAsset>> {
+) -> RuntimeAppResult<Vec<CatalogAsset>> {
     AppService::from_runtime(&state.runtime).list_assets(ListAssetsParams { kind })
 }
 
@@ -241,7 +243,7 @@ pub(crate) fn list_assets(
 pub(crate) fn list_source_assets(
     state: State<'_, AppState>,
     kind: Option<AssetKind>,
-) -> AppResult<Vec<CatalogAsset>> {
+) -> RuntimeAppResult<Vec<CatalogAsset>> {
     AppService::from_runtime(&state.runtime).list_source_assets(kind)
 }
 
@@ -903,7 +905,7 @@ pub(crate) fn update_asset_description(
     state: State<'_, AppState>,
     asset_id: String,
     description: Option<String>,
-) -> AppResult<Asset> {
+) -> RuntimeAppResult<Asset> {
     let fields = vec![("asset_id", asset_id.clone())];
     let result = (|| {
         AppService::from_runtime(&state.runtime).update_asset_description(asset_id, description)
@@ -930,7 +932,7 @@ pub(crate) fn delete_asset(
     state: State<'_, AppState>,
     asset_id: String,
     unmount: Option<bool>,
-) -> AppResult<Asset> {
+) -> RuntimeAppResult<Asset> {
     let fields = vec![("asset_id", asset_id.clone())];
     let result = (|| {
         AppService::from_runtime(&state.runtime).delete_asset(asset_id, unmount.unwrap_or(false))
@@ -944,17 +946,20 @@ pub(crate) fn delete_asset(
 }
 
 #[tauri::command]
-pub(crate) fn list_sources(state: State<'_, AppState>) -> AppResult<Vec<Source>> {
+pub(crate) fn list_sources(state: State<'_, AppState>) -> RuntimeAppResult<Vec<Source>> {
     AppService::from_runtime(&state.runtime).list_sources()
 }
 
 #[tauri::command]
-pub(crate) fn list_skill_sources(state: State<'_, AppState>) -> AppResult<Vec<Source>> {
+pub(crate) fn list_skill_sources(state: State<'_, AppState>) -> RuntimeAppResult<Vec<Source>> {
     AppService::from_runtime(&state.runtime).list_skill_sources()
 }
 
 #[tauri::command]
-pub(crate) fn create_source(state: State<'_, AppState>, source: SourceInput) -> AppResult<Source> {
+pub(crate) fn create_source(
+    state: State<'_, AppState>,
+    source: SourceInput,
+) -> RuntimeAppResult<Source> {
     let input_fields = source_input_log_fields(&source);
     let result = (|| AppService::from_runtime(&state.runtime).add_source(source))();
 
@@ -970,7 +975,10 @@ pub(crate) fn create_source(state: State<'_, AppState>, source: SourceInput) -> 
 }
 
 #[tauri::command]
-pub(crate) fn update_source(state: State<'_, AppState>, source: Source) -> AppResult<Source> {
+pub(crate) fn update_source(
+    state: State<'_, AppState>,
+    source: Source,
+) -> RuntimeAppResult<Source> {
     let input_fields = source_log_fields(&source);
     let result = (|| AppService::from_runtime(&state.runtime).update_source(source))();
 
@@ -986,7 +994,7 @@ pub(crate) fn update_source(state: State<'_, AppState>, source: Source) -> AppRe
 }
 
 #[tauri::command]
-pub(crate) fn delete_source(state: State<'_, AppState>, id: String) -> AppResult<()> {
+pub(crate) fn delete_source(state: State<'_, AppState>, id: String) -> RuntimeAppResult<()> {
     let fields = vec![("source_id", id.clone())];
     let result = (|| {
         AppService::from_runtime(&state.runtime)
@@ -1141,7 +1149,7 @@ pub(crate) fn update_app_shortcuts(
 pub(crate) fn list_asset_mounts(
     state: State<'_, AppState>,
     asset_id: Option<String>,
-) -> AppResult<Vec<AssetMount>> {
+) -> RuntimeAppResult<Vec<AssetMount>> {
     AppService::from_runtime(&state.runtime).list_asset_mounts(asset_id.as_deref())
 }
 
@@ -1149,7 +1157,7 @@ pub(crate) fn list_asset_mounts(
 pub(crate) fn list_asset_mount_statuses(
     state: State<'_, AppState>,
     asset_id: Option<String>,
-) -> AppResult<Vec<AssetMountStatus>> {
+) -> RuntimeAppResult<Vec<AssetMountStatus>> {
     AppService::from_runtime(&state.runtime).list_asset_mount_statuses(asset_id.as_deref())
 }
 
@@ -1157,7 +1165,7 @@ pub(crate) fn list_asset_mount_statuses(
 pub(crate) fn refresh_asset_mount_statuses(
     state: State<'_, AppState>,
     asset_id: Option<String>,
-) -> AppResult<Vec<AssetMountStatus>> {
+) -> RuntimeAppResult<Vec<AssetMountStatus>> {
     let fields = asset_id
         .as_ref()
         .map(|asset_id| vec![("asset_id", asset_id.clone())])
@@ -1480,7 +1488,7 @@ pub(crate) fn toggle_asset_mount(
     state: State<'_, AppState>,
     asset_id: String,
     profile_id: String,
-) -> AppResult<AssetMount> {
+) -> RuntimeAppResult<AssetMount> {
     let result =
         (|| AppService::from_runtime(&state.runtime).toggle_asset_mount(&asset_id, &profile_id))();
 
@@ -1500,7 +1508,7 @@ pub(crate) fn unmount_asset_mount(
     state: State<'_, AppState>,
     asset_id: String,
     profile_id: String,
-) -> AppResult<AssetMountUpdateResult> {
+) -> RuntimeAppResult<AssetMountUpdateResult> {
     let result =
         (|| AppService::from_runtime(&state.runtime).unmount_asset_by_id(&asset_id, &profile_id))();
 
@@ -1520,7 +1528,7 @@ pub(crate) fn mount_asset_mount(
     state: State<'_, AppState>,
     asset_id: String,
     profile_id: String,
-) -> AppResult<AssetMountUpdateResult> {
+) -> RuntimeAppResult<AssetMountUpdateResult> {
     let result =
         (|| AppService::from_runtime(&state.runtime).mount_asset_by_id(&asset_id, &profile_id))();
 
@@ -1542,7 +1550,7 @@ pub(crate) fn set_asset_mount(
     profile_id: String,
     enabled: bool,
     strategy: Option<DeploymentStrategy>,
-) -> AppResult<AssetMount> {
+) -> RuntimeAppResult<AssetMount> {
     let result = (|| {
         AppService::from_runtime(&state.runtime).set_asset_mount(
             &asset_id,
@@ -1571,7 +1579,7 @@ pub(crate) fn set_asset_mount(
 pub(crate) fn scan_sources(
     state: State<'_, AppState>,
     kind: Option<AssetKind>,
-) -> AppResult<Vec<CatalogAsset>> {
+) -> RuntimeAppResult<Vec<CatalogAsset>> {
     let fields = kind
         .map(|kind| vec![("asset_kind", format!("{kind:?}"))])
         .unwrap_or_default();
@@ -1594,7 +1602,9 @@ pub(crate) fn scan_sources(
 }
 
 #[tauri::command]
-pub(crate) fn scan_skill_sources(state: State<'_, AppState>) -> AppResult<Vec<CatalogAsset>> {
+pub(crate) fn scan_skill_sources(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Vec<CatalogAsset>> {
     let result = (|| AppService::from_runtime(&state.runtime).scan_skill_sources())();
 
     match &result {
@@ -2874,7 +2884,7 @@ pub(crate) fn update_conversation_part_translation(
 pub(crate) fn create_plan(
     state: State<'_, AppState>,
     profile_id: Option<String>,
-) -> AppResult<DeploymentPlan> {
+) -> RuntimeAppResult<DeploymentPlan> {
     let fields = profile_id
         .as_ref()
         .map(|profile_id| vec![("profile_id", profile_id.clone())])
@@ -2903,7 +2913,7 @@ pub(crate) fn execute_plan(
     state: State<'_, AppState>,
     plan: DeploymentPlan,
     action_ids: Option<Vec<String>>,
-) -> AppResult<ExecutionResult> {
+) -> RuntimeAppResult<ExecutionResult> {
     let fields = vec![
         ("plan_id", plan.id.clone()),
         ("action_count", plan.actions.len().to_string()),

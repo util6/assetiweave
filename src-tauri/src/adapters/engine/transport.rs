@@ -323,7 +323,11 @@ impl EngineError {
             "process_error" => "process",
             "extension_error" => "extension",
             "external_error" => "external",
-            "legacy_error" => "legacy",
+            // Legacy is an internal migration marker. Keep its stable wire
+            // code, but expose the same transport category as other domain
+            // operation failures until the remaining Application surfaces
+            // complete the typed-error migration.
+            "legacy_error" => "operation_error",
             _ => "operation_error",
         };
         Self {
@@ -1325,7 +1329,8 @@ mod tests {
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
         env::remove_var("HOME");
-        assert_eq!(error.kind, "operation_error");
+        assert_eq!(error.kind, "conflict");
+        assert_eq!(error.code, "conflict");
         assert!(error.message.contains("cannot be deleted"));
         fs::remove_dir_all(home).ok();
     }
@@ -1473,6 +1478,14 @@ mod tests {
             "start_agent_reinstallation",
             "start_agent_uninstall",
             "start_agent_update",
+            "start_source_scan",
+            "get_source_scan_task",
+            "list_source_scan_tasks",
+            "cancel_source_scan",
+            "start_batch_mount",
+            "get_batch_mount_task",
+            "list_batch_mount_tasks",
+            "cancel_batch_mount",
         ])
     }
 

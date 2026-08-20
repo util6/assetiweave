@@ -1,5 +1,6 @@
 use super::prelude::*;
 use crate::backend::runtime::tasks::TaskContext;
+use crate::backend::runtime::{AppError, AppResult};
 
 #[derive(Debug, Clone)]
 pub(crate) struct SourceScanResult {
@@ -16,7 +17,7 @@ impl SourceScanWorkflow {
         skill_sources_only: bool,
     ) -> AppResult<SourceScanResult> {
         if cx.is_cancelled() {
-            return Err("source scan cancelled".to_string());
+            return Err(AppError::Cancelled("source scan cancelled".to_string()));
         }
         if params.dry_run {
             return Ok(SourceScanResult {
@@ -61,7 +62,7 @@ impl SourceScanWorkflow {
             },
         )?;
         if cx.is_cancelled() {
-            return Err("source scan cancelled".to_string());
+            return Err(AppError::Cancelled("source scan cancelled".to_string()));
         }
         cx.progress()
             .progress(total as u64, Some(total as u64), Some("completed"));
@@ -81,30 +82,37 @@ impl SourceScanWorkflow {
 
 impl AppService {
     pub(crate) fn refresh_recorded_assets(&self) -> AppResult<Vec<Asset>> {
-        capabilities::refresh_recorded_assets(&self.db, self.tenant_id())
+        Ok(capabilities::refresh_recorded_assets(
+            &self.db,
+            self.tenant_id(),
+        )?)
     }
 
     pub(crate) fn list_sources(&self) -> AppResult<Vec<Source>> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        self.db.block_on(async move {
+        Ok(self.db.block_on(async move {
             crate::backend::store::load_sources_sqlx(&pool, &tenant_id).await
-        })
+        })?)
     }
 
     pub(crate) fn list_skill_sources(&self) -> AppResult<Vec<Source>> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        self.db.block_on(async move {
+        Ok(self.db.block_on(async move {
             crate::backend::store::load_skill_sources_sqlx(&pool, &tenant_id).await
-        })
+        })?)
     }
 
     pub(crate) fn list_source_assets(
         &self,
         kind: Option<AssetKind>,
     ) -> AppResult<Vec<CatalogAsset>> {
-        capabilities::source_assets_sqlx(&self.db, self.tenant_id(), kind)
+        Ok(capabilities::source_assets_sqlx(
+            &self.db,
+            self.tenant_id(),
+            kind,
+        )?)
     }
 
     pub(crate) fn add_source(&self, source: SourceInput) -> AppResult<Source> {
@@ -127,7 +135,9 @@ impl AppService {
 
     pub(crate) fn update_source(&self, source: Source) -> AppResult<Source> {
         if is_protected_source(&source) {
-            return Err("AssetIWeave-managed Skill sources cannot be edited".to_string());
+            return Err(AppError::Conflict(
+                "AssetIWeave-managed Skill sources cannot be edited".to_string(),
+            ));
         }
         let catalog = self.runtime.target_catalog();
         let source =
@@ -137,7 +147,10 @@ impl AppService {
             .iter()
             .any(|candidate| candidate.id == source.id)
         {
-            return Err(format!("source not found: {}", source.id));
+            return Err(AppError::NotFound(format!(
+                "source not found: {}",
+                source.id
+            )));
         }
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
@@ -186,17 +199,19 @@ impl AppService {
 
     pub(crate) fn remove_source(&self, params: SourceRemoveParams) -> AppResult<Value> {
         if !params.dry_run && !params.yes {
-            return Err("source.remove requires --yes".to_string());
+            return Err(AppError::Validation(
+                "source.remove requires --yes".to_string(),
+            ));
         }
         let sources = self.list_sources()?;
         let source = sources
             .into_iter()
             .find(|source| source.id == params.id)
-            .ok_or_else(|| format!("source not found: {}", params.id))?;
+            .ok_or_else(|| AppError::NotFound(format!("source not found: {}", params.id)))?;
         if is_protected_source(&source) {
-            return Err(
+            return Err(AppError::Conflict(
                 "default Skill source is managed by AssetIWeave and cannot be deleted".to_string(),
-            );
+            ));
         }
         if params.dry_run {
             return Ok(json!({ "removed": false, "dry_run": true, "source": source }));

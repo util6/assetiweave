@@ -1,8 +1,13 @@
 use super::prelude::*;
+use crate::backend::runtime::{AppError, AppResult};
 
 impl AppService {
     pub(crate) fn list_assets(&self, params: ListAssetsParams) -> AppResult<Vec<CatalogAsset>> {
-        capabilities::catalog_assets_sqlx(&self.db, self.tenant_id(), params.kind)
+        Ok(capabilities::catalog_assets_sqlx(
+            &self.db,
+            self.tenant_id(),
+            params.kind,
+        )?)
     }
 
     pub(crate) fn update_asset_description(
@@ -19,21 +24,24 @@ impl AppService {
             })?
             .into_iter()
             .find(|asset| asset.id == asset_id)
-            .ok_or_else(|| format!("asset not found: {asset_id}"))?;
+            .ok_or_else(|| AppError::NotFound(format!("asset not found: {asset_id}")))?;
         if !self
             .list_sources()?
             .iter()
             .any(|source| source.id == asset.source_id)
         {
-            return Err(format!("source not found: {}", asset.source_id));
+            return Err(AppError::NotFound(format!(
+                "source not found: {}",
+                asset.source_id
+            )));
         }
 
         let source_path = crate::backend::path_utils::expand_path(&asset.absolute_path)?;
         if !source_path.exists() {
-            return Err(format!(
+            return Err(AppError::NotFound(format!(
                 "asset source path does not exist: {}",
                 source_path.display()
-            ));
+            )));
         }
 
         asset.description = description
@@ -60,9 +68,11 @@ impl AppService {
             })?
             .into_iter()
             .find(|asset| asset.id == asset_id)
-            .ok_or_else(|| format!("asset not found: {asset_id}"))?;
+            .ok_or_else(|| AppError::NotFound(format!("asset not found: {asset_id}")))?;
         if asset.kind != AssetKind::Skill {
-            return Err("only skill assets can be deleted from the catalog".to_string());
+            return Err(AppError::Validation(
+                "only skill assets can be deleted from the catalog".to_string(),
+            ));
         }
         self.delete_skill(AssetRefParams {
             asset_ref: asset.id.clone(),
@@ -78,24 +88,32 @@ impl AppService {
         let pool = self.db.pool().clone();
         let asset_id = asset_id.map(str::to_string);
         let tenant_id = self.tenant_id().to_string();
-        self.db.block_on(async move {
+        Ok(self.db.block_on(async move {
             crate::backend::store::load_asset_mounts_sqlx(&pool, &tenant_id, asset_id.as_deref())
                 .await
-        })
+        })?)
     }
 
     pub(crate) fn list_asset_mount_statuses(
         &self,
         asset_id: Option<&str>,
     ) -> AppResult<Vec<AssetMountStatus>> {
-        capabilities::scan_asset_mount_statuses_sqlx(&self.db, self.tenant_id(), asset_id)
+        Ok(capabilities::scan_asset_mount_statuses_sqlx(
+            &self.db,
+            self.tenant_id(),
+            asset_id,
+        )?)
     }
 
     pub(crate) fn refresh_asset_mount_statuses(
         &self,
         asset_id: Option<&str>,
     ) -> AppResult<Vec<AssetMountStatus>> {
-        capabilities::sync_asset_mount_observations(&self.db, self.tenant_id(), asset_id)
+        Ok(capabilities::sync_asset_mount_observations(
+            &self.db,
+            self.tenant_id(),
+            asset_id,
+        )?)
     }
 
     pub(crate) fn create_plan(&self, profile_id: Option<&str>) -> AppResult<DeploymentPlan> {
@@ -114,13 +132,13 @@ impl AppService {
             .await?;
             AppResult::Ok((profiles, mounts))
         })?;
-        crate::backend::planner::build_plan_with_catalog(
+        Ok(crate::backend::planner::build_plan_with_catalog(
             &assets,
             &profiles,
             &mounts,
             profile_filter.as_deref(),
             self.runtime.target_catalog().as_ref(),
-        )
+        )?)
     }
 
     pub(crate) fn mount_asset_by_id(
@@ -128,7 +146,12 @@ impl AppService {
         asset_id: &str,
         profile_id: &str,
     ) -> AppResult<AssetMountUpdateResult> {
-        capabilities::mount_asset_mount_record(&self.db, self.tenant_id(), asset_id, profile_id)
+        Ok(capabilities::mount_asset_mount_record(
+            &self.db,
+            self.tenant_id(),
+            asset_id,
+            profile_id,
+        )?)
     }
 
     pub(crate) fn unmount_asset_by_id(
@@ -136,7 +159,12 @@ impl AppService {
         asset_id: &str,
         profile_id: &str,
     ) -> AppResult<AssetMountUpdateResult> {
-        capabilities::unmount_asset_mount_record(&self.db, self.tenant_id(), asset_id, profile_id)
+        Ok(capabilities::unmount_asset_mount_record(
+            &self.db,
+            self.tenant_id(),
+            asset_id,
+            profile_id,
+        )?)
     }
 
     pub(crate) fn toggle_asset_mount(
@@ -147,7 +175,7 @@ impl AppService {
         let (asset, profile) =
             load_mount_asset_and_profile(&self.db, self.tenant_id(), asset_id, profile_id)?;
         let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
-        capabilities::set_asset_mount_record(
+        Ok(capabilities::set_asset_mount_record(
             &self.db,
             self.tenant_id(),
             asset_id,
@@ -157,7 +185,7 @@ impl AppService {
                 crate::backend::targeting::PhysicalMountState::Mounted
             ),
             None,
-        )
+        )?)
     }
 
     pub(crate) fn set_asset_mount(
@@ -167,14 +195,14 @@ impl AppService {
         enabled: bool,
         strategy: Option<DeploymentStrategy>,
     ) -> AppResult<AssetMount> {
-        capabilities::set_asset_mount_record(
+        Ok(capabilities::set_asset_mount_record(
             &self.db,
             self.tenant_id(),
             asset_id,
             profile_id,
             enabled,
             strategy,
-        )
+        )?)
     }
 
     pub(crate) fn execute_plan(
@@ -184,7 +212,7 @@ impl AppService {
     ) -> AppResult<ExecutionResult> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        self.db.block_on(async move {
+        Ok(self.db.block_on(async move {
             let profiles = crate::backend::store::load_profiles_sqlx(&pool, &tenant_id).await?;
             let assets = crate::backend::store::load_assets_sqlx(&pool, &tenant_id, None).await?;
             crate::backend::executor::execute_deployment_plan(
@@ -197,7 +225,7 @@ impl AppService {
                 self.runtime.target_catalog().as_ref(),
             )
             .await
-        })
+        })?)
     }
 }
 
@@ -214,10 +242,10 @@ fn load_mount_asset_and_profile(
     db.block_on(async move {
         let asset = crate::backend::store::load_asset_sqlx(&pool, &tenant_id, &asset_id)
             .await?
-            .ok_or_else(|| format!("asset not found: {asset_id}"))?;
+            .ok_or_else(|| AppError::NotFound(format!("asset not found: {asset_id}")))?;
         let profile = crate::backend::store::load_profile_sqlx(&pool, &tenant_id, &profile_id)
             .await?
-            .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+            .ok_or_else(|| AppError::NotFound(format!("profile not found: {profile_id}")))?;
         AppResult::Ok((asset, profile))
     })
 }

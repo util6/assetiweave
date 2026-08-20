@@ -146,8 +146,8 @@ fn system_skill_source_cannot_be_edited_or_removed() {
         .delete_source(crate::backend::builtin_skills::SYSTEM_SKILL_SOURCE_ID.to_string())
         .expect_err("system source removal should fail");
 
-    assert!(update_error.contains("cannot be edited"));
-    assert!(remove_error.contains("cannot be deleted"));
+    assert!(update_error.to_string().contains("cannot be edited"));
+    assert!(remove_error.to_string().contains("cannot be deleted"));
 
     drop(service);
     fs::remove_dir_all(root).ok();
