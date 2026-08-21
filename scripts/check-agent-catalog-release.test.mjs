@@ -85,6 +85,18 @@ test("release evidence core version is observational metadata", () => {
   fs.rmSync(directory, { recursive: true, force: true });
 });
 
+test("release gate requires a real ACP package/release E2E record", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "assetiweave-agent-catalog-"));
+  const evidenceFixture = path.join(directory, "evidence.json");
+  const evidence = JSON.parse(fs.readFileSync(path.join(ROOT, "builtin-assets", "agent-market", "release-evidence-v1.json"), "utf8"));
+  delete evidence.realE2e;
+  fs.writeFileSync(evidenceFixture, JSON.stringify(evidence));
+  const result = run(CATALOG, "--release", evidenceFixture);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout, /real ACP package\/release E2E/i);
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
 test("release gate requires native availability evidence for tested Agent items", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "assetiweave-agent-catalog-"));
   const evidenceFixture = path.join(directory, "evidence.json");

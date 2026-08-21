@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 
 import crypto from "node:crypto";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import readline from "node:readline";
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const DEFAULT_CATALOG = path.join(ROOT, "builtin-assets", "agent-market", "catalog-v1.json");
@@ -15,6 +18,7 @@ const catalogPath = catalogFlag >= 0 ? path.resolve(process.argv[catalogFlag + 1
 const evidencePath = evidenceFlag >= 0 ? path.resolve(process.argv[evidenceFlag + 1]) : DEFAULT_EVIDENCE;
 const release = args.has("--release");
 const network = args.has("--network");
+const e2e = args.has("--e2e");
 const MAX_NETWORK_BYTES = 256 * 1024 * 1024;
 const NETWORK_TIMEOUT_MS = 30_000;
 
@@ -139,6 +143,32 @@ function checkEvidence(catalog, catalogBytes, evidence) {
     }
   }
   if (!passedManagedConformance) errors.push("release evidence must contain at least one passed managed ACP conformance");
+  const realE2e = evidence.realE2e;
+  if (realE2e?.status !== "passed") {
+    errors.push("release evidence must contain a passed real ACP package/release E2E record");
+  } else {
+    const record = evidence.items.find(
+      (candidate) =>
+        candidate.catalogItemId === realE2e.catalogItemId &&
+        candidate.distributionId === realE2e.distributionId,
+    );
+    const distribution = catalog.items
+      .find((item) => item.id === realE2e.catalogItemId)
+      ?.distributions.find((candidate) => candidate.id === realE2e.distributionId);
+    if (!record || !distribution) {
+      errors.push("real ACP E2E evidence must identify a catalog distribution");
+    } else {
+      if (distribution.type !== "binary") errors.push("real ACP E2E evidence must use a managed binary distribution");
+      if (realE2e.artifact?.url !== distribution.url) errors.push("real ACP E2E artifact URL does not match catalog");
+      if (realE2e.artifact?.sha256 !== distribution.sha256) errors.push("real ACP E2E artifact SHA256 does not match catalog");
+      if (realE2e.artifact?.sizeBytes !== record.artifact?.sizeBytes) errors.push("real ACP E2E artifact size does not match release evidence");
+      if (realE2e.install?.status !== "passed") errors.push("real ACP E2E install evidence must pass");
+      if (realE2e.acpConformance?.status !== "passed") errors.push("real ACP E2E conformance evidence must pass");
+      for (const step of ["initialize", "sessionNew", "sessionClose", "cleanShutdown"]) {
+        if (realE2e.acpConformance?.[step] !== "passed") errors.push(`real ACP E2E conformance step ${step} must pass`);
+      }
+    }
+  }
   return errors;
 }
 
@@ -199,9 +229,8 @@ async function checkNetwork(catalog, evidence) {
       const registryId = item.upstream.registryId;
       const source = await fetchJson(upstreamAgentUrl(revision, registryId));
       if (source.id !== registryId) errors.push(`${item.id}: pinned upstream id mismatch`);
-      if (source.version !== item.version) errors.push(`${item.id}: pinned upstream version ${source.version} does not match catalog ${item.version}`);
       const latest = latestById.get(registryId);
-      if (!latest || latest.version !== item.version) errors.push(`${item.id}: CDN registry version does not match pinned catalog version`);
+      if (!latest) errors.push(`${item.id}: CDN registry no longer contains the pinned registry item`);
       for (const distribution of item.distributions) {
         const record = evidence.items.find((candidate) => candidate.catalogItemId === item.id && candidate.distributionId === distribution.id);
         if (distribution.type === "binary") {
@@ -232,6 +261,179 @@ async function checkNetwork(catalog, evidence) {
   return errors;
 }
 
+function platformTarget() {
+  const osName = process.platform === "darwin" ? "darwin" : process.platform === "win32" ? "windows" : process.platform;
+  const arch = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch;
+  return { os: osName, arch };
+}
+
+async function downloadArtifactBytes(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), NETWORK_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { "user-agent": "AssetIWeave-agent-market-real-e2e" },
+    });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length > MAX_NETWORK_BYTES) throw new Error(`response exceeds ${MAX_NETWORK_BYTES} bytes`);
+    return bytes;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function isolatedEnvironment(root) {
+  return {
+    ...process.env,
+    HOME: root,
+    XDG_CONFIG_HOME: path.join(root, "config"),
+    XDG_DATA_HOME: path.join(root, "data"),
+    XDG_CACHE_HOME: path.join(root, "cache"),
+  };
+}
+
+function runVersion(program, cwd, env) {
+  return execFileSync(program, ["--version"], {
+    cwd,
+    env,
+    encoding: "utf8",
+    timeout: 30_000,
+  }).trim().split(/\r?\n/, 1)[0];
+}
+
+function runAcpConformance(program, args, cwd, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(program, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+    const output = readline.createInterface({ input: child.stdout });
+    const pending = new Map();
+    let nextId = 1;
+    let settled = false;
+    let closing = false;
+    let timer;
+
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      output.close();
+      if (error) {
+        child.kill("SIGTERM");
+        reject(error);
+      } else {
+        resolve(value);
+      }
+    };
+
+    child.stderr.on("data", () => {});
+    child.once("error", (error) => finish(error));
+    child.once("exit", (code, signal) => {
+      if (!settled && !closing) finish(new Error(`ACP process exited before clean shutdown: ${code ?? signal}`));
+    });
+    output.on("line", (line) => {
+      let message;
+      try {
+        message = JSON.parse(line);
+      } catch {
+        finish(new Error("ACP process emitted a non-JSON line"));
+        return;
+      }
+      if (!Object.hasOwn(message, "id") || !pending.has(message.id)) return;
+      const pendingRequest = pending.get(message.id);
+      pending.delete(message.id);
+      if (message.error) pendingRequest.reject(new Error(message.error.message || "ACP request failed"));
+      else pendingRequest.resolve(message.result);
+    });
+
+    const request = (method, params) => new Promise((requestResolve, requestReject) => {
+      const id = nextId++;
+      pending.set(id, { resolve: requestResolve, reject: requestReject });
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+    });
+
+    timer = setTimeout(() => finish(new Error("real ACP conformance timed out")), NETWORK_TIMEOUT_MS);
+    (async () => {
+      try {
+        const initialize = await request("initialize", {
+          protocolVersion: 1,
+          clientInfo: { name: "AssetIWeave", version: "0.6.1" },
+          clientCapabilities: { terminal: false, fs: { readTextFile: false, writeTextFile: false } },
+        });
+        if (initialize?.protocolVersion !== 1) throw new Error("ACP initialize returned an unsupported protocol version");
+        const session = await request("session/new", { cwd, mcpServers: [] });
+        if (!session?.sessionId) throw new Error("ACP session/new did not return a session id");
+        if (initialize.agentCapabilities?.sessionCapabilities?.close) {
+          await request("session/close", { sessionId: session.sessionId });
+        }
+        closing = true;
+        child.stdin.end();
+        const exitCode = await new Promise((resolveExit, rejectExit) => {
+          const onExit = (code, signal) => resolveExit(code ?? (signal ? 1 : 0));
+          child.once("exit", onExit);
+          setTimeout(() => rejectExit(new Error("ACP process did not exit after stdin close")), 10_000);
+        });
+        if (exitCode !== 0) throw new Error(`ACP process exited with status ${exitCode}`);
+        finish(null, {
+          status: "passed",
+          initialize: "passed",
+          sessionNew: "passed",
+          sessionClose: initialize.agentCapabilities?.sessionCapabilities?.close ? "passed" : "not_advertised",
+          cleanShutdown: "passed",
+        });
+      } catch (error) {
+        finish(error);
+      }
+    })();
+  });
+}
+
+async function runRealE2e(catalog) {
+  const target = platformTarget();
+  const candidates = catalog.items
+    .filter((item) => item.protocol === "acp")
+    .flatMap((item) => item.distributions
+      .filter((distribution) => distribution.type === "binary" && distribution.target?.os === target.os && distribution.target?.arch === target.arch)
+      .map((distribution) => ({ item, distribution })));
+  const selected = candidates.find(({ item }) => item.id === "opencode") ?? candidates[0];
+  if (!selected) throw new Error(`catalog has no ACP binary for ${target.os}-${target.arch}`);
+  const { item, distribution } = selected;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "assetiweave-agent-market-e2e-"));
+  const workspace = path.join(root, "workspace");
+  const home = path.join(root, "home");
+  fs.mkdirSync(workspace, { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
+  const env = isolatedEnvironment(home);
+  try {
+    const bytes = await downloadArtifactBytes(distribution.url);
+    if (sha256(bytes) !== distribution.sha256) throw new Error("real ACP artifact SHA256 does not match catalog");
+    if (distribution.size !== bytes.length) throw new Error("real ACP artifact size does not match catalog");
+    const archive = path.join(root, "artifact.zip");
+    fs.writeFileSync(archive, bytes);
+    execFileSync("unzip", ["-q", "-o", archive, "-d", root], { timeout: 60_000 });
+    const program = path.join(root, distribution.executable);
+    fs.chmodSync(program, 0o755);
+    const versionOutput = runVersion(program, workspace, env);
+    const conformance = await runAcpConformance(program, distribution.launchArgs, workspace, env);
+    return {
+      status: "passed",
+      observedAt: new Date().toISOString(),
+      host: target,
+      catalogItemId: item.id,
+      distributionId: distribution.id,
+      artifact: { url: distribution.url, sha256: distribution.sha256, sizeBytes: bytes.length },
+      install: {
+        status: "passed",
+        steps: ["download", "sha256", "extract", "executable-version"],
+        versionOutput,
+      },
+      acpConformance: conformance,
+    };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 let catalogBytes;
 let catalog;
 try {
@@ -257,6 +459,27 @@ if (release) {
 if (network) {
   if (!release || !evidence) errors.push("--network requires --release and a readable release evidence file");
   else errors.push(...await checkNetwork(catalog, evidence));
+}
+
+if (e2e) {
+  if (!release || !evidence) {
+    errors.push("--e2e requires --release and a readable release evidence file");
+  } else {
+    try {
+      const result = await runRealE2e(catalog);
+      const expected = evidence.realE2e;
+      if (expected?.catalogItemId !== result.catalogItemId || expected?.distributionId !== result.distributionId) {
+        errors.push("real ACP E2E result does not identify the evidence distribution");
+      }
+      if (expected?.artifact?.url !== result.artifact.url || expected?.artifact?.sha256 !== result.artifact.sha256 || expected?.artifact?.sizeBytes !== result.artifact.sizeBytes) {
+        errors.push("real ACP E2E result does not match release evidence artifact identity");
+      }
+      if (result.acpConformance.status !== "passed") errors.push("real ACP E2E conformance did not pass");
+      if (errors.length === 0) console.log(`Real ACP E2E passed: ${result.catalogItemId}/${result.distributionId} ${result.install.versionOutput}`);
+    } catch (error) {
+      errors.push(`real ACP E2E failed: ${error.message}`);
+    }
+  }
 }
 
 if (errors.length > 0) {

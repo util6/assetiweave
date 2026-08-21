@@ -24,6 +24,7 @@
     "test:boundaries": "bash scripts/check-module-boundaries.test.sh",
     "agent-catalog:check": "node scripts/check-agent-catalog-release.mjs --static",
     "agent-catalog:release": "node scripts/check-agent-catalog-release.mjs --release --network",
+    "agent-catalog:real-e2e": "node scripts/check-agent-catalog-release.mjs --release --e2e",
     "precli:build": "pnpm artifacts:guard",
     "cli:build": "node scripts/build-cli.js",
     "postcli:build": "pnpm artifacts:check",

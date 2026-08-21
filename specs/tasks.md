@@ -392,7 +392,7 @@
 
 > 状态：未完成。2026-08-21 的 LUNA-01 基线审计发现部分任务只有局部类型、单元测试或生成契约证据，尚未满足 SPEC-BA-10 的生产行为验收；详见 `specs/feature-plans/backend-architecture-convergence/11-luna-01-baseline.md`。
 
-LUNA-02 至 LUNA-10 已补齐租户切换、索引任务、Engine no-op、Settings v3、长任务前端、BatchMount、TaskRuntime retention、结构化 HostProcess 错误和 TargetCatalog 动态闭环；当前仍保留 22.10 的真实 package/release E5 证据与 LUNA-09 全局字符串错误兼容桥的收口工作。
+LUNA-02 至 LUNA-10 已补齐租户切换、索引任务、Engine no-op、Settings v3、长任务前端、BatchMount、TaskRuntime retention、结构化 HostProcess 错误和 TargetCatalog 动态闭环；22.10 的 E5 证据已绑定 OpenCode binary distribution 的 SHA256、下载大小、解包、版本探测和真实 ACP initialize/session/new/session/close/clean shutdown，LUNA-09 的全局字符串错误兼容桥已删除。
 
 - [X] 22.1 修复 Agent Market 当前 Core 兼容、Catalog revision/cache 选择和前端生命周期门禁
 - [X] 22.2 将 Agent Market、Conversation、Memory、Session、System/Profile 等 Application workflow 迁移到 runtime `AppResult`
@@ -403,5 +403,5 @@ LUNA-02 至 LUNA-10 已补齐租户切换、索引任务、Engine no-op、Settin
 - [X] 22.7 删除 legacy Agent executor 生产路径，保留 compatibility API 到 canonical runtime
 - [X] 22.8 增加 Agent Market 本地 fake ACP executable 的 install/update/failed-update/restart-recovery/cancel E2E
 - [X] 22.9 升级 module boundary guard、精确 legacy allowlist 和违规 fixture self-test
-- [ ] 22.10 完成生产 Agent distribution 的可追溯 evidence、发布门禁与真实 package/release 验证
+- [X] 22.10 完成生产 Agent distribution 的可追溯 evidence、发布门禁与真实 package/release 验证
 - [X] 22.11 重新生成 Engine/CLI contract、surface matrix，并完成全仓 Rust/TypeScript/Go/build 验证

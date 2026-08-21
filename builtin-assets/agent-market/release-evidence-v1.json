@@ -10,6 +10,38 @@
     "snapshotUrl": "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json",
     "revisionUrl": "https://github.com/agentclientprotocol/registry/commit/066208e41d95e12108fcd7d282b601ed8b2b53c8"
   },
+  "realE2e": {
+    "status": "passed",
+    "observedAt": "2026-08-21T14:40:53Z",
+    "host": {
+      "os": "darwin",
+      "arch": "aarch64"
+    },
+    "catalogItemId": "opencode",
+    "distributionId": "binary-darwin-aarch64",
+    "artifact": {
+      "url": "https://github.com/anomalyco/opencode/releases/download/v1.18.19/opencode-darwin-arm64.zip",
+      "sha256": "0026326bd77a3277ab3726be237410b19389f7829e8bb3c82dfaf9044162067c",
+      "sizeBytes": 46154618
+    },
+    "install": {
+      "status": "passed",
+      "steps": [
+        "download",
+        "sha256",
+        "extract",
+        "executable-version"
+      ],
+      "versionOutput": "1.18.19"
+    },
+    "acpConformance": {
+      "status": "passed",
+      "initialize": "passed",
+      "sessionNew": "passed",
+      "sessionClose": "passed",
+      "cleanShutdown": "passed"
+    }
+  },
   "items": [
     {
       "evidenceId": "acp-registry-066208e4-opencode-1.18.19-binary-darwin-aarch64",
