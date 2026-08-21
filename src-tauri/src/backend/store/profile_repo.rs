@@ -1,6 +1,6 @@
 use crate::backend::models::TargetProfile;
 use crate::backend::path_utils::normalize_path_for_storage;
-use crate::backend::runtime::{AppError, AppResult};
+use crate::backend::runtime::AppResult;
 use sqlx::SqlitePool;
 
 use super::{
@@ -106,6 +106,7 @@ pub(crate) async fn delete_profile_sqlx(
 mod tests {
     use super::*;
     use crate::backend::models::{AppKind, AssetKind, DeploymentStrategy, ProfileSafety, RuleSet};
+    use crate::backend::runtime::AppError;
     use crate::backend::store::Database;
     use uuid::Uuid;
 

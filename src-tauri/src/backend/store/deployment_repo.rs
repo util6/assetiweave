@@ -1,5 +1,5 @@
 use crate::backend::models::DeploymentState;
-use crate::backend::runtime::{AppError, AppResult};
+use crate::backend::runtime::AppResult;
 use sqlx::{Row, SqlitePool};
 
 use super::{codec::encode_enum_app, sql};
@@ -101,6 +101,7 @@ pub(crate) async fn delete_orphan_deployment_state_sqlx(
 mod tests {
     use super::*;
     use crate::backend::models::DeploymentStrategy;
+    use crate::backend::runtime::AppError;
     use uuid::Uuid;
 
     #[test]
