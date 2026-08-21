@@ -9,21 +9,53 @@ use super::AiExecutionPhase;
 
 #[derive(Debug)]
 pub(crate) enum AiExecutionError {
-    AgentNotFound { agent_id: AgentId },
-    RuntimeUnavailable { command_name: String },
-    Spawn { program: PathBuf, message: String },
-    Output { message: String },
-    Timeout { program: PathBuf, timeout: Duration },
-    Cancelled { program: PathBuf },
-    OutputLimit { limit: usize },
-    EmptyOutput { program: Option<PathBuf> },
+    AgentNotFound {
+        agent_id: AgentId,
+    },
+    RuntimeUnavailable {
+        command_name: String,
+    },
+    Spawn {
+        program: PathBuf,
+        message: String,
+    },
+    Output {
+        message: String,
+    },
+    Timeout {
+        program: PathBuf,
+        timeout: Duration,
+    },
+    Cancelled {
+        program: PathBuf,
+    },
+    OutputLimit {
+        limit: usize,
+    },
+    EmptyOutput {
+        program: Option<PathBuf>,
+    },
     PermissionDenied,
     ToolUseDenied,
-    Protocol { operation: &'static str },
-    ModelSelectionFailed,
-    AgentExited { code: Option<i32> },
-    Workspace { operation: &'static str },
-    CleanupFailed { failures: Vec<String> },
+    Protocol {
+        operation: &'static str,
+    },
+    ProtocolDetail {
+        operation: &'static str,
+        detail: String,
+    },
+    ModelSelectionFailed {
+        detail: Option<String>,
+    },
+    AgentExited {
+        code: Option<i32>,
+    },
+    Workspace {
+        operation: &'static str,
+    },
+    CleanupFailed {
+        failures: Vec<String>,
+    },
     InvalidPrompt(String),
     InvalidModel(String),
 }
@@ -74,11 +106,25 @@ impl AiExecutionError {
                 "The AI agent protocol operation failed.",
                 true,
             ),
-            Self::ModelSelectionFailed => (
-                "model_selection_failed",
-                "The requested AI model could not be selected.",
-                false,
-            ),
+            Self::ProtocolDetail { detail, .. } => {
+                return AiExecutionErrorView {
+                    code: "protocol_failed".to_string(),
+                    message: format!("The AI agent protocol operation failed: {detail}"),
+                    retryable: true,
+                    phase: None,
+                };
+            }
+            Self::ModelSelectionFailed { detail } => {
+                return AiExecutionErrorView {
+                    code: "model_selection_failed".to_string(),
+                    message: detail.as_ref().map_or_else(
+                        || "The requested AI model could not be selected.".to_string(),
+                        |detail| format!("The requested AI model could not be selected: {detail}"),
+                    ),
+                    retryable: false,
+                    phase: None,
+                };
+            }
             Self::AgentExited { .. } => (
                 "agent_exited",
                 "The AI agent process exited before execution completed.",
@@ -152,7 +198,13 @@ impl fmt::Display for AiExecutionError {
             Self::Protocol { operation } => {
                 write!(formatter, "the ACP {operation} operation failed")
             }
-            Self::ModelSelectionFailed => {
+            Self::ProtocolDetail { operation, detail } => {
+                write!(formatter, "the ACP {operation} operation failed: {detail}")
+            }
+            Self::ModelSelectionFailed { detail: Some(detail) } => {
+                write!(formatter, "the requested AI model could not be selected: {detail}")
+            }
+            Self::ModelSelectionFailed { detail: None } => {
                 formatter.write_str("the requested AI model could not be selected")
             }
             Self::AgentExited { code: Some(code) } => {
@@ -201,5 +253,17 @@ mod tests {
         assert_eq!(view.code, "agent_exited");
         assert!(view.retryable);
         assert!(!public_debug.contains("/private/"));
+    }
+
+    #[test]
+    fn public_protocol_error_preserves_the_sanitized_agent_message() {
+        let view = AiExecutionError::ProtocolDetail {
+            operation: "prompt",
+            detail: "Free promotion has ended for the selected model.".to_string(),
+        }
+        .to_view();
+
+        assert_eq!(view.code, "protocol_failed");
+        assert!(view.message.contains("Free promotion has ended"));
     }
 }

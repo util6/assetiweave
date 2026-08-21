@@ -422,7 +422,12 @@ async fn run_execution(
                 request.limits.config_rpc_timeout,
             )
             .await
-            .map_err(|_| AiExecutionError::ModelSelectionFailed)?;
+            .map_err(|error| AiExecutionError::ModelSelectionFailed {
+                detail: match error {
+                    AcpError::RequestFailed { message, .. } => Some(message),
+                    _ => None,
+                },
+            })?;
     }
 
     request.report_phase(AiExecutionPhase::Prompting);
@@ -574,8 +579,14 @@ fn map_process_error(
     }
 }
 
-fn map_acp_error(operation: &'static str, _error: AcpError) -> AiExecutionError {
-    AiExecutionError::Protocol { operation }
+fn map_acp_error(operation: &'static str, error: AcpError) -> AiExecutionError {
+    match error {
+        AcpError::RequestFailed { message, .. } => AiExecutionError::ProtocolDetail {
+            operation,
+            detail: message,
+        },
+        _ => AiExecutionError::Protocol { operation },
+    }
 }
 
 fn cancelled_error(definition: &AgentDefinition) -> AiExecutionError {
@@ -1002,7 +1013,9 @@ mod tests {
 
             assert!(matches!(
                 result,
-                Err(AiExecutionError::Protocol { .. } | AiExecutionError::AgentExited { .. })
+                Err(AiExecutionError::Protocol { .. }
+                    | AiExecutionError::ProtocolDetail { .. }
+                    | AiExecutionError::AgentExited { .. })
             ));
             assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
             let _ = fs::remove_dir_all(root);

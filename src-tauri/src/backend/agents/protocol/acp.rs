@@ -139,9 +139,7 @@ impl AcpProtocol {
             .send_request(NewSessionRequest::new(cwd))
             .block_task()
             .await
-            .map_err(|_| AcpError::RequestFailed {
-                operation: AcpOperation::NewSession,
-            })
+            .map_err(|error| request_failed(AcpOperation::NewSession, error))
     }
 
     pub(crate) async fn set_model(
@@ -157,9 +155,7 @@ impl AcpProtocol {
                 operation: AcpOperation::SetModel,
                 timeout,
             })?
-            .map_err(|_| AcpError::RequestFailed {
-                operation: AcpOperation::SetModel,
-            })
+            .map_err(|error| request_failed(AcpOperation::SetModel, error))
     }
 
     pub(crate) async fn prompt(
@@ -176,9 +172,7 @@ impl AcpProtocol {
             ))
             .block_task()
             .await
-            .map_err(|_| AcpError::RequestFailed {
-                operation: AcpOperation::Prompt,
-            })?;
+            .map_err(|error| request_failed(AcpOperation::Prompt, error))?;
         self.event_tx
             .send(AcpRuntimeEvent::TurnCompleted {
                 session_id: completion_session_id,
@@ -187,6 +181,7 @@ impl AcpProtocol {
             .await
             .map_err(|_| AcpError::RequestFailed {
                 operation: AcpOperation::Prompt,
+                message: "the local ACP event stream closed".to_string(),
             })?;
         Ok(response)
     }
@@ -196,6 +191,7 @@ impl AcpProtocol {
             .send_notification(CancelNotification::new(session_id))
             .map_err(|_| AcpError::RequestFailed {
                 operation: AcpOperation::Cancel,
+                message: "the ACP cancellation notification could not be sent".to_string(),
             })
     }
 
@@ -217,9 +213,7 @@ impl AcpProtocol {
             .block_task()
             .await
             .map(Some)
-            .map_err(|_| AcpError::RequestFailed {
-                operation: AcpOperation::CloseSession,
-            })
+            .map_err(|error| request_failed(AcpOperation::CloseSession, error))
     }
 
     pub(crate) async fn shutdown(&self, timeout: Duration) -> Result<(), AcpError> {
@@ -329,6 +323,7 @@ pub(crate) enum AcpError {
     },
     RequestFailed {
         operation: AcpOperation,
+        message: String,
     },
     StateUnavailable(&'static str),
     ShutdownTimeout {
@@ -353,7 +348,9 @@ impl fmt::Display for AcpError {
                 "ACP {operation:?} timed out after {} milliseconds",
                 timeout.as_millis()
             ),
-            Self::RequestFailed { operation } => write!(formatter, "ACP {operation:?} failed"),
+            Self::RequestFailed { operation, message } => {
+                write!(formatter, "ACP {operation:?} failed: {message}")
+            }
             Self::StateUnavailable(state) => write!(formatter, "ACP {state} state is unavailable"),
             Self::ShutdownTimeout { timeout } => write!(
                 formatter,
@@ -365,6 +362,21 @@ impl fmt::Display for AcpError {
 }
 
 impl std::error::Error for AcpError {}
+
+fn request_failed(operation: AcpOperation, error: agent_client_protocol::Error) -> AcpError {
+    AcpError::RequestFailed {
+        operation,
+        message: sanitize_protocol_error_message(&error.message),
+    }
+}
+
+fn sanitize_protocol_error_message(message: &str) -> String {
+    let normalized = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return "the Agent returned an empty protocol error".to_string();
+    }
+    normalized.chars().take(500).collect()
+}
 
 fn build_initialize_request() -> InitializeRequest {
     InitializeRequest::new(ProtocolVersion::V1)
