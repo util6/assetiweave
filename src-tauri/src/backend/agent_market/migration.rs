@@ -17,6 +17,12 @@ pub(crate) async fn migrate_legacy_assignments(
     scope_key: &str,
 ) -> Result<Vec<String>, String> {
     let settings = crate::backend::app_settings::read_app_settings_value()?;
+    crate::backend::store::save_app_settings_sqlx(
+        &pool,
+        crate::backend::app_settings::SETTINGS_SCHEMA_VERSION,
+        &settings,
+    )
+    .await?;
     let catalog = crate::backend::agent_market::CatalogCache::best_available()
         .map_err(|error| error.to_string())?;
     let catalog_version = catalog.catalog().catalog_version.clone();
@@ -74,6 +80,7 @@ pub(crate) async fn migrate_legacy_assignments(
 
     let mut notices = Vec::new();
     let runtime_root = super::default_runtime_root().map_err(|error| error.to_string())?;
+    let settings_pool = pool.clone();
     let lifecycle = AgentLifecycleService::new(pool, manager, runtime_root)
         .map_err(|error| error.to_string())?;
     for agent_id in agent_ids {
@@ -144,7 +151,12 @@ pub(crate) async fn migrate_legacy_assignments(
         .as_object_mut()
         .expect("migration scopes object")
         .insert(scope_id.clone(), marker);
-    crate::backend::app_settings::save_app_settings(updated_settings.clone())?;
+    crate::backend::store::save_app_settings_sqlx(
+        &settings_pool,
+        crate::backend::app_settings::SETTINGS_SCHEMA_VERSION,
+        &updated_settings,
+    )
+    .await?;
     Ok(
         updated_settings["agentMarketMigration"]["scopes"]
             [migration_scope_id(scope_key, tenant_id)]["notices"]

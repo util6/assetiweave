@@ -11,6 +11,7 @@ mod mount_observation_repo;
 mod mount_repo;
 mod profile_repo;
 mod search_index_repo;
+mod settings_repo;
 mod shortcut_repo;
 mod skill_remote_repo;
 mod source_repo;
@@ -99,6 +100,7 @@ pub(crate) use search_index_repo::{
     mark_conversation_search_index_unusable_sqlx,
     try_acquire_conversation_search_writer_lease_sqlx, ConversationSearchIndexState,
 };
+pub(crate) use settings_repo::{load_app_settings_sqlx, save_app_settings_sqlx};
 pub(crate) use shortcut_repo::{
     load_app_shortcut_settings_sqlx, load_app_shortcuts_sqlx, save_app_shortcuts_sqlx,
 };

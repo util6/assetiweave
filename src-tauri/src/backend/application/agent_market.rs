@@ -480,7 +480,7 @@ impl AppService {
                 false,
             ))
         })?;
-        let capability_assignments = agent_assignment_refs(&agent_id)?;
+        let capability_assignments = agent_assignment_refs(&self.db, &agent_id)?;
         let mut conflicts = capability_assignments
             .iter()
             .map(|assignment| format!("assignment:{assignment}"))
@@ -573,7 +573,7 @@ impl AppService {
             Arc<dyn Fn(crate::backend::agent_market::types::LifecycleTaskPhase) + Send + Sync>,
         >,
     ) -> AppResult<AgentInstallationView> {
-        let assignment_refs = agent_assignment_refs(&request.agent_id)?;
+        let assignment_refs = agent_assignment_refs(&self.db, &request.agent_id)?;
         if assignment_refs.iter().any(|assignment| {
             !request
                 .clear_capability_assignments
@@ -598,7 +598,7 @@ impl AppService {
             .map(|installation| installation_view(&installation))
             .map_err(AppError::from)?;
         if !assignment_refs.is_empty() {
-            clear_agent_assignments(&assignment_refs)?;
+            clear_agent_assignments(&self.db, &assignment_refs)?;
         }
         Ok(result)
     }
@@ -766,8 +766,11 @@ fn installation_view(installation: &AgentInstallation) -> AgentInstallationView 
     }
 }
 
-fn agent_assignment_refs(agent_id: &str) -> AppResult<Vec<String>> {
-    let settings = crate::backend::app_settings::read_app_settings_value()?;
+fn agent_assignment_refs(
+    database: &crate::backend::store::Database,
+    agent_id: &str,
+) -> AppResult<Vec<String>> {
+    let settings = crate::backend::app_settings::read_app_settings_value_for_database(database)?;
     Ok(settings
         .get("agentAssignments")
         .and_then(Value::as_object)
@@ -778,11 +781,15 @@ fn agent_assignment_refs(agent_id: &str) -> AppResult<Vec<String>> {
         .collect())
 }
 
-fn clear_agent_assignments(assignments: &[String]) -> AppResult<()> {
+fn clear_agent_assignments(
+    database: &crate::backend::store::Database,
+    assignments: &[String],
+) -> AppResult<()> {
     if assignments.is_empty() {
         return Ok(());
     }
-    let mut settings = crate::backend::app_settings::read_app_settings_value()?;
+    let mut settings =
+        crate::backend::app_settings::read_app_settings_value_for_database(database)?;
     if let Some(values) = settings
         .get_mut("agentAssignments")
         .and_then(Value::as_object_mut)
@@ -791,7 +798,7 @@ fn clear_agent_assignments(assignments: &[String]) -> AppResult<()> {
             values.remove(assignment);
         }
     }
-    Ok(crate::backend::app_settings::save_app_settings(settings).map(|_| ())?)
+    crate::backend::app_settings::save_app_settings_for_database(database, settings).map(|_| ())
 }
 
 #[allow(dead_code)]

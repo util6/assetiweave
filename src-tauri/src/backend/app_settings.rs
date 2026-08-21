@@ -1,4 +1,8 @@
-use crate::backend::runtime::AppResult;
+use crate::backend::{
+    runtime::AppError,
+    runtime::AppResult,
+    store::{self, Database},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -9,7 +13,7 @@ use std::{
 const CONFIG_DIR_NAME: &str = ".assetiweave";
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONVERSATION_ADAPTER_DIR_NAME: &str = "conversation-adapters";
-const SETTINGS_SCHEMA_VERSION: u32 = 3;
+pub(crate) const SETTINGS_SCHEMA_VERSION: u32 = 3;
 const DEFAULT_AI_RUNTIME_CLI: &str = "opencode";
 const DEFAULT_AUTO_DREAM_MIN_HOURS: i64 = 12;
 const DEFAULT_AUTO_DREAM_MIN_SESSIONS: i64 = 3;
@@ -33,30 +37,80 @@ struct AppSettingsDocument {
     settings: Value,
 }
 
-pub(crate) fn get_app_settings() -> AppResult<AppSettingsFile> {
+pub(crate) fn read_app_settings_value() -> AppResult<Value> {
+    if let Some(runtime) = crate::backend::runtime::current_process_runtime() {
+        return read_app_settings_value_for_database(runtime.db());
+    }
+    let paths = app_settings_paths()?;
+    if !paths.config_path.exists() {
+        return canonicalize_settings(json!({}));
+    }
+    Ok(read_normalized_settings_document(&paths.config_path)?.settings)
+}
+
+pub(crate) fn get_app_settings_for_database(db: &Database) -> AppResult<AppSettingsFile> {
     let paths = app_settings_paths()?;
     ensure_settings_dirs(&paths)?;
-    let settings = read_normalized_settings_document(&paths.config_path)?.settings;
+    let settings = read_app_settings_value_for_database(db)?;
     Ok(paths.into_file(settings))
 }
 
-pub(crate) fn save_app_settings(settings: Value) -> AppResult<AppSettingsFile> {
+pub(crate) fn save_app_settings_for_database(
+    db: &Database,
+    settings: Value,
+) -> AppResult<AppSettingsFile> {
     let paths = app_settings_paths()?;
     ensure_settings_dirs(&paths)?;
+    let settings = canonicalize_settings(settings)?;
+    db.block_on(store::save_app_settings_sqlx(
+        db.pool(),
+        SETTINGS_SCHEMA_VERSION,
+        &settings,
+    ))
+    .map_err(AppError::External)?;
+    // The file remains an import/migration source. Keep its non-execution
+    // display settings in sync, but never use it as the runtime authority.
     let document = AppSettingsDocument {
         schema_version: SETTINGS_SCHEMA_VERSION,
-        settings: normalize_settings_paths(settings)?,
+        settings: settings.clone(),
     };
     write_settings_document(&paths.config_path, &document)?;
-    Ok(paths.into_file(document.settings))
+    Ok(paths.into_file(settings))
 }
 
-pub(crate) fn read_app_settings_value() -> AppResult<Value> {
+pub(crate) fn read_app_settings_value_for_database(db: &Database) -> AppResult<Value> {
     let paths = app_settings_paths()?;
-    if !paths.config_path.exists() {
-        return normalize_settings_paths(json!({}));
-    }
-    Ok(read_normalized_settings_document(&paths.config_path)?.settings)
+    ensure_settings_dirs(&paths)?;
+    let stored = db
+        .block_on(store::load_app_settings_sqlx(db.pool()))
+        .map_err(AppError::External)?;
+    let Some((_schema_version, settings)) = stored else {
+        let legacy = read_settings_document(&paths.config_path)?.settings;
+        let settings = canonicalize_settings(legacy)?;
+        db.block_on(store::save_app_settings_sqlx(
+            db.pool(),
+            SETTINGS_SCHEMA_VERSION,
+            &settings,
+        ))
+        .map_err(AppError::External)?;
+        write_settings_document(
+            &paths.config_path,
+            &AppSettingsDocument {
+                schema_version: SETTINGS_SCHEMA_VERSION,
+                settings: settings.clone(),
+            },
+        )?;
+        return Ok(settings);
+    };
+
+    let settings = canonicalize_settings(settings)?;
+    db.block_on(store::save_app_settings_sqlx(
+        db.pool(),
+        SETTINGS_SCHEMA_VERSION,
+        &settings,
+    ))
+    .map_err(AppError::External)?;
+    Ok(settings)
 }
 
 pub(crate) fn conversation_full_sync_on_startup_enabled() -> AppResult<bool> {
@@ -134,7 +188,7 @@ fn read_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
 
 fn read_normalized_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
     let mut document = read_settings_document(path)?;
-    let normalized = normalize_settings_paths(document.settings.clone())?;
+    let normalized = canonicalize_settings(document.settings.clone())?;
     let schema_changed = document.schema_version != SETTINGS_SCHEMA_VERSION;
     if normalized != document.settings || schema_changed {
         document.settings = normalized;
@@ -153,6 +207,25 @@ fn normalize_settings_paths(mut settings: Value) -> AppResult<Value> {
         &["conversationRuntimeOverrides", "python"][..],
     ] {
         normalize_json_path_setting(&mut settings, path)?;
+    }
+    Ok(settings)
+}
+
+fn canonicalize_settings(settings: Value) -> AppResult<Value> {
+    let mut settings = normalize_settings_paths(settings)?;
+    let Some(root) = settings.as_object_mut() else {
+        return Ok(settings);
+    };
+    // These maps were migration inputs. Canonical action assignments contain
+    // the complete agent/model selection and are the only execution source.
+    root.remove("agentCapabilityAssignments");
+    root.remove("agentModels");
+    if let Some(translation) = root
+        .get_mut("conversationTranslation")
+        .and_then(Value::as_object_mut)
+    {
+        translation.remove("cli");
+        translation.remove("model");
     }
     Ok(settings)
 }
@@ -460,6 +533,12 @@ fn normalize_document(value: Value) -> AppSettingsDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn settings_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn legacy_top_level_settings_are_wrapped() {
@@ -612,5 +691,61 @@ mod tests {
             settings["agentAssignments"]["memory.extraction"]["modelId"],
             "openai/gpt-5-codex"
         );
+    }
+
+    #[test]
+    fn sqlite_settings_import_is_idempotent_and_legacy_keys_are_removed() {
+        let _guard = settings_test_lock().lock().expect("settings test lock");
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-settings-migration-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("create settings test root");
+        let previous_home = std::env::var_os("ASSETIWEAVE_HOME");
+        std::env::set_var("ASSETIWEAVE_HOME", &root);
+        let config = root.join(CONFIG_FILE_NAME);
+        std::fs::write(
+            &config,
+            serde_json::to_string_pretty(&json!({
+                "schemaVersion": 1,
+                "settings": {
+                    "aiRuntime": { "cli": "gemini", "model": "gemini-2.5-pro" },
+                    "agentModels": { "gemini": "gemini-2.5-pro" },
+                    "agentCapabilityAssignments": { "memory": "gemini" }
+                }
+            }))
+            .expect("encode legacy settings"),
+        )
+        .expect("write legacy settings");
+
+        let db_path = root.join("settings.db");
+        let database = crate::backend::store::Database::open_initialized(&db_path)
+            .expect("open settings database");
+        let imported = read_app_settings_value_for_database(&database).expect("import settings");
+        assert_eq!(
+            imported["agentAssignments"]["memory.extraction"]["agentId"],
+            "gemini"
+        );
+        assert!(imported.get("agentModels").is_none());
+        assert!(imported.get("agentCapabilityAssignments").is_none());
+
+        std::fs::write(
+            &config,
+            serde_json::to_string_pretty(&json!({
+                "settings": {
+                    "aiRuntime": { "cli": "opencode", "model": "changed-after-import" }
+                }
+            }))
+            .expect("encode changed legacy settings"),
+        )
+        .expect("rewrite legacy settings");
+        let reopened = read_app_settings_value_for_database(&database).expect("read settings");
+        assert_eq!(reopened, imported);
+
+        match previous_home {
+            Some(value) => std::env::set_var("ASSETIWEAVE_HOME", value),
+            None => std::env::remove_var("ASSETIWEAVE_HOME"),
+        }
+        std::fs::remove_dir_all(root).ok();
     }
 }

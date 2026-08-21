@@ -171,7 +171,9 @@ impl AppService {
     pub(crate) fn get_app_settings(
         &self,
     ) -> AppResult<crate::backend::app_settings::AppSettingsFile> {
-        Ok(crate::backend::app_settings::get_app_settings()?)
+        Ok(crate::backend::app_settings::get_app_settings_for_database(
+            &self.db,
+        )?)
     }
 
     pub(crate) fn save_app_settings(
@@ -179,14 +181,15 @@ impl AppService {
         settings: Value,
     ) -> AppResult<crate::backend::app_settings::AppSettingsFile> {
         self.validate_agent_capability_assignments(&settings)?;
-        Ok(crate::backend::app_settings::save_app_settings(settings)?)
+        Ok(crate::backend::app_settings::save_app_settings_for_database(&self.db, settings)?)
     }
 
     fn validate_agent_capability_assignments(&self, settings: &Value) -> AppResult<()> {
         let Some(assignments) = settings.get("agentAssignments").and_then(Value::as_object) else {
             return Ok(());
         };
-        let previous = crate::backend::app_settings::read_app_settings_value()?;
+        let previous =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
         let previous_assignments = previous.get("agentAssignments").and_then(Value::as_object);
         let repository =
             crate::backend::agent_market::AgentInstallationRepository::new(self.db.pool().clone());
