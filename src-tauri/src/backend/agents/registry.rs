@@ -421,10 +421,14 @@ fn map_host_process_error(kind: ProbeKind, error: HostProcessError) -> AgentProb
         HostProcessError::Timeout { .. } => AgentProbeError::Timeout {
             kind: kind.as_str(),
         },
-        HostProcessError::Spawn(_) => AgentProbeError::SpawnFailed {
-            kind: kind.as_str(),
-        },
-        HostProcessError::Output(_) => AgentProbeError::OutputFailed {
+        HostProcessError::MissingProgram { .. } | HostProcessError::Spawn(_) => {
+            AgentProbeError::SpawnFailed {
+                kind: kind.as_str(),
+            }
+        }
+        HostProcessError::Output(_)
+        | HostProcessError::OutputLimitExceeded { .. }
+        | HostProcessError::Cleanup(_) => AgentProbeError::OutputFailed {
             kind: kind.as_str(),
         },
         HostProcessError::Cancelled => AgentProbeError::OutputFailed {

@@ -862,6 +862,9 @@ pub(super) fn run_external_adapter(
         },
     )
     .map_err(|error| match error {
+        crate::backend::host_process::HostProcessError::MissingProgram { program } => {
+            format!("adapter program was not found: {}", program.display())
+        }
         crate::backend::host_process::HostProcessError::Spawn(reason) => {
             format!(
                 "failed to start adapter {}: {reason}",
@@ -879,6 +882,12 @@ pub(super) fn run_external_adapter(
         }
         crate::backend::host_process::HostProcessError::Cancelled => {
             "adapter process was cancelled".to_string()
+        }
+        crate::backend::host_process::HostProcessError::Cleanup(reason) => {
+            format!("adapter process cleanup failed: {reason}")
+        }
+        crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. } => {
+            "adapter output exceeded configured limit".to_string()
         }
     })?;
     if output.stdout_truncated || output.stderr_truncated {

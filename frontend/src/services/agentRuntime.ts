@@ -96,6 +96,7 @@ export interface AgentMarketErrorView {
   phase: string | null;
   retryable: boolean;
   action: string | null;
+  details?: unknown;
 }
 
 export interface AgentMarketItem {

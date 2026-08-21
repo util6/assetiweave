@@ -3,6 +3,7 @@ use std::{fmt, path::PathBuf, time::Duration};
 use schemars::JsonSchema;
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use url::Url;
 
 const MAX_ID_BYTES: usize = 64;
@@ -639,6 +640,7 @@ pub(crate) struct AgentMarketError {
     pub(crate) phase: Option<String>,
     pub(crate) retryable: bool,
     pub(crate) action: Option<String>,
+    pub(crate) details: Option<Value>,
 }
 
 impl AgentMarketError {
@@ -650,6 +652,7 @@ impl AgentMarketError {
             phase: None,
             retryable,
             action: None,
+            details: None,
         }
     }
 }
@@ -740,6 +743,8 @@ pub(crate) struct AgentMarketErrorView {
     pub(crate) phase: Option<String>,
     pub(crate) retryable: bool,
     pub(crate) action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) details: Option<Value>,
 }
 
 impl From<&AgentMarketError> for AgentMarketErrorView {
@@ -751,6 +756,7 @@ impl From<&AgentMarketError> for AgentMarketErrorView {
             phase: value.phase.clone(),
             retryable: value.retryable,
             action: value.action.clone(),
+            details: value.details.clone(),
         }
     }
 }

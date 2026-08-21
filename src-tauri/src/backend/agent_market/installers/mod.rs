@@ -146,7 +146,17 @@ pub(crate) fn run_host_command(
     .map_err(|error| match error {
         crate::backend::host_process::HostProcessError::Cancelled => InstallError::Cancelled,
         crate::backend::host_process::HostProcessError::Timeout { .. } => InstallError::Timeout,
-        other => InstallError::Spawn(format!("{other:?}")),
+        crate::backend::host_process::HostProcessError::MissingProgram { program } => {
+            InstallError::Spawn(format!("program not found: {}", program.display()))
+        }
+        crate::backend::host_process::HostProcessError::Spawn(reason)
+        | crate::backend::host_process::HostProcessError::Output(reason)
+        | crate::backend::host_process::HostProcessError::Cleanup(reason) => {
+            InstallError::Spawn(reason)
+        }
+        crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. } => {
+            InstallError::Spawn("process output exceeded configured limit".to_string())
+        }
     })
 }
 

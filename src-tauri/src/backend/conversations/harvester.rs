@@ -105,6 +105,25 @@ fn run_conversation_harvester_in_dir(source_dir: &Path, full_reparse: bool) -> A
         Err(crate::backend::host_process::HostProcessError::Cancelled) => {
             return Err(format!("harvester {} was cancelled", manifest.id));
         }
+        Err(crate::backend::host_process::HostProcessError::MissingProgram { program }) => {
+            return Err(format!(
+                "run harvester {}: program not found: {}",
+                manifest.id,
+                program.display()
+            ));
+        }
+        Err(crate::backend::host_process::HostProcessError::Cleanup(error)) => {
+            return Err(format!(
+                "cleanup harvester {} process: {error}",
+                manifest.id
+            ));
+        }
+        Err(crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. }) => {
+            return Err(format!(
+                "harvester {} output exceeded configured limit",
+                manifest.id
+            ));
+        }
     };
     if !output.status.success() {
         let mut message = format!(

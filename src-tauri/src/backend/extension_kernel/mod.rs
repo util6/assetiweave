@@ -34,7 +34,7 @@ pub(crate) use trust::TrustGate;
 
 use std::path::Path;
 
-use super::runtime::AppError;
+use super::runtime::{AppError, WireError};
 
 /// Domain-specific package interpretation stays outside the kernel.
 pub(crate) trait DomainPackageSystem: Send + Sync {
@@ -44,7 +44,13 @@ pub(crate) trait DomainPackageSystem: Send + Sync {
 
 impl From<ExtensionError> for AppError {
     fn from(error: ExtensionError) -> Self {
-        Self::Extension(error.to_string())
+        let view = WireError {
+            code: error.code().to_string(),
+            message: error.public_message(),
+            retryable: error.retryable(),
+            details: error.details(),
+        };
+        Self::from(view)
     }
 }
 
@@ -142,6 +148,21 @@ mod tests {
             assert_eq!(invocation.args, vec!["--version"]);
             assert_eq!(invocation.version_req.as_deref(), Some(">=1"));
         }
+    }
+
+    #[test]
+    fn extension_process_error_wire_is_stable_and_does_not_leak_paths() {
+        let error = AppError::from(ExtensionError::OutputLimitExceeded {
+            package_id: "/Users/util6/private/agent".to_string(),
+            stdout: true,
+            stderr: false,
+        });
+        let view = error.view();
+
+        assert_eq!(view.code, "output_limit_exceeded");
+        assert!(!view.retryable);
+        assert!(!view.message.contains("/Users/util6"));
+        assert_eq!(view.details.unwrap()["stdout"], true);
     }
 
     #[test]

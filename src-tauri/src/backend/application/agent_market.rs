@@ -20,16 +20,17 @@ use crate::backend::extension_kernel::TrustGate;
 
 impl From<AgentMarketError> for AppError {
     fn from(error: AgentMarketError) -> Self {
-        let details = if error.agent_id.is_some() || error.phase.is_some() || error.action.is_some()
-        {
-            Some(serde_json::json!({
-                "agentId": error.agent_id,
-                "phase": error.phase,
-                "action": error.action,
-            }))
-        } else {
-            None
-        };
+        let details = error.details.or_else(|| {
+            if error.agent_id.is_some() || error.phase.is_some() || error.action.is_some() {
+                Some(serde_json::json!({
+                    "agentId": error.agent_id,
+                    "phase": error.phase,
+                    "action": error.action,
+                }))
+            } else {
+                None
+            }
+        });
         Self::Domain {
             code: error.code,
             message: error.message,

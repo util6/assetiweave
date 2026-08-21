@@ -466,5 +466,31 @@ fn start_cancellation_bridge(
 
 fn market_error_from_app(error: &AppError) -> AgentMarketError {
     let view = error.view();
-    AgentMarketError::new(&view.code, &view.message, view.retryable)
+    let mut market_error = AgentMarketError::new(&view.code, &view.message, view.retryable);
+    market_error.details = view.details;
+    market_error
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::{
+        agent_market::types::AgentMarketErrorView, extension_kernel::ExtensionError,
+    };
+
+    #[test]
+    fn agent_market_error_preserves_structured_extension_details() {
+        let app_error = AppError::from(ExtensionError::OutputLimitExceeded {
+            package_id: "private-agent".to_string(),
+            stdout: true,
+            stderr: false,
+        });
+        let error = market_error_from_app(&app_error);
+        let view = AgentMarketErrorView::from(&error);
+
+        assert_eq!(view.code, "output_limit_exceeded");
+        assert!(!view.retryable);
+        assert_eq!(view.details.as_ref().unwrap()["stdout"], true);
+        assert_eq!(view.details.as_ref().unwrap()["stderr"], false);
+    }
 }

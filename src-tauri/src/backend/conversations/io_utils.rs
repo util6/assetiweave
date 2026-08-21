@@ -442,6 +442,9 @@ fn run_runtime_probe(
         ADAPTER_RUNTIME_PROBE_OUTPUT_CAP,
     )
     .map_err(|error| match error {
+        crate::backend::host_process::HostProcessError::MissingProgram { program } => {
+            RuntimeProbeError::Spawn(format!("program not found: {}", program.display()))
+        }
         crate::backend::host_process::HostProcessError::Spawn(reason) => {
             RuntimeProbeError::Spawn(reason)
         }
@@ -453,6 +456,12 @@ fn run_runtime_probe(
         }
         crate::backend::host_process::HostProcessError::Cancelled => {
             RuntimeProbeError::Output("runtime probe was cancelled".to_string())
+        }
+        crate::backend::host_process::HostProcessError::Cleanup(reason) => {
+            RuntimeProbeError::Output(reason)
+        }
+        crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. } => {
+            RuntimeProbeError::Output("runtime probe output exceeded configured limit".to_string())
         }
     })?;
     if output.stdout_truncated || output.stderr_truncated {

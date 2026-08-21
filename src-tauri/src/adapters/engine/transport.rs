@@ -321,7 +321,16 @@ impl EngineError {
             "timeout" => "timeout",
             "storage_error" => "storage",
             "process_error" => "process",
-            "extension_error" => "extension",
+            "extension_error"
+            | "manifest_invalid"
+            | "incompatible"
+            | "trust_rejected"
+            | "program_not_found"
+            | "launch_failed"
+            | "probe_failed"
+            | "output_limit_exceeded"
+            | "nonzero_exit"
+            | "cleanup_failed" => "extension",
             "external_error" => "external",
             _ => "operation_error",
         };
@@ -373,6 +382,23 @@ mod tests {
         assert_eq!(engine_error.code, tauri_view.code);
         assert_eq!(engine_error.retryable, tauri_view.retryable);
         assert_eq!(engine_error.message, tauri_view.message);
+    }
+
+    #[test]
+    fn engine_error_preserves_structured_extension_details() {
+        let app_error = AppError::from(
+            crate::backend::extension_kernel::ExtensionError::OutputLimitExceeded {
+                package_id: "private-agent".to_string(),
+                stdout: true,
+                stderr: false,
+            },
+        );
+        let tauri_view = app_error.view();
+        let engine_error = EngineError::from_app(app_error);
+
+        assert_eq!(engine_error.code, tauri_view.code);
+        assert_eq!(engine_error.retryable, tauri_view.retryable);
+        assert_eq!(engine_error.details, tauri_view.details);
     }
 
     #[test]

@@ -117,8 +117,9 @@ impl From<AppError> for String {
     }
 }
 
-/// Compatibility conversion for infrastructure helpers that still expose a
-/// plain message. New internal APIs should return `AppError` directly.
+/// Compatibility conversion for legacy repositories that still expose plain
+/// string errors. New process, extension, and application boundaries must use
+/// a typed error or an explicit `AppError` constructor instead.
 impl From<String> for AppError {
     fn from(error: String) -> Self {
         Self::External(error)
@@ -131,6 +132,8 @@ impl From<&str> for AppError {
     }
 }
 
+/// Compatibility conversion for infrastructure helpers that still expose a
+/// plain message. New internal APIs should return `AppError` directly.
 impl From<io::ErrorKind> for AppError {
     fn from(kind: io::ErrorKind) -> Self {
         Self::Io(io::Error::from(kind))

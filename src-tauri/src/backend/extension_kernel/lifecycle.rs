@@ -133,17 +133,16 @@ impl LifecycleTaskCoordinator {
             ExternalRegistrationOutcome::Existing(existing) => {
                 Ok(LifecycleReservationOutcome::Existing(existing.task_id))
             }
-            ExternalRegistrationOutcome::Conflict(existing) => Err(AppError::Extension(
-                super::ExtensionError::Conflict(format!(
+            ExternalRegistrationOutcome::Conflict(existing) => {
+                Err(AppError::from(super::ExtensionError::Conflict(format!(
                     "{} conflicts with {}",
                     key.dedup_key(),
                     existing
                         .dedup_key
                         .as_deref()
                         .unwrap_or("an active lifecycle task")
-                ))
-                .to_string(),
-            )),
+                ))))
+            }
         }
     }
 

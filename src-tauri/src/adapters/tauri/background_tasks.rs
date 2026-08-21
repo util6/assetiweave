@@ -1737,8 +1737,10 @@ impl BackgroundTaskProjection for AgentLifecycleTaskSnapshot {
                 self.cancellable = false;
                 if self.error.is_none() {
                     self.error = runtime.error.as_ref().map(|error| {
-                        (&AgentMarketError::new(&error.code, &error.message, error.retryable))
-                            .into()
+                        let mut market_error =
+                            AgentMarketError::new(&error.code, &error.message, error.retryable);
+                        market_error.details = error.details.clone();
+                        (&market_error).into()
                     });
                 }
             }
@@ -1748,7 +1750,10 @@ impl BackgroundTaskProjection for AgentLifecycleTaskSnapshot {
                 self.cancellable = false;
                 self.result = None;
                 self.error = runtime.error.as_ref().map(|error| {
-                    (&AgentMarketError::new(&error.code, &error.message, error.retryable)).into()
+                    let mut market_error =
+                        AgentMarketError::new(&error.code, &error.message, error.retryable);
+                    market_error.details = error.details.clone();
+                    (&market_error).into()
                 });
             }
         }
