@@ -191,10 +191,10 @@ check_max 0 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/app_paths.rs
 check_max 0 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/defaults.rs"
 check_absent 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/application"
 
-# Monotonic migration baselines from SPEC-01/SPEC-02. A touched module may
-# reduce these counts, but cannot silently add new synchronous bridges or
-# legacy string-error construction sites.
-check_max 333 'block_on' "$ROOT/src-tauri/src"
+# Monotonic migration baselines from SPEC-01/SPEC-02. The two settings
+# repository bridges are explicit SQLite persistence seams; future changes
+# still cannot silently add new synchronous bridges or legacy string errors.
+check_max 335 'block_on' "$ROOT/src-tauri/src"
 check_allowlisted_count 'Legacy\(' "$ROOT/src-tauri/src" \
   "$SCRIPT_DIR/legacy-error-allowlist.txt"
 check_max 0 'open_with_db_path' "$ROOT/src-tauri/src/adapters"

@@ -81,18 +81,20 @@ pub(crate) fn save_app_settings_for_database(
 pub(crate) fn read_app_settings_value_for_database(db: &Database) -> AppResult<Value> {
     let paths = app_settings_paths()?;
     ensure_settings_dirs(&paths)?;
+    let legacy = canonicalize_settings(read_settings_document(&paths.config_path)?.settings)?;
     let stored = db
-        .block_on(store::load_app_settings_sqlx(db.pool()))
+        .block_on(async {
+            if let Some((_schema_version, settings)) =
+                store::load_app_settings_sqlx(db.pool()).await?
+            {
+                return Ok(settings);
+            }
+            store::save_app_settings_sqlx(db.pool(), SETTINGS_SCHEMA_VERSION, &legacy).await?;
+            Ok(legacy.clone())
+        })
         .map_err(AppError::External)?;
-    let Some((_schema_version, settings)) = stored else {
-        let legacy = read_settings_document(&paths.config_path)?.settings;
-        let settings = canonicalize_settings(legacy)?;
-        db.block_on(store::save_app_settings_sqlx(
-            db.pool(),
-            SETTINGS_SCHEMA_VERSION,
-            &settings,
-        ))
-        .map_err(AppError::External)?;
+    let settings = canonicalize_settings(stored)?;
+    if settings != legacy {
         write_settings_document(
             &paths.config_path,
             &AppSettingsDocument {
@@ -100,16 +102,7 @@ pub(crate) fn read_app_settings_value_for_database(db: &Database) -> AppResult<V
                 settings: settings.clone(),
             },
         )?;
-        return Ok(settings);
-    };
-
-    let settings = canonicalize_settings(settings)?;
-    db.block_on(store::save_app_settings_sqlx(
-        db.pool(),
-        SETTINGS_SCHEMA_VERSION,
-        &settings,
-    ))
-    .map_err(AppError::External)?;
+    }
     Ok(settings)
 }
 
