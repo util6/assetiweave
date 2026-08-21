@@ -243,6 +243,38 @@ export function resolveAgentCapability(
   };
 }
 
+export function assignModelToAgentActions(
+  assignments: AgentAssignments,
+  agentId: string,
+  modelId: string,
+): AgentAssignments {
+  const normalizedModelId = normalizeAiRuntimeModel(modelId);
+  return Object.fromEntries(
+    Object.entries(assignments).map(([actionId, assignment]) => [
+      actionId,
+      assignment.agentId === agentId
+        ? { ...assignment, modelId: normalizedModelId || null }
+        : assignment,
+    ]),
+  ) as AgentAssignments;
+}
+
+export function assignAgentToAction(
+  assignments: AgentAssignments,
+  actionId: AgentActionId,
+  agentId: string,
+  modelId: string,
+): AgentAssignments {
+  const normalizedModelId = normalizeAiRuntimeModel(modelId);
+  return {
+    ...assignments,
+    [actionId]: {
+      agentId,
+      modelId: normalizedModelId || null,
+    },
+  };
+}
+
 function serviceToActionId(serviceId: AgentCapabilityServiceId): AgentActionId {
   switch (serviceId) {
     case "cardTranslation":

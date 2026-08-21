@@ -109,6 +109,8 @@ import {
   fontFamilyOptions,
   normalizeConversationTranslationTargetLanguage,
   PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH,
+  assignAgentToAction,
+  assignModelToAgentActions,
   resolveAgentCapability,
   resolveFontFamilyCss,
   type AgentCapabilityServiceId,
@@ -343,13 +345,15 @@ export function GlobalSettingsDialog({
       return;
     }
     const actionId = agentActionIdForService(agentCapabilityDialog.serviceId);
-    updateSetting("agentAssignments", {
-      ...settings.agentAssignments,
-      [actionId]: {
-        ...settings.agentAssignments[actionId],
+    updateSetting(
+      "agentAssignments",
+      assignAgentToAction(
+        settings.agentAssignments,
+        actionId,
         agentId,
-      },
-    });
+        settings.agentModels[agentId] ?? "",
+      ),
+    );
     updateSetting("agentCapabilityAssignments", {
       ...settings.agentCapabilityAssignments,
       [agentCapabilityDialog.serviceId]: agentId,
@@ -822,6 +826,10 @@ export function GlobalSettingsDialog({
                     ...settings.agentModels,
                     [agentId]: modelId,
                   });
+                  updateSetting(
+                    "agentAssignments",
+                    assignModelToAgentActions(settings.agentAssignments, agentId, modelId),
+                  );
                   if (agentId === "opencode") {
                     updateSetting("aiRuntime", {
                       ...settings.aiRuntime,
@@ -838,10 +846,10 @@ export function GlobalSettingsDialog({
               <SettingsGroup>
                 <SettingRow icon={<Bot size={18} />} label={t("settings.agentCapabilities.label")}>
                   <AgentCapabilitySetting
-                    agentId={settings.agentCapabilityAssignments.memory}
+                    agentId={resolveAgentCapability(settings, "memory").agentId}
                     appShortcuts={appShortcuts}
                     description={t("settings.agentCapabilities.memoryDescription")}
-                    model={settings.agentModels[settings.agentCapabilityAssignments.memory]}
+                    model={resolveAgentCapability(settings, "memory").model}
                     onOpen={() => openAgentCapabilityDialog("memory")}
                   />
                 </SettingRow>
@@ -899,10 +907,10 @@ export function GlobalSettingsDialog({
               <SettingsGroup>
                 <SettingRow icon={<Bot size={18} />} label={t("settings.agentCapabilities.label")}>
                   <AgentCapabilitySetting
-                    agentId={settings.agentCapabilityAssignments.promptOptimization}
+                    agentId={resolveAgentCapability(settings, "promptOptimization").agentId}
                     appShortcuts={appShortcuts}
                     description={t("settings.agentCapabilities.promptOptimizationDescription")}
-                    model={settings.agentModels[settings.agentCapabilityAssignments.promptOptimization]}
+                    model={resolveAgentCapability(settings, "promptOptimization").model}
                     onOpen={() => openAgentCapabilityDialog("promptOptimization")}
                   />
                 </SettingRow>
@@ -1352,10 +1360,10 @@ export function GlobalSettingsDialog({
               <SettingsGroup>
                 <SettingRow icon={<Bot size={18} />} label={t("settings.agentCapabilities.label")}>
                   <AgentCapabilitySetting
-                    agentId={settings.agentCapabilityAssignments.cardTranslation}
+                    agentId={resolveAgentCapability(settings, "cardTranslation").agentId}
                     appShortcuts={appShortcuts}
                     description={t("settings.agentCapabilities.cardTranslationDescription")}
-                    model={settings.agentModels[settings.agentCapabilityAssignments.cardTranslation]}
+                    model={resolveAgentCapability(settings, "cardTranslation").model}
                     onOpen={() => openAgentCapabilityDialog("cardTranslation")}
                   />
                 </SettingRow>

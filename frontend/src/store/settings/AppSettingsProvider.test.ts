@@ -13,7 +13,10 @@ import {
   defaultSettings,
   DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
   fontFamilyCss,
+  assignAgentToAction,
+  assignModelToAgentActions,
   normalizeStoredSettings,
+  resolveAgentCapability,
   resolveFontFamilyCss,
 } from "./settingsSchema";
 
@@ -259,6 +262,51 @@ describe("AppSettingsProvider", () => {
     expect(settings.agentModels).toEqual({
       codex: "openai/gpt-5-codex",
       gemini: "gemini-2.5-pro",
+    });
+  });
+
+  it("updates canonical action models when the Agent model changes", () => {
+    const assignments = assignModelToAgentActions({
+      "translation.card": { agentId: "opencode", modelId: "opencode/expired" },
+      "memory.extraction": { agentId: "opencode", modelId: null },
+      "memory.dream": { agentId: "codex", modelId: "openai/gpt-5" },
+      "prompt.optimization": { agentId: "opencode", modelId: "opencode/expired" },
+    }, "opencode", "opencode/hy3-free");
+
+    expect(assignments["translation.card"].modelId).toBe("opencode/hy3-free");
+    expect(assignments["memory.extraction"].modelId).toBe("opencode/hy3-free");
+    expect(assignments["prompt.optimization"].modelId).toBe("opencode/hy3-free");
+    expect(assignments["memory.dream"]).toEqual({
+      agentId: "codex",
+      modelId: "openai/gpt-5",
+    });
+  });
+
+  it("replaces an action Agent and its model atomically", () => {
+    const assignments = assignAgentToAction({
+      "translation.card": { agentId: "opencode", modelId: "opencode/expired" },
+      "memory.extraction": { agentId: "opencode", modelId: null },
+      "memory.dream": { agentId: "opencode", modelId: null },
+      "prompt.optimization": { agentId: "opencode", modelId: null },
+    }, "translation.card", "codex", "openai/gpt-5");
+
+    expect(assignments["translation.card"]).toEqual({
+      agentId: "codex",
+      modelId: "openai/gpt-5",
+    });
+  });
+
+  it("resolves execution from the canonical action assignment", () => {
+    const settings = normalizeStoredSettings({
+      agentAssignments: {
+        "translation.card": { agentId: "opencode", modelId: "opencode/hy3-free" },
+      },
+      agentModels: { opencode: "opencode/expired" },
+    });
+
+    expect(resolveAgentCapability(settings, "cardTranslation")).toEqual({
+      agentId: "opencode",
+      model: "opencode/hy3-free",
     });
   });
 

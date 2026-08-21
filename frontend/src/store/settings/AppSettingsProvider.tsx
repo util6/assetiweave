@@ -34,6 +34,8 @@ export {
   RESULT_PREVIEW_LINE_LIMIT_MAX,
   RESULT_PREVIEW_LINE_LIMIT_MIN,
   RESULT_PREVIEW_LINE_LIMIT_STEP,
+  assignAgentToAction,
+  assignModelToAgentActions,
   createFontFamilySetting,
   fontFamilyCss,
   fontFamilyOptionForPreset,
