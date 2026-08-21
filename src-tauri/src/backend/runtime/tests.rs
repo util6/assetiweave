@@ -104,6 +104,86 @@ fn external_task_runtime_owns_id_deduplication_and_terminal_state() {
 }
 
 #[test]
+fn task_runtime_prunes_terminal_tasks_globally_and_preserves_active_tasks() {
+    let tasks = tasks::TaskRuntime::new();
+    let active = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::Scan, Some("active-scan".to_string()))
+                .with_task_id("active-scan"),
+        )
+        .expect("register active task");
+    assert!(matches!(
+        active,
+        tasks::ExternalRegistrationOutcome::Started(_)
+    ));
+    tasks
+        .start_external("active-scan")
+        .expect("start active task");
+
+    for index in 0..101 {
+        let task_id = format!("terminal-{index}");
+        let kind = if index % 2 == 0 {
+            tasks::TaskKind::Scan
+        } else {
+            tasks::TaskKind::BatchMount
+        };
+        tasks
+            .register_external(tasks::TaskSpec::new(kind, None).with_task_id(task_id.clone()))
+            .expect("register terminal task");
+        tasks.start_external(&task_id).expect("start terminal task");
+        tasks
+            .complete_external(&task_id, Ok(serde_json::Value::Null))
+            .expect("finish terminal task");
+    }
+
+    let snapshots = tasks.list(tasks::TaskFilter::default());
+    assert_eq!(
+        snapshots
+            .iter()
+            .filter(|snapshot| snapshot.state.is_terminal())
+            .count(),
+        100
+    );
+    assert!(snapshots
+        .iter()
+        .any(|snapshot| snapshot.task_id == "active-scan"));
+    assert!(tasks.get("terminal-0").is_none());
+}
+
+#[test]
+fn task_runtime_get_prunes_expired_terminal_tasks_before_dedup_and_projection_reads() {
+    let tasks = tasks::TaskRuntime::new();
+    tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::SearchIndexRebuild, Some("rebuild".into()))
+                .with_task_id("expired-rebuild"),
+        )
+        .expect("register task");
+    tasks.start_external("expired-rebuild").expect("start task");
+    tasks
+        .complete_external("expired-rebuild", Ok(serde_json::json!({"done": true})))
+        .expect("finish task");
+    tasks
+        .set_finished_at_for_test(
+            "expired-rebuild",
+            (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339(),
+        )
+        .expect("age task");
+
+    assert!(tasks.get("expired-rebuild").is_none());
+    let replacement = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::SearchIndexRebuild, Some("rebuild".into()))
+                .with_task_id("replacement-rebuild"),
+        )
+        .expect("register replacement task");
+    assert!(matches!(
+        replacement,
+        tasks::ExternalRegistrationOutcome::Started(_)
+    ));
+}
+
+#[test]
 fn task_runtime_progress_is_bounded_and_monotonic() {
     let tasks = tasks::TaskRuntime::new();
     let registered = tasks

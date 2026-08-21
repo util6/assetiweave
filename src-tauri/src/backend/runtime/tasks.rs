@@ -13,6 +13,9 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
+pub(crate) const TASK_TERMINAL_RETENTION: Duration = Duration::from_secs(10 * 60);
+pub(crate) const TASK_TERMINAL_LIMIT: usize = 100;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub(crate) enum TaskKind {
@@ -234,6 +237,7 @@ impl TaskRuntime {
             .tasks
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
         if tasks.contains_key(&task_id) {
             return Ok(SpawnOutcome::Existing);
         }
@@ -258,7 +262,7 @@ impl TaskRuntime {
             error: None,
             started_at,
             finished_at: None,
-            detail: spec.detail,
+            detail: sanitize_task_detail(spec.detail),
             result: None,
         };
         tasks.insert(
@@ -301,6 +305,7 @@ impl TaskRuntime {
             .tasks
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
         if let Some(existing) = tasks.get(&task_id) {
             return Ok(ExternalRegistrationOutcome::Existing(
                 existing.snapshot.clone(),
@@ -337,7 +342,7 @@ impl TaskRuntime {
             error: None,
             started_at,
             finished_at: None,
-            detail: spec.detail,
+            detail: sanitize_task_detail(spec.detail),
             result: None,
         };
         tasks.insert(
@@ -361,6 +366,7 @@ impl TaskRuntime {
             .tasks
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
         let entry = tasks
             .get_mut(task_id)
             .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
@@ -383,6 +389,7 @@ impl TaskRuntime {
             .tasks
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
         let entry = tasks
             .get_mut(task_id)
             .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
@@ -394,9 +401,12 @@ impl TaskRuntime {
     }
 
     pub(crate) fn cancellation_token(&self, task_id: &str) -> AppResult<CancellationToken> {
-        self.tasks
+        let mut tasks = self
+            .tasks
             .lock()
-            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?
+            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
+        tasks
             .get(task_id)
             .map(|entry| entry.cancellation.clone())
             .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))
@@ -423,6 +433,7 @@ impl TaskRuntime {
             .tasks
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
         let entry = tasks
             .get_mut(task_id)
             .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
@@ -455,10 +466,11 @@ impl TaskRuntime {
             .tasks
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
         let entry = tasks
             .get_mut(task_id)
             .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
-        entry.snapshot.detail = detail;
+        entry.snapshot.detail = sanitize_task_detail(detail);
         Ok(entry.snapshot.clone())
     }
 
@@ -476,12 +488,13 @@ impl TaskRuntime {
                 .tasks
                 .lock()
                 .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            Self::prune_terminal_tasks_locked(&mut tasks);
             let entry = tasks
                 .get_mut(task_id)
                 .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
             if entry.snapshot.state == TaskState::Pending {
                 entry.snapshot.state = TaskState::Running;
-                entry.snapshot.detail = detail;
+                entry.snapshot.detail = sanitize_task_detail(detail);
             }
             let should_launch = entry.snapshot.state == TaskState::Running && !entry.started;
             if should_launch {
@@ -513,6 +526,7 @@ impl TaskRuntime {
             .tasks
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
         let entry = tasks
             .get_mut(task_id)
             .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
@@ -551,6 +565,7 @@ impl TaskRuntime {
         Ok(snapshot)
     }
 
+    #[cfg(test)]
     pub(crate) fn remove(&self, task_id: &str) -> Option<TaskSnapshot> {
         let removed = self.tasks.lock().ok()?.remove(task_id);
         if removed
@@ -560,55 +575,6 @@ impl TaskRuntime {
             self.release_active_slot();
         }
         removed.map(|entry| entry.snapshot)
-    }
-
-    /// Prune terminal tasks owned by the runtime. Callers may choose a
-    /// retention window and a maximum number of terminal snapshots per kind,
-    /// but deletion always goes through this runtime so active-task accounting
-    /// and lifecycle state remain consistent.
-    pub(crate) fn prune(&self, kind: TaskKind, retention: Duration, terminal_limit: usize) {
-        let now = Utc::now();
-        let retention =
-            chrono::Duration::from_std(retention).unwrap_or_else(|_| chrono::Duration::zero());
-        let snapshots = self.list(TaskFilter {
-            kind: Some(kind),
-            active_only: false,
-        });
-        let mut terminal = snapshots
-            .into_iter()
-            .filter(|snapshot| snapshot.state.is_terminal())
-            .map(|snapshot| {
-                let finished_at = snapshot
-                    .finished_at
-                    .as_deref()
-                    .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-                    .map(|value| value.with_timezone(&Utc));
-                (snapshot.task_id, finished_at)
-            })
-            .collect::<Vec<_>>();
-
-        let mut remove_ids = terminal
-            .iter()
-            .filter_map(|(task_id, finished_at)| {
-                finished_at
-                    .is_some_and(|finished_at| now.signed_duration_since(finished_at) >= retention)
-                    .then_some(task_id.clone())
-            })
-            .collect::<Vec<_>>();
-        terminal.retain(|(task_id, _)| !remove_ids.iter().any(|removed| removed == task_id));
-
-        terminal.sort_by(|(_, left), (_, right)| left.cmp(right));
-        let excess = terminal.len().saturating_sub(terminal_limit);
-        remove_ids.extend(
-            terminal
-                .into_iter()
-                .take(excess)
-                .map(|(task_id, _)| task_id),
-        );
-
-        for task_id in remove_ids {
-            self.remove(&task_id);
-        }
     }
 
     #[cfg(test)]
@@ -725,17 +691,16 @@ impl TaskRuntime {
     }
 
     pub(crate) fn get(&self, task_id: &str) -> Option<TaskSnapshot> {
-        self.tasks
-            .lock()
-            .ok()?
-            .get(task_id)
-            .map(|e| e.snapshot.clone())
+        let mut tasks = self.tasks.lock().ok()?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
+        tasks.get(task_id).map(|e| e.snapshot.clone())
     }
 
     pub(crate) fn list(&self, filter: TaskFilter) -> Vec<TaskSnapshot> {
-        let Ok(tasks) = self.tasks.lock() else {
+        let Ok(mut tasks) = self.tasks.lock() else {
             return Vec::new();
         };
+        Self::prune_terminal_tasks_locked(&mut tasks);
         let mut snapshots = tasks
             .values()
             .filter(|entry| filter.kind.is_none_or(|kind| kind == entry.snapshot.kind))
@@ -760,6 +725,7 @@ impl TaskRuntime {
         let Ok(mut tasks) = self.tasks.lock() else {
             return CancelOutcome::NotFound;
         };
+        Self::prune_terminal_tasks_locked(&mut tasks);
         let Some(entry) = tasks.get_mut(task_id) else {
             return CancelOutcome::NotFound;
         };
@@ -815,4 +781,53 @@ impl TaskRuntime {
             unfinished_task_ids,
         }
     }
+
+    fn prune_terminal_tasks_locked(tasks: &mut HashMap<String, TaskEntry>) {
+        let now = Utc::now();
+        let retention = chrono::Duration::from_std(TASK_TERMINAL_RETENTION)
+            .unwrap_or_else(|_| chrono::Duration::zero());
+        let mut terminal = tasks
+            .values()
+            .filter(|entry| entry.snapshot.state.is_terminal())
+            .map(|entry| {
+                let finished_at = entry
+                    .snapshot
+                    .finished_at
+                    .as_deref()
+                    .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                    .map(|value| value.with_timezone(&Utc));
+                (entry.snapshot.task_id.clone(), finished_at)
+            })
+            .collect::<Vec<_>>();
+
+        let mut remove_ids = terminal
+            .iter()
+            .filter_map(|(task_id, finished_at)| {
+                finished_at
+                    .is_some_and(|finished_at| now.signed_duration_since(finished_at) >= retention)
+                    .then_some(task_id.clone())
+            })
+            .collect::<Vec<_>>();
+        terminal.retain(|(task_id, _)| !remove_ids.iter().any(|removed| removed == task_id));
+
+        terminal.sort_by(|(_, left), (_, right)| left.cmp(right));
+        let excess = terminal.len().saturating_sub(TASK_TERMINAL_LIMIT);
+        remove_ids.extend(
+            terminal
+                .into_iter()
+                .take(excess)
+                .map(|(task_id, _)| task_id),
+        );
+        for task_id in remove_ids {
+            tasks.remove(&task_id);
+        }
+    }
+}
+
+fn sanitize_task_detail(mut detail: Value) -> Value {
+    if let Some(object) = detail.as_object_mut() {
+        object.remove("result");
+        object.remove("assets");
+    }
+    detail
 }

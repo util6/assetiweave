@@ -35,11 +35,6 @@ use serde_json::Value;
 use std::time::Duration;
 use uuid::Uuid;
 
-const AI_EXECUTION_TERMINAL_RETENTION: Duration = Duration::from_secs(10 * 60);
-const AI_EXECUTION_TERMINAL_LIMIT: usize = 100;
-const AGENT_LIFECYCLE_TERMINAL_RETENTION: Duration = Duration::from_secs(10 * 60);
-const AGENT_LIFECYCLE_TERMINAL_LIMIT: usize = 100;
-
 /// 后台异步任务的状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -300,6 +295,7 @@ pub(crate) struct SkillBackupTaskSnapshot {
     pub(crate) current_asset_id: Option<String>,
     pub(crate) started_at: String,
     pub(crate) finished_at: Option<String>,
+    #[serde(default)]
     pub(crate) assets: Vec<CatalogAsset>,
     pub(crate) errors: Vec<SkillBackupTaskError>,
     pub(crate) error: Option<String>,
@@ -867,11 +863,6 @@ impl BackgroundTaskRegistry {
     }
 
     pub(crate) fn agent_lifecycle_snapshots(&self) -> AppResult<Vec<AgentLifecycleTaskSnapshot>> {
-        self.task_runtime.prune(
-            TaskKind::ExtensionLifecycle,
-            AGENT_LIFECYCLE_TERMINAL_RETENTION,
-            AGENT_LIFECYCLE_TERMINAL_LIMIT,
-        );
         let mut snapshots =
             self.list_projections::<AgentLifecycleTaskSnapshot>(TaskKind::ExtensionLifecycle);
         snapshots.sort_by(|left, right| left.created_at.cmp(&right.created_at));
@@ -1501,11 +1492,6 @@ impl BackgroundTaskRegistry {
     }
 
     pub(crate) fn ai_execution_snapshots(&self) -> AppResult<Vec<AiExecutionTaskSnapshot>> {
-        self.task_runtime.prune(
-            TaskKind::AiExecution,
-            AI_EXECUTION_TERMINAL_RETENTION,
-            AI_EXECUTION_TERMINAL_LIMIT,
-        );
         let mut snapshots = self.list_projections::<AiExecutionTaskSnapshot>(TaskKind::AiExecution);
         snapshots.sort_by(|left, right| {
             left.created_at
@@ -2531,6 +2517,40 @@ mod tests {
     }
 
     #[test]
+    fn task_runtime_result_is_authoritative_and_not_duplicated_in_projection_detail() {
+        let registry = BackgroundTaskRegistry::default();
+        let (task, _) = registry
+            .begin_ai_execution(AiExecutionPurpose::Translation, &opencode_id())
+            .unwrap();
+        let large_text = "large-result-".to_string() + &"x".repeat(4096);
+        registry
+            .finish_ai_execution(
+                &task.id,
+                Ok(AiExecutionResult {
+                    text: large_text.clone(),
+                    ..ai_result("unused")
+                }),
+            )
+            .unwrap();
+
+        let runtime = registry.task_runtime().unwrap();
+        let runtime_snapshot = runtime.get(&task.id).expect("runtime snapshot");
+        let detail = serde_json::to_string(&runtime_snapshot.detail).unwrap();
+        assert!(!detail.contains(&large_text));
+        assert_eq!(runtime_snapshot.result.unwrap()["text"], large_text);
+        assert_eq!(
+            registry
+                .ai_execution_snapshot(&task.id)
+                .unwrap()
+                .unwrap()
+                .result
+                .unwrap()
+                .text,
+            large_text
+        );
+    }
+
+    #[test]
     fn task_10_time_retention_prunes_expired_terminal_tasks() {
         let registry = BackgroundTaskRegistry::default();
         let (task, _) = registry
@@ -2545,7 +2565,10 @@ mod tests {
             .set_finished_at_for_test(
                 &task.id,
                 (Utc::now()
-                    - chrono::Duration::from_std(AI_EXECUTION_TERMINAL_RETENTION).unwrap()
+                    - chrono::Duration::from_std(
+                        crate::backend::runtime::tasks::TASK_TERMINAL_RETENTION,
+                    )
+                    .unwrap()
                     - chrono::Duration::seconds(1))
                 .to_rfc3339(),
             )
