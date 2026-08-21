@@ -62,6 +62,10 @@ pub(crate) struct WireError {
 pub(crate) type AppErrorView = WireError;
 
 impl AppError {
+    pub(crate) fn external(error: impl fmt::Display) -> Self {
+        Self::External(error.to_string())
+    }
+
     pub(crate) fn code(&self) -> String {
         match self {
             Self::Validation(_) => "validation_error".to_string(),
@@ -114,21 +118,6 @@ impl AppError {
 impl From<AppError> for String {
     fn from(error: AppError) -> Self {
         error.to_string()
-    }
-}
-
-/// Compatibility conversion for legacy repositories that still expose plain
-/// string errors. New process, extension, and application boundaries must use
-/// a typed error or an explicit `AppError` constructor instead.
-impl From<String> for AppError {
-    fn from(error: String) -> Self {
-        Self::External(error)
-    }
-}
-
-impl From<&str> for AppError {
-    fn from(error: &str) -> Self {
-        Self::External(error.to_string())
     }
 }
 
@@ -199,5 +188,13 @@ mod tests {
         assert_eq!(value["code"], "external_error");
         assert!(value.get("AppError").is_none());
         assert!(value.get("Legacy").is_none());
+    }
+
+    #[test]
+    fn external_helper_preserves_explicit_boundary_mapping() {
+        let error = AppError::external("plain failure");
+
+        assert_eq!(error.code(), "external_error");
+        assert!(error.retryable());
     }
 }

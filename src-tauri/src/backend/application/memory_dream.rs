@@ -180,7 +180,8 @@ impl AppService {
             .scope
             .as_ref()
             .map(MemoryScope::fingerprint)
-            .transpose()?;
+            .transpose()
+            .map_err(AppError::external)?;
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         self.db.block_on(async move {
@@ -612,7 +613,7 @@ impl AppService {
                             &selected_session.session_id,
                         )
                         .await
-                        ?
+                        .map_err(AppError::external)?
                     }
                     MemoryEvidenceRecordKind::Web => {
                         crate::backend::store::load_web_record_session_detail_sqlx(
@@ -621,7 +622,7 @@ impl AppService {
                             &selected_session.session_id,
                         )
                         .await
-                        ?
+                        .map_err(AppError::external)?
                     }
                 };
                 for selected_question in &selected_session.questions {

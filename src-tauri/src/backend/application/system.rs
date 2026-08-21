@@ -57,26 +57,32 @@ impl AppService {
         db_path: PathBuf,
         runtime_manager: std::sync::Arc<crate::backend::agent_market::AgentRuntimeManager>,
     ) -> AppResult<Self> {
-        let db = crate::backend::store::Database::open_initialized(&db_path)?;
+        let db = crate::backend::store::Database::open_initialized(&db_path)
+            .map_err(AppError::external)?;
         let pool = db.pool().clone();
-        let context = db.block_on(async move {
-            crate::backend::store::load_local_request_context_sqlx(&pool).await
-        })?;
+        let context = db
+            .block_on(
+                async move { crate::backend::store::load_local_request_context_sqlx(&pool).await },
+            )
+            .map_err(AppError::external)?;
         let pool = db.pool().clone();
         let tenant_id = context.tenant.id.clone();
         let seed_tenant_id = tenant_id.clone();
         db.block_on(async move {
             crate::backend::store::seed_tenant_defaults_sqlx(&pool, &seed_tenant_id).await
-        })?;
+        })
+        .map_err(AppError::external)?;
         let pool = db.pool().clone();
         db.block_on(
             crate::backend::application::bootstrap::materialize_and_seed_builtin_adapters(
                 &pool, &tenant_id,
             ),
-        )?;
+        )
+        .map_err(AppError::external)?;
         let runtime_root =
             crate::backend::agent_market::default_runtime_root().map_err(AppError::from)?;
-        db.block_on(runtime_manager.recover_startup(&context.tenant.id, &runtime_root))?;
+        db.block_on(runtime_manager.recover_startup(&context.tenant.id, &runtime_root))
+            .map_err(AppError::external)?;
         let migration_scope = db_path.to_string_lossy().to_string();
         if let Err(error) = db.block_on(crate::backend::agent_market::migrate_legacy_assignments(
             db.pool().clone(),
@@ -86,7 +92,8 @@ impl AppService {
         )) {
             eprintln!("agent market legacy migration deferred: {error}");
         }
-        db.block_on(runtime_manager.reload(&context.tenant.id))?;
+        db.block_on(runtime_manager.reload(&context.tenant.id))
+            .map_err(AppError::external)?;
         let agent_runtime = runtime_manager.runtime();
         let runtime = crate::backend::runtime::AppRuntime::for_test(
             db_path.clone(),
@@ -129,15 +136,19 @@ impl AppService {
         self.db.block_on(async move {
             Ok(AppOverview {
                 source_count: crate::backend::store::count_rows_sqlx(&pool, &tenant_id, "sources")
-                    .await?,
+                    .await
+                    .map_err(AppError::external)?,
                 asset_count: crate::backend::store::count_rows_sqlx(&pool, &tenant_id, "assets")
-                    .await?,
+                    .await
+                    .map_err(AppError::external)?,
                 profile_count: crate::backend::store::count_rows_sqlx(
                     &pool, &tenant_id, "profiles",
                 )
-                .await?,
+                .await
+                .map_err(AppError::external)?,
                 last_scan_status: crate::backend::store::latest_scan_status_sqlx(&pool, &tenant_id)
-                    .await?,
+                    .await
+                    .map_err(AppError::external)?,
             })
         })
     }
@@ -147,13 +158,14 @@ impl AppService {
         file_name: Option<String>,
         line_limit: Option<usize>,
     ) -> AppResult<crate::backend::logs::LogSnapshot> {
-        Ok(crate::backend::logs::logs_get_snapshot(
-            file_name, line_limit,
-        )?)
+        Ok(
+            crate::backend::logs::logs_get_snapshot(file_name, line_limit)
+                .map_err(AppError::external)?,
+        )
     }
 
     pub(crate) fn logs_open_log_directory(&self) -> AppResult<()> {
-        Ok(crate::backend::logs::logs_open_log_directory()?)
+        Ok(crate::backend::logs::logs_open_log_directory().map_err(AppError::external)?)
     }
 
     pub(crate) fn logs_write_operation(
@@ -163,9 +175,10 @@ impl AppService {
         message: String,
         fields: Option<BTreeMap<String, String>>,
     ) -> AppResult<()> {
-        Ok(crate::backend::logs::logs_write_operation(
-            level, operation, message, fields,
-        )?)
+        Ok(
+            crate::backend::logs::logs_write_operation(level, operation, message, fields)
+                .map_err(AppError::external)?,
+        )
     }
 
     pub(crate) fn get_app_settings(
@@ -214,12 +227,14 @@ impl AppService {
             }
             let installation = self
                 .db
-                .block_on(repository.get(self.tenant_id(), agent_id))?
+                .block_on(repository.get(self.tenant_id(), agent_id))
+                .map_err(AppError::external)?
                 .ok_or_else(|| AppError::NotFound(format!("agent_not_installed: {agent_id}")))?;
             if !installation.enabled || !installation.execution_ready() {
                 return Err(AppError::Conflict(format!("agent_not_ready: {agent_id}")));
             }
-            let catalog = crate::backend::agent_market::CatalogCache::best_available()?;
+            let catalog = crate::backend::agent_market::CatalogCache::best_available()
+                .map_err(AppError::external)?;
             let item = catalog.item(agent_id).ok_or_else(|| {
                 AppError::Validation(format!("agent_capability_unsupported: {agent_id}"))
             })?;
@@ -254,9 +269,12 @@ impl AppService {
             conversation_runtime_doctor_summary(&runtime_statuses);
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        let source_count = self.db.block_on(async move {
-            crate::backend::store::count_rows_sqlx(&pool, &tenant_id, "sources").await
-        })?;
+        let source_count = self
+            .db
+            .block_on(async move {
+                crate::backend::store::count_rows_sqlx(&pool, &tenant_id, "sources").await
+            })
+            .map_err(AppError::external)?;
         Ok(json!({
             "checks": [
                 { "name": "database", "status": "pass", "message": self.db_path.to_string_lossy() },

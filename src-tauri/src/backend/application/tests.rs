@@ -15,7 +15,7 @@ fn execute_test_sql(service: &AppService, sql: &str) -> AppResult<()> {
             sqlx::query(AssertSqlSafe(statement.to_string()))
                 .execute(&pool)
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
         }
         Ok(())
     })
@@ -31,7 +31,7 @@ fn clear_test_tables(service: &AppService, tables: &[&str]) {
                 sqlx::query(AssertSqlSafe(statement))
                     .execute(&pool)
                     .await
-                    .map_err(|error| error.to_string())?;
+                    .map_err(AppError::external)?;
             }
             AppResult::Ok(())
         })
@@ -522,9 +522,11 @@ fn upsert_conversation_export_fixture(
         .db
         .block_on(async move {
             crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &adapter)
-                .await?;
+                .await
+                .map_err(AppError::external)?;
             crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source)
-                .await?;
+                .await
+                .map_err(AppError::external)?;
             let sessions = if web_record {
                 crate::backend::store::import_web_record_sessions_sqlx(
                     &pool,
@@ -533,7 +535,8 @@ fn upsert_conversation_export_fixture(
                     &[session],
                     false,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 crate::backend::store::list_web_record_sessions_sqlx(
                     &pool,
                     &tenant_id,
@@ -552,7 +555,8 @@ fn upsert_conversation_export_fixture(
                     &[session],
                     false,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 crate::backend::store::list_conversation_sessions_sqlx(
                     &pool,
                     &tenant_id,
@@ -562,7 +566,8 @@ fn upsert_conversation_export_fixture(
                     1,
                     0,
                 )
-                .await?
+                .await
+                .map_err(AppError::external)?
             };
             AppResult::Ok(sessions[0].session.id.clone())
         })
@@ -893,28 +898,28 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             .bind(&adapter.id)
             .execute(&pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
             sqlx::query(
                 "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text, language, command, cwd, status, exit_code, metadata_json, translated_text, content_card_json) SELECT tenant_id, 'fixture-json-part', turn_id, 1, role, 'text', '{\"step\":\"inspect\"}', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{\"schema_version\":1,\"kind\":\"fixture-export.trace\",\"renderer\":\"json\"}' FROM conversation_parts WHERE tenant_id = ?1 LIMIT 1",
             )
             .bind(&tenant_id)
             .execute(&pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
             sqlx::query(
                 "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text, language, command, cwd, status, exit_code, metadata_json, translated_text, content_card_json) SELECT tenant_id, 'fixture-history-part', turn_id, 2, role, 'text', 'Future history remains visible', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{\"schema_version\":1,\"kind\":\"future.history-note\",\"renderer\":\"plain\"}' FROM conversation_parts WHERE tenant_id = ?1 LIMIT 1",
             )
             .bind(&tenant_id)
             .execute(&pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
             sqlx::query(
                 "UPDATE conversation_parts SET text = 'Compare both paths', metadata_json = '{\"source_type\":\"thinking\"}', content_card_json = '{\"schema_version\":1,\"kind\":\"fixture-export.reasoning\",\"renderer\":\"markdown\"}' WHERE tenant_id = ?1 AND id NOT IN ('fixture-json-part', 'fixture-history-part')",
             )
             .bind(tenant_id)
             .execute(&pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
             AppResult::Ok(())
         })
         .expect("promote fixture to Card Contract v1");
@@ -990,14 +995,14 @@ fn card_contract_v1_web_and_dry_run_exports_share_the_core_path() {
             .bind(&detail.session.adapter_id)
             .execute(&pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
             sqlx::query(
                 "UPDATE web_record_parts SET text = 'Web reasoning survives', metadata_json = NULL, content_card_json = '{\"schema_version\":1,\"kind\":\"fixture-export.reasoning\",\"renderer\":\"markdown\"}' WHERE tenant_id = ?1",
             )
             .bind(tenant_id)
             .execute(&pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
             AppResult::Ok(())
         })
         .expect("promote web fixture to v1");
@@ -1169,7 +1174,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
                 .bind(&adapter.id)
                 .execute(&pool)
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
             AppResult::Ok(())
         })
         .expect("force hash mismatch");
@@ -1237,7 +1242,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             .bind(&adapter_id)
             .execute(&pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
             AppResult::Ok(())
         })
         .expect("store trusted hash");
@@ -3212,9 +3217,11 @@ fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_histor
         .db
         .block_on(async move {
             crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &adapter)
-                .await?;
+                .await
+                .map_err(AppError::external)?;
             crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source)
-                .await?;
+                .await
+                .map_err(AppError::external)?;
             crate::backend::store::import_conversation_sessions_sqlx(
                 &pool,
                 &tenant_id,
@@ -3222,7 +3229,8 @@ fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_histor
                 &[old_changed, unchanged.clone()],
                 false,
             )
-            .await?;
+            .await
+            .map_err(AppError::external)?;
             crate::backend::store::import_conversation_sessions_sqlx(
                 &pool,
                 &tenant_id,

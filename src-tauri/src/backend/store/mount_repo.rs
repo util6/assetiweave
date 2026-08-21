@@ -4,7 +4,7 @@ use chrono::Utc;
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, Sqlite, SqlitePool, Transaction};
 
 use super::{
-    codec::{decode_enum, encode_enum},
+    codec::{decode_enum_app, encode_enum_app},
     sql,
 };
 
@@ -176,7 +176,7 @@ async fn upsert_asset_mount_sqlx(
         .bind(&mount.asset_id)
         .bind(&mount.profile_id)
         .bind(if mount.enabled { 1_i64 } else { 0_i64 })
-        .bind(encode_enum(mount.strategy)?)
+        .bind(encode_enum_app(mount.strategy)?)
         .bind(&mount.created_at)
         .bind(&mount.updated_at)
         .execute(pool)
@@ -194,7 +194,7 @@ async fn upsert_asset_mount_tx(
         .bind(&mount.asset_id)
         .bind(&mount.profile_id)
         .bind(if mount.enabled { 1_i64 } else { 0_i64 })
-        .bind(encode_enum(mount.strategy)?)
+        .bind(encode_enum_app(mount.strategy)?)
         .bind(&mount.created_at)
         .bind(&mount.updated_at)
         .execute(&mut **tx)
@@ -212,7 +212,7 @@ async fn upsert_deployment_state_tx(
         .bind(&state.profile_id)
         .bind(&state.asset_id)
         .bind(&state.target_path)
-        .bind(encode_enum(state.strategy)?)
+        .bind(encode_enum_app(state.strategy)?)
         .bind(&state.source_hash)
         .bind(&state.deployed_at)
         .bind(&state.managed_by)
@@ -243,7 +243,7 @@ fn map_sqlx_mount(row: &SqliteRow) -> AppResult<AssetMount> {
         asset_id: row.try_get(0)?,
         profile_id: row.try_get(1)?,
         enabled: row.try_get::<i64, _>(2)? == 1,
-        strategy: decode_enum(row.try_get::<String, _>(3)?)?,
+        strategy: decode_enum_app(row.try_get::<String, _>(3)?)?,
         created_at: row.try_get(4)?,
         updated_at: row.try_get(5)?,
     })

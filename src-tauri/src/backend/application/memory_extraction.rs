@@ -67,7 +67,8 @@ impl AppService {
                 runtime.agent_id.as_str(),
                 runtime.model.as_deref(),
                 preview.selected_question_count,
-            ))?;
+            ))
+            .map_err(AppError::external)?;
         progress("phase1", 0, preview.selected_question_count, Some(&run_id));
         let result = self.execute_recall_pipeline(
             &run_id,
@@ -128,21 +129,22 @@ impl AppService {
             for (batch, executed) in window.iter().zip(outputs) {
                 let output = executed.output;
                 validate_raw_memories(&output.raw_memories, &batch.references)?;
-                let extraction =
-                    self.db
-                        .block_on(crate::backend::store::persist_memory_extraction_sqlx(
-                            self.db.pool(),
-                            self.tenant_id(),
-                            run_id,
-                            batch.index,
-                            &preview.scope,
-                            &output.raw_memories,
-                            &output.session_summary,
-                            batch.question_count,
-                            batch.input_char_count,
-                            executed.attempt_count,
-                            &batch.evidence,
-                        ))?;
+                let extraction = self
+                    .db
+                    .block_on(crate::backend::store::persist_memory_extraction_sqlx(
+                        self.db.pool(),
+                        self.tenant_id(),
+                        run_id,
+                        batch.index,
+                        &preview.scope,
+                        &output.raw_memories,
+                        &output.session_summary,
+                        batch.question_count,
+                        batch.input_char_count,
+                        executed.attempt_count,
+                        &batch.evidence,
+                    ))
+                    .map_err(AppError::external)?;
                 extractions.push(extraction);
                 let processed = extractions.iter().map(|item| item.question_count).sum();
                 progress(

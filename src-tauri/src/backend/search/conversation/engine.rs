@@ -180,10 +180,10 @@ pub(super) struct DiskConversationIndex {
 
 impl DiskConversationIndex {
     pub(super) fn create(path: &Path) -> AppResult<Self> {
-        std::fs::create_dir_all(path).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(path).map_err(AppError::external)?;
         let fields = build_conversation_schema();
         let index =
-            Index::create_in_dir(path, fields.schema.clone()).map_err(|error| error.to_string())?;
+            Index::create_in_dir(path, fields.schema.clone()).map_err(AppError::external)?;
         register_conversation_tokenizers(&index);
         Ok(Self { index, fields })
     }
@@ -197,7 +197,7 @@ impl DiskConversationIndex {
 
     pub(super) fn open(path: &Path) -> AppResult<Self> {
         let fields = build_conversation_schema();
-        let index = Index::open_in_dir(path).map_err(|error| error.to_string())?;
+        let index = Index::open_in_dir(path).map_err(AppError::external)?;
         register_conversation_tokenizers(&index);
         Ok(Self { index, fields })
     }
@@ -215,12 +215,8 @@ fn replace_documents(
     fields: &ConversationSearchSchema,
     documents: &[ConversationSearchDocument],
 ) -> AppResult<()> {
-    let mut writer = index
-        .writer(50_000_000)
-        .map_err(|error| error.to_string())?;
-    writer
-        .delete_all_documents()
-        .map_err(|error| error.to_string())?;
+    let mut writer = index.writer(50_000_000).map_err(AppError::external)?;
+    writer.delete_all_documents().map_err(AppError::external)?;
     for item in documents {
         let mut document = doc!(
                 fields.document_kind => item.document_kind.as_str(),
@@ -245,11 +241,9 @@ fn replace_documents(
         for fragment in &item.id_fragments {
             document.add_text(fields.id_fragment, fragment);
         }
-        writer
-            .add_document(document)
-            .map_err(|error| error.to_string())?;
+        writer.add_document(document).map_err(AppError::external)?;
     }
-    writer.commit().map_err(|error| error.to_string())?;
+    writer.commit().map_err(AppError::external)?;
     Ok(())
 }
 
@@ -269,7 +263,7 @@ fn search_cards(
             "conversation search query must not exceed 512 characters".to_string(),
         ));
     }
-    let reader = index.reader().map_err(|error| error.to_string())?;
+    let reader = index.reader().map_err(AppError::external)?;
     let searcher = reader.searcher();
     let mut content_type_counts = BTreeMap::new();
     let mut semantic_role_counts = BTreeMap::new();
@@ -284,11 +278,11 @@ fn search_cards(
             &facet_query,
             &TopDocs::with_limit(searcher.num_docs() as usize).order_by_score(),
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     for (_, address) in facet_docs {
         let document = searcher
             .doc::<TantivyDocument>(address)
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
         let document_kind = stored_text(&document, fields.document_kind)?;
         if document_kind == "question" {
             *content_type_counts
@@ -306,7 +300,7 @@ fn search_cards(
     let query = build_card_query(index, fields, query, request)?;
     let total_count = searcher
         .search(&query, &Count)
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     let top_docs = searcher
         .search(
             &query,
@@ -314,12 +308,12 @@ fn search_cards(
                 .and_offset(request.offset)
                 .order_by_score(),
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     let mut hits = Vec::with_capacity(top_docs.len());
     for (score, address) in top_docs {
         let document = searcher
             .doc::<TantivyDocument>(address)
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
         hits.push(ConversationSearchMatch {
             document_id: stored_text(&document, fields.document_id)?,
             session_id: stored_text(&document, fields.session_id)?,

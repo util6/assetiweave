@@ -34,7 +34,8 @@ impl AppService {
                 &tenant.id,
                 &target_catalog,
             )
-            .await?;
+            .await
+            .map_err(AppError::external)?;
             crate::backend::application::bootstrap::materialize_and_seed_builtin_adapters(
                 &pool, &tenant.id,
             )

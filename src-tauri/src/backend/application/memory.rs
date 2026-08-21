@@ -15,7 +15,8 @@ impl AppService {
             .scope
             .as_ref()
             .map(MemoryScope::fingerprint)
-            .transpose()?;
+            .transpose()
+            .map_err(AppError::external)?;
         let filter = MemoryItemFilter {
             kinds: params.kinds,
             statuses: params.statuses,
@@ -29,9 +30,12 @@ impl AppService {
         let tenant_id = self.tenant_id().to_string();
         Ok(self.db.block_on(async move {
             let total_count =
-                crate::backend::store::count_memory_items_sqlx(&pool, &tenant_id, &filter).await?;
-            let items =
-                crate::backend::store::list_memory_items_sqlx(&pool, &tenant_id, &filter).await?;
+                crate::backend::store::count_memory_items_sqlx(&pool, &tenant_id, &filter)
+                    .await
+                    .map_err(AppError::external)?;
+            let items = crate::backend::store::list_memory_items_sqlx(&pool, &tenant_id, &filter)
+                .await
+                .map_err(AppError::external)?;
             Ok::<MemoryItemPage, AppError>(MemoryItemPage {
                 total_count,
                 items,
@@ -51,7 +55,8 @@ impl AppService {
         let item_id = params.item_id;
         Ok(self.db.block_on(async move {
             crate::backend::store::load_memory_item_detail_sqlx(&pool, &tenant_id, &item_id)
-                .await?
+                .await
+                .map_err(AppError::external)?
                 .ok_or_else(|| AppError::NotFound(format!("memory item {item_id} was not found")))
         })?)
     }
@@ -81,15 +86,18 @@ impl AppService {
         };
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            crate::backend::store::create_memory_item_sqlx(
-                &pool,
-                &tenant_id,
-                &draft,
-                &params.evidence_ids,
-            )
-            .await
-        })?)
+        Ok(self
+            .db
+            .block_on(async move {
+                crate::backend::store::create_memory_item_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &draft,
+                    &params.evidence_ids,
+                )
+                .await
+            })
+            .map_err(AppError::external)?)
     }
 
     pub(crate) fn update_memory_item(
@@ -224,12 +232,13 @@ impl AppService {
                 unique_ids.push(item_id);
             }
         }
-        let source_revision =
-            self.db
-                .block_on(crate::backend::store::load_memory_source_revision_sqlx(
-                    self.db.pool(),
-                    self.tenant_id(),
-                ))?;
+        let source_revision = self
+            .db
+            .block_on(crate::backend::store::load_memory_source_revision_sqlx(
+                self.db.pool(),
+                self.tenant_id(),
+            ))
+            .map_err(AppError::external)?;
         let mut unchanged_revision = true;
         let mut results = Vec::with_capacity(unique_ids.len());
         for item_id in unique_ids {
@@ -241,13 +250,14 @@ impl AppService {
             unchanged_revision = false;
             let mut reason = None;
             for evidence in &detail.evidence {
-                let evidence_reason =
-                    self.db
-                        .block_on(crate::backend::store::memory_evidence_stale_reason_sqlx(
-                            self.db.pool(),
-                            self.tenant_id(),
-                            evidence,
-                        ))?;
+                let evidence_reason = self
+                    .db
+                    .block_on(crate::backend::store::memory_evidence_stale_reason_sqlx(
+                        self.db.pool(),
+                        self.tenant_id(),
+                        evidence,
+                    ))
+                    .map_err(AppError::external)?;
                 reason = stronger_stale_reason(reason, evidence_reason);
             }
             detail.item.source_revision = source_revision;
@@ -277,16 +287,19 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let evidence_ids = evidence_ids.map(<[String]>::to_vec);
-        Ok(self.db.block_on(async move {
-            crate::backend::store::update_memory_item_sqlx(
-                &pool,
-                &tenant_id,
-                &item,
-                evidence_ids.as_deref(),
-                change_kind,
-            )
-            .await
-        })?)
+        Ok(self
+            .db
+            .block_on(async move {
+                crate::backend::store::update_memory_item_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &item,
+                    evidence_ids.as_deref(),
+                    change_kind,
+                )
+                .await
+            })
+            .map_err(AppError::external)?)
     }
 }
 

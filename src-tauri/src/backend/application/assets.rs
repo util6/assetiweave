@@ -153,7 +153,8 @@ impl AppService {
             &mounts,
             profile_filter.as_deref(),
             self.runtime.target_catalog().as_ref(),
-        )?)
+        )
+        .map_err(AppError::external)?)
     }
 
     pub(crate) fn mount_asset_by_id(
@@ -268,20 +269,24 @@ impl AppService {
     ) -> AppResult<ExecutionResult> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            let profiles = crate::backend::store::load_profiles_sqlx(&pool, &tenant_id).await?;
-            let assets = crate::backend::store::load_assets_sqlx(&pool, &tenant_id, None).await?;
-            crate::backend::executor::execute_deployment_plan(
-                &pool,
-                &tenant_id,
-                &profiles,
-                &assets,
-                &plan,
-                action_ids.as_deref(),
-                self.runtime.target_catalog().as_ref(),
-            )
-            .await
-        })?)
+        Ok(self
+            .db
+            .block_on(async move {
+                let profiles = crate::backend::store::load_profiles_sqlx(&pool, &tenant_id).await?;
+                let assets =
+                    crate::backend::store::load_assets_sqlx(&pool, &tenant_id, None).await?;
+                crate::backend::executor::execute_deployment_plan(
+                    &pool,
+                    &tenant_id,
+                    &profiles,
+                    &assets,
+                    &plan,
+                    action_ids.as_deref(),
+                    self.runtime.target_catalog().as_ref(),
+                )
+                .await
+            })
+            .map_err(AppError::external)?)
     }
 }
 

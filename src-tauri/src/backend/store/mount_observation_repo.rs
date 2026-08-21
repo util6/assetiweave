@@ -10,8 +10,8 @@ use sqlx::{SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 
 #[cfg(test)]
-use super::codec::decode_enum;
-use super::{codec::encode_enum, sql};
+use super::codec::decode_enum_app;
+use super::{codec::encode_enum_app, sql};
 
 async fn upsert_asset_mount_observations_connection(
     conn: &mut SqliteConnection,
@@ -25,7 +25,7 @@ async fn upsert_asset_mount_observations_connection(
             .bind(&observation.profile_id)
             .bind(&observation.target_dir)
             .bind(&observation.target_path)
-            .bind(encode_enum(observation.state)?)
+            .bind(encode_enum_app(observation.state)?)
             .bind(&observation.linked_source)
             .bind(&observation.observed_at)
             .execute(&mut *conn)
@@ -91,7 +91,7 @@ pub(crate) async fn persist_asset_mount_snapshot_sqlx(
                 .bind(&state.profile_id)
                 .bind(&state.asset_id)
                 .bind(&state.target_path)
-                .bind(encode_enum(state.strategy)?)
+                .bind(encode_enum_app(state.strategy)?)
                 .bind(&state.source_hash)
                 .bind(&state.deployed_at)
                 .bind(&state.managed_by)
@@ -119,7 +119,7 @@ pub(crate) async fn persist_asset_mount_snapshot_sqlx(
             .bind(&asset.id)
             .bind(&profile.id)
             .bind(enabled)
-            .bind(encode_enum(profile.deployment_strategy)?)
+            .bind(encode_enum_app(profile.deployment_strategy)?)
             .bind(created_at.unwrap_or_else(|| now.clone()))
             .bind(now)
             .execute(&mut *tx)
@@ -166,7 +166,7 @@ fn map_sqlx_observation(row: &SqliteRow) -> AppResult<AssetMountObservation> {
         profile_id: row.try_get(1)?,
         target_dir: row.try_get(2)?,
         target_path: row.try_get(3)?,
-        state: decode_enum(row.try_get::<String, _>(4)?)?,
+        state: decode_enum_app(row.try_get::<String, _>(4)?)?,
         linked_source: row.try_get(5)?,
         observed_at: row.try_get(6)?,
     })

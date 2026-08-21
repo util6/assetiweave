@@ -316,7 +316,8 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
                     exit_code,
                 },
                 &card_kinds,
-            )?
+            )
+            .map_err(AppError::external)?
             else {
                 continue;
             };

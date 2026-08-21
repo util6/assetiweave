@@ -53,20 +53,24 @@ impl AppService {
     ) -> AppResult<crate::backend::dto::ConversationSessionDetail> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            let session_id = crate::backend::store::resolve_conversation_session_id_prefix_sqlx(
-                &pool,
-                &tenant_id,
-                &params.session_id,
-            )
-            .await?;
-            crate::backend::store::load_conversation_session_detail_sqlx(
-                &pool,
-                &tenant_id,
-                &session_id,
-            )
-            .await
-        })?)
+        Ok(self
+            .db
+            .block_on(async move {
+                let session_id =
+                    crate::backend::store::resolve_conversation_session_id_prefix_sqlx(
+                        &pool,
+                        &tenant_id,
+                        &params.session_id,
+                    )
+                    .await?;
+                crate::backend::store::load_conversation_session_detail_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &session_id,
+                )
+                .await
+            })
+            .map_err(AppError::external)?)
     }
 
     pub(crate) fn list_web_record_sessions(
@@ -199,17 +203,19 @@ impl AppService {
             let delta_tenant_id = tenant_id.clone();
             let delta_adapter_id = adapter_id.clone();
             let delta_source_id = source_id.clone();
-            self.db.block_on(async move {
-                crate::backend::store::load_recent_conversation_sync_deltas_sqlx(
-                    &delta_pool,
-                    &delta_tenant_id,
-                    record_kind,
-                    delta_source_id.as_deref(),
-                    delta_adapter_id.as_deref(),
-                    recent_run_limit,
-                )
-                .await
-            })?
+            self.db
+                .block_on(async move {
+                    crate::backend::store::load_recent_conversation_sync_deltas_sqlx(
+                        &delta_pool,
+                        &delta_tenant_id,
+                        record_kind,
+                        delta_source_id.as_deref(),
+                        delta_adapter_id.as_deref(),
+                        recent_run_limit,
+                    )
+                    .await
+                })
+                .map_err(AppError::external)?
         } else {
             Vec::new()
         };
@@ -338,55 +344,61 @@ impl AppService {
                 }) {
                     Ok(page) => (page, "tantivy", Some(facet_counts), Some(semantic_counts)),
                     Err(_) => {
-                        let page = self.db.block_on(async move {
-                            crate::backend::store::search_conversation_cards_sqlx(
-                                &pool,
-                                &tenant_id,
-                                record_kind,
-                                adapter_id.as_deref(),
-                                source_id.as_deref(),
-                                search_project_path.as_deref(),
-                                &search_query,
-                                &scan_content_types,
-                                &semantic_roles,
-                                include_questions,
-                                include_cards,
-                                since.as_deref(),
-                                until.as_deref(),
-                                timeline,
-                                limit,
-                                offset,
-                                None,
-                            )
-                            .await
-                        })?;
+                        let page = self
+                            .db
+                            .block_on(async move {
+                                crate::backend::store::search_conversation_cards_sqlx(
+                                    &pool,
+                                    &tenant_id,
+                                    record_kind,
+                                    adapter_id.as_deref(),
+                                    source_id.as_deref(),
+                                    search_project_path.as_deref(),
+                                    &search_query,
+                                    &scan_content_types,
+                                    &semantic_roles,
+                                    include_questions,
+                                    include_cards,
+                                    since.as_deref(),
+                                    until.as_deref(),
+                                    timeline,
+                                    limit,
+                                    offset,
+                                    None,
+                                )
+                                .await
+                            })
+                            .map_err(AppError::external)?;
                         (page, "legacy_scan", None, None)
                     }
                 }
             } else {
                 let allowed_session_ids = allowed_session_ids.clone();
-                let page = self.db.block_on(async move {
-                    crate::backend::store::search_conversation_cards_sqlx(
-                        &pool,
-                        &tenant_id,
-                        record_kind,
-                        adapter_id.as_deref(),
-                        source_id.as_deref(),
-                        search_project_path.as_deref(),
-                        &search_query,
-                        &scan_content_types,
-                        &semantic_roles,
-                        include_questions,
-                        include_cards,
-                        since.as_deref(),
-                        until.as_deref(),
-                        timeline,
-                        limit,
-                        offset,
-                        allowed_session_ids.as_ref(),
-                    )
-                    .await
-                })?;
+                let page = self
+                    .db
+                    .block_on(async move {
+                        crate::backend::store::search_conversation_cards_sqlx(
+                            &pool,
+                            &tenant_id,
+                            record_kind,
+                            adapter_id.as_deref(),
+                            source_id.as_deref(),
+                            search_project_path.as_deref(),
+                            &search_query,
+                            &scan_content_types,
+                            &semantic_roles,
+                            include_questions,
+                            include_cards,
+                            since.as_deref(),
+                            until.as_deref(),
+                            timeline,
+                            limit,
+                            offset,
+                            allowed_session_ids.as_ref(),
+                        )
+                        .await
+                    })
+                    .map_err(AppError::external)?;
                 (page, fallback_backend, None, None)
             };
         if incremental_scope.is_some() {
@@ -442,13 +454,15 @@ impl AppService {
                 &tenant_id,
                 &input_session_id,
             )
-            .await?;
+            .await
+            .map_err(AppError::external)?;
             let detail = crate::backend::store::load_conversation_session_detail_sqlx(
                 &pool,
                 &tenant_id,
                 &session_id,
             )
-            .await?;
+            .await
+            .map_err(AppError::external)?;
             let adapter = load_export_adapter_for_detail(&pool, &tenant_id, &detail).await?;
             let source = load_export_source_for_detail(&pool, &tenant_id, &detail).await?;
             AppResult::Ok((detail, adapter, source))
@@ -502,23 +516,27 @@ impl AppService {
         let query = params.query;
         let limit = params.limit.unwrap_or(100).clamp(1, 500);
         let offset = params.offset.unwrap_or(0);
-        Ok(self.db.block_on(async move {
-            let session_id = crate::backend::store::resolve_conversation_session_id_prefix_sqlx(
-                &pool,
-                &tenant_id,
-                &input_session_id,
-            )
-            .await?;
-            crate::backend::store::list_conversation_question_details_sqlx(
-                &pool,
-                &tenant_id,
-                &session_id,
-                query.as_deref(),
-                limit,
-                offset,
-            )
-            .await
-        })?)
+        Ok(self
+            .db
+            .block_on(async move {
+                let session_id =
+                    crate::backend::store::resolve_conversation_session_id_prefix_sqlx(
+                        &pool,
+                        &tenant_id,
+                        &input_session_id,
+                    )
+                    .await?;
+                crate::backend::store::list_conversation_question_details_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &session_id,
+                    query.as_deref(),
+                    limit,
+                    offset,
+                )
+                .await
+            })
+            .map_err(AppError::external)?)
     }
 
     pub(crate) fn get_conversation_question(
@@ -527,20 +545,24 @@ impl AppService {
     ) -> AppResult<crate::backend::dto::ConversationQuestionDetail> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            let question_id = crate::backend::store::resolve_conversation_question_id_prefix_sqlx(
-                &pool,
-                &tenant_id,
-                &params.question_id,
-            )
-            .await?;
-            crate::backend::store::load_conversation_question_detail_sqlx(
-                &pool,
-                &tenant_id,
-                &question_id,
-            )
-            .await
-        })?)
+        Ok(self
+            .db
+            .block_on(async move {
+                let question_id =
+                    crate::backend::store::resolve_conversation_question_id_prefix_sqlx(
+                        &pool,
+                        &tenant_id,
+                        &params.question_id,
+                    )
+                    .await?;
+                crate::backend::store::load_conversation_question_detail_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &question_id,
+                )
+                .await
+            })
+            .map_err(AppError::external)?)
     }
 
     pub(crate) fn list_conversation_blocks(
@@ -550,15 +572,18 @@ impl AppService {
         let record_kind = conversation_record_kind_from_locator(&params.question_id)?;
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            crate::backend::store::list_conversation_block_locators_sqlx(
-                &pool,
-                &tenant_id,
-                record_kind,
-                &params.question_id,
-            )
-            .await
-        })?)
+        Ok(self
+            .db
+            .block_on(async move {
+                crate::backend::store::list_conversation_block_locators_sqlx(
+                    &pool,
+                    &tenant_id,
+                    record_kind,
+                    &params.question_id,
+                )
+                .await
+            })
+            .map_err(AppError::external)?)
     }
 
     pub(crate) fn get_conversation_block(
@@ -568,15 +593,18 @@ impl AppService {
         let record_kind = conversation_record_kind_from_locator(&params.block_id)?;
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            crate::backend::store::load_conversation_block_detail_sqlx(
-                &pool,
-                &tenant_id,
-                record_kind,
-                &params.block_id,
-            )
-            .await
-        })?)
+        Ok(self
+            .db
+            .block_on(async move {
+                crate::backend::store::load_conversation_block_detail_sqlx(
+                    &pool,
+                    &tenant_id,
+                    record_kind,
+                    &params.block_id,
+                )
+                .await
+            })
+            .map_err(AppError::external)?)
     }
 
     pub(crate) fn merge_conversation_questions(
@@ -585,24 +613,27 @@ impl AppService {
     ) -> AppResult<crate::backend::dto::ConversationMutationResult> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            let mut resolved_question_ids = Vec::with_capacity(params.question_ids.len());
-            for q_id in params.question_ids {
-                resolved_question_ids.push(
-                    crate::backend::store::resolve_conversation_question_id_prefix_sqlx(
-                        &pool, &tenant_id, &q_id,
-                    )
-                    .await?,
-                );
-            }
-            crate::backend::store::merge_conversation_questions_sqlx(
-                &pool,
-                &tenant_id,
-                &resolved_question_ids,
-                params.dry_run,
-            )
-            .await
-        })?)
+        Ok(self
+            .db
+            .block_on(async move {
+                let mut resolved_question_ids = Vec::with_capacity(params.question_ids.len());
+                for q_id in params.question_ids {
+                    resolved_question_ids.push(
+                        crate::backend::store::resolve_conversation_question_id_prefix_sqlx(
+                            &pool, &tenant_id, &q_id,
+                        )
+                        .await?,
+                    );
+                }
+                crate::backend::store::merge_conversation_questions_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &resolved_question_ids,
+                    params.dry_run,
+                )
+                .await
+            })
+            .map_err(AppError::external)?)
     }
 
     pub(crate) fn split_conversation_question(
@@ -611,28 +642,33 @@ impl AppService {
     ) -> AppResult<crate::backend::dto::ConversationMutationResult> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            let question_id = crate::backend::store::resolve_conversation_question_id_prefix_sqlx(
-                &pool,
-                &tenant_id,
-                &params.question_id,
-            )
-            .await?;
-            let before_turn_id = crate::backend::store::resolve_conversation_turn_id_prefix_sqlx(
-                &pool,
-                &tenant_id,
-                &params.before_turn_id,
-            )
-            .await?;
-            crate::backend::store::split_conversation_question_sqlx(
-                &pool,
-                &tenant_id,
-                &question_id,
-                &before_turn_id,
-                params.dry_run,
-            )
-            .await
-        })?)
+        Ok(self
+            .db
+            .block_on(async move {
+                let question_id =
+                    crate::backend::store::resolve_conversation_question_id_prefix_sqlx(
+                        &pool,
+                        &tenant_id,
+                        &params.question_id,
+                    )
+                    .await?;
+                let before_turn_id =
+                    crate::backend::store::resolve_conversation_turn_id_prefix_sqlx(
+                        &pool,
+                        &tenant_id,
+                        &params.before_turn_id,
+                    )
+                    .await?;
+                crate::backend::store::split_conversation_question_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &question_id,
+                    &before_turn_id,
+                    params.dry_run,
+                )
+                .await
+            })
+            .map_err(AppError::external)?)
     }
 
     pub(crate) fn update_conversation_part_translation(
@@ -663,7 +699,8 @@ impl AppService {
                         &tenant_id,
                         &params.part_id,
                     )
-                    .await?;
+                    .await
+                    .map_err(AppError::external)?;
                     crate::backend::store::update_conversation_part_translation_sqlx(
                         &pool,
                         &tenant_id,
@@ -703,7 +740,8 @@ async fn load_export_adapter_for_detail(
         tenant_id,
         &detail.session.adapter_id,
     )
-    .await?
+    .await
+    .map_err(AppError::external)?
     .ok_or_else(|| {
         AppError::NotFound(format!(
             "conversation adapter not found: {}",
@@ -718,7 +756,8 @@ async fn load_export_source_for_detail(
     detail: &crate::backend::dto::ConversationSessionDetail,
 ) -> AppResult<ConversationSource> {
     crate::backend::store::load_conversation_source_sqlx(pool, tenant_id, &detail.session.source_id)
-        .await?
+        .await
+        .map_err(AppError::external)?
         .ok_or_else(|| {
             AppError::NotFound(format!(
                 "conversation source not found: {}",
@@ -754,7 +793,8 @@ fn export_loaded_conversation_markdown(
             &params.content_filter,
             record_kind,
             &default_relative_path_text,
-        )?;
+        )
+        .map_err(AppError::external)?;
         (export.content, export.relative_path)
     } else {
         (

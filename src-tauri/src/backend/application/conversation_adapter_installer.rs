@@ -43,8 +43,12 @@ pub(super) fn install_conversation_adapter_package_from_spec(
     catalog_url: Option<&str>,
 ) -> AppResult<Value> {
     let version_dir = conversation_adapter_package_version_dir(spec)?;
-    let package_manifest_path = version_dir.join(spec.package_manifest_file_name()?);
-    let adapter_manifest_path = version_dir.join(spec.manifest_file_name()?);
+    let package_manifest_path = version_dir.join(
+        spec.package_manifest_file_name()
+            .map_err(AppError::external)?,
+    );
+    let adapter_manifest_path =
+        version_dir.join(spec.manifest_file_name().map_err(AppError::external)?);
 
     if dry_run {
         return Ok(json!({
@@ -82,8 +86,10 @@ pub(super) fn install_conversation_adapter_package_from_spec(
             dry_run: false,
             yes: true,
         },
-    )?;
-    let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)?;
+    )
+    .map_err(AppError::external)?;
+    let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)
+        .map_err(AppError::external)?;
     let now = Utc::now().to_rfc3339();
     let package = ConversationAdapterPackage {
         package_id: spec.package_id().to_string(),
@@ -216,7 +222,9 @@ fn install_conversation_adapter_package_files(
                 source_dir.display()
             )));
         }
-        let package_manifest_file = spec.package_manifest_file_name()?;
+        let package_manifest_file = spec
+            .package_manifest_file_name()
+            .map_err(AppError::external)?;
         if !source_dir.join(&package_manifest_file).is_file() {
             return Err(AppError::Validation(format!(
                 "conversation adapter package source does not contain {}: {}",
@@ -233,9 +241,8 @@ fn install_conversation_adapter_package_files(
         }
         capabilities::copy_dir(&source_dir, &prepared_dir)?;
         let prepared_validation =
-            crate::backend::conversations::validate_conversation_adapter_package_dir(
-                &prepared_dir,
-            )?;
+            crate::backend::conversations::validate_conversation_adapter_package_dir(&prepared_dir)
+                .map_err(AppError::external)?;
         let kernel_inspection = crate::backend::conversations::ConversationAdapterPackageSystem
             .inspect(&prepared_dir)
             .map_err(|error| AppError::Extension(error.to_string()))?;
@@ -254,7 +261,8 @@ fn install_conversation_adapter_package_files(
             let existing =
                 crate::backend::conversations::validate_conversation_adapter_package_dir(
                     version_dir,
-                )?;
+                )
+                .map_err(AppError::external)?;
             validate_installed_package_for_spec(spec, &existing)?;
             if existing.content_hash != prepared_validation.content_hash {
                 return Err(AppError::Conflict(format!(
@@ -447,7 +455,9 @@ pub(super) fn extract_install_artifact_bytes(
         }
     }
 
-    let package_manifest = spec.package_manifest_file_name()?;
+    let package_manifest = spec
+        .package_manifest_file_name()
+        .map_err(AppError::external)?;
     if extract_root.join(&package_manifest).is_file() {
         return Ok(extract_root);
     }
@@ -486,11 +496,14 @@ fn persist_failed_conversation_adapter_package(
         record_kind: spec.record_kind,
         install_dir: current_dir.to_string_lossy().to_string(),
         manifest_path: current_dir
-            .join(spec.package_manifest_file_name()?)
+            .join(
+                spec.package_manifest_file_name()
+                    .map_err(AppError::external)?,
+            )
             .to_string_lossy()
             .to_string(),
         adapter_manifest_path: current_dir
-            .join(spec.manifest_file_name()?)
+            .join(spec.manifest_file_name().map_err(AppError::external)?)
             .to_string_lossy()
             .to_string(),
         runtime_protocol: "stdio-ndjson-v1".to_string(),

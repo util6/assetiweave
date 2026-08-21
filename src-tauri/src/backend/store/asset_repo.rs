@@ -3,7 +3,7 @@ use crate::backend::runtime::{AppError, AppResult};
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 
 use super::{
-    codec::{decode_enum, encode_enum},
+    codec::{decode_enum_app, encode_enum_app},
     sql,
 };
 
@@ -15,7 +15,7 @@ pub(crate) async fn load_assets_sqlx(
     let rows = if let Some(kind) = kind {
         sqlx::query(sql::LIST_ASSETS_BY_KIND)
             .bind(tenant_id)
-            .bind(encode_enum(kind)?)
+            .bind(encode_enum_app(kind)?)
             .fetch_all(pool)
             .await
             .map_err(|error| AppError::External(error.to_string()))?
@@ -56,11 +56,11 @@ fn map_sqlx_asset_row(row: &SqliteRow) -> AppResult<Asset> {
         name: row
             .try_get(2)
             .map_err(|error| AppError::External(error.to_string()))?,
-        kind: decode_enum::<AssetKind>(
+        kind: decode_enum_app::<AssetKind>(
             row.try_get::<String, _>(3)
                 .map_err(|error| AppError::External(error.to_string()))?,
         )?,
-        format: decode_enum::<AssetFormat>(
+        format: decode_enum_app::<AssetFormat>(
             row.try_get::<String, _>(4)
                 .map_err(|error| AppError::External(error.to_string()))?,
         )?,
@@ -117,8 +117,8 @@ pub(crate) async fn replace_source_assets_sqlx(
             .bind(&asset.id)
             .bind(&asset.source_id)
             .bind(&asset.name)
-            .bind(encode_enum(asset.kind)?)
-            .bind(encode_enum(asset.format)?)
+            .bind(encode_enum_app(asset.kind)?)
+            .bind(encode_enum_app(asset.format)?)
             .bind(&asset.relative_path)
             .bind(&asset.absolute_path)
             .bind(&asset.entry_file)

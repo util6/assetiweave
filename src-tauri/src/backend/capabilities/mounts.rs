@@ -420,13 +420,16 @@ fn create_mount_symlink(
     let source_path = crate::backend::targeting::canonical_source_path(asset)?;
     prepare_target_for_mount_symlink(asset, target_path)?;
 
-    let parent = target_path.parent().ok_or_else(|| {
-        format!(
-            "target path is missing parent directory: {}",
-            target_path.display()
-        )
-    })?;
-    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let parent = target_path
+        .parent()
+        .ok_or_else(|| {
+            format!(
+                "target path is missing parent directory: {}",
+                target_path.display()
+            )
+        })
+        .map_err(AppError::external)?;
+    fs::create_dir_all(parent).map_err(AppError::external)?;
     Ok(crate::backend::host_filesystem::HostFilesystem::current()
         .create_symlink(&source_path, target_path)?)
 }
@@ -457,9 +460,9 @@ fn prepare_target_for_mount_symlink(asset: &Asset, target_path: &Path) -> AppRes
     }
 
     if metadata.is_dir() {
-        Ok(fs::remove_dir_all(target_path).map_err(|error| error.to_string())?)
+        Ok(fs::remove_dir_all(target_path).map_err(AppError::external)?)
     } else if metadata.is_file() {
-        Ok(fs::remove_file(target_path).map_err(|error| error.to_string())?)
+        Ok(fs::remove_file(target_path).map_err(AppError::external)?)
     } else {
         Err(AppError::Conflict(format!(
             "unsupported target type for replacement: {}",
@@ -517,12 +520,12 @@ fn repair_mounted_symlink_to_real_source(
         return Ok(inspection);
     }
 
-    let metadata = fs::symlink_metadata(&target_path).map_err(|error| error.to_string())?;
+    let metadata = fs::symlink_metadata(&target_path).map_err(AppError::external)?;
     if !metadata.file_type().is_symlink() {
         return Ok(inspection);
     }
 
-    let previous_link = fs::read_link(&target_path).map_err(|error| error.to_string())?;
+    let previous_link = fs::read_link(&target_path).map_err(AppError::external)?;
     let filesystem = crate::backend::host_filesystem::HostFilesystem::current();
     let previous_kind = filesystem.symlink_kind(&target_path)?;
     filesystem.remove_symlink(&target_path)?;
@@ -607,7 +610,7 @@ fn ensure_target_within_profile(profile: &TargetProfile, target_path: &Path) -> 
 }
 
 fn remove_created_mount_symlink(target_path: &Path) -> AppResult<()> {
-    let metadata = fs::symlink_metadata(target_path).map_err(|error| error.to_string())?;
+    let metadata = fs::symlink_metadata(target_path).map_err(AppError::external)?;
     if !metadata.file_type().is_symlink() {
         return Ok(());
     }

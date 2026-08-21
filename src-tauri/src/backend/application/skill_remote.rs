@@ -126,14 +126,16 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let remote_source_to_save = remote_source.clone();
-        self.db.block_on(async move {
-            crate::backend::store::upsert_skill_remote_source_sqlx(
-                &pool,
-                &tenant_id,
-                &remote_source_to_save,
-            )
-            .await
-        })?;
+        self.db
+            .block_on(async move {
+                crate::backend::store::upsert_skill_remote_source_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &remote_source_to_save,
+                )
+                .await
+            })
+            .map_err(AppError::external)?;
         Ok(json!({
             "dry_run": false,
             "provider": "github",
@@ -153,11 +155,14 @@ impl AppService {
     pub(crate) fn list_skill_remote_sources(&self) -> AppResult<Vec<SkillRemoteSource>> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool, &tenant_id)
-                .await?;
-            crate::backend::store::list_skill_remote_sources_sqlx(&pool, &tenant_id).await
-        })?)
+        Ok(self
+            .db
+            .block_on(async move {
+                crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool, &tenant_id)
+                    .await?;
+                crate::backend::store::list_skill_remote_sources_sqlx(&pool, &tenant_id).await
+            })
+            .map_err(AppError::external)?)
     }
 
     pub(crate) fn check_skill_remote_sources(
@@ -183,7 +188,8 @@ impl AppService {
                         &pool, &tenant_id, asset_id,
                     )
                     .await
-                })?
+                })
+                .map_err(AppError::external)?
                 .ok_or_else(|| {
                     AppError::NotFound(format!("skill remote source not found: {asset_id}"))
                 })?]
@@ -197,14 +203,16 @@ impl AppService {
             let pool = self.db.pool().clone();
             let tenant_id = self.tenant_id().to_string();
             let source_to_save = source.clone();
-            self.db.block_on(async move {
-                crate::backend::store::update_skill_remote_check_result_sqlx(
-                    &pool,
-                    &tenant_id,
-                    &source_to_save,
-                )
-                .await
-            })?;
+            self.db
+                .block_on(async move {
+                    crate::backend::store::update_skill_remote_check_result_sqlx(
+                        &pool,
+                        &tenant_id,
+                        &source_to_save,
+                    )
+                    .await
+                })
+                .map_err(AppError::external)?;
             checked.push(source);
         }
         Ok(checked)

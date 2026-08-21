@@ -6,7 +6,7 @@ use crate::backend::runtime::{AppError, AppResult};
 use chrono::Utc;
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
-use super::{codec::decode_enum, sql};
+use super::{codec::decode_enum_app, sql};
 
 pub(crate) const LOCAL_PRINCIPAL_ID: &str = "local";
 pub(crate) const DEFAULT_TENANT_ID: &str = "default";
@@ -228,7 +228,7 @@ fn normalize_tenant_slug(value: &str) -> AppResult<String> {
 fn map_principal_row(row: &SqliteRow) -> AppResult<Principal> {
     Ok(Principal {
         id: row.try_get(0)?,
-        kind: decode_enum::<PrincipalKind>(row.try_get::<String, _>(1)?)?,
+        kind: decode_enum_app::<PrincipalKind>(row.try_get::<String, _>(1)?)?,
         display_name: row.try_get(2)?,
         created_at: row.try_get(3)?,
         updated_at: row.try_get(4)?,
@@ -240,8 +240,8 @@ fn map_tenant_row(row: &SqliteRow) -> AppResult<Tenant> {
         id: row.try_get(0)?,
         slug: row.try_get(1)?,
         name: row.try_get(2)?,
-        kind: decode_enum::<TenantKind>(row.try_get::<String, _>(3)?)?,
-        status: decode_enum::<TenantStatus>(row.try_get::<String, _>(4)?)?,
+        kind: decode_enum_app::<TenantKind>(row.try_get::<String, _>(3)?)?,
+        status: decode_enum_app::<TenantStatus>(row.try_get::<String, _>(4)?)?,
         created_at: row.try_get(5)?,
         updated_at: row.try_get(6)?,
     })
@@ -251,7 +251,7 @@ fn map_tenant_membership_row(row: &SqliteRow) -> AppResult<TenantMembership> {
     Ok(TenantMembership {
         tenant_id: row.try_get(0)?,
         principal_id: row.try_get(1)?,
-        role: decode_enum::<TenantRole>(row.try_get::<String, _>(2)?)?,
+        role: decode_enum_app::<TenantRole>(row.try_get::<String, _>(2)?)?,
         created_at: row.try_get(3)?,
         updated_at: row.try_get(4)?,
     })

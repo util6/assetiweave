@@ -94,7 +94,7 @@ pub(crate) const AI_EXECUTION_TASK_UPDATED_EVENT: &str = "ai-execution://task-up
 
 #[tauri::command]
 pub(crate) async fn set_app_window_icon(app: AppHandle, icon: Vec<u8>) -> RuntimeAppResult<()> {
-    set_application_icon(app, icon).map_err(Into::into)
+    set_application_icon(app, icon).map_err(AppError::external)
 }
 
 #[tauri::command]
@@ -192,14 +192,14 @@ pub(crate) async fn complete_app_close(
             crate::sync_before_close(&db_path, backup_database);
         })
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     }
 
     let shutdown_report = tauri::async_runtime::spawn_blocking(move || {
         runtime.shutdown_with_grace(std::time::Duration::from_secs(5))
     })
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     if !shutdown_report.dispatcher_drained
         || !shutdown_report.unfinished_task_ids.is_empty()
         || shutdown_report.dispatcher_timed_out

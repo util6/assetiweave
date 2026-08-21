@@ -289,7 +289,8 @@ impl AppService {
             crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, &library_source_to_save)
                 .await
         })?;
-        let library_assets = crate::backend::scanner::scan_skill_source(&library_source)?;
+        let library_assets = crate::backend::scanner::scan_skill_source(&library_source)
+            .map_err(AppError::external)?;
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let library_source_id = library_source.id.clone();

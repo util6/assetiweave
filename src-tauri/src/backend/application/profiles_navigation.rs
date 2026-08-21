@@ -74,9 +74,12 @@ impl AppService {
     ) -> RuntimeAppResult<crate::backend::dto::NavigationModel> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            crate::backend::store::load_navigation_model_sqlx(&pool, &tenant_id).await
-        })?)
+        Ok(self
+            .db
+            .block_on(async move {
+                crate::backend::store::load_navigation_model_sqlx(&pool, &tenant_id).await
+            })
+            .map_err(AppError::external)?)
     }
 
     pub(crate) fn update_navigation_model(
@@ -85,10 +88,14 @@ impl AppService {
     ) -> RuntimeAppResult<NavigationModel> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            crate::backend::store::save_navigation_model_sqlx(&pool, &tenant_id, &model).await?;
-            crate::backend::store::load_navigation_model_sqlx(&pool, &tenant_id).await
-        })?)
+        Ok(self
+            .db
+            .block_on(async move {
+                crate::backend::store::save_navigation_model_sqlx(&pool, &tenant_id, &model)
+                    .await?;
+                crate::backend::store::load_navigation_model_sqlx(&pool, &tenant_id).await
+            })
+            .map_err(AppError::external)?)
     }
 
     pub(crate) fn list_app_shortcuts(

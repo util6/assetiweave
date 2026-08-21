@@ -148,7 +148,7 @@ fn ensure_backup_directory(directory: &Path) -> AppResult<()> {
             directory.display()
         )));
     }
-    Ok(fs::create_dir_all(directory).map_err(|error| error.to_string())?)
+    Ok(fs::create_dir_all(directory).map_err(AppError::external)?)
 }
 
 fn snapshot_sqlite_database(db_path: &Path, target_path: &Path) -> AppResult<()> {
@@ -156,7 +156,7 @@ fn snapshot_sqlite_database(db_path: &Path, target_path: &Path) -> AppResult<()>
     // independent connection so the resident pool can be closing safely.
     let temp_path = temporary_target_path(target_path);
     if temp_path.exists() {
-        fs::remove_file(&temp_path).map_err(|error| error.to_string())?;
+        fs::remove_file(&temp_path).map_err(AppError::external)?;
     }
 
     let snapshot_result = vacuum_into(db_path, &temp_path).or_else(|vacuum_error| {
@@ -173,7 +173,7 @@ fn snapshot_sqlite_database(db_path: &Path, target_path: &Path) -> AppResult<()>
         return Err(error);
     }
 
-    Ok(fs::rename(&temp_path, target_path).map_err(|error| error.to_string())?)
+    Ok(fs::rename(&temp_path, target_path).map_err(AppError::external)?)
 }
 
 fn vacuum_into(db_path: &Path, target_path: &Path) -> AppResult<()> {

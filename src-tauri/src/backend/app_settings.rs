@@ -157,13 +157,14 @@ fn app_config_dir() -> AppResult<PathBuf> {
             return Ok(PathBuf::from(home));
         }
     }
-    let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+    let home =
+        dirs::home_dir().ok_or_else(|| AppError::NotFound("无法确定用户主目录".to_string()))?;
     Ok(home.join(CONFIG_DIR_NAME))
 }
 
 fn ensure_settings_dirs(paths: &AppSettingsPaths) -> AppResult<()> {
-    fs::create_dir_all(&paths.config_dir).map_err(|error| error.to_string())?;
-    Ok(fs::create_dir_all(&paths.conversation_adapter_dir).map_err(|error| error.to_string())?)
+    fs::create_dir_all(&paths.config_dir).map_err(AppError::external)?;
+    Ok(fs::create_dir_all(&paths.conversation_adapter_dir).map_err(AppError::external)?)
 }
 
 fn read_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
@@ -173,9 +174,10 @@ fn read_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
         return Ok(document);
     }
 
-    let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let content = fs::read_to_string(path).map_err(AppError::external)?;
     let parsed: Value = serde_json::from_str(&content)
-        .map_err(|error| format!("解析设置文件失败: {} ({error})", path.to_string_lossy()))?;
+        .map_err(|error| format!("解析设置文件失败: {} ({error})", path.to_string_lossy()))
+        .map_err(AppError::external)?;
     Ok(normalize_document(parsed))
 }
 
@@ -497,12 +499,13 @@ fn normalize_json_path_setting(value: &mut Value, path: &[&str]) -> AppResult<()
 fn write_settings_document(path: &Path, document: &AppSettingsDocument) -> AppResult<()> {
     let parent = path
         .parent()
-        .ok_or_else(|| "设置文件缺少父目录".to_string())?;
-    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let content = serde_json::to_string_pretty(document).map_err(|error| error.to_string())?;
+        .ok_or_else(|| "设置文件缺少父目录".to_string())
+        .map_err(AppError::external)?;
+    fs::create_dir_all(parent).map_err(AppError::external)?;
+    let content = serde_json::to_string_pretty(document).map_err(AppError::external)?;
     let temp_path = path.with_extension("json.tmp");
-    fs::write(&temp_path, format!("{content}\n")).map_err(|error| error.to_string())?;
-    Ok(fs::rename(&temp_path, path).map_err(|error| error.to_string())?)
+    fs::write(&temp_path, format!("{content}\n")).map_err(AppError::external)?;
+    Ok(fs::rename(&temp_path, path).map_err(AppError::external)?)
 }
 
 fn default_document() -> AppSettingsDocument {

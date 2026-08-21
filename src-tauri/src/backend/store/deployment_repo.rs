@@ -1,8 +1,8 @@
 use crate::backend::models::DeploymentState;
-use crate::backend::runtime::AppResult;
+use crate::backend::runtime::{AppError, AppResult};
 use sqlx::{Row, SqlitePool};
 
-use super::{codec::encode_enum, sql};
+use super::{codec::encode_enum_app, sql};
 
 pub(crate) async fn upsert_deployment_state_sqlx(
     pool: &SqlitePool,
@@ -14,7 +14,7 @@ pub(crate) async fn upsert_deployment_state_sqlx(
         .bind(&state.profile_id)
         .bind(&state.asset_id)
         .bind(&state.target_path)
-        .bind(encode_enum(state.strategy)?)
+        .bind(encode_enum_app(state.strategy)?)
         .bind(&state.source_hash)
         .bind(&state.deployed_at)
         .bind(&state.managed_by)
@@ -192,7 +192,7 @@ mod tests {
                 let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM deployment_state")
                     .fetch_one(database.pool())
                     .await
-                    .map_err(|error| error.to_string())?;
+                    .map_err(AppError::external)?;
                 AppResult::Ok(rows)
             })
             .map(|rows| assert_eq!(rows, 2))

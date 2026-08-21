@@ -165,6 +165,8 @@ check_absent 'runtime: Option<Arc<AppRuntime>>' \
 # Application module.
 check_absent 'backend::application|crate::backend::application' \
   "$ROOT/src-tauri/src/backend/runtime"
+check_absent 'impl From<String> for AppError|impl From<&str> for AppError' \
+  "$ROOT/src-tauri/src/backend/runtime/error.rs"
 
 # Application workflows and their prelude must not consume the DTO transport
 # alias or its explicitly named legacy infrastructure alias.

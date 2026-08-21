@@ -115,7 +115,7 @@ pub(crate) struct AgentMarketRefreshResult {
 
 impl AppService {
     pub(crate) fn refresh_agent_market_catalog(&self) -> AppResult<AgentMarketRefreshResult> {
-        let result = CatalogCache::refresh_default()?;
+        let result = CatalogCache::refresh_default().map_err(AppError::external)?;
         let (status, catalog, etag) = match result {
             crate::backend::agent_market::CatalogRefreshOutcome::Updated { catalog, etag } => {
                 ("updated", catalog, etag)
@@ -124,7 +124,8 @@ impl AppService {
                 ("not_modified", catalog, etag)
             }
         };
-        let active_catalog_version = CatalogCache::best_available()?
+        let active_catalog_version = CatalogCache::best_available()
+            .map_err(AppError::external)?
             .catalog()
             .catalog_version
             .clone();
@@ -143,7 +144,7 @@ impl AppService {
         &self,
         request: AgentMarketListRequest,
     ) -> AppResult<Vec<AgentMarketItemView>> {
-        let catalog = CatalogCache::best_available()?;
+        let catalog = CatalogCache::best_available().map_err(AppError::external)?;
         let installations = self.list_agent_installations()?;
         let context = host_distribution_context();
         let query = request
@@ -216,7 +217,10 @@ impl AppService {
         let repository =
             crate::backend::agent_market::AgentInstallationRepository::new(self.db.pool().clone());
         let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(repository.list(&tenant_id))?)
+        Ok(self
+            .db
+            .block_on(repository.list(&tenant_id))
+            .map_err(AppError::external)?)
     }
 
     pub(crate) fn list_installed_agents(&self) -> AppResult<Vec<AgentInstallationView>> {
@@ -247,7 +251,8 @@ impl AppService {
         let tenant_id = self.tenant_id().to_string();
         let mut installation = self
             .db
-            .block_on(repository.get(&tenant_id, &agent_id))?
+            .block_on(repository.get(&tenant_id, &agent_id))
+            .map_err(AppError::external)?
             .ok_or_else(|| {
                 AppError::from(AgentMarketError::new(
                     "agent_not_installed",
@@ -336,9 +341,12 @@ impl AppService {
         }
         installation.runtime_checked_at = Some(now.clone());
         installation.updated_at = now;
-        self.db.block_on(repository.update_health(&installation))?;
         self.db
-            .block_on(self.agent_runtime_manager.reload(&tenant_id))?;
+            .block_on(repository.update_health(&installation))
+            .map_err(AppError::external)?;
+        self.db
+            .block_on(self.agent_runtime_manager.reload(&tenant_id))
+            .map_err(AppError::external)?;
         Ok(installation_view(&installation))
     }
 
@@ -367,7 +375,7 @@ impl AppService {
         &self,
         request: AgentInstallPreviewRequest,
     ) -> AppResult<AgentInstallPreview> {
-        let catalog = CatalogCache::best_available()?;
+        let catalog = CatalogCache::best_available().map_err(AppError::external)?;
         let item = catalog.item(&request.agent_id).ok_or_else(|| {
             AppError::from(AgentMarketError::new(
                 "agent_not_found",
@@ -395,7 +403,8 @@ impl AppService {
                         == Some(candidate.distribution_id.as_str())
             })
             .cloned()
-            .ok_or_else(|| "distribution_unsupported".to_string())?;
+            .ok_or_else(|| "distribution_unsupported".to_string())
+            .map_err(AppError::external)?;
         let current = self
             .list_agent_installations()?
             .into_iter()
@@ -473,7 +482,7 @@ impl AppService {
                     false,
                 ))
             })?;
-        let catalog = CatalogCache::best_available()?;
+        let catalog = CatalogCache::best_available().map_err(AppError::external)?;
         let item = catalog.item(&agent_id).ok_or_else(|| {
             AppError::from(AgentMarketError::new(
                 "agent_not_found",

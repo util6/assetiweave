@@ -154,7 +154,8 @@ pub(crate) struct BuiltinSkillInstallResult {
 }
 
 pub(crate) fn system_skill_root() -> AppResult<PathBuf> {
-    let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+    let home =
+        dirs::home_dir().ok_or_else(|| AppError::NotFound("无法确定用户主目录".to_string()))?;
     Ok(home.join(".assetiweave").join("skills").join(".system"))
 }
 
@@ -204,13 +205,16 @@ fn install_builtin_skills_at(root: &Path) -> AppResult<BuiltinSkillInstallResult
 
     let parent = root
         .parent()
-        .ok_or_else(|| format!("system Skill root has no parent: {}", root.display()))?;
-    fs::create_dir_all(parent).map_err(|error| {
-        format!(
-            "create system Skill parent directory {}: {error}",
-            parent.display()
-        )
-    })?;
+        .ok_or_else(|| format!("system Skill root has no parent: {}", root.display()))
+        .map_err(AppError::external)?;
+    fs::create_dir_all(parent)
+        .map_err(|error| {
+            format!(
+                "create system Skill parent directory {}: {error}",
+                parent.display()
+            )
+        })
+        .map_err(AppError::external)?;
     let suffix = uuid::Uuid::new_v4();
     let staging = parent.join(format!(".system.install-{suffix}"));
     let previous = parent.join(format!(".system.previous-{suffix}"));
@@ -274,10 +278,12 @@ fn install_builtin_skills_at(root: &Path) -> AppResult<BuiltinSkillInstallResult
 fn validate_embedded_skills() -> AppResult<()> {
     for embedded in EMBEDDED_SKILLS {
         let skill = std::str::from_utf8(embedded.skill)
-            .map_err(|error| format!("decode {}/SKILL.md: {error}", embedded.directory))?;
+            .map_err(|error| format!("decode {}/SKILL.md: {error}", embedded.directory))
+            .map_err(AppError::external)?;
         validate_embedded_skill_frontmatter(skill, embedded.name, embedded.directory)?;
         let manifest: serde_json::Value = serde_json::from_slice(embedded.manifest)
-            .map_err(|error| format!("decode {} manifest: {error}", embedded.directory))?;
+            .map_err(|error| format!("decode {} manifest: {error}", embedded.directory))
+            .map_err(AppError::external)?;
         if manifest.get("id").and_then(serde_json::Value::as_str) != Some(embedded.id)
             || manifest.get("entry").and_then(serde_json::Value::as_str) != Some("SKILL.md")
             || manifest
@@ -368,7 +374,7 @@ fn installed_tree_matches(root: &Path, fingerprint: &str) -> AppResult<bool> {
         .collect::<BTreeSet<_>>();
     let mut installed_paths = BTreeSet::new();
     for entry in WalkDir::new(root).follow_links(false) {
-        let entry = entry.map_err(|error| error.to_string())?;
+        let entry = entry.map_err(AppError::external)?;
         if entry.depth() > 0 && entry.file_type().is_symlink() {
             return Ok(false);
         }
@@ -378,7 +384,7 @@ fn installed_tree_matches(root: &Path, fingerprint: &str) -> AppResult<bool> {
         let relative = entry
             .path()
             .strip_prefix(root)
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
         let relative = relative.to_string_lossy().replace('\\', "/");
         if relative == SYSTEM_SKILLS_MARKER {
             continue;
@@ -390,7 +396,7 @@ fn installed_tree_matches(root: &Path, fingerprint: &str) -> AppResult<bool> {
     }
     for file in EMBEDDED_FILES {
         let path = root.join(file.relative_path);
-        if fs::read(&path).map_err(|error| error.to_string())? != file.contents
+        if fs::read(&path).map_err(AppError::external)? != file.contents
             || !executable_mode_matches(&path, file.executable)?
         {
             return Ok(false);
@@ -407,8 +413,9 @@ fn write_embedded_tree(root: &Path, fingerprint: &str) -> AppResult<()> {
         let path = root.join(file.relative_path);
         let parent = path
             .parent()
-            .ok_or_else(|| format!("embedded file has no parent: {}", path.display()))?;
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            .ok_or_else(|| format!("embedded file has no parent: {}", path.display()))
+            .map_err(AppError::external)?;
+        fs::create_dir_all(parent).map_err(AppError::external)?;
         retry_io("write embedded system Skill file", || {
             fs::write(&path, file.contents)
         })?;
@@ -472,10 +479,10 @@ fn set_executable_if_needed(path: &Path, executable: bool) -> AppResult<()> {
     use std::os::unix::fs::PermissionsExt;
     if executable {
         let mut permissions = fs::metadata(path)
-            .map_err(|error| error.to_string())?
+            .map_err(AppError::external)?
             .permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(path, permissions).map_err(|error| error.to_string())?;
+        fs::set_permissions(path, permissions).map_err(AppError::external)?;
     }
     Ok(())
 }
@@ -484,7 +491,7 @@ fn set_executable_if_needed(path: &Path, executable: bool) -> AppResult<()> {
 fn executable_mode_matches(path: &Path, expected: bool) -> AppResult<bool> {
     use std::os::unix::fs::PermissionsExt;
     let executable = fs::metadata(path)
-        .map_err(|error| error.to_string())?
+        .map_err(AppError::external)?
         .permissions()
         .mode()
         & 0o111

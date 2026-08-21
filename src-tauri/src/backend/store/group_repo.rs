@@ -9,7 +9,7 @@ use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    codec::{decode_enum, decode_json, encode_enum, encode_json},
+    codec::{decode_enum_app, decode_json_app, encode_enum_app, encode_json_app},
     sql,
 };
 
@@ -68,7 +68,7 @@ pub(crate) async fn upsert_asset_group_sqlx(
     group: &AssetGroup,
 ) -> AppResult<()> {
     validate_asset_group(group)?;
-    let icon_svg = group.icon_svg.as_ref().map(encode_json).transpose()?;
+    let icon_svg = group.icon_svg.as_ref().map(encode_json_app).transpose()?;
     sqlx::query(sql::UPSERT_ASSET_GROUP)
         .bind(tenant_id)
         .bind(&group.id)
@@ -81,7 +81,7 @@ pub(crate) async fn upsert_asset_group_sqlx(
                 .filter(|value| !value.is_empty()),
         )
         .bind(group.color.trim())
-        .bind(encode_enum(group.asset_kind)?)
+        .bind(encode_enum_app(group.asset_kind)?)
         .bind(
             group
                 .display_icon
@@ -92,7 +92,7 @@ pub(crate) async fn upsert_asset_group_sqlx(
         .bind(icon_svg)
         .bind(if group.enabled { 1 } else { 0 })
         .bind(group.sort_order)
-        .bind(encode_json(&normalize_rules(&group.rules))?)
+        .bind(encode_json_app(&normalize_rules(&group.rules))?)
         .bind(&group.created_at)
         .bind(&group.updated_at)
         .execute(pool)
@@ -260,7 +260,7 @@ async fn load_asset_groups_by_kind_sqlx(
 ) -> AppResult<Vec<AssetGroup>> {
     let rows = sqlx::query(sql::LIST_ASSET_GROUPS_BY_KIND)
         .bind(tenant_id)
-        .bind(encode_enum(kind)?)
+        .bind(encode_enum_app(kind)?)
         .fetch_all(pool)
         .await?;
     rows.iter().map(map_sqlx_asset_group_row).collect()
@@ -306,15 +306,15 @@ fn map_sqlx_asset_group_row(row: &SqliteRow) -> AppResult<AssetGroup> {
         name: row.try_get(1)?,
         description: row.try_get(2)?,
         color: row.try_get(3)?,
-        asset_kind: decode_enum(row.try_get::<String, _>(4)?)?,
+        asset_kind: decode_enum_app(row.try_get::<String, _>(4)?)?,
         display_icon: row.try_get(5)?,
         icon_svg: row
             .try_get::<Option<String>, _>(6)?
-            .map(decode_json)
+            .map(decode_json_app)
             .transpose()?,
         enabled: row.try_get::<i64, _>(7)? == 1,
         sort_order: row.try_get(8)?,
-        rules: decode_json(rules_payload)?,
+        rules: decode_json_app(rules_payload)?,
         created_at: row.try_get(10)?,
         updated_at: row.try_get(11)?,
     })

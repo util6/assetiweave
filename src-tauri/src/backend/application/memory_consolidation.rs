@@ -32,7 +32,8 @@ impl AppService {
                 self.tenant_id(),
                 run_id,
                 "phase2",
-            ))?;
+            ))
+            .map_err(AppError::external)?;
         let allowed = preview
             .evidence
             .iter()
@@ -63,13 +64,14 @@ impl AppService {
             })?;
         validate_consolidation(&output, &allowed)?;
 
-        let stored_evidence =
-            self.db
-                .block_on(crate::backend::store::load_memory_run_evidence_sqlx(
-                    self.db.pool(),
-                    self.tenant_id(),
-                    run_id,
-                ))?;
+        let stored_evidence = self
+            .db
+            .block_on(crate::backend::store::load_memory_run_evidence_sqlx(
+                self.db.pool(),
+                self.tenant_id(),
+                run_id,
+            ))
+            .map_err(AppError::external)?;
         let origin = if preview.mode == MemoryRecallMode::Full {
             MemoryItemOrigin::FullOrganize
         } else {
@@ -110,7 +112,8 @@ impl AppService {
                 &result_json,
                 preview.source_revision,
                 0,
-            ))?;
+            ))
+            .map_err(AppError::external)?;
         Ok(MemoryRecallRunResult {
             run_id: Some(run_id.to_string()),
             preview: preview.clone(),

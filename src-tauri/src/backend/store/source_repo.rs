@@ -4,15 +4,15 @@ use crate::backend::{
         detect_target_provider, expand_path, find_git_root, is_app_library_path,
         normalize_path_for_storage, normalize_relative_path,
     },
-    runtime::AppResult,
+    runtime::{AppError, AppResult},
     target_catalog::TargetCatalog,
 };
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
 use super::{
     codec::{
-        decode_enum, decode_json, decode_optional_enum, encode_enum, encode_json,
-        encode_optional_enum,
+        decode_enum_app, decode_json_app, decode_optional_enum_app, encode_enum_app,
+        encode_json_app, encode_optional_enum_app,
     },
     sql,
 };
@@ -25,7 +25,7 @@ pub(crate) async fn load_sources_sqlx(
         .bind(tenant_id)
         .fetch_all(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     rows.iter().map(map_sqlx_source_row).collect()
 }
 
@@ -37,7 +37,7 @@ pub(crate) async fn load_skill_sources_sqlx(
         .bind(tenant_id)
         .fetch_all(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     rows.iter().map(map_sqlx_source_row).collect()
 }
 
@@ -51,56 +51,38 @@ pub(crate) async fn load_source_sqlx(
         .bind(source_id)
         .fetch_optional(pool)
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(AppError::external)?
         .as_ref()
         .map(map_sqlx_source_row)
         .transpose()
 }
 
 fn map_sqlx_source_row(row: &SqliteRow) -> AppResult<Source> {
-    let root_path: String = row.try_get(3).map_err(|error| error.to_string())?;
-    let repo_root: Option<String> = row.try_get(6).map_err(|error| error.to_string())?;
+    let root_path: String = row.try_get(3).map_err(AppError::external)?;
+    let repo_root: Option<String> = row.try_get(6).map_err(AppError::external)?;
     Ok(Source {
-        id: row.try_get(0).map_err(|error| error.to_string())?,
-        name: row.try_get(1).map_err(|error| error.to_string())?,
-        kind: decode_enum(
-            row.try_get::<String, _>(2)
-                .map_err(|error| error.to_string())?,
-        )?,
+        id: row.try_get(0).map_err(AppError::external)?,
+        name: row.try_get(1).map_err(AppError::external)?,
+        kind: decode_enum_app(row.try_get::<String, _>(2).map_err(AppError::external)?)?,
         root_path: normalize_path_for_storage(&root_path)?,
-        scanner_kind: decode_enum(
-            row.try_get::<String, _>(4)
-                .map_err(|error| error.to_string())?,
-        )?,
-        source_origin: decode_enum(
-            row.try_get::<String, _>(5)
-                .map_err(|error| error.to_string())?,
-        )?,
+        scanner_kind: decode_enum_app(row.try_get::<String, _>(4).map_err(AppError::external)?)?,
+        source_origin: decode_enum_app(row.try_get::<String, _>(5).map_err(AppError::external)?)?,
         repo_root: repo_root
             .as_deref()
             .map(normalize_path_for_storage)
             .transpose()?,
-        scan_root: row.try_get(7).map_err(|error| error.to_string())?,
-        origin_app_kind: decode_optional_enum(row.try_get(8).map_err(|error| error.to_string())?)?,
-        origin_provider_id: row.try_get(9).map_err(|error| error.to_string())?,
-        include_globs: decode_json(
-            row.try_get::<String, _>(10)
-                .map_err(|error| error.to_string())?,
+        scan_root: row.try_get(7).map_err(AppError::external)?,
+        origin_app_kind: decode_optional_enum_app(row.try_get(8).map_err(AppError::external)?)?,
+        origin_provider_id: row.try_get(9).map_err(AppError::external)?,
+        include_globs: decode_json_app(row.try_get::<String, _>(10).map_err(AppError::external)?)?,
+        exclude_globs: decode_json_app(row.try_get::<String, _>(11).map_err(AppError::external)?)?,
+        default_kind: decode_optional_enum_app::<AssetKind>(
+            row.try_get(12).map_err(AppError::external)?,
         )?,
-        exclude_globs: decode_json(
-            row.try_get::<String, _>(11)
-                .map_err(|error| error.to_string())?,
-        )?,
-        default_kind: decode_optional_enum::<AssetKind>(
-            row.try_get(12).map_err(|error| error.to_string())?,
-        )?,
-        enabled: row
-            .try_get::<i64, _>(13)
-            .map_err(|error| error.to_string())?
-            == 1,
-        priority: row.try_get(14).map_err(|error| error.to_string())?,
-        last_scanned_at: row.try_get(15).map_err(|error| error.to_string())?,
-        last_scan_status: row.try_get(16).map_err(|error| error.to_string())?,
+        enabled: row.try_get::<i64, _>(13).map_err(AppError::external)? == 1,
+        priority: row.try_get(14).map_err(AppError::external)?,
+        last_scanned_at: row.try_get(15).map_err(AppError::external)?,
+        last_scan_status: row.try_get(16).map_err(AppError::external)?,
     })
 }
 
@@ -135,24 +117,24 @@ async fn upsert_source_sqlx_normalized(
         .bind(tenant_id)
         .bind(&source.id)
         .bind(&source.name)
-        .bind(encode_enum(source.kind)?)
+        .bind(encode_enum_app(source.kind)?)
         .bind(&source.root_path)
-        .bind(encode_enum(source.scanner_kind)?)
-        .bind(encode_enum(source.source_origin)?)
+        .bind(encode_enum_app(source.scanner_kind)?)
+        .bind(encode_enum_app(source.source_origin)?)
         .bind(&source.repo_root)
         .bind(&source.scan_root)
-        .bind(encode_optional_enum(source.origin_app_kind)?)
+        .bind(encode_optional_enum_app(source.origin_app_kind)?)
         .bind(&source.origin_provider_id)
-        .bind(encode_json(&source.include_globs)?)
-        .bind(encode_json(&source.exclude_globs)?)
-        .bind(encode_optional_enum(source.default_kind)?)
+        .bind(encode_json_app(&source.include_globs)?)
+        .bind(encode_json_app(&source.exclude_globs)?)
+        .bind(encode_optional_enum_app(source.default_kind)?)
         .bind(if source.enabled { 1 } else { 0 })
         .bind(source.priority)
         .bind(&source.last_scanned_at)
         .bind(&source.last_scan_status)
         .execute(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     Ok(())
 }
 
@@ -252,13 +234,13 @@ pub(crate) async fn delete_source_sqlx(
         .bind(id)
         .execute(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     sqlx::query(sql::DELETE_SOURCE)
         .bind(tenant_id)
         .bind(id)
         .execute(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     Ok(())
 }
 

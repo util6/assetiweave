@@ -1,10 +1,10 @@
 use crate::backend::models::TargetProfile;
 use crate::backend::path_utils::normalize_path_for_storage;
-use crate::backend::runtime::AppResult;
+use crate::backend::runtime::{AppError, AppResult};
 use sqlx::SqlitePool;
 
 use super::{
-    codec::{decode_json, encode_json},
+    codec::{decode_json_app, encode_json_app},
     sql,
 };
 
@@ -19,7 +19,7 @@ pub(crate) async fn load_profiles_sqlx(
     payloads
         .into_iter()
         .map(|payload| {
-            let profile = decode_json(payload)?;
+            let profile = decode_json_app(payload)?;
             normalize_profile_paths(profile)
         })
         .collect()
@@ -36,7 +36,7 @@ pub(crate) async fn load_profile_sqlx(
         .fetch_optional(pool)
         .await?
         .map(|payload| {
-            let profile = decode_json(payload)?;
+            let profile = decode_json_app(payload)?;
             normalize_profile_paths(profile)
         })
         .transpose()
@@ -51,7 +51,7 @@ pub(crate) async fn upsert_profile_sqlx(
     sqlx::query(sql::UPSERT_PROFILE)
         .bind(tenant_id)
         .bind(&profile.id)
-        .bind(encode_json(&profile)?)
+        .bind(encode_json_app(&profile)?)
         .execute(pool)
         .await?;
     Ok(())
@@ -165,7 +165,7 @@ mod tests {
                         sqlx::query_scalar("SELECT COUNT(*) FROM app_shortcut_items")
                             .fetch_one(database.pool())
                             .await
-                            .map_err(|error| error.to_string())?;
+                            .map_err(AppError::external)?;
                     AppResult::Ok((
                         profiles,
                         loaded_profile,

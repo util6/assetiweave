@@ -410,7 +410,7 @@ impl BackgroundTaskRegistry {
     ) -> AppResult<TaskSnapshot> {
         self.task_runtime.complete_external(
             task_id,
-            result.map_err(crate::backend::runtime::AppError::from),
+            result.map_err(crate::backend::runtime::AppError::external),
         )
     }
 
@@ -540,7 +540,7 @@ impl BackgroundTaskRegistry {
         let runtime_result = result
             .as_ref()
             .map(|value| serde_json::to_value(&value.assets).unwrap_or(Value::Null))
-            .map_err(|error| crate::backend::runtime::AppError::from(error.clone()));
+            .map_err(|error| crate::backend::runtime::AppError::external(error.clone()));
         let runtime = self.finish_external_result(task_id, runtime_result)?;
         let mut snapshot: SourceScanTaskSnapshot = self.decode(&runtime)?;
         if let Ok(result) = result {
@@ -637,7 +637,7 @@ impl BackgroundTaskRegistry {
     ) -> AppResult<BatchMountTaskSnapshot> {
         let runtime_result = result
             .clone()
-            .map_err(crate::backend::runtime::AppError::from);
+            .map_err(crate::backend::runtime::AppError::external);
         let runtime = self.finish_external_result(task_id, runtime_result)?;
         let mut snapshot: BatchMountTaskSnapshot = self.decode(&runtime)?;
         snapshot.result = result.ok();
@@ -711,7 +711,7 @@ impl BackgroundTaskRegistry {
         let runtime_result = result
             .as_ref()
             .map(|value| serde_json::to_value(value).unwrap_or(Value::Null))
-            .map_err(|error| crate::backend::runtime::AppError::from(error.clone()));
+            .map_err(|error| crate::backend::runtime::AppError::external(error.clone()));
         self.finish_external_result(task_id, runtime_result)?;
         let mut snapshot: AgentMarketRefreshTaskSnapshot =
             self.decode(&self.external_task_snapshot(task_id)?)?;
@@ -1249,7 +1249,7 @@ impl BackgroundTaskRegistry {
         let runtime_result = result
             .as_ref()
             .map(|assets| serde_json::to_value(assets).unwrap_or(Value::Null))
-            .map_err(|error| crate::backend::runtime::AppError::from(error.clone()));
+            .map_err(|error| crate::backend::runtime::AppError::external(error.clone()));
         self.finish_external_result(task_id, runtime_result)?;
         let mut snapshot: SkillBackupTaskSnapshot =
             self.decode(&self.external_task_snapshot(task_id)?)?;
@@ -1275,7 +1275,10 @@ impl BackgroundTaskRegistry {
         &self,
         params: &MemoryTaskStartParams,
     ) -> AppResult<(MemoryTaskSnapshot, AiExecutionCancellation, bool)> {
-        let scope_fingerprint = params.scope.fingerprint()?;
+        let scope_fingerprint = params
+            .scope
+            .fingerprint()
+            .map_err(crate::backend::runtime::AppError::external)?;
         let id = Uuid::new_v4().to_string();
         let snapshot = MemoryTaskSnapshot {
             id: id.clone(),
@@ -2043,9 +2046,7 @@ mod tests {
                 Box::new(move |_| {
                     agent_wait
                         .recv_timeout(Duration::from_secs(1))
-                        .map_err(|error| {
-                            crate::backend::runtime::AppError::from(error.to_string())
-                        })?;
+                        .map_err(|error| crate::backend::runtime::AppError::external(error))?;
                     Ok(serde_json::json!({ "domain": "agent" }))
                 }),
             )
@@ -2056,9 +2057,7 @@ mod tests {
                 Box::new(move |_| {
                     adapter_wait
                         .recv_timeout(Duration::from_secs(1))
-                        .map_err(|error| {
-                            crate::backend::runtime::AppError::from(error.to_string())
-                        })?;
+                        .map_err(|error| crate::backend::runtime::AppError::external(error))?;
                     Ok(serde_json::json!({ "domain": "conversation" }))
                 }),
             )

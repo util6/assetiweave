@@ -201,7 +201,9 @@ pub(crate) fn cleanup_orphan_asset_records(
     Ok(db.block_on(async move {
         crate::backend::store::delete_orphan_asset_mounts_sqlx(&pool, &tenant_id).await?;
         crate::backend::store::delete_orphan_deployment_state_sqlx(&pool, &tenant_id).await?;
-        crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool, &tenant_id).await?;
+        crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool, &tenant_id)
+            .await
+            .map_err(AppError::external)?;
         crate::backend::store::delete_orphan_asset_group_members_sqlx(&pool, &tenant_id).await
     })?)
 }

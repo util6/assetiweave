@@ -7,7 +7,7 @@ use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 use std::collections::HashSet;
 
 use super::{
-    codec::{decode_json, encode_enum, encode_json},
+    codec::{decode_json_app, encode_enum_app, encode_json_app},
     sql,
 };
 
@@ -112,7 +112,11 @@ pub(crate) async fn save_app_shortcuts_sqlx(
         .await
         .map_err(|error| AppError::External(error.to_string()))?;
     for (sort_order, shortcut) in shortcuts.iter().enumerate() {
-        let icon_svg = shortcut.icon_svg.as_ref().map(encode_json).transpose()?;
+        let icon_svg = shortcut
+            .icon_svg
+            .as_ref()
+            .map(encode_json_app)
+            .transpose()?;
         sqlx::query(sql::UPSERT_APP_SHORTCUT)
             .bind(tenant_id)
             .bind(&shortcut.profile_id)
@@ -132,11 +136,11 @@ pub(crate) async fn save_app_shortcuts_sqlx(
 }
 
 fn decode_icon_svg_sqlx(value: Option<String>) -> AppResult<Option<AppShortcutIconSvg>> {
-    Ok(value.map(decode_json).transpose()?)
+    Ok(value.map(decode_json_app).transpose()?)
 }
 
 fn map_sqlx_app_shortcut(row: &SqliteRow) -> AppResult<AppShortcut> {
-    let profile: TargetProfile = decode_json(
+    let profile: TargetProfile = decode_json_app(
         row.try_get::<String, _>(5)
             .map_err(|error| AppError::External(error.to_string()))?,
     )?;
@@ -145,7 +149,7 @@ fn map_sqlx_app_shortcut(row: &SqliteRow) -> AppResult<AppShortcut> {
             .try_get(0)
             .map_err(|error| AppError::External(error.to_string()))?,
         profile_name: profile.name,
-        app_kind: encode_enum(profile.app_kind.unwrap_or(AppKind::Custom))?,
+        app_kind: encode_enum_app(profile.app_kind.unwrap_or(AppKind::Custom))?,
         display_icon: row
             .try_get(1)
             .map_err(|error| AppError::External(error.to_string()))?,
@@ -164,7 +168,7 @@ fn map_sqlx_app_shortcut(row: &SqliteRow) -> AppResult<AppShortcut> {
 }
 
 fn map_sqlx_app_shortcut_setting(row: &SqliteRow) -> AppResult<AppShortcut> {
-    let profile: TargetProfile = decode_json(
+    let profile: TargetProfile = decode_json_app(
         row.try_get::<String, _>(1)
             .map_err(|error| AppError::External(error.to_string()))?,
     )?;
@@ -173,7 +177,7 @@ fn map_sqlx_app_shortcut_setting(row: &SqliteRow) -> AppResult<AppShortcut> {
         profile_id: row
             .try_get(0)
             .map_err(|error| AppError::External(error.to_string()))?,
-        app_kind: encode_enum(profile.app_kind.unwrap_or(AppKind::Custom))?,
+        app_kind: encode_enum_app(profile.app_kind.unwrap_or(AppKind::Custom))?,
         display_icon: row
             .try_get::<Option<String>, _>(2)
             .map_err(|error| AppError::External(error.to_string()))?

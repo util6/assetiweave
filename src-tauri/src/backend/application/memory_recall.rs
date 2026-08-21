@@ -13,29 +13,33 @@ impl AppService {
         params: MemoryRecallPreviewParams,
     ) -> AppResult<MemoryRecallPreview> {
         validate_recall_params(&params)?;
-        let source_revision =
-            self.db
-                .block_on(crate::backend::store::load_memory_source_revision_sqlx(
-                    self.db.pool(),
-                    self.tenant_id(),
-                ))?;
+        let source_revision = self
+            .db
+            .block_on(crate::backend::store::load_memory_source_revision_sqlx(
+                self.db.pool(),
+                self.tenant_id(),
+            ))
+            .map_err(AppError::external)?;
         let (backend, total, refs) = match params.mode {
             MemoryRecallMode::Exact => self.exact_recall_refs(&params)?,
             MemoryRecallMode::Full => {
                 let limit = params.limit.unwrap_or(50).clamp(1, RECALL_FULL_PAGE_MAX);
                 let offset = params.offset.unwrap_or(0);
-                let (total, refs) = self.db.block_on(
-                    crate::backend::store::list_memory_recall_question_refs_sqlx(
-                        self.db.pool(),
-                        self.tenant_id(),
-                        &params.scope,
-                        params.since.as_deref(),
-                        params.until.as_deref(),
-                        params.include_unavailable,
-                        limit,
-                        offset,
-                    ),
-                )?;
+                let (total, refs) = self
+                    .db
+                    .block_on(
+                        crate::backend::store::list_memory_recall_question_refs_sqlx(
+                            self.db.pool(),
+                            self.tenant_id(),
+                            &params.scope,
+                            params.since.as_deref(),
+                            params.until.as_deref(),
+                            params.include_unavailable,
+                            limit,
+                            offset,
+                        ),
+                    )
+                    .map_err(AppError::external)?;
                 ("bounded_sql".to_string(), total, refs)
             }
         };

@@ -53,7 +53,8 @@ pub(crate) fn status(app: &AppHandle) -> AppResult<CliToolsStatus> {
     let resource_dir = app
         .path()
         .resource_dir()
-        .map_err(|error| format!("resolve app resource directory: {error}"))?;
+        .map_err(|error| format!("resolve app resource directory: {error}"))
+        .map_err(AppError::external)?;
     Ok(build_status(&resource_dir, current_path_env()))
 }
 
@@ -62,19 +63,25 @@ pub(crate) fn install(app: &AppHandle) -> AppResult<CliToolsStatus> {
     let resource_dir = app
         .path()
         .resource_dir()
-        .map_err(|error| format!("resolve app resource directory: {error}"))?;
+        .map_err(|error| format!("resolve app resource directory: {error}"))
+        .map_err(AppError::external)?;
     let tools = bundled_tools(&resource_dir);
     if !tools.cli_path.is_file() || !tools.engine_path.is_file() {
-        return Err(format!("bundled CLI tools are missing from {}", tools.dir.display()).into());
+        return Err(AppError::External(format!(
+            "bundled CLI tools are missing from {}",
+            tools.dir.display()
+        )));
     }
 
     let install_dir = default_install_dir()?;
-    fs::create_dir_all(&install_dir).map_err(|error| {
-        format!(
-            "create CLI install directory {}: {error}",
-            install_dir.display()
-        )
-    })?;
+    fs::create_dir_all(&install_dir)
+        .map_err(|error| {
+            format!(
+                "create CLI install directory {}: {error}",
+                install_dir.display()
+            )
+        })
+        .map_err(AppError::external)?;
     write_shim(&install_dir, CLI_NAME, &tools.cli_path)?;
     write_shim(&install_dir, CLI_ALIAS, &tools.cli_path)?;
     write_shim(&install_dir, ENGINE_NAME, &tools.engine_path)?;
@@ -204,15 +211,19 @@ fn write_shim(install_dir: &Path, tool_name: &str, target: &Path) -> AppResult<(
     let contents = windows_cmd_contents(target);
     #[cfg(not(windows))]
     let contents = unix_shim_contents(target);
-    fs::write(&path, contents).map_err(|error| format!("write {}: {error}", path.display()))?;
+    fs::write(&path, contents)
+        .map_err(|error| format!("write {}: {error}", path.display()))
+        .map_err(AppError::external)?;
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path)
-            .map_err(|error| format!("read {} permissions: {error}", path.display()))?
+            .map_err(|error| format!("read {} permissions: {error}", path.display()))
+            .map_err(AppError::external)?
             .permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&path, permissions)
-            .map_err(|error| format!("set {} executable: {error}", path.display()))?;
+            .map_err(|error| format!("set {} executable: {error}", path.display()))
+            .map_err(AppError::external)?;
     }
     Ok(())
 }
@@ -260,7 +271,8 @@ fn configure_unix_user_path(install_dir: &Path) -> AppResult<()> {
         let existing = fs::read_to_string(profile).unwrap_or_default();
         if !existing.contains(marker) && !existing.contains(path_text.as_ref()) {
             fs::write(profile, format!("{existing}{block}"))
-                .map_err(|error| format!("update shell profile {}: {error}", profile.display()))?;
+                .map_err(|error| format!("update shell profile {}: {error}", profile.display()))
+                .map_err(AppError::external)?;
         }
         wrote_profile = true;
     }
