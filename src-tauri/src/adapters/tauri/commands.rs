@@ -1674,13 +1674,20 @@ pub(crate) fn start_source_scan(
     let spawn_result = std::thread::Builder::new()
         .name(format!("aiw-source-scan-{}", &task_id[..8]))
         .spawn(move || {
-            let service = AppService::from_runtime(&runtime);
-            let result = crate::backend::application::SourceScanWorkflow::run(
-                &service,
-                params,
-                &task_context,
-                skill_sources_only,
-            );
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let service = AppService::from_runtime(&runtime);
+                crate::backend::application::SourceScanWorkflow::run(
+                    &service,
+                    params,
+                    &task_context,
+                    skill_sources_only,
+                )
+            }))
+            .unwrap_or_else(|_| {
+                Err(crate::backend::runtime::AppError::External(
+                    "source scan worker panicked".to_string(),
+                ))
+            });
             if let Ok(snapshot) =
                 tasks.finish_source_scan(&worker_task_id, result.map_err(|error| error.to_string()))
             {

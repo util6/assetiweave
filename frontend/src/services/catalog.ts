@@ -745,15 +745,15 @@ export async function applySkillGroupExclusiveMount(
 }
 
 export async function scanSources(kind?: AssetKind): Promise<Asset[]> {
-  try {
-    if (isTauriRuntime()) {
-      const task = await startSourceScan(kind, "all");
-      const terminal = await waitForSourceScanTask(task.id);
-      if (terminal.status !== "completed" || !terminal.result) {
-        throw new Error(terminal.error ?? "Source scan did not complete");
-      }
-      return terminal.result;
+  if (isTauriRuntime()) {
+    const task = await startSourceScan(kind, "all");
+    const terminal = await waitForSourceScanTask(task.id);
+    if (terminal.status !== "completed" || !terminal.result) {
+      throw new Error(terminal.error ?? "Source scan did not complete");
     }
+    return terminal.result;
+  }
+  try {
     return await invoke<Asset[]>("scan_sources", { kind: kind ?? null });
   } catch {
     return kind ? fallbackAssets.filter((asset) => asset.kind === kind) : fallbackAssets;
@@ -761,15 +761,15 @@ export async function scanSources(kind?: AssetKind): Promise<Asset[]> {
 }
 
 export async function scanSkillSources(): Promise<Asset[]> {
-  try {
-    if (isTauriRuntime()) {
-      const task = await startSourceScan("skill", "skills");
-      const terminal = await waitForSourceScanTask(task.id);
-      if (terminal.status !== "completed" || !terminal.result) {
-        throw new Error(terminal.error ?? "Skill source scan did not complete");
-      }
-      return terminal.result;
+  if (isTauriRuntime()) {
+    const task = await startSourceScan("skill", "skills");
+    const terminal = await waitForSourceScanTask(task.id);
+    if (terminal.status !== "completed" || !terminal.result) {
+      throw new Error(terminal.error ?? "Skill source scan did not complete");
     }
+    return terminal.result;
+  }
+  try {
     return await invoke<Asset[]>("scan_skill_sources");
   } catch {
     return fallbackAssets.filter((asset) => asset.kind === "skill");
@@ -888,7 +888,7 @@ async function waitForBatchMountTask(taskId: string): Promise<BatchMountTaskSnap
   }
 }
 
-async function waitForSourceScanTask(taskId: string): Promise<SourceScanTaskSnapshot> {
+export async function waitForSourceScanTask(taskId: string): Promise<SourceScanTaskSnapshot> {
   for (;;) {
     const snapshot = await getSourceScanTask(taskId);
     if (["completed", "failed", "cancelled"].includes(snapshot.status)) {
