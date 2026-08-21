@@ -48,14 +48,10 @@ export function AgentConnectionRow({
 }) {
   const status = statusMeta(connectionState, t);
   const accentColor = resolveAgentIconAccentColor(agent, appShortcuts);
-  const lifecycleBlocked = agent.coreCompatible === false || agent.hasSelectableDistribution === false;
-  const lifecycleBlockReason = agent.coreCompatible === false
-    ? agent.coreCompatibility
-      ? t("settings.agents.coreIncompatibleRange", agent.coreCompatibility)
-      : t("settings.agents.coreIncompatible")
-    : agent.hasSelectableDistribution === false
-      ? t("settings.agents.distributionUnavailable")
-      : undefined;
+  const lifecycleBlocked = agent.hasSelectableDistribution === false;
+  const lifecycleBlockReason = lifecycleBlocked
+    ? t("settings.agents.distributionUnavailable")
+    : undefined;
   return (
     <article className="group flex flex-wrap items-center gap-3 rounded-xl border border-theme-card-border/60 bg-theme-control/58 px-3.5 py-3 transition-[background,border-color,transform] hover:-translate-y-px hover:border-theme-nav-active-border/60 hover:bg-theme-control-hover/70 sm:flex-nowrap">
       <span

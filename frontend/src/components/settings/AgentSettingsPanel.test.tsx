@@ -186,7 +186,7 @@ describe("AgentSettingsPanel", () => {
     expect(within(row as HTMLElement).getAllByRole("button")).toHaveLength(2);
   });
 
-  it("disables lifecycle actions for an incompatible market item", async () => {
+  it("treats core compatibility metadata as observational", async () => {
     agentRuntime.listAgentMarket = listAgentMarketMock;
     const item = createMarketItem("opencode", false);
     item.coreCompatible = false;
@@ -196,8 +196,8 @@ describe("AgentSettingsPanel", () => {
 
     const row = (await screen.findByRole("heading", { name: "OpenCode" })).closest("article");
     const install = within(row as HTMLElement).getByRole("button", { name: "安装" });
-    expect((install as HTMLButtonElement).disabled).toBe(true);
-    expect(within(row as HTMLElement).getByText("当前版本不兼容")).toBeTruthy();
+    expect((install as HTMLButtonElement).disabled).toBe(false);
+    expect(within(row as HTMLElement).queryByText("当前版本不兼容")).toBeNull();
   });
 
   it("shows only installed Agents and the three compact ACP settings actions", async () => {

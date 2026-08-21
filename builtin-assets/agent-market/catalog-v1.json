@@ -1,7 +1,7 @@
 {
   "schema": "assetiweave.agent-market/v1",
-  "catalogVersion": "2026.08.20.2",
-  "generatedAt": "2026-08-20T00:00:00Z",
+  "catalogVersion": "2026.08.21.1",
+  "generatedAt": "2026-08-21T00:00:00Z",
   "source": {
     "kind": "assetiweave_curated",
     "upstream": "agentclientprotocol/registry",
@@ -25,7 +25,7 @@
           "prompt_optimization"
         ],
         "textPrompt": true,
-        "modelDiscovery": false
+        "modelDiscovery": true
       },
       "verification": {
         "status": "tested",
@@ -53,6 +53,9 @@
           "executable": "opencode",
           "launchArgs": [
             "acp"
+          ],
+          "modelDiscoveryArgs": [
+            "models"
           ]
         }
       ]
@@ -97,6 +100,46 @@
             "--acp"
           ],
           "nodeRange": ">=20"
+        }
+      ]
+    },
+    {
+      "id": "antigravity",
+      "displayName": "Antigravity",
+      "description": "Google Antigravity CLI through the native Agent runtime",
+      "protocol": "native",
+      "version": "1.1.16",
+      "capabilities": {
+        "purposes": [
+          "card_translation",
+          "memory"
+        ],
+        "textPrompt": true,
+        "modelDiscovery": false
+      },
+      "verification": {
+        "status": "tested",
+        "testedAt": "2026-08-20T00:00:00Z",
+        "evidenceId": "assetiweave-native-antigravity-1.1.15-system"
+      },
+      "upstream": {
+        "registryId": "antigravity",
+        "homepage": "https://antigravity.google/product/antigravity-cli",
+        "license": "proprietary"
+      },
+      "distributions": [
+        {
+          "id": "system-antigravity",
+          "type": "system",
+          "priority": 10,
+          "commandCandidates": [
+            "agy"
+          ],
+          "versionArgs": [
+            "--version"
+          ],
+          "versionRange": "",
+          "launchArgs": []
         }
       ]
     },

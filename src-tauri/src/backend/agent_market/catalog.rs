@@ -320,4 +320,23 @@ mod tests {
             changed_service.preview_token(changed_item, &distribution_id, "install")
         );
     }
+
+    #[test]
+    fn bundled_opencode_keeps_cli_model_discovery_in_its_runtime_definition() {
+        let service = CatalogService::bundled().expect("bundled catalog");
+        let item = service.item("opencode").expect("OpenCode item");
+
+        assert!(item.capabilities.model_discovery);
+        let model_discovery_args = match &item.distributions[0] {
+            Distribution::Binary {
+                model_discovery_args,
+                ..
+            } => model_discovery_args,
+            other => panic!("unexpected OpenCode distribution: {other:?}"),
+        };
+        assert_eq!(
+            model_discovery_args.as_deref(),
+            Some(["models".to_string()].as_slice())
+        );
+    }
 }

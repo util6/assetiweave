@@ -73,7 +73,7 @@ func newCmdAgentMarketList(f *cmdutil.Factory) *cobra.Command {
 	cmd.Flags().StringVar(&query, "query", "", "search Agent id, name or description")
 	cmd.Flags().StringVar(&protocol, "protocol", "", "protocol filter: acp or native")
 	cmd.Flags().BoolVar(&installedOnly, "installed-only", false, "only list installed Agents")
-	cmd.Flags().BoolVar(&includeIncompatible, "include-incompatible", true, "include core-incompatible catalog items")
+	cmd.Flags().BoolVar(&includeIncompatible, "include-incompatible", true, "legacy compatibility flag; Agent versions are observational")
 	return cmd
 }
 
@@ -167,6 +167,7 @@ func newCmdAgentLifecycle(f *cmdutil.Factory, defaultAction, use, short string) 
 			}
 			return callAndPrint(cmd, f, schema.MethodAgentInstallRun, map[string]any{
 				"agentId":        args[0],
+				"action":         defaultAction,
 				"catalogVersion": preview.CatalogVersion,
 				"agentVersion":   preview.TargetVersion,
 				"distributionId": preview.Selected.DistributionID,

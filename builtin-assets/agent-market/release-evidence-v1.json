@@ -1,9 +1,9 @@
 {
   "schema": "assetiweave.agent-market/release-evidence/v1",
-  "catalogVersion": "2026.08.20.2",
-  "catalogContentSha256": "2074ed1aaf12eb94557be5116d7efa99bbf71eb5b88db3d1cd750081d592a497",
+  "catalogVersion": "2026.08.21.1",
+  "catalogContentSha256": "2f708308ed54e9769fffb6fff4842bf5c338c1dc9c840a33b35d34d72ac732bf",
   "coreVersion": "0.6.1",
-  "capturedAt": "2026-08-20T12:28:31Z",
+  "capturedAt": "2026-08-21T07:15:00Z",
   "upstream": {
     "name": "agentclientprotocol/registry",
     "revision": "066208e41d95e12108fcd7d282b601ed8b2b53c8",
@@ -57,6 +57,24 @@
         "sessionNew": "failed: network_disconnected",
         "sessionClose": "not_run",
         "cleanShutdown": "passed"
+      }
+    },
+    {
+      "evidenceId": "assetiweave-native-antigravity-1.1.15-system",
+      "catalogItemId": "antigravity",
+      "upstreamAgentId": "antigravity",
+      "agentVersion": "1.1.15",
+      "distributionId": "system-antigravity",
+      "distributionType": "system",
+      "sourceAgentUrl": "https://antigravity.google/docs/cli-install",
+      "install": {
+        "status": "passed",
+        "method": "system executable discovery",
+        "versionOutput": "1.1.15"
+      },
+      "nativeConformance": {
+        "status": "passed",
+        "availabilityProbe": "passed"
       }
     },
     {

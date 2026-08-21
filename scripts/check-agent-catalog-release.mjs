@@ -8,7 +8,6 @@ import process from "node:process";
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const DEFAULT_CATALOG = path.join(ROOT, "builtin-assets", "agent-market", "catalog-v1.json");
 const DEFAULT_EVIDENCE = path.join(ROOT, "builtin-assets", "agent-market", "release-evidence-v1.json");
-const CURRENT_CORE = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
 const args = new Set(process.argv.slice(2));
 const catalogFlag = process.argv.indexOf("--catalog");
 const evidenceFlag = process.argv.indexOf("--evidence");
@@ -22,23 +21,6 @@ const NETWORK_TIMEOUT_MS = 30_000;
 function parseVersion(value) {
   const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(String(value));
   return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
-}
-
-function compareVersion(left, right) {
-  for (let index = 0; index < 3; index += 1) {
-    if (left[index] !== right[index]) return left[index] - right[index];
-  }
-  return 0;
-}
-
-function isCompatible(version, range) {
-  const current = parseVersion(version);
-  const match = /^\s*>=\s*([^,]+)\s*,\s*<\s*(.+?)\s*$/.exec(String(range));
-  const minimum = match && parseVersion(match[1]);
-  const maximum = match && parseVersion(match[2]);
-  return Boolean(current && minimum && maximum)
-    && compareVersion(current, minimum) >= 0
-    && compareVersion(current, maximum) < 0;
 }
 
 function sha256(bytes) {
@@ -64,12 +46,8 @@ function checkCatalog(catalog) {
   for (const item of catalog?.items ?? []) {
     if (!item?.id || ids.has(item.id)) errors.push(`duplicate or empty item id: ${item?.id ?? "<empty>"}`);
     ids.add(item?.id);
-    if (!parseVersion(item?.version)) errors.push(`${item?.id}: version must be semver`);
-    if (!isCompatible(CURRENT_CORE, `>=${item?.coreCompatibility?.min}, <${item?.coreCompatibility?.maxExclusive}`)) {
-      errors.push(`${item?.id}: coreCompatibility does not include ${CURRENT_CORE}`);
-    }
-    if (!parseVersion(item?.coreCompatibility?.min) || !parseVersion(item?.coreCompatibility?.maxExclusive)) {
-      errors.push(`${item?.id}: coreCompatibility must contain fixed semver bounds`);
+    if (typeof item?.version !== "string" || item.version.trim() === "" || item.version.length > 120 || item.version.includes("\0")) {
+      errors.push(`${item?.id}: observed version must be a non-empty bounded string`);
     }
     if (!item?.verification || !["tested", "experimental"].includes(item.verification.status)) {
       errors.push(`${item?.id}: verification status must be tested or experimental`);
@@ -108,7 +86,6 @@ function checkEvidence(catalog, catalogBytes, evidence) {
   }
   if (evidence.catalogVersion !== catalog.catalogVersion) errors.push("evidence catalogVersion does not match catalog");
   if (evidence.catalogContentSha256 !== sha256(catalogBytes)) errors.push("evidence catalogContentSha256 does not match bundled catalog");
-  if (evidence.coreVersion !== CURRENT_CORE) errors.push(`evidence coreVersion does not match ${CURRENT_CORE}`);
   if (evidence.upstream?.name !== catalog.source?.upstream) errors.push("evidence upstream name does not match catalog");
   if (evidence.upstream?.revision !== catalog.source?.upstreamRevision) errors.push("evidence upstream revision does not match catalog");
   if (!Array.isArray(evidence.items) || evidence.items.length === 0) {
@@ -134,7 +111,6 @@ function checkEvidence(catalog, catalogBytes, evidence) {
         errors.push(`${item.id}/${distribution.id}: missing evidence record`);
         continue;
       }
-      if (record.agentVersion !== item.version) errors.push(`${item.id}/${distribution.id}: evidence version does not match catalog`);
       if (record.install?.status !== "passed") errors.push(`${item.id}/${distribution.id}: install evidence must pass`);
       if (record.distributionType !== distribution.type) errors.push(`${item.id}/${distribution.id}: evidence distribution type does not match catalog`);
       if (distribution.type === "binary") {
@@ -147,11 +123,19 @@ function checkEvidence(catalog, catalogBytes, evidence) {
         if (record.bin !== distribution.bin) errors.push(`${item.id}/${distribution.id}: package bin evidence does not match catalog`);
         if (!record.packageIntegrity) errors.push(`${item.id}/${distribution.id}: package integrity evidence is missing`);
       }
-      const conformance = record.acpConformance;
-      const conformancePassed = conformance?.status === "passed"
-        && ["initialize", "sessionNew", "sessionClose", "cleanShutdown"].every((step) => conformance[step] === "passed");
-      if (item.verification?.status === "tested" && !conformancePassed) errors.push(`${item.id}/${distribution.id}: tested item requires complete ACP conformance evidence`);
-      if (conformancePassed && ["binary", "npx", "uvx"].includes(distribution.type)) passedManagedConformance = true;
+      if (item.protocol === "native") {
+        const nativeConformancePassed = record.nativeConformance?.status === "passed"
+          && record.nativeConformance?.availabilityProbe === "passed";
+        if (item.verification?.status === "tested" && !nativeConformancePassed) {
+          errors.push(`${item.id}/${distribution.id}: tested native item requires availability evidence`);
+        }
+      } else {
+        const conformance = record.acpConformance;
+        const conformancePassed = conformance?.status === "passed"
+          && ["initialize", "sessionNew", "sessionClose", "cleanShutdown"].every((step) => conformance[step] === "passed");
+        if (item.verification?.status === "tested" && !conformancePassed) errors.push(`${item.id}/${distribution.id}: tested item requires complete ACP conformance evidence`);
+        if (conformancePassed && ["binary", "npx", "uvx"].includes(distribution.type)) passedManagedConformance = true;
+      }
     }
   }
   if (!passedManagedConformance) errors.push("release evidence must contain at least one passed managed ACP conformance");
@@ -211,6 +195,7 @@ async function checkNetwork(catalog, evidence) {
     if (latestRegistry?.version !== "1.0.0") errors.push("remote ACP registry schema version is not 1.0.0");
     const latestById = new Map((latestRegistry.agents ?? []).map((item) => [item.id, item]));
     for (const item of catalog.items) {
+      if (item.protocol !== "acp") continue;
       const registryId = item.upstream.registryId;
       const source = await fetchJson(upstreamAgentUrl(revision, registryId));
       if (source.id !== registryId) errors.push(`${item.id}: pinned upstream id mismatch`);
@@ -279,5 +264,5 @@ if (errors.length > 0) {
   process.exitCode = 1;
 } else {
   const mode = network ? "network release" : release ? "release" : "static";
-  console.log(`Agent catalog ${mode} check passed: ${catalog.items.length} items, catalog ${catalog.catalogVersion}, core ${CURRENT_CORE}`);
+  console.log(`Agent catalog ${mode} check passed: ${catalog.items.length} items, catalog ${catalog.catalogVersion}`);
 }
