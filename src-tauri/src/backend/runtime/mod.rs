@@ -6,7 +6,6 @@
 
 mod app_runtime;
 mod error;
-mod locks;
 pub(crate) mod tasks;
 
 #[allow(unused_imports)]
@@ -16,8 +15,6 @@ pub(crate) use app_runtime::{
 };
 #[allow(unused_imports)]
 pub(crate) use error::{AppError, AppErrorView, AppResult, WireError};
-#[allow(unused_imports)]
-pub(crate) use locks::{PlanScopeGuard, RuntimeLocks};
 
 #[cfg(test)]
 mod tests;

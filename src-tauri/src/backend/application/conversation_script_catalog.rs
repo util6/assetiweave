@@ -1776,6 +1776,7 @@ impl From<ConversationAdapterPackageCatalogEntry> for ConversationScriptCatalogE
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug)]
 struct GitHubCatalogLocation {
     repo_url: String,

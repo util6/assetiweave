@@ -40,9 +40,9 @@ impl SourceScanWorkflow {
         })?;
         let total = sources.len();
         let scan = if skill_sources_only {
-            crate::backend::scanner::scan_skill_source
+            capabilities::scan_skill_source
         } else {
-            crate::backend::scanner::scan_source
+            capabilities::scan_source
         };
         capabilities::scan_selected_sources_with_progress(
             &service.db,
@@ -51,7 +51,7 @@ impl SourceScanWorkflow {
             scan,
             |index, total, source| {
                 if cx.is_cancelled() {
-                    return Err("source scan cancelled".to_string());
+                    return Err(AppError::Cancelled("source scan cancelled".to_string()));
                 }
                 cx.progress().progress(
                     index as u64,

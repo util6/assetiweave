@@ -1,4 +1,4 @@
-use crate::backend::compat::LegacyResult;
+use crate::backend::runtime::AppResult;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,14 +37,17 @@ pub(crate) struct HostDirectories {
 }
 
 impl HostDirectories {
-    pub(crate) fn current() -> LegacyResult<Self> {
-        let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+    pub(crate) fn current() -> AppResult<Self> {
+        let home = dirs::home_dir().ok_or_else(|| {
+            crate::backend::runtime::AppError::NotFound("无法确定用户主目录".to_string())
+        })?;
         Ok(Self {
             config: dirs::config_dir().unwrap_or_else(|| home.clone()),
             local_data: dirs::data_local_dir().unwrap_or_else(|| home.clone()),
             data: dirs::data_dir().unwrap_or_else(|| home.clone()),
             cache: dirs::cache_dir().unwrap_or_else(|| home.clone()),
-            workspace: std::env::current_dir().map_err(|error| error.to_string())?,
+            workspace: std::env::current_dir()
+                .map_err(|error| crate::backend::runtime::AppError::External(error.to_string()))?,
             home,
         })
     }
@@ -105,7 +108,7 @@ pub(crate) struct HostPathResolver {
 }
 
 impl HostPathResolver {
-    pub(crate) fn current() -> LegacyResult<Self> {
+    pub(crate) fn current() -> AppResult<Self> {
         Ok(Self::new(
             HostPlatform::current(),
             HostDirectories::current()?,
@@ -119,7 +122,7 @@ impl HostPathResolver {
         }
     }
 
-    pub(crate) fn normalize_input(&self, raw: &str) -> LegacyResult<StoredPath> {
+    pub(crate) fn normalize_input(&self, raw: &str) -> AppResult<StoredPath> {
         let spec = self.parse(raw)?;
         if spec.anchor == PathAnchor::Absolute {
             for (anchor, directory) in [
@@ -143,7 +146,7 @@ impl HostPathResolver {
         Ok(StoredPath(self.format_spec(&spec)))
     }
 
-    pub(crate) fn resolve(&self, stored: &StoredPath) -> LegacyResult<ResolvedPath> {
+    pub(crate) fn resolve(&self, stored: &StoredPath) -> AppResult<ResolvedPath> {
         let spec = self.parse(stored.as_str())?;
         let path = match spec.anchor {
             PathAnchor::Home => self.join(&self.directories.home, &spec.value),
@@ -171,7 +174,7 @@ impl HostPathResolver {
         Ok(ResolvedPath(path))
     }
 
-    pub(crate) fn display(&self, stored: &StoredPath) -> LegacyResult<DisplayPath> {
+    pub(crate) fn display(&self, stored: &StoredPath) -> AppResult<DisplayPath> {
         let resolved = self.resolve(stored)?;
         if let Some(relative) = self.strip_directory_prefix(
             &resolved.as_path().to_string_lossy(),
@@ -184,10 +187,12 @@ impl HostPathResolver {
         ))
     }
 
-    fn parse(&self, raw: &str) -> LegacyResult<PathSpec> {
+    fn parse(&self, raw: &str) -> AppResult<PathSpec> {
         let raw = raw.trim();
         if raw.is_empty() {
-            return Err("path must not be empty".to_string());
+            return Err(crate::backend::runtime::AppError::Validation(
+                "path must not be empty".to_string(),
+            ));
         }
 
         for (prefix, anchor) in [

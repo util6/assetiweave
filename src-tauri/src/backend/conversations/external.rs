@@ -138,8 +138,9 @@ pub(super) fn resolve_source_location_for_adapter(
     if source.location.contains("://") {
         return Ok(source.location.clone());
     }
-    crate::backend::path_utils::expand_path(&source.location)
-        .map(|path| path.to_string_lossy().to_string())
+    Ok(crate::backend::path_utils::expand_path(&source.location)?
+        .to_string_lossy()
+        .to_string())
 }
 
 fn validate_external_adapter_for_method(
@@ -876,7 +877,7 @@ pub(super) fn run_external_adapter(
         crate::backend::host_process::HostProcessError::Timeout { .. } => {
             format!("adapter timed out after {} ms", timeout.as_millis())
         }
-        crate::backend::host_process::HostProcessError::Cancelled { .. } => {
+        crate::backend::host_process::HostProcessError::Cancelled => {
             "adapter process was cancelled".to_string()
         }
     })?;
@@ -897,6 +898,7 @@ pub(super) fn run_external_adapter(
     parse_external_adapter_output_with_manifest(method, output.stdout, output.stderr, manifest)
 }
 
+#[cfg(test)]
 pub(super) fn parse_external_adapter_output(
     method: &str,
     stdout: Vec<u8>,

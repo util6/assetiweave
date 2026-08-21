@@ -1,8 +1,6 @@
 use super::prelude::*;
 
 pub(super) struct DetectionCtx<'a> {
-    pub(super) source: &'a Source,
-    pub(super) path: &'a Path,
     pub(super) relative_path: &'a str,
     pub(super) format: AssetFormat,
 }
@@ -152,11 +150,9 @@ pub(super) fn detect(ctx: &DetectionCtx<'_>) -> Option<(&'static str, u32, Detec
 mod tests {
     use super::*;
     use crate::backend::models::{SourceKind, SourceOrigin};
-    use std::path::PathBuf;
-
     #[test]
     fn detector_order_is_stable_and_priority_driven() {
-        let source = Source {
+        let _source = Source {
             id: "source".into(),
             name: "source".into(),
             kind: SourceKind::Local,
@@ -176,8 +172,6 @@ mod tests {
             last_scan_status: None,
         };
         let ctx = DetectionCtx {
-            source: &source,
-            path: &PathBuf::from("/tmp/prompt-rule.md"),
             relative_path: "prompt-rule.md",
             format: AssetFormat::Markdown,
         };

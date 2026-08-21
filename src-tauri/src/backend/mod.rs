@@ -1,7 +1,6 @@
 pub(crate) mod agent_market;
 pub(crate) mod agents;
 pub(crate) mod ai_execution;
-pub(crate) mod app_paths;
 pub(crate) mod app_settings;
 pub(crate) mod application;
 pub(crate) mod bootstrap;

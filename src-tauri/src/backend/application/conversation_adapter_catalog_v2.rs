@@ -443,7 +443,7 @@ enum CatalogFetchResult {
 
 fn fetch_catalog_document(url: &str, etag: Option<&str>) -> AppResult<CatalogFetchResult> {
     if !url.starts_with("https://") && !url.starts_with("http://") {
-        let path = crate::backend::path_utils::expand_path(url).map_err(AppError::Storage)?;
+        let path = crate::backend::path_utils::expand_path(url)?;
         return fs::read_to_string(&path)
             .map(|text| CatalogFetchResult::Text { text, etag: None })
             .map_err(|error| {
@@ -494,8 +494,7 @@ fn resolve_catalog_document_url(index_url: &str, history_url: &str) -> AppResult
                 AppError::Validation(format!("resolve Catalog v2 history URL failed: {error}"))
             });
     }
-    let index_path =
-        crate::backend::path_utils::expand_path(index_url).map_err(AppError::Storage)?;
+    let index_path = crate::backend::path_utils::expand_path(index_url)?;
     Ok(index_path
         .parent()
         .unwrap_or_else(|| Path::new("."))

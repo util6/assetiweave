@@ -108,12 +108,9 @@ impl AgentRuntimeManager {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn registry(&self) -> AgentRuntimeRegistry {
         self.registry.clone()
-    }
-
-    pub(crate) fn repository(&self) -> &AgentInstallationRepository {
-        &self.repository
     }
 
     pub(crate) fn runtime(&self) -> Arc<dyn AgentExecutionRuntime> {
@@ -315,6 +312,7 @@ struct ResolvedDefinition {
     protocol: String,
 }
 
+#[cfg(test)]
 pub(crate) fn definition_json(
     agent_id: &str,
     display_name: &str,

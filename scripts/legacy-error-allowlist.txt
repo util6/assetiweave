@@ -1,7 +1,1 @@
 # path|symbol|owner|removal_task|count
-src-tauri/src/adapters/tauri/agent_market.rs|AppError::Legacy|Agent Market transport compatibility|BA-008|2
-src-tauri/src/backend/events/dispatcher.rs|AppError::Legacy|Domain event dispatcher compatibility|BA-008|4
-src-tauri/src/backend/events/tests.rs|AppError::Legacy|Domain event legacy fixture|BA-008|1
-src-tauri/src/backend/runtime/app_runtime.rs|AppError::Legacy|Runtime bootstrap compatibility|BA-008|1
-src-tauri/src/backend/runtime/error.rs|Legacy|Runtime error conversion compatibility|BA-008|7
-src-tauri/src/backend/runtime/tasks.rs|AppError::Legacy|Task runtime compatibility|BA-008|3

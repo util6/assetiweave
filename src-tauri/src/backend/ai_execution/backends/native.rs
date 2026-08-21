@@ -147,7 +147,6 @@ impl NativeExecutionBackend {
             )
             .await
             .map_err(|error| AiExecutionError::Output {
-                program: PathBuf::from(command_name),
                 message: error.to_string(),
             })?;
 
@@ -155,7 +154,6 @@ impl NativeExecutionBackend {
             Ok(())
         } else {
             Err(AiExecutionError::Output {
-                program: PathBuf::from(command_name),
                 message: result
                     .error
                     .unwrap_or_else(|| "probe command exited with non-zero status".to_string()),
@@ -213,19 +211,16 @@ impl NativeExecutionBackend {
             )
             .await
             .map_err(|error| AiExecutionError::Output {
-                program: PathBuf::from(command_name),
                 message: error.to_string(),
             })?;
 
         if output.stdout_truncated || output.stderr_truncated {
             return Err(AiExecutionError::Output {
-                program: PathBuf::from(command_name),
                 message: "model discovery output exceeded the configured limit".to_string(),
             });
         }
         if !output.status.success() {
             return Err(AiExecutionError::Output {
-                program: PathBuf::from(command_name),
                 message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
             });
         }
@@ -409,10 +404,7 @@ async fn run_native_execution(
     }
 
     if let Some(err) = result_error {
-        return Err(AiExecutionError::Output {
-            program: PathBuf::from(&definition.command),
-            message: err,
-        });
+        return Err(AiExecutionError::Output { message: err });
     }
 
     let text = if !accumulated_text.is_empty() {
@@ -423,7 +415,6 @@ async fn run_native_execution(
 
     if text.is_empty() {
         return Err(AiExecutionError::Output {
-            program: PathBuf::from(&definition.command),
             message: "agent produced empty response text".to_string(),
         });
     }
@@ -440,7 +431,6 @@ async fn run_native_execution(
 fn create_workspace(root: &Path) -> Result<PathBuf, AiExecutionError> {
     let workspace = root.join(format!("exec-{}", Uuid::new_v4()));
     fs::create_dir_all(&workspace).map_err(|error| AiExecutionError::Output {
-        program: workspace.clone(),
         message: format!("could not create execution workspace: {error}"),
     })?;
     Ok(workspace)
@@ -449,10 +439,6 @@ fn create_workspace(root: &Path) -> Result<PathBuf, AiExecutionError> {
 fn cancelled_error(definition: &AgentDefinition) -> AiExecutionError {
     AiExecutionError::Cancelled {
         program: PathBuf::from(&definition.command),
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-        stdout_truncated: false,
-        stderr_truncated: false,
     }
 }
 
@@ -460,10 +446,6 @@ fn timeout_error(definition: &AgentDefinition, timeout: std::time::Duration) -> 
     AiExecutionError::Timeout {
         program: PathBuf::from(&definition.command),
         timeout,
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-        stdout_truncated: false,
-        stderr_truncated: false,
     }
 }
 

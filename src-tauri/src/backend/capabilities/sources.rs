@@ -1,5 +1,13 @@
 use super::prelude::*;
 
+pub(crate) fn scan_source(source: &Source) -> AppResult<Vec<Asset>> {
+    crate::backend::scanner::scan_source(source).map_err(AppError::External)
+}
+
+pub(crate) fn scan_skill_source(source: &Source) -> AppResult<Vec<Asset>> {
+    crate::backend::scanner::scan_skill_source(source).map_err(AppError::External)
+}
+
 pub(crate) fn scan_selected_sources(
     db: &crate::backend::store::Database,
     tenant_id: &str,
@@ -57,20 +65,21 @@ where
                 }
             }
             Err(error) => {
-                if should_remove_source_on_scan_error(&error) {
+                let error_message = error.to_string();
+                if should_remove_source_on_scan_error(&error_message) {
                     let mut fields = source_log_fields(&source);
-                    fields.push(("error", error.clone()));
+                    fields.push(("error", error_message.clone()));
                     log_warn("source.scan.removed", "来源路径不存在，已移除", &fields);
                     delete_source_sqlx(db, tenant_id, &source.id)?;
                     continue;
                 }
                 source.last_scanned_at = Some(now);
-                source.last_scan_status = Some(format!("error: {error}"));
+                source.last_scan_status = Some(format!("error: {error_message}"));
                 upsert_source_sqlx(db, tenant_id, &source)?;
                 log_error(
                     "source.scan.error",
                     "扫描来源失败",
-                    &error,
+                    &error_message,
                     &source_log_fields(&source),
                 );
             }
@@ -80,9 +89,9 @@ where
     cleanup_orphan_asset_records(db, tenant_id)?;
     let pool = db.pool().clone();
     let tenant_id = tenant_id.to_string();
-    db.block_on(
-        async move { crate::backend::store::load_assets_sqlx(&pool, &tenant_id, None).await },
-    )
+    Ok(db.block_on(async move {
+        crate::backend::store::load_assets_sqlx(&pool, &tenant_id, None).await
+    })?)
 }
 
 pub(crate) fn refresh_all_sources(
@@ -94,7 +103,7 @@ pub(crate) fn refresh_all_sources(
     let sources = db.block_on(async move {
         crate::backend::store::load_sources_sqlx(&pool, &tenant_id_for_query).await
     })?;
-    scan_selected_sources(db, tenant_id, sources, crate::backend::scanner::scan_source)
+    scan_selected_sources(db, tenant_id, sources, scan_source)
 }
 
 pub(crate) fn refresh_recorded_assets(
@@ -178,9 +187,9 @@ pub(crate) fn refresh_recorded_assets(
     cleanup_orphan_asset_records(db, tenant_id)?;
     let pool = db.pool().clone();
     let tenant_id = tenant_id.to_string();
-    db.block_on(
-        async move { crate::backend::store::load_assets_sqlx(&pool, &tenant_id, None).await },
-    )
+    Ok(db.block_on(async move {
+        crate::backend::store::load_assets_sqlx(&pool, &tenant_id, None).await
+    })?)
 }
 
 pub(crate) fn cleanup_orphan_asset_records(
@@ -189,12 +198,12 @@ pub(crate) fn cleanup_orphan_asset_records(
 ) -> AppResult<()> {
     let pool = db.pool().clone();
     let tenant_id = tenant_id.to_string();
-    db.block_on(async move {
+    Ok(db.block_on(async move {
         crate::backend::store::delete_orphan_asset_mounts_sqlx(&pool, &tenant_id).await?;
         crate::backend::store::delete_orphan_deployment_state_sqlx(&pool, &tenant_id).await?;
         crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool, &tenant_id).await?;
         crate::backend::store::delete_orphan_asset_group_members_sqlx(&pool, &tenant_id).await
-    })
+    })?)
 }
 
 fn prune_missing_sources(
@@ -233,7 +242,7 @@ fn persist_source_scan_result_sqlx(
     let source_id = source.id.clone();
     let source_to_save = source.clone();
     let assets_to_save = assets.to_vec();
-    db.block_on(async move {
+    Ok(db.block_on(async move {
         crate::backend::store::replace_source_assets_sqlx(
             &pool,
             &tenant_id,
@@ -242,7 +251,7 @@ fn persist_source_scan_result_sqlx(
         )
         .await?;
         crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, &source_to_save).await
-    })
+    })?)
 }
 
 fn replace_source_assets_sqlx(
@@ -255,10 +264,10 @@ fn replace_source_assets_sqlx(
     let tenant_id = tenant_id.to_string();
     let source_id = source_id.to_string();
     let assets = assets.to_vec();
-    db.block_on(async move {
+    Ok(db.block_on(async move {
         crate::backend::store::replace_source_assets_sqlx(&pool, &tenant_id, &source_id, &assets)
             .await
-    })
+    })?)
 }
 
 fn upsert_source_sqlx(
@@ -269,9 +278,9 @@ fn upsert_source_sqlx(
     let pool = db.pool().clone();
     let tenant_id = tenant_id.to_string();
     let source = source.clone();
-    db.block_on(async move {
+    Ok(db.block_on(async move {
         crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, &source).await
-    })
+    })?)
 }
 
 fn delete_source_sqlx(
@@ -282,9 +291,9 @@ fn delete_source_sqlx(
     let pool = db.pool().clone();
     let tenant_id = tenant_id.to_string();
     let source_id = source_id.to_string();
-    db.block_on(async move {
+    Ok(db.block_on(async move {
         crate::backend::store::delete_source_sqlx(&pool, &tenant_id, &source_id).await
-    })
+    })?)
 }
 
 fn source_root_is_missing(source: &Source) -> bool {

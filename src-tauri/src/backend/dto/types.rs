@@ -296,24 +296,9 @@ impl ConversationSearchCardType {
         Self::new("question")
     }
 
+    #[cfg(test)]
     pub(crate) fn answer() -> Self {
         Self::new("answer")
-    }
-
-    pub(crate) fn tool() -> Self {
-        Self::new("tool")
-    }
-
-    pub(crate) fn command() -> Self {
-        Self::new("command")
-    }
-
-    pub(crate) fn code() -> Self {
-        Self::new("code")
-    }
-
-    pub(crate) fn result() -> Self {
-        Self::new("result")
     }
 }
 
@@ -370,7 +355,7 @@ pub(crate) struct AppOverview {
     pub(crate) last_scan_status: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 pub(crate) struct CatalogAsset {
     #[serde(flatten)]
     pub(crate) asset: Asset,
@@ -381,7 +366,7 @@ pub(crate) struct CatalogAsset {
     pub(crate) backup_status: Option<SkillBackupAssetStatus>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 pub(crate) struct GitRepositoryInfo {
     pub(crate) root_path: String,
     pub(crate) display_root_path: String,
@@ -389,7 +374,7 @@ pub(crate) struct GitRepositoryInfo {
     pub(crate) web_url: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 pub(crate) struct SkillBackupAssetStatus {
     pub(crate) state: SkillBackupState,
     pub(crate) backup_path: Option<String>,
@@ -397,7 +382,7 @@ pub(crate) struct SkillBackupAssetStatus {
     pub(crate) hidden_asset_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SkillBackupState {
     BackedUp,

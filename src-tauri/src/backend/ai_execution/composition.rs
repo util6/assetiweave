@@ -17,57 +17,29 @@ impl ActionId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ExecutionPolicyClass {
-    InteractiveAssist,
-    Diagnostics,
-    BatchTransform,
-    BackgroundAnalysis,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ActionRegistration {
     pub(crate) id: &'static str,
-    pub(crate) policy: ExecutionPolicyClass,
-    pub(crate) description: &'static str,
 }
 
 static ACTIONS: &[ActionRegistration] = &[
     ActionRegistration {
         id: "translation.card",
-        policy: ExecutionPolicyClass::InteractiveAssist,
-        description: "Translate a conversation card",
     },
     ActionRegistration {
         id: "translation.connection_test",
-        policy: ExecutionPolicyClass::Diagnostics,
-        description: "Check translation connectivity",
     },
     ActionRegistration {
         id: "translation.model_discovery",
-        policy: ExecutionPolicyClass::Diagnostics,
-        description: "Discover translation models",
     },
     ActionRegistration {
         id: "memory.extraction",
-        policy: ExecutionPolicyClass::BackgroundAnalysis,
-        description: "Extract memory candidates",
     },
-    ActionRegistration {
-        id: "memory.dream",
-        policy: ExecutionPolicyClass::BackgroundAnalysis,
-        description: "Generate memory dream notes",
-    },
+    ActionRegistration { id: "memory.dream" },
     ActionRegistration {
         id: "prompt.optimization",
-        policy: ExecutionPolicyClass::InteractiveAssist,
-        description: "Optimize a prompt",
     },
 ];
-
-pub(crate) fn action_registrations() -> &'static [ActionRegistration] {
-    ACTIONS
-}
 
 pub(crate) fn resolve_action(id: &ActionId) -> Result<&'static ActionRegistration, AppError> {
     ACTIONS
@@ -78,8 +50,7 @@ pub(crate) fn resolve_action(id: &ActionId) -> Result<&'static ActionRegistratio
 
 pub(crate) fn resolve_agent_for(action: &ActionId) -> Result<(AgentId, Option<String>), AppError> {
     resolve_action(action)?;
-    let settings =
-        crate::backend::app_settings::read_app_settings_value().map_err(AppError::Legacy)?;
+    let settings = crate::backend::app_settings::read_app_settings_value()?;
     let assignments = settings.get("agentAssignments").and_then(Value::as_object);
     let assignment = assignments
         .and_then(|values| values.get(action.as_str()))

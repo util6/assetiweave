@@ -40,6 +40,7 @@ pub(crate) struct AcpProtocol {
     shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
     actor: Mutex<Option<JoinHandle<()>>>,
     actor_abort: AbortHandle,
+    #[cfg(test)]
     alive: Arc<AtomicBool>,
     shutdown_requested: Arc<AtomicBool>,
 }
@@ -112,6 +113,7 @@ impl AcpProtocol {
                 shutdown_tx: Mutex::new(Some(shutdown_tx)),
                 actor: Mutex::new(Some(actor)),
                 actor_abort,
+                #[cfg(test)]
                 alive,
                 shutdown_requested,
             },
@@ -122,10 +124,12 @@ impl AcpProtocol {
         ))
     }
 
+    #[cfg(test)]
     pub(crate) fn initialize_response(&self) -> &InitializeResponse {
         &self.initialize
     }
 
+    #[cfg(test)]
     pub(crate) fn is_alive(&self) -> bool {
         self.alive.load(Ordering::Acquire)
     }

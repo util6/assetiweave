@@ -25,6 +25,7 @@ pub(crate) struct Compatibility {
 }
 
 impl Compatibility {
+    #[cfg(test)]
     pub(crate) fn accepts_core(&self, host: &Version) -> bool {
         self.core_requirement
             .as_ref()

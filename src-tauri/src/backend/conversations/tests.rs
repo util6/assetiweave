@@ -6,7 +6,10 @@ use super::{
     validate_external_adapter,
 };
 use crate::backend::models::{ConversationPartKind, ConversationPartRole};
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    process::{Command, Stdio},
+};
 
 struct TempFixture {
     path: PathBuf,

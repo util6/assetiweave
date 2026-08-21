@@ -7,16 +7,17 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
     AssertSqlSafe, Row, SqlitePool,
 };
+#[cfg(test)]
 use std::{
     collections::BTreeSet,
-    future::Future,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
-    time::Duration,
+    path::PathBuf,
+    sync::{Mutex, OnceLock},
 };
+use std::{future::Future, path::Path, sync::Arc, time::Duration};
 use tokio::runtime::Runtime;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+#[cfg(test)]
 static INITIALIZED_DB_PATHS: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
 
 #[derive(Clone)]
@@ -299,7 +300,7 @@ async fn ensure_library_source_sqlx(pool: &SqlitePool, tenant_id: &str) -> Legac
 
 async fn ensure_system_skill_source_sqlx(pool: &SqlitePool, tenant_id: &str) -> LegacyResult<()> {
     let source = crate::backend::builtin_skills::system_skill_source()?;
-    super::source_repo::upsert_source_sqlx(pool, tenant_id, &source).await
+    Ok(super::source_repo::upsert_source_sqlx(pool, tenant_id, &source).await?)
 }
 
 async fn normalize_existing_sources_sqlx(pool: &SqlitePool, tenant_id: &str) -> LegacyResult<()> {

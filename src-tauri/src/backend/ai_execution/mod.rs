@@ -16,19 +16,9 @@ use crate::backend::agents::types::{
 };
 #[cfg(test)]
 use std::path::Path;
-use std::{path::PathBuf, process::ExitStatus, sync::Arc};
+use std::sync::Arc;
 
 const MAX_PROMPT_BYTES: usize = 1_000_000;
-
-#[derive(Debug)]
-pub(crate) struct AiCommandOutput {
-    pub(crate) program: PathBuf,
-    pub(crate) status: ExitStatus,
-    pub(crate) stdout: Vec<u8>,
-    pub(crate) stderr: Vec<u8>,
-    pub(crate) stdout_truncated: bool,
-    pub(crate) stderr_truncated: bool,
-}
 
 #[cfg(test)]
 pub(crate) fn agent_runtime_manager(

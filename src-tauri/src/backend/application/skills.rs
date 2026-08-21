@@ -578,9 +578,7 @@ impl AppService {
             group_id,
             profile_id,
             enabled,
-            |index, total, asset_id| {
-                before_item(index, total, asset_id).map_err(|error| error.to_string())
-            },
+            |index, total, asset_id| before_item(index, total, asset_id),
         )?)
     }
 
@@ -621,9 +619,7 @@ impl AppService {
                 &self.db,
                 self.tenant_id(),
                 &input,
-                |index, total, asset_id| {
-                    before_item(index, total, asset_id).map_err(|error| error.to_string())
-                },
+                |index, total, asset_id| before_item(index, total, asset_id),
             )?,
         )
     }

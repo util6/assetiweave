@@ -1,10 +1,10 @@
 use crate::backend::models::{AssetKind, Source, SourceOrigin, SourceScannerKind};
 use crate::backend::{
-    compat::LegacyResult,
     path_utils::{
         detect_target_provider, expand_path, find_git_root, is_app_library_path,
         normalize_path_for_storage, normalize_relative_path,
     },
+    runtime::AppResult,
     target_catalog::TargetCatalog,
 };
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
@@ -20,7 +20,7 @@ use super::{
 pub(crate) async fn load_sources_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> LegacyResult<Vec<Source>> {
+) -> AppResult<Vec<Source>> {
     let rows = sqlx::query(sql::LIST_SOURCES)
         .bind(tenant_id)
         .fetch_all(pool)
@@ -32,7 +32,7 @@ pub(crate) async fn load_sources_sqlx(
 pub(crate) async fn load_skill_sources_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> LegacyResult<Vec<Source>> {
+) -> AppResult<Vec<Source>> {
     let rows = sqlx::query(sql::LIST_SKILL_SOURCES)
         .bind(tenant_id)
         .fetch_all(pool)
@@ -45,7 +45,7 @@ pub(crate) async fn load_source_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     source_id: &str,
-) -> LegacyResult<Option<Source>> {
+) -> AppResult<Option<Source>> {
     sqlx::query(sql::LOAD_SOURCE)
         .bind(tenant_id)
         .bind(source_id)
@@ -57,7 +57,7 @@ pub(crate) async fn load_source_sqlx(
         .transpose()
 }
 
-fn map_sqlx_source_row(row: &SqliteRow) -> LegacyResult<Source> {
+fn map_sqlx_source_row(row: &SqliteRow) -> AppResult<Source> {
     let root_path: String = row.try_get(3).map_err(|error| error.to_string())?;
     let repo_root: Option<String> = row.try_get(6).map_err(|error| error.to_string())?;
     Ok(Source {
@@ -108,7 +108,7 @@ pub(crate) async fn upsert_source_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     source: &Source,
-) -> LegacyResult<()> {
+) -> AppResult<()> {
     upsert_source_sqlx_normalized(pool, tenant_id, normalize_source(source)).await
 }
 
@@ -117,7 +117,7 @@ pub(crate) async fn upsert_source_sqlx_with_catalog(
     tenant_id: &str,
     source: &Source,
     catalog: &TargetCatalog,
-) -> LegacyResult<()> {
+) -> AppResult<()> {
     upsert_source_sqlx_normalized(
         pool,
         tenant_id,
@@ -130,7 +130,7 @@ async fn upsert_source_sqlx_normalized(
     pool: &SqlitePool,
     tenant_id: &str,
     source: Source,
-) -> LegacyResult<()> {
+) -> AppResult<()> {
     sqlx::query(sql::UPSERT_SOURCE)
         .bind(tenant_id)
         .bind(&source.id)
@@ -246,7 +246,7 @@ pub(crate) async fn delete_source_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     id: &str,
-) -> LegacyResult<()> {
+) -> AppResult<()> {
     sqlx::query(sql::DELETE_ASSETS_BY_SOURCE)
         .bind(tenant_id)
         .bind(id)
@@ -287,7 +287,7 @@ mod tests {
                     load_source_sqlx(database.pool(), "default", &skill_source.id).await?;
                 let missing_source =
                     load_source_sqlx(database.pool(), "default", "missing").await?;
-                LegacyResult::Ok((
+                AppResult::Ok((
                     all_sources,
                     skill_sources,
                     loaded_skill_source,
@@ -328,7 +328,7 @@ mod tests {
                 let tenant_sources = load_sources_sqlx(database.pool(), "tenant-a").await?;
                 let default_loaded = load_source_sqlx(database.pool(), "default", "shared").await?;
                 let tenant_loaded = load_source_sqlx(database.pool(), "tenant-a", "shared").await?;
-                LegacyResult::Ok((
+                AppResult::Ok((
                     default_sources,
                     tenant_sources,
                     default_loaded,

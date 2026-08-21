@@ -23,6 +23,5 @@ pub(super) use sha2::{Digest, Sha256};
 pub(super) use std::{
     fs,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
     time::Duration,
 };

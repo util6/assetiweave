@@ -106,6 +106,7 @@ pub(crate) struct TaskSnapshot {
     pub(crate) started_at: String,
     pub(crate) finished_at: Option<String>,
     pub(crate) detail: Value,
+    pub(crate) result: Option<Value>,
 }
 
 pub(crate) struct TaskContext {
@@ -174,8 +175,8 @@ pub(crate) struct TaskRuntime {
 }
 
 pub(crate) enum SpawnOutcome {
-    Started(TaskSnapshot),
-    Existing(TaskSnapshot),
+    Started,
+    Existing,
 }
 
 pub(crate) enum ExternalRegistrationOutcome {
@@ -231,17 +232,20 @@ impl TaskRuntime {
             .tasks
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
-        if let Some(existing) = tasks.get(&task_id) {
-            return Ok(SpawnOutcome::Existing(existing.snapshot.clone()));
+        if tasks.contains_key(&task_id) {
+            return Ok(SpawnOutcome::Existing);
         }
-        if let Some(existing) = spec.dedup_key.as_ref().and_then(|key| {
-            tasks.values().find(|entry| {
-                entry.snapshot.kind == spec.kind
-                    && entry.snapshot.dedup_key.as_ref() == Some(key)
-                    && entry.snapshot.state.is_active()
-            })
+        if spec.dedup_key.as_ref().is_some_and(|key| {
+            tasks
+                .values()
+                .find(|entry| {
+                    entry.snapshot.kind == spec.kind
+                        && entry.snapshot.dedup_key.as_ref() == Some(key)
+                        && entry.snapshot.state.is_active()
+                })
+                .is_some()
         }) {
-            return Ok(SpawnOutcome::Existing(existing.snapshot.clone()));
+            return Ok(SpawnOutcome::Existing);
         }
         let snapshot = TaskSnapshot {
             task_id: task_id.clone(),
@@ -253,6 +257,7 @@ impl TaskRuntime {
             started_at,
             finished_at: None,
             detail: spec.detail,
+            result: None,
         };
         tasks.insert(
             task_id.clone(),
@@ -269,7 +274,7 @@ impl TaskRuntime {
         }
 
         self.launch_task(task_id.clone(), cancellation, task)?;
-        Ok(SpawnOutcome::Started(snapshot))
+        Ok(SpawnOutcome::Started)
     }
 
     /// Register an externally-driven task without moving its domain work into
@@ -331,6 +336,7 @@ impl TaskRuntime {
             started_at,
             finished_at: None,
             detail: spec.detail,
+            result: None,
         };
         tasks.insert(
             task_id,
@@ -359,6 +365,28 @@ impl TaskRuntime {
         if entry.snapshot.state == TaskState::Pending {
             entry.snapshot.state = TaskState::Running;
             entry.started = true;
+        }
+        Ok(entry.snapshot.clone())
+    }
+
+    /// Mark a reserved external task as running without claiming its worker
+    /// slot. The adapter can then attach the real closure through
+    /// `start_external_with` while observers see the canonical running state.
+    pub(crate) fn activate_external(
+        &self,
+        task_id: &str,
+        detail: Value,
+    ) -> AppResult<TaskSnapshot> {
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+        if entry.snapshot.state == TaskState::Pending {
+            entry.snapshot.state = TaskState::Running;
+            entry.snapshot.detail = detail;
         }
         Ok(entry.snapshot.clone())
     }
@@ -415,6 +443,21 @@ impl TaskRuntime {
             });
         }
         Ok(())
+    }
+
+    /// Replace the adapter projection stored by the canonical task runtime.
+    /// Tauri and Engine adapters must derive their public snapshots from this
+    /// value rather than keeping a second mutable task registry.
+    pub(crate) fn update_detail(&self, task_id: &str, detail: Value) -> AppResult<TaskSnapshot> {
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+        entry.snapshot.detail = detail;
+        Ok(entry.snapshot.clone())
     }
 
     /// Start a task that was registered before its adapter had assembled the
@@ -483,7 +526,7 @@ impl TaskRuntime {
                         Some(AppError::Canceled("后台任务已取消".to_string()).into());
                 } else {
                     entry.snapshot.state = TaskState::Succeeded;
-                    entry.snapshot.detail = detail;
+                    entry.snapshot.result = Some(detail);
                 }
             }
             Err(_error) if entry.cancellation.is_cancelled() => {
@@ -515,6 +558,72 @@ impl TaskRuntime {
             self.release_active_slot();
         }
         removed.map(|entry| entry.snapshot)
+    }
+
+    /// Prune terminal tasks owned by the runtime. Callers may choose a
+    /// retention window and a maximum number of terminal snapshots per kind,
+    /// but deletion always goes through this runtime so active-task accounting
+    /// and lifecycle state remain consistent.
+    pub(crate) fn prune(&self, kind: TaskKind, retention: Duration, terminal_limit: usize) {
+        let now = Utc::now();
+        let retention =
+            chrono::Duration::from_std(retention).unwrap_or_else(|_| chrono::Duration::zero());
+        let snapshots = self.list(TaskFilter {
+            kind: Some(kind),
+            active_only: false,
+        });
+        let mut terminal = snapshots
+            .into_iter()
+            .filter(|snapshot| snapshot.state.is_terminal())
+            .map(|snapshot| {
+                let finished_at = snapshot
+                    .finished_at
+                    .as_deref()
+                    .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                    .map(|value| value.with_timezone(&Utc));
+                (snapshot.task_id, finished_at)
+            })
+            .collect::<Vec<_>>();
+
+        let mut remove_ids = terminal
+            .iter()
+            .filter_map(|(task_id, finished_at)| {
+                finished_at
+                    .is_some_and(|finished_at| now.signed_duration_since(finished_at) >= retention)
+                    .then_some(task_id.clone())
+            })
+            .collect::<Vec<_>>();
+        terminal.retain(|(task_id, _)| !remove_ids.iter().any(|removed| removed == task_id));
+
+        terminal.sort_by(|(_, left), (_, right)| left.cmp(right));
+        let excess = terminal.len().saturating_sub(terminal_limit);
+        remove_ids.extend(
+            terminal
+                .into_iter()
+                .take(excess)
+                .map(|(task_id, _)| task_id),
+        );
+
+        for task_id in remove_ids {
+            self.remove(&task_id);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_finished_at_for_test(
+        &self,
+        task_id: &str,
+        finished_at: String,
+    ) -> AppResult<()> {
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+        entry.snapshot.finished_at = Some(finished_at);
+        Ok(())
     }
 
     pub(crate) fn has_active_tasks(&self) -> bool {
@@ -550,7 +659,7 @@ impl TaskRuntime {
                 },
             };
             let result = catch_unwind(AssertUnwindSafe(|| task(context)))
-                .unwrap_or_else(|_| Err(AppError::Legacy("后台任务发生 panic".to_string())));
+                .unwrap_or_else(|_| Err(AppError::External("后台任务发生 panic".to_string())));
             let mut release_slot = false;
             if let Ok(mut tasks) = runtime.tasks.lock() {
                 if let Some(entry) = tasks.get_mut(&run_task_id) {
@@ -567,7 +676,7 @@ impl TaskRuntime {
                             }
                             Ok(detail) => {
                                 entry.snapshot.state = TaskState::Succeeded;
-                                entry.snapshot.detail = detail;
+                                entry.snapshot.result = Some(detail);
                             }
                             Err(error)
                                 if cancellation.is_cancelled()
@@ -604,11 +713,11 @@ impl TaskRuntime {
                     entry.snapshot.state = TaskState::Failed;
                     entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
                     entry.snapshot.error =
-                        Some(AppError::Legacy(format!("启动后台任务失败: {error}")).into());
+                        Some(AppError::External(format!("启动后台任务失败: {error}")).into());
                 }
             }
             self.release_active_slot();
-            return Err(AppError::Legacy(format!("启动后台任务失败: {error}")));
+            return Err(AppError::External(format!("启动后台任务失败: {error}")));
         }
         Ok(())
     }
@@ -662,10 +771,6 @@ impl TaskRuntime {
 
     pub(crate) fn stop_accepting(&self) {
         self.accepting.store(false, Ordering::Release);
-    }
-
-    pub(crate) fn shutdown(&self) -> ShutdownReport {
-        self.shutdown_with_grace(Duration::from_secs(5))
     }
 
     pub(crate) fn shutdown_with_grace(&self, grace: Duration) -> ShutdownReport {

@@ -110,33 +110,29 @@ impl CatalogService {
         action: &str,
     ) -> String {
         let mut hasher = Sha256::new();
-        hasher.update(self.catalog.catalog_version.as_bytes());
-        hasher.update([0]);
         hasher.update(item.id.as_bytes());
         hasher.update([0]);
-        hasher.update(item.version.as_bytes());
-        hasher.update([0]);
-        hasher.update(distribution_id.as_bytes());
+        if let Some(distribution) = item
+            .distributions
+            .iter()
+            .find(|distribution| distribution.id() == distribution_id)
+        {
+            hasher.update(
+                serde_json::to_vec(distribution)
+                    .expect("validated catalog distribution must serialize"),
+            );
+        } else {
+            hasher.update(distribution_id.as_bytes());
+        }
         hasher.update([0]);
         hasher.update(action.as_bytes());
         hex_lower(&hasher.finalize())[..24].to_string()
     }
 }
 
+#[cfg(test)]
 pub(crate) fn bundled_catalog() -> Result<Catalog, CatalogError> {
     parse_catalog(BUNDLED_CATALOG.as_bytes())
-}
-
-pub(crate) fn is_core_compatible(item: &CatalogItem) -> bool {
-    let Ok(current) = semver::Version::parse(env!("CARGO_PKG_VERSION")) else {
-        return false;
-    };
-    semver::VersionReq::parse(&format!(
-        ">={}, <{}",
-        item.core_compatibility.min, item.core_compatibility.max_exclusive
-    ))
-    .map(|requirement| requirement.matches(&current))
-    .unwrap_or(false)
 }
 
 fn parse_catalog(bytes: &[u8]) -> Result<Catalog, CatalogError> {
@@ -175,24 +171,6 @@ fn validate_catalog(catalog: &Catalog) -> Result<(), CatalogError> {
             )));
         }
         item.validate_basic().map_err(CatalogError::Invalid)?;
-        let min = semver::Version::parse(&item.core_compatibility.min)
-            .map_err(|_| CatalogError::Invalid(format!("invalid core minimum for {}", item.id)))?;
-        let max = semver::Version::parse(&item.core_compatibility.max_exclusive)
-            .map_err(|_| CatalogError::Invalid(format!("invalid core maximum for {}", item.id)))?;
-        if min >= max {
-            return Err(CatalogError::Invalid(format!(
-                "core compatibility range is empty for {}",
-                item.id
-            )));
-        }
-        if item.core_compatibility.min.trim().is_empty()
-            || item.core_compatibility.max_exclusive.trim().is_empty()
-        {
-            return Err(CatalogError::Invalid(format!(
-                "missing core compatibility for {}",
-                item.id
-            )));
-        }
         if item.verification.evidence_id.is_none()
             && matches!(
                 item.verification.status,
@@ -249,6 +227,7 @@ fn hex_lower(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::agent_market::types::AgentMarketProtocol;
 
     #[test]
     fn bundled_catalog_contains_all_initial_agents_without_execution_commands() {
@@ -258,9 +237,28 @@ mod tests {
             .iter()
             .map(|item| item.id.as_str())
             .collect::<HashSet<_>>();
-        for id in ["opencode", "gemini", "claude", "codex", "pi", "qoder"] {
+        for id in [
+            "opencode",
+            "gemini",
+            "antigravity",
+            "claude",
+            "codex",
+            "pi",
+            "qoder",
+        ] {
             assert!(ids.contains(id), "missing {id}");
         }
+        let antigravity = catalog
+            .items
+            .iter()
+            .find(|item| item.id == "antigravity")
+            .expect("Antigravity catalog item");
+        assert_eq!(antigravity.protocol, AgentMarketProtocol::Native);
+        assert!(matches!(
+            antigravity.distributions.as_slice(),
+            [Distribution::System { command_candidates, .. }]
+                if command_candidates == &["agy".to_string()]
+        ));
         let json = serde_json::to_string(&catalog).expect("catalog json");
         assert!(!json.contains("npx -y"));
         assert!(!json.contains("latest"));
@@ -304,13 +302,22 @@ mod tests {
     }
 
     #[test]
-    fn bundled_catalog_items_support_current_core_version() {
+    fn preview_token_ignores_observational_catalog_and_agent_versions() {
         let catalog = bundled_catalog().expect("bundled catalog");
+        let service = CatalogService::from_catalog(catalog.clone());
+        let item = service.item("opencode").expect("OpenCode item");
+        let distribution_id = item.distributions[0].id().to_string();
+        let token = service.preview_token(item, &distribution_id, "install");
 
-        assert!(
-            catalog.items.iter().all(is_core_compatible),
-            "at least one bundled item does not support core {}",
-            env!("CARGO_PKG_VERSION")
+        let mut changed = catalog;
+        changed.catalog_version = "2099.01.01.1".to_string();
+        changed.items[0].version = "999.0.0".to_string();
+        let changed_service = CatalogService::from_catalog(changed);
+        let changed_item = changed_service.item("opencode").expect("OpenCode item");
+
+        assert_eq!(
+            token,
+            changed_service.preview_token(changed_item, &distribution_id, "install")
         );
     }
 }

@@ -17,7 +17,6 @@ use crate::backend::{
         ConversationAdapterPackageUninstallParams, ConversationScriptInstallParams,
         ConversationSyncMode, ConversationSyncParams, MemoryTaskStartParams,
     },
-    compat::LegacyResult,
     dto::CatalogAsset,
     extension_kernel::{
         LifecycleOp, LifecycleRequestKey, LifecycleReservationOutcome, LifecycleTaskCoordinator,
@@ -28,18 +27,12 @@ use crate::backend::{
         ExternalRegistrationOutcome, TaskFn, TaskKind, TaskRuntime, TaskSnapshot, TaskSpec,
         TaskState,
     },
+    runtime::AppResult,
 };
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
-    time::{Duration, Instant},
-};
+use std::time::Duration;
 use uuid::Uuid;
 
 const AI_EXECUTION_TERMINAL_RETENTION: Duration = Duration::from_secs(10 * 60);
@@ -48,7 +41,7 @@ const AGENT_LIFECYCLE_TERMINAL_RETENTION: Duration = Duration::from_secs(10 * 60
 const AGENT_LIFECYCLE_TERMINAL_LIMIT: usize = 100;
 
 /// 后台异步任务的状态
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum BackgroundTaskStatus {
     /// 任务正在后台运行中
@@ -63,7 +56,7 @@ pub(crate) enum BackgroundTaskStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AiExecutionTaskState {
     Queued,
@@ -79,12 +72,12 @@ impl AiExecutionTaskState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub(crate) struct AiExecutionPublicResult {
     pub(crate) text: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub(crate) struct AiExecutionTaskSnapshot {
     pub(crate) id: String,
     pub(crate) purpose: AiExecutionPurpose,
@@ -110,14 +103,8 @@ pub(crate) struct AiExecutionTaskGetParams {
     pub(crate) task_id: String,
 }
 
-struct AiExecutionTaskEntry {
-    snapshot: AiExecutionTaskSnapshot,
-    cancellation: AiExecutionCancellation,
-    terminal_at: Option<Instant>,
-}
-
 /// 会话同步任务进度快照
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub(crate) struct ConversationSyncTaskProgress {
     /// 当前运行阶段
     pub(crate) phase: ConversationSyncProgressPhase,
@@ -130,7 +117,7 @@ pub(crate) struct ConversationSyncTaskProgress {
 }
 
 /// 会话同步任务阶段
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ConversationSyncProgressPhase {
     /// 正在准备与初始化同步环境
@@ -145,7 +132,7 @@ pub(crate) enum ConversationSyncProgressPhase {
     Cancelled,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub(crate) struct ConversationSyncTaskSnapshot {
     pub(crate) id: String,
     pub(crate) status: BackgroundTaskStatus,
@@ -161,7 +148,7 @@ pub(crate) struct ConversationSyncTaskSnapshot {
     pub(crate) error: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub(crate) struct ConversationSearchIndexTaskSnapshot {
     pub(crate) id: String,
     pub(crate) status: BackgroundTaskStatus,
@@ -178,7 +165,7 @@ pub(crate) enum SourceScanScope {
     Skills,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SourceScanProgressPhase {
     Preparing,
@@ -188,7 +175,7 @@ pub(crate) enum SourceScanProgressPhase {
     Cancelled,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub(crate) struct SourceScanTaskProgress {
     pub(crate) phase: SourceScanProgressPhase,
     pub(crate) completed_source_count: u64,
@@ -196,7 +183,7 @@ pub(crate) struct SourceScanTaskProgress {
     pub(crate) current_source_name: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub(crate) struct SourceScanTaskSnapshot {
     pub(crate) id: String,
     pub(crate) status: BackgroundTaskStatus,
@@ -209,11 +196,7 @@ pub(crate) struct SourceScanTaskSnapshot {
     pub(crate) error: Option<String>,
 }
 
-struct SourceScanTaskEntry {
-    snapshot: SourceScanTaskSnapshot,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub(crate) struct BatchMountTaskProgress {
     pub(crate) phase: String,
     pub(crate) completed: u64,
@@ -221,7 +204,7 @@ pub(crate) struct BatchMountTaskProgress {
     pub(crate) current_id: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub(crate) struct BatchMountTaskSnapshot {
     pub(crate) id: String,
     pub(crate) status: BackgroundTaskStatus,
@@ -234,10 +217,6 @@ pub(crate) struct BatchMountTaskSnapshot {
     pub(crate) error: Option<String>,
 }
 
-struct BatchMountTaskEntry {
-    snapshot: BatchMountTaskSnapshot,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum ConversationSyncScope {
     All,
@@ -246,16 +225,16 @@ enum ConversationSyncScope {
 }
 
 impl ConversationSyncScope {
-    fn from_record_kind(record_kind: Option<&str>) -> LegacyResult<Self> {
+    fn from_record_kind(record_kind: Option<&str>) -> AppResult<Self> {
         let Some(record_kind) = record_kind.map(str::trim).filter(|value| !value.is_empty()) else {
             return Ok(Self::All);
         };
         match record_kind {
             "session" | "sessions" | "conversation" | "conversations" => Ok(Self::Session),
             "web" | "web-record" | "web_record" | "web-records" | "web_records" => Ok(Self::Web),
-            _ => Err(format!(
+            _ => Err(crate::backend::runtime::AppError::Validation(format!(
                 "unsupported conversation record kind: {record_kind}"
-            )),
+            ))),
         }
     }
 
@@ -287,7 +266,7 @@ impl ConversationSyncScope {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub(crate) struct ConversationScriptInstallTaskSnapshot {
     pub(crate) id: String,
     pub(crate) status: BackgroundTaskStatus,
@@ -304,13 +283,13 @@ pub(crate) struct ConversationScriptInstallTaskSnapshot {
     pub(crate) error: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub(crate) struct SkillBackupTaskError {
     pub(crate) asset_id: Option<String>,
     pub(crate) message: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct SkillBackupTaskSnapshot {
     pub(crate) id: String,
     pub(crate) status: BackgroundTaskStatus,
@@ -326,7 +305,7 @@ pub(crate) struct SkillBackupTaskSnapshot {
     pub(crate) error: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub(crate) struct MemoryTaskSnapshot {
     pub(crate) id: String,
     pub(crate) status: BackgroundTaskStatus,
@@ -346,17 +325,7 @@ pub(crate) struct MemoryTaskSnapshot {
     pub(crate) error: Option<String>,
 }
 
-struct MemoryTaskEntry {
-    snapshot: MemoryTaskSnapshot,
-    cancellation: AiExecutionCancellation,
-}
-
-struct AgentLifecycleTaskEntry {
-    snapshot: AgentLifecycleTaskSnapshot,
-    cancellation: Arc<AtomicBool>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AgentMarketRefreshTaskState {
     Running,
@@ -365,13 +334,7 @@ pub(crate) enum AgentMarketRefreshTaskState {
     Cancelled,
 }
 
-impl AgentMarketRefreshTaskState {
-    pub(crate) fn is_terminal(self) -> bool {
-        matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentMarketRefreshTaskSnapshot {
     pub(crate) id: String,
@@ -383,26 +346,12 @@ pub(crate) struct AgentMarketRefreshTaskSnapshot {
     pub(crate) error: Option<String>,
 }
 
-struct AgentMarketRefreshTaskEntry {
-    snapshot: AgentMarketRefreshTaskSnapshot,
-    terminal_at: Option<Instant>,
-}
-
 pub(crate) struct BackgroundTaskRegistry {
-    /// Compatibility projections remain here while migrated task execution is
-    /// owned by the backend TaskRuntime.
+    /// The backend TaskRuntime is the only mutable lifecycle authority. The
+    /// Tauri layer stores no parallel task maps; its DTOs are serialized in
+    /// `TaskSnapshot.detail` and projected on read.
     task_runtime: TaskRuntime,
     lifecycle: LifecycleTaskCoordinator,
-    conversation_sync: Mutex<HashMap<ConversationSyncScope, ConversationSyncTaskSnapshot>>,
-    conversation_script_install: Mutex<Option<ConversationScriptInstallTaskSnapshot>>,
-    skill_backup: Mutex<Option<SkillBackupTaskSnapshot>>,
-    conversation_search_index: Mutex<Option<ConversationSearchIndexTaskSnapshot>>,
-    memory_tasks: Mutex<HashMap<String, MemoryTaskEntry>>,
-    ai_executions: Mutex<HashMap<String, AiExecutionTaskEntry>>,
-    agent_lifecycle_tasks: Mutex<HashMap<String, AgentLifecycleTaskEntry>>,
-    agent_market_refresh_tasks: Mutex<HashMap<String, AgentMarketRefreshTaskEntry>>,
-    source_scan_tasks: Mutex<HashMap<String, SourceScanTaskEntry>>,
-    batch_mount_tasks: Mutex<HashMap<String, BatchMountTaskEntry>>,
 }
 
 impl Default for BackgroundTaskRegistry {
@@ -416,16 +365,6 @@ impl BackgroundTaskRegistry {
         Self {
             lifecycle: LifecycleTaskCoordinator::new(task_runtime.clone()),
             task_runtime,
-            conversation_sync: Mutex::new(HashMap::new()),
-            conversation_script_install: Mutex::new(None),
-            skill_backup: Mutex::new(None),
-            conversation_search_index: Mutex::new(None),
-            memory_tasks: Mutex::new(HashMap::new()),
-            ai_executions: Mutex::new(HashMap::new()),
-            agent_lifecycle_tasks: Mutex::new(HashMap::new()),
-            agent_market_refresh_tasks: Mutex::new(HashMap::new()),
-            source_scan_tasks: Mutex::new(HashMap::new()),
-            batch_mount_tasks: Mutex::new(HashMap::new()),
         }
     }
 
@@ -440,31 +379,40 @@ impl BackgroundTaskRegistry {
         dedup_key: Option<String>,
         conflict_keys: impl IntoIterator<Item = String>,
         detail: Value,
-    ) -> LegacyResult<ExternalRegistrationOutcome> {
-        let runtime = &self.task_runtime;
+    ) -> AppResult<ExternalRegistrationOutcome> {
         let mut spec = TaskSpec::new(kind, dedup_key)
             .with_task_id(task_id.to_string())
             .with_conflict_keys(conflict_keys);
         spec.detail = detail;
-        match runtime
-            .register_external(spec)
-            .map_err(|error| error.to_string())?
-        {
-            ExternalRegistrationOutcome::Started(_) => runtime
+        match self.task_runtime.register_external(spec)? {
+            ExternalRegistrationOutcome::Started(_snapshot) => self
+                .task_runtime
                 .start_external(task_id)
-                .map(ExternalRegistrationOutcome::Started)
-                .map_err(|error| error.to_string()),
+                .map(ExternalRegistrationOutcome::Started),
             outcome @ ExternalRegistrationOutcome::Existing(_)
             | outcome @ ExternalRegistrationOutcome::Conflict(_) => Ok(outcome),
         }
+    }
+
+    fn register_projection<T: Serialize>(
+        &self,
+        kind: TaskKind,
+        task_id: &str,
+        dedup_key: Option<String>,
+        conflict_keys: impl IntoIterator<Item = String>,
+        projection: &T,
+    ) -> AppResult<ExternalRegistrationOutcome> {
+        let detail = serde_json::to_value(projection)
+            .map_err(|error| crate::backend::runtime::AppError::External(error.to_string()))?;
+        self.register_external_task(kind, task_id, dedup_key, conflict_keys, detail)
     }
 
     fn finish_external_task(
         &self,
         task_id: &str,
         result: Result<Value, String>,
-    ) -> LegacyResult<TaskSnapshot> {
-        self.finish_external_result(
+    ) -> AppResult<TaskSnapshot> {
+        self.task_runtime.complete_external(
             task_id,
             result.map_err(crate::backend::runtime::AppError::from),
         )
@@ -474,28 +422,68 @@ impl BackgroundTaskRegistry {
         &self,
         task_id: &str,
         result: crate::backend::runtime::AppResult<Value>,
-    ) -> LegacyResult<TaskSnapshot> {
-        self.task_runtime
-            .complete_external(task_id, result)
-            .map_err(String::from)
+    ) -> AppResult<TaskSnapshot> {
+        self.task_runtime.complete_external(task_id, result)
     }
 
-    fn cancel_external_task(&self, task_id: &str) -> LegacyResult<TaskSnapshot> {
+    fn external_task_snapshot(&self, task_id: &str) -> AppResult<TaskSnapshot> {
+        self.task_runtime.get(task_id).ok_or_else(|| {
+            crate::backend::runtime::AppError::NotFound(format!(
+                "background task not found: {task_id}"
+            ))
+        })
+    }
+
+    fn decode<T: DeserializeOwned>(&self, runtime: &TaskSnapshot) -> AppResult<T> {
+        serde_json::from_value(runtime.detail.clone()).map_err(|error| {
+            crate::backend::runtime::AppError::External(format!(
+                "task projection {} could not be decoded: {error}",
+                runtime.task_id
+            ))
+        })
+    }
+
+    fn projection<T: BackgroundTaskProjection>(&self, task_id: &str) -> AppResult<T> {
+        let runtime = self.external_task_snapshot(task_id)?;
+        Ok(self.decode::<T>(&runtime)?.project_with_runtime(&runtime))
+    }
+
+    fn projection_from_runtime<T: BackgroundTaskProjection>(
+        &self,
+        runtime: &TaskSnapshot,
+    ) -> AppResult<T> {
+        Ok(self.decode::<T>(runtime)?.project_with_runtime(runtime))
+    }
+
+    fn write_projection<T: Serialize>(&self, task_id: &str, projection: &T) -> AppResult<()> {
+        let detail = serde_json::to_value(projection)
+            .map_err(|error| crate::backend::runtime::AppError::External(error.to_string()))?;
+        self.task_runtime.update_detail(task_id, detail).map(|_| ())
+    }
+
+    fn list_projections<T: BackgroundTaskProjection>(&self, kind: TaskKind) -> Vec<T> {
+        self.task_runtime
+            .list(crate::backend::runtime::tasks::TaskFilter {
+                kind: Some(kind),
+                active_only: false,
+            })
+            .into_iter()
+            .filter_map(|runtime| self.projection_from_runtime(&runtime).ok())
+            .collect()
+    }
+
+    fn cancel_external_task(&self, task_id: &str) -> AppResult<TaskSnapshot> {
         match self.task_runtime.cancel(task_id) {
             crate::backend::runtime::tasks::CancelOutcome::Requested(snapshot)
             | crate::backend::runtime::tasks::CancelOutcome::AlreadyFinished(snapshot) => {
                 Ok(snapshot)
             }
             crate::backend::runtime::tasks::CancelOutcome::NotFound => {
-                Err(format!("background task not found: {task_id}"))
+                Err(crate::backend::runtime::AppError::NotFound(format!(
+                    "background task not found: {task_id}"
+                )))
             }
         }
-    }
-
-    fn external_task_snapshot(&self, task_id: &str) -> LegacyResult<TaskSnapshot> {
-        self.task_runtime
-            .get(task_id)
-            .ok_or_else(|| format!("background task not found: {task_id}"))
     }
 
     pub(crate) fn begin_source_scan(
@@ -503,9 +491,8 @@ impl BackgroundTaskRegistry {
         tenant_id: &str,
         scope: SourceScanScope,
         kind: Option<crate::backend::models::AssetKind>,
-    ) -> LegacyResult<(SourceScanTaskSnapshot, bool)> {
+    ) -> AppResult<(SourceScanTaskSnapshot, bool)> {
         let id = Uuid::new_v4().to_string();
-        let now = Utc::now().to_rfc3339();
         let snapshot = SourceScanTaskSnapshot {
             id: id.clone(),
             status: BackgroundTaskStatus::Running,
@@ -517,7 +504,7 @@ impl BackgroundTaskRegistry {
                 total_source_count: None,
                 current_source_name: None,
             },
-            started_at: now,
+            started_at: Utc::now().to_rfc3339(),
             finished_at: None,
             result: None,
             error: None,
@@ -531,128 +518,57 @@ impl BackgroundTaskRegistry {
             kind.map(|value| format!("{value:?}"))
                 .unwrap_or_else(|| "all".to_string())
         );
-        let registration = self.register_external_task(
+        let registration = self.register_projection(
             TaskKind::Scan,
             &id,
             Some(dedup_key),
             [format!("catalog-write:{tenant_id}")],
-            serde_json::json!({ "domain": "source_scan", "scope": scope }),
+            &snapshot,
         )?;
-        let runtime_id = match registration {
-            ExternalRegistrationOutcome::Started(_) => {
-                let mut tasks = self
-                    .source_scan_tasks
-                    .lock()
-                    .map_err(|error| error.to_string())?;
-                tasks.insert(
-                    id,
-                    SourceScanTaskEntry {
-                        snapshot: snapshot.clone(),
-                    },
-                );
-                return Ok((snapshot, true));
+        match registration {
+            ExternalRegistrationOutcome::Started(runtime) => {
+                Ok((self.projection_from_runtime(&runtime)?, true))
             }
-            ExternalRegistrationOutcome::Existing(runtime_snapshot)
-            | ExternalRegistrationOutcome::Conflict(runtime_snapshot) => runtime_snapshot.task_id,
-        };
-        self.source_scan_tasks
-            .lock()
-            .map_err(|error| error.to_string())?
-            .get(&runtime_id)
-            .map(|entry| {
-                let runtime = self.task_runtime.get(&runtime_id);
-                runtime
-                    .map(|runtime| project_source_scan(&entry.snapshot, &runtime))
-                    .unwrap_or_else(|| entry.snapshot.clone())
-            })
-            .ok_or_else(|| format!("source scan task projection not found: {runtime_id}"))
-            .map(|snapshot| (snapshot, false))
+            ExternalRegistrationOutcome::Existing(runtime)
+            | ExternalRegistrationOutcome::Conflict(runtime) => {
+                Ok((self.projection_from_runtime(&runtime)?, false))
+            }
+        }
     }
 
     pub(crate) fn finish_source_scan(
         &self,
         task_id: &str,
         result: Result<crate::backend::application::SourceScanResult, String>,
-    ) -> LegacyResult<SourceScanTaskSnapshot> {
+    ) -> AppResult<SourceScanTaskSnapshot> {
         let runtime_result = result
             .as_ref()
             .map(|value| serde_json::to_value(&value.assets).unwrap_or(Value::Null))
             .map_err(|error| crate::backend::runtime::AppError::from(error.clone()));
-        let runtime_snapshot = self.finish_external_result(task_id, runtime_result)?;
-        let mut tasks = self
-            .source_scan_tasks
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let entry = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| format!("source scan task not found: {task_id}"))?;
-        entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
-        match (runtime_snapshot.state, result) {
-            (TaskState::Succeeded, Ok(result)) => {
-                entry.snapshot.status = BackgroundTaskStatus::Completed;
-                entry.snapshot.progress.phase = SourceScanProgressPhase::Completed;
-                entry.snapshot.result = Some(result.assets);
-            }
-            (TaskState::Canceled, _) => {
-                entry.snapshot.status = BackgroundTaskStatus::Cancelled;
-                entry.snapshot.progress.phase = SourceScanProgressPhase::Cancelled;
-                entry.snapshot.error = runtime_error_message(&runtime_snapshot);
-            }
-            (_, Err(error)) => {
-                entry.snapshot.status = BackgroundTaskStatus::Failed;
-                entry.snapshot.progress.phase = SourceScanProgressPhase::Failed;
-                entry.snapshot.error = Some(error);
-            }
-            (state, Ok(_)) => {
-                entry.snapshot.status = BackgroundTaskStatus::Failed;
-                entry.snapshot.progress.phase = SourceScanProgressPhase::Failed;
-                entry.snapshot.error = Some(format!(
-                    "source scan did not reach a terminal state: {state:?}"
-                ));
-            }
+        let runtime = self.finish_external_result(task_id, runtime_result)?;
+        let mut snapshot: SourceScanTaskSnapshot = self.decode(&runtime)?;
+        if let Ok(result) = result {
+            snapshot.result = Some(result.assets);
+        } else if runtime.state == TaskState::Canceled {
+            snapshot.result = None;
         }
-        Ok(entry.snapshot.clone())
+        self.write_projection(task_id, &snapshot)?;
+        self.projection_from_runtime(&self.external_task_snapshot(task_id)?)
     }
 
-    pub(crate) fn source_scan_snapshot(
-        &self,
-        task_id: &str,
-    ) -> LegacyResult<SourceScanTaskSnapshot> {
-        let runtime = self.external_task_snapshot(task_id)?;
-        self.source_scan_tasks
-            .lock()
-            .map_err(|error| error.to_string())?
-            .get(task_id)
-            .map(|entry| project_source_scan(&entry.snapshot, &runtime))
-            .ok_or_else(|| format!("source scan task not found: {task_id}"))
+    pub(crate) fn source_scan_snapshot(&self, task_id: &str) -> AppResult<SourceScanTaskSnapshot> {
+        self.projection(task_id)
     }
 
-    pub(crate) fn source_scan_snapshots(&self) -> LegacyResult<Vec<SourceScanTaskSnapshot>> {
-        let mut snapshots = self
-            .source_scan_tasks
-            .lock()
-            .map_err(|error| error.to_string())?
-            .values()
-            .filter_map(|entry| {
-                self.task_runtime
-                    .get(&entry.snapshot.id)
-                    .map(|runtime| project_source_scan(&entry.snapshot, &runtime))
-            })
-            .collect::<Vec<_>>();
+    pub(crate) fn source_scan_snapshots(&self) -> AppResult<Vec<SourceScanTaskSnapshot>> {
+        let mut snapshots = self.list_projections::<SourceScanTaskSnapshot>(TaskKind::Scan);
         snapshots.sort_by(|left, right| left.started_at.cmp(&right.started_at));
         Ok(snapshots)
     }
 
-    pub(crate) fn cancel_source_scan(&self, task_id: &str) -> LegacyResult<SourceScanTaskSnapshot> {
-        match self.task_runtime.cancel(task_id) {
-            crate::backend::runtime::tasks::CancelOutcome::Requested(snapshot)
-            | crate::backend::runtime::tasks::CancelOutcome::AlreadyFinished(snapshot) => {
-                self.source_scan_snapshot(&snapshot.task_id)
-            }
-            crate::backend::runtime::tasks::CancelOutcome::NotFound => {
-                Err(format!("source scan task not found: {task_id}"))
-            }
-        }
+    pub(crate) fn cancel_source_scan(&self, task_id: &str) -> AppResult<SourceScanTaskSnapshot> {
+        self.cancel_external_task(task_id)?;
+        self.projection(task_id)
     }
 
     pub(crate) fn begin_batch_mount(
@@ -661,7 +577,7 @@ impl BackgroundTaskRegistry {
         mode: &str,
         profile_id: &str,
         dedup_suffix: &str,
-    ) -> LegacyResult<(BatchMountTaskSnapshot, bool)> {
+    ) -> AppResult<(BatchMountTaskSnapshot, bool)> {
         let id = Uuid::new_v4().to_string();
         let snapshot = BatchMountTaskSnapshot {
             id: id.clone(),
@@ -679,47 +595,22 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        let registration = self.register_external_task(
+        let registration = self.register_projection(
             TaskKind::BatchMount,
             &id,
             Some(format!(
                 "mount:{tenant_id}:{mode}:{profile_id}:{dedup_suffix}"
             )),
             [format!("mount-profile:{tenant_id}:{profile_id}")],
-            serde_json::json!({ "domain": "batch_mount", "mode": mode }),
+            &snapshot,
         )?;
         match registration {
-            ExternalRegistrationOutcome::Started(_) => {
-                self.batch_mount_tasks
-                    .lock()
-                    .map_err(|error| error.to_string())?
-                    .insert(
-                        id,
-                        BatchMountTaskEntry {
-                            snapshot: snapshot.clone(),
-                        },
-                    );
-                Ok((snapshot, true))
-            }
-            ExternalRegistrationOutcome::Existing(existing)
-            | ExternalRegistrationOutcome::Conflict(existing) => self
-                .batch_mount_tasks
-                .lock()
-                .map_err(|error| error.to_string())?
-                .get(&existing.task_id)
-                .map(|entry| {
-                    self.task_runtime
-                        .get(&existing.task_id)
-                        .map(|runtime| project_batch_mount(&entry.snapshot, &runtime))
-                        .unwrap_or_else(|| entry.snapshot.clone())
-                })
-                .map(|snapshot| (snapshot, false))
-                .ok_or_else(|| {
-                    format!(
-                        "batch mount task projection not found: {}",
-                        existing.task_id
-                    )
-                }),
+            ExternalRegistrationOutcome::Started(ref runtime)
+            | ExternalRegistrationOutcome::Existing(ref runtime)
+            | ExternalRegistrationOutcome::Conflict(ref runtime) => Ok((
+                self.projection_from_runtime(&runtime)?,
+                matches!(&registration, ExternalRegistrationOutcome::Started(_)),
+            )),
         }
     }
 
@@ -729,116 +620,66 @@ impl BackgroundTaskRegistry {
         completed: u64,
         total: Option<u64>,
         current_id: Option<&str>,
-    ) -> LegacyResult<BatchMountTaskSnapshot> {
+    ) -> AppResult<BatchMountTaskSnapshot> {
+        let runtime = self.external_task_snapshot(task_id)?;
+        let mut snapshot: BatchMountTaskSnapshot = self.decode(&runtime)?;
+        if runtime.state.is_active() {
+            snapshot.progress.completed = completed;
+            snapshot.progress.total = total;
+            snapshot.progress.current_id = current_id.map(str::to_string);
+        }
         self.task_runtime
             .set_progress(task_id, completed, total, current_id)?;
-        self.batch_mount_snapshot(task_id)
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
     }
 
     pub(crate) fn finish_batch_mount(
         &self,
         task_id: &str,
         result: Result<Value, String>,
-    ) -> LegacyResult<BatchMountTaskSnapshot> {
+    ) -> AppResult<BatchMountTaskSnapshot> {
         let runtime_result = result
-            .as_ref()
-            .map(|value| value.clone())
-            .map_err(|error| crate::backend::runtime::AppError::from(error.clone()));
-        let runtime_snapshot = self.finish_external_result(task_id, runtime_result)?;
-        let mut tasks = self
-            .batch_mount_tasks
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let entry = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| format!("batch mount task not found: {task_id}"))?;
-        entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
-        match (runtime_snapshot.state, result) {
-            (TaskState::Succeeded, Ok(result)) => {
-                entry.snapshot.status = BackgroundTaskStatus::Completed;
-                entry.snapshot.progress.phase = "completed".to_string();
-                entry.snapshot.progress.current_id = None;
-                entry.snapshot.result = Some(result);
-            }
-            (TaskState::Canceled, _) => {
-                entry.snapshot.status = BackgroundTaskStatus::Cancelled;
-                entry.snapshot.progress.phase = "cancelled".to_string();
-                entry.snapshot.progress.current_id = None;
-                entry.snapshot.error = runtime_error_message(&runtime_snapshot);
-            }
-            (_, Err(error)) => {
-                entry.snapshot.status = BackgroundTaskStatus::Failed;
-                entry.snapshot.progress.phase = "failed".to_string();
-                entry.snapshot.progress.current_id = None;
-                entry.snapshot.error = Some(error);
-            }
-            (state, Ok(_)) => {
-                entry.snapshot.status = BackgroundTaskStatus::Failed;
-                entry.snapshot.progress.phase = "failed".to_string();
-                entry.snapshot.progress.current_id = None;
-                entry.snapshot.error = Some(format!(
-                    "batch mount did not reach a terminal state: {state:?}"
-                ));
-            }
-        }
-        Ok(entry.snapshot.clone())
+            .clone()
+            .map_err(crate::backend::runtime::AppError::from);
+        let runtime = self.finish_external_result(task_id, runtime_result)?;
+        let mut snapshot: BatchMountTaskSnapshot = self.decode(&runtime)?;
+        snapshot.result = result.ok();
+        self.write_projection(task_id, &snapshot)?;
+        self.projection_from_runtime(&self.external_task_snapshot(task_id)?)
     }
 
-    pub(crate) fn batch_mount_snapshot(
-        &self,
-        task_id: &str,
-    ) -> LegacyResult<BatchMountTaskSnapshot> {
-        let runtime = self.external_task_snapshot(task_id)?;
-        self.batch_mount_tasks
-            .lock()
-            .map_err(|error| error.to_string())?
-            .get(task_id)
-            .map(|entry| project_batch_mount(&entry.snapshot, &runtime))
-            .ok_or_else(|| format!("batch mount task not found: {task_id}"))
+    pub(crate) fn batch_mount_snapshot(&self, task_id: &str) -> AppResult<BatchMountTaskSnapshot> {
+        self.projection(task_id)
     }
 
-    pub(crate) fn batch_mount_snapshots(&self) -> LegacyResult<Vec<BatchMountTaskSnapshot>> {
-        let mut snapshots = self
-            .batch_mount_tasks
-            .lock()
-            .map_err(|error| error.to_string())?
-            .values()
-            .filter_map(|entry| {
-                self.task_runtime
-                    .get(&entry.snapshot.id)
-                    .map(|runtime| project_batch_mount(&entry.snapshot, &runtime))
-            })
-            .collect::<Vec<_>>();
+    pub(crate) fn batch_mount_snapshots(&self) -> AppResult<Vec<BatchMountTaskSnapshot>> {
+        let mut snapshots = self.list_projections::<BatchMountTaskSnapshot>(TaskKind::BatchMount);
         snapshots.sort_by(|left, right| left.started_at.cmp(&right.started_at));
         Ok(snapshots)
     }
 
-    pub(crate) fn cancel_batch_mount(&self, task_id: &str) -> LegacyResult<BatchMountTaskSnapshot> {
-        match self.task_runtime.cancel(task_id) {
-            crate::backend::runtime::tasks::CancelOutcome::Requested(snapshot)
-            | crate::backend::runtime::tasks::CancelOutcome::AlreadyFinished(snapshot) => {
-                self.batch_mount_snapshot(&snapshot.task_id)
-            }
-            crate::backend::runtime::tasks::CancelOutcome::NotFound => {
-                Err(format!("batch mount task not found: {task_id}"))
-            }
-        }
+    pub(crate) fn cancel_batch_mount(&self, task_id: &str) -> AppResult<BatchMountTaskSnapshot> {
+        self.cancel_external_task(task_id)?;
+        self.projection(task_id)
     }
 
-    /// Start work through the same kernel coordinator used by both extension
-    /// domains. The domain projection remains responsible for its rich UI
-    /// snapshot, while TaskRuntime owns execution and shutdown accounting.
     pub(crate) fn spawn_extension_lifecycle(
         &self,
         task_id: &str,
         task: TaskFn,
     ) -> crate::backend::runtime::AppResult<TaskSnapshot> {
-        self.lifecycle.spawn(task_id, Value::Null, task)
+        let detail = self
+            .task_runtime
+            .get(task_id)
+            .map(|snapshot| snapshot.detail)
+            .unwrap_or(Value::Null);
+        self.lifecycle.spawn(task_id, detail, task)
     }
 
     pub(crate) fn begin_agent_market_refresh(
         &self,
-    ) -> LegacyResult<(AgentMarketRefreshTaskSnapshot, bool)> {
+    ) -> AppResult<(AgentMarketRefreshTaskSnapshot, bool)> {
         let now = Utc::now().to_rfc3339();
         let snapshot = AgentMarketRefreshTaskSnapshot {
             id: Uuid::new_v4().to_string(),
@@ -849,113 +690,53 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        let registration = self.register_external_task(
+        let registration = self.register_projection(
             TaskKind::Other,
             &snapshot.id,
             Some("agent-market-refresh".to_string()),
             Vec::new(),
-            serde_json::json!({"domain": "agent_market_refresh"}),
+            &snapshot,
         )?;
-        let (runtime_snapshot, started) = match registration {
-            ExternalRegistrationOutcome::Started(snapshot) => (snapshot, true),
-            ExternalRegistrationOutcome::Existing(snapshot)
-            | ExternalRegistrationOutcome::Conflict(snapshot) => (snapshot, false),
-        };
-        let mut tasks = self
-            .agent_market_refresh_tasks
-            .lock()
-            .map_err(|error| error.to_string())?;
-        prune_agent_market_refresh_tasks(&mut tasks);
-        if !started {
-            let existing = tasks.get(&runtime_snapshot.task_id).ok_or_else(|| {
-                format!(
-                    "agent market refresh task projection not found: {}",
-                    runtime_snapshot.task_id
-                )
-            })?;
-            return Ok((existing.snapshot.clone(), false));
+        match registration {
+            ExternalRegistrationOutcome::Started(ref runtime)
+            | ExternalRegistrationOutcome::Existing(ref runtime)
+            | ExternalRegistrationOutcome::Conflict(ref runtime) => Ok((
+                self.projection_from_runtime(&runtime)?,
+                matches!(&registration, ExternalRegistrationOutcome::Started(_)),
+            )),
         }
-        tasks.insert(
-            snapshot.id.clone(),
-            AgentMarketRefreshTaskEntry {
-                snapshot: snapshot.clone(),
-                terminal_at: None,
-            },
-        );
-        Ok((snapshot, true))
     }
 
     pub(crate) fn finish_agent_market_refresh(
         &self,
         task_id: &str,
         result: Result<AgentMarketRefreshResult, String>,
-    ) -> LegacyResult<AgentMarketRefreshTaskSnapshot> {
+    ) -> AppResult<AgentMarketRefreshTaskSnapshot> {
         let runtime_result = result
             .as_ref()
             .map(|value| serde_json::to_value(value).unwrap_or(Value::Null))
             .map_err(|error| crate::backend::runtime::AppError::from(error.clone()));
-        let runtime_snapshot = self.finish_external_result(task_id, runtime_result)?;
-        let mut tasks = self
-            .agent_market_refresh_tasks
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let entry = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| "Agent Market refresh task not found".to_string())?;
-        entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
-        entry.snapshot.updated_at = Utc::now().to_rfc3339();
-        entry.terminal_at = Some(Instant::now());
-        match (runtime_snapshot.state, result) {
-            (TaskState::Succeeded, Ok(result)) => {
-                entry.snapshot.state = AgentMarketRefreshTaskState::Succeeded;
-                entry.snapshot.result = Some(result);
-            }
-            (TaskState::Canceled, _) => {
-                entry.snapshot.state = AgentMarketRefreshTaskState::Cancelled;
-                entry.snapshot.result = None;
-                entry.snapshot.error = runtime_error_message(&runtime_snapshot);
-            }
-            (_, Err(error)) => {
-                entry.snapshot.state = AgentMarketRefreshTaskState::Failed;
-                entry.snapshot.error = Some(error);
-            }
-            (state, Ok(_)) => {
-                entry.snapshot.state = AgentMarketRefreshTaskState::Failed;
-                entry.snapshot.error = Some(format!(
-                    "Agent Market refresh did not reach a terminal state: {state:?}"
-                ));
-            }
-        }
-        Ok(entry.snapshot.clone())
+        self.finish_external_result(task_id, runtime_result)?;
+        let mut snapshot: AgentMarketRefreshTaskSnapshot =
+            self.decode(&self.external_task_snapshot(task_id)?)?;
+        snapshot.result = result.ok();
+        snapshot.updated_at = Utc::now().to_rfc3339();
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
     }
 
     pub(crate) fn agent_market_refresh_snapshot(
         &self,
         task_id: &str,
-    ) -> LegacyResult<AgentMarketRefreshTaskSnapshot> {
-        let runtime_snapshot = self.external_task_snapshot(task_id)?;
-        self.agent_market_refresh_tasks
-            .lock()
-            .map_err(|error| error.to_string())?
-            .get(task_id)
-            .map(|entry| project_agent_market_refresh(&entry.snapshot, &runtime_snapshot))
-            .ok_or_else(|| "Agent Market refresh task not found".to_string())
+    ) -> AppResult<AgentMarketRefreshTaskSnapshot> {
+        self.projection(task_id)
     }
 
     pub(crate) fn agent_market_refresh_snapshots(
         &self,
-    ) -> LegacyResult<Vec<AgentMarketRefreshTaskSnapshot>> {
-        let mut snapshots = self
-            .agent_market_refresh_tasks
-            .lock()
-            .map_err(|error| error.to_string())?
-            .values()
-            .filter_map(|entry| {
-                self.task_runtime
-                    .get(&entry.snapshot.id)
-                    .map(|runtime| project_agent_market_refresh(&entry.snapshot, &runtime))
-            })
-            .collect::<Vec<_>>();
+    ) -> AppResult<Vec<AgentMarketRefreshTaskSnapshot>> {
+        let mut snapshots =
+            self.list_projections::<AgentMarketRefreshTaskSnapshot>(TaskKind::Other);
         snapshots.sort_by(|left, right| left.created_at.cmp(&right.created_at));
         Ok(snapshots)
     }
@@ -969,7 +750,11 @@ impl BackgroundTaskRegistry {
         distribution_id: Option<String>,
         distribution_type: Option<crate::backend::agent_market::types::DistributionType>,
         ownership: Option<crate::backend::agent_market::types::Ownership>,
-    ) -> LegacyResult<(AgentLifecycleTaskSnapshot, Arc<AtomicBool>, bool)> {
+    ) -> AppResult<(
+        AgentLifecycleTaskSnapshot,
+        tokio_util::sync::CancellationToken,
+        bool,
+    )> {
         let lifecycle_key = extension_lifecycle_key(
             PackageKind::Agent,
             &agent_id,
@@ -1002,37 +787,18 @@ impl BackgroundTaskRegistry {
             error: None,
             warnings: Vec::new(),
         };
-        let reservation = self
-            .lifecycle
-            .reserve(snapshot.id.clone(), lifecycle_key)
-            .map_err(|error| error.to_string())?;
-        let mut tasks = self
-            .agent_lifecycle_tasks
-            .lock()
-            .map_err(|error| error.to_string())?;
-        prune_agent_lifecycle_tasks(&mut tasks);
-        match reservation {
-            LifecycleReservationOutcome::Started => {}
+        match self.lifecycle.reserve(snapshot.id.clone(), lifecycle_key)? {
             LifecycleReservationOutcome::Existing(existing_id) => {
-                let existing = tasks.get(&existing_id).ok_or_else(|| {
-                    format!("agent lifecycle task projection not found: {existing_id}")
-                })?;
-                return Ok((
-                    existing.snapshot.clone(),
-                    existing.cancellation.clone(),
-                    false,
-                ));
+                let runtime = self.external_task_snapshot(&existing_id)?;
+                let cancellation = self.task_runtime.cancellation_token(&existing_id)?;
+                Ok((self.projection_from_runtime(&runtime)?, cancellation, false))
+            }
+            LifecycleReservationOutcome::Started => {
+                self.write_projection(&snapshot.id, &snapshot)?;
+                let cancellation = self.task_runtime.cancellation_token(&snapshot.id)?;
+                Ok((self.projection(&snapshot.id)?, cancellation, true))
             }
         }
-        let cancellation = Arc::new(AtomicBool::new(false));
-        tasks.insert(
-            snapshot.id.clone(),
-            AgentLifecycleTaskEntry {
-                snapshot: snapshot.clone(),
-                cancellation: cancellation.clone(),
-            },
-        );
-        Ok((snapshot, cancellation, true))
     }
 
     pub(crate) fn update_agent_lifecycle(
@@ -1042,126 +808,72 @@ impl BackgroundTaskRegistry {
         completed_units: u64,
         downloaded_bytes: Option<u64>,
         warnings: Vec<String>,
-    ) -> LegacyResult<AgentLifecycleTaskSnapshot> {
-        let runtime_snapshot = self.external_task_snapshot(task_id)?;
-        let mut tasks = self
-            .agent_lifecycle_tasks
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let entry = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| "agent lifecycle task not found".to_string())?;
-        match runtime_snapshot.state {
-            TaskState::Cancelling => {
-                entry.snapshot.state = LifecycleTaskState::Cancelling;
-                entry.snapshot.phase = LifecycleTaskPhase::Cancelling;
-                entry.snapshot.cancellable = false;
-            }
-            TaskState::Canceled => {
-                entry.snapshot.state = LifecycleTaskState::Cancelled;
-                entry.snapshot.phase = LifecycleTaskPhase::Cancelled;
-                entry.snapshot.cancellable = false;
-                entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
-            }
-            TaskState::Pending | TaskState::Running
-                if !matches!(
-                    entry.snapshot.state,
-                    LifecycleTaskState::Cancelling | LifecycleTaskState::Cancelled
-                ) =>
-            {
-                entry.snapshot.state = LifecycleTaskState::Running;
-                entry.snapshot.phase = phase;
-                entry.snapshot.progress.completed_units = completed_units;
-                entry.snapshot.progress.downloaded_bytes = downloaded_bytes;
-                entry.snapshot.warnings = warnings;
-                entry.snapshot.updated_at = Utc::now().to_rfc3339();
-            }
-            TaskState::Succeeded | TaskState::Failed | TaskState::Pending | TaskState::Running => {}
+    ) -> AppResult<AgentLifecycleTaskSnapshot> {
+        let runtime = self.external_task_snapshot(task_id)?;
+        if runtime.state == TaskState::Pending {
+            self.task_runtime
+                .activate_external(task_id, runtime.detail.clone())?;
         }
-        Ok(entry.snapshot.clone())
+        let runtime = self.external_task_snapshot(task_id)?;
+        let mut snapshot: AgentLifecycleTaskSnapshot = self.decode(&runtime)?;
+        if runtime.state == TaskState::Running && !snapshot.state.is_terminal() {
+            snapshot.state = LifecycleTaskState::Running;
+            snapshot.phase = phase;
+            snapshot.progress.completed_units = completed_units;
+            snapshot.progress.downloaded_bytes = downloaded_bytes;
+            snapshot.warnings = warnings;
+            snapshot.updated_at = Utc::now().to_rfc3339();
+        }
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
     }
 
     pub(crate) fn finish_agent_lifecycle(
         &self,
         task_id: &str,
         result: Result<(Option<Value>, Vec<String>), AgentMarketError>,
-    ) -> LegacyResult<AgentLifecycleTaskSnapshot> {
+    ) -> AppResult<AgentLifecycleTaskSnapshot> {
         let runtime_result = result
             .as_ref()
             .map(|(value, _)| value.clone().unwrap_or(Value::Null))
             .map_err(|error| crate::backend::runtime::AppError::from(error.clone()));
-        let runtime_snapshot = self.finish_external_result(task_id, runtime_result)?;
-        let mut tasks = self
-            .agent_lifecycle_tasks
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let entry = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| "agent lifecycle task not found".to_string())?;
-        if runtime_snapshot.state == TaskState::Canceled {
-            entry.snapshot.state = LifecycleTaskState::Cancelled;
-            entry.snapshot.phase = LifecycleTaskPhase::Cancelled;
-            entry.snapshot.cancellable = false;
-            entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
-            entry.snapshot.updated_at = Utc::now().to_rfc3339();
-        } else {
-            entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
-            entry.snapshot.updated_at = Utc::now().to_rfc3339();
-            entry.snapshot.cancellable = false;
-            match result {
-                Ok((result, warnings)) if runtime_snapshot.state == TaskState::Succeeded => {
-                    entry.snapshot.state = LifecycleTaskState::Succeeded;
-                    entry.snapshot.phase = LifecycleTaskPhase::Succeeded;
-                    entry.snapshot.result = result;
-                    entry.snapshot.warnings = warnings;
-                }
-                Err(error) => {
-                    entry.snapshot.state = LifecycleTaskState::Failed;
-                    entry.snapshot.phase = LifecycleTaskPhase::Failed;
-                    entry.snapshot.error = Some((&error).into());
-                }
-                Ok(_) => {
-                    entry.snapshot.state = LifecycleTaskState::Failed;
-                    entry.snapshot.phase = LifecycleTaskPhase::Failed;
-                    entry.snapshot.error = Some(
-                        (&AgentMarketError::new("task_state", "扩展生命周期任务未进入终态", false))
-                            .into(),
-                    );
-                }
+        let runtime = self.finish_external_result(task_id, runtime_result)?;
+        let mut snapshot: AgentLifecycleTaskSnapshot = self.decode(&runtime)?;
+        snapshot.finished_at = runtime.finished_at.clone();
+        snapshot.updated_at = Utc::now().to_rfc3339();
+        snapshot.cancellable = false;
+        match result {
+            Ok((value, warnings)) if runtime.state == TaskState::Succeeded => {
+                snapshot.result = value;
+                snapshot.warnings = warnings;
+            }
+            Err(error) => snapshot.error = Some((&error).into()),
+            Ok(_) => {
+                snapshot.error = Some(
+                    (&AgentMarketError::new("task_state", "扩展生命周期任务未进入终态", false))
+                        .into(),
+                )
             }
         }
-        let snapshot = entry.snapshot.clone();
-        drop(tasks);
-        Ok(snapshot)
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
     }
 
     pub(crate) fn agent_lifecycle_snapshot(
         &self,
         task_id: &str,
-    ) -> LegacyResult<AgentLifecycleTaskSnapshot> {
-        let runtime_snapshot = self.external_task_snapshot(task_id)?;
-        self.agent_lifecycle_tasks
-            .lock()
-            .map_err(|error| error.to_string())?
-            .get(task_id)
-            .map(|entry| project_agent_lifecycle(&entry.snapshot, &runtime_snapshot))
-            .ok_or_else(|| "agent lifecycle task not found".to_string())
+    ) -> AppResult<AgentLifecycleTaskSnapshot> {
+        self.projection(task_id)
     }
 
-    pub(crate) fn agent_lifecycle_snapshots(
-        &self,
-    ) -> LegacyResult<Vec<AgentLifecycleTaskSnapshot>> {
-        let mut snapshots = self
-            .agent_lifecycle_tasks
-            .lock()
-            .map_err(|error| error.to_string())?
-            .values()
-            .filter_map(|entry| {
-                self.task_runtime
-                    .get(&entry.snapshot.id)
-                    .map(|runtime| project_agent_lifecycle(&entry.snapshot, &runtime))
-            })
-            .collect::<Vec<_>>();
+    pub(crate) fn agent_lifecycle_snapshots(&self) -> AppResult<Vec<AgentLifecycleTaskSnapshot>> {
+        self.task_runtime.prune(
+            TaskKind::ExtensionLifecycle,
+            AGENT_LIFECYCLE_TERMINAL_RETENTION,
+            AGENT_LIFECYCLE_TERMINAL_LIMIT,
+        );
+        let mut snapshots =
+            self.list_projections::<AgentLifecycleTaskSnapshot>(TaskKind::ExtensionLifecycle);
         snapshots.sort_by(|left, right| left.created_at.cmp(&right.created_at));
         Ok(snapshots)
     }
@@ -1169,41 +881,14 @@ impl BackgroundTaskRegistry {
     pub(crate) fn cancel_agent_lifecycle(
         &self,
         task_id: &str,
-    ) -> LegacyResult<AgentLifecycleTaskSnapshot> {
-        let runtime_snapshot = self.lifecycle.cancel(task_id);
-        let runtime_snapshot = match runtime_snapshot {
-            crate::backend::runtime::tasks::CancelOutcome::Requested(snapshot)
-            | crate::backend::runtime::tasks::CancelOutcome::AlreadyFinished(snapshot) => snapshot,
-            crate::backend::runtime::tasks::CancelOutcome::NotFound => {
-                return Err(format!("agent lifecycle task not found: {task_id}"));
-            }
-        };
-        let mut tasks = self
-            .agent_lifecycle_tasks
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let entry = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| "agent lifecycle task not found".to_string())?;
-        entry.cancellation.store(true, Ordering::SeqCst);
-        if runtime_snapshot.state == TaskState::Canceled {
-            entry.snapshot.state = LifecycleTaskState::Cancelled;
-            entry.snapshot.phase = LifecycleTaskPhase::Cancelled;
-            entry.snapshot.cancellable = false;
-            entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
-        } else if runtime_snapshot.state.is_active() {
-            entry.snapshot.state = LifecycleTaskState::Cancelling;
-            entry.snapshot.phase = LifecycleTaskPhase::Cancelling;
-            entry.snapshot.cancellable = false;
-            entry.snapshot.finished_at = None;
-            entry.snapshot.updated_at = Utc::now().to_rfc3339();
-        }
-        Ok(entry.snapshot.clone())
+    ) -> AppResult<AgentLifecycleTaskSnapshot> {
+        self.lifecycle.cancel(task_id);
+        self.projection(task_id)
     }
 
     pub(crate) fn begin_conversation_search_index_rebuild(
         &self,
-    ) -> LegacyResult<(ConversationSearchIndexTaskSnapshot, bool)> {
+    ) -> AppResult<(ConversationSearchIndexTaskSnapshot, bool)> {
         let snapshot = ConversationSearchIndexTaskSnapshot {
             id: Uuid::new_v4().to_string(),
             status: BackgroundTaskStatus::Running,
@@ -1212,99 +897,49 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        let registration = self.register_external_task(
+        let registration = self.register_projection(
             TaskKind::SearchIndexRebuild,
             &snapshot.id,
             Some("conversation-search-index".to_string()),
             Vec::new(),
-            serde_json::json!({"domain": "conversation_search_index"}),
+            &snapshot,
         )?;
-        let (runtime_snapshot, started) = match registration {
-            ExternalRegistrationOutcome::Started(snapshot) => (snapshot, true),
-            ExternalRegistrationOutcome::Existing(snapshot)
-            | ExternalRegistrationOutcome::Conflict(snapshot) => (snapshot, false),
-        };
-        let mut current = self
-            .conversation_search_index
-            .lock()
-            .map_err(|error| error.to_string())?;
-        if !started {
-            let existing = current
-                .as_ref()
-                .filter(|snapshot| snapshot.id == runtime_snapshot.task_id)
-                .ok_or_else(|| {
-                    format!(
-                        "conversation search index task projection not found: {}",
-                        runtime_snapshot.task_id
-                    )
-                })?;
-            return Ok((existing.clone(), false));
+        match registration {
+            ExternalRegistrationOutcome::Started(ref runtime)
+            | ExternalRegistrationOutcome::Existing(ref runtime)
+            | ExternalRegistrationOutcome::Conflict(ref runtime) => Ok((
+                self.projection_from_runtime(&runtime)?,
+                matches!(&registration, ExternalRegistrationOutcome::Started(_)),
+            )),
         }
-        *current = Some(snapshot.clone());
-        Ok((snapshot, true))
     }
 
     pub(crate) fn finish_conversation_search_index_rebuild(
         &self,
         task_id: &str,
-        result: LegacyResult<Value>,
-    ) -> LegacyResult<ConversationSearchIndexTaskSnapshot> {
-        let runtime_snapshot = self.finish_external_task(task_id, result.clone())?;
-        let mut current = self
-            .conversation_search_index
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let snapshot = current
-            .as_mut()
-            .filter(|snapshot| snapshot.id == task_id)
-            .ok_or_else(|| "conversation search index task not found".to_string())?;
-        snapshot.finished_at = runtime_snapshot.finished_at.clone();
-        match (runtime_snapshot.state, result) {
-            (TaskState::Succeeded, Ok(value)) => {
-                snapshot.status = BackgroundTaskStatus::Completed;
-                snapshot.result = Some(value);
-                snapshot.error = None;
-            }
-            (TaskState::Canceled, _) => {
-                snapshot.status = BackgroundTaskStatus::Cancelled;
-                snapshot.result = None;
-                snapshot.error = runtime_error_message(&runtime_snapshot);
-            }
-            (_, Err(error)) => {
-                snapshot.status = BackgroundTaskStatus::Failed;
-                snapshot.result = None;
-                snapshot.error = Some(error);
-            }
-            (state, Ok(_)) => {
-                snapshot.status = BackgroundTaskStatus::Failed;
-                snapshot.result = None;
-                snapshot.error = Some(format!(
-                    "conversation search index did not reach a terminal state: {state:?}"
-                ));
-            }
-        }
-        Ok(snapshot.clone())
+        result: Result<Value, String>,
+    ) -> AppResult<ConversationSearchIndexTaskSnapshot> {
+        self.finish_external_task(task_id, result.clone())?;
+        let mut snapshot: ConversationSearchIndexTaskSnapshot =
+            self.decode(&self.external_task_snapshot(task_id)?)?;
+        snapshot.result = result.ok();
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
     }
 
     pub(crate) fn conversation_search_index_snapshot(
         &self,
-    ) -> LegacyResult<Option<ConversationSearchIndexTaskSnapshot>> {
-        self.conversation_search_index
-            .lock()
-            .map(|snapshot| {
-                snapshot.as_ref().and_then(|snapshot| {
-                    self.task_runtime
-                        .get(&snapshot.id)
-                        .map(|runtime| project_background_snapshot(snapshot, &runtime))
-                })
-            })
-            .map_err(|error| error.to_string())
+    ) -> AppResult<Option<ConversationSearchIndexTaskSnapshot>> {
+        Ok(self
+            .list_projections::<ConversationSearchIndexTaskSnapshot>(TaskKind::SearchIndexRebuild)
+            .into_iter()
+            .max_by(|left, right| left.started_at.cmp(&right.started_at)))
     }
 
     pub(crate) fn begin_conversation_sync(
         &self,
         params: &ConversationSyncParams,
-    ) -> LegacyResult<(ConversationSyncTaskSnapshot, bool)> {
+    ) -> AppResult<(ConversationSyncTaskSnapshot, bool)> {
         let scope = ConversationSyncScope::from_record_kind(params.record_kind.as_deref())?;
         let snapshot = ConversationSyncTaskSnapshot {
             id: Uuid::new_v4().to_string(),
@@ -1325,35 +960,20 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        let registration = self.register_external_task(
+        let registration = self.register_projection(
             TaskKind::ConversationSync,
             &snapshot.id,
             Some(scope.dedup_key().to_string()),
             scope.conflict_keys(),
-            serde_json::json!({"domain": "conversation_sync"}),
+            &snapshot,
         )?;
-        let mut current = self
-            .conversation_sync
-            .lock()
-            .map_err(|error| error.to_string())?;
         match registration {
-            ExternalRegistrationOutcome::Started(_) => {
-                current.insert(scope, snapshot.clone());
-                Ok((snapshot, true))
-            }
-            ExternalRegistrationOutcome::Existing(runtime_snapshot)
-            | ExternalRegistrationOutcome::Conflict(runtime_snapshot) => {
-                let existing = current
-                    .values()
-                    .find(|snapshot| snapshot.id == runtime_snapshot.task_id)
-                    .ok_or_else(|| {
-                        format!(
-                            "conversation sync task projection not found: {}",
-                            runtime_snapshot.task_id
-                        )
-                    })?;
-                Ok((existing.clone(), false))
-            }
+            ExternalRegistrationOutcome::Started(ref runtime)
+            | ExternalRegistrationOutcome::Existing(ref runtime)
+            | ExternalRegistrationOutcome::Conflict(ref runtime) => Ok((
+                self.projection_from_runtime(&runtime)?,
+                matches!(&registration, ExternalRegistrationOutcome::Started(_)),
+            )),
         }
     }
 
@@ -1363,19 +983,10 @@ impl BackgroundTaskRegistry {
         completed_source_count: usize,
         total_source_count: usize,
         current_source_name: Option<String>,
-    ) -> LegacyResult<ConversationSyncTaskSnapshot> {
-        let runtime_snapshot = self.external_task_snapshot(task_id)?;
-        let mut current = self
-            .conversation_sync
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let snapshot = current
-            .values_mut()
-            .find(|snapshot| snapshot.id == task_id)
-            .ok_or_else(|| "conversation sync task not found".to_string())?;
-        if runtime_snapshot.state == TaskState::Running
-            && snapshot.status == BackgroundTaskStatus::Running
-        {
+    ) -> AppResult<ConversationSyncTaskSnapshot> {
+        let runtime = self.external_task_snapshot(task_id)?;
+        let mut snapshot: ConversationSyncTaskSnapshot = self.decode(&runtime)?;
+        if runtime.state == TaskState::Running {
             snapshot.progress = ConversationSyncTaskProgress {
                 phase: ConversationSyncProgressPhase::Syncing,
                 completed_source_count: completed_source_count.min(total_source_count),
@@ -1383,113 +994,67 @@ impl BackgroundTaskRegistry {
                 current_source_name,
             };
         }
-        Ok(snapshot.clone())
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
     }
 
     pub(crate) fn finish_conversation_sync(
         &self,
         task_id: &str,
-        result: LegacyResult<Value>,
-    ) -> LegacyResult<ConversationSyncTaskSnapshot> {
-        let runtime_snapshot = self.finish_external_task(task_id, result.clone())?;
-        let mut current = self
-            .conversation_sync
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let snapshot = current
-            .values_mut()
-            .find(|snapshot| snapshot.id == task_id)
-            .ok_or_else(|| "conversation sync task not found".to_string())?;
-
-        snapshot.finished_at = runtime_snapshot.finished_at.clone();
-        match (runtime_snapshot.state, result) {
-            (TaskState::Succeeded, Ok(value)) => {
-                snapshot.status = BackgroundTaskStatus::Completed;
-                snapshot.progress.phase = ConversationSyncProgressPhase::Completed;
-                snapshot.progress.completed_source_count = snapshot.progress.total_source_count;
-                snapshot.progress.current_source_name = None;
-                snapshot.result = Some(value);
-                snapshot.error = None;
-            }
-            (TaskState::Canceled, _) => {
-                snapshot.status = BackgroundTaskStatus::Cancelled;
-                snapshot.progress.phase = ConversationSyncProgressPhase::Cancelled;
-                snapshot.progress.current_source_name = None;
-                snapshot.result = None;
-                snapshot.error = runtime_error_message(&runtime_snapshot);
-            }
-            (_, Err(error)) => {
-                snapshot.status = BackgroundTaskStatus::Failed;
-                snapshot.progress.phase = ConversationSyncProgressPhase::Failed;
-                snapshot.progress.current_source_name = None;
-                snapshot.result = None;
-                snapshot.error = Some(error);
-            }
-            (state, Ok(_)) => {
-                snapshot.status = BackgroundTaskStatus::Failed;
-                snapshot.progress.phase = ConversationSyncProgressPhase::Failed;
-                snapshot.progress.current_source_name = None;
-                snapshot.result = None;
-                snapshot.error = Some(format!(
-                    "conversation sync did not reach a terminal state: {state:?}"
-                ));
-            }
-        }
-        Ok(snapshot.clone())
+        result: Result<Value, String>,
+    ) -> AppResult<ConversationSyncTaskSnapshot> {
+        self.finish_external_task(task_id, result.clone())?;
+        let mut snapshot: ConversationSyncTaskSnapshot =
+            self.decode(&self.external_task_snapshot(task_id)?)?;
+        snapshot.result = result.ok();
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
     }
 
     pub(crate) fn conversation_sync_snapshot(
         &self,
-    ) -> LegacyResult<Option<ConversationSyncTaskSnapshot>> {
-        self.conversation_sync
-            .lock()
-            .map(|snapshots| {
-                snapshots
-                    .values()
-                    .filter_map(|snapshot| {
-                        self.task_runtime
-                            .get(&snapshot.id)
-                            .map(|runtime| project_background_snapshot(snapshot, &runtime))
-                    })
-                    .max_by(|left, right| left.started_at.cmp(&right.started_at))
-            })
-            .map_err(|error| error.to_string())
+    ) -> AppResult<Option<ConversationSyncTaskSnapshot>> {
+        Ok(self
+            .list_projections::<ConversationSyncTaskSnapshot>(TaskKind::ConversationSync)
+            .into_iter()
+            .max_by(|left, right| left.started_at.cmp(&right.started_at)))
     }
 
     pub(crate) fn conversation_sync_snapshots(
         &self,
-    ) -> LegacyResult<Vec<ConversationSyncTaskSnapshot>> {
-        self.conversation_sync
-            .lock()
-            .map(|snapshots| {
-                let mut snapshots = snapshots
-                    .values()
-                    .filter_map(|snapshot| {
-                        self.task_runtime
-                            .get(&snapshot.id)
-                            .map(|runtime| project_background_snapshot(snapshot, &runtime))
-                    })
-                    .collect::<Vec<_>>();
-                snapshots.sort_by(|left, right| left.started_at.cmp(&right.started_at));
-                snapshots
-            })
-            .map_err(|error| error.to_string())
+    ) -> AppResult<Vec<ConversationSyncTaskSnapshot>> {
+        let mut snapshots =
+            self.list_projections::<ConversationSyncTaskSnapshot>(TaskKind::ConversationSync);
+        snapshots.sort_by(|left, right| left.started_at.cmp(&right.started_at));
+        Ok(snapshots)
+    }
+
+    fn begin_conversation_script_projection(
+        &self,
+        snapshot: &ConversationScriptInstallTaskSnapshot,
+        key: LifecycleRequestKey,
+    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
+        match self.lifecycle.reserve(snapshot.id.clone(), key)? {
+            LifecycleReservationOutcome::Existing(existing_id) => {
+                Ok((self.projection(&existing_id)?, false))
+            }
+            LifecycleReservationOutcome::Started => {
+                self.write_projection(&snapshot.id, snapshot)?;
+                Ok((self.projection(&snapshot.id)?, true))
+            }
+        }
     }
 
     pub(crate) fn begin_conversation_script_install(
         &self,
         params: &ConversationScriptInstallParams,
-    ) -> LegacyResult<(ConversationScriptInstallTaskSnapshot, bool)> {
-        let mut current = self
-            .conversation_script_install
-            .lock()
-            .map_err(|error| error.to_string())?;
-
+    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
         let item_id = params.item_id.trim().to_string();
         if item_id.is_empty() {
-            return Err("conversation script install requires an item id".to_string());
+            return Err(crate::backend::runtime::AppError::Validation(
+                "conversation script install requires an item id".to_string(),
+            ));
         }
-
         let snapshot = ConversationScriptInstallTaskSnapshot {
             id: Uuid::new_v4().to_string(),
             status: BackgroundTaskStatus::Running,
@@ -1505,45 +1070,28 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        match self
-            .lifecycle
-            .reserve(
-                snapshot.id.clone(),
-                extension_lifecycle_key(
-                    PackageKind::ConversationAdapter,
-                    &snapshot.package_id,
-                    snapshot.version.as_deref(),
-                    "install",
-                )?,
-            )
-            .map_err(|error| error.to_string())?
-        {
-            LifecycleReservationOutcome::Started => {}
-            LifecycleReservationOutcome::Existing(existing_id) => {
-                let existing = current
-                    .as_ref()
-                    .filter(|current| current.id == existing_id)
-                    .ok_or_else(|| {
-                        format!("conversation lifecycle task projection not found: {existing_id}")
-                    })?;
-                return Ok((existing.clone(), false));
-            }
-        }
-        *current = Some(snapshot.clone());
-        Ok((snapshot, true))
+        self.begin_conversation_script_projection(
+            &snapshot,
+            extension_lifecycle_key(
+                PackageKind::ConversationAdapter,
+                &snapshot.package_id,
+                snapshot.version.as_deref(),
+                "install",
+            )?,
+        )
     }
 
     pub(crate) fn begin_conversation_adapter_package_install(
         &self,
         params: &ConversationAdapterPackageInstallParams,
-    ) -> LegacyResult<(ConversationScriptInstallTaskSnapshot, bool)> {
+    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
         self.begin_conversation_adapter_package_change(params, "install", "installing")
     }
 
     pub(crate) fn begin_conversation_adapter_package_update(
         &self,
         params: &ConversationAdapterPackageInstallParams,
-    ) -> LegacyResult<(ConversationScriptInstallTaskSnapshot, bool)> {
+    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
         self.begin_conversation_adapter_package_change(params, "update", "updating")
     }
 
@@ -1552,17 +1100,13 @@ impl BackgroundTaskRegistry {
         params: &ConversationAdapterPackageInstallParams,
         action: &str,
         phase: &str,
-    ) -> LegacyResult<(ConversationScriptInstallTaskSnapshot, bool)> {
-        let mut current = self
-            .conversation_script_install
-            .lock()
-            .map_err(|error| error.to_string())?;
-
+    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
         let package_id = params.package_id.trim().to_string();
         if package_id.is_empty() {
-            return Err("conversation adapter package install requires a package id".to_string());
+            return Err(crate::backend::runtime::AppError::Validation(
+                "conversation adapter package install requires a package id".to_string(),
+            ));
         }
-
         let snapshot = ConversationScriptInstallTaskSnapshot {
             id: Uuid::new_v4().to_string(),
             status: BackgroundTaskStatus::Running,
@@ -1578,45 +1122,26 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        match self
-            .lifecycle
-            .reserve(
-                snapshot.id.clone(),
-                extension_lifecycle_key(
-                    PackageKind::ConversationAdapter,
-                    &snapshot.package_id,
-                    snapshot.version.as_deref(),
-                    action,
-                )?,
-            )
-            .map_err(|error| error.to_string())?
-        {
-            LifecycleReservationOutcome::Started => {}
-            LifecycleReservationOutcome::Existing(existing_id) => {
-                let existing = current
-                    .as_ref()
-                    .filter(|current| current.id == existing_id)
-                    .ok_or_else(|| {
-                        format!("conversation lifecycle task projection not found: {existing_id}")
-                    })?;
-                return Ok((existing.clone(), false));
-            }
-        }
-        *current = Some(snapshot.clone());
-        Ok((snapshot, true))
+        self.begin_conversation_script_projection(
+            &snapshot,
+            extension_lifecycle_key(
+                PackageKind::ConversationAdapter,
+                &snapshot.package_id,
+                snapshot.version.as_deref(),
+                action,
+            )?,
+        )
     }
 
     pub(crate) fn begin_conversation_adapter_package_uninstall(
         &self,
         params: &ConversationAdapterPackageUninstallParams,
-    ) -> LegacyResult<(ConversationScriptInstallTaskSnapshot, bool)> {
-        let mut current = self
-            .conversation_script_install
-            .lock()
-            .map_err(|error| error.to_string())?;
+    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
         let package_id = params.package_id.trim().to_string();
         if package_id.is_empty() {
-            return Err("conversation adapter package uninstall requires a package id".to_string());
+            return Err(crate::backend::runtime::AppError::Validation(
+                "conversation adapter package uninstall requires a package id".to_string(),
+            ));
         }
         let snapshot = ConversationScriptInstallTaskSnapshot {
             id: Uuid::new_v4().to_string(),
@@ -1633,111 +1158,49 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        match self
-            .lifecycle
-            .reserve(
-                snapshot.id.clone(),
-                extension_lifecycle_key(
-                    PackageKind::ConversationAdapter,
-                    &snapshot.package_id,
-                    snapshot.version.as_deref(),
-                    "uninstall",
-                )?,
-            )
-            .map_err(|error| error.to_string())?
-        {
-            LifecycleReservationOutcome::Started => {}
-            LifecycleReservationOutcome::Existing(existing_id) => {
-                let existing = current
-                    .as_ref()
-                    .filter(|current| current.id == existing_id)
-                    .ok_or_else(|| {
-                        format!("conversation lifecycle task projection not found: {existing_id}")
-                    })?;
-                return Ok((existing.clone(), false));
-            }
-        }
-        *current = Some(snapshot.clone());
-        Ok((snapshot, true))
+        self.begin_conversation_script_projection(
+            &snapshot,
+            extension_lifecycle_key(
+                PackageKind::ConversationAdapter,
+                &snapshot.package_id,
+                None,
+                "uninstall",
+            )?,
+        )
     }
 
     pub(crate) fn finish_conversation_script_install(
         &self,
         task_id: &str,
-        result: LegacyResult<Value>,
-    ) -> LegacyResult<ConversationScriptInstallTaskSnapshot> {
-        let runtime_snapshot = self.finish_external_task(task_id, result.clone())?;
-        let mut current = self
-            .conversation_script_install
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let snapshot = current
-            .as_mut()
-            .ok_or_else(|| "conversation script install task not found".to_string())?;
-        if snapshot.id != task_id {
-            return Err(format!(
-                "conversation script install task is no longer current: {task_id}"
-            ));
-        }
-
-        snapshot.finished_at = runtime_snapshot.finished_at.clone();
-        match (runtime_snapshot.state, result) {
-            (TaskState::Succeeded, Ok(value)) => {
-                snapshot.status = BackgroundTaskStatus::Completed;
-                snapshot.phase = Some("completed".to_string());
-                snapshot.result = Some(value);
-                snapshot.error = None;
-            }
-            (TaskState::Canceled, _) => {
-                snapshot.status = BackgroundTaskStatus::Cancelled;
-                snapshot.phase = Some("cancelled".to_string());
-                snapshot.result = None;
-                snapshot.error = runtime_error_message(&runtime_snapshot);
-            }
-            (_, Err(error)) => {
-                snapshot.status = BackgroundTaskStatus::Failed;
-                snapshot.phase = Some("failed".to_string());
-                snapshot.result = None;
-                snapshot.error = Some(error);
-            }
-            (state, Ok(_)) => {
-                snapshot.status = BackgroundTaskStatus::Failed;
-                snapshot.phase = Some("failed".to_string());
-                snapshot.result = None;
-                snapshot.error = Some(format!(
-                    "conversation adapter install did not reach a terminal state: {state:?}"
-                ));
-            }
-        }
-        let snapshot = snapshot.clone();
-        drop(current);
-        Ok(snapshot)
+        result: Result<Value, String>,
+    ) -> AppResult<ConversationScriptInstallTaskSnapshot> {
+        self.finish_external_task(task_id, result.clone())?;
+        let mut snapshot: ConversationScriptInstallTaskSnapshot =
+            self.decode(&self.external_task_snapshot(task_id)?)?;
+        snapshot.result = result.ok();
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
     }
 
     pub(crate) fn conversation_script_install_snapshot(
         &self,
-    ) -> LegacyResult<Option<ConversationScriptInstallTaskSnapshot>> {
-        self.conversation_script_install
-            .lock()
-            .map(|snapshot| {
-                snapshot.as_ref().and_then(|snapshot| {
-                    self.task_runtime
-                        .get(&snapshot.id)
-                        .map(|runtime| project_background_snapshot(snapshot, &runtime))
-                })
-            })
-            .map_err(|error| error.to_string())
+    ) -> AppResult<Option<ConversationScriptInstallTaskSnapshot>> {
+        Ok(self
+            .list_projections::<ConversationScriptInstallTaskSnapshot>(TaskKind::ExtensionLifecycle)
+            .into_iter()
+            .max_by(|left, right| left.started_at.cmp(&right.started_at)))
     }
 
     pub(crate) fn begin_skill_backup(
         &self,
         asset_ids: Vec<String>,
-    ) -> LegacyResult<(SkillBackupTaskSnapshot, bool)> {
+    ) -> AppResult<(SkillBackupTaskSnapshot, bool)> {
         let asset_ids = dedupe_non_empty(asset_ids);
         if asset_ids.is_empty() {
-            return Err("skill backup requires at least one asset id".to_string());
+            return Err(crate::backend::runtime::AppError::Validation(
+                "skill backup requires at least one asset id".to_string(),
+            ));
         }
-
         let snapshot = SkillBackupTaskSnapshot {
             id: Uuid::new_v4().to_string(),
             status: BackgroundTaskStatus::Running,
@@ -1752,36 +1215,21 @@ impl BackgroundTaskRegistry {
             errors: Vec::new(),
             error: None,
         };
-        let registration = self.register_external_task(
+        let registration = self.register_projection(
             TaskKind::Backup,
             &snapshot.id,
             Some("skill-backup".to_string()),
             Vec::new(),
-            serde_json::json!({"domain": "skill_backup"}),
+            &snapshot,
         )?;
-        let (runtime_snapshot, started) = match registration {
-            ExternalRegistrationOutcome::Started(snapshot) => (snapshot, true),
-            ExternalRegistrationOutcome::Existing(snapshot)
-            | ExternalRegistrationOutcome::Conflict(snapshot) => (snapshot, false),
-        };
-        let mut current = self
-            .skill_backup
-            .lock()
-            .map_err(|error| error.to_string())?;
-        if !started {
-            let existing = current
-                .as_ref()
-                .filter(|snapshot| snapshot.id == runtime_snapshot.task_id)
-                .ok_or_else(|| {
-                    format!(
-                        "skill backup task projection not found: {}",
-                        runtime_snapshot.task_id
-                    )
-                })?;
-            return Ok((existing.clone(), false));
+        match registration {
+            ExternalRegistrationOutcome::Started(ref runtime)
+            | ExternalRegistrationOutcome::Existing(ref runtime)
+            | ExternalRegistrationOutcome::Conflict(ref runtime) => Ok((
+                self.projection_from_runtime(&runtime)?,
+                matches!(&registration, ExternalRegistrationOutcome::Started(_)),
+            )),
         }
-        *current = Some(snapshot.clone());
-        Ok((snapshot, true))
     }
 
     pub(crate) fn update_skill_backup_progress(
@@ -1789,110 +1237,53 @@ impl BackgroundTaskRegistry {
         task_id: &str,
         completed_count: usize,
         current_asset_id: Option<String>,
-    ) -> LegacyResult<SkillBackupTaskSnapshot> {
-        let runtime_snapshot = self.external_task_snapshot(task_id)?;
-        let mut current = self
-            .skill_backup
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let snapshot = current
-            .as_mut()
-            .ok_or_else(|| "skill backup task not found".to_string())?;
-        if snapshot.id != task_id {
-            return Err(format!("skill backup task is no longer current: {task_id}"));
-        }
-        if runtime_snapshot.state == TaskState::Running
-            && snapshot.status == BackgroundTaskStatus::Running
-        {
+    ) -> AppResult<SkillBackupTaskSnapshot> {
+        let runtime = self.external_task_snapshot(task_id)?;
+        let mut snapshot: SkillBackupTaskSnapshot = self.decode(&runtime)?;
+        if runtime.state == TaskState::Running {
             snapshot.completed_count = completed_count.min(snapshot.total_count);
             snapshot.current_asset_id = current_asset_id;
         }
-        Ok(snapshot.clone())
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
     }
 
     pub(crate) fn finish_skill_backup(
         &self,
         task_id: &str,
-        result: LegacyResult<Vec<CatalogAsset>>,
-    ) -> LegacyResult<SkillBackupTaskSnapshot> {
+        result: Result<Vec<CatalogAsset>, String>,
+    ) -> AppResult<SkillBackupTaskSnapshot> {
         let runtime_result = result
             .as_ref()
-            .map(|assets| serde_json::json!({"asset_count": assets.len()}))
+            .map(|assets| serde_json::to_value(assets).unwrap_or(Value::Null))
             .map_err(|error| crate::backend::runtime::AppError::from(error.clone()));
-        let runtime_snapshot = self.finish_external_result(task_id, runtime_result)?;
-        let mut current = self
-            .skill_backup
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let snapshot = current
-            .as_mut()
-            .ok_or_else(|| "skill backup task not found".to_string())?;
-        if snapshot.id != task_id {
-            return Err(format!("skill backup task is no longer current: {task_id}"));
+        self.finish_external_result(task_id, runtime_result)?;
+        let mut snapshot: SkillBackupTaskSnapshot =
+            self.decode(&self.external_task_snapshot(task_id)?)?;
+        match result {
+            Ok(assets) => snapshot.assets = assets,
+            Err(error) => snapshot.errors.push(SkillBackupTaskError {
+                asset_id: snapshot.current_asset_id.clone(),
+                message: error,
+            }),
         }
-
-        snapshot.finished_at = runtime_snapshot.finished_at.clone();
-        snapshot.current_asset_id = None;
-        match (runtime_snapshot.state, result) {
-            (TaskState::Succeeded, Ok(assets)) => {
-                snapshot.status = BackgroundTaskStatus::Completed;
-                snapshot.completed_count = snapshot.total_count;
-                snapshot.failed_count = 0;
-                snapshot.assets = assets;
-                snapshot.errors.clear();
-                snapshot.error = None;
-            }
-            (TaskState::Canceled, _) => {
-                snapshot.status = BackgroundTaskStatus::Cancelled;
-                snapshot.failed_count = 0;
-                snapshot.assets.clear();
-                snapshot.errors.clear();
-                snapshot.error = runtime_error_message(&runtime_snapshot);
-            }
-            (_, Err(error)) => {
-                snapshot.status = BackgroundTaskStatus::Failed;
-                snapshot.failed_count = 1;
-                snapshot.assets.clear();
-                snapshot.errors = vec![SkillBackupTaskError {
-                    asset_id: snapshot.asset_ids.get(snapshot.completed_count).cloned(),
-                    message: error.clone(),
-                }];
-                snapshot.error = Some(error);
-            }
-            (state, Ok(_)) => {
-                snapshot.status = BackgroundTaskStatus::Failed;
-                snapshot.failed_count = 1;
-                snapshot.assets.clear();
-                snapshot.errors.clear();
-                snapshot.error = Some(format!(
-                    "skill backup did not reach a terminal state: {state:?}"
-                ));
-            }
-        }
-        Ok(snapshot.clone())
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
     }
 
-    pub(crate) fn skill_backup_snapshot(&self) -> LegacyResult<Option<SkillBackupTaskSnapshot>> {
-        self.skill_backup
-            .lock()
-            .map(|snapshot| {
-                snapshot.as_ref().and_then(|snapshot| {
-                    self.task_runtime
-                        .get(&snapshot.id)
-                        .map(|runtime| project_background_snapshot(snapshot, &runtime))
-                })
-            })
-            .map_err(|error| error.to_string())
+    pub(crate) fn skill_backup_snapshot(&self) -> AppResult<Option<SkillBackupTaskSnapshot>> {
+        Ok(self
+            .list_projections::<SkillBackupTaskSnapshot>(TaskKind::Backup)
+            .into_iter()
+            .max_by(|left, right| left.started_at.cmp(&right.started_at)))
     }
 
     pub(crate) fn begin_memory_task(
         &self,
         params: &MemoryTaskStartParams,
-    ) -> LegacyResult<(MemoryTaskSnapshot, AiExecutionCancellation, bool)> {
+    ) -> AppResult<(MemoryTaskSnapshot, AiExecutionCancellation, bool)> {
         let scope_fingerprint = params.scope.fingerprint()?;
         let id = Uuid::new_v4().to_string();
-        let cancellation = AiExecutionCancellation::default();
-        let dedup_key = format!("memory:{:?}:{scope_fingerprint}", params.kind);
         let snapshot = MemoryTaskSnapshot {
             id: id.clone(),
             status: BackgroundTaskStatus::Running,
@@ -1911,50 +1302,32 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        let registration = self.register_external_task(
+        let registration = self.register_projection(
             TaskKind::Other,
-            &snapshot.id,
-            Some(dedup_key),
+            &id,
+            Some(format!("memory:{:?}:{scope_fingerprint}", params.kind)),
             vec![format!("memory-scope:{scope_fingerprint}")],
-            serde_json::json!({"domain": "memory", "kind": format!("{:?}", params.kind)}),
+            &snapshot,
         )?;
-        let mut tasks = self
-            .memory_tasks
-            .lock()
-            .map_err(|error| error.to_string())?;
         match registration {
-            ExternalRegistrationOutcome::Started(_) => {
-                tasks.insert(
-                    id,
-                    MemoryTaskEntry {
-                        snapshot: snapshot.clone(),
-                        cancellation: cancellation.clone(),
-                    },
+            ExternalRegistrationOutcome::Conflict(runtime) => {
+                let existing: MemoryTaskSnapshot = self.decode(&runtime)?;
+                Err(crate::backend::runtime::AppError::Conflict(format!(
+                    "Memory scope is already running task {} ({:?})",
+                    runtime.task_id, existing.kind
+                )))
+            }
+            ExternalRegistrationOutcome::Started(runtime) => {
+                let cancellation = AiExecutionCancellation::from_token(
+                    self.task_runtime.cancellation_token(&runtime.task_id)?,
                 );
-                Ok((snapshot, cancellation, true))
+                Ok((self.projection_from_runtime(&runtime)?, cancellation, true))
             }
-            ExternalRegistrationOutcome::Existing(runtime_snapshot) => {
-                let existing = tasks.get(&runtime_snapshot.task_id).ok_or_else(|| {
-                    format!(
-                        "memory task projection not found: {}",
-                        runtime_snapshot.task_id
-                    )
-                })?;
-                Ok((
-                    existing.snapshot.clone(),
-                    existing.cancellation.clone(),
-                    false,
-                ))
-            }
-            ExternalRegistrationOutcome::Conflict(runtime_snapshot) => {
-                let kind = tasks
-                    .get(&runtime_snapshot.task_id)
-                    .map(|entry| format!("{:?}", entry.snapshot.kind))
-                    .unwrap_or_else(|| "unknown".to_string());
-                Err(format!(
-                    "Memory scope is already running task {} ({kind})",
-                    runtime_snapshot.task_id
-                ))
+            ExternalRegistrationOutcome::Existing(runtime) => {
+                let cancellation = AiExecutionCancellation::from_token(
+                    self.task_runtime.cancellation_token(&runtime.task_id)?,
+                );
+                Ok((self.projection_from_runtime(&runtime)?, cancellation, false))
             }
         }
     }
@@ -1966,153 +1339,62 @@ impl BackgroundTaskRegistry {
         processed_count: usize,
         total_count: usize,
         run_id: Option<String>,
-    ) -> LegacyResult<MemoryTaskSnapshot> {
-        let runtime_snapshot = self.external_task_snapshot(task_id)?;
-        let mut tasks = self
-            .memory_tasks
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let entry = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| format!("Memory task was not found: {task_id}"))?;
-        match runtime_snapshot.state {
-            TaskState::Cancelling => {
-                entry.snapshot.cancel_requested = true;
-                entry.snapshot.phase = "cancelling".to_string();
+    ) -> AppResult<MemoryTaskSnapshot> {
+        let runtime = self.external_task_snapshot(task_id)?;
+        let mut snapshot: MemoryTaskSnapshot = self.decode(&runtime)?;
+        if runtime.state == TaskState::Running {
+            snapshot.phase = phase.to_string();
+            snapshot.processed_count = processed_count.min(total_count);
+            snapshot.total_count = total_count;
+            if run_id.is_some() {
+                snapshot.run_id = run_id;
             }
-            TaskState::Canceled => {
-                entry.snapshot.cancel_requested = true;
-                entry.snapshot.status = BackgroundTaskStatus::Cancelled;
-                entry.snapshot.phase = "cancelled".to_string();
-                entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
-            }
-            TaskState::Running if entry.snapshot.status == BackgroundTaskStatus::Running => {
-                entry.snapshot.phase = phase.to_string();
-                entry.snapshot.processed_count = processed_count.min(total_count);
-                entry.snapshot.total_count = total_count;
-                if run_id.is_some() {
-                    entry.snapshot.run_id = run_id;
-                }
-            }
-            TaskState::Pending | TaskState::Running | TaskState::Succeeded | TaskState::Failed => {}
         }
-        Ok(entry.snapshot.clone())
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
     }
 
     pub(crate) fn finish_memory_task(
         &self,
         task_id: &str,
-        result: LegacyResult<Value>,
-    ) -> LegacyResult<MemoryTaskSnapshot> {
-        let runtime_snapshot = self.finish_external_task(task_id, result.clone())?;
-        let mut tasks = self
-            .memory_tasks
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let entry = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| format!("Memory task was not found: {task_id}"))?;
-        entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
-        match (runtime_snapshot.state, result) {
-            (TaskState::Succeeded, Ok(value)) => {
-                entry.snapshot.status = BackgroundTaskStatus::Completed;
-                entry.snapshot.phase = "completed".to_string();
-                entry.snapshot.processed_count = entry.snapshot.total_count;
-                entry.snapshot.result = Some(value);
-                entry.snapshot.error = None;
-            }
-            (TaskState::Canceled, _) => {
-                entry.snapshot.status = BackgroundTaskStatus::Cancelled;
-                entry.snapshot.phase = "cancelled".to_string();
-                entry.snapshot.result = None;
-                entry.snapshot.error = runtime_error_message(&runtime_snapshot);
-            }
-            (_, Err(error)) => {
-                entry.snapshot.status = BackgroundTaskStatus::Failed;
-                entry.snapshot.phase = "failed".to_string();
-                entry.snapshot.result = None;
-                entry.snapshot.error = Some(error);
-            }
-            (state, Ok(_)) => {
-                entry.snapshot.status = BackgroundTaskStatus::Failed;
-                entry.snapshot.phase = "failed".to_string();
-                entry.snapshot.result = None;
-                entry.snapshot.error = Some(format!(
-                    "Memory task did not reach a terminal state: {state:?}"
-                ));
-            }
-        }
-        Ok(entry.snapshot.clone())
+        result: Result<Value, String>,
+    ) -> AppResult<MemoryTaskSnapshot> {
+        self.finish_external_task(task_id, result.clone())?;
+        let mut snapshot: MemoryTaskSnapshot =
+            self.decode(&self.external_task_snapshot(task_id)?)?;
+        snapshot.result = result.ok();
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
     }
 
-    pub(crate) fn cancel_memory_task(&self, task_id: &str) -> LegacyResult<MemoryTaskSnapshot> {
-        let runtime_snapshot = self.cancel_external_task(task_id)?;
-        let mut tasks = self
-            .memory_tasks
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let entry = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| format!("Memory task was not found: {task_id}"))?;
-        if entry.snapshot.status == BackgroundTaskStatus::Running {
-            entry.snapshot.cancel_requested = true;
-            entry.snapshot.phase = if runtime_snapshot.state == TaskState::Canceled {
-                entry.snapshot.status = BackgroundTaskStatus::Cancelled;
-                "cancelled".to_string()
-            } else {
-                "cancelling".to_string()
-            };
-            entry.cancellation.cancel();
-        }
-        Ok(entry.snapshot.clone())
+    pub(crate) fn cancel_memory_task(&self, task_id: &str) -> AppResult<MemoryTaskSnapshot> {
+        self.cancel_external_task(task_id)?;
+        let runtime = self.external_task_snapshot(task_id)?;
+        let mut snapshot: MemoryTaskSnapshot = self.decode(&runtime)?;
+        snapshot.cancel_requested = true;
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
     }
 
     pub(crate) fn memory_task_snapshot(
         &self,
         task_id: &str,
-    ) -> LegacyResult<Option<MemoryTaskSnapshot>> {
-        self.memory_tasks
-            .lock()
-            .map(|tasks| {
-                tasks.get(task_id).and_then(|entry| {
-                    self.task_runtime
-                        .get(task_id)
-                        .map(|runtime| project_background_snapshot(&entry.snapshot, &runtime))
-                })
-            })
-            .map_err(|error| error.to_string())
+    ) -> AppResult<Option<MemoryTaskSnapshot>> {
+        Ok(self.projection::<MemoryTaskSnapshot>(task_id).ok())
     }
 
-    pub(crate) fn memory_task_snapshots(&self) -> LegacyResult<Vec<MemoryTaskSnapshot>> {
-        self.memory_tasks
-            .lock()
-            .map(|tasks| {
-                let mut snapshots = tasks
-                    .values()
-                    .filter_map(|entry| {
-                        self.task_runtime
-                            .get(&entry.snapshot.id)
-                            .map(|runtime| project_background_snapshot(&entry.snapshot, &runtime))
-                    })
-                    .collect::<Vec<_>>();
-                snapshots.sort_by(|left, right| left.started_at.cmp(&right.started_at));
-                snapshots
-            })
-            .map_err(|error| error.to_string())
+    pub(crate) fn memory_task_snapshots(&self) -> AppResult<Vec<MemoryTaskSnapshot>> {
+        let mut snapshots = self.list_projections::<MemoryTaskSnapshot>(TaskKind::Other);
+        snapshots.sort_by(|left, right| left.started_at.cmp(&right.started_at));
+        Ok(snapshots)
     }
 
     pub(crate) fn begin_ai_execution(
         &self,
         purpose: AiExecutionPurpose,
         agent_id: &AgentId,
-    ) -> LegacyResult<(AiExecutionTaskSnapshot, AiExecutionCancellation)> {
-        let mut tasks = self
-            .ai_executions
-            .lock()
-            .map_err(|_| "AI execution task registry is unavailable".to_string())?;
-        prune_ai_executions(&mut tasks, Instant::now());
+    ) -> AppResult<(AiExecutionTaskSnapshot, AiExecutionCancellation)> {
         let id = Uuid::new_v4().to_string();
-        let cancellation = AiExecutionCancellation::default();
         let now = Utc::now().to_rfc3339();
         let snapshot = AiExecutionTaskSnapshot {
             id: id.clone(),
@@ -2126,199 +1408,103 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        let registration = self.register_external_task(
+        let runtime = match self.register_external_task(
             TaskKind::AiExecution,
-            &snapshot.id,
+            &id,
             None,
             Vec::new(),
-            serde_json::json!({"domain": "ai_execution", "purpose": format!("{:?}", purpose)}),
-        )?;
-        match registration {
-            ExternalRegistrationOutcome::Started(_) => {}
-            ExternalRegistrationOutcome::Existing(existing)
-            | ExternalRegistrationOutcome::Conflict(existing) => {
-                return Err(format!(
+            serde_json::to_value(&snapshot)
+                .map_err(|error| crate::backend::runtime::AppError::External(error.to_string()))?,
+        )? {
+            ExternalRegistrationOutcome::Started(runtime) => runtime,
+            ExternalRegistrationOutcome::Existing(runtime)
+            | ExternalRegistrationOutcome::Conflict(runtime) => {
+                return Err(crate::backend::runtime::AppError::Conflict(format!(
                     "AI execution task id was already registered: {}",
-                    existing.task_id
-                ));
+                    runtime.task_id
+                )))
             }
-        }
-        tasks.insert(
-            id,
-            AiExecutionTaskEntry {
-                snapshot: snapshot.clone(),
-                cancellation: cancellation.clone(),
-                terminal_at: None,
-            },
+        };
+        let cancellation = AiExecutionCancellation::from_token(
+            self.task_runtime.cancellation_token(&runtime.task_id)?,
         );
-        Ok((snapshot, cancellation))
+        Ok((self.projection_from_runtime(&runtime)?, cancellation))
     }
 
     pub(crate) fn update_ai_execution_phase(
         &self,
         task_id: &str,
         phase: AiExecutionPhase,
-    ) -> LegacyResult<AiExecutionTaskSnapshot> {
-        let runtime_snapshot = self.external_task_snapshot(task_id)?;
-        let mut tasks = self
-            .ai_executions
-            .lock()
-            .map_err(|_| "AI execution task registry is unavailable".to_string())?;
-        let entry = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| format!("AI execution task was not found: {task_id}"))?;
-        match runtime_snapshot.state {
-            TaskState::Cancelling => {
-                entry.snapshot.state = AiExecutionTaskState::Running;
-                entry.snapshot.phase = AiExecutionPhase::Cancelling;
-            }
-            TaskState::Canceled => {
-                entry.snapshot.state = AiExecutionTaskState::Cancelled;
-                entry.snapshot.phase = AiExecutionPhase::CleaningUp;
-                entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
-                entry.terminal_at = Some(Instant::now());
-            }
-            TaskState::Pending | TaskState::Running if !entry.snapshot.state.is_terminal() => {
-                entry.snapshot.state = if phase == AiExecutionPhase::Queued {
-                    AiExecutionTaskState::Queued
-                } else {
-                    AiExecutionTaskState::Running
-                };
-                entry.snapshot.phase = phase;
-                entry.snapshot.updated_at = Utc::now().to_rfc3339();
-            }
-            TaskState::Pending | TaskState::Running | TaskState::Succeeded | TaskState::Failed => {}
+    ) -> AppResult<AiExecutionTaskSnapshot> {
+        let runtime = self.external_task_snapshot(task_id)?;
+        let mut snapshot: AiExecutionTaskSnapshot = self.decode(&runtime)?;
+        if runtime.state == TaskState::Running && !snapshot.state.is_terminal() {
+            snapshot.state = if phase == AiExecutionPhase::Queued {
+                AiExecutionTaskState::Queued
+            } else {
+                AiExecutionTaskState::Running
+            };
+            snapshot.phase = phase;
+            snapshot.updated_at = Utc::now().to_rfc3339();
         }
-        Ok(entry.snapshot.clone())
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
     }
 
     pub(crate) fn finish_ai_execution(
         &self,
         task_id: &str,
         result: Result<AiExecutionResult, AiExecutionError>,
-    ) -> LegacyResult<AiExecutionTaskSnapshot> {
-        let runtime_result = match &result {
-            Ok(result) => Ok(serde_json::json!({"text": result.text})),
-            Err(error) => Err(crate::backend::runtime::AppError::from(
-                error.to_view().message,
-            )),
-        };
-        let runtime_snapshot = self.finish_external_result(task_id, runtime_result)?;
-        let mut tasks = self
-            .ai_executions
-            .lock()
-            .map_err(|_| "AI execution task registry is unavailable".to_string())?;
-        let now = Instant::now();
-        prune_ai_executions(&mut tasks, now);
-        let snapshot = {
-            let entry = tasks
-                .get_mut(task_id)
-                .ok_or_else(|| format!("AI execution task was not found: {task_id}"))?;
-            if entry.snapshot.state.is_terminal() {
-                return Ok(entry.snapshot.clone());
+    ) -> AppResult<AiExecutionTaskSnapshot> {
+        let runtime_result = result
+            .as_ref()
+            .map(|value| serde_json::json!({"text": value.text}))
+            .map_err(|error| {
+                let view = error.to_view();
+                crate::backend::runtime::AppError::Domain {
+                    code: view.code,
+                    message: view.message,
+                    retryable: view.retryable,
+                    details: view.phase.map(|phase| serde_json::json!({"phase": phase})),
+                }
+            });
+        self.finish_external_result(task_id, runtime_result)?;
+        let mut snapshot: AiExecutionTaskSnapshot =
+            self.decode(&self.external_task_snapshot(task_id)?)?;
+        match result {
+            Ok(result) => {
+                snapshot.result = Some(AiExecutionPublicResult { text: result.text });
             }
-            entry.snapshot.phase = AiExecutionPhase::CleaningUp;
-            entry.snapshot.updated_at = Utc::now().to_rfc3339();
-            entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
-            entry.terminal_at = Some(now);
-            match (runtime_snapshot.state, result) {
-                (TaskState::Succeeded, Ok(result)) => {
-                    entry.snapshot.state = AiExecutionTaskState::Succeeded;
-                    entry.snapshot.result = Some(AiExecutionPublicResult { text: result.text });
-                    entry.snapshot.error = None;
-                }
-                (TaskState::Canceled, _) => {
-                    entry.snapshot.state = AiExecutionTaskState::Cancelled;
-                    entry.snapshot.result = None;
-                    entry.snapshot.error = None;
-                }
-                (_, Err(error)) => {
-                    let mut error = error.to_view();
-                    error.phase = Some(entry.snapshot.phase);
-                    entry.snapshot.state = AiExecutionTaskState::Failed;
-                    entry.snapshot.result = None;
-                    entry.snapshot.error = Some(error);
-                }
-                (state, Ok(_)) => {
-                    entry.snapshot.state = AiExecutionTaskState::Failed;
-                    entry.snapshot.result = None;
-                    entry.snapshot.error = Some(AiExecutionErrorView {
-                        code: "task_state".to_string(),
-                        message: format!("AI execution did not reach a terminal state: {state:?}"),
-                        phase: Some(entry.snapshot.phase),
-                        retryable: false,
-                    });
-                }
-            }
-            entry.snapshot.clone()
-        };
-        prune_ai_executions(&mut tasks, now);
-        Ok(snapshot)
-    }
-
-    pub(crate) fn cancel_ai_execution(
-        &self,
-        task_id: &str,
-    ) -> LegacyResult<AiExecutionTaskSnapshot> {
-        let runtime_snapshot = self.cancel_external_task(task_id)?;
-        let mut tasks = self
-            .ai_executions
-            .lock()
-            .map_err(|_| "AI execution task registry is unavailable".to_string())?;
-        let entry = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| format!("AI execution task was not found: {task_id}"))?;
-        if !entry.snapshot.state.is_terminal() {
-            entry.cancellation.cancel();
-            entry.snapshot.state = if runtime_snapshot.state == TaskState::Canceled {
-                AiExecutionTaskState::Cancelled
-            } else {
-                AiExecutionTaskState::Running
-            };
-            entry.snapshot.phase = if runtime_snapshot.state == TaskState::Canceled {
-                AiExecutionPhase::CleaningUp
-            } else {
-                AiExecutionPhase::Cancelling
-            };
-            entry.snapshot.updated_at = Utc::now().to_rfc3339();
-            if runtime_snapshot.state == TaskState::Canceled {
-                entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
-                entry.terminal_at = Some(Instant::now());
+            Err(error) => {
+                snapshot.phase = AiExecutionPhase::CleaningUp;
+                let mut error_view = error.to_view();
+                error_view.phase = Some(AiExecutionPhase::CleaningUp);
+                snapshot.error = Some(error_view);
             }
         }
-        Ok(entry.snapshot.clone())
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
+    }
+
+    pub(crate) fn cancel_ai_execution(&self, task_id: &str) -> AppResult<AiExecutionTaskSnapshot> {
+        self.cancel_external_task(task_id)?;
+        self.projection(task_id)
     }
 
     pub(crate) fn ai_execution_snapshot(
         &self,
         task_id: &str,
-    ) -> LegacyResult<Option<AiExecutionTaskSnapshot>> {
-        self.ai_executions
-            .lock()
-            .map(|tasks| {
-                tasks.get(task_id).and_then(|entry| {
-                    self.task_runtime
-                        .get(task_id)
-                        .map(|runtime| project_ai_execution(&entry.snapshot, &runtime))
-                })
-            })
-            .map_err(|_| "AI execution task registry is unavailable".to_string())
+    ) -> AppResult<Option<AiExecutionTaskSnapshot>> {
+        Ok(self.projection::<AiExecutionTaskSnapshot>(task_id).ok())
     }
 
-    pub(crate) fn ai_execution_snapshots(&self) -> LegacyResult<Vec<AiExecutionTaskSnapshot>> {
-        let mut tasks = self
-            .ai_executions
-            .lock()
-            .map_err(|_| "AI execution task registry is unavailable".to_string())?;
-        prune_ai_executions(&mut tasks, Instant::now());
-        let mut snapshots = tasks
-            .values()
-            .filter_map(|entry| {
-                self.task_runtime
-                    .get(&entry.snapshot.id)
-                    .map(|runtime| project_ai_execution(&entry.snapshot, &runtime))
-            })
-            .collect::<Vec<_>>();
+    pub(crate) fn ai_execution_snapshots(&self) -> AppResult<Vec<AiExecutionTaskSnapshot>> {
+        self.task_runtime.prune(
+            TaskKind::AiExecution,
+            AI_EXECUTION_TERMINAL_RETENTION,
+            AI_EXECUTION_TERMINAL_LIMIT,
+        );
+        let mut snapshots = self.list_projections::<AiExecutionTaskSnapshot>(TaskKind::AiExecution);
         snapshots.sort_by(|left, right| {
             left.created_at
                 .cmp(&right.created_at)
@@ -2327,43 +1513,21 @@ impl BackgroundTaskRegistry {
         Ok(snapshots)
     }
 
-    pub(crate) fn cancel_all_ai_executions(&self) -> LegacyResult<Vec<AiExecutionTaskSnapshot>> {
+    pub(crate) fn cancel_all_ai_executions(&self) -> AppResult<Vec<AiExecutionTaskSnapshot>> {
         let task_ids = self
-            .ai_executions
-            .lock()
-            .map_err(|_| "AI execution task registry is unavailable".to_string())?
-            .values()
-            .filter(|entry| !entry.snapshot.state.is_terminal())
-            .map(|entry| entry.snapshot.id.clone())
+            .task_runtime
+            .list(crate::backend::runtime::tasks::TaskFilter {
+                kind: Some(TaskKind::AiExecution),
+                active_only: true,
+            })
+            .into_iter()
+            .map(|snapshot| snapshot.task_id)
             .collect::<Vec<_>>();
-        let now = Utc::now().to_rfc3339();
         let mut cancelled = Vec::new();
         for task_id in task_ids {
-            let runtime_snapshot = self.cancel_external_task(&task_id)?;
-            let mut tasks = self
-                .ai_executions
-                .lock()
-                .map_err(|_| "AI execution task registry is unavailable".to_string())?;
-            if let Some(entry) = tasks.get_mut(&task_id) {
-                if !entry.snapshot.state.is_terminal() {
-                    entry.cancellation.cancel();
-                    entry.snapshot.state = if runtime_snapshot.state == TaskState::Canceled {
-                        AiExecutionTaskState::Cancelled
-                    } else {
-                        AiExecutionTaskState::Running
-                    };
-                    entry.snapshot.phase = if runtime_snapshot.state == TaskState::Canceled {
-                        AiExecutionPhase::CleaningUp
-                    } else {
-                        AiExecutionPhase::Cancelling
-                    };
-                    entry.snapshot.updated_at = now.clone();
-                    if runtime_snapshot.state == TaskState::Canceled {
-                        entry.snapshot.finished_at = runtime_snapshot.finished_at.clone();
-                        entry.terminal_at = Some(Instant::now());
-                    }
-                    cancelled.push(entry.snapshot.clone());
-                }
+            self.cancel_external_task(&task_id)?;
+            if let Ok(snapshot) = self.projection::<AiExecutionTaskSnapshot>(&task_id) {
+                cancelled.push(snapshot);
             }
         }
         cancelled.sort_by(|left, right| left.id.cmp(&right.id));
@@ -2374,7 +1538,7 @@ impl BackgroundTaskRegistry {
         &self,
         timeout: Duration,
         poll_interval: Duration,
-    ) -> LegacyResult<AiExecutionShutdownReport> {
+    ) -> AppResult<AiExecutionShutdownReport> {
         let cancelled_count = self.cancel_all_ai_executions()?.len();
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
@@ -2399,7 +1563,7 @@ impl BackgroundTaskRegistry {
         }
     }
 
-    fn active_ai_execution_count(&self) -> LegacyResult<usize> {
+    fn active_ai_execution_count(&self) -> AppResult<usize> {
         Ok(self
             .task_runtime
             .list(crate::backend::runtime::tasks::TaskFilter {
@@ -2420,247 +1584,246 @@ fn runtime_error_message(snapshot: &TaskSnapshot) -> Option<String> {
 
 fn background_task_status(state: TaskState) -> BackgroundTaskStatus {
     match state {
-        TaskState::Pending | TaskState::Running | TaskState::Cancelling => {
-            BackgroundTaskStatus::Running
-        }
-        TaskState::Succeeded => BackgroundTaskStatus::Completed,
-        TaskState::Failed => BackgroundTaskStatus::Failed,
-        TaskState::Canceled => BackgroundTaskStatus::Cancelled,
-    }
-}
-
-fn project_source_scan(
-    snapshot: &SourceScanTaskSnapshot,
-    runtime: &TaskSnapshot,
-) -> SourceScanTaskSnapshot {
-    let mut projected = snapshot.clone();
-    projected.status = match runtime.state {
         TaskState::Pending | TaskState::Running => BackgroundTaskStatus::Running,
         TaskState::Cancelling => BackgroundTaskStatus::Cancelling,
         TaskState::Succeeded => BackgroundTaskStatus::Completed,
         TaskState::Failed => BackgroundTaskStatus::Failed,
         TaskState::Canceled => BackgroundTaskStatus::Cancelled,
-    };
-    projected.finished_at = runtime.finished_at.clone();
-    if let Some(progress) = &runtime.progress {
-        projected.progress.completed_source_count = progress.current;
-        projected.progress.total_source_count = progress.total;
-        projected.progress.current_source_name = progress.note.clone();
-        if matches!(runtime.state, TaskState::Pending | TaskState::Running) {
-            projected.progress.phase = SourceScanProgressPhase::Scanning;
-        }
     }
-    if runtime.state == TaskState::Canceled {
-        projected.progress.phase = SourceScanProgressPhase::Cancelled;
-        projected.error = runtime_error_message(runtime);
-    }
-    projected
 }
 
-fn project_batch_mount(
-    snapshot: &BatchMountTaskSnapshot,
-    runtime: &TaskSnapshot,
-) -> BatchMountTaskSnapshot {
-    let mut projected = snapshot.clone();
-    projected.status = match runtime.state {
-        TaskState::Pending | TaskState::Running => BackgroundTaskStatus::Running,
-        TaskState::Cancelling => BackgroundTaskStatus::Cancelling,
-        TaskState::Succeeded => BackgroundTaskStatus::Completed,
-        TaskState::Failed => BackgroundTaskStatus::Failed,
-        TaskState::Canceled => BackgroundTaskStatus::Cancelled,
-    };
-    projected.finished_at = runtime.finished_at.clone();
-    if let Some(progress) = &runtime.progress {
-        projected.progress.completed = progress.current;
-        projected.progress.total = progress.total;
-        projected.progress.current_id = progress.note.clone();
-        if matches!(runtime.state, TaskState::Pending | TaskState::Running) {
-            projected.progress.phase = "running".to_string();
-        }
-    }
-    if runtime.state == TaskState::Canceled {
-        projected.progress.phase = "cancelled".to_string();
-        projected.progress.current_id = None;
-        projected.error = runtime_error_message(runtime);
-    }
-    projected
+trait BackgroundTaskProjection: DeserializeOwned {
+    fn project_with_runtime(self, runtime: &TaskSnapshot) -> Self;
 }
 
-trait BackgroundTaskProjection: Clone {
-    fn project_with_runtime(&self, runtime: &TaskSnapshot) -> Self;
-}
-
-macro_rules! impl_background_task_projection {
-    ($type:ty) => {
-        impl BackgroundTaskProjection for $type {
-            fn project_with_runtime(&self, runtime: &TaskSnapshot) -> Self {
-                let mut projected = self.clone();
-                projected.status = background_task_status(runtime.state);
-                projected.finished_at = runtime.finished_at.clone();
-                projected
+macro_rules! impl_basic_projection {
+    ($ty:ty) => {
+        impl BackgroundTaskProjection for $ty {
+            fn project_with_runtime(mut self, runtime: &TaskSnapshot) -> Self {
+                self.status = background_task_status(runtime.state);
+                self.finished_at = runtime.finished_at.clone();
+                if runtime.state == TaskState::Canceled {
+                    self.result = None;
+                    self.error = runtime_error_message(runtime);
+                } else if runtime.state == TaskState::Failed && self.error.is_none() {
+                    self.error = runtime_error_message(runtime);
+                }
+                if runtime.state == TaskState::Succeeded {
+                    self.result = runtime.result.clone();
+                    self.error = None;
+                }
+                self
             }
         }
     };
 }
 
-impl_background_task_projection!(ConversationSyncTaskSnapshot);
-impl_background_task_projection!(ConversationSearchIndexTaskSnapshot);
-impl_background_task_projection!(ConversationScriptInstallTaskSnapshot);
-impl_background_task_projection!(SkillBackupTaskSnapshot);
-impl_background_task_projection!(MemoryTaskSnapshot);
+impl_basic_projection!(ConversationSyncTaskSnapshot);
+impl_basic_projection!(ConversationSearchIndexTaskSnapshot);
+impl_basic_projection!(ConversationScriptInstallTaskSnapshot);
+impl_basic_projection!(BatchMountTaskSnapshot);
+impl_basic_projection!(MemoryTaskSnapshot);
 
-fn project_background_snapshot<T: BackgroundTaskProjection>(
-    snapshot: &T,
-    runtime: &TaskSnapshot,
-) -> T {
-    snapshot.project_with_runtime(runtime)
-}
-
-fn project_agent_market_refresh(
-    snapshot: &AgentMarketRefreshTaskSnapshot,
-    runtime: &TaskSnapshot,
-) -> AgentMarketRefreshTaskSnapshot {
-    let mut projected = snapshot.clone();
-    projected.state = match runtime.state {
-        TaskState::Succeeded => AgentMarketRefreshTaskState::Succeeded,
-        TaskState::Failed => AgentMarketRefreshTaskState::Failed,
-        TaskState::Canceled => AgentMarketRefreshTaskState::Cancelled,
-        TaskState::Pending | TaskState::Running | TaskState::Cancelling => {
-            AgentMarketRefreshTaskState::Running
+impl BackgroundTaskProjection for SourceScanTaskSnapshot {
+    fn project_with_runtime(mut self, runtime: &TaskSnapshot) -> Self {
+        self.status = background_task_status(runtime.state);
+        self.finished_at = runtime.finished_at.clone();
+        if let Some(progress) = &runtime.progress {
+            self.progress.completed_source_count = progress.current;
+            self.progress.total_source_count = progress.total;
+            self.progress.current_source_name = progress.note.clone();
         }
-    };
-    projected.finished_at = runtime.finished_at.clone();
-    if runtime.state == TaskState::Canceled {
-        projected.result = None;
-        projected.error = runtime_error_message(runtime);
-    }
-    projected
-}
-
-fn project_agent_lifecycle(
-    snapshot: &AgentLifecycleTaskSnapshot,
-    runtime: &TaskSnapshot,
-) -> AgentLifecycleTaskSnapshot {
-    let mut projected = snapshot.clone();
-    match runtime.state {
-        TaskState::Pending => {
-            projected.state = LifecycleTaskState::Queued;
-            projected.phase = LifecycleTaskPhase::Queued;
-            projected.cancellable = true;
-        }
-        TaskState::Running => {
-            if !projected.state.is_terminal() {
-                projected.state = LifecycleTaskState::Running;
-                projected.cancellable = true;
+        match runtime.state {
+            TaskState::Running | TaskState::Pending => {
+                self.progress.phase = SourceScanProgressPhase::Scanning;
+            }
+            TaskState::Cancelling => {}
+            TaskState::Succeeded => {
+                self.progress.phase = SourceScanProgressPhase::Completed;
+                self.result = runtime
+                    .result
+                    .clone()
+                    .and_then(|value| serde_json::from_value(value).ok());
+                self.error = None;
+            }
+            TaskState::Failed => {
+                self.progress.phase = SourceScanProgressPhase::Failed;
+                self.error = runtime_error_message(runtime);
+            }
+            TaskState::Canceled => {
+                self.progress.phase = SourceScanProgressPhase::Cancelled;
+                self.result = None;
+                self.error = runtime_error_message(runtime);
             }
         }
-        TaskState::Cancelling => {
-            projected.state = LifecycleTaskState::Cancelling;
-            projected.phase = LifecycleTaskPhase::Cancelling;
-            projected.cancellable = false;
-        }
-        TaskState::Succeeded => {
-            projected.state = LifecycleTaskState::Succeeded;
-            projected.phase = LifecycleTaskPhase::Succeeded;
-            projected.cancellable = false;
-        }
-        TaskState::Failed => {
-            projected.state = LifecycleTaskState::Failed;
-            projected.phase = LifecycleTaskPhase::Failed;
-            projected.cancellable = false;
-        }
-        TaskState::Canceled => {
-            projected.state = LifecycleTaskState::Cancelled;
-            projected.phase = LifecycleTaskPhase::Cancelled;
-            projected.cancellable = false;
-        }
+        self
     }
-    projected.finished_at = runtime.finished_at.clone();
-    if runtime.state == TaskState::Canceled {
-        projected.error = runtime.error.as_ref().map(|error| {
-            (&AgentMarketError::new(&error.code, &error.message, error.retryable)).into()
-        });
-    }
-    projected
 }
 
-fn project_ai_execution(
-    snapshot: &AiExecutionTaskSnapshot,
-    runtime: &TaskSnapshot,
-) -> AiExecutionTaskSnapshot {
-    let mut projected = snapshot.clone();
-    match runtime.state {
-        TaskState::Pending => {
-            projected.state = AiExecutionTaskState::Queued;
+impl BackgroundTaskProjection for SkillBackupTaskSnapshot {
+    fn project_with_runtime(mut self, runtime: &TaskSnapshot) -> Self {
+        self.status = background_task_status(runtime.state);
+        self.finished_at = runtime.finished_at.clone();
+        match runtime.state {
+            TaskState::Succeeded => {
+                self.completed_count = self.total_count;
+                self.failed_count = 0;
+                self.assets = runtime
+                    .result
+                    .clone()
+                    .and_then(|value| serde_json::from_value(value).ok())
+                    .unwrap_or_default();
+                self.errors.clear();
+                self.error = None;
+            }
+            TaskState::Failed => {
+                self.failed_count = 1;
+                self.error = runtime_error_message(runtime);
+            }
+            TaskState::Canceled => {
+                self.failed_count = 0;
+                self.assets.clear();
+                self.errors.clear();
+                self.error = runtime_error_message(runtime);
+            }
+            TaskState::Pending | TaskState::Running | TaskState::Cancelling => {}
         }
-        TaskState::Running => {
-            if !projected.state.is_terminal() {
-                projected.state = if projected.phase == AiExecutionPhase::Queued {
-                    AiExecutionTaskState::Queued
-                } else {
-                    AiExecutionTaskState::Running
-                };
+        self
+    }
+}
+
+impl BackgroundTaskProjection for AgentMarketRefreshTaskSnapshot {
+    fn project_with_runtime(mut self, runtime: &TaskSnapshot) -> Self {
+        self.state = match runtime.state {
+            TaskState::Pending | TaskState::Running | TaskState::Cancelling => {
+                AgentMarketRefreshTaskState::Running
+            }
+            TaskState::Succeeded => AgentMarketRefreshTaskState::Succeeded,
+            TaskState::Failed => AgentMarketRefreshTaskState::Failed,
+            TaskState::Canceled => AgentMarketRefreshTaskState::Cancelled,
+        };
+        self.finished_at = runtime.finished_at.clone();
+        if runtime.state == TaskState::Succeeded {
+            self.result = runtime
+                .result
+                .clone()
+                .and_then(|value| serde_json::from_value(value).ok());
+            self.error = None;
+        } else if runtime.state == TaskState::Failed || runtime.state == TaskState::Canceled {
+            self.result = None;
+            self.error = runtime_error_message(runtime);
+        }
+        self
+    }
+}
+
+impl BackgroundTaskProjection for AgentLifecycleTaskSnapshot {
+    fn project_with_runtime(mut self, runtime: &TaskSnapshot) -> Self {
+        match runtime.state {
+            TaskState::Pending => {
+                self.state = LifecycleTaskState::Queued;
+                self.phase = LifecycleTaskPhase::Queued;
+                self.cancellable = true;
+            }
+            TaskState::Running => {
+                if !self.state.is_terminal() {
+                    self.state = LifecycleTaskState::Running;
+                    self.cancellable = true;
+                }
+            }
+            TaskState::Cancelling => {
+                self.state = LifecycleTaskState::Cancelling;
+                self.phase = LifecycleTaskPhase::Cancelling;
+                self.cancellable = false;
+            }
+            TaskState::Succeeded => {
+                self.state = LifecycleTaskState::Succeeded;
+                self.phase = LifecycleTaskPhase::Succeeded;
+                self.cancellable = false;
+                self.result = runtime.result.clone();
+                self.error = None;
+            }
+            TaskState::Failed => {
+                self.state = LifecycleTaskState::Failed;
+                self.phase = LifecycleTaskPhase::Failed;
+                self.cancellable = false;
+                if self.error.is_none() {
+                    self.error = runtime.error.as_ref().map(|error| {
+                        (&AgentMarketError::new(&error.code, &error.message, error.retryable))
+                            .into()
+                    });
+                }
+            }
+            TaskState::Canceled => {
+                self.state = LifecycleTaskState::Cancelled;
+                self.phase = LifecycleTaskPhase::Cancelled;
+                self.cancellable = false;
+                self.result = None;
+                self.error = runtime.error.as_ref().map(|error| {
+                    (&AgentMarketError::new(&error.code, &error.message, error.retryable)).into()
+                });
             }
         }
-        TaskState::Cancelling => {
-            projected.state = AiExecutionTaskState::Running;
-            projected.phase = AiExecutionPhase::Cancelling;
-        }
-        TaskState::Succeeded => {
-            projected.state = AiExecutionTaskState::Succeeded;
-        }
-        TaskState::Failed => {
-            projected.state = AiExecutionTaskState::Failed;
-        }
-        TaskState::Canceled => {
-            projected.state = AiExecutionTaskState::Cancelled;
-            projected.phase = AiExecutionPhase::CleaningUp;
-            projected.result = None;
-        }
+        self.finished_at = runtime.finished_at.clone();
+        self
     }
-    projected.finished_at = runtime.finished_at.clone();
-    if runtime.state == TaskState::Canceled && projected.error.is_none() {
-        projected.error = Some(AiExecutionErrorView {
-            code: "cancelled".to_string(),
-            message: runtime_error_message(runtime)
-                .unwrap_or_else(|| "AI execution task was cancelled".to_string()),
-            phase: Some(projected.phase),
-            retryable: false,
-        });
-    }
-    projected
 }
 
-fn prune_agent_lifecycle_tasks(tasks: &mut HashMap<String, AgentLifecycleTaskEntry>) {
-    let now = Utc::now();
-    tasks.retain(|_, entry| {
-        if !entry.snapshot.state.is_terminal() {
-            return true;
+impl BackgroundTaskProjection for AiExecutionTaskSnapshot {
+    fn project_with_runtime(mut self, runtime: &TaskSnapshot) -> Self {
+        match runtime.state {
+            TaskState::Pending => self.state = AiExecutionTaskState::Queued,
+            TaskState::Running => {
+                if !self.state.is_terminal() {
+                    self.state = if self.phase == AiExecutionPhase::Queued {
+                        AiExecutionTaskState::Queued
+                    } else {
+                        AiExecutionTaskState::Running
+                    };
+                }
+            }
+            TaskState::Cancelling => {
+                self.state = AiExecutionTaskState::Running;
+                self.phase = AiExecutionPhase::Cancelling;
+            }
+            TaskState::Succeeded => {
+                self.state = AiExecutionTaskState::Succeeded;
+                self.result = runtime.result.clone().and_then(|value| {
+                    value
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .map(|text| AiExecutionPublicResult {
+                            text: text.to_string(),
+                        })
+                });
+                self.error = None;
+            }
+            TaskState::Failed => {
+                self.state = AiExecutionTaskState::Failed;
+                if self.error.is_none() {
+                    self.error = runtime.error.as_ref().map(|error| AiExecutionErrorView {
+                        code: error.code.clone(),
+                        message: error.message.clone(),
+                        retryable: error.retryable,
+                        phase: Some(self.phase),
+                    });
+                }
+            }
+            TaskState::Canceled => {
+                self.state = AiExecutionTaskState::Cancelled;
+                self.phase = AiExecutionPhase::CleaningUp;
+                self.result = None;
+                self.error = Some(AiExecutionErrorView {
+                    code: "cancelled".to_string(),
+                    message: runtime_error_message(runtime)
+                        .unwrap_or_else(|| "AI execution task was cancelled".to_string()),
+                    phase: Some(self.phase),
+                    retryable: false,
+                });
+            }
         }
-        entry
-            .snapshot
-            .finished_at
-            .as_deref()
-            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-            .map(|finished| {
-                now.signed_duration_since(finished.with_timezone(&Utc))
-                    .to_std()
-                    .unwrap_or_default()
-                    <= AGENT_LIFECYCLE_TERMINAL_RETENTION
-            })
-            .unwrap_or(true)
-    });
-    let mut terminal = tasks
-        .values()
-        .filter(|entry| entry.snapshot.state.is_terminal())
-        .map(|entry| (entry.snapshot.id.clone(), entry.snapshot.created_at.clone()))
-        .collect::<Vec<_>>();
-    if terminal.len() > AGENT_LIFECYCLE_TERMINAL_LIMIT {
-        terminal.sort_by(|left, right| left.1.cmp(&right.1));
-        let excess = terminal.len() - AGENT_LIFECYCLE_TERMINAL_LIMIT;
-        for (id, _) in terminal.into_iter().take(excess) {
-            tasks.remove(&id);
-        }
+        self.finished_at = runtime.finished_at.clone();
+        self
     }
 }
 
@@ -2669,89 +1832,41 @@ fn extension_lifecycle_key(
     package_id: &str,
     version: Option<&str>,
     action: &str,
-) -> LegacyResult<LifecycleRequestKey> {
-    let version = version
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("0.0.0");
+) -> AppResult<LifecycleRequestKey> {
+    let version = version.unwrap_or("0.0.0");
     let version = semver::Version::parse(version)
-        .map_err(|error| format!("invalid extension package version {version}: {error}"))?;
-    let operation = match action {
-        "install" | "reinstall" => LifecycleOp::Install,
-        "update" | "upgrade" => LifecycleOp::Upgrade,
-        "uninstall" | "remove" => LifecycleOp::Remove,
-        "enable" => LifecycleOp::Enable,
-        "disable" => LifecycleOp::Disable,
-        "probe" | "check" => LifecycleOp::Probe,
-        other => return Err(format!("unsupported extension lifecycle action: {other}")),
-    };
+        .map_err(|error| crate::backend::runtime::AppError::Validation(error.to_string()))?;
     Ok(LifecycleRequestKey {
         resource: ResourceKey::new(PackageIdentity {
             kind,
             package_id: package_id.to_string(),
             version,
         }),
-        operation,
+        operation: match action {
+            "install" => LifecycleOp::Install,
+            "update" => LifecycleOp::Upgrade,
+            "reinstall" => LifecycleOp::Install,
+            "uninstall" => LifecycleOp::Remove,
+            "enable" => LifecycleOp::Enable,
+            "disable" => LifecycleOp::Disable,
+            "probe" => LifecycleOp::Probe,
+            _ => {
+                return Err(crate::backend::runtime::AppError::Validation(format!(
+                    "unsupported lifecycle action: {action}"
+                )))
+            }
+        },
     })
 }
 
-fn prune_agent_market_refresh_tasks(tasks: &mut HashMap<String, AgentMarketRefreshTaskEntry>) {
-    let now = Instant::now();
-    tasks.retain(|_, entry| {
-        !entry.snapshot.state.is_terminal()
-            || entry.terminal_at.is_none_or(|finished| {
-                now.duration_since(finished) <= AGENT_LIFECYCLE_TERMINAL_RETENTION
-            })
-    });
-    if tasks.len() <= AGENT_LIFECYCLE_TERMINAL_LIMIT {
-        return;
-    }
-    let mut terminal = tasks
-        .iter()
-        .filter(|(_, entry)| entry.snapshot.state.is_terminal())
-        .map(|(id, entry)| (id.clone(), entry.snapshot.updated_at.clone()))
-        .collect::<Vec<_>>();
-    terminal.sort_by(|left, right| left.1.cmp(&right.1));
-    for (id, _) in terminal
-        .into_iter()
-        .take(tasks.len() - AGENT_LIFECYCLE_TERMINAL_LIMIT)
-    {
-        tasks.remove(&id);
-    }
-}
-
-fn prune_ai_executions(tasks: &mut HashMap<String, AiExecutionTaskEntry>, now: Instant) {
-    tasks.retain(|_, entry| {
-        entry.terminal_at.is_none_or(|terminal_at| {
-            now.saturating_duration_since(terminal_at) <= AI_EXECUTION_TERMINAL_RETENTION
-        })
-    });
-
-    let mut terminal = tasks
-        .iter()
-        .filter_map(|(id, entry)| entry.terminal_at.map(|at| (id.clone(), at)))
-        .collect::<Vec<_>>();
-    if terminal.len() <= AI_EXECUTION_TERMINAL_LIMIT {
-        return;
-    }
-    terminal.sort_by(|(left_id, left_at), (right_id, right_at)| {
-        right_at.cmp(left_at).then_with(|| right_id.cmp(left_id))
-    });
-    for (id, _) in terminal.into_iter().skip(AI_EXECUTION_TERMINAL_LIMIT) {
-        tasks.remove(&id);
-    }
-}
-
 fn dedupe_non_empty(values: Vec<String>) -> Vec<String> {
-    let mut deduped = Vec::new();
-    let mut seen = HashSet::new();
-    for value in values {
-        let value = value.trim().to_string();
-        if !value.is_empty() && seen.insert(value.clone()) {
-            deduped.push(value);
-        }
-    }
-    deduped
+    let mut seen = std::collections::HashSet::new();
+    values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -3353,7 +2468,7 @@ mod tests {
 
         let error = registry.cancel_ai_execution("missing").unwrap_err();
 
-        assert!(error.contains("not found"));
+        assert!(error.to_string().contains("not found"));
         assert_eq!(registry.ai_execution_snapshot("missing").unwrap(), None);
     }
 
@@ -3382,13 +2497,16 @@ mod tests {
             .finish_ai_execution(&task.id, Ok(ai_result("done")))
             .unwrap();
         registry
-            .ai_executions
-            .lock()
+            .task_runtime()
             .unwrap()
-            .get_mut(&task.id)
-            .unwrap()
-            .terminal_at =
-            Some(Instant::now() - AI_EXECUTION_TERMINAL_RETENTION - Duration::from_secs(1));
+            .set_finished_at_for_test(
+                &task.id,
+                (Utc::now()
+                    - chrono::Duration::from_std(AI_EXECUTION_TERMINAL_RETENTION).unwrap()
+                    - chrono::Duration::seconds(1))
+                .to_rfc3339(),
+            )
+            .unwrap();
 
         assert!(registry.ai_execution_snapshots().unwrap().is_empty());
     }
@@ -3523,8 +2641,6 @@ mod tests {
         assert!(should_start);
         assert!(!duplicate_should_start);
         assert_eq!(first.id, duplicate.id);
-        assert!(Arc::ptr_eq(&cancellation, &duplicate_cancellation));
-
         let running = registry
             .update_agent_lifecycle(
                 &first.id,
@@ -3551,7 +2667,8 @@ mod tests {
                 .state,
             TaskState::Cancelling
         );
-        assert!(cancellation.load(Ordering::SeqCst));
+        assert!(cancellation.is_cancelled());
+        assert!(duplicate_cancellation.is_cancelled());
         let terminal = registry
             .finish_agent_lifecycle(&first.id, Ok((None, Vec::new())))
             .unwrap();
@@ -3587,7 +2704,7 @@ mod tests {
                 None,
             )
             .expect_err("a different active operation must not reuse the install task");
-        assert!(error.contains("conflicts"));
+        assert!(error.to_string().contains("conflicts"));
     }
 
     #[test]
@@ -3747,10 +2864,6 @@ mod tests {
     fn cancelled_error() -> AiExecutionError {
         AiExecutionError::Cancelled {
             program: std::path::PathBuf::from("opencode"),
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-            stdout_truncated: false,
-            stderr_truncated: false,
         }
     }
 }

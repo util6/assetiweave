@@ -184,10 +184,6 @@ impl EventDispatcher {
         }
     }
 
-    pub(crate) fn notify(&self) {
-        self.wake.notify();
-    }
-
     pub(crate) fn initialize_tenant(&self, tenant_id: &str) -> Result<(), AppError> {
         let tenant = tenant_id.to_string();
         let consumers = self
@@ -311,12 +307,12 @@ impl EventDispatcher {
                 Ok(SequencedEvent {
                     seq: row
                         .try_get(0)
-                        .map_err(|error: sqlx::Error| AppError::Legacy(error.to_string()))?,
+                        .map_err(|error: sqlx::Error| AppError::External(error.to_string()))?,
                     event: serde_json::from_str(
                         &row.try_get::<String, _>(1)
-                            .map_err(|error: sqlx::Error| AppError::Legacy(error.to_string()))?,
+                            .map_err(|error: sqlx::Error| AppError::External(error.to_string()))?,
                     )
-                    .map_err(|error| AppError::Legacy(error.to_string()))?,
+                    .map_err(|error| AppError::External(error.to_string()))?,
                 })
             })
             .collect::<Result<Vec<_>, AppError>>()?;
@@ -330,12 +326,11 @@ impl EventDispatcher {
                 database: self.database.clone(),
                 pool: self.database.pool().clone(),
                 db_path: self.db_path.clone(),
-                cancellation: self.cancellation.clone(),
                 consumer_id: consumer_id.clone(),
                 batch_last_seq: batch.last().map(|item| item.seq).unwrap_or_default(),
             };
             catch_unwind(AssertUnwindSafe(|| consumer.handle(&interested, &cx)))
-                .map_err(|_| AppError::Legacy("领域事件消费者发生 panic".to_string()))??;
+                .map_err(|_| AppError::External("领域事件消费者发生 panic".to_string()))??;
         }
         let last_seq = batch.last().map(|item| item.seq).unwrap_or_default();
         let consumer_id_for_update = consumer_id.clone();
@@ -383,6 +378,7 @@ impl EventDispatcher {
         report
     }
 
+    #[cfg(test)]
     pub(crate) fn dispatch_once(&self, tenant_id: &str) -> Result<usize, AppError> {
         Ok(self.dispatch_tenant(tenant_id).delivered_events)
     }
@@ -565,10 +561,6 @@ impl EventDispatcher {
 }
 
 impl EventDispatcherHandle {
-    pub(crate) fn stop(self) -> EventDispatcherShutdownReport {
-        self.stop_with_timeout(DEFAULT_SHUTDOWN_GRACE)
-    }
-
     pub(crate) fn stop_with_timeout(mut self, grace: Duration) -> EventDispatcherShutdownReport {
         let deadline = Instant::now() + grace;
         if let Ok(mut shutdown_deadline) = self.shutdown_deadline.lock() {

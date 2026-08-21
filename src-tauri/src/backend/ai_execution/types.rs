@@ -1,11 +1,4 @@
-use std::{
-    fmt,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+use std::{fmt, sync::Arc, time::Duration};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -18,34 +11,34 @@ pub(crate) trait AiExecutionProgressSink: Send + Sync {
     fn set_phase(&self, phase: AiExecutionPhase);
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct AiExecutionCancellation {
-    cancelled: Arc<AtomicBool>,
-    notify: Arc<tokio::sync::Notify>,
+    token: tokio_util::sync::CancellationToken,
 }
 
 impl AiExecutionCancellation {
+    pub(crate) fn from_token(token: tokio_util::sync::CancellationToken) -> Self {
+        Self { token }
+    }
+
     pub(crate) fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
-        self.notify.notify_waiters();
+        self.token.cancel();
     }
 
     pub(crate) fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+        self.token.is_cancelled()
     }
 
     pub(crate) async fn cancelled(&self) {
-        loop {
-            let notified = self.notify.notified();
-            if self.is_cancelled() {
-                return;
-            }
-            notified.await;
-        }
+        self.token.cancelled().await;
     }
+}
 
-    pub(super) fn flag(&self) -> &AtomicBool {
-        self.cancelled.as_ref()
+impl Default for AiExecutionCancellation {
+    fn default() -> Self {
+        Self {
+            token: tokio_util::sync::CancellationToken::new(),
+        }
     }
 }
 

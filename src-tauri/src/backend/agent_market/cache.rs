@@ -7,7 +7,7 @@ use std::{
 use sha2::{Digest, Sha256};
 
 use super::{
-    catalog::{is_core_compatible, CatalogRevision, CatalogService},
+    catalog::{CatalogRevision, CatalogService},
     types::Catalog,
 };
 
@@ -233,12 +233,6 @@ impl CatalogCache {
             etag: response_etag,
         })
     }
-
-    pub(crate) fn is_within_cache(&self, path: &Path) -> bool {
-        self.catalog_path
-            .parent()
-            .is_some_and(|root| path.starts_with(root))
-    }
 }
 
 pub(crate) fn select_active_catalog(bundled: Catalog, cached: Option<Catalog>) -> Catalog {
@@ -256,21 +250,11 @@ pub(crate) fn select_active_catalog(bundled: Catalog, cached: Option<Catalog>) -
 
     let bundled_revision = CatalogRevision::parse(&bundled.catalog_version).ok();
     let cached_revision = CatalogRevision::parse(&cached.catalog_version).ok();
-    let bundled_compatible = bundled.items.iter().any(is_core_compatible);
-    let cached_compatible = cached.items.iter().any(is_core_compatible);
-
-    match (bundled_compatible, cached_compatible) {
-        (true, false) => bundled,
-        (false, true) => cached,
-        (false, false) => bundled,
-        (true, true) => match (bundled_revision, cached_revision) {
-            (Some(bundled_revision), Some(cached_revision))
-                if cached_revision > bundled_revision =>
-            {
-                cached
-            }
-            _ => bundled,
-        },
+    match (bundled_revision, cached_revision) {
+        (Some(bundled_revision), Some(cached_revision)) if cached_revision > bundled_revision => {
+            cached
+        }
+        _ => bundled,
     }
 }
 
@@ -320,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn incompatible_cache_does_not_mask_compatible_bundled_catalog() {
+    fn older_cache_does_not_mask_newer_bundled_catalog() {
         let bundled = super::super::catalog::bundled_catalog().expect("bundled catalog");
         let mut cached = bundled.clone();
         cached.catalog_version = "2026.08.16.1".to_string();
@@ -332,7 +316,21 @@ mod tests {
         let selected = select_active_catalog(bundled.clone(), Some(cached));
 
         assert_eq!(selected.catalog_version, bundled.catalog_version);
-        assert!(selected.items.iter().all(is_core_compatible));
+    }
+
+    #[test]
+    fn newer_cache_is_selected_even_when_core_range_is_only_observational() {
+        let bundled = super::super::catalog::bundled_catalog().expect("bundled catalog");
+        let mut cached = bundled.clone();
+        cached.catalog_version = "2099.01.02.1".to_string();
+        for item in &mut cached.items {
+            item.core_compatibility.min = "0.1.0".to_string();
+            item.core_compatibility.max_exclusive = "0.2.0".to_string();
+        }
+
+        let selected = select_active_catalog(bundled, Some(cached.clone()));
+
+        assert_eq!(selected.catalog_version, cached.catalog_version);
     }
 
     #[test]

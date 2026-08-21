@@ -411,12 +411,7 @@ impl AppService {
             run_id: run_id.clone(),
             note_id: note_id.clone(),
             scope: params.scope,
-            trigger,
-            source_revision_start: preview.source_revision_start,
             source_revision_end: preview.source_revision_end,
-            provider: policy.agent_id.to_string(),
-            model: policy.model.clone(),
-            prompt_version: MEMORY_DREAM_PROMPT_VERSION.to_string(),
             processed_count: preview.question_count,
             total_count: preview.question_count,
             markdown: markdown.clone(),
@@ -617,7 +612,7 @@ impl AppService {
                             &selected_session.session_id,
                         )
                         .await
-                        .map_err(memory_store_error)?
+                        ?
                     }
                     MemoryEvidenceRecordKind::Web => {
                         crate::backend::store::load_web_record_session_detail_sqlx(
@@ -626,7 +621,7 @@ impl AppService {
                             &selected_session.session_id,
                         )
                         .await
-                        .map_err(memory_store_error)?
+                        ?
                     }
                 };
                 for selected_question in &selected_session.questions {
@@ -1011,8 +1006,7 @@ fn memory_dream_candidates(markdown: &str) -> Vec<MemoryDreamCandidateDraft> {
 fn load_memory_dream_policy(
     runtime: std::sync::Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
 ) -> AppResult<MemoryDreamPolicy> {
-    let settings =
-        crate::backend::app_settings::read_app_settings_value().map_err(AppError::Storage)?;
+    let settings = crate::backend::app_settings::read_app_settings_value()?;
     let memory = settings.get("memory").and_then(Value::as_object);
     let auto_enabled = memory
         .and_then(|memory| memory.get("autoDreamEnabled"))

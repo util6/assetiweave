@@ -30,6 +30,7 @@ impl AppService {
                     offset,
                 )
                 .await
+                .map_err(AppError::External)
             } else {
                 crate::backend::store::list_conversation_sessions_sqlx(
                     &pool,
@@ -41,6 +42,7 @@ impl AppService {
                     offset,
                 )
                 .await
+                .map_err(AppError::External)
             }
         })?)
     }
@@ -95,6 +97,7 @@ impl AppService {
                     offset,
                 )
                 .await
+                .map_err(AppError::External)
             } else {
                 crate::backend::store::list_web_record_sessions_sqlx(
                     &pool,
@@ -668,6 +671,7 @@ impl AppService {
                         &translated_text,
                     )
                     .await
+                    .map_err(AppError::External)
                 }
                 crate::backend::dto::ConversationRecordKind::Web => {
                     let part_id = crate::backend::store::resolve_web_record_part_id_prefix_sqlx(

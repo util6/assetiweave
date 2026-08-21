@@ -3,6 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use tauri::{AppHandle, Emitter, State};
+use tokio_util::sync::CancellationToken;
 
 use crate::backend::agent_market::types::AgentInstallationView;
 use crate::{
@@ -284,7 +285,7 @@ fn spawn_install_worker(
     state: State<'_, AppState>,
     params: AgentInstallStartRequest,
     task_id: String,
-    cancellation: Arc<std::sync::atomic::AtomicBool>,
+    cancellation: CancellationToken,
 ) {
     let tasks = state.background_tasks.clone();
     let phase_tasks = tasks.clone();
@@ -296,10 +297,8 @@ fn spawn_install_worker(
     let result = tasks.spawn_extension_lifecycle(
         &task_id,
         Box::new(move |context| {
-            if context.is_cancelled() {
-                cancellation.store(true, std::sync::atomic::Ordering::SeqCst);
-            }
-            let (bridge_stop, bridge) = start_cancellation_bridge(&context, cancellation.clone());
+            let (bridge_stop, bridge, cancellation_flag) =
+                start_cancellation_bridge(&context, cancellation.clone());
             let _ = worker_tasks.update_agent_lifecycle(
                 &task_id_for_runtime,
                 crate::backend::agent_market::types::LifecycleTaskPhase::Preparing,
@@ -307,14 +306,14 @@ fn spawn_install_worker(
                 None,
                 Vec::new(),
             );
-            let result = if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+            let result = if cancellation.is_cancelled() {
                 Err(AppError::Cancelled(
                     "Agent installation cancelled".to_string(),
                 ))
             } else {
                 AppService::from_runtime(&runtime).install_agent_with_cancellation_and_progress(
                     params,
-                    Some(cancellation.clone()),
+                    Some(cancellation_flag.clone()),
                     Some(Arc::new(move |phase| {
                         if let Ok(snapshot) = phase_tasks.update_agent_lifecycle(
                             &phase_task_id,
@@ -352,7 +351,7 @@ fn spawn_install_worker(
             }
             match result {
                 Ok(outcome) => serde_json::to_value(&outcome.installation)
-                    .map_err(|error| AppError::Legacy(error.to_string())),
+                    .map_err(|error| AppError::External(error.to_string())),
                 Err(error) => Err(error),
             }
         }),
@@ -367,7 +366,7 @@ fn spawn_uninstall_worker(
     state: State<'_, AppState>,
     params: AgentUninstallStartRequest,
     task_id: String,
-    cancellation: Arc<std::sync::atomic::AtomicBool>,
+    cancellation: CancellationToken,
 ) {
     let tasks = state.background_tasks.clone();
     let phase_tasks = tasks.clone();
@@ -379,10 +378,8 @@ fn spawn_uninstall_worker(
     let result = tasks.spawn_extension_lifecycle(
         &task_id,
         Box::new(move |context| {
-            if context.is_cancelled() {
-                cancellation.store(true, std::sync::atomic::Ordering::SeqCst);
-            }
-            let (bridge_stop, bridge) = start_cancellation_bridge(&context, cancellation.clone());
+            let (bridge_stop, bridge, cancellation_flag) =
+                start_cancellation_bridge(&context, cancellation.clone());
             let _ = worker_tasks.update_agent_lifecycle(
                 &task_id_for_runtime,
                 crate::backend::agent_market::types::LifecycleTaskPhase::Preparing,
@@ -390,12 +387,12 @@ fn spawn_uninstall_worker(
                 None,
                 Vec::new(),
             );
-            let result = if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
+            let result = if cancellation.is_cancelled() {
                 Err(AppError::Cancelled("Agent uninstall cancelled".to_string()))
             } else {
                 AppService::from_runtime(&runtime).uninstall_agent_with_cancellation_and_progress(
                     params,
-                    Some(cancellation.clone()),
+                    Some(cancellation_flag.clone()),
                     Some(Arc::new(move |phase| {
                         if let Ok(snapshot) = phase_tasks.update_agent_lifecycle(
                             &phase_task_id,
@@ -430,7 +427,7 @@ fn spawn_uninstall_worker(
             }
             match result {
                 Ok(installation) => serde_json::to_value(installation)
-                    .map_err(|error| AppError::Legacy(error.to_string())),
+                    .map_err(|error| AppError::External(error.to_string())),
                 Err(error) => Err(error),
             }
         }),
@@ -442,24 +439,29 @@ fn spawn_uninstall_worker(
 
 fn start_cancellation_bridge(
     context: &crate::backend::runtime::tasks::TaskContext,
-    cancellation: Arc<std::sync::atomic::AtomicBool>,
+    cancellation: CancellationToken,
 ) -> (
     Arc<std::sync::atomic::AtomicBool>,
     std::thread::JoinHandle<()>,
+    Arc<std::sync::atomic::AtomicBool>,
 ) {
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stop_for_thread = stop.clone();
+    let worker_cancellation = Arc::new(std::sync::atomic::AtomicBool::new(
+        cancellation.is_cancelled(),
+    ));
+    let worker_cancellation_for_thread = worker_cancellation.clone();
     let task_cancellation = context.cancellation();
     let bridge = std::thread::spawn(move || {
         while !stop_for_thread.load(std::sync::atomic::Ordering::SeqCst) {
             if task_cancellation.is_cancelled() {
-                cancellation.store(true, std::sync::atomic::Ordering::SeqCst);
+                worker_cancellation_for_thread.store(true, std::sync::atomic::Ordering::SeqCst);
                 break;
             }
             std::thread::sleep(Duration::from_millis(10));
         }
     });
-    (stop, bridge)
+    (stop, bridge, worker_cancellation)
 }
 
 fn market_error_from_app(error: &AppError) -> AgentMarketError {

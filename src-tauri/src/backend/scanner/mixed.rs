@@ -65,8 +65,6 @@ pub(super) fn scan_mixed_assets(source: &Source) -> AppResult<Vec<Asset>> {
         let format = detect_format(path);
         let (detector_id, detector_version, kind) =
             super::detector::detect(&super::detector::DetectionCtx {
-                source,
-                path,
                 relative_path: &relative_string,
                 format,
             })

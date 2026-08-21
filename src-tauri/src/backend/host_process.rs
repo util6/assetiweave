@@ -64,12 +64,7 @@ pub(crate) enum HostProcessError {
         stdout_truncated: bool,
         stderr_truncated: bool,
     },
-    Cancelled {
-        stdout: Vec<u8>,
-        stderr: Vec<u8>,
-        stdout_truncated: bool,
-        stderr_truncated: bool,
-    },
+    Cancelled,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -316,12 +311,7 @@ fn run_command_with_control_and_input(
     input: HostInput,
 ) -> Result<HostProcessOutput, HostProcessError> {
     if is_cancelled(control.cancellation) {
-        return Err(HostProcessError::Cancelled {
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-            stdout_truncated: false,
-            stderr_truncated: false,
-        });
+        return Err(HostProcessError::Cancelled);
     }
 
     configure_process_tree(command);
@@ -388,14 +378,9 @@ fn run_command_with_control_and_input(
         if is_cancelled(control.cancellation) {
             terminate_child_tree(&mut child);
             let _ = child.wait();
-            let (stdout, stdout_truncated) = join_output_reader(stdout_reader, "stdout")?;
-            let (stderr, stderr_truncated) = join_output_reader(stderr_reader, "stderr")?;
-            return Err(HostProcessError::Cancelled {
-                stdout,
-                stderr,
-                stdout_truncated,
-                stderr_truncated,
-            });
+            let _ = join_output_reader(stdout_reader, "stdout")?;
+            let _ = join_output_reader(stderr_reader, "stderr")?;
+            return Err(HostProcessError::Cancelled);
         }
 
         if started.elapsed() >= control.timeout {
@@ -766,7 +751,7 @@ mod tests {
         cancellation.cancel();
 
         let error = task.await.expect_err("cancelled command should fail");
-        assert!(matches!(error, HostProcessError::Cancelled { .. }));
+        assert!(matches!(error, HostProcessError::Cancelled));
     }
 
     #[test]

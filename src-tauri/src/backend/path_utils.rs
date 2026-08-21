@@ -1,40 +1,45 @@
 use crate::backend::host_paths::HostPathResolver;
-use crate::backend::models::AppKind;
-use crate::backend::target_catalog::TargetCatalog;
-use crate::backend::{compat::LegacyResult, dto::GitRepositoryInfo};
+use crate::backend::{
+    dto::GitRepositoryInfo,
+    runtime::{AppError, AppResult},
+};
+use crate::backend::{models::AppKind, target_catalog::TargetCatalog};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path, path::PathBuf, process::Command};
 use walkdir::WalkDir;
 
-pub(crate) fn app_db_path() -> LegacyResult<PathBuf> {
+pub(crate) fn app_db_path() -> AppResult<PathBuf> {
     if let Some(path) = std::env::var_os("ASSETIWEAVE_DB_PATH").filter(|path| !path.is_empty()) {
         let path = PathBuf::from(path);
         if let Some(parent) = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
         {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            fs::create_dir_all(parent)?;
         }
         return Ok(path);
     }
 
-    let mut data_dir = dirs::data_dir().ok_or("无法确定系统数据目录")?;
+    let mut data_dir =
+        dirs::data_dir().ok_or_else(|| AppError::NotFound("无法确定系统数据目录".to_string()))?;
     data_dir.push("AssetIWeave");
-    fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&data_dir)?;
     Ok(data_dir.join("app.db"))
 }
 
-pub(crate) fn ensure_app_library_dirs() -> LegacyResult<()> {
-    fs::create_dir_all(default_skill_backup_root()?).map_err(|error| error.to_string())?;
-    fs::create_dir_all(default_database_backup_root()?).map_err(|error| error.to_string())
+pub(crate) fn ensure_app_library_dirs() -> AppResult<()> {
+    fs::create_dir_all(default_skill_backup_root()?)?;
+    fs::create_dir_all(default_database_backup_root()?)?;
+    Ok(())
 }
 
-pub(crate) fn default_skill_backup_root() -> LegacyResult<PathBuf> {
+pub(crate) fn default_skill_backup_root() -> AppResult<PathBuf> {
     default_skill_backup_root_for_tenant("default")
 }
 
-pub(crate) fn default_skill_backup_root_for_tenant(tenant_id: &str) -> LegacyResult<PathBuf> {
-    let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+pub(crate) fn default_skill_backup_root_for_tenant(tenant_id: &str) -> AppResult<PathBuf> {
+    let home =
+        dirs::home_dir().ok_or_else(|| AppError::NotFound("无法确定用户主目录".to_string()))?;
     Ok(home
         .join(".assetiweave")
         .join("tenants")
@@ -43,32 +48,33 @@ pub(crate) fn default_skill_backup_root_for_tenant(tenant_id: &str) -> LegacyRes
         .join("skills"))
 }
 
-pub(crate) fn legacy_skill_backup_root() -> LegacyResult<PathBuf> {
-    let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+pub(crate) fn legacy_skill_backup_root() -> AppResult<PathBuf> {
+    let home =
+        dirs::home_dir().ok_or_else(|| AppError::NotFound("无法确定用户主目录".to_string()))?;
     Ok(home.join(".assetiweave").join("library").join("skills"))
 }
 
-pub(crate) fn default_database_backup_root() -> LegacyResult<PathBuf> {
-    let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+pub(crate) fn default_database_backup_root() -> AppResult<PathBuf> {
+    let home =
+        dirs::home_dir().ok_or_else(|| AppError::NotFound("无法确定用户主目录".to_string()))?;
     Ok(home
         .join(".assetiweave")
         .join("library")
         .join("database-backups"))
 }
 
-pub(crate) fn expand_path(path: &str) -> LegacyResult<PathBuf> {
+pub(crate) fn expand_path(path: &str) -> AppResult<PathBuf> {
     let resolver = HostPathResolver::current()?;
     let stored = resolver.normalize_input(path)?;
     Ok(resolver.resolve(&stored)?.into_path_buf())
 }
 
-pub(crate) fn normalize_path_for_storage(path: &str) -> LegacyResult<String> {
-    HostPathResolver::current()
-        .and_then(|resolver| resolver.normalize_input(path))
-        .map(|path| path.as_str().to_string())
+pub(crate) fn normalize_path_for_storage(path: &str) -> AppResult<String> {
+    let resolver = HostPathResolver::current()?;
+    Ok(resolver.normalize_input(path)?.as_str().to_string())
 }
 
-pub(crate) fn display_path(path: &str) -> LegacyResult<String> {
+pub(crate) fn display_path(path: &str) -> AppResult<String> {
     let resolver = HostPathResolver::current()?;
     let stored = resolver.normalize_input(path)?;
     Ok(resolver.display(&stored)?.as_str().to_string())
@@ -242,12 +248,6 @@ pub(crate) fn detect_target_provider(
     })
 }
 
-#[cfg(test)]
-pub(crate) fn detect_app_target(path: &Path) -> Option<AppKind> {
-    let catalog = TargetCatalog::builtin().ok()?;
-    detect_target_provider(path, &catalog).and_then(|(_, app_kind)| app_kind)
-}
-
 pub(crate) fn is_app_library_path(path: &Path) -> bool {
     let filesystem = crate::backend::host_filesystem::HostFilesystem::current();
     if let Some(home) = dirs::home_dir() {
@@ -294,14 +294,14 @@ fn safe_tenant_path_segment(tenant_id: &str) -> String {
     }
 }
 
-pub(crate) fn hash_file(path: &Path) -> LegacyResult<String> {
-    let bytes = fs::read(path).map_err(|error| error.to_string())?;
+pub(crate) fn hash_file(path: &Path) -> AppResult<String> {
+    let bytes = fs::read(path)?;
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-pub(crate) fn hash_path(path: &Path) -> LegacyResult<String> {
+pub(crate) fn hash_path(path: &Path) -> AppResult<String> {
     if path.is_dir() {
         hash_dir(path)
     } else {
@@ -309,10 +309,10 @@ pub(crate) fn hash_path(path: &Path) -> LegacyResult<String> {
     }
 }
 
-fn hash_dir(path: &Path) -> LegacyResult<String> {
+fn hash_dir(path: &Path) -> AppResult<String> {
     let mut files = Vec::new();
     for entry in WalkDir::new(path).follow_links(false) {
-        let entry = entry.map_err(|error| error.to_string())?;
+        let entry = entry.map_err(|error| AppError::External(error.to_string()))?;
         if entry.file_type().is_file() {
             files.push(entry.path().to_path_buf());
         }
@@ -321,10 +321,12 @@ fn hash_dir(path: &Path) -> LegacyResult<String> {
 
     let mut hasher = Sha256::new();
     for file in files {
-        let relative = file.strip_prefix(path).map_err(|error| error.to_string())?;
+        let relative = file
+            .strip_prefix(path)
+            .map_err(|error| AppError::External(error.to_string()))?;
         hasher.update(normalize_relative_path(relative).as_bytes());
         hasher.update(b"\0");
-        hasher.update(fs::read(file).map_err(|error| error.to_string())?);
+        hasher.update(fs::read(file)?);
         hasher.update(b"\0");
     }
 

@@ -109,11 +109,10 @@ impl AppService {
     pub(crate) fn open_with_db_path_and_runtime(
         db_path: PathBuf,
         agent_runtime: std::sync::Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
-    ) -> AppResult<super::service::AgentAppService> {
-        Ok(super::service::AgentAppService {
-            _service: Self::open_with_db_path(db_path)?,
-            agent_runtime,
-        })
+    ) -> AppResult<Self> {
+        let mut service = Self::open_with_db_path(db_path)?;
+        service.agent_runtime = agent_runtime;
+        Ok(service)
     }
 
     pub(crate) fn request_context(&self) -> &RequestContext {

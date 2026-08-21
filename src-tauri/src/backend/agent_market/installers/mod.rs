@@ -144,7 +144,7 @@ pub(crate) fn run_host_command(
         },
     )
     .map_err(|error| match error {
-        crate::backend::host_process::HostProcessError::Cancelled { .. } => InstallError::Cancelled,
+        crate::backend::host_process::HostProcessError::Cancelled => InstallError::Cancelled,
         crate::backend::host_process::HostProcessError::Timeout { .. } => InstallError::Timeout,
         other => InstallError::Spawn(format!("{other:?}")),
     })

@@ -1,7 +1,5 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use semver::{Version, VersionReq};
-
 use super::types::{CatalogItem, Distribution, DistributionCandidate, DistributionType};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -24,7 +22,7 @@ pub(crate) struct DistributionSelectionContext {
 impl Default for DistributionSelectionContext {
     fn default() -> Self {
         Self {
-            os: std::env::consts::OS.to_string(),
+            os: normalized_os(std::env::consts::OS),
             arch: normalized_arch(std::env::consts::ARCH),
             node_available: false,
             npm_available: false,
@@ -107,7 +105,7 @@ fn candidate(
     match distribution {
         Distribution::System {
             command_candidates,
-            version_range,
+            version_range: _,
             ..
         } => {
             let observation = command_candidates
@@ -128,14 +126,13 @@ fn candidate(
                         .clone()
                         .unwrap_or_else(|| "runtime_missing".to_string()),
                 );
-            } else if !version_satisfies(observation.version.as_deref(), version_range) {
-                result.selectable = false;
-                result.reason_code = Some("system_version_incompatible".to_string());
             }
         }
         Distribution::Binary { target, size, .. } => {
             result.download_size = *size;
-            if target.os != context.os || normalized_arch(&target.arch) != context.arch {
+            if normalized_os(&target.os) != context.os
+                || normalized_arch(&target.arch) != context.arch
+            {
                 result.selectable = false;
                 result.reason_code = Some("distribution_unsupported".to_string());
             } else {
@@ -183,26 +180,17 @@ fn type_rank(distribution_type: &DistributionType) -> u8 {
     }
 }
 
-fn version_satisfies(version: Option<&str>, requirement: &str) -> bool {
-    let Some(version) = version.and_then(extract_version) else {
-        return false;
-    };
-    let Ok(requirement) = VersionReq::parse(requirement) else {
-        return false;
-    };
-    requirement.matches(&version)
-}
-
-fn extract_version(value: &str) -> Option<Version> {
-    value
-        .split_whitespace()
-        .find_map(|part| Version::parse(part.trim_start_matches('v')).ok())
-}
-
 pub(crate) fn normalized_arch(arch: &str) -> String {
     match arch {
         "arm64" | "aarch64" => "aarch64".to_string(),
         "x86_64" | "amd64" => "x86_64".to_string(),
+        other => other.to_string(),
+    }
+}
+
+pub(crate) fn normalized_os(os: &str) -> String {
+    match os {
+        "macos" | "darwin" => "darwin".to_string(),
         other => other.to_string(),
     }
 }
@@ -241,6 +229,31 @@ mod tests {
         assert!(candidates
             .iter()
             .any(|candidate| candidate.distribution_type == DistributionType::Binary));
+    }
+
+    #[test]
+    fn rust_macos_host_name_matches_darwin_catalog_target() {
+        let item = bundled_catalog()
+            .unwrap()
+            .items
+            .into_iter()
+            .find(|item| item.id == "opencode")
+            .unwrap();
+        let context = DistributionSelectionContext {
+            os: normalized_os("macos"),
+            arch: normalized_arch("aarch64"),
+            node_available: false,
+            npm_available: false,
+            uv_available: false,
+            system: HashMap::new(),
+        };
+
+        let candidate = DistributionSelector::select(&item, &context, None)
+            .unwrap()
+            .remove(0);
+
+        assert!(candidate.selectable);
+        assert!(candidate.recommended);
     }
 
     #[test]

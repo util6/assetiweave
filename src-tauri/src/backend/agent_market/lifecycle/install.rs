@@ -60,28 +60,6 @@ pub(crate) async fn run(
             false,
         ));
     }
-    if !crate::backend::agent_market::is_core_compatible(item) {
-        return Err(market_error(
-            "core_incompatible",
-            "The Agent catalog item is incompatible with this AssetIWeave version.",
-            false,
-        ));
-    }
-    let catalog = service.catalog.catalog();
-    if request.catalog_version != catalog.catalog_version {
-        return Err(market_error(
-            "catalog_version_unavailable",
-            "The selected catalog version is no longer active.",
-            true,
-        ));
-    }
-    if request.agent_version != item.version {
-        return Err(market_error(
-            "catalog_version_unavailable",
-            "The selected Agent version is no longer active.",
-            true,
-        ));
-    }
     let distribution = item
         .distributions
         .iter()
@@ -122,17 +100,6 @@ pub(crate) async fn run(
             return Err(market_error(
                 "agent_not_installed",
                 "The Agent is not installed; choose install.",
-                false,
-            ));
-        }
-        "update"
-            if current
-                .as_ref()
-                .is_some_and(|installation| installation.agent_version == item.version) =>
-        {
-            return Err(market_error(
-                "update_not_available",
-                "The selected Agent is already at the catalog version.",
                 false,
             ));
         }

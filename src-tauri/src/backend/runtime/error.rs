@@ -21,6 +21,7 @@ pub(crate) enum AppError {
     Canceled(String),
     #[error("{0}")]
     Cancelled(String),
+    #[allow(dead_code)]
     #[error("{0}")]
     Timeout(String),
     #[error("{0}")]
@@ -36,8 +37,6 @@ pub(crate) enum AppError {
         retryable: bool,
         details: Option<Value>,
     },
-    #[error("{0}")]
-    Legacy(String),
 }
 
 impl Serialize for AppError {
@@ -75,7 +74,6 @@ impl AppError {
             Self::Process(_) => "process_error".to_string(),
             Self::External(_) => "external_error".to_string(),
             Self::Domain { code, .. } => code.clone(),
-            Self::Legacy(_) => "legacy_error".to_string(),
         }
     }
 
@@ -90,7 +88,7 @@ impl AppError {
 
     pub(crate) fn retryable(&self) -> bool {
         match self {
-            Self::Validation(_) | Self::NotFound(_) | Self::Legacy(_) => false,
+            Self::Validation(_) | Self::NotFound(_) => false,
             Self::Conflict(_)
             | Self::Io(_)
             | Self::Db(_)
@@ -119,19 +117,17 @@ impl From<AppError> for String {
     }
 }
 
-/// Compatibility conversion for repository and legacy helper APIs that still
-/// expose plain messages. New internal APIs should return `AppError` directly;
-/// this bridge keeps the migration monotonic without losing the error code at
-/// the application boundary.
+/// Compatibility conversion for infrastructure helpers that still expose a
+/// plain message. New internal APIs should return `AppError` directly.
 impl From<String> for AppError {
     fn from(error: String) -> Self {
-        Self::Legacy(error)
+        Self::External(error)
     }
 }
 
 impl From<&str> for AppError {
     fn from(error: &str) -> Self {
-        Self::Legacy(error.to_string())
+        Self::External(error.to_string())
     }
 }
 
@@ -146,7 +142,7 @@ impl From<tokio::task::JoinError> for AppError {
         if error.is_cancelled() {
             Self::Canceled("后台任务已取消".to_string())
         } else {
-            Self::Legacy(format!("后台任务异常退出: {error}"))
+            Self::External(format!("后台任务异常退出: {error}"))
         }
     }
 }
@@ -194,10 +190,10 @@ mod tests {
     }
 
     #[test]
-    fn legacy_error_never_exposes_debug_payload() {
-        let value = serde_json::to_value(AppError::Legacy("plain failure".to_string()))
+    fn external_error_never_exposes_debug_payload() {
+        let value = serde_json::to_value(AppError::External("plain failure".to_string()))
             .expect("wire error serializes");
-        assert_eq!(value["code"], "legacy_error");
+        assert_eq!(value["code"], "external_error");
         assert!(value.get("AppError").is_none());
         assert!(value.get("Legacy").is_none());
     }

@@ -1,8 +1,8 @@
-use super::{tasks::TaskRuntime, AppError, AppResult, RuntimeLocks};
+use super::{tasks::TaskRuntime, AppError, AppResult};
 use arc_swap::ArcSwap;
 use std::{
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
@@ -29,7 +29,6 @@ pub(crate) enum RuntimeRole {
 #[derive(Debug, Clone)]
 pub(crate) struct RequestContextSnapshot {
     pub(crate) tenant: Tenant,
-    pub(crate) generation: u64,
     pub(crate) request_context: RequestContext,
 }
 
@@ -47,9 +46,6 @@ impl ShutdownState {
         }
     }
 
-    pub(crate) fn accepting(&self) -> bool {
-        self.accepting.load(Ordering::Acquire)
-    }
     pub(crate) fn begin(&self) -> bool {
         self.accepting.store(false, Ordering::Release);
         !self.shutdown_started.swap(true, Ordering::AcqRel)
@@ -80,13 +76,10 @@ pub(crate) struct AppRuntime {
     db_path: PathBuf,
     db: Database,
     context: ArcSwap<RequestContextSnapshot>,
-    generation: AtomicU64,
     agent_runtime_manager: Arc<AgentRuntimeManager>,
     agent_runtime: Arc<dyn AgentExecutionRuntime>,
-    locks: RuntimeLocks,
     task_runtime: TaskRuntime,
     shutdown: ShutdownState,
-    role: RuntimeRole,
     dispatcher: Mutex<Option<EventDispatcherHandle>>,
     target_catalog: RegistrySnapshot<TargetCatalog>,
     conversation_adapter_catalog: RegistrySnapshot<ConversationAdapterCatalog>,
@@ -96,12 +89,12 @@ static PROCESS_RUNTIME: OnceLock<Arc<AppRuntime>> = OnceLock::new();
 
 impl AppRuntime {
     pub(crate) fn bootstrap(db_path: PathBuf, role: RuntimeRole) -> AppResult<Arc<Self>> {
-        let runtime = crate::backend::store::build_runtime().map_err(AppError::Legacy)?;
+        let runtime = crate::backend::store::build_runtime().map_err(AppError::External)?;
         let pool = runtime
             .block_on(store::open_migrated_pool(&db_path))
-            .map_err(AppError::Legacy)?;
-        ensure_app_library_dirs().map_err(AppError::Legacy)?;
-        let target_catalog = TargetCatalog::builtin().map_err(AppError::Legacy)?;
+            .map_err(AppError::External)?;
+        ensure_app_library_dirs()?;
+        let target_catalog = TargetCatalog::builtin()?;
 
         // Bootstrap is the only production path that opens the migrated pool. The
         // old Database::open_initialized remains a test/migration compatibility API.
@@ -110,10 +103,8 @@ impl AppRuntime {
                 &pool,
                 &target_catalog,
             ))
-            .map_err(AppError::Legacy)?;
-        let context = runtime
-            .block_on(store::load_local_request_context_sqlx(&pool))
-            .map_err(AppError::Legacy)?;
+            .map_err(AppError::External)?;
+        let context = runtime.block_on(store::load_local_request_context_sqlx(&pool))?;
         let tenant_id = context.tenant.id.clone();
         runtime.block_on(
             crate::backend::bootstrap::materialize_and_seed_builtin_adapters(&pool, &tenant_id),
@@ -122,7 +113,7 @@ impl AppRuntime {
             .block_on(crate::backend::store::list_conversation_adapters_sqlx(
                 &pool, &tenant_id,
             ))
-            .map_err(AppError::Legacy)?;
+            .map_err(AppError::External)?;
         let workspace_root = db_path
             .parent()
             .unwrap_or_else(|| Path::new("."))
@@ -130,10 +121,10 @@ impl AppRuntime {
         let agent_runtime_manager =
             Arc::new(AgentRuntimeManager::new(pool.clone(), workspace_root));
         let runtime_root = crate::backend::agent_market::default_runtime_root()
-            .map_err(|error| AppError::Legacy(error.to_string()))?;
+            .map_err(|error| AppError::External(error.to_string()))?;
         runtime
             .block_on(agent_runtime_manager.recover_startup(&tenant_id, &runtime_root))
-            .map_err(AppError::Legacy)?;
+            .map_err(AppError::External)?;
         let migration_scope = db_path.to_string_lossy().to_string();
         if let Err(error) =
             runtime.block_on(crate::backend::agent_market::migrate_legacy_assignments(
@@ -151,26 +142,22 @@ impl AppRuntime {
         }
         runtime
             .block_on(agent_runtime_manager.reload(&tenant_id))
-            .map_err(AppError::Legacy)?;
+            .map_err(AppError::External)?;
 
         let task_runtime = TaskRuntime::with_runtime_handle(runtime.handle().clone());
         let db = Database::from_parts(pool, runtime);
         let snapshot = RequestContextSnapshot {
             tenant: context.tenant.clone(),
-            generation: 0,
             request_context: context,
         };
         let app_runtime = Arc::new(Self {
             db_path,
             db,
             context: ArcSwap::from_pointee(snapshot),
-            generation: AtomicU64::new(0),
             agent_runtime: agent_runtime_manager.runtime(),
             agent_runtime_manager,
-            locks: RuntimeLocks::default(),
             task_runtime,
             shutdown: ShutdownState::new(),
-            role,
             dispatcher: Mutex::new(None),
             target_catalog: RegistrySnapshot::new(target_catalog),
             conversation_adapter_catalog: RegistrySnapshot::new(ConversationAdapterCatalog::new(
@@ -207,16 +194,12 @@ impl AppRuntime {
             db,
             context: ArcSwap::from_pointee(RequestContextSnapshot {
                 tenant: context.tenant.clone(),
-                generation: 0,
                 request_context: context,
             }),
-            generation: AtomicU64::new(0),
             agent_runtime_manager,
             agent_runtime,
-            locks: RuntimeLocks::default(),
             task_runtime: TaskRuntime::new(),
             shutdown: ShutdownState::new(),
-            role: RuntimeRole::OneShot,
             dispatcher: Mutex::new(None),
             target_catalog: RegistrySnapshot::new(
                 TargetCatalog::builtin().expect("test target catalog must be valid"),
@@ -264,19 +247,9 @@ impl AppRuntime {
     pub(crate) fn agent_runtime(&self) -> Arc<dyn AgentExecutionRuntime> {
         self.agent_runtime.clone()
     }
-    pub(crate) fn locks(&self) -> &RuntimeLocks {
-        &self.locks
-    }
     pub(crate) fn task_runtime(&self) -> &TaskRuntime {
         &self.task_runtime
     }
-    pub(crate) fn role(&self) -> RuntimeRole {
-        self.role
-    }
-    pub(crate) fn shutdown_state(&self) -> &ShutdownState {
-        &self.shutdown
-    }
-
     pub(crate) fn target_catalog(&self) -> Arc<TargetCatalog> {
         self.target_catalog.load()
     }
@@ -292,7 +265,7 @@ impl AppRuntime {
             .block_on(crate::backend::store::list_conversation_adapters_sqlx(
                 &pool, &tenant_id,
             ))
-            .map_err(AppError::Legacy)?;
+            .map_err(AppError::External)?;
         self.conversation_adapter_catalog
             .replace(ConversationAdapterCatalog::new(adapters));
         Ok(())
@@ -304,33 +277,6 @@ impl AppRuntime {
                 handle.notify();
             }
         }
-    }
-
-    pub(crate) fn refresh_context(&self) -> AppResult<Arc<RequestContextSnapshot>> {
-        let pool = self.pool().clone();
-        let context = self
-            .block_on(store::load_local_request_context_sqlx(&pool))
-            .map_err(AppError::Legacy)?;
-        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
-        let snapshot = Arc::new(RequestContextSnapshot {
-            tenant: context.tenant.clone(),
-            generation,
-            request_context: context,
-        });
-        self.context.store(snapshot.clone());
-        let adapters = self
-            .block_on(crate::backend::store::list_conversation_adapters_sqlx(
-                self.pool(),
-                &snapshot.tenant.id,
-            ))
-            .map_err(AppError::Legacy)?;
-        self.conversation_adapter_catalog
-            .replace(ConversationAdapterCatalog::new(adapters));
-        Ok(snapshot)
-    }
-
-    pub(crate) fn shutdown(&self) -> ShutdownReport {
-        self.shutdown_with_grace(Duration::from_secs(5))
     }
 
     pub(crate) fn shutdown_with_grace(&self, grace: Duration) -> ShutdownReport {

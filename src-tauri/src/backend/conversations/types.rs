@@ -20,12 +20,6 @@ impl ConversationAdapterCatalog {
     pub(crate) fn new(adapters: Vec<ConversationAdapter>) -> Self {
         Self { adapters }
     }
-
-    pub(crate) fn get(&self, adapter_id: &str) -> Option<&ConversationAdapter> {
-        self.adapters
-            .iter()
-            .find(|adapter| adapter.id == adapter_id)
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

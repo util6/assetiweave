@@ -62,25 +62,6 @@ impl AgentLifecycleService {
         }
     }
 
-    pub(crate) async fn install(
-        &self,
-        tenant_id: &str,
-        request: AgentInstallStartRequest,
-    ) -> Result<InstallOutcome, AgentMarketError> {
-        self.install_with_cancellation(tenant_id, request, None)
-            .await
-    }
-
-    pub(crate) async fn install_with_cancellation(
-        &self,
-        tenant_id: &str,
-        request: AgentInstallStartRequest,
-        cancellation: Option<Arc<AtomicBool>>,
-    ) -> Result<InstallOutcome, AgentMarketError> {
-        self.install_with_cancellation_and_progress(tenant_id, request, cancellation, None)
-            .await
-    }
-
     pub(crate) async fn install_with_cancellation_and_progress(
         &self,
         tenant_id: &str,
@@ -91,22 +72,13 @@ impl AgentLifecycleService {
         install::run(self, tenant_id, request, cancellation, phase_sink).await
     }
 
-    pub(crate) async fn uninstall(
+    #[cfg(test)]
+    pub(crate) async fn install(
         &self,
         tenant_id: &str,
-        request: AgentUninstallStartRequest,
-    ) -> Result<AgentInstallation, AgentMarketError> {
-        self.uninstall_with_cancellation(tenant_id, request, None)
-            .await
-    }
-
-    pub(crate) async fn uninstall_with_cancellation(
-        &self,
-        tenant_id: &str,
-        request: AgentUninstallStartRequest,
-        cancellation: Option<Arc<AtomicBool>>,
-    ) -> Result<AgentInstallation, AgentMarketError> {
-        self.uninstall_with_cancellation_and_progress(tenant_id, request, cancellation, None)
+        request: AgentInstallStartRequest,
+    ) -> Result<InstallOutcome, AgentMarketError> {
+        self.install_with_cancellation_and_progress(tenant_id, request, None, None)
             .await
     }
 
@@ -300,11 +272,13 @@ mod tests {
             runtime_root.clone(),
             CatalogService::from_catalog(fixture_catalog("1.0.0", &url_v1, &good_v1)),
         );
-        let install_request = request_for(&service_v1, "install", "1.0.0");
+        let mut install_request = request_for(&service_v1, "install", "1.0.0");
+        install_request.catalog_version = "observed-old-catalog".to_string();
+        install_request.agent_version = "0.0.1".to_string();
         let installed = service_v1
             .install("default", install_request)
             .await
-            .expect("fixture install");
+            .expect("observational request versions must not block install");
         assert_eq!(
             installed.installation.protocol_status,
             ProtocolStatus::Ready
@@ -379,10 +353,11 @@ mod tests {
 
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let cancelled = service_v3
-            .install_with_cancellation(
+            .install_with_cancellation_and_progress(
                 "default",
                 request_for(&service_v3, "reinstall", "1.2.0"),
                 Some(cancellation),
+                None,
             )
             .await
             .expect_err("cancelled reinstall");

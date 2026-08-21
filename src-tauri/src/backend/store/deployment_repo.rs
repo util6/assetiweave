@@ -1,5 +1,5 @@
-use crate::backend::compat::LegacyResult;
 use crate::backend::models::DeploymentState;
+use crate::backend::runtime::AppResult;
 use sqlx::{Row, SqlitePool};
 
 use super::{codec::encode_enum, sql};
@@ -8,7 +8,7 @@ pub(crate) async fn upsert_deployment_state_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     state: &DeploymentState,
-) -> LegacyResult<()> {
+) -> AppResult<()> {
     sqlx::query(sql::UPSERT_DEPLOYMENT_STATE)
         .bind(tenant_id)
         .bind(&state.profile_id)
@@ -19,8 +19,7 @@ pub(crate) async fn upsert_deployment_state_sqlx(
         .bind(&state.deployed_at)
         .bind(&state.managed_by)
         .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(())
 }
 
@@ -30,15 +29,14 @@ pub(crate) async fn is_managed_deployment_sqlx(
     profile_id: &str,
     asset_id: &str,
     target_path: &str,
-) -> LegacyResult<bool> {
+) -> AppResult<bool> {
     let managed_by: Option<String> = sqlx::query_scalar(sql::GET_MANAGED_DEPLOYMENT)
         .bind(tenant_id)
         .bind(profile_id)
         .bind(asset_id)
         .bind(target_path)
         .fetch_optional(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(managed_by.as_deref() == Some("assetiweave"))
 }
 
@@ -46,13 +44,12 @@ pub(crate) async fn count_deployment_state_by_profile_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     profile_id: &str,
-) -> LegacyResult<usize> {
+) -> AppResult<usize> {
     let count: i64 = sqlx::query_scalar(sql::COUNT_DEPLOYMENT_STATE_BY_PROFILE)
         .bind(tenant_id)
         .bind(profile_id)
         .fetch_one(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(count as usize)
 }
 
@@ -60,20 +57,14 @@ pub(crate) async fn load_managed_deployment_targets_by_profile_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     profile_id: &str,
-) -> LegacyResult<Vec<(String, String)>> {
+) -> AppResult<Vec<(String, String)>> {
     let rows = sqlx::query(sql::LIST_MANAGED_DEPLOYMENT_TARGETS_BY_PROFILE)
         .bind(tenant_id)
         .bind(profile_id)
         .fetch_all(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     rows.into_iter()
-        .map(|row| {
-            Ok((
-                row.try_get(0).map_err(|error| error.to_string())?,
-                row.try_get(1).map_err(|error| error.to_string())?,
-            ))
-        })
+        .map(|row| Ok((row.try_get(0)?, row.try_get(1)?)))
         .collect()
 }
 
@@ -84,27 +75,25 @@ pub(crate) async fn delete_deployment_state_sqlx(
     profile_id: &str,
     asset_id: &str,
     target_path: &str,
-) -> LegacyResult<()> {
+) -> AppResult<()> {
     sqlx::query(sql::DELETE_DEPLOYMENT_STATE)
         .bind(tenant_id)
         .bind(profile_id)
         .bind(asset_id)
         .bind(target_path)
         .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(())
 }
 
 pub(crate) async fn delete_orphan_deployment_state_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> LegacyResult<()> {
+) -> AppResult<()> {
     sqlx::query(sql::DELETE_ORPHAN_DEPLOYMENT_STATE)
         .bind(tenant_id)
         .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(())
 }
 
@@ -204,7 +193,7 @@ mod tests {
                     .fetch_one(database.pool())
                     .await
                     .map_err(|error| error.to_string())?;
-                LegacyResult::Ok(rows)
+                AppResult::Ok(rows)
             })
             .map(|rows| assert_eq!(rows, 2))
             .expect("query SQLx deployment repo");
@@ -229,7 +218,7 @@ mod tests {
         }
     }
 
-    async fn insert_asset(pool: &SqlitePool, asset_id: &str) -> LegacyResult<()> {
+    async fn insert_asset(pool: &SqlitePool, asset_id: &str) -> AppResult<()> {
         sqlx::query(
             r#"
             INSERT INTO assets (
@@ -241,8 +230,7 @@ mod tests {
         .bind(asset_id)
         .bind("2026-06-18T00:00:00Z")
         .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
         Ok(())
     }
 

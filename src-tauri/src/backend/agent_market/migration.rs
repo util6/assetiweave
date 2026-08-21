@@ -108,7 +108,7 @@ pub(crate) async fn migrate_legacy_assignments(
             preview_token: catalog.preview_token(item, distribution.id(), "install"),
         };
         match lifecycle
-            .install_with_cancellation(tenant_id, request, None)
+            .install_with_cancellation_and_progress(tenant_id, request, None, None)
             .await
         {
             Ok(outcome) => {

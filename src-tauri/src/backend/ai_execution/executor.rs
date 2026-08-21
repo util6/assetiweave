@@ -24,8 +24,6 @@ use super::{
     AiExecutionRequest, AiExecutionResult,
 };
 
-const DEFAULT_MAX_CONCURRENCY: usize = 2;
-
 pub(crate) type BackendFuture<'a> =
     Pin<Box<dyn Future<Output = Result<AiExecutionResult, AiExecutionError>> + Send + 'a>>;
 pub(crate) type AgentConnectionFuture<'a> =
@@ -169,18 +167,6 @@ pub(crate) struct AgentExecutor {
 
 impl AgentExecutor {
     #[cfg(test)]
-    pub(crate) fn builtin(workspace_root: PathBuf) -> Result<Self, AiExecutionError> {
-        let registry = AgentRegistry::builtin().map_err(|_| AiExecutionError::Protocol {
-            operation: "registry_initialize",
-        })?;
-        Ok(Self::with_backends(
-            Arc::new(registry),
-            Arc::new(AcpExecutionBackend::new(workspace_root.clone())),
-            Arc::new(NativeExecutionBackend::new(workspace_root)),
-            DEFAULT_MAX_CONCURRENCY,
-        ))
-    }
-
     pub(crate) fn new(
         registry: Arc<AgentRegistry>,
         acp: Arc<dyn AgentExecutionBackend>,
@@ -649,10 +635,6 @@ impl Drop for ActiveExecutionGuard {
 fn cancelled_before_spawn(request: &AiExecutionRequest) -> AiExecutionError {
     AiExecutionError::Cancelled {
         program: PathBuf::from(request.agent_id.as_str()),
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-        stdout_truncated: false,
-        stderr_truncated: false,
     }
 }
 
@@ -660,10 +642,6 @@ fn timeout_before_spawn(request: &AiExecutionRequest, timeout: Duration) -> AiEx
     AiExecutionError::Timeout {
         program: PathBuf::from(request.agent_id.as_str()),
         timeout,
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-        stdout_truncated: false,
-        stderr_truncated: false,
     }
 }
 

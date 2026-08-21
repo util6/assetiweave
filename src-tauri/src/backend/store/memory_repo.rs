@@ -1468,6 +1468,7 @@ pub(crate) async fn persist_memory_dream_success_sqlx(
     Ok(input.note_id.clone())
 }
 
+#[cfg(test)]
 pub(crate) async fn upsert_memory_evidence_snapshot_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -2660,12 +2661,7 @@ mod tests {
             run_id: run_id.to_string(),
             note_id: note_id.to_string(),
             scope: scope.clone(),
-            trigger: crate::backend::models::MemoryRunTrigger::Manual,
-            source_revision_start: cursor_offset.saturating_sub(1) as i64,
             source_revision_end: cursor_offset as i64,
-            provider: "opencode".to_string(),
-            model: None,
-            prompt_version: "memory-auto-dream-v1".to_string(),
             processed_count: 1,
             total_count: 1,
             markdown: format!(

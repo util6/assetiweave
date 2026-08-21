@@ -323,11 +323,6 @@ impl EngineError {
             "process_error" => "process",
             "extension_error" => "extension",
             "external_error" => "external",
-            // Legacy is an internal migration marker. Keep its stable wire
-            // code, but expose the same transport category as other domain
-            // operation failures until the remaining Application surfaces
-            // complete the typed-error migration.
-            "legacy_error" => "operation_error",
             _ => "operation_error",
         };
         Self {

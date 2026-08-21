@@ -200,7 +200,7 @@ async fn execute_deployment_action(
     let target_path = PathBuf::from(&action.target_path);
     ensure_target_within_profile(profile, &target_path)?;
     let source_path = crate::backend::targeting::canonical_source_path(asset)
-        .map_err(DeploymentError::Failure)?;
+        .map_err(|error| DeploymentError::Failure(error.to_string()))?;
 
     if target_path.exists()
         && !crate::backend::store::is_managed_deployment_sqlx(
@@ -211,7 +211,7 @@ async fn execute_deployment_action(
             &action.target_path,
         )
         .await
-        .map_err(DeploymentError::Failure)?
+        .map_err(|error| DeploymentError::Failure(error.to_string()))?
         && !target_can_be_replaced_with_asset(asset, &target_path)
             .map_err(DeploymentError::Failure)?
     {
@@ -234,7 +234,7 @@ async fn execute_deployment_action(
         DeploymentStrategy::SymlinkToSource => {
             crate::backend::host_filesystem::HostFilesystem::current()
                 .create_symlink(&source_path, &target_path)
-                .map_err(DeploymentError::Failure)?
+                .map_err(|error| DeploymentError::Failure(error.to_string()))?
         }
         DeploymentStrategy::CopyToTarget => copy_asset(&source_path, &target_path)?,
         other => {
@@ -256,7 +256,7 @@ async fn execute_deployment_action(
     };
     crate::backend::store::upsert_deployment_state_sqlx(pool, tenant_id, &state)
         .await
-        .map_err(DeploymentError::Failure)?;
+        .map_err(|error| DeploymentError::Failure(error.to_string()))?;
     Ok(())
 }
 
@@ -264,15 +264,18 @@ fn target_can_be_replaced_with_asset(asset: &Asset, target_path: &Path) -> Resul
     if crate::backend::targeting::target_is_asset_source(asset, target_path)? {
         return Ok(false);
     }
-    crate::backend::targeting::target_content_matches_asset(asset, target_path)
+    Ok(crate::backend::targeting::target_content_matches_asset(
+        asset,
+        target_path,
+    )?)
 }
 
 fn ensure_target_within_profile(
     profile: &TargetProfile,
     target_path: &Path,
 ) -> Result<(), DeploymentError> {
-    let allowed_root =
-        crate::backend::targeting::target_dir(profile).map_err(DeploymentError::Failure)?;
+    let allowed_root = crate::backend::targeting::target_dir(profile)
+        .map_err(|error| DeploymentError::Failure(error.to_string()))?;
     if !crate::backend::host_filesystem::HostFilesystem::current()
         .is_within(target_path, &allowed_root)
     {
@@ -287,7 +290,7 @@ fn ensure_target_within_profile(
 fn remove_existing_target(path: &Path) -> Result<(), DeploymentError> {
     crate::backend::host_filesystem::HostFilesystem::current()
         .remove_path(path)
-        .map_err(DeploymentError::Failure)
+        .map_err(|error| DeploymentError::Failure(error.to_string()))
 }
 
 fn copy_asset(source: &Path, target: &Path) -> Result<(), DeploymentError> {
@@ -303,5 +306,5 @@ fn copy_asset(source: &Path, target: &Path) -> Result<(), DeploymentError> {
 fn copy_dir(source: &Path, target: &Path) -> Result<(), DeploymentError> {
     crate::backend::host_filesystem::HostFilesystem::current()
         .copy_dir(source, target)
-        .map_err(DeploymentError::Failure)
+        .map_err(|error| DeploymentError::Failure(error.to_string()))
 }

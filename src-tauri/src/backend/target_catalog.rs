@@ -1,5 +1,5 @@
-use crate::backend::compat::LegacyResult;
-use crate::backend::models::{AppKind, TargetProfileDescriptor};
+use crate::backend::models::TargetProfileDescriptor;
+use crate::backend::runtime::{AppError, AppResult};
 
 include!(concat!(env!("OUT_DIR"), "/builtin_target_descriptors.rs"));
 
@@ -9,30 +9,30 @@ pub(crate) struct TargetCatalog {
 }
 
 impl TargetCatalog {
-    pub(crate) fn builtin() -> LegacyResult<Self> {
+    pub(crate) fn builtin() -> AppResult<Self> {
         let descriptors = BUILTIN_TARGET_DESCRIPTORS
             .iter()
-            .map(|source| serde_json::from_str(source).map_err(|error| error.to_string()))
-            .collect::<LegacyResult<Vec<TargetProfileDescriptor>>>()?;
+            .map(|source| {
+                serde_json::from_str(source).map_err(|error| AppError::External(error.to_string()))
+            })
+            .collect::<AppResult<Vec<TargetProfileDescriptor>>>()?;
         Self::from_descriptors(descriptors)
     }
 
-    pub(crate) fn from_descriptors(
-        descriptors: Vec<TargetProfileDescriptor>,
-    ) -> LegacyResult<Self> {
+    pub(crate) fn from_descriptors(descriptors: Vec<TargetProfileDescriptor>) -> AppResult<Self> {
         let mut ids = std::collections::BTreeSet::new();
         for descriptor in &descriptors {
             if descriptor.id.trim().is_empty() || !ids.insert(descriptor.id.clone()) {
-                return Err(format!(
+                return Err(AppError::Validation(format!(
                     "target provider descriptor id is empty or duplicated: {}",
                     descriptor.id
-                ));
+                )));
             }
             if descriptor.default_targets.is_empty() {
-                return Err(format!(
+                return Err(AppError::Validation(format!(
                     "target provider descriptor has no default target: {}",
                     descriptor.id
-                ));
+                )));
             }
         }
         Ok(Self { descriptors })
@@ -51,23 +51,16 @@ impl TargetCatalog {
     pub(crate) fn require_descriptor(
         &self,
         provider_id: &str,
-    ) -> crate::backend::compat::LegacyResult<&TargetProfileDescriptor> {
+    ) -> AppResult<&TargetProfileDescriptor> {
         self.descriptor(provider_id).ok_or_else(|| {
-            format!("target_provider_missing: target provider is not available: {provider_id}")
+            AppError::NotFound(format!(
+                "target_provider_missing: target provider is not available: {provider_id}"
+            ))
         })
     }
 
-    pub(crate) fn descriptor_for_app_kind(
-        &self,
-        app_kind: AppKind,
-    ) -> Option<&TargetProfileDescriptor> {
-        self.descriptors
-            .iter()
-            .find(|descriptor| descriptor.app_kind_compat == Some(app_kind))
-    }
-
     #[cfg(test)]
-    pub(crate) fn builtin_for_tests() -> LegacyResult<Self> {
+    pub(crate) fn builtin_for_tests() -> AppResult<Self> {
         Self::builtin()
     }
 }
@@ -75,7 +68,7 @@ impl TargetCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::models::AssetKind;
+    use crate::backend::models::{AppKind, AssetKind};
 
     #[test]
     fn builtin_descriptors_cover_legacy_app_kinds() {
@@ -95,7 +88,9 @@ mod tests {
             AppKind::Custom,
         ] {
             let descriptor = catalog
-                .descriptor_for_app_kind(app_kind)
+                .descriptors()
+                .iter()
+                .find(|descriptor| descriptor.app_kind_compat == Some(app_kind))
                 .expect("legacy app kind descriptor");
             assert!(descriptor.supported_kinds.contains(&AssetKind::Skill));
         }

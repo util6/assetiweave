@@ -47,7 +47,10 @@ where
         .await
     })?;
     if !detail.group.enabled {
-        return Err(format!("asset group is disabled: {}", detail.group.name));
+        return Err(AppError::Validation(format!(
+            "asset group is disabled: {}",
+            detail.group.name
+        )));
     }
 
     let mut mounts = Vec::new();
@@ -69,7 +72,7 @@ where
             }
             Err(message) => errors.push(AssetGroupMountError {
                 asset_id: member.asset_id.clone(),
-                message,
+                message: message.to_string(),
             }),
         }
     }
@@ -117,7 +120,7 @@ where
         let profile =
             crate::backend::store::load_profile_sqlx(&pool, &tenant_id_for_query, &profile_id)
                 .await?
-                .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+                .ok_or_else(|| AppError::NotFound(format!("profile not found: {profile_id}")))?;
         AppResult::Ok((assets, profile))
     })?;
     let asset_by_id = assets
@@ -144,7 +147,7 @@ where
             Err(message) => errors.push(SkillGroupExclusiveMountError {
                 asset_id: item.asset_id.clone(),
                 name: item.name.clone(),
-                message,
+                message: message.to_string(),
             }),
         }
     }
@@ -162,7 +165,7 @@ where
             Err(message) => errors.push(SkillGroupExclusiveMountError {
                 asset_id: item.asset_id.clone(),
                 name: item.name.clone(),
-                message,
+                message: message.to_string(),
             }),
         }
     }
@@ -194,7 +197,9 @@ pub(crate) fn build_skill_group_exclusive_mount_preview_sqlx(
             let profile =
                 crate::backend::store::load_profile_sqlx(&pool, &tenant_id_for_query, &profile_id)
                     .await?
-                    .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+                    .ok_or_else(|| {
+                        AppError::NotFound(format!("profile not found: {profile_id}"))
+                    })?;
             let skill_assets = crate::backend::store::load_assets_sqlx(
                 &pool,
                 &tenant_id_for_query,
@@ -254,7 +259,7 @@ pub(crate) fn build_skill_group_exclusive_mount_preview_sqlx(
             group_details_by_id
                 .get(group_id)
                 .cloned()
-                .ok_or_else(|| format!("asset group not found: {group_id}"))
+                .ok_or_else(|| AppError::NotFound(format!("asset group not found: {group_id}")))
         },
         move |asset_id, target_path| {
             Ok(managed_targets_by_asset
@@ -278,7 +283,9 @@ where
     IsManaged: FnMut(&str, &str) -> AppResult<bool>,
 {
     if !input.mount_selected {
-        return Err("exclusive skill group mount requires mount_selected=true".to_string());
+        return Err(AppError::Validation(
+            "exclusive skill group mount requires mount_selected=true".to_string(),
+        ));
     }
     let _dry_run_requested = input.dry_run;
     validate_exclusive_skill_profile(profile)?;
@@ -421,23 +428,26 @@ where
 
 fn validate_exclusive_skill_profile(profile: &TargetProfile) -> AppResult<()> {
     if !profile.enabled {
-        return Err(format!("profile is disabled: {}", profile.name));
+        return Err(AppError::Validation(format!(
+            "profile is disabled: {}",
+            profile.name
+        )));
     }
     if !profile.supported_kinds.contains(&AssetKind::Skill)
         || !profile.include.kinds.contains(&AssetKind::Skill)
     {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "profile {} does not support skill assets",
             profile.name
-        ));
+        )));
     }
     if !matches!(
         profile.deployment_strategy,
         DeploymentStrategy::SymlinkToSource
     ) {
-        return Err(
+        return Err(AppError::Validation(
             "exclusive skill group mount only supports symlink_to_source profiles".to_string(),
-        );
+        ));
     }
     Ok(())
 }
@@ -494,19 +504,19 @@ fn unmount_exclusive_skill_mount_record(
                 .await
             })?;
             if !is_managed {
-                return Err(format!(
+                return Err(AppError::Conflict(format!(
                     "target is mounted but not managed by AssetIWeave: {}",
                     inspection.target_path
-                ));
+                )));
             }
         }
         crate::backend::targeting::PhysicalMountState::NotMounted => {}
         crate::backend::targeting::PhysicalMountState::Conflict
         | crate::backend::targeting::PhysicalMountState::Broken => {
-            return Err(format!(
+            return Err(AppError::Conflict(format!(
                 "target is not a managed mount for this asset: {}",
                 inspection.target_path
-            ));
+            )));
         }
     }
 

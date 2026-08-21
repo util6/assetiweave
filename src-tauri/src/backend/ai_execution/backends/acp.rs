@@ -581,10 +581,6 @@ fn map_acp_error(operation: &'static str, _error: AcpError) -> AiExecutionError 
 fn cancelled_error(definition: &AgentDefinition) -> AiExecutionError {
     AiExecutionError::Cancelled {
         program: PathBuf::from(&definition.command),
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-        stdout_truncated: false,
-        stderr_truncated: false,
     }
 }
 
@@ -592,10 +588,6 @@ fn timeout_error(definition: &AgentDefinition, timeout: std::time::Duration) -> 
     AiExecutionError::Timeout {
         program: PathBuf::from(&definition.command),
         timeout,
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-        stdout_truncated: false,
-        stderr_truncated: false,
     }
 }
 

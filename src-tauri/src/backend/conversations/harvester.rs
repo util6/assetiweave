@@ -102,7 +102,7 @@ fn run_conversation_harvester_in_dir(source_dir: &Path, full_reparse: bool) -> A
             append_captured_output(&mut message, "stderr", &stderr, stderr_truncated);
             return Err(message);
         }
-        Err(crate::backend::host_process::HostProcessError::Cancelled { .. }) => {
+        Err(crate::backend::host_process::HostProcessError::Cancelled) => {
             return Err(format!("harvester {} was cancelled", manifest.id));
         }
     };

@@ -2820,11 +2820,15 @@ fn normalize_conversation_source_location(location: &str) -> LegacyResult<String
     if location.contains("://") {
         return Ok(location.to_string());
     }
-    crate::backend::path_utils::normalize_path_for_storage(location)
+    Ok(crate::backend::path_utils::normalize_path_for_storage(
+        location,
+    )?)
 }
 
 fn normalize_conversation_path(path: &str) -> LegacyResult<String> {
-    crate::backend::path_utils::normalize_path_for_storage(path)
+    Ok(crate::backend::path_utils::normalize_path_for_storage(
+        path,
+    )?)
 }
 
 fn normalize_optional_conversation_path(path: Option<&str>) -> LegacyResult<Option<String>> {

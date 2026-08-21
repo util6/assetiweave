@@ -154,7 +154,6 @@ pub fn run() {
             panic!("failed to initialize AssetIWeave AppRuntime: {error}");
         }
     };
-    let agent_runtime_manager = runtime.agent_runtime_manager();
     let agent_runtime = runtime.agent_runtime();
     let conversation_full_sync_on_startup_enabled =
         match backend::app_settings::conversation_full_sync_on_startup_enabled() {
@@ -317,7 +316,6 @@ pub fn run() {
                 runtime.task_runtime().clone(),
             )),
             agent_runtime,
-            agent_runtime_manager,
             allow_close: Arc::new(AtomicBool::new(false)),
             allow_exit: Arc::new(AtomicBool::new(false)),
             exit_prompt_open: Arc::new(AtomicBool::new(false)),

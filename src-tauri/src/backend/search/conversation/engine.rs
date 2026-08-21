@@ -2,8 +2,8 @@ use super::schema::{
     build_conversation_schema, register_conversation_tokenizers, ConversationSearchSchema,
     JIEBA_TOKENIZER,
 };
-use crate::backend::compat::LegacyResult;
 use crate::backend::models::{conversation_id_fragment, conversation_id_search_term};
+use crate::backend::runtime::{AppError, AppResult};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -35,33 +35,8 @@ pub(super) struct ConversationSearchDocument {
 }
 
 impl ConversationSearchDocument {
-    #[cfg(test)]
-    pub(super) fn card(
-        record_kind: &str,
-        session_id: &str,
-        question_id: &str,
-        document_id: &str,
-        card_type: &str,
-        question_title: &str,
-        content: &str,
-    ) -> Self {
-        Self::scoped_card(
-            record_kind,
-            session_id,
-            question_id,
-            document_id,
-            card_type,
-            question_title,
-            content,
-            "",
-            "",
-            "",
-            "",
-            "",
-        )
-    }
-
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     pub(super) fn scoped_card(
         record_kind: &str,
         session_id: &str,
@@ -176,7 +151,7 @@ pub(super) struct InMemoryConversationIndex {
 
 #[cfg(test)]
 impl InMemoryConversationIndex {
-    pub(super) fn new() -> LegacyResult<Self> {
+    pub(super) fn new() -> AppResult<Self> {
         let fields = build_conversation_schema();
         let index = Index::create_in_ram(fields.schema.clone());
         register_conversation_tokenizers(&index);
@@ -186,14 +161,14 @@ impl InMemoryConversationIndex {
     pub(super) fn replace_documents(
         &self,
         documents: &[ConversationSearchDocument],
-    ) -> LegacyResult<()> {
+    ) -> AppResult<()> {
         replace_documents(&self.index, &self.fields, documents)
     }
 
     pub(super) fn search_cards(
         &self,
         request: &ConversationCardQuery,
-    ) -> LegacyResult<ConversationSearchMatches> {
+    ) -> AppResult<ConversationSearchMatches> {
         search_cards(&self.index, &self.fields, request)
     }
 }
@@ -204,7 +179,7 @@ pub(super) struct DiskConversationIndex {
 }
 
 impl DiskConversationIndex {
-    pub(super) fn create(path: &Path) -> LegacyResult<Self> {
+    pub(super) fn create(path: &Path) -> AppResult<Self> {
         std::fs::create_dir_all(path).map_err(|error| error.to_string())?;
         let fields = build_conversation_schema();
         let index =
@@ -216,11 +191,11 @@ impl DiskConversationIndex {
     pub(super) fn replace_documents(
         &self,
         documents: &[ConversationSearchDocument],
-    ) -> LegacyResult<()> {
+    ) -> AppResult<()> {
         replace_documents(&self.index, &self.fields, documents)
     }
 
-    pub(super) fn open(path: &Path) -> LegacyResult<Self> {
+    pub(super) fn open(path: &Path) -> AppResult<Self> {
         let fields = build_conversation_schema();
         let index = Index::open_in_dir(path).map_err(|error| error.to_string())?;
         register_conversation_tokenizers(&index);
@@ -230,7 +205,7 @@ impl DiskConversationIndex {
     pub(super) fn search_cards(
         &self,
         request: &ConversationCardQuery,
-    ) -> LegacyResult<ConversationSearchMatches> {
+    ) -> AppResult<ConversationSearchMatches> {
         search_cards(&self.index, &self.fields, request)
     }
 }
@@ -239,7 +214,7 @@ fn replace_documents(
     index: &Index,
     fields: &ConversationSearchSchema,
     documents: &[ConversationSearchDocument],
-) -> LegacyResult<()> {
+) -> AppResult<()> {
     let mut writer = index
         .writer(50_000_000)
         .map_err(|error| error.to_string())?;
@@ -282,13 +257,17 @@ fn search_cards(
     index: &Index,
     fields: &ConversationSearchSchema,
     request: &ConversationCardQuery,
-) -> LegacyResult<ConversationSearchMatches> {
+) -> AppResult<ConversationSearchMatches> {
     let query = request.query.trim();
     if query.is_empty() {
-        return Err("conversation search query is required".to_string());
+        return Err(AppError::Validation(
+            "conversation search query is required".to_string(),
+        ));
     }
     if query.chars().count() > 512 {
-        return Err("conversation search query must not exceed 512 characters".to_string());
+        return Err(AppError::Validation(
+            "conversation search query must not exceed 512 characters".to_string(),
+        ));
     }
     let reader = index.reader().map_err(|error| error.to_string())?;
     let searcher = reader.searcher();
@@ -368,7 +347,7 @@ fn build_card_query(
     fields: &ConversationSearchSchema,
     query: &str,
     request: &ConversationCardQuery,
-) -> LegacyResult<BooleanQuery> {
+) -> AppResult<BooleanQuery> {
     let mut clauses: Vec<(Occur, Box<dyn Query>)> =
         vec![exact_clause(fields.record_kind, &request.record_kind)];
     let has_card_filters = !request.card_kinds.is_empty() || !request.semantic_roles.is_empty();
@@ -462,7 +441,9 @@ fn build_card_query(
         ));
     }
     if lexical_branches.is_empty() {
-        return Err("conversation search query has no searchable terms".to_string());
+        return Err(AppError::Validation(
+            "conversation search query has no searchable terms".to_string(),
+        ));
     }
     let normalized = query.trim().to_lowercase();
     if (2..=15).contains(&normalized.chars().count()) {
@@ -476,12 +457,11 @@ fn build_card_query(
     Ok(BooleanQuery::new(clauses))
 }
 
-fn tokens_for(index: &Index, tokenizer_name: &str, query: &str) -> LegacyResult<Vec<String>> {
+fn tokens_for(index: &Index, tokenizer_name: &str, query: &str) -> AppResult<Vec<String>> {
     let mut tokens = BTreeSet::new();
-    let mut analyzer = index
-        .tokenizers()
-        .get(tokenizer_name)
-        .ok_or_else(|| format!("missing conversation tokenizer: {tokenizer_name}"))?;
+    let mut analyzer = index.tokenizers().get(tokenizer_name).ok_or_else(|| {
+        AppError::External(format!("missing conversation tokenizer: {tokenizer_name}"))
+    })?;
     let mut stream = analyzer.token_stream(query);
     while stream.advance() {
         let text = stream.token().text.trim().to_lowercase();
@@ -543,12 +523,16 @@ fn text_branch(
     )
 }
 
-fn stored_text(document: &TantivyDocument, field: tantivy::schema::Field) -> LegacyResult<String> {
+fn stored_text(document: &TantivyDocument, field: tantivy::schema::Field) -> AppResult<String> {
     document
         .get_first(field)
         .and_then(|value| value.as_str())
         .map(str::to_string)
-        .ok_or_else(|| "conversation search index document is missing a stored field".to_string())
+        .ok_or_else(|| {
+            AppError::External(
+                "conversation search index document is missing a stored field".to_string(),
+            )
+        })
 }
 
 fn score_to_integer(score: f32) -> usize {

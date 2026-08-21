@@ -55,6 +55,7 @@ impl fmt::Display for ResourceKey {
 }
 
 impl LifecycleOp {
+    #[cfg(test)]
     pub(crate) fn conflicts_with(self, other: Self) -> bool {
         matches!(
             (self, other),
@@ -82,6 +83,7 @@ impl LifecycleRequestKey {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn conflicts_with(&self, other: &Self) -> bool {
         self.resource.same_package(&other.resource)
             && self.operation.conflicts_with(other.operation)
@@ -89,6 +91,7 @@ impl LifecycleRequestKey {
 }
 
 impl ResourceKey {
+    #[cfg(test)]
     fn same_package(&self, other: &Self) -> bool {
         self.identity.kind == other.identity.kind
             && self.identity.package_id == other.identity.package_id

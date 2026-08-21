@@ -226,6 +226,7 @@ impl ManagedAgentProcess {
         }
     }
 
+    #[cfg(test)]
     pub(crate) async fn force_kill_tree(&self) -> ProcessTerminationReport {
         let mut signal_errors = Vec::new();
         if let Err(error) = signal_process_tree(self.process_group_id, HostProcessSignal::Kill) {
@@ -290,6 +291,7 @@ pub(crate) struct StderrTailSnapshot {
 }
 
 impl StderrTailSnapshot {
+    #[cfg(test)]
     pub(crate) fn lossy_text(&self) -> String {
         String::from_utf8_lossy(&self.bytes).into_owned()
     }

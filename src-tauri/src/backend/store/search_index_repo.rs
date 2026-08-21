@@ -1,4 +1,7 @@
-use crate::backend::{compat::LegacyResult, dto::SearchRetrievalMode};
+use crate::backend::{
+    dto::SearchRetrievalMode,
+    runtime::{AppError, AppResult},
+};
 use chrono::Utc;
 use sqlx::{AssertSqlSafe, Row, SqliteConnection, SqlitePool};
 use uuid::Uuid;
@@ -80,7 +83,7 @@ impl ConversationSearchIndexState {
 pub(crate) async fn load_or_create_conversation_search_index_state_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> LegacyResult<ConversationSearchIndexState> {
+) -> AppResult<ConversationSearchIndexState> {
     let now = Utc::now().to_rfc3339();
     sqlx::query(
         r#"
@@ -96,8 +99,7 @@ pub(crate) async fn load_or_create_conversation_search_index_state_sqlx(
     .bind(CONVERSATION_SEARCH_TOKENIZER_VERSION)
     .bind(&now)
     .execute(pool)
-    .await
-    .map_err(|error| error.to_string())?;
+    .await?;
 
     let row = sqlx::query(
         r#"
@@ -111,16 +113,16 @@ pub(crate) async fn load_or_create_conversation_search_index_state_sqlx(
     )
     .bind(tenant_id)
     .fetch_one(pool)
-    .await
-    .map_err(|error| error.to_string())?;
+    .await?;
     map_search_index_state(&row)
 }
 
 #[allow(dead_code)]
+#[cfg(test)]
 pub(crate) async fn bump_conversation_search_source_revision_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> LegacyResult<i64> {
+) -> AppResult<i64> {
     load_or_create_conversation_search_index_state_sqlx(pool, tenant_id).await?;
     let revision = sqlx::query_scalar::<_, i64>(
         r#"
@@ -135,21 +137,19 @@ pub(crate) async fn bump_conversation_search_source_revision_sqlx(
     .bind(Utc::now().to_rfc3339())
     .bind(tenant_id)
     .fetch_one(pool)
-    .await
-    .map_err(|error| error.to_string())?;
+    .await?;
     Ok(revision)
 }
 
 pub(crate) async fn bump_conversation_search_source_revision_sqlx_tx(
     connection: &mut SqliteConnection,
     tenant_id: &str,
-) -> LegacyResult<i64> {
+) -> AppResult<i64> {
     let tenant_exists =
         sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM tenants WHERE id = ?1)")
             .bind(tenant_id)
             .fetch_one(&mut *connection)
-            .await
-            .map_err(|error| error.to_string())?;
+            .await?;
     if tenant_exists == 0 {
         return Ok(0);
     }
@@ -167,8 +167,7 @@ pub(crate) async fn bump_conversation_search_source_revision_sqlx_tx(
     .bind(CONVERSATION_SEARCH_TOKENIZER_VERSION)
     .bind(Utc::now().to_rfc3339())
     .execute(&mut *connection)
-    .await
-    .map_err(|error| error.to_string())?;
+    .await?;
     let revision = sqlx::query_scalar::<_, i64>(
         r#"
         UPDATE conversation_search_index_state
@@ -182,8 +181,7 @@ pub(crate) async fn bump_conversation_search_source_revision_sqlx_tx(
     .bind(Utc::now().to_rfc3339())
     .bind(tenant_id)
     .fetch_one(connection)
-    .await
-    .map_err(|error| error.to_string())?;
+    .await?;
     Ok(revision)
 }
 
@@ -193,7 +191,7 @@ pub(crate) async fn try_acquire_conversation_search_writer_lease_sqlx(
     owner: &str,
     now: &str,
     expires_at: &str,
-) -> LegacyResult<bool> {
+) -> AppResult<bool> {
     load_or_create_conversation_search_index_state_sqlx(pool, tenant_id).await?;
     let result = sqlx::query(
         r#"
@@ -213,15 +211,14 @@ pub(crate) async fn try_acquire_conversation_search_writer_lease_sqlx(
     .bind(now)
     .bind(tenant_id)
     .execute(pool)
-    .await
-    .map_err(|error| error.to_string())?;
+    .await?;
     Ok(result.rows_affected() == 1)
 }
 
 pub(crate) async fn load_conversation_search_index_documents_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> LegacyResult<Vec<ConversationSearchIndexDocumentRow>> {
+) -> AppResult<Vec<ConversationSearchIndexDocumentRow>> {
     let mut documents = Vec::new();
     for tables in [SearchDocumentTables::session(), SearchDocumentTables::web()] {
         let question_sql = format!(
@@ -244,29 +241,25 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
         for row in sqlx::query(AssertSqlSafe(question_sql))
             .bind(tenant_id)
             .fetch_all(pool)
-            .await
-            .map_err(|error| error.to_string())?
+            .await?
         {
-            let question_text: String = row.try_get(4).map_err(|error| error.to_string())?;
-            let turn_id: String = row.try_get(2).map_err(|error| error.to_string())?;
+            let question_text: String = row.try_get(4)?;
+            let turn_id: String = row.try_get(2)?;
             documents.push(ConversationSearchIndexDocumentRow {
                 document_kind: "question".to_string(),
                 record_kind: tables.record_kind.to_string(),
-                session_id: row.try_get(0).map_err(|error| error.to_string())?,
-                question_id: row.try_get(1).map_err(|error| error.to_string())?,
+                session_id: row.try_get(0)?,
+                question_id: row.try_get(1)?,
                 turn_id: turn_id.clone(),
                 part_id: String::new(),
                 block_id: format!("{turn_id}-question"),
                 card_kind: String::new(),
                 semantic_role: String::new(),
-                question_title: search_question_title(
-                    row.try_get(3).map_err(|error| error.to_string())?,
-                    &question_text,
-                ),
-                content: row.try_get(5).map_err(|error| error.to_string())?,
-                adapter_id: row.try_get(6).map_err(|error| error.to_string())?,
-                source_id: row.try_get(7).map_err(|error| error.to_string())?,
-                project_path: row.try_get(8).map_err(|error| error.to_string())?,
+                question_title: search_question_title(row.try_get(3)?, &question_text),
+                content: row.try_get(5)?,
+                adapter_id: row.try_get(6)?,
+                source_id: row.try_get(7)?,
+                project_path: row.try_get(8)?,
             });
         }
 
@@ -296,19 +289,17 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
         for row in sqlx::query(AssertSqlSafe(part_sql))
             .bind(tenant_id)
             .fetch_all(pool)
-            .await
-            .map_err(|error| error.to_string())?
+            .await?
         {
-            let text: Option<String> = row.try_get(6).map_err(|error| error.to_string())?;
-            let language: Option<String> = row.try_get(7).map_err(|error| error.to_string())?;
-            let command: Option<String> = row.try_get(8).map_err(|error| error.to_string())?;
-            let cwd: Option<String> = row.try_get(9).map_err(|error| error.to_string())?;
-            let status: Option<String> = row.try_get(10).map_err(|error| error.to_string())?;
-            let exit_code: Option<i32> = row.try_get(11).map_err(|error| error.to_string())?;
-            let metadata: Option<String> = row.try_get(12).map_err(|error| error.to_string())?;
-            let content_card_json: Option<String> =
-                row.try_get(13).map_err(|error| error.to_string())?;
-            let card_kinds_json: String = row.try_get(17).map_err(|error| error.to_string())?;
+            let text: Option<String> = row.try_get(6)?;
+            let language: Option<String> = row.try_get(7)?;
+            let command: Option<String> = row.try_get(8)?;
+            let cwd: Option<String> = row.try_get(9)?;
+            let status: Option<String> = row.try_get(10)?;
+            let exit_code: Option<i32> = row.try_get(11)?;
+            let metadata: Option<String> = row.try_get(12)?;
+            let content_card_json: Option<String> = row.try_get(13)?;
+            let card_kinds_json: String = row.try_get(17)?;
             let card_kinds = serde_json::from_str::<
                 Vec<crate::backend::models::ConversationCardKindDefinition>,
             >(&card_kinds_json)
@@ -329,32 +320,30 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
             else {
                 continue;
             };
-            let part_id: String = row.try_get(3).map_err(|error| error.to_string())?;
-            let question_text: String = row.try_get(5).map_err(|error| error.to_string())?;
+            let part_id: String = row.try_get(3)?;
+            let question_text: String = row.try_get(5)?;
             documents.push(ConversationSearchIndexDocumentRow {
                 document_kind: "card".to_string(),
                 record_kind: tables.record_kind.to_string(),
-                session_id: row.try_get(0).map_err(|error| error.to_string())?,
-                question_id: row.try_get(1).map_err(|error| error.to_string())?,
-                turn_id: row.try_get(2).map_err(|error| error.to_string())?,
+                session_id: row.try_get(0)?,
+                question_id: row.try_get(1)?,
+                turn_id: row.try_get(2)?,
                 part_id: part_id.clone(),
                 block_id: part_id.clone(),
                 card_kind: card.kind,
                 semantic_role: card.semantic_role.unwrap_or_default(),
-                question_title: search_question_title(
-                    row.try_get(4).map_err(|error| error.to_string())?,
-                    &question_text,
-                ),
+                question_title: search_question_title(row.try_get(4)?, &question_text),
                 content: card.body,
-                adapter_id: row.try_get(14).map_err(|error| error.to_string())?,
-                source_id: row.try_get(15).map_err(|error| error.to_string())?,
-                project_path: row.try_get(16).map_err(|error| error.to_string())?,
+                adapter_id: row.try_get(14)?,
+                source_id: row.try_get(15)?,
+                project_path: row.try_get(16)?,
             });
         }
     }
     Ok(documents)
 }
 
+#[cfg(test)]
 pub(crate) async fn complete_conversation_search_index_rebuild_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -362,7 +351,7 @@ pub(crate) async fn complete_conversation_search_index_rebuild_sqlx(
     generation: &str,
     document_count: i64,
     size_bytes: i64,
-) -> LegacyResult<bool> {
+) -> AppResult<bool> {
     complete_conversation_search_index_rebuild_with_offset_sqlx(
         pool,
         tenant_id,
@@ -383,9 +372,9 @@ pub(crate) async fn complete_conversation_search_index_rebuild_with_offset_sqlx(
     document_count: i64,
     size_bytes: i64,
     consumer_offset: Option<(&str, i64)>,
-) -> LegacyResult<bool> {
+) -> AppResult<bool> {
     let now = Utc::now().to_rfc3339();
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool.begin().await?;
     let result = sqlx::query(
         r#"
         UPDATE conversation_search_index_state
@@ -405,8 +394,7 @@ pub(crate) async fn complete_conversation_search_index_rebuild_with_offset_sqlx(
     .bind(CONVERSATION_SEARCH_TOKENIZER_VERSION)
     .bind(tenant_id)
     .execute(&mut *tx)
-    .await
-    .map_err(|error| error.to_string())?;
+    .await?;
     if result.rows_affected() == 1 {
         if let Some((consumer_id, last_seq)) = consumer_offset {
             sqlx::query(
@@ -418,10 +406,10 @@ pub(crate) async fn complete_conversation_search_index_rebuild_with_offset_sqlx(
             .bind(&now)
             .execute(&mut *tx)
             .await
-            .map_err(|error| error.to_string())?;
+            ?;
         }
     }
-    tx.commit().await.map_err(|error| error.to_string())?;
+    tx.commit().await?;
     Ok(result.rows_affected() == 1)
 }
 
@@ -430,7 +418,7 @@ pub(crate) async fn fail_conversation_search_index_rebuild_sqlx(
     tenant_id: &str,
     owner: &str,
     error: &str,
-) -> LegacyResult<()> {
+) -> AppResult<()> {
     sqlx::query(
         r#"
         UPDATE conversation_search_index_state
@@ -444,8 +432,7 @@ pub(crate) async fn fail_conversation_search_index_rebuild_sqlx(
     .bind(tenant_id)
     .bind(owner)
     .execute(pool)
-    .await
-    .map_err(|failure| failure.to_string())?;
+    .await?;
     Ok(())
 }
 
@@ -453,7 +440,7 @@ pub(crate) async fn mark_conversation_search_index_unusable_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     error: &str,
-) -> LegacyResult<()> {
+) -> AppResult<()> {
     sqlx::query(
         r#"
         UPDATE conversation_search_index_state
@@ -465,8 +452,7 @@ pub(crate) async fn mark_conversation_search_index_unusable_sqlx(
     .bind(Utc::now().to_rfc3339())
     .bind(tenant_id)
     .execute(pool)
-    .await
-    .map_err(|failure| failure.to_string())?;
+    .await?;
     Ok(())
 }
 
@@ -521,37 +507,36 @@ fn search_question_title(title: Option<String>, question_text: &str) -> String {
 
 fn map_search_index_state(
     row: &sqlx::sqlite::SqliteRow,
-) -> LegacyResult<ConversationSearchIndexState> {
+) -> AppResult<ConversationSearchIndexState> {
     Ok(ConversationSearchIndexState {
-        tenant_id: row.try_get(0).map_err(|error| error.to_string())?,
-        index_instance_id: row.try_get(1).map_err(|error| error.to_string())?,
-        schema_version: row.try_get(2).map_err(|error| error.to_string())?,
-        tokenizer_version: row.try_get(3).map_err(|error| error.to_string())?,
-        source_revision: row.try_get(4).map_err(|error| error.to_string())?,
-        indexed_revision: row.try_get(5).map_err(|error| error.to_string())?,
-        active_generation: row.try_get(6).map_err(|error| error.to_string())?,
-        health: decode_search_index_health(
-            &row.try_get::<String, _>(7)
-                .map_err(|error| error.to_string())?,
-        )?,
-        document_count: row.try_get(8).map_err(|error| error.to_string())?,
-        size_bytes: row.try_get(9).map_err(|error| error.to_string())?,
-        last_built_at: row.try_get(10).map_err(|error| error.to_string())?,
-        last_error: row.try_get(11).map_err(|error| error.to_string())?,
-        lease_owner: row.try_get(12).map_err(|error| error.to_string())?,
-        lease_expires_at: row.try_get(13).map_err(|error| error.to_string())?,
-        updated_at: row.try_get(14).map_err(|error| error.to_string())?,
+        tenant_id: row.try_get(0)?,
+        index_instance_id: row.try_get(1)?,
+        schema_version: row.try_get(2)?,
+        tokenizer_version: row.try_get(3)?,
+        source_revision: row.try_get(4)?,
+        indexed_revision: row.try_get(5)?,
+        active_generation: row.try_get(6)?,
+        health: decode_search_index_health(&row.try_get::<String, _>(7)?)?,
+        document_count: row.try_get(8)?,
+        size_bytes: row.try_get(9)?,
+        last_built_at: row.try_get(10)?,
+        last_error: row.try_get(11)?,
+        lease_owner: row.try_get(12)?,
+        lease_expires_at: row.try_get(13)?,
+        updated_at: row.try_get(14)?,
     })
 }
 
-fn decode_search_index_health(value: &str) -> LegacyResult<ConversationSearchIndexHealth> {
+fn decode_search_index_health(value: &str) -> AppResult<ConversationSearchIndexHealth> {
     match value {
         "missing" => Ok(ConversationSearchIndexHealth::Missing),
         "ready" => Ok(ConversationSearchIndexHealth::Ready),
         "stale" => Ok(ConversationSearchIndexHealth::Stale),
         "failed" => Ok(ConversationSearchIndexHealth::Failed),
         "disabled" => Ok(ConversationSearchIndexHealth::Disabled),
-        _ => Err(format!("invalid conversation search index health: {value}")),
+        _ => Err(AppError::Validation(format!(
+            "invalid conversation search index health: {value}"
+        ))),
     }
 }
 
@@ -631,7 +616,7 @@ mod tests {
                 .bind(TENANT_ID)
                 .execute(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                ?;
                 assert!(complete_conversation_search_index_rebuild_sqlx(
                     database.pool(),
                     TENANT_ID,
@@ -647,7 +632,7 @@ mod tests {
                 assert!(rebuilt.is_compatible());
                 assert_eq!(rebuilt.health, ConversationSearchIndexHealth::Ready);
                 assert_eq!(rebuilt.active_generation.as_deref(), Some("generation-upgraded"));
-                crate::backend::compat::LegacyResult::Ok(())
+                AppResult::Ok(())
             })
             .expect("track search state");
 

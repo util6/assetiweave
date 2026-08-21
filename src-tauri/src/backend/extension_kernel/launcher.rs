@@ -190,7 +190,7 @@ fn host_process_error_message(error: HostProcessError) -> String {
     match error {
         HostProcessError::Spawn(reason) | HostProcessError::Output(reason) => reason,
         HostProcessError::Timeout { .. } => "process deadline exceeded".to_string(),
-        HostProcessError::Cancelled { .. } => "process cancelled".to_string(),
+        HostProcessError::Cancelled => "process cancelled".to_string(),
     }
 }
 

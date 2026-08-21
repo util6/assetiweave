@@ -2,7 +2,7 @@
 //!
 //! 负责将带有文本及图片附件的 Prompt 卡片写回系统剪贴板（如 macOS `pbcopy` / AppleScript 等）。
 
-use crate::backend::compat::LegacyResult;
+use crate::backend::runtime::{AppError, AppResult};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
 use std::{
@@ -45,11 +45,11 @@ pub(crate) struct PromptClipboardImageAttachment {
 }
 
 /// 将指定的 Prompt 文本及图片附件一并写入系统剪贴板
-pub(crate) fn copy_prompt_card_to_clipboard(params: PromptClipboardParams) -> LegacyResult<()> {
+pub(crate) fn copy_prompt_card_to_clipboard(params: PromptClipboardParams) -> AppResult<()> {
     if params.attachments.len() > PROMPT_CLIPBOARD_ATTACHMENT_LIMIT {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "too many prompt image attachments: maximum is {PROMPT_CLIPBOARD_ATTACHMENT_LIMIT}"
-        ));
+        )));
     }
 
     let cache_root = prompt_clipboard_cache_root();
@@ -80,7 +80,7 @@ struct DecodedPromptClipboardImage {
 
 fn decode_prompt_clipboard_image(
     attachment: &PromptClipboardImageAttachment,
-) -> LegacyResult<DecodedPromptClipboardImage> {
+) -> AppResult<DecodedPromptClipboardImage> {
     let (metadata, payload) = attachment
         .data_url
         .split_once(',')
@@ -92,7 +92,9 @@ fn decode_prompt_clipboard_image(
     let data_url_mime_type = metadata_parts.next().unwrap_or_default();
     let base64_encoded = metadata_parts.any(|part| part.eq_ignore_ascii_case("base64"));
     if !base64_encoded {
-        return Err("image attachment data URL must be base64 encoded".to_string());
+        return Err(AppError::Validation(
+            "image attachment data URL must be base64 encoded".to_string(),
+        ));
     }
 
     let mime_type = if data_url_mime_type.trim().is_empty() {
@@ -101,17 +103,19 @@ fn decode_prompt_clipboard_image(
         data_url_mime_type.trim()
     };
     if !mime_type.starts_with("image/") {
-        return Err("clipboard attachment must be an image".to_string());
+        return Err(AppError::Validation(
+            "clipboard attachment must be an image".to_string(),
+        ));
     }
 
     let bytes = STANDARD
         .decode(payload)
         .map_err(|error| error.to_string())?;
     if bytes.len() > PROMPT_CLIPBOARD_MAX_IMAGE_BYTES {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "image attachment is too large: maximum is {} MiB",
             PROMPT_CLIPBOARD_MAX_IMAGE_BYTES / 1024 / 1024
-        ));
+        )));
     }
 
     Ok(DecodedPromptClipboardImage {
@@ -192,7 +196,7 @@ fn prune_prompt_clipboard_cache(cache_root: &Path) {
 }
 
 #[cfg(target_os = "macos")]
-fn write_prompt_clipboard(text_path: &Path, image_paths: &[PathBuf]) -> LegacyResult<()> {
+fn write_prompt_clipboard(text_path: &Path, image_paths: &[PathBuf]) -> AppResult<()> {
     let mut command = Command::new("/usr/bin/osascript");
     command
         .arg("-l")
@@ -212,15 +216,19 @@ fn write_prompt_clipboard(text_path: &Path, image_paths: &[PathBuf]) -> LegacyRe
 
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if stderr.is_empty() {
-        Err("failed to write macOS pasteboard".to_string())
+        Err(AppError::Process(
+            "failed to write macOS pasteboard".to_string(),
+        ))
     } else {
-        Err(stderr)
+        Err(AppError::Process(stderr))
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn write_prompt_clipboard(_text_path: &Path, _image_paths: &[PathBuf]) -> LegacyResult<()> {
-    Err("native prompt image clipboard copy is currently only available on macOS".to_string())
+fn write_prompt_clipboard(_text_path: &Path, _image_paths: &[PathBuf]) -> AppResult<()> {
+    Err(AppError::External(
+        "native prompt image clipboard copy is currently only available on macOS".to_string(),
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -319,7 +327,7 @@ mod tests {
         })
         .expect_err("reject non-image");
 
-        assert!(error.contains("image"));
+        assert!(error.to_string().contains("image"));
     }
 
     #[test]

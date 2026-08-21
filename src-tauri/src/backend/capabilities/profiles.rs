@@ -3,7 +3,7 @@ use super::prelude::*;
 pub(crate) fn target_profile_from_input(input: TargetProfileInput) -> AppResult<TargetProfile> {
     let name = input.name.trim().to_string();
     if name.is_empty() {
-        return Err("profile name is required".to_string());
+        return Err(AppError::Validation("profile name is required".to_string()));
     }
 
     let id = input
@@ -12,7 +12,7 @@ pub(crate) fn target_profile_from_input(input: TargetProfileInput) -> AppResult<
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| slug_profile_id(&name));
     if id.is_empty() {
-        return Err("profile id is required".to_string());
+        return Err(AppError::Validation("profile id is required".to_string()));
     }
 
     let target_paths = input
@@ -24,7 +24,9 @@ pub(crate) fn target_profile_from_input(input: TargetProfileInput) -> AppResult<
         .map(|path| crate::backend::path_utils::normalize_path_for_storage(&path))
         .collect::<AppResult<Vec<_>>>()?;
     if target_paths.is_empty() {
-        return Err("profile target path is required".to_string());
+        return Err(AppError::Validation(
+            "profile target path is required".to_string(),
+        ));
     }
 
     let app_kind = input.app_kind.or_else(|| {
@@ -80,7 +82,9 @@ pub(crate) fn ensure_profile_can_be_deleted_sqlx(
     profile_id: &str,
 ) -> AppResult<()> {
     if crate::backend::defaults::is_default_app_profile_id(profile_id) {
-        return Err(format!("default app cannot be deleted: {profile_id}"));
+        return Err(AppError::Conflict(format!(
+            "default app cannot be deleted: {profile_id}"
+        )));
     }
 
     let deployment_count = db.block_on(async {
@@ -92,7 +96,9 @@ pub(crate) fn ensure_profile_can_be_deleted_sqlx(
         .await
     })?;
     if deployment_count > 0 {
-        return Err(format!("profile has managed deployments: {profile_id}"));
+        return Err(AppError::Conflict(format!(
+            "profile has managed deployments: {profile_id}"
+        )));
     }
 
     if scan_asset_mount_statuses_sqlx(db, tenant_id, None)?
@@ -101,7 +107,9 @@ pub(crate) fn ensure_profile_can_be_deleted_sqlx(
             status.profile_id == profile_id && status.state == PhysicalMountStateDto::Mounted
         })
     {
-        return Err(format!("profile has mounted assets: {profile_id}"));
+        return Err(AppError::Conflict(format!(
+            "profile has mounted assets: {profile_id}"
+        )));
     }
 
     Ok(())
@@ -112,20 +120,20 @@ pub(crate) fn ensure_default_profile_update_is_allowed(
     next: &TargetProfile,
 ) -> AppResult<()> {
     if crate::backend::defaults::is_default_app_profile_id(&existing.id) && existing.id != next.id {
-        return Err(format!(
+        return Err(AppError::Conflict(format!(
             "default app profile id cannot be changed: {}",
             existing.id
-        ));
+        )));
     }
     Ok(())
 }
 
 pub(crate) fn validate_target_profile(profile: &TargetProfile) -> AppResult<()> {
     if profile.id.trim().is_empty() {
-        return Err("profile id is required".to_string());
+        return Err(AppError::Validation("profile id is required".to_string()));
     }
     if profile.name.trim().is_empty() {
-        return Err("profile name is required".to_string());
+        return Err(AppError::Validation("profile name is required".to_string()));
     }
     if profile
         .target_paths
@@ -133,7 +141,9 @@ pub(crate) fn validate_target_profile(profile: &TargetProfile) -> AppResult<()> 
         .map(|path| path.trim())
         .all(str::is_empty)
     {
-        return Err("profile target path is required".to_string());
+        return Err(AppError::Validation(
+            "profile target path is required".to_string(),
+        ));
     }
     Ok(())
 }

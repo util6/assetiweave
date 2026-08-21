@@ -7,8 +7,8 @@
 
 use crate::backend::{
     app_settings::read_app_settings_value,
-    compat::LegacyResult,
     path_utils::{default_database_backup_root, expand_path},
+    runtime::{AppError, AppResult},
 };
 use chrono::Utc;
 use serde::Serialize;
@@ -48,14 +48,14 @@ pub(crate) struct DatabaseBackupError {
     pub(crate) message: String,
 }
 
-pub(crate) fn backup_database_from_settings(db_path: &Path) -> LegacyResult<DatabaseBackupReport> {
+pub(crate) fn backup_database_from_settings(db_path: &Path) -> AppResult<DatabaseBackupReport> {
     let mut settings_errors = Vec::new();
     let settings = match read_app_settings_value() {
         Ok(value) => value,
         Err(error) => {
             settings_errors.push(DatabaseBackupError {
                 directory: "settings".to_string(),
-                message: error,
+                message: error.to_string(),
             });
             Value::Object(Default::default())
         }
@@ -71,7 +71,7 @@ pub(crate) fn backup_database_from_settings(db_path: &Path) -> LegacyResult<Data
 pub(crate) fn configured_backup_directories(
     default_root: PathBuf,
     settings: &Value,
-) -> LegacyResult<Vec<PathBuf>> {
+) -> AppResult<Vec<PathBuf>> {
     let mut seen = BTreeSet::new();
     let mut directories = Vec::new();
     push_unique_path(&mut directories, &mut seen, default_root);
@@ -86,12 +86,12 @@ pub(crate) fn configured_backup_directories(
 pub(crate) fn backup_database_to_directories(
     db_path: &Path,
     directories: &[PathBuf],
-) -> LegacyResult<DatabaseBackupReport> {
+) -> AppResult<DatabaseBackupReport> {
     if !db_path.is_file() {
-        return Err(format!(
+        return Err(AppError::NotFound(format!(
             "database file does not exist: {}",
             db_path.display()
-        ));
+        )));
     }
 
     let file_name = backup_file_name();
@@ -103,13 +103,13 @@ pub(crate) fn backup_database_to_directories(
             Ok(target) => targets.push(target),
             Err(message) => errors.push(DatabaseBackupError {
                 directory: directory.to_string_lossy().to_string(),
-                message,
+                message: message.to_string(),
             }),
         }
     }
 
     if targets.is_empty() {
-        return Err(if errors.is_empty() {
+        return Err(AppError::External(if errors.is_empty() {
             "no database backup target directories configured".to_string()
         } else {
             errors
@@ -117,7 +117,7 @@ pub(crate) fn backup_database_to_directories(
                 .map(|error| format!("{}: {}", error.directory, error.message))
                 .collect::<Vec<_>>()
                 .join("; ")
-        });
+        }));
     }
 
     Ok(DatabaseBackupReport {
@@ -131,7 +131,7 @@ fn backup_database_to_directory(
     db_path: &Path,
     directory: &Path,
     file_name: &str,
-) -> LegacyResult<DatabaseBackupTarget> {
+) -> AppResult<DatabaseBackupTarget> {
     ensure_backup_directory(directory)?;
     let target_path = directory.join(file_name);
     snapshot_sqlite_database(db_path, &target_path)?;
@@ -141,17 +141,17 @@ fn backup_database_to_directory(
     })
 }
 
-fn ensure_backup_directory(directory: &Path) -> LegacyResult<()> {
+fn ensure_backup_directory(directory: &Path) -> AppResult<()> {
     if directory.exists() && !directory.is_dir() {
-        return Err(format!(
+        return Err(AppError::Conflict(format!(
             "database backup target is not a directory: {}",
             directory.display()
-        ));
+        )));
     }
-    fs::create_dir_all(directory).map_err(|error| error.to_string())
+    Ok(fs::create_dir_all(directory).map_err(|error| error.to_string())?)
 }
 
-fn snapshot_sqlite_database(db_path: &Path, target_path: &Path) -> LegacyResult<()> {
+fn snapshot_sqlite_database(db_path: &Path, target_path: &Path) -> AppResult<()> {
     // OneShot / Shutdown Infrastructure Path: VACUUM INTO needs a short-lived
     // independent connection so the resident pool can be closing safely.
     let temp_path = temporary_target_path(target_path);
@@ -162,7 +162,9 @@ fn snapshot_sqlite_database(db_path: &Path, target_path: &Path) -> LegacyResult<
     let snapshot_result = vacuum_into(db_path, &temp_path).or_else(|vacuum_error| {
         fs::remove_file(&temp_path).ok();
         checkpoint_and_copy(db_path, &temp_path).map_err(|copy_error| {
-            format!("SQLite snapshot failed: {vacuum_error}; fallback copy failed: {copy_error}")
+            AppError::External(format!(
+                "SQLite snapshot failed: {vacuum_error}; fallback copy failed: {copy_error}"
+            ))
         })
     });
 
@@ -171,21 +173,21 @@ fn snapshot_sqlite_database(db_path: &Path, target_path: &Path) -> LegacyResult<
         return Err(error);
     }
 
-    fs::rename(&temp_path, target_path).map_err(|error| error.to_string())
+    Ok(fs::rename(&temp_path, target_path).map_err(|error| error.to_string())?)
 }
 
-fn vacuum_into(db_path: &Path, target_path: &Path) -> LegacyResult<()> {
+fn vacuum_into(db_path: &Path, target_path: &Path) -> AppResult<()> {
     let target = target_path.to_string_lossy().to_string();
     let runtime = build_backup_runtime()?;
-    runtime.block_on(async move {
+    Ok(runtime.block_on(async move {
         let pool = open_backup_pool(db_path).await?;
         let result = crate::backend::store::vacuum_database_into_sqlx(&pool, &target).await;
         pool.close().await;
         result
-    })
+    })?)
 }
 
-fn checkpoint_and_copy(db_path: &Path, target_path: &Path) -> LegacyResult<()> {
+fn checkpoint_and_copy(db_path: &Path, target_path: &Path) -> AppResult<()> {
     let runtime = build_backup_runtime()?;
     runtime.block_on(async move {
         let pool = open_backup_pool(db_path).await?;
@@ -193,12 +195,11 @@ fn checkpoint_and_copy(db_path: &Path, target_path: &Path) -> LegacyResult<()> {
         pool.close().await;
         result
     })?;
-    fs::copy(db_path, target_path)
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    fs::copy(db_path, target_path)?;
+    Ok(())
 }
 
-async fn open_backup_pool(db_path: &Path) -> LegacyResult<SqlitePool> {
+async fn open_backup_pool(db_path: &Path) -> AppResult<SqlitePool> {
     let options = SqliteConnectOptions::new()
         .filename(db_path)
         .create_if_missing(false)
@@ -207,14 +208,14 @@ async fn open_backup_pool(db_path: &Path) -> LegacyResult<SqlitePool> {
         .max_connections(1)
         .connect_with(options)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(AppError::Db)
 }
 
-fn build_backup_runtime() -> LegacyResult<Runtime> {
+fn build_backup_runtime() -> AppResult<Runtime> {
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()
-        .map_err(|error| error.to_string())
+        .map_err(|error| AppError::External(error.to_string()))
 }
 
 fn backup_file_name() -> String {

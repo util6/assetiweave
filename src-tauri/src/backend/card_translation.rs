@@ -440,14 +440,6 @@ fn opencode_search_candidates(home_dir: Option<&Path>) -> Vec<PathBuf> {
     host_executable_search_candidates(OPENCODE_COMMAND, home_dir)
 }
 
-fn first_nonempty_line(bytes: &[u8]) -> Option<String> {
-    String::from_utf8_lossy(bytes)
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(str::to_string)
-}
-
 fn parse_model_lines(bytes: &[u8]) -> Vec<String> {
     let mut models = String::from_utf8_lossy(bytes)
         .lines()

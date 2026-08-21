@@ -1,6 +1,5 @@
 use super::*;
 use std::{
-    collections::BTreeSet,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -10,30 +9,12 @@ use std::{
 };
 
 #[test]
-fn plan_scope_lock_orders_keys_and_blocks_conflicts() {
-    let locks = Arc::new(RuntimeLocks::default());
-    let mut keys = BTreeSet::new();
-    keys.insert("profile:b".to_string());
-    keys.insert("path:a".to_string());
-    let guard = locks.acquire_plan_scope(keys).expect("scope");
-    let other = locks.clone();
-    let joined = thread::spawn(move || {
-        let mut keys = BTreeSet::new();
-        keys.insert("path:a".to_string());
-        let _guard = other.acquire_plan_scope(keys).expect("other scope");
-    });
-    thread::sleep(Duration::from_millis(20));
-    assert!(!joined.is_finished());
-    drop(guard);
-    joined.join().expect("joined");
-}
-
-#[test]
 fn task_runtime_deduplicates_and_cancels_cooperatively() {
     let tasks = tasks::TaskRuntime::new();
     let outcome = tasks
         .spawn(
-            tasks::TaskSpec::new(tasks::TaskKind::Scan, Some("source-1".to_string())),
+            tasks::TaskSpec::new(tasks::TaskKind::Scan, Some("source-1".to_string()))
+                .with_task_id("scan-task"),
             Box::new(|context| {
                 while !context.is_cancelled() {
                     std::thread::sleep(Duration::from_millis(2));
@@ -43,8 +24,8 @@ fn task_runtime_deduplicates_and_cancels_cooperatively() {
         )
         .expect("spawn");
     let id = match outcome {
-        tasks::SpawnOutcome::Started(snapshot) => snapshot.task_id,
-        tasks::SpawnOutcome::Existing(_) => panic!("first task deduplicated"),
+        tasks::SpawnOutcome::Started => "scan-task".to_string(),
+        tasks::SpawnOutcome::Existing => panic!("first task deduplicated"),
     };
     let second = tasks
         .spawn(
@@ -52,7 +33,7 @@ fn task_runtime_deduplicates_and_cancels_cooperatively() {
             Box::new(|_| Ok(serde_json::Value::Null)),
         )
         .expect("dedup");
-    assert!(matches!(second, tasks::SpawnOutcome::Existing(_)));
+    assert!(matches!(second, tasks::SpawnOutcome::Existing));
     assert!(matches!(
         tasks.cancel(&id),
         tasks::CancelOutcome::Requested(_)
@@ -223,7 +204,8 @@ fn task_runtime_shutdown_is_bounded_and_reports_unfinished_tasks() {
     let tasks = tasks::TaskRuntime::new();
     let outcome = tasks
         .spawn(
-            tasks::TaskSpec::new(tasks::TaskKind::Backup, Some("slow".to_string())),
+            tasks::TaskSpec::new(tasks::TaskKind::Backup, Some("slow".to_string()))
+                .with_task_id("slow-task"),
             Box::new(|_| {
                 std::thread::sleep(Duration::from_millis(150));
                 Ok(serde_json::Value::Null)
@@ -231,8 +213,8 @@ fn task_runtime_shutdown_is_bounded_and_reports_unfinished_tasks() {
         )
         .expect("spawn slow task");
     let task_id = match outcome {
-        tasks::SpawnOutcome::Started(snapshot) => snapshot.task_id,
-        tasks::SpawnOutcome::Existing(_) => panic!("slow task unexpectedly deduplicated"),
+        tasks::SpawnOutcome::Started => "slow-task".to_string(),
+        tasks::SpawnOutcome::Existing => panic!("slow task unexpectedly deduplicated"),
     };
 
     let started = std::time::Instant::now();

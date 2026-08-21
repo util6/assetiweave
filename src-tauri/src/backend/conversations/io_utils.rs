@@ -451,7 +451,7 @@ fn run_runtime_probe(
         crate::backend::host_process::HostProcessError::Timeout { stdout, stderr, .. } => {
             RuntimeProbeError::Timeout { stdout, stderr }
         }
-        crate::backend::host_process::HostProcessError::Cancelled { .. } => {
+        crate::backend::host_process::HostProcessError::Cancelled => {
             RuntimeProbeError::Output("runtime probe was cancelled".to_string())
         }
     })?;

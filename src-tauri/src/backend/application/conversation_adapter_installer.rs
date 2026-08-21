@@ -616,8 +616,7 @@ fn validate_installed_manifest_for_spec(
 fn conversation_adapter_package_dir(
     spec: &ConversationAdapterPackageInstallSpec,
 ) -> AppResult<PathBuf> {
-    Ok(crate::backend::app_settings::conversation_adapter_dir()
-        .map_err(AppError::Storage)?
+    Ok(crate::backend::app_settings::conversation_adapter_dir()?
         .join("packages")
         .join(spec.package_id()))
 }
@@ -651,8 +650,7 @@ fn conversation_adapter_package_prepared_dir(
 fn conversation_script_staging_dir(
     spec: &ConversationAdapterPackageInstallSpec,
 ) -> AppResult<PathBuf> {
-    Ok(crate::backend::app_settings::conversation_adapter_dir()
-        .map_err(AppError::Storage)?
+    Ok(crate::backend::app_settings::conversation_adapter_dir()?
         .join("staging")
         .join(format!(
             "{}-{}",

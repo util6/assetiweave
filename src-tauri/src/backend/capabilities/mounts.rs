@@ -72,7 +72,7 @@ fn persist_asset_mount_observation_snapshot(
             observed_at: observed_at.clone(),
         })
         .collect::<Vec<_>>();
-    db.block_on(async {
+    Ok(db.block_on(async {
         let assets = crate::backend::store::load_assets_sqlx(db.pool(), tenant_id, None).await?;
         let profiles = crate::backend::store::load_profiles_sqlx(db.pool(), tenant_id).await?;
         crate::backend::store::persist_asset_mount_snapshot_sqlx(
@@ -84,7 +84,7 @@ fn persist_asset_mount_observation_snapshot(
             statuses,
         )
         .await
-    })
+    })?)
 }
 
 fn inspect_asset_mount_statuses(
@@ -171,7 +171,9 @@ fn validate_mount_target(
         source.source_origin,
         SourceOrigin::AppTarget | SourceOrigin::AppLocal
     ) {
-        return Err("app-local skills must be backed up before mounting".to_string());
+        return Err(AppError::Validation(
+            "app-local skills must be backed up before mounting".to_string(),
+        ));
     }
 
     Ok(profile.deployment_strategy)
@@ -187,7 +189,9 @@ pub(crate) fn mount_asset_mount_record(
         let (asset, source, profile) = load_mount_target_sqlx(db, tenant_id, asset_id, profile_id)?;
         let strategy = validate_mount_target(&source, &profile)?;
         if !matches!(strategy, DeploymentStrategy::SymlinkToSource) {
-            return Err("immediate mount only supports symlink_to_source profiles".to_string());
+            return Err(AppError::Validation(
+                "immediate mount only supports symlink_to_source profiles".to_string(),
+            ));
         }
         validate_immediate_mount_support(&asset, &profile)?;
 
@@ -212,10 +216,10 @@ pub(crate) fn mount_asset_mount_record(
             crate::backend::targeting::PhysicalMountState::NotMounted => {}
             crate::backend::targeting::PhysicalMountState::Conflict
             | crate::backend::targeting::PhysicalMountState::Broken => {
-                return Err(format!(
+                return Err(AppError::Conflict(format!(
                     "target is not available for mounting: {}",
                     inspection.target_path
-                ));
+                )));
             }
         }
 
@@ -227,10 +231,10 @@ pub(crate) fn mount_asset_mount_record(
             crate::backend::targeting::PhysicalMountState::Mounted
         ) {
             remove_created_mount_symlink(&target_path).ok();
-            return Err(format!(
+            return Err(AppError::Conflict(format!(
                 "mount verification failed for {asset_id} on {profile_id}: {}",
                 inspection.target_path
-            ));
+            )));
         }
 
         let mount = match persist_verified_mount(
@@ -293,10 +297,10 @@ pub(crate) fn unmount_asset_mount_record(
             crate::backend::targeting::PhysicalMountState::NotMounted => {}
             crate::backend::targeting::PhysicalMountState::Conflict
             | crate::backend::targeting::PhysicalMountState::Broken => {
-                return Err(format!(
+                return Err(AppError::Conflict(format!(
                     "target is not a symlink to this asset: {}",
                     inspection.target_path
-                ));
+                )));
             }
         }
 
@@ -305,10 +309,10 @@ pub(crate) fn unmount_asset_mount_record(
             inspection.state,
             crate::backend::targeting::PhysicalMountState::NotMounted
         ) {
-            return Err(format!(
+            return Err(AppError::Conflict(format!(
                 "unmount verification failed for {asset_id} on {profile_id}: {}",
                 inspection.target_path
-            ));
+            )));
         }
 
         match persist_verified_unmount(db, tenant_id, &asset, &profile, &inspection.target_path) {
@@ -355,10 +359,10 @@ pub(super) fn load_mount_asset_and_profile_sqlx(
     db.block_on(async move {
         let asset = crate::backend::store::load_asset_sqlx(&pool, &tenant_id, &asset_id)
             .await?
-            .ok_or_else(|| format!("asset not found: {asset_id}"))?;
+            .ok_or_else(|| AppError::NotFound(format!("asset not found: {asset_id}")))?;
         let profile = crate::backend::store::load_profile_sqlx(&pool, &tenant_id, &profile_id)
             .await?
-            .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+            .ok_or_else(|| AppError::NotFound(format!("profile not found: {profile_id}")))?;
         AppResult::Ok((asset, profile))
     })
 }
@@ -376,29 +380,32 @@ fn load_mount_target_sqlx(
     db.block_on(async move {
         let asset = crate::backend::store::load_asset_sqlx(&pool, &tenant_id, &asset_id)
             .await?
-            .ok_or_else(|| format!("asset not found: {asset_id}"))?;
+            .ok_or_else(|| AppError::NotFound(format!("asset not found: {asset_id}")))?;
         let source = crate::backend::store::load_source_sqlx(&pool, &tenant_id, &asset.source_id)
             .await?
-            .ok_or_else(|| format!("source not found: {}", asset.source_id))?;
+            .ok_or_else(|| AppError::NotFound(format!("source not found: {}", asset.source_id)))?;
         let profile = crate::backend::store::load_profile_sqlx(&pool, &tenant_id, &profile_id)
             .await?
-            .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+            .ok_or_else(|| AppError::NotFound(format!("profile not found: {profile_id}")))?;
         AppResult::Ok((asset, source, profile))
     })
 }
 
 fn validate_immediate_mount_support(asset: &Asset, profile: &TargetProfile) -> AppResult<()> {
     if !profile.enabled {
-        return Err(format!("profile is disabled: {}", profile.name));
+        return Err(AppError::Validation(format!(
+            "profile is disabled: {}",
+            profile.name
+        )));
     }
     if matches!(asset.kind, AssetKind::Unclassified)
         || !profile.supported_kinds.contains(&asset.kind)
         || !profile.include.kinds.contains(&asset.kind)
     {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "profile {} does not support {:?}",
             profile.name, asset.kind
-        ));
+        )));
     }
 
     Ok(())
@@ -420,44 +427,44 @@ fn create_mount_symlink(
         )
     })?;
     fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    crate::backend::host_filesystem::HostFilesystem::current()
-        .create_symlink(&source_path, target_path)
+    Ok(crate::backend::host_filesystem::HostFilesystem::current()
+        .create_symlink(&source_path, target_path)?)
 }
 
 fn prepare_target_for_mount_symlink(asset: &Asset, target_path: &Path) -> AppResult<()> {
     let metadata = match fs::symlink_metadata(target_path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(AppError::External(error.to_string())),
     };
     if metadata.file_type().is_symlink() {
-        return Err(format!(
+        return Err(AppError::Conflict(format!(
             "target symlink already exists: {}",
             target_path.display()
-        ));
+        )));
     }
     if crate::backend::targeting::target_is_asset_source(asset, target_path)? {
-        return Err(format!(
+        return Err(AppError::Conflict(format!(
             "target path is the asset source path: {}",
             target_path.display()
-        ));
+        )));
     }
     if !crate::backend::targeting::target_content_matches_asset(asset, target_path)? {
-        return Err(format!(
+        return Err(AppError::Conflict(format!(
             "target exists with different content: {}",
             target_path.display()
-        ));
+        )));
     }
 
     if metadata.is_dir() {
-        fs::remove_dir_all(target_path).map_err(|error| error.to_string())
+        Ok(fs::remove_dir_all(target_path).map_err(|error| error.to_string())?)
     } else if metadata.is_file() {
-        fs::remove_file(target_path).map_err(|error| error.to_string())
+        Ok(fs::remove_file(target_path).map_err(|error| error.to_string())?)
     } else {
-        Err(format!(
+        Err(AppError::Conflict(format!(
             "unsupported target type for replacement: {}",
             target_path.display()
-        ))
+        )))
     }
 }
 
@@ -535,10 +542,10 @@ fn repair_mounted_symlink_to_real_source(
         filesystem
             .create_symlink_with_kind(&previous_link, &target_path, previous_kind)
             .ok();
-        return Err(format!(
+        return Err(AppError::Conflict(format!(
             "ghost symlink repair verification failed: {}",
             repaired.target_path
-        ));
+        )));
     }
     Ok(repaired)
 }
@@ -560,10 +567,10 @@ fn persist_verified_mount(
         deployed_at: Utc::now().to_rfc3339(),
         managed_by: "assetiweave".to_string(),
     };
-    db.block_on(async {
+    Ok(db.block_on(async {
         crate::backend::store::persist_verified_mount_sqlx(db.pool(), tenant_id, &state, strategy)
             .await
-    })
+    })?)
 }
 
 fn persist_verified_unmount(
@@ -573,7 +580,7 @@ fn persist_verified_unmount(
     profile: &TargetProfile,
     target_path: &str,
 ) -> AppResult<AssetMount> {
-    db.block_on(async {
+    Ok(db.block_on(async {
         crate::backend::store::persist_verified_unmount_sqlx(
             db.pool(),
             tenant_id,
@@ -583,7 +590,7 @@ fn persist_verified_unmount(
             profile.deployment_strategy,
         )
         .await
-    })
+    })?)
 }
 
 fn ensure_target_within_profile(profile: &TargetProfile, target_path: &Path) -> AppResult<()> {
@@ -591,10 +598,10 @@ fn ensure_target_within_profile(profile: &TargetProfile, target_path: &Path) -> 
     if !crate::backend::host_filesystem::HostFilesystem::current()
         .is_within(target_path, &target_dir)
     {
-        return Err(format!(
+        return Err(AppError::Conflict(format!(
             "refusing to write outside profile target directory: {}",
             target_path.display()
-        ));
+        )));
     }
     Ok(())
 }
@@ -604,12 +611,12 @@ fn remove_created_mount_symlink(target_path: &Path) -> AppResult<()> {
     if !metadata.file_type().is_symlink() {
         return Ok(());
     }
-    crate::backend::host_filesystem::HostFilesystem::current().remove_symlink(target_path)
+    Ok(crate::backend::host_filesystem::HostFilesystem::current().remove_symlink(target_path)?)
 }
 
 fn remove_mounted_symlink(target_path: &str) -> AppResult<()> {
     let path = Path::new(target_path);
-    crate::backend::host_filesystem::HostFilesystem::current().remove_symlink(path)
+    Ok(crate::backend::host_filesystem::HostFilesystem::current().remove_symlink(path)?)
 }
 
 pub(crate) fn asset_mount_status(

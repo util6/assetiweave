@@ -485,8 +485,7 @@ impl AppService {
                             &read.sessions,
                             params.dry_run,
                         )
-                        .await
-                        .map_err(conversation_storage_error)?;
+                        .await?;
                         let retained_session_count = persist_successful_conversation_observation(
                             &pool,
                             &tenant_id,

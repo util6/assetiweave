@@ -1,5 +1,5 @@
 use super::{ConsumerCx, DomainEvent, DomainEventConsumer, InitialPosition, SequencedEvent};
-use crate::backend::{compat::LegacyResult, runtime::AppError};
+use crate::backend::runtime::{AppError, AppResult};
 use std::collections::BTreeSet;
 
 pub(crate) struct SearchIndexAdvanceConsumer;
@@ -33,8 +33,7 @@ impl DomainEventConsumer for SearchIndexAdvanceConsumer {
                 &tenant_id,
                 &cx.consumer_id,
                 cx.batch_last_seq,
-            )
-            .map_err(AppError::Legacy)?;
+            )?;
         }
         Ok(())
     }
@@ -68,18 +67,16 @@ impl DomainEventConsumer for MemoryEvidenceStaleConsumer {
             let sync_run_id = sync_run_id.clone();
             let session_ids = changed_session_ids.clone();
             let revision = *revision_end;
-            cx.database
-                .block_on(async {
-                    mark_evidence_stale(
-                        &cx.pool,
-                        &tenant_id,
-                        &sync_run_id,
-                        session_ids.as_deref(),
-                        revision,
-                    )
-                    .await
-                })
-                .map_err(AppError::Legacy)?;
+            cx.database.block_on(async {
+                mark_evidence_stale(
+                    &cx.pool,
+                    &tenant_id,
+                    &sync_run_id,
+                    session_ids.as_deref(),
+                    revision,
+                )
+                .await
+            })?;
         }
         Ok(())
     }
@@ -91,7 +88,7 @@ async fn mark_evidence_stale(
     sync_run_id: &str,
     changed_session_ids: Option<&[String]>,
     revision: i64,
-) -> LegacyResult<()> {
+) -> AppResult<()> {
     let session_ids = if let Some(ids) = changed_session_ids {
         ids.to_vec()
     } else {
@@ -102,7 +99,7 @@ async fn mark_evidence_stale(
         .bind(sync_run_id)
         .fetch_all(pool)
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(AppError::Db)?
     };
     let marked_at = chrono::Utc::now().to_rfc3339();
     for session_id in session_ids {
@@ -123,7 +120,7 @@ async fn mark_evidence_stale(
         .bind(session_id)
         .execute(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::Db)?;
     }
     Ok(())
 }

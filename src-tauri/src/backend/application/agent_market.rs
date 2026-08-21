@@ -13,8 +13,8 @@ use crate::backend::agent_market::types::{
     RuntimeStatus,
 };
 use crate::backend::agent_market::{
-    default_runtime_root, is_core_compatible, is_safe_managed_install_path, AgentLifecycleService,
-    CatalogCache, DistributionSelectionContext, DistributionSelector, SystemObservation,
+    default_runtime_root, is_safe_managed_install_path, AgentLifecycleService, CatalogCache,
+    DistributionSelectionContext, DistributionSelector, SystemObservation,
 };
 use crate::backend::extension_kernel::TrustGate;
 
@@ -100,7 +100,7 @@ pub(crate) struct AgentUninstallPreview {
     pub(crate) preview_token: String,
 }
 
-#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentMarketRefreshResult {
     pub(crate) status: String,
@@ -173,9 +173,11 @@ impl AppService {
                         .iter()
                         .any(|installation| installation.agent_id == item.id)
             })
-            .filter(|item| request.include_incompatible || is_core_compatible(item))
             .map(|item| {
-                let candidates = DistributionSelector::select(item, &context, None)?;
+                let mut item_context = context.clone();
+                probe_item_system_distributions(item, &mut item_context);
+                let candidates = DistributionSelector::select(item, &item_context, None)
+                    .map_err(distribution_selection_error)?;
                 let installed = installations
                     .iter()
                     .find(|installation| installation.agent_id == item.id)
@@ -191,7 +193,9 @@ impl AppService {
                     description: item.description.clone(),
                     protocol: item.protocol.clone(),
                     version: item.version.clone(),
-                    core_compatible: is_core_compatible(item),
+                    // Kept in the wire DTO for client compatibility. Agent Market
+                    // versions are observational and never gate ACP lifecycle actions.
+                    core_compatible: true,
                     core_compatibility: item.core_compatibility.clone(),
                     installability: installability(item, &candidates),
                     capabilities: item.capabilities.clone(),
@@ -370,21 +374,6 @@ impl AppService {
                 false,
             ))
         })?;
-        if request
-            .catalog_version
-            .as_deref()
-            .is_some_and(|version| version != catalog.catalog().catalog_version)
-            || request
-                .agent_version
-                .as_deref()
-                .is_some_and(|version| version != item.version)
-        {
-            return Err(AppError::from(AgentMarketError::new(
-                "catalog_version_unavailable",
-                "The requested catalog or Agent version is no longer active.",
-                true,
-            )));
-        }
         if !matches!(request.action.as_str(), "install" | "update" | "reinstall") {
             return Err(AppError::from(AgentMarketError::new(
                 "invalid_action",
@@ -392,17 +381,11 @@ impl AppService {
                 false,
             )));
         }
-        if !is_core_compatible(item) {
-            return Err(AppError::from(AgentMarketError::new(
-                "core_incompatible",
-                "The Agent catalog item is incompatible with this AssetIWeave version.",
-                false,
-            )));
-        }
         let mut context = host_distribution_context();
         probe_item_system_distributions(item, &mut context);
         let candidates =
-            DistributionSelector::select(item, &context, request.distribution_id.as_deref())?;
+            DistributionSelector::select(item, &context, request.distribution_id.as_deref())
+                .map_err(distribution_selection_error)?;
         let selected = candidates
             .iter()
             .find(|candidate| {
@@ -428,17 +411,6 @@ impl AppService {
                 return Err(AppError::from(AgentMarketError::new(
                     "agent_not_installed",
                     "The Agent is not installed; choose install.",
-                    false,
-                )))
-            }
-            "update"
-                if current
-                    .as_ref()
-                    .is_some_and(|installation| installation.agent_version == item.version) =>
-            {
-                return Err(AppError::from(AgentMarketError::new(
-                    "update_not_available",
-                    "The selected Agent is already at the catalog version.",
                     false,
                 )))
             }
@@ -662,10 +634,29 @@ fn host_distribution_context() -> DistributionSelectionContext {
     context
 }
 
-fn installability(item: &CatalogItem, candidates: &[DistributionCandidate]) -> String {
-    if !is_core_compatible(item) {
-        return "core-incompatible".to_string();
-    }
+fn distribution_selection_error(error: String) -> AppError {
+    let code = error
+        .split_once(':')
+        .map(|(code, _)| code)
+        .unwrap_or(error.as_str())
+        .trim();
+    let (message, retryable) = match code {
+        "runtime_missing" => (
+            "The selected Agent distribution requires a runtime that is not installed.",
+            true,
+        ),
+        "system_version_incompatible" => {
+            ("The selected system Agent runtime could not be used.", true)
+        }
+        _ => (
+            "The selected Agent distribution is unavailable on this platform.",
+            false,
+        ),
+    };
+    AppError::from(AgentMarketError::new(code, message, retryable))
+}
+
+fn installability(_item: &CatalogItem, candidates: &[DistributionCandidate]) -> String {
     if candidates.iter().any(|candidate| candidate.selectable) {
         return "installable".to_string();
     }
