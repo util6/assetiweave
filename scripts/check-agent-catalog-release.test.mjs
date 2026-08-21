@@ -8,6 +8,7 @@ import test from "node:test";
 const ROOT = path.resolve(import.meta.dirname, "..");
 const SCRIPT = path.join(ROOT, "scripts", "check-agent-catalog-release.mjs");
 const CATALOG = path.join(ROOT, "builtin-assets", "agent-market", "catalog-v1.json");
+const BUNDLED_CATALOG = JSON.parse(fs.readFileSync(CATALOG, "utf8"));
 
 function run(catalogPath, mode = "--static", evidencePath) {
   try {
@@ -22,7 +23,10 @@ function run(catalogPath, mode = "--static", evidencePath) {
 test("production catalog passes artifact and release-evidence gates", () => {
   const result = run(CATALOG, "--release");
   assert.equal(result.status, 0, result.stdout);
-  assert.match(result.stdout, /7 items, catalog 2026\.08\.21\.1/);
+  assert.match(
+    result.stdout,
+    new RegExp(`${BUNDLED_CATALOG.items.length} items, catalog ${BUNDLED_CATALOG.catalogVersion}`),
+  );
 });
 
 test("release gate rejects fixture and placeholder catalog data", () => {
