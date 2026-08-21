@@ -390,7 +390,7 @@
 
 ## Phase 22：后端架构收口（SPEC-BA）
 
-> 状态：未完成。2026-08-21 的 LUNA-01 基线审计发现部分任务只有局部类型、单元测试或生成契约证据，尚未满足 SPEC-BA-10 的生产行为验收；详见 `specs/feature-plans/backend-architecture-convergence/11-luna-01-baseline.md`。
+> 状态：已完成。2026-08-21 已完成 LUNA-02 至 LUNA-10 的生产行为收口，并通过 Rust、TypeScript、Go、Engine surface、模块边界、Agent Catalog release 和真实 ACP E2E 验证；对应证据见 `specs/feature-plans/backend-architecture-convergence/07-verification-matrix.md` 与 `10-luna-remediation-spec.md`。
 
 LUNA-02 至 LUNA-10 已补齐租户切换、索引任务、Engine no-op、Settings v3、长任务前端、BatchMount、TaskRuntime retention、结构化 HostProcess 错误和 TargetCatalog 动态闭环；22.10 的 E5 证据已绑定 OpenCode binary distribution 的 SHA256、下载大小、解包、版本探测和真实 ACP initialize/session/new/session/close/clean shutdown，LUNA-09 的全局字符串错误兼容桥已删除。
 
