@@ -13,7 +13,7 @@ use crate::backend::{
     conversations::ConversationAdapterCatalog,
     events::{EventDispatcher, EventDispatcherHandle},
     extension_kernel::RegistrySnapshot,
-    models::{RequestContext, Tenant},
+    models::{RequestContext, TargetProfileDescriptor, Tenant},
     path_utils::ensure_app_library_dirs,
     store::{self, Database},
     target_catalog::TargetCatalog,
@@ -185,6 +185,25 @@ impl AppRuntime {
         agent_runtime_manager: Arc<AgentRuntimeManager>,
         agent_runtime: Arc<dyn AgentExecutionRuntime>,
     ) -> Arc<Self> {
+        Self::for_test_with_target_catalog(
+            db_path,
+            db,
+            context,
+            agent_runtime_manager,
+            agent_runtime,
+            TargetCatalog::builtin().expect("test target catalog must be valid"),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_with_target_catalog(
+        db_path: PathBuf,
+        db: Database,
+        context: RequestContext,
+        agent_runtime_manager: Arc<AgentRuntimeManager>,
+        agent_runtime: Arc<dyn AgentExecutionRuntime>,
+        target_catalog: TargetCatalog,
+    ) -> Arc<Self> {
         let adapters = db
             .block_on(crate::backend::store::list_conversation_adapters_sqlx(
                 db.pool(),
@@ -204,9 +223,7 @@ impl AppRuntime {
             context_update_gate: Mutex::new(()),
             shutdown: ShutdownState::new(),
             dispatcher: Mutex::new(None),
-            target_catalog: RegistrySnapshot::new(
-                TargetCatalog::builtin().expect("test target catalog must be valid"),
-            ),
+            target_catalog: RegistrySnapshot::new(target_catalog),
             conversation_adapter_catalog: RegistrySnapshot::new(ConversationAdapterCatalog::new(
                 adapters,
             )),
@@ -316,6 +333,19 @@ impl AppRuntime {
     }
     pub(crate) fn target_catalog(&self) -> Arc<TargetCatalog> {
         self.target_catalog.load()
+    }
+
+    /// Validate a complete provider set outside the snapshot and publish it as
+    /// one replacement. Readers keep using the previous immutable catalog when
+    /// validation fails.
+    #[allow(dead_code)]
+    pub(crate) fn refresh_target_catalog(
+        &self,
+        descriptors: Vec<TargetProfileDescriptor>,
+    ) -> AppResult<Arc<TargetCatalog>> {
+        let catalog = TargetCatalog::from_descriptors(descriptors)?;
+        self.target_catalog.replace(catalog);
+        Ok(self.target_catalog.load())
     }
 
     pub(crate) fn conversation_adapter_catalog(&self) -> Arc<ConversationAdapterCatalog> {

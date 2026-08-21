@@ -2517,6 +2517,163 @@ fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
     fs::remove_dir_all(root).ok();
 }
 
+#[test]
+fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
+    let root = std::env::temp_dir().join(format!("assetiweave-target-runtime-{}", Uuid::new_v4()));
+    let source_root = root.join("fixture-source");
+    let target_root = root.join("fixture-target");
+    fs::create_dir_all(&source_root).expect("create fixture source");
+    fs::create_dir_all(&target_root).expect("create fixture target");
+    let source_file = source_root.join("SKILL.md");
+    fs::write(&source_file, "---\ndescription: fixture\n---\n").expect("write fixture asset");
+
+    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let descriptor = crate::backend::models::TargetProfileDescriptor {
+        id: "fixture-provider".to_string(),
+        name: "Fixture Provider".to_string(),
+        app_kind_compat: None,
+        default_targets: vec![crate::backend::models::TargetPathRule {
+            asset_kind: AssetKind::Skill,
+            path: target_root.to_string_lossy().to_string(),
+        }],
+        supported_kinds: vec![AssetKind::Skill],
+        deployment_strategy: DeploymentStrategy::SymlinkToSource,
+        icon: None,
+    };
+    service
+        .runtime
+        .refresh_target_catalog(vec![descriptor])
+        .expect("publish fixture target catalog");
+
+    service
+        .create_tenant(TenantCreateParams {
+            name: "Fixture tenant".to_string(),
+            slug: Some("fixture-tenant".to_string()),
+            set_active: true,
+        })
+        .expect("seed fixture provider profile");
+    let service = AppService::from_runtime(&service.runtime);
+    assert!(service
+        .list_profiles()
+        .expect("list seeded profiles")
+        .iter()
+        .any(|profile| profile.target_provider_id == "fixture-provider"));
+
+    let detected = service
+        .add_source(SourceInput {
+            id: Some("fixture-detect-source".to_string()),
+            name: "Fixture target source".to_string(),
+            kind: crate::backend::models::SourceKind::Local,
+            root_path: target_root.to_string_lossy().to_string(),
+            scanner_kind: Some(crate::backend::models::SourceScannerKind::Skill),
+            source_origin: Some(crate::backend::models::SourceOrigin::LocalFolder),
+            repo_root: None,
+            scan_root: None,
+            origin_app_kind: None,
+            origin_provider_id: None,
+            include_globs: Vec::new(),
+            exclude_globs: Vec::new(),
+            default_kind: Some(AssetKind::Skill),
+            enabled: true,
+            priority: 0,
+        })
+        .expect("save detected target source");
+    assert_eq!(
+        detected.origin_provider_id.as_deref(),
+        Some("fixture-provider")
+    );
+
+    let source = Source {
+        id: "fixture-asset-source".to_string(),
+        name: "Fixture asset source".to_string(),
+        kind: crate::backend::models::SourceKind::Local,
+        root_path: source_root.to_string_lossy().to_string(),
+        scanner_kind: crate::backend::models::SourceScannerKind::Skill,
+        source_origin: crate::backend::models::SourceOrigin::LocalFolder,
+        repo_root: None,
+        scan_root: String::new(),
+        origin_app_kind: None,
+        origin_provider_id: None,
+        include_globs: vec!["**/SKILL.md".to_string()],
+        exclude_globs: Vec::new(),
+        default_kind: Some(AssetKind::Skill),
+        enabled: true,
+        priority: 0,
+        last_scanned_at: None,
+        last_scan_status: None,
+    };
+    upsert_test_source(&service, &source);
+    replace_test_source_assets(
+        &service,
+        &source.id,
+        &[Asset {
+            id: "fixture-asset".to_string(),
+            source_id: source.id.clone(),
+            name: "Fixture Skill".to_string(),
+            kind: AssetKind::Skill,
+            detector_id: "fixture.detector".to_string(),
+            detector_version: 1,
+            format: crate::backend::models::AssetFormat::Markdown,
+            relative_path: "SKILL.md".to_string(),
+            absolute_path: source_file.to_string_lossy().to_string(),
+            entry_file: Some("SKILL.md".to_string()),
+            description: Some("fixture".to_string()),
+            content_hash: None,
+            discovered_at: Utc::now().to_rfc3339(),
+            updated_at: Utc::now().to_rfc3339(),
+        }],
+    );
+
+    let profile = service
+        .list_profiles()
+        .expect("list fixture profiles")
+        .into_iter()
+        .find(|profile| profile.target_provider_id == "fixture-provider")
+        .expect("fixture provider profile");
+    execute_test_sql(
+        &service,
+        &format!(
+            "INSERT INTO asset_mounts (tenant_id, asset_id, profile_id, enabled, strategy, created_at, updated_at) VALUES ('{}', 'fixture-asset', '{}', 1, 'symlink_to_source', '2026-08-21T00:00:00Z', '2026-08-21T00:00:00Z')",
+            service.tenant_id(),
+            profile.id,
+        ),
+    )
+    .expect("record fixture mount intent");
+    let plan = service
+        .create_plan(Some(&profile.id))
+        .expect("build plan from injected catalog");
+    assert_eq!(plan.summary.create_count, 1);
+    let execution = service
+        .execute_plan(plan, None)
+        .expect("execute plan from injected catalog");
+    assert_eq!(execution.executed_count, 1);
+    assert!(target_root.join("Fixture Skill.md").is_symlink());
+
+    let invalid = service.runtime.refresh_target_catalog(vec![
+        crate::backend::models::TargetProfileDescriptor {
+            id: "fixture-provider".to_string(),
+            name: "Fixture Provider".to_string(),
+            app_kind_compat: None,
+            default_targets: vec![crate::backend::models::TargetPathRule {
+                asset_kind: AssetKind::Skill,
+                path: String::new(),
+            }],
+            supported_kinds: vec![AssetKind::Skill],
+            deployment_strategy: DeploymentStrategy::SymlinkToSource,
+            icon: None,
+        },
+    ]);
+    assert!(invalid.is_err());
+    assert!(service
+        .runtime
+        .target_catalog()
+        .descriptor("fixture-provider")
+        .is_some());
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
 fn github_repo_item() -> Value {
     json!({
         "full_name": "util6/util6-agents",

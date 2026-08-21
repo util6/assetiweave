@@ -28,11 +28,34 @@ impl TargetCatalog {
                     descriptor.id
                 )));
             }
+            if descriptor.name.trim().is_empty() {
+                return Err(AppError::Validation(format!(
+                    "target provider descriptor name is empty: {}",
+                    descriptor.id
+                )));
+            }
             if descriptor.default_targets.is_empty() {
                 return Err(AppError::Validation(format!(
                     "target provider descriptor has no default target: {}",
                     descriptor.id
                 )));
+            }
+            let mut target_keys = std::collections::BTreeSet::new();
+            for target in &descriptor.default_targets {
+                let path = target.path.trim();
+                if path.is_empty() {
+                    return Err(AppError::Validation(format!(
+                        "target provider descriptor has an empty target path: {}",
+                        descriptor.id
+                    )));
+                }
+                let key = format!("{:?}\u{0}{path}", target.asset_kind);
+                if !target_keys.insert(key) {
+                    return Err(AppError::Validation(format!(
+                        "target provider descriptor has a duplicated target path: {}",
+                        descriptor.id
+                    )));
+                }
             }
         }
         Ok(Self { descriptors })
@@ -115,5 +138,24 @@ mod tests {
             catalog.descriptor("fixture-agent").unwrap().name,
             "Fixture Agent"
         );
+    }
+
+    #[test]
+    fn invalid_provider_refresh_input_is_rejected_before_publication() {
+        let error = TargetCatalog::from_descriptors(vec![TargetProfileDescriptor {
+            id: "fixture-agent".to_string(),
+            name: "Fixture Agent".to_string(),
+            app_kind_compat: None,
+            default_targets: vec![crate::backend::models::TargetPathRule {
+                asset_kind: AssetKind::Skill,
+                path: "  ".to_string(),
+            }],
+            supported_kinds: vec![AssetKind::Skill],
+            deployment_strategy: crate::backend::models::DeploymentStrategy::SymlinkToSource,
+            icon: None,
+        }])
+        .expect_err("empty provider target path must fail validation");
+
+        assert!(error.to_string().contains("empty target path"));
     }
 }
