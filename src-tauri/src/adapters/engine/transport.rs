@@ -953,6 +953,35 @@ mod tests {
     }
 
     #[test]
+    fn engine_search_index_rebuild_executes_the_canonical_workflow() {
+        let _guard = env_lock().lock().expect("env lock");
+        let home = unique_temp_dir("assetiweave-engine-search-index-home");
+        let db_path = home.join("app.db");
+        fs::create_dir_all(&home).expect("create temp home");
+        set_test_home(&home);
+        env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
+
+        let report = dispatch(EngineRequest {
+            method: "start_conversation_search_index_rebuild".to_string(),
+            params: json!({}),
+        })
+        .expect("rebuild search index through Engine");
+        let status = dispatch(EngineRequest {
+            method: "get_conversation_search_index_status".to_string(),
+            params: json!({}),
+        })
+        .expect("read rebuilt search index status");
+
+        env::remove_var("ASSETIWEAVE_DB_PATH");
+        env::remove_var("HOME");
+        assert!(report["generation"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()));
+        assert_eq!(status["health"], json!("ready"));
+        fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
     fn schema_lists_every_cli_and_tauri_command_method() {
         let schema = command_registry::schema_index();
         let methods = schema["methods"].as_array().expect("methods array");
@@ -1458,14 +1487,23 @@ mod tests {
             "cancel_app_close_prompt",
             "complete_app_close",
             "copy_prompt_card_to_clipboard",
+            "cancel_memory_task",
             "get_ai_execution_task",
             "get_agent_lifecycle_task",
             "get_agent_market_refresh_task",
             "get_cli_tools_status",
+            "get_conversation_adapter_package_task",
+            "get_conversation_search_index_task",
+            "get_conversation_script_install_task",
+            "get_conversation_sync_task",
+            "get_memory_task",
+            "get_skill_backup_task",
             "install_cli_tools",
             "list_ai_execution_tasks",
             "list_agent_lifecycle_tasks",
             "list_agent_market_refresh_tasks",
+            "list_conversation_sync_tasks",
+            "list_memory_tasks",
             "list_source_assets",
             "set_app_window_icon",
             "start_conversation_card_translation",
@@ -1473,6 +1511,7 @@ mod tests {
             "start_agent_reinstallation",
             "start_agent_uninstall",
             "start_agent_update",
+            "start_memory_task",
             "start_source_scan",
             "get_source_scan_task",
             "list_source_scan_tasks",

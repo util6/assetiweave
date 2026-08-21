@@ -2074,63 +2074,6 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         since: "0.5.2", deprecated: false
     ),
     command!(
-        "start_memory_task",
-        "start_memory_task",
-        "Start a desktop Memory background task",
-        Write,
-        App,
-        true,
-        crate::backend::application::MemoryTaskStartParams,
-        System => |_params| Value::Null,
-        &[
-            param!("kind", "Memory task kind"),
-            param!("scope", "Memory scope"),
-            param!("trigger", "Automatic or manual trigger"),
-            param!("dry_run", "Preview without AI or writes", ["dryRun"]),
-        ],
-        None,
-        since: "0.5.2", deprecated: false
-    ),
-    command!(
-        "get_memory_task",
-        "get_memory_task",
-        "Get one desktop Memory background task",
-        Read,
-        App,
-        false,
-        crate::backend::application::MemoryTaskGetParams,
-        System => |_params| Value::Null,
-        &[param!("task_id", "Memory task identifier", ["taskId"])],
-        None,
-        since: "0.5.2", deprecated: false
-    ),
-    command!(
-        "list_memory_tasks",
-        "list_memory_tasks",
-        "List desktop Memory background tasks",
-        Read,
-        App,
-        false,
-        NoParams,
-        System => |_params| Value::Array(Vec::new()),
-        &[],
-        None,
-        since: "0.5.2", deprecated: false
-    ),
-    command!(
-        "cancel_memory_task",
-        "cancel_memory_task",
-        "Cancel one desktop Memory background task",
-        Write,
-        App,
-        false,
-        crate::backend::application::MemoryTaskGetParams,
-        System => |_params| Value::Null,
-        &[param!("task_id", "Memory task identifier", ["taskId"])],
-        None,
-        since: "0.5.2", deprecated: false
-    ),
-    command!(
         "list_memory_items",
         "memory.item.list",
         "List formal Memory items and review candidates with pagination",
@@ -2313,18 +2256,6 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         crate::backend::application::SkillBackupTaskParams,
         Service => |service, params| service.backup_skills(params.asset_ids),
         &[param!("asset_ids", "Asset identifiers", ["assetIds"])],
-        None
-    ),
-    command!(
-        "get_skill_backup_task",
-        "get_skill_backup_task",
-        "Get the current desktop Skill backup background task",
-        Read,
-        App,
-        false,
-        NoParams,
-        System => |_params| Value::Null,
-        &[],
         None
     ),
     command!(
@@ -3530,30 +3461,6 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
-        "get_conversation_script_install_task",
-        "get_conversation_script_install_task",
-        "Get the current desktop conversation script install background task",
-        Read,
-        App,
-        false,
-        NoParams,
-        System => |_params| Value::Null,
-        &[],
-        None
-    ),
-    command!(
-        "get_conversation_adapter_package_task",
-        "get_conversation_adapter_package_task",
-        "Get the current desktop conversation adapter package background task",
-        Read,
-        App,
-        false,
-        NoParams,
-        System => |_params| Value::Null,
-        &[],
-        None
-    ),
-    command!(
         "sync_conversations",
         "conversation.sync",
         "Synchronize conversation sources",
@@ -3568,30 +3475,6 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("record_kind", "Conversation record kind", ["recordKind"]),
             param!("dry_run", "Preview without importing", ["dryRun"]),
         ],
-        None
-    ),
-    command!(
-        "get_conversation_sync_task",
-        "get_conversation_sync_task",
-        "Get the current desktop conversation sync background task",
-        Read,
-        App,
-        false,
-        NoParams,
-        System => |_params| Value::Null,
-        &[],
-        None
-    ),
-    command!(
-        "list_conversation_sync_tasks",
-        "list_conversation_sync_tasks",
-        "List desktop conversation sync background tasks by record kind",
-        Read,
-        App,
-        false,
-        NoParams,
-        System => |_params| Value::Array(Vec::new()),
-        &[],
         None
     ),
     command!(
@@ -3743,24 +3626,12 @@ const COMMAND_SPECS: &[CommandSpec] = &[
     command!(
         "start_conversation_search_index_rebuild",
         "start_conversation_search_index_rebuild",
-        "Start the desktop conversation search index rebuild task",
+        "Rebuild the conversation search index",
         Write,
         App,
         false,
         NoParams,
-        System => |_params| Value::Null,
-        &[],
-        None
-    ),
-    command!(
-        "get_conversation_search_index_task",
-        "get_conversation_search_index_task",
-        "Get the current desktop conversation search index rebuild task",
-        Read,
-        App,
-        false,
-        NoParams,
-        System => |_params| Value::Null,
+        Service => |service, _params| service.rebuild_conversation_search_index(),
         &[],
         None
     ),

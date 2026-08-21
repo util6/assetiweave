@@ -22,7 +22,6 @@
 | `apply_skill_group_exclusive_mount` | `apply_skill_group_exclusive_mount` | — | `apply_skill_group_exclusive_mount` | `high-risk-write` | `true` |
 | `apply_skill_group_mount` | `apply_skill_group_mount` | — | `apply_skill_group_mount` | `high-risk-write` | `true` |
 | `asset.list` | `asset.list`<br>`list_assets` | `assetiweave-cli asset list` | `list_assets` | `read` | `false` |
-| `cancel_memory_task` | `cancel_memory_task` | — | `cancel_memory_task` | `write` | `false` |
 | `conversation.adapter.list` | `conversation.adapter.list`<br>`list_conversation_adapters` | — | `list_conversation_adapters` | `read` | `false` |
 | `conversation.adapter.register` | `conversation.adapter.register`<br>`register_conversation_adapter` | — | `register_conversation_adapter` | `high-risk-write` | `true` |
 | `conversation.adapter.runtime-status` | `conversation.adapter.runtime-status`<br>`list_conversation_adapter_runtime_statuses` | — | `list_conversation_adapter_runtime_statuses` | `read` | `false` |
@@ -83,20 +82,12 @@
 | `delete_skill_group` | `delete_skill_group` | — | `delete_skill_group` | `high-risk-write` | `true` |
 | `doctor.run` | `doctor.run` | `assetiweave-cli doctor` | — | `read` | `false` |
 | `execute_plan` | `execute_plan` | — | `execute_plan` | `high-risk-write` | `true` |
-| `get_conversation_adapter_package_task` | `get_conversation_adapter_package_task` | — | `get_conversation_adapter_package_task` | `read` | `false` |
-| `get_conversation_script_install_task` | `get_conversation_script_install_task` | — | `get_conversation_script_install_task` | `read` | `false` |
-| `get_conversation_search_index_task` | `get_conversation_search_index_task` | — | `get_conversation_search_index_task` | `read` | `false` |
-| `get_conversation_sync_task` | `get_conversation_sync_task` | — | `get_conversation_sync_task` | `read` | `false` |
-| `get_memory_task` | `get_memory_task` | — | `get_memory_task` | `read` | `false` |
 | `get_navigation_model` | `get_navigation_model` | — | `get_navigation_model` | `read` | `false` |
 | `get_skill_backup_settings` | `get_skill_backup_settings` | — | `get_skill_backup_settings` | `read` | `false` |
-| `get_skill_backup_task` | `get_skill_backup_task` | — | `get_skill_backup_task` | `read` | `false` |
 | `list_app_shortcut_settings` | `list_app_shortcut_settings` | — | `list_app_shortcut_settings` | `read` | `false` |
 | `list_app_shortcuts` | `list_app_shortcuts` | — | `list_app_shortcuts` | `read` | `false` |
 | `list_asset_mount_statuses` | `list_asset_mount_statuses` | — | `list_asset_mount_statuses` | `read` | `false` |
 | `list_asset_mounts` | `list_asset_mounts` | — | `list_asset_mounts` | `read` | `false` |
-| `list_conversation_sync_tasks` | `list_conversation_sync_tasks` | — | `list_conversation_sync_tasks` | `read` | `false` |
-| `list_memory_tasks` | `list_memory_tasks` | — | `list_memory_tasks` | `read` | `false` |
 | `list_skill_sources` | `list_skill_sources` | — | `list_skill_sources` | `read` | `false` |
 | `logs_get_snapshot` | `logs_get_snapshot` | — | `logs_get_snapshot` | `read` | `false` |
 | `logs_open_log_directory` | `logs_open_log_directory` | — | `logs_open_log_directory` | `read` | `false` |
@@ -158,7 +149,6 @@
 | `source.remove` | `delete_source`<br>`source.remove` | `assetiweave-cli source remove <source-id> --yes` | `delete_source` | `high-risk-write` | `true` |
 | `source.scan` | `scan_sources`<br>`source.scan` | `assetiweave-cli source scan` | `scan_sources` | `write` | `false` |
 | `start_conversation_search_index_rebuild` | `start_conversation_search_index_rebuild` | — | `start_conversation_search_index_rebuild` | `write` | `false` |
-| `start_memory_task` | `start_memory_task` | — | `start_memory_task` | `write` | `false` |
 | `system.version` | `system.version` | `assetiweave-cli version` | — | `read` | `false` |
 | `tenant.active` | `get_active_tenant`<br>`tenant.active` | `assetiweave-cli tenant active` | `get_active_tenant` | `read` | `false` |
 | `tenant.create` | `create_tenant`<br>`tenant.create` | `assetiweave-cli tenant create <name>` | `create_tenant` | `write` | `false` |
