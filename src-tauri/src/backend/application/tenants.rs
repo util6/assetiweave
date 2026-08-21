@@ -21,7 +21,7 @@ impl AppService {
         let slug = params.slug;
         let set_active = params.set_active;
         let target_catalog = self.runtime.target_catalog();
-        self.db.block_on(async move {
+        let tenant = self.db.block_on(async move {
             let tenant = crate::backend::store::create_local_tenant_sqlx(
                 &pool,
                 &principal_id,
@@ -39,12 +39,12 @@ impl AppService {
                 &pool, &tenant.id,
             )
             .await?;
-            if set_active {
-                crate::backend::store::set_active_tenant_sqlx(&pool, &principal_id, &tenant.id)
-                    .await?;
-            }
             AppResult::Ok(tenant)
-        })
+        })?;
+        if set_active {
+            self.runtime.activate_tenant(&tenant.id)?;
+        }
+        Ok(tenant)
     }
 
     pub(crate) fn switch_tenant(&self, tenant_id: String) -> AppResult<Tenant> {
@@ -52,11 +52,7 @@ impl AppService {
         if tenant_id.is_empty() {
             return Err(AppError::Validation("tenant id is required".to_string()));
         }
-        let pool = self.db.pool().clone();
-        let principal_id = self.request_context().principal.id.clone();
         let tenant_id = tenant_id.to_string();
-        Ok(self.db.block_on(async move {
-            crate::backend::store::set_active_tenant_sqlx(&pool, &principal_id, &tenant_id).await
-        })?)
+        self.runtime.activate_tenant(&tenant_id)
     }
 }

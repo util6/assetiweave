@@ -88,6 +88,10 @@ fn creating_tenant_seeds_isolated_skill_backup_library_root() {
         .expect("create tenant");
     assert_eq!(tenant.id, "client-a");
     assert_eq!(tenant.slug, "client-a");
+    assert_eq!(
+        AppService::from_runtime(&service.runtime).tenant_id(),
+        "client-a"
+    );
     drop(service);
 
     let tenant_service =
@@ -123,6 +127,74 @@ fn creating_tenant_seeds_isolated_skill_backup_library_root() {
         .is_empty());
 
     drop(tenant_service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn switching_tenant_rebinds_the_next_app_service_request() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-tenant-switch-request-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create temp dir");
+    let db_path = root.join("app.db");
+    let source_root = root.join("tenant-b-source");
+    fs::create_dir_all(&source_root).expect("create tenant B source root");
+
+    let service = AppService::open_with_db_path(db_path).expect("open application service");
+    let tenant_b = service
+        .create_tenant(TenantCreateParams {
+            name: "Tenant B".to_string(),
+            slug: Some("tenant-b".to_string()),
+            set_active: false,
+        })
+        .expect("create tenant B");
+
+    service
+        .switch_tenant(tenant_b.id.clone())
+        .expect("switch to tenant B");
+
+    let next_request = AppService::from_runtime(&service.runtime);
+    assert_eq!(next_request.tenant_id(), "tenant-b");
+    next_request
+        .add_source(SourceInput {
+            id: Some("tenant-b-source".to_string()),
+            name: "Tenant B source".to_string(),
+            kind: SourceKind::Local,
+            root_path: source_root.to_string_lossy().to_string(),
+            scanner_kind: None,
+            source_origin: None,
+            repo_root: None,
+            scan_root: None,
+            origin_app_kind: None,
+            origin_provider_id: None,
+            include_globs: Vec::new(),
+            exclude_globs: Vec::new(),
+            default_kind: None,
+            enabled: true,
+            priority: 0,
+        })
+        .expect("create source in tenant B");
+
+    let pool = service.db.pool().clone();
+    let (default_sources, tenant_b_sources) = service
+        .db
+        .block_on(async move {
+            let default_sources =
+                crate::backend::store::load_sources_sqlx(&pool, "default").await?;
+            let tenant_b_sources =
+                crate::backend::store::load_sources_sqlx(&pool, "tenant-b").await?;
+            AppResult::Ok((default_sources, tenant_b_sources))
+        })
+        .expect("load sources by tenant");
+    assert!(!default_sources
+        .iter()
+        .any(|source| source.id == "tenant-b-source"));
+    assert!(tenant_b_sources
+        .iter()
+        .any(|source| source.id == "tenant-b-source"));
+
+    drop(service);
     fs::remove_dir_all(root).ok();
 }
 

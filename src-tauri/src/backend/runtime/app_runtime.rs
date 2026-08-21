@@ -79,6 +79,7 @@ pub(crate) struct AppRuntime {
     agent_runtime_manager: Arc<AgentRuntimeManager>,
     agent_runtime: Arc<dyn AgentExecutionRuntime>,
     task_runtime: TaskRuntime,
+    context_update_gate: Mutex<()>,
     shutdown: ShutdownState,
     dispatcher: Mutex<Option<EventDispatcherHandle>>,
     target_catalog: RegistrySnapshot<TargetCatalog>,
@@ -157,6 +158,7 @@ impl AppRuntime {
             agent_runtime: agent_runtime_manager.runtime(),
             agent_runtime_manager,
             task_runtime,
+            context_update_gate: Mutex::new(()),
             shutdown: ShutdownState::new(),
             dispatcher: Mutex::new(None),
             target_catalog: RegistrySnapshot::new(target_catalog),
@@ -199,6 +201,7 @@ impl AppRuntime {
             agent_runtime_manager,
             agent_runtime,
             task_runtime: TaskRuntime::new(),
+            context_update_gate: Mutex::new(()),
             shutdown: ShutdownState::new(),
             dispatcher: Mutex::new(None),
             target_catalog: RegistrySnapshot::new(
@@ -240,6 +243,67 @@ impl AppRuntime {
     }
     pub(crate) fn context(&self) -> Arc<RequestContextSnapshot> {
         self.context.load_full()
+    }
+
+    /// Persist and publish a tenant change as one runtime transition.
+    ///
+    /// The database update is validated first, then the new request context is
+    /// loaded before the ArcSwap publication. If context construction fails,
+    /// the active tenant is compensated back to the previously published
+    /// snapshot so callers never keep a successful database change with a
+    /// stale runtime context.
+    pub(crate) fn activate_tenant(&self, tenant_id: &str) -> AppResult<Tenant> {
+        let _update_guard = self
+            .context_update_gate
+            .lock()
+            .map_err(|_| AppError::Conflict("租户上下文更新锁不可用".to_string()))?;
+        let previous = self.context();
+        let principal_id = previous.request_context.principal.id.clone();
+        let previous_tenant_id = previous.tenant.id.clone();
+        let tenant_id = tenant_id.to_string();
+        let pool = self.pool().clone();
+
+        let transition = self.block_on(async {
+            let tenant =
+                crate::backend::store::set_active_tenant_sqlx(&pool, &principal_id, &tenant_id)
+                    .await?;
+            let next_context =
+                crate::backend::store::load_local_request_context_sqlx(&pool).await?;
+            AppResult::Ok((tenant, next_context))
+        });
+        let (tenant, next_context) = match transition {
+            Ok(transition) => transition,
+            Err(error) => {
+                self.compensate_active_tenant(&pool, &principal_id, &previous_tenant_id, &error)?;
+                return Err(error);
+            }
+        };
+
+        self.context.store(Arc::new(RequestContextSnapshot {
+            tenant: next_context.tenant.clone(),
+            request_context: next_context,
+        }));
+        Ok(tenant)
+    }
+
+    fn compensate_active_tenant(
+        &self,
+        pool: &sqlx::SqlitePool,
+        principal_id: &str,
+        previous_tenant_id: &str,
+        original_error: &AppError,
+    ) -> AppResult<()> {
+        self.block_on(crate::backend::store::set_active_tenant_sqlx(
+            pool,
+            principal_id,
+            previous_tenant_id,
+        ))
+        .map(|_| ())
+        .map_err(|rollback_error| {
+            AppError::Conflict(format!(
+                "租户上下文构造失败且回滚 active tenant 失败: {original_error}; {rollback_error}"
+            ))
+        })
     }
     pub(crate) fn agent_runtime_manager(&self) -> Arc<AgentRuntimeManager> {
         self.agent_runtime_manager.clone()
