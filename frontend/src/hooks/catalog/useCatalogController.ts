@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useCatalogTasks } from "../../app/backgroundTasks/CatalogTaskProvider";
 import { type NotificationMessage } from "../../components/notifications/NotificationBanner";
 import {
   applySkillGroupExclusiveMount,
@@ -23,8 +24,13 @@ import { useMountSelection } from "./useMountSelection";
 
 export function useCatalogController() {
   const { settings } = useAppSettings();
+  const { startSourceScan } = useCatalogTasks();
   const catalogData = useCatalogData();
-  const operations = useCatalogOperations(catalogData.refreshOverview, catalogData.activeAssetKind);
+  const operations = useCatalogOperations(
+    catalogData.refreshOverview,
+    catalogData.activeAssetKind,
+    startSourceScan,
+  );
   const tenantController = useTenantController({
     onTenantChanged: async () => {
       await catalogData.reloadCatalogData();

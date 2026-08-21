@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
+import { useCatalogTasks } from "../../app/backgroundTasks/CatalogTaskProvider";
 import { ArrowDownWideNarrow, Columns3, DatabaseZap, DownloadCloud, Filter, FolderPlus, LayoutList, Power, RefreshCw, Settings } from "lucide-react";
 import { AssetDeleteDialog } from "../../components/assets/AssetDeleteDialog";
 import { AssetEditDialog } from "../../components/assets/AssetEditDialog";
@@ -75,7 +76,8 @@ export function SourcesPage({
 }) {
   const { t } = useI18n();
   const { startBackup, task: backupTask } = useSkillBackup();
-  const sources = useSourcesController(onCatalogRefresh);
+  const { startSourceScan } = useCatalogTasks();
+  const sources = useSourcesController(onCatalogRefresh, startSourceScan);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [acquireDialogOpen, setAcquireDialogOpen] = useState(false);
   const [editingSource, setEditingSource] = useState<Source | null>(null);

@@ -12,7 +12,9 @@ const catalogService = vi.hoisted(() => ({
   listSourceAssets: vi.fn(),
   revealPath: vi.fn(),
   scanSkillSources: vi.fn(),
+  startSourceScan: vi.fn(),
   updateSource: vi.fn(),
+  waitForSourceScanTask: vi.fn(),
 }));
 
 vi.mock("../../services/catalog", () => catalogService);
@@ -45,7 +47,47 @@ describe("useSourcesController", () => {
     expect(onCatalogRefresh).toHaveBeenCalledWith([canonicalAsset]);
     expect(result.current.sourceAssets).toEqual([sourceAsset]);
   });
+
+  it("returns after background scan start and refreshes when the task settles", async () => {
+    const source = createSource("local-system-copy");
+    catalogService.listSkillSources.mockResolvedValue([source]);
+    catalogService.listSourceAssets.mockResolvedValue([]);
+    const onCatalogRefresh = vi.fn().mockResolvedValue(undefined);
+    const task = runningSourceScan();
+    const terminal = { ...task, status: "completed", result: [], finished_at: "2026-08-21T00:00:02Z" };
+    const startBackgroundScan = vi.fn().mockResolvedValue(task);
+    catalogService.waitForSourceScanTask.mockResolvedValue(terminal);
+
+    const { result } = renderHook(() => useSourcesController(onCatalogRefresh, startBackgroundScan));
+    await waitFor(() => expect(result.current.sources).toEqual([source]));
+
+    await act(async () => {
+      await result.current.scanAllSources();
+    });
+
+    expect(startBackgroundScan).toHaveBeenCalledWith("skill", "skills");
+    await waitFor(() => expect(onCatalogRefresh).toHaveBeenCalledWith([]));
+  });
 });
+
+function runningSourceScan() {
+  return {
+    id: "scan-task",
+    status: "running" as const,
+    scope: "skills" as const,
+    kind: "skill" as const,
+    progress: {
+      phase: "scanning" as const,
+      completed_source_count: 0,
+      total_source_count: 1,
+      current_source_name: null,
+    },
+    started_at: "2026-08-21T00:00:00Z",
+    finished_at: null,
+    result: null,
+    error: null,
+  };
+}
 
 function createSource(id: string): Source {
   return {
