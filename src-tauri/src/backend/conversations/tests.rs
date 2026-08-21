@@ -6,10 +6,7 @@ use super::{
     validate_external_adapter,
 };
 use crate::backend::models::{ConversationPartKind, ConversationPartRole};
-use std::{
-    collections::BTreeMap,
-    process::{Command, Stdio},
-};
+use std::collections::BTreeMap;
 
 struct TempFixture {
     path: PathBuf,
@@ -3122,12 +3119,18 @@ fn assert_content_card_types(
 
 #[cfg(unix)]
 fn command_available(command: &str) -> bool {
-    Command::new(command)
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+    let Some(program) = crate::backend::host_process::resolve_host_executable(command) else {
+        return false;
+    };
+    crate::backend::host_process::run_program_with_timeout(
+        &program,
+        &["--version".to_string()],
+        None,
+        std::time::Duration::from_secs(5),
+        8 * 1024,
+        8 * 1024,
+    )
+    .is_ok_and(|output| output.status.success())
 }
 
 fn source_fixture(
