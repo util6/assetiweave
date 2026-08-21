@@ -387,20 +387,26 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
     stored.conversations,
   );
   const promptOptimization = normalizePromptOptimizationSettings(stored.promptOptimization);
-  const agentModels = normalizeAgentModels(stored.agentModels);
+  const storedAgentModels = normalizeAgentModels(stored.agentModels);
+  const agentAssignments = normalizeAgentAssignments(
+    stored.agentAssignments,
+    stored.agentCapabilityAssignments,
+    storedAgentModels,
+    aiRuntime,
+  );
+  const agentModels = mergeCanonicalAssignmentModels(
+    mergeLegacyAiRuntimeModel(storedAgentModels, aiRuntime),
+    agentAssignments,
+  );
 
   return {
-    agentAssignments: normalizeAgentAssignments(
-      stored.agentAssignments,
-      stored.agentCapabilityAssignments,
-      agentModels,
-      aiRuntime,
-    ),
+    agentAssignments,
     agentCapabilityAssignments: normalizeAgentCapabilityAssignments(
       stored.agentCapabilityAssignments,
       aiRuntime.cli,
+      agentAssignments,
     ),
-    agentModels: mergeLegacyAiRuntimeModel(agentModels, aiRuntime),
+    agentModels,
     aiRuntime,
     columnMinWidth: normalizeColumnMinWidth(stored.columnMinWidth),
 
@@ -476,19 +482,29 @@ function normalizeAgentModels(value: unknown): Record<string, string> {
 function normalizeAgentCapabilityAssignments(
   value: unknown,
   legacyCli: AiRuntimeCli,
+  assignments?: AgentAssignments,
 ): AgentCapabilityAssignments {
   const stored = isRecord(value) ? value : {};
   const fallback = legacyCli;
-  const memory = normalizeAgentCapabilityAgentId(stored.memory, fallback);
-  return {
-    cardTranslation: normalizeAgentCapabilityAgentId(stored.cardTranslation, fallback),
-    memory,
-    "memory.extraction": normalizeAgentCapabilityAgentId(
-      stored["memory.extraction"],
+  if (!assignments) {
+    const memory = normalizeAgentCapabilityAgentId(stored.memory, fallback);
+    return {
+      cardTranslation: normalizeAgentCapabilityAgentId(stored.cardTranslation, fallback),
       memory,
-    ),
-    "memory.dream": normalizeAgentCapabilityAgentId(stored["memory.dream"], memory),
-    promptOptimization: normalizeAgentCapabilityAgentId(stored.promptOptimization, fallback),
+      "memory.extraction": normalizeAgentCapabilityAgentId(
+        stored["memory.extraction"],
+        memory,
+      ),
+      "memory.dream": normalizeAgentCapabilityAgentId(stored["memory.dream"], memory),
+      promptOptimization: normalizeAgentCapabilityAgentId(stored.promptOptimization, fallback),
+    };
+  }
+  return {
+    cardTranslation: assignments["translation.card"].agentId,
+    memory: assignments["memory.extraction"].agentId,
+    "memory.extraction": assignments["memory.extraction"].agentId,
+    "memory.dream": assignments["memory.dream"].agentId,
+    promptOptimization: assignments["prompt.optimization"].agentId,
   };
 }
 
@@ -514,6 +530,19 @@ function mergeLegacyAiRuntimeModel(
     ...agentModels,
     [aiRuntime.cli]: aiRuntime.model,
   };
+}
+
+function mergeCanonicalAssignmentModels(
+  agentModels: Record<string, string>,
+  assignments: AgentAssignments,
+): Record<string, string> {
+  const merged = { ...agentModels };
+  for (const assignment of Object.values(assignments)) {
+    if (assignment.modelId) {
+      merged[assignment.agentId] = assignment.modelId;
+    }
+  }
+  return merged;
 }
 
 function normalizeConversationRuntimeOverrides(value: unknown): ConversationRuntimeOverrideSettings {

@@ -354,10 +354,6 @@ export function GlobalSettingsDialog({
         settings.agentModels[agentId] ?? "",
       ),
     );
-    updateSetting("agentCapabilityAssignments", {
-      ...settings.agentCapabilityAssignments,
-      [agentCapabilityDialog.serviceId]: agentId,
-    });
     setAgentCapabilityDialog(null);
   }
 
@@ -822,10 +818,6 @@ export function GlobalSettingsDialog({
                 appShortcuts={appShortcuts}
                 focusAgentId={agentFocusId}
                 onModelChange={(agentId, modelId) => {
-                  updateSetting("agentModels", {
-                    ...settings.agentModels,
-                    [agentId]: modelId,
-                  });
                   updateSetting(
                     "agentAssignments",
                     assignModelToAgentActions(settings.agentAssignments, agentId, modelId),
