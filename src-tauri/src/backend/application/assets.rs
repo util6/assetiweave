@@ -1,6 +1,21 @@
 use super::prelude::*;
 use crate::backend::runtime::{AppError, AppResult};
 
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct BatchMountWorkflowResult {
+    pub(crate) requested_count: usize,
+    pub(crate) updated_count: usize,
+    pub(crate) error_count: usize,
+    pub(crate) results: Vec<AssetMountUpdateResult>,
+    pub(crate) errors: Vec<BatchMountItemError>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct BatchMountItemError {
+    pub(crate) asset_id: String,
+    pub(crate) message: String,
+}
+
 impl AppService {
     pub(crate) fn list_assets(&self, params: ListAssetsParams) -> AppResult<Vec<CatalogAsset>> {
         Ok(capabilities::catalog_assets_sqlx(
@@ -205,6 +220,47 @@ impl AppService {
         )?)
     }
 
+    pub(crate) fn apply_explicit_mount_with_progress<BeforeItem>(
+        &self,
+        asset_ids: Vec<String>,
+        profile_id: &str,
+        enabled: bool,
+        mut before_item: BeforeItem,
+    ) -> AppResult<BatchMountWorkflowResult>
+    where
+        BeforeItem: FnMut(usize, usize, &str) -> AppResult<()>,
+    {
+        let asset_ids = asset_ids
+            .into_iter()
+            .map(|asset_id| asset_id.trim().to_string())
+            .filter(|asset_id| !asset_id.is_empty())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        if asset_ids.is_empty() {
+            return Err(AppError::Validation(
+                "asset_ids are required for explicit batch mount".to_string(),
+            ));
+        }
+
+        let total = asset_ids.len();
+        let (results, errors) = run_batch_items(&asset_ids, &mut before_item, |asset_id| {
+            if enabled {
+                self.mount_asset_by_id(asset_id, profile_id)
+            } else {
+                self.unmount_asset_by_id(asset_id, profile_id)
+            }
+        })?;
+
+        Ok(BatchMountWorkflowResult {
+            requested_count: total,
+            updated_count: results.len(),
+            error_count: errors.len(),
+            results,
+            errors,
+        })
+    }
+
     pub(crate) fn execute_plan(
         &self,
         plan: DeploymentPlan,
@@ -229,6 +285,31 @@ impl AppService {
     }
 }
 
+fn run_batch_items<T, BeforeItem, ApplyItem>(
+    asset_ids: &[String],
+    before_item: &mut BeforeItem,
+    mut apply_item: ApplyItem,
+) -> AppResult<(Vec<T>, Vec<BatchMountItemError>)>
+where
+    BeforeItem: FnMut(usize, usize, &str) -> AppResult<()>,
+    ApplyItem: FnMut(&str) -> AppResult<T>,
+{
+    let total = asset_ids.len();
+    let mut results = Vec::new();
+    let mut errors = Vec::new();
+    for (index, asset_id) in asset_ids.iter().enumerate() {
+        before_item(index, total, asset_id)?;
+        match apply_item(asset_id) {
+            Ok(result) => results.push(result),
+            Err(error) => errors.push(BatchMountItemError {
+                asset_id: asset_id.clone(),
+                message: error.to_string(),
+            }),
+        }
+    }
+    Ok((results, errors))
+}
+
 fn load_mount_asset_and_profile(
     db: &crate::backend::store::Database,
     tenant_id: &str,
@@ -248,4 +329,36 @@ fn load_mount_asset_and_profile(
             .ok_or_else(|| AppError::NotFound(format!("profile not found: {profile_id}")))?;
         AppResult::Ok((asset, profile))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run_batch_items;
+    use crate::backend::runtime::AppError;
+
+    #[test]
+    fn batch_cancel_is_checked_before_the_next_item() {
+        let asset_ids = vec![
+            "asset-a".to_string(),
+            "asset-b".to_string(),
+            "asset-c".to_string(),
+        ];
+        let mut started = Vec::new();
+        let result = run_batch_items(
+            &asset_ids,
+            &mut |index, _, _| {
+                if index == 1 {
+                    return Err(AppError::Cancelled("batch cancelled".to_string()));
+                }
+                Ok(())
+            },
+            |asset_id| {
+                started.push(asset_id.to_string());
+                Ok::<_, AppError>(asset_id.to_string())
+            },
+        );
+
+        assert!(matches!(result, Err(AppError::Cancelled(_))));
+        assert_eq!(started, vec!["asset-a"]);
+    }
 }

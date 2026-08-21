@@ -845,9 +845,10 @@ export interface BatchMountTaskSnapshot {
 const BATCH_MOUNT_TASK_UPDATED_EVENT = "batch-mount-task-updated";
 
 export async function startBatchMount(params: {
-  mode: "group" | "exclusive";
+  mode: "explicit" | "group" | "exclusive";
   groupId?: string;
   groupIds?: string[];
+  assetIds?: string[];
   profileId: string;
   enabled?: boolean;
 }): Promise<BatchMountTaskSnapshot> {
@@ -855,6 +856,7 @@ export async function startBatchMount(params: {
     mode: params.mode,
     groupId: params.groupId ?? null,
     groupIds: params.groupIds ?? null,
+    assetIds: params.assetIds ?? null,
     profileId: params.profileId,
     enabled: params.enabled ?? null,
   });
@@ -878,7 +880,7 @@ export function subscribeBatchMountTasks(listener: (snapshot: BatchMountTaskSnap
   });
 }
 
-async function waitForBatchMountTask(taskId: string): Promise<BatchMountTaskSnapshot> {
+export async function waitForBatchMountTask(taskId: string): Promise<BatchMountTaskSnapshot> {
   for (;;) {
     const snapshot = await getBatchMountTask(taskId);
     if (["completed", "failed", "cancelled"].includes(snapshot.status)) {

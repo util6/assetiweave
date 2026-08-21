@@ -1742,9 +1742,10 @@ pub(crate) fn start_batch_mount(
     profile_id: String,
     enabled: Option<bool>,
     group_ids: Option<Vec<String>>,
+    asset_ids: Option<Vec<String>>,
 ) -> RuntimeAppResult<BatchMountTaskSnapshot> {
     let mode = mode.trim().to_ascii_lowercase();
-    if !matches!(mode.as_str(), "group" | "exclusive") {
+    if !matches!(mode.as_str(), "explicit" | "group" | "exclusive") {
         return Err(AppError::Validation(format!(
             "unsupported batch mount mode: {mode}"
         )));
@@ -1761,6 +1762,19 @@ pub(crate) fn start_batch_mount(
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
+    let asset_ids = asset_ids
+        .unwrap_or_default()
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if mode == "explicit" && asset_ids.is_empty() {
+        return Err(AppError::Validation(
+            "asset_ids are required for explicit batch mount".to_string(),
+        ));
+    }
     if mode == "group" && group_id.as_deref().is_none_or(str::is_empty) {
         return Err(AppError::Validation(
             "group_id is required for group batch mount".to_string(),
@@ -1773,7 +1787,9 @@ pub(crate) fn start_batch_mount(
     }
 
     let tenant_id = state.runtime.context().tenant.id.clone();
-    let dedup_suffix = if mode == "group" {
+    let dedup_suffix = if mode == "explicit" {
+        asset_ids.join(",")
+    } else if mode == "group" {
         format!(
             "{}:{}",
             group_id.as_deref().unwrap_or_default(),
@@ -1799,91 +1815,112 @@ pub(crate) fn start_batch_mount(
     let worker_group_id = group_id.clone();
     let worker_profile_id = profile_id.clone();
     let worker_group_ids = group_ids.clone();
+    let worker_asset_ids = asset_ids.clone();
     let worker_enabled = enabled.unwrap_or(true);
     let worker_task_id = task_id.clone();
     let spawn_result = std::thread::Builder::new()
         .name(format!("aiw-batch-mount-{}", &task_id[..8]))
         .spawn(move || {
-            let service = AppService::from_runtime(&runtime);
-            if task_context.is_cancelled() {
-                let result = tasks.finish_batch_mount(
-                    &worker_task_id,
-                    Err("batch mount cancelled before execution".to_string()),
-                );
-                if let Ok(snapshot) = result {
-                    let _ = worker_app.emit(BATCH_MOUNT_TASK_UPDATED_EVENT, &snapshot);
-                }
-                return;
-            }
-            let mut result = if worker_mode == "group" {
-                service
-                    .apply_skill_group_mount_with_progress(
-                        worker_group_id.as_deref().unwrap_or_default(),
-                        &worker_profile_id,
-                        worker_enabled,
-                        |completed, total, current_id| {
-                            if task_context.is_cancelled() {
-                                return Err(AppError::Cancelled(
-                                    "batch mount cancelled".to_string(),
-                                ));
-                            }
-                            tasks
-                                .update_batch_mount_progress(
-                                    &worker_task_id,
-                                    completed as u64,
-                                    Some(total as u64),
-                                    Some(current_id),
-                                )
-                                .map(|_| ())
-                        },
-                    )
-                    .and_then(|value| {
-                        serde_json::to_value(value)
-                            .map_err(|error| AppError::External(error.to_string()))
-                    })
-            } else {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let service = AppService::from_runtime(&runtime);
                 if task_context.is_cancelled() {
-                    let result = tasks.finish_batch_mount(
-                        &worker_task_id,
-                        Err("batch mount cancelled before exclusive execution".to_string()),
-                    );
-                    if let Ok(snapshot) = result {
-                        let _ = worker_app.emit(BATCH_MOUNT_TASK_UPDATED_EVENT, &snapshot);
-                    }
-                    return;
+                    return Err(AppError::Cancelled(
+                        "batch mount cancelled before execution".to_string(),
+                    ));
                 }
-                service
-                    .apply_skill_group_exclusive_mount_with_progress(
-                        SkillGroupExclusiveMountInput {
-                            group_ids: worker_group_ids,
-                            profile_id: worker_profile_id,
-                            mount_selected: true,
-                            dry_run: false,
-                        },
-                        |completed, total, current_id| {
-                            if task_context.is_cancelled() {
-                                return Err(AppError::Cancelled(
-                                    "batch mount cancelled".to_string(),
-                                ));
-                            }
-                            tasks
-                                .update_batch_mount_progress(
-                                    &worker_task_id,
-                                    completed as u64,
-                                    Some(total as u64),
-                                    Some(current_id),
-                                )
-                                .map(|_| ())
-                        },
-                    )
-                    .and_then(|value| {
-                        serde_json::to_value(value)
-                            .map_err(|error| AppError::External(error.to_string()))
-                    })
-            };
+                if worker_mode == "explicit" {
+                    service
+                        .apply_explicit_mount_with_progress(
+                            worker_asset_ids,
+                            &worker_profile_id,
+                            worker_enabled,
+                            |completed, total, current_id| {
+                                if task_context.is_cancelled() {
+                                    return Err(AppError::Cancelled(
+                                        "batch mount cancelled".to_string(),
+                                    ));
+                                }
+                                tasks
+                                    .update_batch_mount_progress(
+                                        &worker_task_id,
+                                        completed as u64,
+                                        Some(total as u64),
+                                        Some(current_id),
+                                    )
+                                    .map(|_| ())
+                            },
+                        )
+                        .and_then(|value| {
+                            serde_json::to_value(value)
+                                .map_err(|error| AppError::External(error.to_string()))
+                        })
+                } else if worker_mode == "group" {
+                    service
+                        .apply_skill_group_mount_with_progress(
+                            worker_group_id.as_deref().unwrap_or_default(),
+                            &worker_profile_id,
+                            worker_enabled,
+                            |completed, total, current_id| {
+                                if task_context.is_cancelled() {
+                                    return Err(AppError::Cancelled(
+                                        "batch mount cancelled".to_string(),
+                                    ));
+                                }
+                                tasks
+                                    .update_batch_mount_progress(
+                                        &worker_task_id,
+                                        completed as u64,
+                                        Some(total as u64),
+                                        Some(current_id),
+                                    )
+                                    .map(|_| ())
+                            },
+                        )
+                        .and_then(|value| {
+                            serde_json::to_value(value)
+                                .map_err(|error| AppError::External(error.to_string()))
+                        })
+                } else {
+                    service
+                        .apply_skill_group_exclusive_mount_with_progress(
+                            SkillGroupExclusiveMountInput {
+                                group_ids: worker_group_ids,
+                                profile_id: worker_profile_id,
+                                mount_selected: true,
+                                dry_run: false,
+                            },
+                            |completed, total, current_id| {
+                                if task_context.is_cancelled() {
+                                    return Err(AppError::Cancelled(
+                                        "batch mount cancelled".to_string(),
+                                    ));
+                                }
+                                tasks
+                                    .update_batch_mount_progress(
+                                        &worker_task_id,
+                                        completed as u64,
+                                        Some(total as u64),
+                                        Some(current_id),
+                                    )
+                                    .map(|_| ())
+                            },
+                        )
+                        .and_then(|value| {
+                            serde_json::to_value(value)
+                                .map_err(|error| AppError::External(error.to_string()))
+                        })
+                }
+            }))
+            .unwrap_or_else(|_| {
+                Err(AppError::External(
+                    "batch mount worker panicked".to_string(),
+                ))
+            });
+            let mut result = result;
             if let Ok(value) = result.as_mut() {
                 let partial = value
                     .get("errorCount")
+                    .or_else(|| value.get("error_count"))
                     .and_then(Value::as_u64)
                     .is_some_and(|count| count > 0)
                     || value
@@ -1910,6 +1947,7 @@ pub(crate) fn start_batch_mount(
                 .and_then(|value| {
                     let total = value
                         .get("requestedCount")
+                        .or_else(|| value.get("requested_count"))
                         .and_then(Value::as_u64)
                         .or_else(|| {
                             let preview = value.get("preview")?;
@@ -1921,9 +1959,16 @@ pub(crate) fn start_batch_mount(
                 })
                 .unwrap_or((0, None));
             let _ = tasks.update_batch_mount_progress(&worker_task_id, completed, total, None);
-            if let Ok(snapshot) =
+            let finish = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 tasks.finish_batch_mount(&worker_task_id, result.map_err(String::from))
-            {
+            }))
+            .unwrap_or_else(|_| {
+                tasks.finish_batch_mount(
+                    &worker_task_id,
+                    Err("batch mount worker panicked".to_string()),
+                )
+            });
+            if let Ok(snapshot) = finish {
                 let _ = worker_app.emit(BATCH_MOUNT_TASK_UPDATED_EVENT, &snapshot);
             }
         });

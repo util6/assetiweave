@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useCatalogTasks } from "../../app/backgroundTasks/CatalogTaskProvider";
 import { type NotificationMessage } from "../../components/notifications/NotificationBanner";
 import {
@@ -24,7 +24,7 @@ import { useMountSelection } from "./useMountSelection";
 
 export function useCatalogController() {
   const { settings } = useAppSettings();
-  const { startSourceScan } = useCatalogTasks();
+  const { batchMount, startBatchMount, startSourceScan } = useCatalogTasks();
   const catalogData = useCatalogData();
   const operations = useCatalogOperations(
     catalogData.refreshOverview,
@@ -42,7 +42,9 @@ export function useCatalogController() {
   const { setMountProfiles, toggleMountProfile } = useMountSelection(
     catalogData.assetMountStatuses,
     catalogData.applyAssetMountStatus,
+    startBatchMount,
   );
+  const refreshedBatchTaskRef = useRef<string | null>(null);
   const [query, setQuery] = useState("");
   const [refreshingMountStatus, setRefreshingMountStatus] = useState(false);
   const [notification, setNotification] = useState<NotificationMessage | null>(() =>
@@ -73,6 +75,17 @@ export function useCatalogController() {
       setNotification((current) => (current?.id === "mvp-notification-outlet" ? null : current));
     }
   }, [settings.showStartupNotification]);
+
+  useEffect(() => {
+    if (!batchMount || (batchMount.status !== "completed" && batchMount.status !== "failed" && batchMount.status !== "cancelled")) {
+      return;
+    }
+    if (refreshedBatchTaskRef.current === batchMount.id) {
+      return;
+    }
+    refreshedBatchTaskRef.current = batchMount.id;
+    void catalogData.refreshMountState().catch(() => undefined);
+  }, [batchMount, catalogData.refreshMountState]);
 
   function dismissNotification(id: string) {
     setNotification((current) => (current?.id === id ? null : current));
