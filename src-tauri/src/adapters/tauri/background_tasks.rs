@@ -897,13 +897,15 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        let registration = self.register_projection(
+        let detail = serde_json::to_value(&snapshot)
+            .map_err(|error| crate::backend::runtime::AppError::External(error.to_string()))?;
+        let mut spec = TaskSpec::new(
             TaskKind::SearchIndexRebuild,
-            &snapshot.id,
             Some("conversation-search-index".to_string()),
-            Vec::new(),
-            &snapshot,
-        )?;
+        )
+        .with_task_id(snapshot.id.clone());
+        spec.detail = detail;
+        let registration = self.task_runtime.register_external(spec)?;
         match registration {
             ExternalRegistrationOutcome::Started(ref runtime)
             | ExternalRegistrationOutcome::Existing(ref runtime)
@@ -1961,6 +1963,47 @@ mod tests {
             .unwrap();
         assert_eq!(finished.status, BackgroundTaskStatus::Completed);
         assert!(!registry.has_running_tasks());
+    }
+
+    #[test]
+    fn search_index_registration_leaves_worker_start_to_task_runtime() {
+        let registry = BackgroundTaskRegistry::default();
+        let (first, should_start) = registry
+            .begin_conversation_search_index_rebuild()
+            .expect("register search index task");
+        assert!(should_start);
+
+        let executions = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let executions_for_worker = executions.clone();
+        registry
+            .task_runtime()
+            .expect("shared task runtime")
+            .start_external_with(
+                &first.id,
+                Value::Null,
+                Box::new(move |_| {
+                    executions_for_worker.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Ok(Value::Null)
+                }),
+            )
+            .expect("start search index worker");
+
+        for _ in 0..100 {
+            if registry
+                .task_runtime()
+                .and_then(|runtime| runtime.get(&first.id))
+                .is_some_and(|snapshot| snapshot.state.is_terminal())
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let runtime = registry.task_runtime().expect("shared task runtime");
+        assert_eq!(executions.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            runtime.get(&first.id).expect("completed task").state,
+            TaskState::Succeeded
+        );
     }
 
     #[test]

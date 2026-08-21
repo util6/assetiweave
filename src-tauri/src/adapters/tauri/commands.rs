@@ -82,10 +82,7 @@ use crate::{
         asset_log_fields, log_error, log_info, log_warn, profile_log_fields,
         source_input_log_fields, source_log_fields, status_summary_fields,
     },
-    backend::runtime::{
-        tasks::{SpawnOutcome, TaskContext, TaskKind, TaskSpec},
-        AppError,
-    },
+    backend::runtime::{tasks::TaskContext, AppError},
 };
 use serde_json::Value;
 use std::{collections::BTreeMap, sync::Arc};
@@ -2803,77 +2800,20 @@ pub(crate) fn start_conversation_search_index_rebuild(
     let runtime = state.runtime.clone();
     let background_tasks = state.background_tasks.clone();
     let task_id = snapshot.id.clone();
-    if let Some(task_runtime) = background_tasks.task_runtime() {
-        let app = app.clone();
-        let task_id_for_runtime = task_id.clone();
-        let background_tasks_for_runtime = background_tasks.clone();
-        let outcome = task_runtime.spawn(
-            TaskSpec::new(
-                TaskKind::SearchIndexRebuild,
-                Some("conversation-search-index".to_string()),
-            ),
-            Box::new(move |_context| {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    AppService::from_runtime(&runtime)
-                        .rebuild_conversation_search_index()
-                        .and_then(|report| {
-                            serde_json::to_value(report).map_err(|error| {
-                                AppError::External(format!(
-                                    "serialize conversation search index report: {error}"
-                                ))
-                            })
-                        })
-                }))
-                .unwrap_or_else(|_| {
-                    Err(AppError::Process(
-                        "conversation search index rebuild panicked".to_string(),
-                    ))
-                });
-                let projection_result = match &result {
-                    Ok(value) => Ok(value.clone()),
-                    Err(error) => Err(error.to_string()),
-                };
-                match background_tasks_for_runtime.finish_conversation_search_index_rebuild(
-                    &task_id_for_runtime,
-                    projection_result,
-                ) {
-                    Ok(snapshot) => {
-                        if let Err(error) =
-                            app.emit("conversation-search-index-task-updated", &snapshot)
-                        {
-                            log_error(
-                                "conversation.search.index.rebuild",
-                                "推送对话搜索索引任务状态失败",
-                                &error.to_string(),
-                                &[("task_id", task_id_for_runtime.clone())],
-                            );
-                        }
-                    }
-                    Err(error) => log_error(
-                        "conversation.search.index.rebuild",
-                        "更新对话搜索索引任务状态失败",
-                        &error,
-                        &[("task_id", task_id_for_runtime.clone())],
-                    ),
-                }
-                result
-            }),
-        );
-        match outcome {
-            Ok(SpawnOutcome::Started) => {}
-            Ok(SpawnOutcome::Existing) => {
-                return Err(AppError::Conflict(
-                    "conversation search index task is already running in TaskRuntime".to_string(),
-                ));
-            }
-            Err(error) => {
-                let _ = background_tasks
-                    .finish_conversation_search_index_rebuild(&task_id, Err(error.to_string()));
-                return Err(error);
-            }
-        }
-    } else {
-        tauri::async_runtime::spawn_blocking(move || {
+    let task_runtime = background_tasks
+        .task_runtime()
+        .ok_or_else(|| AppError::Conflict("TaskRuntime 未初始化".to_string()))?;
+    let task_detail = task_runtime
+        .get(&task_id)
+        .map(|task| task.detail)
+        .ok_or_else(|| AppError::NotFound(format!("background task not found: {task_id}")))?;
+    let app = app.clone();
+    let task_id_for_runtime = task_id.clone();
+    let background_tasks_for_runtime = background_tasks.clone();
+    let outcome = task_runtime.start_external_with(
+        &task_id,
+        task_detail,
+        Box::new(move |_context| {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 AppService::from_runtime(&runtime)
                     .rebuild_conversation_search_index()
@@ -2894,8 +2834,8 @@ pub(crate) fn start_conversation_search_index_rebuild(
                 Ok(value) => Ok(value.clone()),
                 Err(error) => Err(error.to_string()),
             };
-            match background_tasks
-                .finish_conversation_search_index_rebuild(&task_id, projection_result)
+            match background_tasks_for_runtime
+                .finish_conversation_search_index_rebuild(&task_id_for_runtime, projection_result)
             {
                 Ok(snapshot) => {
                     if let Err(error) =
@@ -2905,7 +2845,7 @@ pub(crate) fn start_conversation_search_index_rebuild(
                             "conversation.search.index.rebuild",
                             "推送对话搜索索引任务状态失败",
                             &error.to_string(),
-                            &[("task_id", task_id)],
+                            &[("task_id", task_id_for_runtime.clone())],
                         );
                     }
                 }
@@ -2913,10 +2853,16 @@ pub(crate) fn start_conversation_search_index_rebuild(
                     "conversation.search.index.rebuild",
                     "更新对话搜索索引任务状态失败",
                     &error,
-                    &[("task_id", task_id)],
+                    &[("task_id", task_id_for_runtime.clone())],
                 ),
             }
-        });
+            result
+        }),
+    );
+    if let Err(error) = outcome {
+        let _ = background_tasks
+            .finish_conversation_search_index_rebuild(&task_id, Err(error.to_string()));
+        return Err(error);
     }
     Ok(snapshot)
 }

@@ -174,6 +174,7 @@ pub(crate) struct TaskRuntime {
     active: Arc<(Mutex<usize>, Condvar)>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum SpawnOutcome {
     Started,
     Existing,
@@ -217,6 +218,7 @@ impl TaskRuntime {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn spawn(&self, spec: TaskSpec, task: TaskFn) -> Result<SpawnOutcome, AppError> {
         if !self.accepting.load(Ordering::Acquire) {
             return Err(AppError::Canceled(
