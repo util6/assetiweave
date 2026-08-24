@@ -6,6 +6,7 @@ import {
   applySkillGroupMount,
   previewSkillGroupExclusiveMount,
   revealPath,
+  type BatchMountTaskSnapshot,
 } from "../../services/catalog";
 import { useAppSettings } from "../../store/settings/AppSettingsProvider";
 import { useTenantController } from "../tenants/useTenantController";
@@ -22,14 +23,29 @@ import { useCatalogOperations } from "./useCatalogOperations";
 import { useExpandedAssets } from "./useExpandedAssets";
 import { useMountSelection } from "./useMountSelection";
 
+type PendingBatchMount =
+  | {
+      mode: "explicit" | "group";
+      assetIds: string[];
+      profileId: string;
+      enabled: boolean;
+      groupId?: string;
+    }
+  | {
+      mode: "exclusive";
+      groupIds: string[];
+      profileId: string;
+    };
+
 export function useCatalogController() {
   const { settings } = useAppSettings();
-  const { batchMount, startBatchMount, startSourceScan } = useCatalogTasks();
+  const { batchMount, sourceScan, startBatchMount, startSourceScan } = useCatalogTasks();
   const catalogData = useCatalogData();
   const operations = useCatalogOperations(
     catalogData.refreshOverview,
     catalogData.activeAssetKind,
     startSourceScan,
+    sourceScan,
   );
   const tenantController = useTenantController({
     onTenantChanged: async () => {
@@ -45,6 +61,9 @@ export function useCatalogController() {
     startBatchMount,
   );
   const refreshedBatchTaskRef = useRef<string | null>(null);
+  const pendingBatchTasksRef = useRef(new Map<string, PendingBatchMount>());
+  const latestBatchMountRef = useRef<BatchMountTaskSnapshot | null>(batchMount);
+  latestBatchMountRef.current = batchMount;
   const [query, setQuery] = useState("");
   const [refreshingMountStatus, setRefreshingMountStatus] = useState(false);
   const [notification, setNotification] = useState<NotificationMessage | null>(() =>
@@ -83,9 +102,108 @@ export function useCatalogController() {
     if (refreshedBatchTaskRef.current === batchMount.id) {
       return;
     }
+    const pending = pendingBatchTasksRef.current.get(batchMount.id);
+    if (!pending) {
+      return;
+    }
     refreshedBatchTaskRef.current = batchMount.id;
-    void catalogData.refreshMountState().catch(() => undefined);
+    pendingBatchTasksRef.current.delete(batchMount.id);
+    void settleBatchMount(batchMount, pending);
   }, [batchMount, catalogData.refreshMountState]);
+
+  async function settleBatchMount(task: BatchMountTaskSnapshot, pending: PendingBatchMount) {
+    try {
+      const refreshedStatuses = await catalogData.refreshMountState();
+      operations.clearDeploymentPlan();
+      if (task.status !== "completed") {
+        setNotification({
+          id: `mount-batch-error-${pending.profileId}-${Date.now()}`,
+          tone: "error",
+          messageKey: "mount.notification.failed",
+          messageParams: { message: task.error?.message ?? task.status },
+        });
+        return;
+      }
+
+      if (pending.mode === "exclusive") {
+        const result = batchResult(task);
+        setNotification({
+          id: `mount-group-exclusive-sync-${pending.profileId}-${Date.now()}`,
+          tone: numberField(result, "skipped_count") > 0 || arrayLength(result, "errors") > 0 ? "warning" : "success",
+          messageKey: "group.exclusive.result",
+          messageParams: {
+            profile: getProfileName(pending.profileId, catalogData.profiles),
+            keep: numberField(result, "keep_count"),
+            mount: numberField(result, "mount_count"),
+            unmount: numberField(result, "unmount_count"),
+            mounted: countMountedAssetsForProfile(refreshedStatuses, pending.profileId),
+            skipped: numberField(result, "skipped_count") + arrayLength(result, "errors"),
+          },
+        });
+        return;
+      }
+
+      const result = batchResult(task);
+      const isGroup = pending.mode === "group";
+      const errorCount = isGroup ? numberField(result, "error_count") : 0;
+      setNotification({
+        id: `mount-${pending.mode}-sync-${pending.groupId ?? pending.profileId}-${Date.now()}`,
+        tone: errorCount > 0 ? "warning" : "success",
+        messageKey: isGroup
+          ? pending.enabled
+            ? "group.mount.resultMounted"
+            : "group.mount.resultUnmounted"
+          : pending.enabled
+            ? "mount.notification.batchMountedProfile"
+            : "mount.notification.batchUnmountedProfile",
+        messageParams: {
+          ...(isGroup
+            ? {
+                updated: countAssetsForProfileState(
+                  pending.assetIds,
+                  refreshedStatuses,
+                  pending.profileId,
+                  pending.enabled ? "mounted" : "not_mounted",
+                ),
+                errors: errorCount,
+              }
+            : {
+                count: countAssetsForProfileState(
+                  pending.assetIds,
+                  refreshedStatuses,
+                  pending.profileId,
+                  pending.enabled ? "mounted" : "not_mounted",
+                ),
+              }),
+          profile: getProfileName(pending.profileId, catalogData.profiles),
+          mounted: countMountedAssetsForProfile(refreshedStatuses, pending.profileId),
+        },
+      });
+    } catch (error) {
+      setNotification({
+        id: `mount-batch-error-${pending.profileId}-${Date.now()}`,
+        tone: "error",
+        messageKey: "mount.notification.failed",
+        messageParams: { message: errorMessage(error) },
+      });
+    }
+  }
+
+  function registerPendingBatchMount(task: BatchMountTaskSnapshot, pending: PendingBatchMount) {
+    pendingBatchTasksRef.current.set(task.id, pending);
+    const latest = latestBatchMountRef.current;
+    const terminal = isTerminalBatchMount(task)
+      ? task
+      : latest?.id === task.id && isTerminalBatchMount(latest)
+        ? latest
+        : null;
+    if (!terminal || refreshedBatchTaskRef.current === task.id) {
+      return;
+    }
+    refreshedBatchTaskRef.current = task.id;
+    pendingBatchTasksRef.current.delete(task.id);
+    void settleBatchMount(terminal, pending);
+  }
 
   function dismissNotification(id: string) {
     setNotification((current) => (current?.id === id ? null : current));
@@ -178,7 +296,16 @@ export function useCatalogController() {
     }
 
     try {
-      await setMountProfiles(mountableAssetIds, profileId, enabled);
+      const task = await setMountProfiles(mountableAssetIds, profileId, enabled);
+      if (task) {
+        registerPendingBatchMount(task, {
+          mode: "explicit",
+          assetIds: mountableAssetIds,
+          profileId,
+          enabled,
+        });
+        return;
+      }
       const refreshedStatuses = await catalogData.refreshMountState();
       operations.clearDeploymentPlan();
       setNotification({
@@ -219,24 +346,18 @@ export function useCatalogController() {
 
     try {
       if (isTauriRuntime()) {
-        const result = await applySkillGroupMount(groupId, profileId, enabled);
-        const refreshedStatuses = await catalogData.refreshMountState();
-        operations.clearDeploymentPlan();
-        setNotification({
-          id: `mount-group-sync-${groupId}-${profileId}-${Date.now()}`,
-          tone: result.error_count > 0 ? "warning" : "success",
-          messageKey: enabled ? "group.mount.resultMounted" : "group.mount.resultUnmounted",
-          messageParams: {
-            updated: countAssetsForProfileState(
-              assetIds,
-              refreshedStatuses,
-              profileId,
-              enabled ? "mounted" : "not_mounted",
-            ),
-            profile: getProfileName(profileId, catalogData.profiles),
-            mounted: countMountedAssetsForProfile(refreshedStatuses, profileId),
-            errors: result.error_count,
-          },
+        const task = await startBatchMount({
+          mode: "group",
+          groupId,
+          profileId,
+          enabled,
+        });
+        registerPendingBatchMount(task, {
+          mode: "group",
+          groupId,
+          assetIds,
+          profileId,
+          enabled,
         });
         return;
       }
@@ -291,6 +412,19 @@ export function useCatalogController() {
 
   async function applyGroupExclusiveMountAndClearPlan(groupIds: string[], profileId: string) {
     try {
+      if (isTauriRuntime()) {
+        const task = await startBatchMount({
+          mode: "exclusive",
+          groupIds,
+          profileId,
+        });
+        registerPendingBatchMount(task, {
+          mode: "exclusive",
+          groupIds,
+          profileId,
+        });
+        return;
+      }
       const result = await applySkillGroupExclusiveMount({
         group_ids: groupIds,
         profile_id: profileId,
@@ -312,7 +446,6 @@ export function useCatalogController() {
           skipped: result.skipped_count + result.errors.length,
         },
       });
-      return result;
     } catch (error) {
       await catalogData.refreshMountState().catch(() => undefined);
       setNotification({
@@ -360,4 +493,22 @@ function isTauriRuntime() {
 
 function getProfileName(profileId: string, profiles: { id: string; name: string }[]) {
   return profiles.find((profile) => profile.id === profileId)?.name ?? profileId;
+}
+
+function batchResult(task: BatchMountTaskSnapshot): Record<string, unknown> {
+  return task.result && typeof task.result === "object"
+    ? task.result as Record<string, unknown>
+    : {};
+}
+
+function numberField(result: Record<string, unknown>, key: string): number {
+  return typeof result[key] === "number" ? result[key] : 0;
+}
+
+function arrayLength(result: Record<string, unknown>, key: string): number {
+  return Array.isArray(result[key]) ? result[key].length : 0;
+}
+
+function isTerminalBatchMount(task: BatchMountTaskSnapshot): boolean {
+  return task.status === "completed" || task.status === "failed" || task.status === "cancelled";
 }

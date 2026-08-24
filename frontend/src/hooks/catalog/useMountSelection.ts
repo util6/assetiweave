@@ -46,19 +46,23 @@ export function useMountSelection(
     }
   }
 
-  async function setMountProfiles(assetIds: string[], profileId: string, enabled: boolean) {
+  async function setMountProfiles(
+    assetIds: string[],
+    profileId: string,
+    enabled: boolean,
+  ): Promise<BatchMountTaskSnapshot | null> {
     if (isTauriRuntime() && startBackgroundBatchMount) {
-      await startBackgroundBatchMount({
+      return await startBackgroundBatchMount({
         mode: "explicit",
         assetIds,
         profileId,
         enabled,
       });
-      return;
     }
     for (const assetId of assetIds) {
       await setMountProfile(assetId, profileId, enabled);
     }
+    return null;
   }
 
   return { setMountProfiles, toggleMountProfile };

@@ -1,9 +1,8 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createPlan,
   executePlan,
   scanSources,
-  waitForSourceScanTask,
   type SourceScanScope,
   type SourceScanTaskSnapshot,
 } from "../../services/catalog";
@@ -16,10 +15,26 @@ export function useCatalogOperations(
     kind?: Extract<AssetKind, "skill" | "prompt" | "rule">,
     scope?: SourceScanScope,
   ) => Promise<SourceScanTaskSnapshot>,
+  sourceScan?: SourceScanTaskSnapshot | null,
 ) {
   const [plan, setPlan] = useState<DeploymentPlan | null>(null);
   const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const startedScanIdsRef = useRef(new Set<string>());
+  const settledScanIdsRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    if (
+      !sourceScan ||
+      !isTerminalSourceScan(sourceScan) ||
+      !startedScanIdsRef.current.has(sourceScan.id) ||
+      settledScanIdsRef.current.has(sourceScan.id)
+    ) {
+      return;
+    }
+    settledScanIdsRef.current.add(sourceScan.id);
+    void settleSourceScan(sourceScan).catch(() => refreshOverview());
+  }, [sourceScan]);
 
   async function scan() {
     setBusy(true);
@@ -30,7 +45,11 @@ export function useCatalogOperations(
             ? activeAssetKind
             : undefined;
         const task = await startBackgroundScan(scanKind, "all");
-        void settleSourceScan(task).catch(() => refreshOverview());
+        startedScanIdsRef.current.add(task.id);
+        if (isTerminalSourceScan(task)) {
+          settledScanIdsRef.current.add(task.id);
+          await settleSourceScan(task);
+        }
         return;
       }
       const scannedAssets = await scanSources(activeAssetKind);
@@ -43,9 +62,8 @@ export function useCatalogOperations(
   }
 
   async function settleSourceScan(task: SourceScanTaskSnapshot) {
-    const terminal = isTerminalSourceScan(task) ? task : await waitForSourceScanTask(task.id);
-    if (terminal.status === "completed" && terminal.result) {
-      await refreshOverview(terminal.result);
+    if (task.status === "completed" && task.result) {
+      await refreshOverview(task.result);
       setPlan(null);
       setExecutionResult(null);
     } else {

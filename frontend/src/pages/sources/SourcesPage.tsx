@@ -76,8 +76,8 @@ export function SourcesPage({
 }) {
   const { t } = useI18n();
   const { startBackup, task: backupTask } = useSkillBackup();
-  const { startSourceScan } = useCatalogTasks();
-  const sources = useSourcesController(onCatalogRefresh, startSourceScan);
+  const { sourceScan, startSourceScan } = useCatalogTasks();
+  const sources = useSourcesController(onCatalogRefresh, startSourceScan, sourceScan);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [acquireDialogOpen, setAcquireDialogOpen] = useState(false);
   const [editingSource, setEditingSource] = useState<Source | null>(null);

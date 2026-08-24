@@ -116,7 +116,7 @@ export function AppRouter() {
           tone: "error",
           messageKey: "backup.notification.failed",
           messageParams: {
-            message: skillBackupTask.error ?? skillBackupTask.errors[0]?.message ?? "Unknown error",
+            message: skillBackupTask.error?.message ?? skillBackupTask.errors[0]?.error.message ?? "Unknown error",
           },
         });
         return;

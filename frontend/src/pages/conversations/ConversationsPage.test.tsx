@@ -911,7 +911,7 @@ describe("MarkdownContent", () => {
               "Wall time: 0.0000 seconds",
               "Process exited with code 0",
               "Output:",
-              "./specs/design.md:69:- App 快捷入口支持真实应用图标",
+              "./agent-docs/feature-plans/runtime-extension-refactor/00-overview.md:69:- App 快捷入口支持真实应用图标",
               "./cli/internal/errlint/legacy_exit_test.go:23: got := summarizeBySymbol(violations)",
               "./src-tauri/src/path_utils.rs:166: &[\"symbolic-ref\", \"--short\"]",
             ].join("\n"),
@@ -931,7 +931,7 @@ describe("MarkdownContent", () => {
 
     expect(html).toContain("<pre");
     expect(html).toContain("whitespace-pre-wrap");
-    expect(html).toContain("Output:\n./specs/design.md:69");
+    expect(html).toContain("Output:\n./agent-docs/feature-plans/runtime-extension-refactor/00-overview.md:69");
     expect(html).toContain("\n./cli/internal/errlint/legacy_exit_test.go:23");
     expect(html).toContain("\n./src-tauri/src/path_utils.rs:166");
   });

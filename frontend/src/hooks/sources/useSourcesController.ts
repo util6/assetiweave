@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { loadSharedResource, readSharedResource } from "../../lib/asyncCache";
 import {
   createSource,
@@ -9,7 +9,6 @@ import {
   scanSkillSources,
   startSourceScan,
   updateSource,
-  waitForSourceScanTask,
 } from "../../services/catalog";
 import type { Asset, Source, SourceInput } from "../../types";
 import type { SourceScanScope, SourceScanTaskSnapshot } from "../../services/catalog";
@@ -23,6 +22,7 @@ export function useSourcesController(
     kind?: "skill" | "prompt" | "rule",
     scope?: SourceScanScope,
   ) => Promise<SourceScanTaskSnapshot>,
+  sourceScan?: SourceScanTaskSnapshot | null,
 ) {
   const [sources, setSources] = useState<Source[]>(() => readSharedResource<Source[]>(SKILL_SOURCES_CACHE_KEY) ?? []);
   const [sourceAssets, setSourceAssets] = useState<Asset[]>(
@@ -35,10 +35,25 @@ export function useSourcesController(
       readSharedResource<Source[]>(SKILL_SOURCES_CACHE_KEY) === undefined ||
       readSharedResource<Asset[]>(SKILL_SOURCE_ASSETS_CACHE_KEY) === undefined,
   );
+  const startedScanIdsRef = useRef(new Set<string>());
+  const settledScanIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
     void Promise.all([refreshSources(), refreshSourceAssets()]).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (
+      !sourceScan ||
+      !isTerminalSourceScan(sourceScan) ||
+      !startedScanIdsRef.current.has(sourceScan.id) ||
+      settledScanIdsRef.current.has(sourceScan.id)
+    ) {
+      return;
+    }
+    settledScanIdsRef.current.add(sourceScan.id);
+    void refreshAfterSourceScan(sourceScan).catch(() => onCatalogRefresh?.());
+  }, [sourceScan]);
 
   const assetCounts = useMemo(() => {
     return sourceAssets.reduce<Record<string, number>>((counts, asset) => {
@@ -165,13 +180,11 @@ export function useSourcesController(
     }
 
     const task = await startBackgroundScan("skill", "skills");
+    startedScanIdsRef.current.add(task.id);
     if (isTerminalSourceScan(task)) {
+      settledScanIdsRef.current.add(task.id);
       await refreshAfterSourceScan(task);
-      return;
     }
-    void waitForSourceScanTask(task.id)
-      .then((terminal) => refreshAfterSourceScan(terminal))
-      .catch(() => onCatalogRefresh?.());
   }
 
   async function refreshAfterSourceScan(task: SourceScanTaskSnapshot) {

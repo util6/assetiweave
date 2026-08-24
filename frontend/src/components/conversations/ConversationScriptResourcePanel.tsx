@@ -226,7 +226,7 @@ export function ConversationScriptResourcePanel({
       return;
     }
 
-    onNotifyError(installTask.error || t(packageTaskFailedLabel(installTask.action)));
+    onNotifyError(installTask.error?.message || t(packageTaskFailedLabel(installTask.action)));
   }, [installTask, loadCatalog, onInstalled, onManifestSelect, onNotify, onNotifyError, t]);
 
   const recordEntries = useMemo(

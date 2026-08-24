@@ -251,6 +251,8 @@ export interface MemoryRecallPreviewParams {
   offset?: number;
 }
 
+import type { AppErrorView } from "./index";
+
 export interface MemoryTaskSnapshot {
   id: string;
   status: MemoryTaskStatus;
@@ -267,7 +269,7 @@ export interface MemoryTaskSnapshot {
   started_at: string;
   finished_at: string | null;
   result: unknown;
-  error: string | null;
+  error: AppErrorView | null;
 }
 
 export interface MemoryTaskStartParams {

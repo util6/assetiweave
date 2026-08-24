@@ -102,6 +102,13 @@ export interface SkillRemoteSource {
   message?: string | null;
 }
 
+export interface AppErrorView {
+  code: string;
+  message: string;
+  retryable: boolean;
+  details?: unknown;
+}
+
 export interface SkillAcquireResult {
   dry_run: boolean;
   provider: string;
@@ -118,6 +125,34 @@ export interface SkillAcquireResult {
     asset?: Asset;
   };
   remote_source?: SkillRemoteSource;
+  staging_cleaned?: boolean;
+}
+
+export type RemoteSkillAcquireTaskStatus =
+  | "running"
+  | "cancelling"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface RemoteSkillAcquireTaskSnapshot {
+  id: string;
+  status: RemoteSkillAcquireTaskStatus;
+  url: string;
+  branch?: string | null;
+  path?: string | null;
+  name?: string | null;
+  dry_run: boolean;
+  phase: string;
+  started_at: string;
+  finished_at?: string | null;
+  result?: SkillAcquireResult | null;
+  error?: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    details?: unknown;
+  } | null;
 }
 
 export interface AppOverview {

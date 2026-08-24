@@ -642,7 +642,7 @@ export function GlobalSettingsDialog({
     : fullConversationSyncTask?.status === "completed"
       ? t("settings.conversation.fullSyncCompleted")
       : fullConversationSyncTask?.status === "failed"
-        ? fullConversationSyncTask.error || t("settings.conversation.fullSyncFailed")
+        ? fullConversationSyncTask.error?.message || t("settings.conversation.fullSyncFailed")
         : t("settings.conversation.fullSyncIdle");
   const fullSyncRunning = fullConversationSyncTask?.status === "running";
   const fullSyncAnimating = fullSyncStarting || fullSyncRunning;

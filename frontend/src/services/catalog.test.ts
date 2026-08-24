@@ -96,32 +96,11 @@ describe("catalog services", () => {
     ]);
   });
 
-  it("does not replace a desktop scan failure with preview assets", async () => {
+  it("does not expose a synchronous desktop scan fallback", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
-    const failedTask = {
-      id: "scan-failed",
-      status: "failed",
-      scope: "all",
-      kind: null,
-      progress: {
-        phase: "failed",
-        completed_source_count: 0,
-        total_source_count: 1,
-        current_source_name: null,
-      },
-      started_at: "2026-08-21T00:00:00Z",
-      finished_at: "2026-08-21T00:00:01Z",
-      result: null,
-      error: "fixture scan failed",
-    } as const;
-    invokeMock.mockImplementation(async (command: string) => {
-      if (command === "start_source_scan" || command === "get_source_scan_task") {
-        return failedTask;
-      }
-      throw new Error(`unexpected command: ${command}`);
-    });
 
-    await expect(scanSources()).rejects.toThrow("fixture scan failed");
+    await expect(scanSources()).rejects.toThrow("Desktop source scans must use startSourceScan");
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 });
 

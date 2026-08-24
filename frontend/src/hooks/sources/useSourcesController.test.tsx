@@ -14,7 +14,6 @@ const catalogService = vi.hoisted(() => ({
   scanSkillSources: vi.fn(),
   startSourceScan: vi.fn(),
   updateSource: vi.fn(),
-  waitForSourceScanTask: vi.fn(),
 }));
 
 vi.mock("../../services/catalog", () => catalogService);
@@ -54,11 +53,13 @@ describe("useSourcesController", () => {
     catalogService.listSourceAssets.mockResolvedValue([]);
     const onCatalogRefresh = vi.fn().mockResolvedValue(undefined);
     const task = runningSourceScan();
-    const terminal = { ...task, status: "completed", result: [], finished_at: "2026-08-21T00:00:02Z" };
+    const terminal = { ...task, status: "completed" as const, result: [], finished_at: "2026-08-21T00:00:02Z" };
     const startBackgroundScan = vi.fn().mockResolvedValue(task);
-    catalogService.waitForSourceScanTask.mockResolvedValue(terminal);
 
-    const { result } = renderHook(() => useSourcesController(onCatalogRefresh, startBackgroundScan));
+    const { result, rerender } = renderHook(
+      ({ snapshot }) => useSourcesController(onCatalogRefresh, startBackgroundScan, snapshot),
+      { initialProps: { snapshot: null as typeof terminal | null } },
+    );
     await waitFor(() => expect(result.current.sources).toEqual([source]));
 
     await act(async () => {
@@ -66,6 +67,8 @@ describe("useSourcesController", () => {
     });
 
     expect(startBackgroundScan).toHaveBeenCalledWith("skill", "skills");
+    expect(onCatalogRefresh).not.toHaveBeenCalled();
+    rerender({ snapshot: terminal });
     await waitFor(() => expect(onCatalogRefresh).toHaveBeenCalledWith([]));
   });
 });
