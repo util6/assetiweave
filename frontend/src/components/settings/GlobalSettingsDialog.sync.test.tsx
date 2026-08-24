@@ -77,6 +77,29 @@ vi.mock("../../services/cardTranslation", () => ({
   testConversationTranslationConnection: vi.fn(),
 }));
 
+vi.mock("../../services/agentRuntime", () => ({
+  checkAgentConnection: vi.fn().mockResolvedValue({
+    agent_id: "opencode",
+    available: true,
+    installed: true,
+    connected: false,
+    version: null,
+    connection_method: null,
+    error_code: null,
+    error: null,
+  }),
+  listAgentMarket: undefined,
+  listAgentCatalog: vi.fn().mockResolvedValue([]),
+  listAgentModels: vi.fn().mockResolvedValue({
+    agent_id: "opencode",
+    available: true,
+    models: [],
+    current_model_id: null,
+    error_code: null,
+    error: null,
+  }),
+}));
+
 describe("GlobalSettingsDialog", () => {
   beforeEach(() => {
     conversationSyncState.tasks = [];
