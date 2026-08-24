@@ -111,6 +111,7 @@ import {
   PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH,
   assignAgentToAction,
   assignModelToAgentActions,
+  modelsByAgentFromAssignments,
   resolveAgentCapability,
   resolveFontFamilyCss,
   type AgentCapabilityServiceId,
@@ -351,7 +352,7 @@ export function GlobalSettingsDialog({
         settings.agentAssignments,
         actionId,
         agentId,
-        settings.agentModels[agentId] ?? "",
+        modelsByAgentFromAssignments(settings.agentAssignments)[agentId] ?? "",
       ),
     );
     setAgentCapabilityDialog(null);
@@ -822,14 +823,8 @@ export function GlobalSettingsDialog({
                     "agentAssignments",
                     assignModelToAgentActions(settings.agentAssignments, agentId, modelId),
                   );
-                  if (agentId === "opencode") {
-                    updateSetting("aiRuntime", {
-                      ...settings.aiRuntime,
-                      model: modelId,
-                    });
-                  }
                 }}
-                selectedModels={settings.agentModels}
+                selectedModels={modelsByAgentFromAssignments(settings.agentAssignments)}
                 view={activePanel === "agents.settings" ? "settings" : "market"}
               />
             )}

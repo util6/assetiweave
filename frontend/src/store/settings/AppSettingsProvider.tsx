@@ -43,6 +43,7 @@ export {
   firstFontFamilyName,
   normalizeStoredSettings,
   normalizeConversationTranslationTargetLanguage,
+  modelsByAgentFromAssignments,
   resolveAgentCapability,
   resolveFontFamilyCss,
   TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH,

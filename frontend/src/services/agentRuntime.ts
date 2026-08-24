@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { isTauriRuntime } from "./appUpdater";
+import type { AppErrorView } from "../types";
 
 export type AgentConnectionCheckMode = "installation" | "connection";
 
@@ -106,9 +107,7 @@ export interface AgentMarketItem {
   description: string;
   protocol: AgentMarketProtocol;
   version: string;
-  coreCompatible: boolean;
-  coreCompatibility: { min: string; maxExclusive: string };
-  installability: "installable" | "runtime-required" | "core-incompatible" | "unsupported";
+  installability: "installable" | "runtime-required" | "unsupported";
   capabilities: {
     purposes: string[];
     textPrompt: boolean;
@@ -144,7 +143,7 @@ export interface AgentMarketRefreshTaskSnapshot {
   updatedAt: string;
   finishedAt: string | null;
   result: AgentMarketRefreshResult | null;
-  error: string | null;
+  error: AppErrorView | null;
 }
 
 export interface AgentInstallPreview {
@@ -215,7 +214,6 @@ export interface AgentMarketListRequest {
   query?: string;
   protocol?: AgentMarketProtocol;
   installedOnly?: boolean;
-  includeIncompatible?: boolean;
 }
 
 export interface AgentInstallPreviewRequest {

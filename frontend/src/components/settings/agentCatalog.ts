@@ -24,8 +24,6 @@ export interface AgentCatalogItem {
   installed?: AgentInstallationView | null;
   marketVersion?: string;
   updateAvailable?: boolean;
-  coreCompatible?: boolean;
-  coreCompatibility?: { min: string; maxExclusive: string };
   installability?: AgentMarketItem["installability"];
   hasSelectableDistribution?: boolean;
 }
@@ -105,8 +103,6 @@ export function marketItemToCatalogItem(item: AgentMarketItem): AgentCatalogItem
     installed: item.installed,
     marketVersion: item.version,
     updateAvailable: item.updateAvailable,
-    coreCompatible: item.coreCompatible,
-    coreCompatibility: item.coreCompatibility,
     installability: item.installability,
     hasSelectableDistribution: item.distributions.some((distribution) => distribution.selectable),
   };

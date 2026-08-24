@@ -212,7 +212,7 @@ export function AgentSettingsPanel({
         snapshot = await agentRuntime.getAgentMarketRefreshTask(snapshot.id);
       }
       if (snapshot.state === "failed") {
-        setConnectionMessages((current) => ({ ...current, _market: snapshot.error || t("settings.agents.refreshFailed") }));
+        setConnectionMessages((current) => ({ ...current, _market: snapshot.error?.message || t("settings.agents.refreshFailed") }));
         return;
       }
       await reloadMarketCatalog();

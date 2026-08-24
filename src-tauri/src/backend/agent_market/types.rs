@@ -751,12 +751,15 @@ impl From<&AgentMarketError> for AgentMarketErrorView {
     fn from(value: &AgentMarketError) -> Self {
         Self {
             code: value.code.clone(),
-            message: value.message.clone(),
+            message: crate::backend::runtime::sanitize_public_message(&value.message),
             agent_id: value.agent_id.clone(),
             phase: value.phase.clone(),
             retryable: value.retryable,
             action: value.action.clone(),
-            details: value.details.clone(),
+            details: value
+                .details
+                .as_ref()
+                .and_then(crate::backend::runtime::sanitize_details),
         }
     }
 }
@@ -768,12 +771,6 @@ pub(crate) struct AgentMarketListRequest {
     pub(crate) protocol: Option<AgentMarketProtocol>,
     #[serde(default)]
     pub(crate) installed_only: bool,
-    #[serde(default = "default_true")]
-    pub(crate) include_incompatible: bool,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -1197,5 +1194,29 @@ mod tests {
                 .args,
             vec!["--models"]
         );
+    }
+
+    #[test]
+    fn agent_market_error_view_redacts_infrastructure_diagnostics() {
+        let mut error = AgentMarketError::new(
+            "uninstall_failed",
+            "failed to remove /Users/util6/private-agent token=secret",
+            true,
+        );
+        error.details = Some(serde_json::json!({
+            "path": "/Users/util6/private-agent",
+            "token": "secret",
+            "phase": "cleaning_up",
+        }));
+
+        let view = AgentMarketErrorView::from(&error);
+        let serialized = serde_json::to_string(&view).unwrap();
+
+        assert_eq!(view.message, "The operation failed.");
+        assert_eq!(view.details.as_ref().unwrap()["path"], "<redacted>");
+        assert!(view.details.as_ref().unwrap().get("token").is_none());
+        assert_eq!(view.details.as_ref().unwrap()["phase"], "cleaning_up");
+        assert!(!serialized.contains("/Users/util6"));
+        assert!(!serialized.contains("secret"));
     }
 }

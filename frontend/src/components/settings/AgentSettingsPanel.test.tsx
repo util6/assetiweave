@@ -186,10 +186,9 @@ describe("AgentSettingsPanel", () => {
     expect(within(row as HTMLElement).getAllByRole("button")).toHaveLength(2);
   });
 
-  it("treats core compatibility metadata as observational", async () => {
+  it("lists catalog versions without compatibility gating", async () => {
     agentRuntime.listAgentMarket = listAgentMarketMock;
     const item = createMarketItem("opencode", false);
-    item.coreCompatible = false;
     listAgentMarketMock.mockResolvedValue([item]);
 
     renderPanel();
@@ -256,7 +255,6 @@ function createMarketItem(id: string, installed: boolean) {
     description: "Fixture Agent",
     protocol: "acp",
     version: "1.0.0",
-    coreCompatible: true,
     capabilities: {
       purposes: ["text"],
       textPrompt: true,

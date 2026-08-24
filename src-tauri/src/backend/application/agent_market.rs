@@ -49,8 +49,6 @@ pub(crate) struct AgentMarketItemView {
     pub(crate) description: String,
     pub(crate) protocol: AgentMarketProtocol,
     pub(crate) version: String,
-    pub(crate) core_compatible: bool,
-    pub(crate) core_compatibility: crate::backend::agent_market::types::CoreCompatibility,
     pub(crate) installability: String,
     pub(crate) capabilities: crate::backend::agent_market::types::CatalogCapabilities,
     pub(crate) verification: crate::backend::agent_market::types::Verification,
@@ -195,10 +193,6 @@ impl AppService {
                     description: item.description.clone(),
                     protocol: item.protocol.clone(),
                     version: item.version.clone(),
-                    // Kept in the wire DTO for client compatibility. Agent Market
-                    // versions are observational and never gate ACP lifecycle actions.
-                    core_compatible: true,
-                    core_compatibility: item.core_compatibility.clone(),
                     installability: installability(item, &candidates),
                     capabilities: item.capabilities.clone(),
                     verification: item.verification.clone(),
@@ -358,7 +352,6 @@ impl AppService {
             query: Some(agent_id.clone()),
             protocol: None,
             installed_only: false,
-            include_incompatible: true,
         })?
         .into_iter()
         .find(|item| item.id == agent_id)
@@ -583,7 +576,10 @@ impl AppService {
             Arc<dyn Fn(crate::backend::agent_market::types::LifecycleTaskPhase) + Send + Sync>,
         >,
     ) -> AppResult<AgentInstallationView> {
-        let assignment_refs = agent_assignment_refs(&self.db, &request.agent_id)?;
+        let settings_before =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let assignment_refs =
+            agent_assignment_refs_from_settings(&settings_before, &request.agent_id);
         if assignment_refs.iter().any(|assignment| {
             !request
                 .clear_capability_assignments
@@ -596,7 +592,41 @@ impl AppService {
                 false,
             )));
         }
-        let lifecycle = self.agent_lifecycle()?;
+        // Remove assignments before deleting the installation so a crash cannot
+        // leave settings pointing at a nonexistent Agent. If lifecycle work
+        // fails, restore the exact prior settings snapshot for recovery.
+        let cleared_settings =
+            settings_without_agent_assignments(settings_before.clone(), &assignment_refs);
+        let assignments_changed = cleared_settings != settings_before;
+        if assignments_changed {
+            crate::backend::app_settings::save_app_settings_for_database(
+                &self.db,
+                cleared_settings,
+            )?;
+        }
+
+        let restore_assignments = || {
+            crate::backend::app_settings::save_app_settings_for_database(
+                &self.db,
+                settings_before.clone(),
+            )
+            .map(|_| ())
+        };
+        let lifecycle = match self.agent_lifecycle() {
+            Ok(lifecycle) => lifecycle,
+            Err(error) => {
+                if assignments_changed {
+                    restore_assignments().map_err(|_recovery| {
+                        AppError::from(AgentMarketError::new(
+                            "assignment_recovery_failed",
+                            "Agent uninstall failed and assignment recovery failed.",
+                            true,
+                        ))
+                    })?;
+                }
+                return Err(error);
+            }
+        };
         let result = self
             .db
             .block_on(lifecycle.uninstall_with_cancellation_and_progress(
@@ -605,12 +635,22 @@ impl AppService {
                 cancellation,
                 phase_sink,
             ))
-            .map(|installation| installation_view(&installation))
-            .map_err(AppError::from)?;
-        if !assignment_refs.is_empty() {
-            clear_agent_assignments(&self.db, &assignment_refs)?;
+            .map(|installation| installation_view(&installation));
+        match result {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                if assignments_changed {
+                    restore_assignments().map_err(|_recovery| {
+                        AppError::from(AgentMarketError::new(
+                            "assignment_recovery_failed",
+                            "Agent uninstall failed and assignment recovery failed.",
+                            true,
+                        ))
+                    })?;
+                }
+                Err(AppError::from(error))
+            }
         }
-        Ok(result)
     }
 
     pub(crate) fn set_agent_enabled(
@@ -781,25 +821,21 @@ fn agent_assignment_refs(
     agent_id: &str,
 ) -> AppResult<Vec<String>> {
     let settings = crate::backend::app_settings::read_app_settings_value_for_database(database)?;
-    Ok(settings
+    Ok(agent_assignment_refs_from_settings(&settings, agent_id))
+}
+
+fn agent_assignment_refs_from_settings(settings: &Value, agent_id: &str) -> Vec<String> {
+    settings
         .get("agentAssignments")
         .and_then(Value::as_object)
         .into_iter()
         .flat_map(|assignments| assignments.iter())
         .filter(|(_, value)| value.get("agentId").and_then(Value::as_str) == Some(agent_id))
         .map(|(key, _)| key.clone())
-        .collect())
+        .collect()
 }
 
-fn clear_agent_assignments(
-    database: &crate::backend::store::Database,
-    assignments: &[String],
-) -> AppResult<()> {
-    if assignments.is_empty() {
-        return Ok(());
-    }
-    let mut settings =
-        crate::backend::app_settings::read_app_settings_value_for_database(database)?;
+fn settings_without_agent_assignments(mut settings: Value, assignments: &[String]) -> Value {
     if let Some(values) = settings
         .get_mut("agentAssignments")
         .and_then(Value::as_object_mut)
@@ -808,7 +844,7 @@ fn clear_agent_assignments(
             values.remove(assignment);
         }
     }
-    crate::backend::app_settings::save_app_settings_for_database(database, settings).map(|_| ())
+    settings
 }
 
 #[allow(dead_code)]
