@@ -15,8 +15,8 @@ use crate::backend::{
         types::{AgentDefinition, AgentModelOption, AgentProtocol},
     },
     ai_execution::{
-        AiExecutionCancellation, AiExecutionError, AiExecutionLimits, AiExecutionPhase,
-        AiExecutionPurpose, AiExecutionRequest, AiExecutionResult,
+        AiExecutionCancellation, AiExecutionCleanupReport, AiExecutionError, AiExecutionLimits,
+        AiExecutionPhase, AiExecutionPurpose, AiExecutionRequest, AiExecutionResult,
     },
     operation_log::{log_info, log_warn},
 };
@@ -70,6 +70,11 @@ impl AcpExecutionBackend {
         }
         request.report_phase(AiExecutionPhase::Closing);
         let cleanup = guard.cleanup(outcome.is_err(), &request).await;
+        request.report_cleanup(AiExecutionCleanupReport {
+            process_reaped: cleanup.process_reaped,
+            workspace_removed: cleanup.workspace_removed,
+            failure_count: cleanup.failures.len(),
+        });
         request.report_phase(AiExecutionPhase::CleaningUp);
         let mut cleanup_fields = vec![
             ("execution_id", request.execution_id.clone()),
@@ -105,7 +110,7 @@ impl AcpExecutionBackend {
         if cleanup.failures.is_empty() {
             return outcome;
         }
-        if outcome.is_ok() || !cleanup.process_reaped || !cleanup.workspace_removed {
+        if outcome.is_ok() {
             return Err(AiExecutionError::CleanupFailed {
                 failures: cleanup.failures,
             });
@@ -489,7 +494,9 @@ async fn run_prompt_and_aggregate(
                 match aggregator.apply(event) {
                     AggregatorAction::Continue => {}
                     AggregatorAction::CancelAndFail(error) => {
-                        let _ = protocol.cancel(session_id.clone());
+                        let _ = protocol
+                            .cancel_and_wait(session_id.clone(), request.limits.cancel_grace)
+                            .await;
                         return Err(error);
                     }
                     AggregatorAction::Complete { stop_reason } => {
@@ -530,7 +537,9 @@ async fn run_prompt_and_aggregate(
                 }
             }
             _ = &mut cancellation => {
-                let _ = protocol.cancel(session_id.clone());
+                let _ = protocol
+                    .cancel_and_wait(session_id.clone(), request.limits.cancel_grace)
+                    .await;
                 return Err(cancelled_error(definition));
             }
             exit = &mut process_exit => {
@@ -635,8 +644,13 @@ impl AcpExecutionGuard {
         if let Some(protocol) = self.protocol.as_ref() {
             if cancel_before_close {
                 if let Some(session_id) = self.session_id.clone() {
-                    if protocol.cancel(session_id).is_err() {
-                        report.failures.push("cancel".to_owned());
+                    let cancel_timeout = request
+                        .limits
+                        .cancel_grace
+                        .min(request.limits.close_timeout);
+                    match protocol.cancel_and_wait(session_id, cancel_timeout).await {
+                        Ok(()) => {}
+                        Err(_) => report.failures.push("cancel".to_owned()),
                     }
                 }
             }

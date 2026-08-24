@@ -195,6 +195,26 @@ impl AcpProtocol {
             })
     }
 
+    /// Send cancellation while the transport is still writable and yield to
+    /// the SDK actor once so the notification write is observed before the
+    /// caller starts closing the session/process. The SDK notification API has
+    /// no response/flush future, so this is the bounded transport boundary we
+    /// can enforce without waiting indefinitely on a non-cooperative agent.
+    pub(crate) async fn cancel_and_wait(
+        &self,
+        session_id: SessionId,
+        timeout: Duration,
+    ) -> Result<(), AcpError> {
+        self.cancel(session_id)?;
+        tokio::time::timeout(timeout, tokio::task::yield_now())
+            .await
+            .map_err(|_| AcpError::RequestTimeout {
+                operation: AcpOperation::Cancel,
+                timeout,
+            })?;
+        Ok(())
+    }
+
     pub(crate) async fn close_session(
         &self,
         session_id: SessionId,

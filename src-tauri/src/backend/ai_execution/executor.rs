@@ -20,8 +20,8 @@ use crate::backend::operation_log::{log_info, log_warn, LogField};
 
 use super::{
     backends::{acp::AcpExecutionBackend, native::NativeExecutionBackend},
-    AiExecutionError, AiExecutionPhase, AiExecutionProgressSink, AiExecutionPurpose,
-    AiExecutionRequest, AiExecutionResult,
+    AiExecutionCleanupReport, AiExecutionError, AiExecutionPhase, AiExecutionProgressSink,
+    AiExecutionPurpose, AiExecutionRequest, AiExecutionResult,
 };
 
 pub(crate) type BackendFuture<'a> =
@@ -473,6 +473,18 @@ impl AiExecutionProgressSink for ObservedProgressSink {
         );
         fields.push(("phase", format!("{phase:?}").to_ascii_lowercase()));
         log_info("ai_execution.phase", "AI execution phase changed", &fields);
+    }
+
+    fn failure_phase(&self) -> Option<AiExecutionPhase> {
+        self.downstream
+            .as_ref()
+            .and_then(|progress| progress.failure_phase())
+    }
+
+    fn set_cleanup_report(&self, report: AiExecutionCleanupReport) {
+        if let Some(downstream) = self.downstream.as_ref() {
+            downstream.set_cleanup_report(report);
+        }
     }
 }
 

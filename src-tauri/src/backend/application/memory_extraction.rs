@@ -49,7 +49,9 @@ impl AppService {
                 extractions: Vec::new(),
             });
         }
-        let runtime = load_recall_ai_runtime(self.agent_runtime.clone())?;
+        let settings =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let runtime = load_recall_ai_runtime(self.agent_runtime.clone(), &settings)?;
         let run_id = Uuid::new_v4().to_string();
         let kind = if preview.mode == MemoryRecallMode::Full {
             MemoryRunKind::FullOrganize
@@ -358,9 +360,11 @@ fn validate_raw_memories(items: &[MemoryRawMemory], allowed: &HashSet<String>) -
 
 fn load_recall_ai_runtime(
     runtime: Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
+    settings: &Value,
 ) -> AppResult<RecallAiRuntime> {
     let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
         &crate::backend::ai_execution::composition::ActionId::new("memory.extraction"),
+        settings,
     )?;
     Ok(RecallAiRuntime {
         agent_id,

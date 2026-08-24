@@ -5,9 +5,12 @@ impl AppService {
     pub(crate) fn check_opencode_translation_availability(
         &self,
     ) -> RuntimeAppResult<crate::backend::card_translation::OpencodeTranslationAvailability> {
+        let settings =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
         Ok(
-            crate::backend::card_translation::check_opencode_translation_availability(
+            crate::backend::card_translation::check_opencode_translation_availability_with_settings(
                 self.agent_runtime()?.as_ref(),
+                &settings,
             ),
         )
     }

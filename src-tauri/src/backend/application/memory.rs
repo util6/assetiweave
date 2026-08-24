@@ -651,9 +651,10 @@ mod tests {
             db,
             db_path: db_path.clone(),
             context,
-            runtime: app_runtime,
+            runtime: app_runtime.clone(),
             agent_runtime_manager: runtime_manager,
             agent_runtime,
+            conversation_adapter_catalog: app_runtime.conversation_adapter_catalog(),
         };
         (service, db_path)
     }

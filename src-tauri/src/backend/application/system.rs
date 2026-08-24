@@ -32,8 +32,9 @@ impl AppService {
             db: runtime.db().clone(),
             db_path: runtime.db_path().to_path_buf(),
             context: snapshot.request_context.clone(),
-            agent_runtime_manager: runtime.agent_runtime_manager(),
-            agent_runtime: runtime.agent_runtime(),
+            agent_runtime_manager: snapshot.agent_runtime_manager.clone(),
+            agent_runtime: snapshot.agent_runtime.clone(),
+            conversation_adapter_catalog: snapshot.conversation_adapter_catalog.clone(),
         }
     }
 
@@ -103,12 +104,13 @@ impl AppService {
             agent_runtime.clone(),
         );
         Ok(Self {
-            runtime,
+            runtime: runtime.clone(),
             db,
             db_path,
             context,
             agent_runtime_manager: runtime_manager,
             agent_runtime,
+            conversation_adapter_catalog: runtime.conversation_adapter_catalog(),
         })
     }
 

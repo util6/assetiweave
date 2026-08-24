@@ -1361,5 +1361,6 @@ function aiTask(
       : null,
     result: text ? { text } : null,
     error: null,
+    cleanup: null,
   };
 }

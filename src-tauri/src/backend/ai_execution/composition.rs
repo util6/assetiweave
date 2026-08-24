@@ -48,9 +48,11 @@ pub(crate) fn resolve_action(id: &ActionId) -> Result<&'static ActionRegistratio
         .ok_or_else(|| AppError::Validation(format!("unknown action: {}", id.as_str())))
 }
 
-pub(crate) fn resolve_agent_for(action: &ActionId) -> Result<(AgentId, Option<String>), AppError> {
+pub(crate) fn resolve_agent_for(
+    action: &ActionId,
+    settings: &Value,
+) -> Result<(AgentId, Option<String>), AppError> {
     resolve_action(action)?;
-    let settings = crate::backend::app_settings::read_app_settings_value()?;
     let assignments = settings.get("agentAssignments").and_then(Value::as_object);
     let assignment = assignments
         .and_then(|values| values.get(action.as_str()))

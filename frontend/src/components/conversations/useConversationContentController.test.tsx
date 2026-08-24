@@ -39,6 +39,7 @@ function task(overrides: Partial<AiExecutionTaskSnapshot> = {}): AiExecutionTask
     result: null,
     state: "running",
     updated_at: "2026-08-16T00:00:01Z",
+    cleanup: null,
     ...overrides,
   };
 }

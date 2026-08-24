@@ -13,8 +13,8 @@ const MEMORY_DREAM_PROMPT_VERSION: &str = "memory-auto-dream-v1";
 const MEMORY_DREAM_STABILITY_MINUTES: i64 = 10;
 const MEMORY_DREAM_QUERY_ROW_LIMIT: usize = 4_096;
 
-fn memory_store_error(error: String) -> AppError {
-    AppError::Storage(error)
+fn memory_store_error<E: Into<AppError>>(error: E) -> AppError {
+    error.into()
 }
 
 #[derive(Clone)]
@@ -313,7 +313,9 @@ impl AppService {
             return Err(AppError::Conflict(format_memory_dream_gate_error(&preview)));
         }
 
-        let policy = load_memory_dream_policy(self.agent_runtime.clone())?;
+        let settings =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let policy = load_memory_dream_policy(self.agent_runtime.clone(), &settings)?;
         let context = self.build_memory_dream_context(&preview)?;
         let run_id = Uuid::new_v4().to_string();
         let note_id = Uuid::new_v4().to_string();
@@ -551,7 +553,9 @@ impl AppService {
             MEMORY_DREAM_MAX_QUESTIONS,
             MEMORY_DREAM_MAX_INPUT_CHARS,
         );
-        let policy = load_memory_dream_policy(self.agent_runtime.clone())?;
+        let settings =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let policy = load_memory_dream_policy(self.agent_runtime.clone(), &settings)?;
         let gates = evaluate_memory_dream_gates(MemoryDreamGateInputs {
             trigger,
             policy,
@@ -1006,8 +1010,8 @@ fn memory_dream_candidates(markdown: &str) -> Vec<MemoryDreamCandidateDraft> {
 
 fn load_memory_dream_policy(
     runtime: std::sync::Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
+    settings: &Value,
 ) -> AppResult<MemoryDreamPolicy> {
-    let settings = crate::backend::app_settings::read_app_settings_value()?;
     let memory = settings.get("memory").and_then(Value::as_object);
     let auto_enabled = memory
         .and_then(|memory| memory.get("autoDreamEnabled"))
@@ -1025,6 +1029,7 @@ fn load_memory_dream_policy(
         .clamp(1, 50);
     let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
         &crate::backend::ai_execution::composition::ActionId::new("memory.dream"),
+        settings,
     )?;
     let runtime_available = runtime.check_availability(&agent_id).available;
     Ok(MemoryDreamPolicy {
@@ -1490,9 +1495,10 @@ mod tests {
             db: database,
             db_path: db_path.clone(),
             context,
-            runtime: app_runtime,
+            runtime: app_runtime.clone(),
             agent_runtime_manager: runtime_manager,
             agent_runtime,
+            conversation_adapter_catalog: app_runtime.conversation_adapter_catalog(),
         };
 
         let result = service

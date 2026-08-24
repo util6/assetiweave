@@ -107,6 +107,7 @@ impl AiExecutionError {
                 true,
             ),
             Self::ProtocolDetail { detail, .. } => {
+                let detail = crate::backend::runtime::sanitize_public_message(detail);
                 return AiExecutionErrorView {
                     code: "protocol_failed".to_string(),
                     message: format!("The AI agent protocol operation failed: {detail}"),
@@ -117,9 +118,14 @@ impl AiExecutionError {
             Self::ModelSelectionFailed { detail } => {
                 return AiExecutionErrorView {
                     code: "model_selection_failed".to_string(),
-                    message: detail.as_ref().map_or_else(
+                    message: detail.as_deref().map_or_else(
                         || "The requested AI model could not be selected.".to_string(),
-                        |detail| format!("The requested AI model could not be selected: {detail}"),
+                        |detail| {
+                            format!(
+                                "The requested AI model could not be selected: {}",
+                                crate::backend::runtime::sanitize_public_message(detail)
+                            )
+                        },
                     ),
                     retryable: false,
                     phase: None,
