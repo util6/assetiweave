@@ -557,7 +557,6 @@ pub(crate) fn sync_before_close(db_path: &std::path::Path, backup_database: bool
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::has_startup_self_check_arg;

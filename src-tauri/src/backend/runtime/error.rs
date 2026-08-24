@@ -300,7 +300,6 @@ mod tests {
     }
 }
 
-
 impl From<String> for AppError {
     fn from(message: String) -> Self {
         Self::External(message)
