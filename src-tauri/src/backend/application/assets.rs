@@ -16,7 +16,80 @@ pub(crate) struct BatchMountItemError {
     pub(crate) message: String,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) enum BatchMountWorkflowInput {
+    Explicit {
+        asset_ids: Vec<String>,
+        profile_id: String,
+        enabled: bool,
+    },
+    Group {
+        group_id: String,
+        profile_id: String,
+        enabled: bool,
+    },
+    Exclusive {
+        group_ids: Vec<String>,
+        profile_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub(crate) enum BatchMountWorkflowOutput {
+    Explicit(BatchMountWorkflowResult),
+    Group(ApplyAssetGroupMountResult),
+    Exclusive(ApplySkillGroupExclusiveMountResult),
+}
+
 impl AppService {
+    pub(crate) fn run_batch_mount_workflow_with_progress<BeforeItem>(
+        &self,
+        input: BatchMountWorkflowInput,
+        mut before_item: BeforeItem,
+    ) -> AppResult<BatchMountWorkflowOutput>
+    where
+        BeforeItem: FnMut(usize, usize, &str) -> AppResult<()>,
+    {
+        match input {
+            BatchMountWorkflowInput::Explicit {
+                asset_ids,
+                profile_id,
+                enabled,
+            } => self
+                .apply_explicit_mount_with_progress(asset_ids, &profile_id, enabled, before_item)
+                .map(BatchMountWorkflowOutput::Explicit),
+            BatchMountWorkflowInput::Group {
+                group_id,
+                profile_id,
+                enabled,
+            } => capabilities::apply_skill_group_mount_record_with_progress(
+                &self.db,
+                self.tenant_id(),
+                &group_id,
+                &profile_id,
+                enabled,
+                before_item,
+            )
+            .map(BatchMountWorkflowOutput::Group),
+            BatchMountWorkflowInput::Exclusive {
+                group_ids,
+                profile_id,
+            } => capabilities::apply_skill_group_exclusive_mount_record_with_progress(
+                &self.db,
+                self.tenant_id(),
+                &SkillGroupExclusiveMountInput {
+                    group_ids,
+                    profile_id,
+                    mount_selected: true,
+                    dry_run: false,
+                },
+                |index, total, asset_id| before_item(index, total, asset_id),
+            )
+            .map(BatchMountWorkflowOutput::Exclusive),
+        }
+    }
+
     pub(crate) fn list_assets(&self, params: ListAssetsParams) -> AppResult<Vec<CatalogAsset>> {
         Ok(capabilities::catalog_assets_sqlx(
             &self.db,
@@ -244,13 +317,40 @@ impl AppService {
             ));
         }
 
+        let (assets, sources, profile) =
+            capabilities::load_batch_mount_inputs_sqlx(&self.db, self.tenant_id(), profile_id)?;
+        let asset_by_id = assets
+            .iter()
+            .map(|asset| (asset.id.as_str(), asset))
+            .collect::<HashMap<_, _>>();
+        let source_by_id = sources
+            .iter()
+            .map(|source| (source.id.as_str(), source))
+            .collect::<HashMap<_, _>>();
+
         let total = asset_ids.len();
         let (results, errors) = run_batch_items(&asset_ids, &mut before_item, |asset_id| {
-            if enabled {
-                self.mount_asset_by_id(asset_id, profile_id)
-            } else {
-                self.unmount_asset_by_id(asset_id, profile_id)
+            let asset = asset_by_id
+                .get(asset_id)
+                .ok_or_else(|| AppError::NotFound(format!("asset not found: {asset_id}")))?;
+            if !enabled {
+                return capabilities::unmount_preloaded_asset_mount_record(
+                    &self.db,
+                    self.tenant_id(),
+                    asset,
+                    &profile,
+                );
             }
+            let source = source_by_id.get(asset.source_id.as_str()).ok_or_else(|| {
+                AppError::NotFound(format!("source not found: {}", asset.source_id))
+            })?;
+            capabilities::mount_preloaded_asset_mount_record(
+                &self.db,
+                self.tenant_id(),
+                asset,
+                source,
+                &profile,
+            )
         })?;
 
         Ok(BatchMountWorkflowResult {

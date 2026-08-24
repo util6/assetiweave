@@ -153,6 +153,22 @@ impl AppService {
         })
     }
 
+    pub(crate) fn list_target_profile_descriptors(
+        &self,
+    ) -> AppResult<Vec<crate::backend::models::TargetProfileDescriptor>> {
+        Ok(self.runtime.target_catalog().descriptors().to_vec())
+    }
+
+    pub(crate) fn refresh_target_profile_descriptors(
+        &self,
+    ) -> AppResult<Vec<crate::backend::models::TargetProfileDescriptor>> {
+        Ok(self
+            .runtime
+            .refresh_target_catalog_from_disk()?
+            .descriptors()
+            .to_vec())
+    }
+
     pub(crate) fn logs_get_snapshot(
         &self,
         file_name: Option<String>,

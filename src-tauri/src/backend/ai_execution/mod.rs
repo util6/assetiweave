@@ -7,8 +7,8 @@ mod types;
 pub(crate) use error::{AiExecutionError, AiExecutionErrorView};
 pub(crate) use executor::AgentExecutionRuntime;
 pub(crate) use types::{
-    AiExecutionCancellation, AiExecutionLimits, AiExecutionPhase, AiExecutionProgressSink,
-    AiExecutionPurpose, AiExecutionRequest, AiExecutionResult,
+    AiExecutionCancellation, AiExecutionCleanupReport, AiExecutionLimits, AiExecutionPhase,
+    AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest, AiExecutionResult,
 };
 
 use crate::backend::agents::types::{

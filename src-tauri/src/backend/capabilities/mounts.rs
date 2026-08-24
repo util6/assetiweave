@@ -185,26 +185,37 @@ pub(crate) fn mount_asset_mount_record(
     asset_id: &str,
     profile_id: &str,
 ) -> AppResult<AssetMountUpdateResult> {
+    let (asset, source, profile) = load_mount_target_sqlx(db, tenant_id, asset_id, profile_id)?;
+    mount_preloaded_asset_mount_record(db, tenant_id, &asset, &source, &profile)
+}
+
+pub(crate) fn mount_preloaded_asset_mount_record(
+    db: &crate::backend::store::Database,
+    tenant_id: &str,
+    asset: &Asset,
+    source: &Source,
+    profile: &TargetProfile,
+) -> AppResult<AssetMountUpdateResult> {
+    let asset_id = asset.id.as_str();
+    let profile_id = profile.id.as_str();
     let result = (|| {
-        let (asset, source, profile) = load_mount_target_sqlx(db, tenant_id, asset_id, profile_id)?;
-        let strategy = validate_mount_target(&source, &profile)?;
+        let strategy = validate_mount_target(source, profile)?;
         if !matches!(strategy, DeploymentStrategy::SymlinkToSource) {
             return Err(AppError::Validation(
                 "immediate mount only supports symlink_to_source profiles".to_string(),
             ));
         }
-        validate_immediate_mount_support(&asset, &profile)?;
+        validate_immediate_mount_support(asset, profile)?;
 
-        let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
+        let inspection = crate::backend::targeting::inspect_mount(profile, asset)?;
         match inspection.state {
             crate::backend::targeting::PhysicalMountState::Mounted => {
-                let inspection =
-                    repair_mounted_symlink_to_real_source(&asset, &profile, inspection)?;
+                let inspection = repair_mounted_symlink_to_real_source(asset, profile, inspection)?;
                 let mount = persist_verified_mount(
                     db,
                     tenant_id,
-                    &asset,
-                    &profile,
+                    asset,
+                    profile,
                     &inspection.target_path,
                     strategy,
                 )?;
@@ -224,8 +235,8 @@ pub(crate) fn mount_asset_mount_record(
         }
 
         let target_path = PathBuf::from(&inspection.target_path);
-        create_mount_symlink(&asset, &profile, &target_path)?;
-        let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
+        create_mount_symlink(asset, profile, &target_path)?;
+        let inspection = crate::backend::targeting::inspect_mount(profile, asset)?;
         if !matches!(
             inspection.state,
             crate::backend::targeting::PhysicalMountState::Mounted
@@ -240,8 +251,8 @@ pub(crate) fn mount_asset_mount_record(
         let mount = match persist_verified_mount(
             db,
             tenant_id,
-            &asset,
-            &profile,
+            asset,
+            profile,
             &inspection.target_path,
             strategy,
         ) {
@@ -259,7 +270,7 @@ pub(crate) fn mount_asset_mount_record(
 
     match &result {
         Ok(update) => {
-            let mut fields = mount_log_fields(db, tenant_id, asset_id, profile_id);
+            let mut fields = preloaded_mount_log_fields(asset, profile);
             fields.push(("target_path", update.status.target_path.clone()));
             fields.push(("state", format!("{:?}", update.status.state)));
             log_info("skill.mount.success", "skill 挂载成功", &fields);
@@ -268,7 +279,7 @@ pub(crate) fn mount_asset_mount_record(
             "skill.mount.error",
             "skill 挂载失败",
             error,
-            &mount_log_fields(db, tenant_id, asset_id, profile_id),
+            &preloaded_mount_log_fields(asset, profile),
         ),
     }
     result
@@ -280,10 +291,20 @@ pub(crate) fn unmount_asset_mount_record(
     asset_id: &str,
     profile_id: &str,
 ) -> AppResult<AssetMountUpdateResult> {
+    let (asset, profile) = load_mount_asset_and_profile_sqlx(db, tenant_id, asset_id, profile_id)?;
+    unmount_preloaded_asset_mount_record(db, tenant_id, &asset, &profile)
+}
+
+pub(crate) fn unmount_preloaded_asset_mount_record(
+    db: &crate::backend::store::Database,
+    tenant_id: &str,
+    asset: &Asset,
+    profile: &TargetProfile,
+) -> AppResult<AssetMountUpdateResult> {
+    let asset_id = asset.id.as_str();
+    let profile_id = profile.id.as_str();
     let result = (|| {
-        let (asset, profile) =
-            load_mount_asset_and_profile_sqlx(db, tenant_id, asset_id, profile_id)?;
-        let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
+        let inspection = crate::backend::targeting::inspect_mount(profile, asset)?;
         let target_path = PathBuf::from(&inspection.target_path);
         let removed_link = matches!(
             inspection.state,
@@ -304,7 +325,7 @@ pub(crate) fn unmount_asset_mount_record(
             }
         }
 
-        let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
+        let inspection = crate::backend::targeting::inspect_mount(profile, asset)?;
         if !matches!(
             inspection.state,
             crate::backend::targeting::PhysicalMountState::NotMounted
@@ -315,14 +336,14 @@ pub(crate) fn unmount_asset_mount_record(
             )));
         }
 
-        match persist_verified_unmount(db, tenant_id, &asset, &profile, &inspection.target_path) {
+        match persist_verified_unmount(db, tenant_id, asset, profile, &inspection.target_path) {
             Ok(mount) => Ok(AssetMountUpdateResult {
                 mount,
                 status: asset_mount_status(&asset.id, &profile.id, inspection),
             }),
             Err(error) => {
                 if removed_link {
-                    create_mount_symlink(&asset, &profile, &target_path).ok();
+                    create_mount_symlink(asset, profile, &target_path).ok();
                 }
                 Err(error)
             }
@@ -331,7 +352,7 @@ pub(crate) fn unmount_asset_mount_record(
 
     match &result {
         Ok(update) => {
-            let mut fields = mount_log_fields(db, tenant_id, asset_id, profile_id);
+            let mut fields = preloaded_mount_log_fields(asset, profile);
             fields.push(("target_path", update.status.target_path.clone()));
             fields.push(("state", format!("{:?}", update.status.state)));
             log_info("skill.unmount.success", "skill 卸载成功", &fields);
@@ -340,10 +361,16 @@ pub(crate) fn unmount_asset_mount_record(
             "skill.unmount.error",
             "skill 卸载失败",
             error,
-            &mount_log_fields(db, tenant_id, asset_id, profile_id),
+            &preloaded_mount_log_fields(asset, profile),
         ),
     }
     result
+}
+
+fn preloaded_mount_log_fields(asset: &Asset, profile: &TargetProfile) -> Vec<LogField> {
+    let mut fields = asset_log_fields(asset);
+    fields.extend(profile_log_fields(profile));
+    fields
 }
 
 pub(super) fn load_mount_asset_and_profile_sqlx(
@@ -364,6 +391,24 @@ pub(super) fn load_mount_asset_and_profile_sqlx(
             .await?
             .ok_or_else(|| AppError::NotFound(format!("profile not found: {profile_id}")))?;
         AppResult::Ok((asset, profile))
+    })
+}
+
+pub(crate) fn load_batch_mount_inputs_sqlx(
+    db: &crate::backend::store::Database,
+    tenant_id: &str,
+    profile_id: &str,
+) -> AppResult<(Vec<Asset>, Vec<Source>, TargetProfile)> {
+    let pool = db.pool().clone();
+    let tenant_id = tenant_id.to_string();
+    let profile_id = profile_id.to_string();
+    db.block_on(async move {
+        let assets = crate::backend::store::load_assets_sqlx(&pool, &tenant_id, None).await?;
+        let sources = crate::backend::store::load_sources_sqlx(&pool, &tenant_id).await?;
+        let profile = crate::backend::store::load_profile_sqlx(&pool, &tenant_id, &profile_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("profile not found: {profile_id}")))?;
+        AppResult::Ok((assets, sources, profile))
     })
 }
 

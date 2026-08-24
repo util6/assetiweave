@@ -12,7 +12,8 @@ use crate::adapters::tauri::background_tasks::{
     AiExecutionTaskGetParams, AiExecutionTaskSnapshot, BackgroundTaskRegistry,
     BackgroundTaskStatus, BatchMountTaskSnapshot, ConversationScriptInstallTaskSnapshot,
     ConversationSearchIndexTaskSnapshot, ConversationSyncTaskSnapshot, MemoryTaskSnapshot,
-    SkillBackupTaskSnapshot, SourceScanScope, SourceScanTaskSnapshot,
+    RemoteSkillAcquireTaskSnapshot, SkillBackupTaskSnapshot, SourceScanScope,
+    SourceScanTaskSnapshot,
 };
 #[cfg(test)]
 use crate::backend::capabilities::{
@@ -29,8 +30,8 @@ use crate::{
         AgentModelsResult,
     },
     backend::ai_execution::{
-        AgentExecutionRuntime, AiExecutionError, AiExecutionLimits, AiExecutionPhase,
-        AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
+        AgentExecutionRuntime, AiExecutionCleanupReport, AiExecutionError, AiExecutionLimits,
+        AiExecutionPhase, AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
     },
     backend::application::{
         AppService, ConversationAdapterCatalogRefreshParams,
@@ -67,16 +68,15 @@ use crate::{
         ExternalAdapterValidateParams,
     },
     backend::dto::{
-        AppOverview, AppShortcut, ApplyAssetGroupMountResult, ApplySkillGroupExclusiveMountResult,
-        AssetGroupInput, AssetMountStatus, AssetMountUpdateResult, CatalogAsset,
-        ConversationSearchIndexStatus, ExecutionResult, MemoryItemPage, NavigationModel,
-        SkillBackupSettings, SkillGroupExclusiveMountInput, SkillGroupExclusiveMountPreview,
-        SkillRemoteSource, SourceInput, TargetProfileInput,
+        AppOverview, AppShortcut, AssetGroupInput, AssetMountStatus, AssetMountUpdateResult,
+        CatalogAsset, ConversationSearchIndexStatus, ExecutionResult, MemoryItemPage,
+        NavigationModel, SkillBackupSettings, SkillGroupExclusiveMountInput,
+        SkillGroupExclusiveMountPreview, SkillRemoteSource, SourceInput, TargetProfileInput,
     },
     backend::models::{
         Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
         ConversationSource, DeploymentPlan, DeploymentStrategy, MemoryItemDetail, MemoryRunKind,
-        Source, TargetProfile, Tenant,
+        Source, TargetProfile, TargetProfileDescriptor, Tenant,
     },
     backend::operation_log::{
         asset_log_fields, log_error, log_info, log_warn, profile_log_fields,
@@ -85,7 +85,10 @@ use crate::{
     backend::runtime::{tasks::TaskContext, AppError},
 };
 use serde_json::Value;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
 use tauri::{AppHandle, Emitter, State};
 
 type RuntimeAppResult<T> = crate::backend::runtime::AppResult<T>;
@@ -187,9 +190,24 @@ pub(crate) async fn complete_app_close(
 
     crate::converge_ai_executions_before_close(background_tasks).await;
 
+    let task_runtime = runtime.clone();
+    let unfinished_tasks = tauri::async_runtime::spawn_blocking(move || {
+        task_runtime.stop_tasks_with_grace(std::time::Duration::from_secs(5))
+    })
+    .await
+    .map_err(AppError::external)?;
+    if !unfinished_tasks.is_empty() {
+        log_warn(
+            "app.close.tasks",
+            "关闭前仍有后台任务未收敛",
+            &[("unfinished_tasks", unfinished_tasks.len().to_string())],
+        );
+    }
+
     if !shutdown_sync_done.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        let sync_runtime = runtime.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            crate::sync_before_close(&db_path, backup_database);
+            crate::sync_before_close_with_runtime(&sync_runtime, &db_path, backup_database);
         })
         .await
         .map_err(AppError::external)?;
@@ -446,8 +464,10 @@ pub(crate) fn start_memory_task(
             "deep Recall and full organize background tasks require Recall parameters".to_string(),
         ));
     }
-    let (snapshot, cancellation, should_start) =
-        state.background_tasks.begin_memory_task(&params)?;
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    let (snapshot, cancellation, should_start) = state
+        .background_tasks
+        .begin_memory_task_for_tenant(&tenant_id, &params)?;
     if !should_start {
         return Ok(snapshot);
     }
@@ -486,14 +506,11 @@ pub(crate) fn start_memory_task(
                         Some(cancellation),
                         report,
                     )
-                    .map_err(|error| error.to_string())
-                    .and_then(|value| {
-                        serde_json::to_value(value).map_err(|error| error.to_string())
-                    }),
+                    .and_then(|value| serde_json::to_value(value).map_err(AppError::external)),
                 MemoryRunKind::DeepRecall | MemoryRunKind::FullOrganize => {
-                    let mut recall = params
-                        .recall
-                        .ok_or_else(|| "Recall task parameters are required".to_string())?;
+                    let mut recall = params.recall.ok_or_else(|| {
+                        AppError::Validation("Recall task parameters are required".to_string())
+                    })?;
                     recall.scope = params.scope;
                     recall.mode = if params.kind == MemoryRunKind::FullOrganize {
                         crate::backend::models::MemoryRecallMode::Full
@@ -510,14 +527,11 @@ pub(crate) fn start_memory_task(
                             Some(cancellation),
                             report,
                         )
-                        .map_err(|error| error.to_string())
-                        .and_then(|value| {
-                            serde_json::to_value(value).map_err(|error| error.to_string())
-                        })
+                        .and_then(|value| serde_json::to_value(value).map_err(AppError::external))
                 }
             }
         }))
-        .unwrap_or_else(|_| Err("Memory task panicked".to_string()));
+        .unwrap_or_else(|_| Err(AppError::Process("Memory task panicked".to_string())));
         match background_tasks.finish_memory_task(&task_id, result) {
             Ok(snapshot) => emit_memory_task(&app, &snapshot),
             Err(error) => log_error(
@@ -536,14 +550,20 @@ pub(crate) fn get_memory_task(
     state: State<'_, AppState>,
     params: MemoryTaskGetParams,
 ) -> RuntimeAppResult<Option<MemoryTaskSnapshot>> {
-    state.background_tasks.memory_task_snapshot(&params.task_id)
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    state
+        .background_tasks
+        .memory_task_snapshot_for_tenant(&tenant_id, &params.task_id)
 }
 
 #[tauri::command]
 pub(crate) fn list_memory_tasks(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<MemoryTaskSnapshot>> {
-    state.background_tasks.memory_task_snapshots()
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    state
+        .background_tasks
+        .memory_task_snapshots_for_tenant(&tenant_id)
 }
 
 #[tauri::command]
@@ -552,7 +572,10 @@ pub(crate) fn cancel_memory_task(
     state: State<'_, AppState>,
     params: MemoryTaskGetParams,
 ) -> RuntimeAppResult<MemoryTaskSnapshot> {
-    let snapshot = state.background_tasks.cancel_memory_task(&params.task_id)?;
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    let snapshot = state
+        .background_tasks
+        .cancel_memory_task_for_tenant(&tenant_id, &params.task_id)?;
     emit_memory_task(&app, &snapshot);
     Ok(snapshot)
 }
@@ -638,7 +661,10 @@ pub(crate) fn backup_skills(
     state: State<'_, AppState>,
     asset_ids: Vec<String>,
 ) -> RuntimeAppResult<SkillBackupTaskSnapshot> {
-    let (snapshot, should_start) = state.background_tasks.begin_skill_backup(asset_ids)?;
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    let (snapshot, should_start) = state
+        .background_tasks
+        .begin_skill_backup_for_tenant(&tenant_id, asset_ids)?;
     if !should_start {
         return Ok(snapshot);
     }
@@ -686,7 +712,7 @@ pub(crate) fn backup_skills(
                 &[("task_id", task_id.clone())],
             ),
         }
-        match background_tasks.finish_skill_backup(&task_id, result.map_err(String::from)) {
+        match background_tasks.finish_skill_backup(&task_id, result) {
             Ok(snapshot) => emit_skill_backup_task(&app, &snapshot),
             Err(error) => log_error(
                 "skill.backup.background",
@@ -704,7 +730,10 @@ pub(crate) fn backup_skills(
 pub(crate) fn get_skill_backup_task(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Option<SkillBackupTaskSnapshot>> {
-    state.background_tasks.skill_backup_snapshot()
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    state
+        .background_tasks
+        .skill_backup_snapshot_for_tenant(&tenant_id)
 }
 
 fn emit_skill_backup_task(app: &AppHandle, snapshot: &SkillBackupTaskSnapshot) {
@@ -776,7 +805,7 @@ where
         }
         let projection_result = match &result {
             Ok(value) => Ok(value.clone()),
-            Err(error) => Err(error.to_string()),
+            Err(error) => Err(AppError::from(error.view())),
         };
         match background_tasks_for_runtime
             .finish_conversation_script_install(&task_id_for_runtime, projection_result)
@@ -792,9 +821,10 @@ where
         result
     });
     if let Err(error) = background_tasks.spawn_extension_lifecycle(&task_id, task) {
+        let projection_error = AppError::from(error.view());
         let _ =
-            background_tasks.finish_conversation_script_install(&task_id, Err(error.to_string()));
-        return Err(AppError::External(error.to_string()));
+            background_tasks.finish_conversation_script_install(&task_id, Err(projection_error));
+        return Err(error);
     }
     Ok(())
 }
@@ -822,39 +852,108 @@ pub(crate) fn search_skills(
 }
 
 #[tauri::command]
-pub(crate) fn acquire_skill(
+pub(crate) fn start_skill_acquire(
+    app: AppHandle,
     state: State<'_, AppState>,
     params: SkillAcquireParams,
-) -> RuntimeAppResult<Value> {
-    let fields = vec![("url", params.url.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).acquire_skill(params))();
-
-    match &result {
-        Ok(value) => log_info(
-            "skill.acquire",
-            "获取 Skill 成功",
-            &[
-                (
-                    "dry_run",
-                    value
-                        .get("dry_run")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false)
-                        .to_string(),
-                ),
-                (
-                    "name",
-                    value
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string(),
-                ),
-            ],
-        ),
-        Err(error) => log_error("skill.acquire", "获取 Skill 失败", error, &fields),
+) -> RuntimeAppResult<RemoteSkillAcquireTaskSnapshot> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    let (snapshot, should_start) = state
+        .background_tasks
+        .begin_remote_skill_acquire_for_tenant(&tenant_id, &params)?;
+    let _ = app.emit("skill-remote://acquire-task-updated", &snapshot);
+    if !should_start {
+        return Ok(snapshot);
     }
-    result
+
+    let tasks = state.background_tasks.clone();
+    let runtime = state.runtime.clone();
+    let task_id = snapshot.id.clone();
+    let cancellation = tasks
+        .task_runtime()
+        .ok_or_else(|| AppError::Conflict("TaskRuntime 未初始化".to_string()))?
+        .cancellation_token(&task_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let emit_app = app.clone();
+        let emit_tasks = tasks.clone();
+        let update_phase = |phase: &str| {
+            if let Ok(snapshot) = emit_tasks.update_remote_skill_acquire_phase(&task_id, phase) {
+                let _ = emit_app.emit("skill-remote://acquire-task-updated", &snapshot);
+            }
+        };
+        let result = AppService::from_runtime(&runtime)
+            .acquire_skill_with_cancellation_and_progress(
+                params,
+                Some(&cancellation),
+                Some(&update_phase),
+            );
+        if let Err(error) = &result {
+            log_error(
+                "skill.acquire",
+                "获取 Skill 失败",
+                error,
+                &[("task_id", task_id.clone())],
+            );
+        }
+        let snapshot = emit_tasks.finish_remote_skill_acquire(&task_id, result);
+        if let Ok(snapshot) = snapshot {
+            let _ = emit_app.emit("skill-remote://acquire-task-updated", &snapshot);
+        }
+    });
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub(crate) fn acquire_skill(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: SkillAcquireParams,
+) -> RuntimeAppResult<RemoteSkillAcquireTaskSnapshot> {
+    start_skill_acquire(app, state, params)
+}
+
+#[tauri::command]
+pub(crate) fn get_skill_acquire_task(
+    state: State<'_, AppState>,
+    task_id: Option<String>,
+) -> RuntimeAppResult<Option<RemoteSkillAcquireTaskSnapshot>> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    if let Some(task_id) = task_id {
+        return Ok(Some(
+            state
+                .background_tasks
+                .remote_skill_acquire_snapshot_for_tenant(&tenant_id, &task_id)?,
+        ));
+    }
+    Ok(state
+        .background_tasks
+        .remote_skill_acquire_snapshots_for_tenant(&tenant_id)?
+        .into_iter()
+        .max_by(|left, right| left.started_at.cmp(&right.started_at)))
+}
+
+#[tauri::command]
+pub(crate) fn list_skill_acquire_tasks(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Vec<RemoteSkillAcquireTaskSnapshot>> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    state
+        .background_tasks
+        .remote_skill_acquire_snapshots_for_tenant(&tenant_id)
+}
+
+#[tauri::command]
+pub(crate) fn cancel_skill_acquire_task(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> RuntimeAppResult<RemoteSkillAcquireTaskSnapshot> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    let snapshot = state
+        .background_tasks
+        .cancel_remote_skill_acquire_for_tenant(&tenant_id, &task_id)?;
+    let _ = app.emit("skill-remote://acquire-task-updated", &snapshot);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -1028,6 +1127,20 @@ pub(crate) fn delete_source(state: State<'_, AppState>, id: String) -> RuntimeAp
 #[tauri::command]
 pub(crate) fn list_profiles(state: State<'_, AppState>) -> RuntimeAppResult<Vec<TargetProfile>> {
     AppService::from_runtime(&state.runtime).list_profiles()
+}
+
+#[tauri::command]
+pub(crate) fn list_target_profile_descriptors(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Vec<TargetProfileDescriptor>> {
+    AppService::from_runtime(&state.runtime).list_target_profile_descriptors()
+}
+
+#[tauri::command]
+pub(crate) fn refresh_target_profile_descriptors(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Vec<TargetProfileDescriptor>> {
+    AppService::from_runtime(&state.runtime).refresh_target_profile_descriptors()
 }
 
 #[tauri::command]
@@ -1315,70 +1428,6 @@ pub(crate) fn set_skill_group_manual_members(
 }
 
 #[tauri::command]
-pub(crate) fn apply_skill_group_mount(
-    state: State<'_, AppState>,
-    group_id: String,
-    profile_id: String,
-    enabled: bool,
-) -> RuntimeAppResult<ApplyAssetGroupMountResult> {
-    let fields = vec![
-        ("group_id", group_id.clone()),
-        ("profile_id", profile_id.clone()),
-        ("enabled", enabled.to_string()),
-    ];
-    let result = (|| {
-        AppService::from_runtime(&state.runtime).apply_skill_group_mount(
-            &group_id,
-            &profile_id,
-            enabled,
-        )
-    })();
-
-    match &result {
-        Ok(result) => {
-            let mut fields = fields.clone();
-            fields.extend([
-                ("requested_count", result.requested_count.to_string()),
-                ("updated_count", result.updated_count.to_string()),
-                ("error_count", result.error_count.to_string()),
-            ]);
-            let level_message = if result.error_count > 0 {
-                (
-                    "skill_group.mount.apply",
-                    "应用 skill 分组挂载完成但存在失败",
-                )
-            } else {
-                ("skill_group.mount.apply", "应用 skill 分组挂载成功")
-            };
-            if result.error_count > 0 {
-                log_warn(level_message.0, level_message.1, &fields);
-            } else {
-                log_info(level_message.0, level_message.1, &fields);
-            }
-            for item in &result.errors {
-                log_error(
-                    "skill_group.mount.error",
-                    "skill 分组挂载成员失败",
-                    &item.message,
-                    &[
-                        ("group_id", result.group_id.clone()),
-                        ("profile_id", result.profile_id.clone()),
-                        ("asset_id", item.asset_id.clone()),
-                    ],
-                );
-            }
-        }
-        Err(error) => log_error(
-            "skill_group.mount.apply",
-            "应用 skill 分组挂载失败",
-            error,
-            &fields,
-        ),
-    }
-    result
-}
-
-#[tauri::command]
 pub(crate) fn preview_skill_group_exclusive_mount(
     state: State<'_, AppState>,
     input: SkillGroupExclusiveMountInput,
@@ -1424,77 +1473,6 @@ pub(crate) fn preview_skill_group_exclusive_mount(
         Err(error) => log_error(
             "skill_group.exclusive.preview",
             "预览 skill 分组独占挂载失败",
-            error,
-            &fields,
-        ),
-    }
-    result
-}
-
-#[tauri::command]
-pub(crate) fn apply_skill_group_exclusive_mount(
-    state: State<'_, AppState>,
-    input: SkillGroupExclusiveMountInput,
-) -> RuntimeAppResult<ApplySkillGroupExclusiveMountResult> {
-    let fields = vec![
-        ("profile_id", input.profile_id.clone()),
-        ("group_count", input.group_ids.len().to_string()),
-    ];
-    let result =
-        (|| AppService::from_runtime(&state.runtime).apply_skill_group_exclusive_mount(input))();
-
-    match &result {
-        Ok(result) => {
-            let fields = vec![
-                ("profile_id", result.preview.profile_id.clone()),
-                ("group_count", result.preview.group_ids.len().to_string()),
-                ("keep_count", result.preview.keep_count.to_string()),
-                ("mount_count", result.preview.mount_count.to_string()),
-                ("unmount_count", result.preview.unmount_count.to_string()),
-                ("skipped_count", result.preview.skipped_count.to_string()),
-                ("error_count", result.errors.len().to_string()),
-            ];
-            if result.errors.is_empty() && result.preview.skipped_count == 0 {
-                log_info(
-                    "skill_group.exclusive.apply",
-                    "应用 skill 分组独占挂载成功",
-                    &fields,
-                );
-            } else {
-                log_warn(
-                    "skill_group.exclusive.apply",
-                    "应用 skill 分组独占挂载完成但存在跳过或失败",
-                    &fields,
-                );
-            }
-            for item in &result.preview.skipped {
-                log_warn(
-                    "skill_group.exclusive.skipped",
-                    "skill 独占挂载应用跳过",
-                    &[
-                        ("profile_id", result.preview.profile_id.clone()),
-                        ("asset_id", item.asset_id.clone()),
-                        ("skill_name", item.name.clone()),
-                        ("reason", item.reason.clone()),
-                    ],
-                );
-            }
-            for item in &result.errors {
-                log_error(
-                    "skill_group.exclusive.error",
-                    "skill 独占挂载应用失败",
-                    &item.message,
-                    &[
-                        ("profile_id", result.preview.profile_id.clone()),
-                        ("asset_id", item.asset_id.clone()),
-                        ("skill_name", item.name.clone()),
-                    ],
-                );
-            }
-        }
-        Err(error) => log_error(
-            "skill_group.exclusive.apply",
-            "应用 skill 分组独占挂载失败",
             error,
             &fields,
         ),
@@ -1594,49 +1572,6 @@ pub(crate) fn set_asset_mount(
     result
 }
 
-#[tauri::command]
-pub(crate) fn scan_sources(
-    state: State<'_, AppState>,
-    kind: Option<AssetKind>,
-) -> RuntimeAppResult<Vec<CatalogAsset>> {
-    let fields = kind
-        .map(|kind| vec![("asset_kind", format!("{kind:?}"))])
-        .unwrap_or_default();
-    let result = (|| {
-        AppService::from_runtime(&state.runtime).scan_sources(SourceScanParams {
-            kind,
-            dry_run: false,
-        })
-    })();
-
-    match &result {
-        Ok(assets) => {
-            let mut fields = fields.clone();
-            fields.push(("asset_count", assets.len().to_string()));
-            log_info("source.scan.all", "扫描全部来源成功", &fields);
-        }
-        Err(error) => log_error("source.scan.all", "扫描全部来源失败", error, &fields),
-    }
-    result
-}
-
-#[tauri::command]
-pub(crate) fn scan_skill_sources(
-    state: State<'_, AppState>,
-) -> RuntimeAppResult<Vec<CatalogAsset>> {
-    let result = (|| AppService::from_runtime(&state.runtime).scan_skill_sources())();
-
-    match &result {
-        Ok(assets) => log_info(
-            "source.scan.skills",
-            "扫描 skill 来源成功",
-            &[("skill_count", assets.len().to_string())],
-        ),
-        Err(error) => log_error("source.scan.skills", "扫描 skill 来源失败", error, &[]),
-    }
-    result
-}
-
 pub(crate) const SOURCE_SCAN_TASK_UPDATED_EVENT: &str = "source-scan-task-updated";
 
 #[tauri::command]
@@ -1657,7 +1592,9 @@ pub(crate) fn start_source_scan(
         .background_tasks
         .begin_source_scan(&tenant_id, scope, scan_kind)?;
     if !started {
-        return state.background_tasks.source_scan_snapshot(&snapshot.id);
+        return state
+            .background_tasks
+            .source_scan_snapshot_for_tenant(&tenant_id, &snapshot.id);
     }
 
     let task_id = snapshot.id.clone();
@@ -1683,21 +1620,17 @@ pub(crate) fn start_source_scan(
                     skill_sources_only,
                 )
             }))
-            .unwrap_or_else(|_| {
-                Err(crate::backend::runtime::AppError::External(
-                    "source scan worker panicked".to_string(),
-                ))
-            });
-            if let Ok(snapshot) =
-                tasks.finish_source_scan(&worker_task_id, result.map_err(|error| error.to_string()))
-            {
+            .unwrap_or_else(|_| Err(AppError::Process("source scan worker panicked".to_string())));
+            if let Ok(snapshot) = tasks.finish_source_scan(&worker_task_id, result) {
                 let _ = worker_app.emit(SOURCE_SCAN_TASK_UPDATED_EVENT, &snapshot);
             }
         });
     if let Err(error) = spawn_result {
         let failure = state.background_tasks.finish_source_scan(
             &task_id,
-            Err(format!("启动 source scan worker 失败: {error}")),
+            Err(AppError::Process(format!(
+                "启动 source scan worker 失败: {error}"
+            ))),
         )?;
         let _ = app.emit(SOURCE_SCAN_TASK_UPDATED_EVENT, &failure);
         return Ok(failure);
@@ -1710,14 +1643,20 @@ pub(crate) fn get_source_scan_task(
     state: State<'_, AppState>,
     task_id: String,
 ) -> RuntimeAppResult<SourceScanTaskSnapshot> {
-    state.background_tasks.source_scan_snapshot(&task_id)
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    state
+        .background_tasks
+        .source_scan_snapshot_for_tenant(&tenant_id, &task_id)
 }
 
 #[tauri::command]
 pub(crate) fn list_source_scan_tasks(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<SourceScanTaskSnapshot>> {
-    state.background_tasks.source_scan_snapshots()
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    state
+        .background_tasks
+        .source_scan_snapshots_for_tenant(&tenant_id)
 }
 
 #[tauri::command]
@@ -1726,7 +1665,10 @@ pub(crate) fn cancel_source_scan(
     state: State<'_, AppState>,
     task_id: String,
 ) -> RuntimeAppResult<SourceScanTaskSnapshot> {
-    let snapshot = state.background_tasks.cancel_source_scan(&task_id)?;
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    let snapshot = state
+        .background_tasks
+        .cancel_source_scan_for_tenant(&tenant_id, &task_id)?;
     let _ = app.emit(SOURCE_SCAN_TASK_UPDATED_EVENT, &snapshot);
     Ok(snapshot)
 }
@@ -1785,6 +1727,23 @@ pub(crate) fn start_batch_mount(
             "group_ids are required for exclusive batch mount".to_string(),
         ));
     }
+    let workflow_input = match mode.as_str() {
+        "explicit" => crate::backend::application::BatchMountWorkflowInput::Explicit {
+            asset_ids: asset_ids.clone(),
+            profile_id: profile_id.clone(),
+            enabled: enabled.unwrap_or(true),
+        },
+        "group" => crate::backend::application::BatchMountWorkflowInput::Group {
+            group_id: group_id.clone().unwrap_or_default(),
+            profile_id: profile_id.clone(),
+            enabled: enabled.unwrap_or(true),
+        },
+        "exclusive" => crate::backend::application::BatchMountWorkflowInput::Exclusive {
+            group_ids: group_ids.clone(),
+            profile_id: profile_id.clone(),
+        },
+        _ => unreachable!("batch mode was validated"),
+    };
 
     let tenant_id = state.runtime.context().tenant.id.clone();
     let dedup_suffix = if mode == "explicit" {
@@ -1803,7 +1762,9 @@ pub(crate) fn start_batch_mount(
             .background_tasks
             .begin_batch_mount(&tenant_id, &mode, &profile_id, &dedup_suffix)?;
     if !started {
-        return state.background_tasks.batch_mount_snapshot(&snapshot.id);
+        return state
+            .background_tasks
+            .batch_mount_snapshot_for_tenant(&tenant_id, &snapshot.id);
     }
 
     let task_id = snapshot.id.clone();
@@ -1811,12 +1772,7 @@ pub(crate) fn start_batch_mount(
     let tasks = state.background_tasks.clone();
     let task_context = runtime.task_runtime().task_context(&task_id)?;
     let worker_app = app.clone();
-    let worker_mode = mode.clone();
-    let worker_group_id = group_id.clone();
-    let worker_profile_id = profile_id.clone();
-    let worker_group_ids = group_ids.clone();
-    let worker_asset_ids = asset_ids.clone();
-    let worker_enabled = enabled.unwrap_or(true);
+    let worker_input = workflow_input;
     let worker_task_id = task_id.clone();
     let spawn_result = std::thread::Builder::new()
         .name(format!("aiw-batch-mount-{}", &task_id[..8]))
@@ -1828,88 +1784,29 @@ pub(crate) fn start_batch_mount(
                         "batch mount cancelled before execution".to_string(),
                     ));
                 }
-                if worker_mode == "explicit" {
-                    service
-                        .apply_explicit_mount_with_progress(
-                            worker_asset_ids,
-                            &worker_profile_id,
-                            worker_enabled,
-                            |completed, total, current_id| {
-                                if task_context.is_cancelled() {
-                                    return Err(AppError::Cancelled(
-                                        "batch mount cancelled".to_string(),
-                                    ));
-                                }
-                                tasks
-                                    .update_batch_mount_progress(
-                                        &worker_task_id,
-                                        completed as u64,
-                                        Some(total as u64),
-                                        Some(current_id),
-                                    )
-                                    .map(|_| ())
-                            },
-                        )
-                        .and_then(|value| {
-                            serde_json::to_value(value)
-                                .map_err(|error| AppError::External(error.to_string()))
-                        })
-                } else if worker_mode == "group" {
-                    service
-                        .apply_skill_group_mount_with_progress(
-                            worker_group_id.as_deref().unwrap_or_default(),
-                            &worker_profile_id,
-                            worker_enabled,
-                            |completed, total, current_id| {
-                                if task_context.is_cancelled() {
-                                    return Err(AppError::Cancelled(
-                                        "batch mount cancelled".to_string(),
-                                    ));
-                                }
-                                tasks
-                                    .update_batch_mount_progress(
-                                        &worker_task_id,
-                                        completed as u64,
-                                        Some(total as u64),
-                                        Some(current_id),
-                                    )
-                                    .map(|_| ())
-                            },
-                        )
-                        .and_then(|value| {
-                            serde_json::to_value(value)
-                                .map_err(|error| AppError::External(error.to_string()))
-                        })
-                } else {
-                    service
-                        .apply_skill_group_exclusive_mount_with_progress(
-                            SkillGroupExclusiveMountInput {
-                                group_ids: worker_group_ids,
-                                profile_id: worker_profile_id,
-                                mount_selected: true,
-                                dry_run: false,
-                            },
-                            |completed, total, current_id| {
-                                if task_context.is_cancelled() {
-                                    return Err(AppError::Cancelled(
-                                        "batch mount cancelled".to_string(),
-                                    ));
-                                }
-                                tasks
-                                    .update_batch_mount_progress(
-                                        &worker_task_id,
-                                        completed as u64,
-                                        Some(total as u64),
-                                        Some(current_id),
-                                    )
-                                    .map(|_| ())
-                            },
-                        )
-                        .and_then(|value| {
-                            serde_json::to_value(value)
-                                .map_err(|error| AppError::External(error.to_string()))
-                        })
-                }
+                service
+                    .run_batch_mount_workflow_with_progress(
+                        worker_input,
+                        |completed, total, current_id| {
+                            if task_context.is_cancelled() {
+                                return Err(AppError::Cancelled(
+                                    "batch mount cancelled".to_string(),
+                                ));
+                            }
+                            tasks
+                                .update_batch_mount_progress(
+                                    &worker_task_id,
+                                    completed as u64,
+                                    Some(total as u64),
+                                    Some(current_id),
+                                )
+                                .map(|_| ())
+                        },
+                    )
+                    .and_then(|value| {
+                        serde_json::to_value(value)
+                            .map_err(|error| AppError::External(error.to_string()))
+                    })
             }))
             .unwrap_or_else(|_| {
                 Err(AppError::External(
@@ -1960,12 +1857,12 @@ pub(crate) fn start_batch_mount(
                 .unwrap_or((0, None));
             let _ = tasks.update_batch_mount_progress(&worker_task_id, completed, total, None);
             let finish = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                tasks.finish_batch_mount(&worker_task_id, result.map_err(String::from))
+                tasks.finish_batch_mount(&worker_task_id, result)
             }))
             .unwrap_or_else(|_| {
                 tasks.finish_batch_mount(
                     &worker_task_id,
-                    Err("batch mount worker panicked".to_string()),
+                    Err(AppError::Process("batch mount worker panicked".to_string())),
                 )
             });
             if let Ok(snapshot) = finish {
@@ -1975,7 +1872,9 @@ pub(crate) fn start_batch_mount(
     if let Err(error) = spawn_result {
         let failure = state.background_tasks.finish_batch_mount(
             &task_id,
-            Err(format!("启动 batch mount worker 失败: {error}")),
+            Err(AppError::Process(format!(
+                "启动 batch mount worker 失败: {error}"
+            ))),
         )?;
         let _ = app.emit(BATCH_MOUNT_TASK_UPDATED_EVENT, &failure);
         return Ok(failure);
@@ -1988,14 +1887,20 @@ pub(crate) fn get_batch_mount_task(
     state: State<'_, AppState>,
     task_id: String,
 ) -> RuntimeAppResult<BatchMountTaskSnapshot> {
-    state.background_tasks.batch_mount_snapshot(&task_id)
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    state
+        .background_tasks
+        .batch_mount_snapshot_for_tenant(&tenant_id, &task_id)
 }
 
 #[tauri::command]
 pub(crate) fn list_batch_mount_tasks(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<BatchMountTaskSnapshot>> {
-    state.background_tasks.batch_mount_snapshots()
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    state
+        .background_tasks
+        .batch_mount_snapshots_for_tenant(&tenant_id)
 }
 
 #[tauri::command]
@@ -2004,7 +1909,10 @@ pub(crate) fn cancel_batch_mount(
     state: State<'_, AppState>,
     task_id: String,
 ) -> RuntimeAppResult<BatchMountTaskSnapshot> {
-    let snapshot = state.background_tasks.cancel_batch_mount(&task_id)?;
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    let snapshot = state
+        .background_tasks
+        .cancel_batch_mount_for_tenant(&tenant_id, &task_id)?;
     let _ = app.emit(BATCH_MOUNT_TASK_UPDATED_EVENT, &snapshot);
     Ok(snapshot)
 }
@@ -2166,10 +2074,19 @@ struct RegistryAiExecutionProgressSink {
     tasks: Arc<BackgroundTaskRegistry>,
     task_id: String,
     emitter: Arc<dyn AiExecutionTaskEmitter>,
+    last_execution_phase: Mutex<Option<AiExecutionPhase>>,
 }
 
 impl AiExecutionProgressSink for RegistryAiExecutionProgressSink {
     fn set_phase(&self, phase: AiExecutionPhase) {
+        if !matches!(
+            phase,
+            AiExecutionPhase::Cancelling | AiExecutionPhase::Closing | AiExecutionPhase::CleaningUp
+        ) {
+            if let Ok(mut last_phase) = self.last_execution_phase.lock() {
+                *last_phase = Some(phase);
+            }
+        }
         match self.tasks.update_ai_execution_phase(&self.task_id, phase) {
             Ok(snapshot) => self.emitter.emit(&snapshot),
             Err(error) => log_error(
@@ -2180,20 +2097,56 @@ impl AiExecutionProgressSink for RegistryAiExecutionProgressSink {
             ),
         }
     }
+
+    fn failure_phase(&self) -> Option<AiExecutionPhase> {
+        self.last_execution_phase
+            .lock()
+            .ok()
+            .and_then(|last_phase| *last_phase)
+    }
+
+    fn set_cleanup_report(&self, report: AiExecutionCleanupReport) {
+        match self
+            .tasks
+            .update_ai_execution_cleanup(&self.task_id, report)
+        {
+            Ok(snapshot) => self.emitter.emit(&snapshot),
+            Err(error) => log_error(
+                "ai_execution.task",
+                "更新 AI 执行清理报告失败",
+                &error,
+                &[("task_id", self.task_id.clone())],
+            ),
+        }
+    }
 }
 
+#[cfg(test)]
 fn prepare_ai_execution_task(
     tasks: Arc<BackgroundTaskRegistry>,
     params: ConversationTranslationRequest,
     emitter: Arc<dyn AiExecutionTaskEmitter>,
 ) -> RuntimeAppResult<(AiExecutionTaskSnapshot, AiExecutionRequest)> {
+    prepare_ai_execution_task_for_tenant("default", tasks, params, emitter)
+}
+
+fn prepare_ai_execution_task_for_tenant(
+    tenant_id: &str,
+    tasks: Arc<BackgroundTaskRegistry>,
+    params: ConversationTranslationRequest,
+    emitter: Arc<dyn AiExecutionTaskEmitter>,
+) -> RuntimeAppResult<(AiExecutionTaskSnapshot, AiExecutionRequest)> {
     let (agent_id, prompt, model) = prepare_opencode_agent_translation(params)?;
-    let (snapshot, cancellation) =
-        tasks.begin_ai_execution(AiExecutionPurpose::Translation, &agent_id)?;
+    let (snapshot, cancellation) = tasks.begin_ai_execution_for_tenant(
+        tenant_id,
+        AiExecutionPurpose::Translation,
+        &agent_id,
+    )?;
     let progress = Arc::new(RegistryAiExecutionProgressSink {
         tasks,
         task_id: snapshot.id.clone(),
         emitter: emitter.clone(),
+        last_execution_phase: Mutex::new(None),
     });
     let request = AiExecutionRequest {
         execution_id: snapshot.id.clone(),
@@ -2216,6 +2169,7 @@ async fn run_ai_execution_task(
     request: AiExecutionRequest,
     emitter: Arc<dyn AiExecutionTaskEmitter>,
 ) {
+    let progress = request.progress.clone();
     let execution = tokio::spawn(async move { runtime.execute(request).await });
     let result = match execution.await {
         Ok(result) => result,
@@ -2223,7 +2177,10 @@ async fn run_ai_execution_task(
             operation: "execution_task_panicked",
         }),
     };
-    match tasks.finish_ai_execution(&task_id, result) {
+    let failure_phase = progress
+        .as_ref()
+        .and_then(|progress| progress.failure_phase());
+    match tasks.finish_ai_execution_with_phase(&task_id, result, failure_phase) {
         Ok(snapshot) => emitter.emit(&snapshot),
         Err(error) => log_error(
             "ai_execution.task",
@@ -2242,7 +2199,9 @@ pub(crate) async fn start_conversation_card_translation(
 ) -> RuntimeAppResult<AiExecutionTaskSnapshot> {
     let emitter: Arc<dyn AiExecutionTaskEmitter> = Arc::new(TauriAiExecutionTaskEmitter { app });
     let tasks = state.background_tasks.clone();
-    let (snapshot, request) = prepare_ai_execution_task(tasks.clone(), params, emitter.clone())?;
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    let (snapshot, request) =
+        prepare_ai_execution_task_for_tenant(&tenant_id, tasks.clone(), params, emitter.clone())?;
     let runtime = state.agent_runtime.clone();
     let task_id = snapshot.id.clone();
     tauri::async_runtime::spawn(run_ai_execution_task(
@@ -2256,16 +2215,20 @@ pub(crate) fn get_ai_execution_task(
     state: State<'_, AppState>,
     params: AiExecutionTaskGetParams,
 ) -> RuntimeAppResult<Option<AiExecutionTaskSnapshot>> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
     state
         .background_tasks
-        .ai_execution_snapshot(&params.task_id)
+        .ai_execution_snapshot_for_tenant(&tenant_id, &params.task_id)
 }
 
 #[tauri::command]
 pub(crate) fn list_ai_execution_tasks(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<AiExecutionTaskSnapshot>> {
-    state.background_tasks.ai_execution_snapshots()
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    state
+        .background_tasks
+        .ai_execution_snapshots_for_tenant(&tenant_id)
 }
 
 #[tauri::command]
@@ -2274,9 +2237,10 @@ pub(crate) fn cancel_ai_execution_task(
     state: State<'_, AppState>,
     params: AiExecutionTaskGetParams,
 ) -> RuntimeAppResult<AiExecutionTaskSnapshot> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
     let snapshot = state
         .background_tasks
-        .cancel_ai_execution(&params.task_id)?;
+        .cancel_ai_execution_for_tenant(&tenant_id, &params.task_id)?;
     TauriAiExecutionTaskEmitter { app }.emit(&snapshot);
     Ok(snapshot)
 }
@@ -2363,6 +2327,7 @@ pub(crate) async fn prepare_conversation_adapter_package_change(
     params: ConversationAdapterPackageChangeParams,
 ) -> RuntimeAppResult<crate::backend::application::ConversationAdapterPackageChangePreflight> {
     let runtime = state.runtime.clone();
+    let tenant_id = state.runtime.context().tenant.id.clone();
     let mut preflight = tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).prepare_conversation_adapter_package_change(params)
     })
@@ -2370,7 +2335,7 @@ pub(crate) async fn prepare_conversation_adapter_package_change(
     .map_err(|error| AppError::External(error.to_string()))??;
     if state
         .background_tasks
-        .conversation_script_install_snapshot()?
+        .conversation_script_install_snapshot_for_tenant(&tenant_id)?
         .is_some_and(|task| task.status == BackgroundTaskStatus::Running)
     {
         preflight.task_conflicts.push("package_change".to_string());
@@ -2502,9 +2467,10 @@ pub(crate) fn install_conversation_adapter_package(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageInstallParams,
 ) -> RuntimeAppResult<ConversationScriptInstallTaskSnapshot> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
     let (snapshot, should_start) = state
         .background_tasks
-        .begin_conversation_adapter_package_install(&params)?;
+        .begin_conversation_adapter_package_install_for_tenant(&tenant_id, &params)?;
     if !should_start {
         return Ok(snapshot);
     }
@@ -2528,9 +2494,10 @@ pub(crate) fn update_conversation_adapter_package(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageInstallParams,
 ) -> RuntimeAppResult<ConversationScriptInstallTaskSnapshot> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
     let (snapshot, should_start) = state
         .background_tasks
-        .begin_conversation_adapter_package_update(&params)?;
+        .begin_conversation_adapter_package_update_for_tenant(&tenant_id, &params)?;
     if !should_start {
         return Ok(snapshot);
     }
@@ -2554,9 +2521,10 @@ pub(crate) fn uninstall_conversation_adapter_package(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageUninstallParams,
 ) -> RuntimeAppResult<ConversationScriptInstallTaskSnapshot> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
     let (snapshot, should_start) = state
         .background_tasks
-        .begin_conversation_adapter_package_uninstall(&params)?;
+        .begin_conversation_adapter_package_uninstall_for_tenant(&tenant_id, &params)?;
     if !should_start {
         return Ok(snapshot);
     }
@@ -2576,9 +2544,10 @@ pub(crate) fn uninstall_conversation_adapter_package(
 pub(crate) fn get_conversation_adapter_package_task(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Option<ConversationScriptInstallTaskSnapshot>> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
     state
         .background_tasks
-        .conversation_script_install_snapshot()
+        .conversation_script_install_snapshot_for_tenant(&tenant_id)
 }
 
 #[tauri::command]
@@ -2587,9 +2556,10 @@ pub(crate) fn install_conversation_script(
     state: State<'_, AppState>,
     params: ConversationScriptInstallParams,
 ) -> RuntimeAppResult<ConversationScriptInstallTaskSnapshot> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
     let (snapshot, should_start) = state
         .background_tasks
-        .begin_conversation_script_install(&params)?;
+        .begin_conversation_script_install_for_tenant(&tenant_id, &params)?;
     if !should_start {
         return Ok(snapshot);
     }
@@ -2611,9 +2581,10 @@ pub(crate) fn install_conversation_script(
 pub(crate) fn get_conversation_script_install_task(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Option<ConversationScriptInstallTaskSnapshot>> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
     state
         .background_tasks
-        .conversation_script_install_snapshot()
+        .conversation_script_install_snapshot_for_tenant(&tenant_id)
 }
 
 #[tauri::command]
@@ -2638,7 +2609,9 @@ pub(crate) fn start_conversation_sync_background(
     >,
     params: ConversationSyncParams,
 ) -> RuntimeAppResult<ConversationSyncTaskSnapshot> {
-    let (snapshot, should_start) = background_tasks.begin_conversation_sync(&params)?;
+    let tenant_id = runtime.context().tenant.id.clone();
+    let (snapshot, should_start) =
+        background_tasks.begin_conversation_sync_for_tenant(&tenant_id, &params)?;
     if !should_start {
         return Ok(snapshot);
     }
@@ -2685,7 +2658,6 @@ pub(crate) fn start_conversation_sync_background(
                 "conversation sync task panicked".to_string(),
             ))
         });
-        let result = result.map_err(|error| error.to_string());
         match &result {
             Ok(value) => log_info(
                 "conversation.sync",
@@ -2728,14 +2700,20 @@ pub(crate) fn start_conversation_sync_background(
 pub(crate) fn get_conversation_sync_task(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Option<ConversationSyncTaskSnapshot>> {
-    state.background_tasks.conversation_sync_snapshot()
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    state
+        .background_tasks
+        .conversation_sync_snapshot_for_tenant(&tenant_id)
 }
 
 #[tauri::command]
 pub(crate) fn list_conversation_sync_tasks(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<ConversationSyncTaskSnapshot>> {
-    state.background_tasks.conversation_sync_snapshots()
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    state
+        .background_tasks
+        .conversation_sync_snapshots_for_tenant(&tenant_id)
 }
 
 #[tauri::command]
@@ -2842,9 +2820,10 @@ pub(crate) fn start_conversation_search_index_rebuild(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<ConversationSearchIndexTaskSnapshot> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
     let (snapshot, should_start) = state
         .background_tasks
-        .begin_conversation_search_index_rebuild()?;
+        .begin_conversation_search_index_rebuild_for_tenant(&tenant_id)?;
     if !should_start {
         return Ok(snapshot);
     }
@@ -2884,7 +2863,7 @@ pub(crate) fn start_conversation_search_index_rebuild(
             });
             let projection_result = match &result {
                 Ok(value) => Ok(value.clone()),
-                Err(error) => Err(error.to_string()),
+                Err(error) => Err(AppError::from(error.view())),
             };
             match background_tasks_for_runtime
                 .finish_conversation_search_index_rebuild(&task_id_for_runtime, projection_result)
@@ -2912,8 +2891,9 @@ pub(crate) fn start_conversation_search_index_rebuild(
         }),
     );
     if let Err(error) = outcome {
+        let projection_error = AppError::from(error.view());
         let _ = background_tasks
-            .finish_conversation_search_index_rebuild(&task_id, Err(error.to_string()));
+            .finish_conversation_search_index_rebuild(&task_id, Err(projection_error));
         return Err(error);
     }
     Ok(snapshot)
@@ -2923,7 +2903,10 @@ pub(crate) fn start_conversation_search_index_rebuild(
 pub(crate) fn get_conversation_search_index_task(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Option<ConversationSearchIndexTaskSnapshot>> {
-    state.background_tasks.conversation_search_index_snapshot()
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    state
+        .background_tasks
+        .conversation_search_index_snapshot_for_tenant(&tenant_id)
 }
 
 #[tauri::command]
@@ -3355,7 +3338,11 @@ pub(crate) fn command_handler(
         backup_skills,
         get_skill_backup_task,
         search_skills,
+        start_skill_acquire,
         acquire_skill,
+        get_skill_acquire_task,
+        list_skill_acquire_tasks,
+        cancel_skill_acquire_task,
         list_skill_remote_sources,
         check_skill_remote_sources,
         list_sources,
@@ -3366,6 +3353,8 @@ pub(crate) fn command_handler(
         update_asset_description,
         delete_asset,
         list_profiles,
+        list_target_profile_descriptors,
+        refresh_target_profile_descriptors,
         create_profile,
         update_profile,
         delete_profile,
@@ -3382,15 +3371,11 @@ pub(crate) fn command_handler(
         update_skill_group,
         delete_skill_group,
         set_skill_group_manual_members,
-        apply_skill_group_mount,
         preview_skill_group_exclusive_mount,
-        apply_skill_group_exclusive_mount,
         toggle_asset_mount,
         mount_asset_mount,
         unmount_asset_mount,
         set_asset_mount,
-        scan_sources,
-        scan_skill_sources,
         start_source_scan,
         get_source_scan_task,
         list_source_scan_tasks,
@@ -3548,6 +3533,26 @@ mod tests {
         }
     }
 
+    struct FailingAdapterRuntime;
+
+    impl AgentExecutionRuntime for FailingAdapterRuntime {
+        fn execute<'a>(&'a self, request: AiExecutionRequest) -> BackendFuture<'a> {
+            Box::pin(async move {
+                request.report_phase(AiExecutionPhase::Prompting);
+                request.report_phase(AiExecutionPhase::Closing);
+                request.report_phase(AiExecutionPhase::CleaningUp);
+                request.report_cleanup(AiExecutionCleanupReport {
+                    process_reaped: false,
+                    workspace_removed: true,
+                    failure_count: 1,
+                });
+                Err(AiExecutionError::Protocol {
+                    operation: "adapter_failure",
+                })
+            })
+        }
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn tauri_01_02_start_preparation_is_fast_and_has_no_global_lock_dependency() {
         let tasks = Arc::new(BackgroundTaskRegistry::default());
@@ -3624,6 +3629,36 @@ mod tests {
         ] {
             assert!(serialized.get(field).is_some(), "missing field {field}");
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tauri_03_04_failure_keeps_execution_phase_separate_from_cleanup_phase() {
+        let tasks = Arc::new(BackgroundTaskRegistry::default());
+        let emitter = Arc::new(RecordingAiTaskEmitter::default());
+        let runtime: Arc<dyn AgentExecutionRuntime> = Arc::new(FailingAdapterRuntime);
+        let (queued, request) = prepare_ai_execution_task(
+            tasks.clone(),
+            opencode_translation_request(),
+            emitter.clone(),
+        )
+        .unwrap();
+
+        run_ai_execution_task(tasks.clone(), runtime, queued.id.clone(), request, emitter).await;
+
+        let failed = tasks.ai_execution_snapshot(&queued.id).unwrap().unwrap();
+        assert_eq!(failed.phase, AiExecutionPhase::CleaningUp);
+        assert_eq!(
+            failed.error.as_ref().and_then(|error| error.phase),
+            Some(AiExecutionPhase::Prompting)
+        );
+        assert_eq!(
+            failed.cleanup,
+            Some(AiExecutionCleanupReport {
+                process_reaped: false,
+                workspace_removed: true,
+                failure_count: 1,
+            })
+        );
     }
 
     #[test]

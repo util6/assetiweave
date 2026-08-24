@@ -212,7 +212,30 @@ pub(crate) fn run_program_with_timeout(
     stdout_cap: usize,
     stderr_cap: usize,
 ) -> Result<HostProcessOutput, HostProcessError> {
-    run_host_command_blocking(HostCommandSpec {
+    run_program_with_cancellation(
+        program,
+        args,
+        current_dir,
+        timeout,
+        stdout_cap,
+        stderr_cap,
+        None,
+    )
+}
+
+/// Execute a bounded host command while observing a task cancellation token.
+/// The watcher only flips the existing process-control flag; the command
+/// runner remains responsible for terminating and reaping the process group.
+pub(crate) fn run_program_with_cancellation(
+    program: &Path,
+    args: &[String],
+    current_dir: Option<&Path>,
+    timeout: Duration,
+    stdout_cap: usize,
+    stderr_cap: usize,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
+) -> Result<HostProcessOutput, HostProcessError> {
+    let spec = HostCommandSpec {
         program: program.to_path_buf(),
         args: args.to_vec(),
         env: Vec::new(),
@@ -224,18 +247,56 @@ pub(crate) fn run_program_with_timeout(
         timeout,
         stdout_limit: stdout_cap,
         stderr_limit: stderr_cap,
-    })
-    .map(|output| HostProcessOutput {
-        status: output.status,
-        stdout: output.stdout,
-        stderr: output.stderr,
-        stdout_truncated: output.stdout_truncated,
-        stderr_truncated: output.stderr_truncated,
-    })
+    };
+
+    let Some(cancellation) = cancellation else {
+        return run_host_command_blocking(spec).map(|output| HostProcessOutput {
+            status: output.status,
+            stdout: output.stdout,
+            stderr: output.stderr,
+            stdout_truncated: output.stdout_truncated,
+            stderr_truncated: output.stderr_truncated,
+        });
+    };
+
+    let cancellation_flag = Arc::new(AtomicBool::new(cancellation.is_cancelled()));
+    let watcher_done = Arc::new(AtomicBool::new(false));
+    let watcher_flag = cancellation_flag.clone();
+    let watcher_done_flag = watcher_done.clone();
+    let watcher_token = cancellation.clone();
+    let watcher = thread::spawn(move || {
+        while !watcher_done_flag.load(Ordering::Acquire) {
+            if watcher_token.is_cancelled() {
+                watcher_flag.store(true, Ordering::Release);
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    });
+    let result =
+        run_host_command_blocking_with_cancellation(spec, Some(&cancellation_flag)).map(|output| {
+            HostProcessOutput {
+                status: output.status,
+                stdout: output.stdout,
+                stderr: output.stderr,
+                stdout_truncated: output.stdout_truncated,
+                stderr_truncated: output.stderr_truncated,
+            }
+        });
+    watcher_done.store(true, Ordering::Release);
+    let _ = watcher.join();
+    result
 }
 
 pub(crate) fn run_host_command_blocking(
     spec: HostCommandSpec,
+) -> Result<HostCommandOutput, HostProcessError> {
+    run_host_command_blocking_with_cancellation(spec, None)
+}
+
+fn run_host_command_blocking_with_cancellation(
+    spec: HostCommandSpec,
+    cancellation: Option<&AtomicBool>,
 ) -> Result<HostCommandOutput, HostProcessError> {
     let mut command = build_host_command(&spec)?;
     let started = Instant::now();
@@ -245,7 +306,7 @@ pub(crate) fn run_host_command_blocking(
             timeout: spec.timeout,
             stdout_cap: spec.stdout_limit,
             stderr_cap: spec.stderr_limit,
-            cancellation: None,
+            cancellation,
         },
         spec.stdin,
     )?;
@@ -395,6 +456,17 @@ fn run_command_with_control_and_input(
             }
         };
         if let Some(status) = status {
+            // A launcher may exit successfully while a descendant keeps the
+            // inherited stdout/stderr pipes open. Kill the owned process group
+            // before joining readers so a normal exit cannot wait forever on a
+            // descendant that escaped the launcher's lifecycle.
+            if !stdout_reader.is_finished() || !stderr_reader.is_finished() {
+                if let Err(error) = signal_process_tree(child.id(), HostProcessSignal::Kill) {
+                    let _ = join_output_reader(stdout_reader, "stdout");
+                    let _ = join_output_reader(stderr_reader, "stderr");
+                    return Err(HostProcessError::Cleanup(error));
+                }
+            }
             let (stdout, stdout_truncated) = join_output_reader(stdout_reader, "stdout")?;
             let (stderr, stderr_truncated) = join_output_reader(stderr_reader, "stderr")?;
             return Ok(HostProcessOutput {
@@ -697,6 +769,13 @@ mod tests {
                 io::stdout().write_all(&vec![b'x'; 256 * 1024]).unwrap();
             }
             Ok("timeout") => std::thread::sleep(Duration::from_secs(5)),
+            #[cfg(unix)]
+            Ok("launcher-exits") => {
+                let _ = Command::new("sh")
+                    .args(["-c", "sleep 5"])
+                    .spawn()
+                    .expect("spawn inherited-pipe descendant");
+            }
             _ => {}
         }
     }
@@ -729,6 +808,20 @@ mod tests {
 
         assert!(matches!(error, HostProcessError::Timeout { .. }));
         assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn normal_exit_reaps_descendants_before_joining_output_readers() {
+        let mut command = fixture_command("launcher-exits");
+        let started = Instant::now();
+
+        let output =
+            run_command_with_timeout(&mut command, Duration::from_secs(2), 64 * 1024, 64 * 1024)
+                .expect("launcher exit should not wait on inherited pipes");
+
+        assert!(output.status.success());
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[tokio::test(flavor = "current_thread")]

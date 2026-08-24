@@ -9,6 +9,20 @@ use super::{normalize_model, normalize_prompt, AiExecutionError};
 
 pub(crate) trait AiExecutionProgressSink: Send + Sync {
     fn set_phase(&self, phase: AiExecutionPhase);
+
+    fn failure_phase(&self) -> Option<AiExecutionPhase> {
+        None
+    }
+
+    fn set_cleanup_report(&self, _report: AiExecutionCleanupReport) {}
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct AiExecutionCleanupReport {
+    pub(crate) process_reaped: bool,
+    pub(crate) workspace_removed: bool,
+    pub(crate) failure_count: usize,
 }
 
 #[derive(Clone)]
@@ -106,6 +120,12 @@ impl AiExecutionRequest {
     pub(crate) fn report_phase(&self, phase: AiExecutionPhase) {
         if let Some(progress) = self.progress.as_ref() {
             progress.set_phase(phase);
+        }
+    }
+
+    pub(crate) fn report_cleanup(&self, report: AiExecutionCleanupReport) {
+        if let Some(progress) = self.progress.as_ref() {
+            progress.set_cleanup_report(report);
         }
     }
 }

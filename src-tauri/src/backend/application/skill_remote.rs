@@ -1,9 +1,32 @@
 use super::prelude::*;
 use crate::backend::runtime::{AppError, AppResult};
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 const SKILL_REMOTE_SECURITY_NOTICE: &str =
     "Review remote Skill contents before importing; AssetIWeave does not execute or trust remote code automatically.";
+
+struct StagingDirectoryGuard {
+    path: PathBuf,
+}
+
+impl Drop for StagingDirectoryGuard {
+    fn drop(&mut self) {
+        let _ = self.cleanup();
+    }
+}
+
+impl StagingDirectoryGuard {
+    fn cleanup(&mut self) -> bool {
+        fs::remove_dir_all(&self.path).is_ok() || !self.path.exists()
+    }
+}
+
+fn report_skill_acquire_phase(phase_sink: Option<&dyn Fn(&str)>, phase: &str) {
+    if let Some(phase_sink) = phase_sink {
+        phase_sink(phase);
+    }
+}
 
 impl AppService {
     pub(crate) fn search_skills(&self, params: SkillSearchParams) -> AppResult<SkillSearchResult> {
@@ -46,6 +69,23 @@ impl AppService {
     }
 
     pub(crate) fn acquire_skill(&self, params: SkillAcquireParams) -> AppResult<Value> {
+        self.acquire_skill_with_cancellation(params, None)
+    }
+
+    pub(crate) fn acquire_skill_with_cancellation(
+        &self,
+        params: SkillAcquireParams,
+        cancellation: Option<&CancellationToken>,
+    ) -> AppResult<Value> {
+        self.acquire_skill_with_cancellation_and_progress(params, cancellation, None)
+    }
+
+    pub(crate) fn acquire_skill_with_cancellation_and_progress(
+        &self,
+        params: SkillAcquireParams,
+        cancellation: Option<&CancellationToken>,
+        phase_sink: Option<&dyn Fn(&str)>,
+    ) -> AppResult<Value> {
         if !params.dry_run && !params.yes {
             return Err(AppError::Validation(
                 "skill acquire requires --yes".to_string(),
@@ -68,6 +108,7 @@ impl AppService {
         let skill_path_hint = location.skill_path_hint(&staging_dir);
 
         if params.dry_run {
+            report_skill_acquire_phase(phase_sink, "preparing");
             return Ok(json!({
                 "dry_run": true,
                 "provider": "github",
@@ -82,7 +123,13 @@ impl AppService {
             }));
         }
 
-        clone_github_skill(&location, &staging_dir)?;
+        ensure_not_cancelled(cancellation)?;
+        report_skill_acquire_phase(phase_sink, "cloning");
+        let mut staging_guard = StagingDirectoryGuard {
+            path: staging_dir.clone(),
+        };
+        clone_github_skill(&location, &staging_dir, cancellation)?;
+        ensure_not_cancelled(cancellation)?;
         let skill_dir = resolve_cloned_skill_dir(&staging_dir, location.path.as_deref())?;
         let acquired_tree_sha = git_skill_tree_sha(&staging_dir, location.path.as_deref());
         let acquired_branch = location
@@ -90,11 +137,16 @@ impl AppService {
             .clone()
             .or_else(|| git_current_branch(&staging_dir))
             .unwrap_or_else(|| "HEAD".to_string());
-        let import_result = self.import_skill(ImportSkillParams {
-            from: skill_dir.to_string_lossy().to_string(),
-            name: Some(name.clone()),
-            dry_run: false,
-        })?;
+        report_skill_acquire_phase(phase_sink, "importing");
+        let import_result = self.import_skill_with_progress(
+            ImportSkillParams {
+                from: skill_dir.to_string_lossy().to_string(),
+                name: Some(name.clone()),
+                dry_run: false,
+            },
+            phase_sink,
+        )?;
+        ensure_not_cancelled(cancellation)?;
         let imported_asset = import_result
             .get("asset")
             .cloned()
@@ -136,6 +188,12 @@ impl AppService {
                 .await
             })
             .map_err(AppError::external)?;
+        let staging_cleaned = staging_guard.cleanup();
+        if !staging_cleaned {
+            return Err(AppError::Storage(
+                "remote Skill staging cleanup failed".to_string(),
+            ));
+        }
         Ok(json!({
             "dry_run": false,
             "provider": "github",
@@ -146,6 +204,7 @@ impl AppService {
             "name": name,
             "staging_path": staging_dir,
             "skill_path": skill_dir,
+            "staging_cleaned": staging_cleaned,
             "import": import_result,
             "remote_source": remote_source,
             "security_notice": SKILL_REMOTE_SECURITY_NOTICE,
@@ -784,7 +843,19 @@ fn clean_skill_subpath(value: &str) -> Option<String> {
     }
 }
 
-fn clone_github_skill(location: &GitHubSkillLocation, target: &Path) -> AppResult<()> {
+fn ensure_not_cancelled(cancellation: Option<&CancellationToken>) -> AppResult<()> {
+    if cancellation.is_some_and(CancellationToken::is_cancelled) {
+        Err(AppError::Canceled("skill acquire cancelled".to_string()))
+    } else {
+        Ok(())
+    }
+}
+
+fn clone_github_skill(
+    location: &GitHubSkillLocation,
+    target: &Path,
+    cancellation: Option<&CancellationToken>,
+) -> AppResult<()> {
     if target.exists() {
         return Err(AppError::Conflict(format!(
             "skill acquire staging path already exists: {}",
@@ -803,15 +874,21 @@ fn clone_github_skill(location: &GitHubSkillLocation, target: &Path) -> AppResul
         location.repo_url.clone(),
         target.to_string_lossy().to_string(),
     ]);
-    let output = crate::backend::host_process::run_program_with_timeout(
+    let output = crate::backend::host_process::run_program_with_cancellation(
         Path::new("git"),
         &command_args,
         None,
         Duration::from_secs(120),
         1024 * 1024,
         256 * 1024,
+        cancellation,
     )
-    .map_err(|error| AppError::Process(format!("failed to run git clone: {error:?}")))?;
+    .map_err(|error| match error {
+        crate::backend::host_process::HostProcessError::Cancelled => {
+            AppError::Canceled("skill acquire cancelled".to_string())
+        }
+        error => AppError::Process(format!("failed to run git clone: {error:?}")),
+    })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(AppError::Process(format!("git clone failed: {stderr}")));

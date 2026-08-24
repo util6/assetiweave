@@ -445,6 +445,32 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli profile list")
     ),
     command!(
+        "list_target_profile_descriptors",
+        "target.catalog.list",
+        "List target provider descriptors",
+        Read,
+        App,
+        false,
+        NoParams,
+        Service => |service, _params| service.list_target_profile_descriptors(),
+        &[],
+        None,
+        since: "0.6.1", deprecated: false
+    ),
+    command!(
+        "refresh_target_profile_descriptors",
+        "target.catalog.refresh",
+        "Reload target provider descriptors from the app-owned override directory",
+        Write,
+        App,
+        false,
+        NoParams,
+        Service => |service, _params| service.refresh_target_profile_descriptors(),
+        &[],
+        None,
+        since: "0.6.1", deprecated: false
+    ),
+    command!(
         "memory.overview",
         "memory.overview",
         "Get the local deterministic Memory overview without invoking AI",
@@ -2844,8 +2870,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         &[
             param!("query", "Optional Agent search query"),
             param!("protocol", "Optional Agent protocol filter"),
-            param!("installedOnly", "Only return installed Agents", ["installed_only"]),
-            param!("includeIncompatible", "Include core-incompatible items", ["include_incompatible"])
+            param!("installedOnly", "Only return installed Agents", ["installed_only"])
         ],
         Some("assetiweave-cli agent market list")
     ),

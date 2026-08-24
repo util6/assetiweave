@@ -696,6 +696,15 @@ mod tests {
         let remote_list = remotes.as_array().expect("remote list array");
         assert_eq!(remote_list.len(), 1);
         assert_eq!(remote_list[0]["asset_id"], value["import"]["asset"]["id"]);
+        assert_eq!(value["staging_cleaned"], json!(true));
+        let staging_path = backup_root.join("staging");
+        assert!(
+            !staging_path.exists()
+                || fs::read_dir(&staging_path)
+                    .expect("read staging root")
+                    .next()
+                    .is_none()
+        );
         fs::remove_dir_all(home).ok();
         fs::remove_dir_all(backup_root).ok();
         fs::remove_dir_all(repo).ok();
@@ -1061,12 +1070,15 @@ mod tests {
             fs::read_to_string(workspace_root.join("src-tauri/src/adapters/tauri/commands.rs"))
                 .expect("read Tauri commands");
         let mut tauri_handlers = extract_tauri_handler_methods(&tauri_command_source);
-        for method in desktop_only_tauri_methods() {
-            tauri_handlers.remove(method);
+        let desktop_only = desktop_only_tauri_methods();
+        for method in &desktop_only {
+            tauri_handlers.remove(*method);
         }
         let registered = command_registry::command_specs()
             .iter()
-            .filter(|spec| command_registry::is_app_method(spec.method))
+            .filter(|spec| {
+                command_registry::is_app_method(spec.method) && !desktop_only.contains(spec.method)
+            })
             .map(|spec| spec.method.to_string())
             .collect::<BTreeSet<_>>();
 
@@ -1546,6 +1558,14 @@ mod tests {
             "get_batch_mount_task",
             "list_batch_mount_tasks",
             "cancel_batch_mount",
+            "start_skill_acquire",
+            "get_skill_acquire_task",
+            "list_skill_acquire_tasks",
+            "cancel_skill_acquire_task",
+            "apply_skill_group_mount",
+            "apply_skill_group_exclusive_mount",
+            "scan_sources",
+            "scan_skill_sources",
         ])
     }
 

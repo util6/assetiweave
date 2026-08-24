@@ -227,6 +227,14 @@ impl AppService {
     }
 
     pub(crate) fn import_skill(&self, params: ImportSkillParams) -> AppResult<Value> {
+        self.import_skill_with_progress(params, None)
+    }
+
+    pub(crate) fn import_skill_with_progress(
+        &self,
+        params: ImportSkillParams,
+        phase_sink: Option<&dyn Fn(&str)>,
+    ) -> AppResult<Value> {
         let source_dir = crate::backend::path_utils::expand_path(&params.from)?;
         if !source_dir.is_dir() {
             return Err(AppError::Validation(format!(
@@ -279,6 +287,9 @@ impl AppService {
         }
 
         capabilities::copy_dir(&source_dir, &target_dir)?;
+        if let Some(phase_sink) = phase_sink {
+            phase_sink("scanning");
+        }
         let library_source = capabilities::assetiweave_library_source_with_root(
             capabilities::skill_backup_settings_sqlx(&self.db, self.tenant_id())?.root_path,
         );
@@ -554,13 +565,7 @@ impl AppService {
         profile_id: &str,
         enabled: bool,
     ) -> AppResult<ApplyAssetGroupMountResult> {
-        Ok(capabilities::apply_skill_group_mount_record(
-            &self.db,
-            self.tenant_id(),
-            group_id,
-            profile_id,
-            enabled,
-        )?)
+        self.apply_skill_group_mount_with_progress(group_id, profile_id, enabled, |_, _, _| Ok(()))
     }
 
     pub(crate) fn apply_skill_group_mount_with_progress<BeforeItem>(
@@ -573,14 +578,17 @@ impl AppService {
     where
         BeforeItem: FnMut(usize, usize, &str) -> AppResult<()>,
     {
-        Ok(capabilities::apply_skill_group_mount_record_with_progress(
-            &self.db,
-            self.tenant_id(),
-            group_id,
-            profile_id,
-            enabled,
+        match self.run_batch_mount_workflow_with_progress(
+            super::BatchMountWorkflowInput::Group {
+                group_id: group_id.to_string(),
+                profile_id: profile_id.to_string(),
+                enabled,
+            },
             |index, total, asset_id| before_item(index, total, asset_id),
-        )?)
+        )? {
+            super::BatchMountWorkflowOutput::Group(result) => Ok(result),
+            _ => unreachable!("group workflow returns a group result"),
+        }
     }
 
     pub(crate) fn preview_skill_group_exclusive_mount(
@@ -600,11 +608,7 @@ impl AppService {
         &self,
         input: SkillGroupExclusiveMountInput,
     ) -> AppResult<ApplySkillGroupExclusiveMountResult> {
-        Ok(capabilities::apply_skill_group_exclusive_mount_record(
-            &self.db,
-            self.tenant_id(),
-            &input,
-        )?)
+        self.apply_skill_group_exclusive_mount_with_progress(input, |_, _, _| Ok(()))
     }
 
     pub(crate) fn apply_skill_group_exclusive_mount_with_progress<BeforeItem>(
@@ -615,14 +619,16 @@ impl AppService {
     where
         BeforeItem: FnMut(usize, usize, &str) -> AppResult<()>,
     {
-        Ok(
-            capabilities::apply_skill_group_exclusive_mount_record_with_progress(
-                &self.db,
-                self.tenant_id(),
-                &input,
-                |index, total, asset_id| before_item(index, total, asset_id),
-            )?,
-        )
+        match self.run_batch_mount_workflow_with_progress(
+            super::BatchMountWorkflowInput::Exclusive {
+                group_ids: input.group_ids,
+                profile_id: input.profile_id,
+            },
+            |index, total, asset_id| before_item(index, total, asset_id),
+        )? {
+            super::BatchMountWorkflowOutput::Exclusive(result) => Ok(result),
+            _ => unreachable!("exclusive workflow returns an exclusive result"),
+        }
     }
 
     fn resolve_skill_asset(&self, asset_ref: &str) -> AppResult<Asset> {
