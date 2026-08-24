@@ -299,15 +299,3 @@ mod tests {
             .contains("/Users/util6"));
     }
 }
-
-impl From<String> for AppError {
-    fn from(message: String) -> Self {
-        Self::External(message)
-    }
-}
-
-impl From<AppError> for String {
-    fn from(error: AppError) -> Self {
-        error.to_string()
-    }
-}
