@@ -14,7 +14,9 @@ pub(crate) use app_runtime::{
     RuntimeRole, ShutdownReport, ShutdownState,
 };
 #[allow(unused_imports)]
-pub(crate) use error::{AppError, AppErrorView, AppResult, WireError};
+pub(crate) use error::{
+    sanitize_details, sanitize_public_message, AppError, AppErrorView, AppResult, WireError,
+};
 
 #[cfg(test)]
 mod tests;

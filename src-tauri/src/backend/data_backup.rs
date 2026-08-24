@@ -6,7 +6,6 @@
 //! a pattern for ordinary Application Service work.
 
 use crate::backend::{
-    app_settings::read_app_settings_value,
     path_utils::{default_database_backup_root, expand_path},
     runtime::{AppError, AppResult},
 };
@@ -48,24 +47,13 @@ pub(crate) struct DatabaseBackupError {
     pub(crate) message: String,
 }
 
-pub(crate) fn backup_database_from_settings(db_path: &Path) -> AppResult<DatabaseBackupReport> {
-    let mut settings_errors = Vec::new();
-    let settings = match read_app_settings_value() {
-        Ok(value) => value,
-        Err(error) => {
-            settings_errors.push(DatabaseBackupError {
-                directory: "settings".to_string(),
-                message: error.to_string(),
-            });
-            Value::Object(Default::default())
-        }
-    };
-
+pub(crate) fn backup_database_from_settings_value(
+    db_path: &Path,
+    settings: &Value,
+) -> AppResult<DatabaseBackupReport> {
     let default_root = default_database_backup_root()?;
-    let directories = configured_backup_directories(default_root, &settings)?;
-    let mut report = backup_database_to_directories(db_path, &directories)?;
-    report.errors.splice(0..0, settings_errors);
-    Ok(report)
+    let directories = configured_backup_directories(default_root, settings)?;
+    backup_database_to_directories(db_path, &directories)
 }
 
 pub(crate) fn configured_backup_directories(

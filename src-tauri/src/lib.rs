@@ -5,7 +5,7 @@ use crate::{
     adapters::{app_state::AppState, tauri::background_tasks::BackgroundTaskRegistry},
     backend::{
         application::AppService,
-        data_backup::backup_database_from_settings,
+        data_backup::backup_database_from_settings_value,
         logs::write_startup_log,
         operation_log::{log_error, log_warn},
         path_utils::app_db_path,
@@ -154,9 +154,20 @@ pub fn run() {
             panic!("failed to initialize AssetIWeave AppRuntime: {error}");
         }
     };
+    if let Err(error) = backend::runtime::install_process_runtime(runtime.clone()) {
+        log_error(
+            "app.startup.runtime_install",
+            "failed to install the resident AppRuntime as the process settings authority",
+            &error,
+            &[],
+        );
+        panic!("failed to install AssetIWeave process AppRuntime: {error}");
+    }
     let agent_runtime = runtime.agent_runtime();
     let conversation_full_sync_on_startup_enabled =
-        match backend::app_settings::conversation_full_sync_on_startup_enabled() {
+        match backend::app_settings::conversation_full_sync_on_startup_enabled_for_database(
+            runtime.db(),
+        ) {
             Ok(enabled) => enabled,
             Err(error) => {
                 log_error(
@@ -417,31 +428,36 @@ pub fn run() {
     });
 }
 
-pub(crate) fn sync_before_close(db_path: &std::path::Path, backup_database: bool) {
-    match AppRuntime::bootstrap(db_path.to_path_buf(), RuntimeRole::OneShot) {
-        Ok(runtime) => {
-            let service = AppService::from_runtime(&runtime);
-            if let Err(error) = service.refresh_asset_mount_statuses(None) {
-                log_error(
-                    "app.close.mount_refresh",
-                    "failed to sync AssetIWeave mount observations before close",
-                    &error,
-                    &[],
-                );
-            }
-        }
-        Err(error) => {
-            log_error(
-                "app.close.database",
-                "failed to open AssetIWeave database before close",
-                &error,
-                &[],
-            );
-        }
+pub(crate) fn sync_before_close_with_runtime(
+    runtime: &Arc<AppRuntime>,
+    db_path: &std::path::Path,
+    backup_database: bool,
+) {
+    let service = AppService::from_runtime(runtime);
+    if let Err(error) = service.refresh_asset_mount_statuses(None) {
+        log_error(
+            "app.close.mount_refresh",
+            "failed to sync AssetIWeave mount observations before close",
+            &error,
+            &[],
+        );
     }
 
     if backup_database {
-        match backup_database_from_settings(db_path) {
+        let settings = match service.get_app_settings() {
+            Ok(settings) => settings.settings,
+            Err(error) => {
+                log_error(
+                    "app.close.database_backup_settings",
+                    "读取 SQLite 备份设置失败，使用默认备份目录",
+                    &error,
+                    &[],
+                );
+                serde_json::Value::Object(Default::default())
+            }
+        };
+        let backup_result = backup_database_from_settings_value(db_path, &settings);
+        match backup_result {
             Ok(report) => {
                 if !report.errors.is_empty() {
                     let errors = report
@@ -528,6 +544,19 @@ fn install_engine_termination_handlers(
     }
     Ok(())
 }
+
+pub(crate) fn sync_before_close(db_path: &std::path::Path, backup_database: bool) {
+    match AppRuntime::bootstrap(db_path.to_path_buf(), RuntimeRole::OneShot) {
+        Ok(runtime) => sync_before_close_with_runtime(&runtime, db_path, backup_database),
+        Err(error) => log_error(
+            "app.close.database",
+            "failed to open AssetIWeave database before close",
+            &error,
+            &[],
+        ),
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

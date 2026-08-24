@@ -66,49 +66,42 @@ pub(crate) fn save_app_settings_for_database(
         db.pool(),
         SETTINGS_SCHEMA_VERSION,
         &settings,
-    ))
-    .map_err(AppError::External)?;
-    // The file remains an import/migration source. Keep its non-execution
-    // display settings in sync, but never use it as the runtime authority.
-    let document = AppSettingsDocument {
-        schema_version: SETTINGS_SCHEMA_VERSION,
-        settings: settings.clone(),
-    };
-    write_settings_document(&paths.config_path, &document)?;
+    ))?;
     Ok(paths.into_file(settings))
 }
 
 pub(crate) fn read_app_settings_value_for_database(db: &Database) -> AppResult<Value> {
-    let paths = app_settings_paths()?;
-    ensure_settings_dirs(&paths)?;
-    let legacy = canonicalize_settings(read_settings_document(&paths.config_path)?.settings)?;
-    let stored = db
-        .block_on(async {
-            if let Some((_schema_version, settings)) =
-                store::load_app_settings_sqlx(db.pool()).await?
-            {
-                return Ok(settings);
-            }
-            store::save_app_settings_sqlx(db.pool(), SETTINGS_SCHEMA_VERSION, &legacy).await?;
-            Ok(legacy.clone())
-        })
-        .map_err(AppError::External)?;
-    let settings = canonicalize_settings(stored)?;
-    if settings != legacy {
-        write_settings_document(
-            &paths.config_path,
-            &AppSettingsDocument {
-                schema_version: SETTINGS_SCHEMA_VERSION,
-                settings: settings.clone(),
-            },
-        )?;
-    }
-    Ok(settings)
+    db.block_on(load_or_import_app_settings_sqlx(db.pool()))
 }
 
-pub(crate) fn conversation_full_sync_on_startup_enabled() -> AppResult<bool> {
+/// Load the authoritative SQLite settings row. The legacy JSON document is
+/// consulted exactly once, only when the row does not exist yet.
+pub(crate) async fn load_or_import_app_settings_sqlx(pool: &sqlx::SqlitePool) -> AppResult<Value> {
+    if let Some((schema_version, stored)) = store::load_app_settings_sqlx(pool).await? {
+        if schema_version > SETTINGS_SCHEMA_VERSION {
+            return Err(AppError::Validation(format!(
+                "settings schema version {schema_version} is newer than supported version {SETTINGS_SCHEMA_VERSION}"
+            )));
+        }
+        let settings = canonicalize_settings(stored)?;
+        if schema_version < SETTINGS_SCHEMA_VERSION {
+            store::save_app_settings_sqlx(pool, SETTINGS_SCHEMA_VERSION, &settings).await?;
+        }
+        return Ok(settings);
+    }
+
+    let paths = app_settings_paths()?;
+    ensure_settings_dirs(&paths)?;
+    let imported = canonicalize_settings(read_settings_document(&paths.config_path)?.settings)?;
+    store::save_app_settings_sqlx(pool, SETTINGS_SCHEMA_VERSION, &imported).await?;
+    Ok(imported)
+}
+
+pub(crate) fn conversation_full_sync_on_startup_enabled_for_database(
+    db: &Database,
+) -> AppResult<bool> {
     Ok(conversation_full_sync_on_startup_enabled_from_value(
-        &read_app_settings_value()?,
+        &read_app_settings_value_for_database(db)?,
     ))
 }
 
@@ -357,6 +350,7 @@ fn normalize_canonical_agent_assignments(
         .and_then(Value::as_object);
     let agent_models = root.get("agentModels").and_then(Value::as_object);
     let existing = root.get("agentAssignments").and_then(Value::as_object);
+    let has_canonical_assignments = existing.is_some();
     let action_sources = [
         ("translation.card", "cardTranslation"),
         ("memory.extraction", "memory.extraction"),
@@ -368,6 +362,9 @@ fn normalize_canonical_agent_assignments(
         let existing_assignment = existing
             .and_then(|values| values.get(action_id))
             .and_then(Value::as_object);
+        if has_canonical_assignments && existing_assignment.is_none() {
+            continue;
+        }
         let legacy_agent = legacy
             .and_then(|values| values.get(legacy_id))
             .and_then(Value::as_str)
@@ -743,5 +740,59 @@ mod tests {
             None => std::env::remove_var("ASSETIWEAVE_HOME"),
         }
         std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn sqlite_settings_remain_available_when_legacy_file_is_corrupt() {
+        let _guard = settings_test_lock().lock().expect("settings test lock");
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-settings-corrupt-file-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("create settings test root");
+        let previous_home = std::env::var_os("ASSETIWEAVE_HOME");
+        std::env::set_var("ASSETIWEAVE_HOME", &root);
+        let database = crate::backend::store::Database::open_initialized(&root.join("settings.db"))
+            .expect("open settings database");
+        let expected = canonicalize_settings(json!({
+            "theme": "dark",
+            "agentAssignments": {}
+        }))
+        .expect("canonical settings");
+        save_app_settings_for_database(&database, expected.clone()).expect("save sqlite settings");
+        std::fs::write(root.join(CONFIG_FILE_NAME), "{ invalid json")
+            .expect("write corrupt legacy file");
+
+        let actual = read_app_settings_value_for_database(&database)
+            .expect("read settings from sqlite despite corrupt legacy file");
+        assert_eq!(actual, expected);
+
+        match previous_home {
+            Some(value) => std::env::set_var("ASSETIWEAVE_HOME", value),
+            None => std::env::remove_var("ASSETIWEAVE_HOME"),
+        }
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn canonical_settings_do_not_refill_explicitly_unassigned_actions() {
+        let settings = canonicalize_settings(json!({
+            "aiRuntime": { "cli": "opencode", "model": "model/a" },
+            "agentAssignments": {
+                "translation.card": { "agentId": "opencode", "modelId": "model/a" }
+            }
+        }))
+        .expect("canonicalize settings");
+
+        assert!(settings["agentAssignments"]
+            .get("translation.card")
+            .is_some());
+        assert!(settings["agentAssignments"]
+            .get("memory.extraction")
+            .is_none());
+        assert!(settings["agentAssignments"].get("memory.dream").is_none());
+        assert!(settings["agentAssignments"]
+            .get("prompt.optimization")
+            .is_none());
     }
 }

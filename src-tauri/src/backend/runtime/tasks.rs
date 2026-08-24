@@ -24,6 +24,9 @@ pub(crate) enum TaskKind {
     ScriptInstall,
     ExtensionLifecycle,
     AiExecution,
+    AgentMarketRefresh,
+    Memory,
+    RemoteSkillAcquire,
     Scan,
     Backup,
     BatchMount,
@@ -62,24 +65,35 @@ pub(crate) struct TaskProgress {
 pub(crate) struct TaskSpec {
     pub(crate) kind: TaskKind,
     pub(crate) task_id: Option<String>,
+    pub(crate) tenant_id: Option<String>,
     pub(crate) dedup_key: Option<String>,
     pub(crate) conflict_keys: Vec<String>,
     pub(crate) detail: Value,
 }
 
 impl TaskSpec {
-    pub(crate) fn new(kind: TaskKind, dedup_key: Option<String>) -> Self {
+    pub(crate) fn global(kind: TaskKind, dedup_key: Option<String>) -> Self {
         Self {
             kind,
             task_id: None,
+            tenant_id: None,
             dedup_key,
             conflict_keys: Vec::new(),
             detail: Value::Null,
         }
     }
 
+    pub(crate) fn new(kind: TaskKind, dedup_key: Option<String>) -> Self {
+        Self::global(kind, dedup_key)
+    }
+
     pub(crate) fn with_task_id(mut self, task_id: impl Into<String>) -> Self {
         self.task_id = Some(task_id.into());
+        self
+    }
+
+    pub(crate) fn with_tenant_id(mut self, tenant_id: impl Into<String>) -> Self {
+        self.tenant_id = Some(tenant_id.into());
         self
     }
 
@@ -102,6 +116,8 @@ impl TaskSpec {
 pub(crate) struct TaskSnapshot {
     pub(crate) task_id: String,
     pub(crate) kind: TaskKind,
+    #[serde(skip)]
+    pub(crate) tenant_id: Option<String>,
     pub(crate) dedup_key: Option<String>,
     pub(crate) state: TaskState,
     pub(crate) progress: Option<TaskProgress>,
@@ -246,6 +262,7 @@ impl TaskRuntime {
                 .values()
                 .find(|entry| {
                     entry.snapshot.kind == spec.kind
+                        && entry.snapshot.tenant_id == spec.tenant_id
                         && entry.snapshot.dedup_key.as_ref() == Some(key)
                         && entry.snapshot.state.is_active()
                 })
@@ -256,6 +273,7 @@ impl TaskRuntime {
         let snapshot = TaskSnapshot {
             task_id: task_id.clone(),
             kind: spec.kind,
+            tenant_id: spec.tenant_id,
             dedup_key: spec.dedup_key,
             state: TaskState::Running,
             progress: None,
@@ -314,6 +332,7 @@ impl TaskRuntime {
         if let Some(existing) = spec.dedup_key.as_ref().and_then(|key| {
             tasks.values().find(|entry| {
                 entry.snapshot.kind == spec.kind
+                    && entry.snapshot.tenant_id == spec.tenant_id
                     && entry.snapshot.dedup_key.as_ref() == Some(key)
                     && entry.snapshot.state.is_active()
             })
@@ -324,6 +343,7 @@ impl TaskRuntime {
         }
         if let Some(existing) = tasks.values().find(|entry| {
             entry.snapshot.state.is_active()
+                && entry.snapshot.tenant_id == spec.tenant_id
                 && spec
                     .conflict_keys
                     .iter()
@@ -336,6 +356,7 @@ impl TaskRuntime {
         let snapshot = TaskSnapshot {
             task_id: task_id.clone(),
             kind: spec.kind,
+            tenant_id: spec.tenant_id,
             state: TaskState::Pending,
             dedup_key: spec.dedup_key,
             progress: None,
@@ -539,7 +560,7 @@ impl TaskRuntime {
                 if entry.cancellation.is_cancelled() {
                     entry.snapshot.state = TaskState::Canceled;
                     entry.snapshot.error =
-                        Some(AppError::Canceled("后台任务已取消".to_string()).into());
+                        Some(AppError::Canceled("后台任务已取消".to_string()).view());
                 } else {
                     entry.snapshot.state = TaskState::Succeeded;
                     entry.snapshot.result = Some(detail);
@@ -548,15 +569,15 @@ impl TaskRuntime {
             Err(_error) if entry.cancellation.is_cancelled() => {
                 entry.snapshot.state = TaskState::Canceled;
                 entry.snapshot.error =
-                    Some(AppError::Canceled("后台任务已取消".to_string()).into());
+                    Some(AppError::Canceled("后台任务已取消".to_string()).view());
             }
             Err(error) if matches!(error, AppError::Canceled(_)) => {
                 entry.snapshot.state = TaskState::Canceled;
-                entry.snapshot.error = Some(error.into());
+                entry.snapshot.error = Some(error.view());
             }
             Err(error) => {
                 entry.snapshot.state = TaskState::Failed;
-                entry.snapshot.error = Some(error.into());
+                entry.snapshot.error = Some(error.view());
             }
         }
         let snapshot = entry.snapshot.clone();
@@ -640,7 +661,7 @@ impl TaskRuntime {
                             Ok(_detail) if cancellation.is_cancelled() => {
                                 entry.snapshot.state = TaskState::Canceled;
                                 entry.snapshot.error =
-                                    Some(AppError::Canceled("后台任务已取消".to_string()).into());
+                                    Some(AppError::Canceled("后台任务已取消".to_string()).view());
                             }
                             Ok(detail) => {
                                 entry.snapshot.state = TaskState::Succeeded;
@@ -657,12 +678,12 @@ impl TaskRuntime {
                                     } else {
                                         AppError::Canceled("后台任务已取消".to_string())
                                     }
-                                    .into(),
+                                    .view(),
                                 );
                             }
                             Err(error) => {
                                 entry.snapshot.state = TaskState::Failed;
-                                entry.snapshot.error = Some(error.into());
+                                entry.snapshot.error = Some(error.view());
                             }
                         }
                         release_slot = true;
@@ -681,7 +702,7 @@ impl TaskRuntime {
                     entry.snapshot.state = TaskState::Failed;
                     entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
                     entry.snapshot.error =
-                        Some(AppError::External(format!("启动后台任务失败: {error}")).into());
+                        Some(AppError::External(format!("启动后台任务失败: {error}")).view());
                 }
             }
             self.release_active_slot();
@@ -694,6 +715,12 @@ impl TaskRuntime {
         let mut tasks = self.tasks.lock().ok()?;
         Self::prune_terminal_tasks_locked(&mut tasks);
         tasks.get(task_id).map(|e| e.snapshot.clone())
+    }
+
+    pub(crate) fn get_for_tenant(&self, tenant_id: &str, task_id: &str) -> Option<TaskSnapshot> {
+        self.get(task_id).filter(|snapshot| {
+            snapshot.tenant_id.is_none() || snapshot.tenant_id.as_deref() == Some(tenant_id)
+        })
     }
 
     pub(crate) fn list(&self, filter: TaskFilter) -> Vec<TaskSnapshot> {
@@ -721,6 +748,15 @@ impl TaskRuntime {
         snapshots
     }
 
+    pub(crate) fn list_for_tenant(&self, tenant_id: &str, filter: TaskFilter) -> Vec<TaskSnapshot> {
+        self.list(filter)
+            .into_iter()
+            .filter(|snapshot| {
+                snapshot.tenant_id.is_none() || snapshot.tenant_id.as_deref() == Some(tenant_id)
+            })
+            .collect()
+    }
+
     pub(crate) fn cancel(&self, task_id: &str) -> CancelOutcome {
         let Ok(mut tasks) = self.tasks.lock() else {
             return CancelOutcome::NotFound;
@@ -735,6 +771,13 @@ impl TaskRuntime {
             return CancelOutcome::Requested(entry.snapshot.clone());
         }
         CancelOutcome::AlreadyFinished(entry.snapshot.clone())
+    }
+
+    pub(crate) fn cancel_for_tenant(&self, tenant_id: &str, task_id: &str) -> CancelOutcome {
+        if self.get_for_tenant(tenant_id, task_id).is_none() {
+            return CancelOutcome::NotFound;
+        }
+        self.cancel(task_id)
     }
 
     pub(crate) fn stop_accepting(&self) {
