@@ -13,6 +13,8 @@
     "source.remove",
     "source.scan",
     "profile.list",
+    "list_target_profile_descriptors",
+    "refresh_target_profile_descriptors",
     "memory.overview",
     "memory.dream.status",
     "memory.dream.preview",
@@ -696,6 +698,44 @@
       },
       "cli": "assetiweave-cli profile list",
       "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "list_target_profile_descriptors",
+      "canonical_method": "target.catalog.list",
+      "description": "List target provider descriptors",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "cli": null,
+      "since": "0.6.1",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "refresh_target_profile_descriptors",
+      "canonical_method": "target.catalog.refresh",
+      "description": "Reload target provider descriptors from the app-owned override directory",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "cli": null,
+      "since": "0.6.1",
       "deprecated": false
     },
     {
@@ -9776,14 +9816,6 @@
             "description": "Only return installed Agents",
             "aliases": [
               "installed_only"
-            ]
-          },
-          "includeIncompatible": {
-            "type": "boolean",
-            "default": true,
-            "description": "Include core-incompatible items",
-            "aliases": [
-              "include_incompatible"
             ]
           }
         },

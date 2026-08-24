@@ -101,7 +101,7 @@ impl AppRuntime {
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .join("target-providers");
-        let target_catalog = TargetCatalog::builtin()?;
+        let target_catalog = TargetCatalog::load_with_overrides(&target_catalog_dir)?;
 
         // Bootstrap is the only production path that opens the migrated pool. The
         // old Database::open_initialized remains a test/migration compatibility API.
@@ -374,10 +374,6 @@ impl AppRuntime {
     pub(crate) fn agent_runtime(&self) -> Arc<dyn AgentExecutionRuntime> {
         self.context().agent_runtime.clone()
     }
-
-    pub(crate) fn agent_runtime_manager(&self) -> Arc<AgentRuntimeManager> {
-        self.context().agent_runtime_manager.clone()
-    }
     pub(crate) fn task_runtime(&self) -> &TaskRuntime {
         &self.task_runtime
     }
@@ -410,7 +406,7 @@ impl AppRuntime {
     }
 
     pub(crate) fn refresh_target_catalog_from_disk(&self) -> AppResult<Arc<TargetCatalog>> {
-        let catalog = TargetCatalog::builtin()?;
+        let catalog = TargetCatalog::load_with_overrides(&self.target_catalog_dir)?;
         self.reconcile_tenants_with_target_catalog(&catalog)?;
         self.target_catalog.replace(catalog);
         Ok(self.target_catalog.load())

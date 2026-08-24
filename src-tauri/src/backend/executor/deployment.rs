@@ -1,10 +1,10 @@
 use crate::backend::{
-    compat::LegacyResult,
     dto::ExecutionResult,
     models::{
         Asset, DeploymentAction, DeploymentActionType, DeploymentPlan, DeploymentState,
         DeploymentStrategy, TargetProfile,
     },
+    runtime::AppResult,
 };
 use chrono::Utc;
 use sqlx::SqlitePool;
@@ -74,7 +74,7 @@ pub(crate) async fn execute_deployment_plan(
     plan: &DeploymentPlan,
     requested_action_ids: Option<&[String]>,
     target_catalog: &crate::backend::target_catalog::TargetCatalog,
-) -> LegacyResult<ExecutionResult> {
+) -> AppResult<ExecutionResult> {
     let requested: Option<HashSet<&str>> =
         requested_action_ids.map(|ids| ids.iter().map(String::as_str).collect());
     let asset_map: HashMap<&str, &Asset> = assets
@@ -261,24 +261,32 @@ async fn execute_deployment_action(
 }
 
 fn target_can_be_replaced_with_asset(asset: &Asset, target_path: &Path) -> Result<bool, String> {
-    if crate::backend::targeting::target_is_asset_source(asset, target_path)? {
+    if crate::backend::targeting::target_is_asset_source(asset, target_path)
+        .map_err(|error| error.to_string())?
+    {
         return Ok(false);
     }
-    Ok(crate::backend::targeting::target_content_matches_asset(
-        asset,
-        target_path,
-    )?)
+    Ok(
+        crate::backend::targeting::target_content_matches_asset(asset, target_path)
+            .map_err(|error| error.to_string())?,
+    )
 }
 
 fn ensure_target_within_profile(
     profile: &TargetProfile,
     target_path: &Path,
 ) -> Result<(), DeploymentError> {
-    let allowed_root = crate::backend::targeting::target_dir(profile)
-        .map_err(|error| DeploymentError::Failure(error.to_string()))?;
-    if !crate::backend::host_filesystem::HostFilesystem::current()
-        .is_within(target_path, &allowed_root)
-    {
+    let filesystem = crate::backend::host_filesystem::HostFilesystem::current();
+    let mut allowed = false;
+    for root in &profile.target_paths {
+        let expanded = crate::backend::path_utils::expand_path(root)
+            .map_err(|error| DeploymentError::Failure(error.to_string()))?;
+        if filesystem.is_within(target_path, &expanded) {
+            allowed = true;
+            break;
+        }
+    }
+    if !allowed {
         return Err(DeploymentError::Failure(format!(
             "拒绝写入 Profile 目标目录外部: {}",
             target_path.display()

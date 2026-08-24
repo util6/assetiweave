@@ -109,33 +109,49 @@ pub(crate) fn default_profiles_from_catalog(catalog: &TargetCatalog) -> Vec<Targ
     catalog
         .descriptors()
         .iter()
-        .map(|descriptor| TargetProfile {
-            id: descriptor.id.clone(),
-            name: descriptor.name.clone(),
-            app_kind: descriptor.app_kind_compat,
-            target_provider_id: descriptor.id.clone(),
-            target_paths: vec![descriptor.default_targets[0].path.clone()],
-            supported_kinds: descriptor.supported_kinds.clone(),
-            deployment_strategy: descriptor.deployment_strategy,
-            enabled: true,
-            include: RuleSet {
-                kinds: vec![AssetKind::Skill, AssetKind::Prompt, AssetKind::Rule],
-                tags: vec![],
-                groups: vec![],
-                sources: vec![],
-                path_patterns: vec![],
-            },
-            exclude: RuleSet {
-                kinds: vec![AssetKind::Unclassified],
-                tags: vec![],
-                groups: vec![],
-                sources: vec![],
-                path_patterns: vec![],
-            },
-            safety: ProfileSafety {
-                allow_remove: false,
-                allow_overwrite: false,
-            },
+        .map(|descriptor| {
+            let mut supported_kinds = descriptor
+                .default_targets
+                .iter()
+                .map(|target| target.asset_kind)
+                .collect::<Vec<_>>();
+            for kind in &descriptor.supported_kinds {
+                if !supported_kinds.contains(kind) {
+                    supported_kinds.push(*kind);
+                }
+            }
+            TargetProfile {
+                id: descriptor.id.clone(),
+                name: descriptor.name.clone(),
+                app_kind: descriptor.app_kind_compat,
+                target_provider_id: descriptor.id.clone(),
+                target_paths: descriptor
+                    .default_targets
+                    .iter()
+                    .map(|target| target.path.clone())
+                    .collect(),
+                supported_kinds,
+                deployment_strategy: descriptor.deployment_strategy,
+                enabled: true,
+                include: RuleSet {
+                    kinds: vec![AssetKind::Skill, AssetKind::Prompt, AssetKind::Rule],
+                    tags: vec![],
+                    groups: vec![],
+                    sources: vec![],
+                    path_patterns: vec![],
+                },
+                exclude: RuleSet {
+                    kinds: vec![AssetKind::Unclassified],
+                    tags: vec![],
+                    groups: vec![],
+                    sources: vec![],
+                    path_patterns: vec![],
+                },
+                safety: ProfileSafety {
+                    allow_remove: false,
+                    allow_overwrite: false,
+                },
+            }
         })
         .collect()
 }

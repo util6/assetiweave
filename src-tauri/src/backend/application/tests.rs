@@ -199,6 +199,46 @@ fn switching_tenant_rebinds_the_next_app_service_request() {
 }
 
 #[test]
+fn switching_tenant_rebinds_tenant_scoped_runtime_catalogs() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-tenant-switch-runtime-resources-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create temp dir");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let tenant_b = service
+        .create_tenant(TenantCreateParams {
+            name: "Tenant B".to_string(),
+            slug: Some("tenant-b-runtime".to_string()),
+            set_active: false,
+        })
+        .expect("create tenant B");
+    execute_test_sql(
+        &service,
+        &format!(
+            "INSERT INTO conversation_adapters (tenant_id, id, name, kind, version, enabled, manifest_path, executable_path, content_hash, trusted_hash, trust_state, protocol_version, capabilities, input_kinds, card_contract_version, card_kinds_json, created_at, updated_at) VALUES ('{}', 'tenant-b-only-adapter', 'Tenant B only adapter', 'external', '1.0.0', 1, NULL, NULL, NULL, NULL, 'trusted', 1, '[\"list\"]', '[\"directory\"]', NULL, '[]', '2026-08-23T00:00:00Z', '2026-08-23T00:00:00Z')",
+            tenant_b.id
+        ),
+    )
+    .expect("save tenant B adapter");
+
+    service
+        .switch_tenant(tenant_b.id)
+        .expect("switch to tenant B");
+
+    let next_request = AppService::from_runtime(&service.runtime);
+    assert!(next_request
+        .list_conversation_adapters()
+        .expect("list tenant B adapters")
+        .iter()
+        .any(|adapter| adapter.id == "tenant-b-only-adapter"));
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn system_skill_source_cannot_be_edited_or_removed() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-system-source-protection-{}",
@@ -588,13 +628,15 @@ fn load_export_fixture_adapter(service: &AppService, session_id: &str) -> Conver
                 &tenant_id,
                 &session_id,
             )
-            .await?;
+            .await
+            .map_err(|error| error.to_string())?;
             crate::backend::store::load_conversation_adapter_sqlx(
                 &pool,
                 &tenant_id,
                 &detail.session.adapter_id,
             )
-            .await?
+            .await
+            .map_err(|error| error.to_string())?
             .ok_or_else(|| "fixture adapter not found".to_string())
         })
         .expect("load export fixture adapter")
@@ -2523,6 +2565,55 @@ fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
 }
 
 #[test]
+fn refreshing_target_catalog_reconciles_existing_default_profiles() {
+    let root =
+        std::env::temp_dir().join(format!("assetiweave-target-reconcile-{}", Uuid::new_v4()));
+    let skill_target = root.join("codex-skills");
+    let prompt_target = root.join("codex-prompts");
+    fs::create_dir_all(&root).expect("create target reconciliation root");
+    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+
+    service
+        .runtime
+        .refresh_target_catalog(vec![crate::backend::models::TargetProfileDescriptor {
+            id: "codex".to_string(),
+            name: "Codex Fixture".to_string(),
+            app_kind_compat: Some(crate::backend::models::AppKind::Codex),
+            default_targets: vec![
+                crate::backend::models::TargetPathRule {
+                    asset_kind: AssetKind::Skill,
+                    path: skill_target.to_string_lossy().to_string(),
+                },
+                crate::backend::models::TargetPathRule {
+                    asset_kind: AssetKind::Prompt,
+                    path: prompt_target.to_string_lossy().to_string(),
+                },
+            ],
+            supported_kinds: vec![AssetKind::Skill, AssetKind::Prompt],
+            deployment_strategy: DeploymentStrategy::SymlinkToSource,
+            icon: None,
+        }])
+        .expect("refresh target catalog");
+
+    let profile = service
+        .list_profiles()
+        .expect("list profiles")
+        .into_iter()
+        .find(|profile| profile.id == "codex")
+        .expect("existing Codex profile");
+    assert_eq!(
+        profile.target_paths,
+        vec![
+            skill_target.to_string_lossy().to_string(),
+            prompt_target.to_string_lossy().to_string(),
+        ]
+    );
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
     let root = std::env::temp_dir().join(format!("assetiweave-target-runtime-{}", Uuid::new_v4()));
     let source_root = root.join("fixture-source");
@@ -2674,6 +2765,50 @@ fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
         .target_catalog()
         .descriptor("fixture-provider")
         .is_some());
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn invalid_disk_target_catalog_refresh_preserves_the_published_snapshot() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-target-disk-refresh-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(root.join("target-providers")).expect("create provider directory");
+    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    assert!(service
+        .list_target_profile_descriptors()
+        .expect("list initial descriptors")
+        .iter()
+        .any(|descriptor| descriptor.id == "codex"));
+    fs::write(
+        root.join("target-providers/invalid.json"),
+        serde_json::json!({
+            "id": "invalid-provider",
+            "name": "Invalid Provider",
+            "app_kind_compat": null,
+            "default_targets": [{ "asset_kind": "skill", "path": "" }],
+            "supported_kinds": ["skill"],
+            "deployment_strategy": "symlink_to_source",
+            "icon": null
+        })
+        .to_string(),
+    )
+    .expect("write invalid descriptor");
+
+    assert!(service.refresh_target_profile_descriptors().is_err());
+    assert!(service
+        .list_target_profile_descriptors()
+        .expect("list preserved descriptors")
+        .iter()
+        .any(|descriptor| descriptor.id == "codex"));
+    assert!(!service
+        .list_target_profile_descriptors()
+        .expect("list preserved descriptors")
+        .iter()
+        .any(|descriptor| descriptor.id == "invalid-provider"));
 
     drop(service);
     fs::remove_dir_all(root).ok();
