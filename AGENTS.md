@@ -6,7 +6,7 @@
 - `frontend/src/services/` is the only frontend boundary for Tauri/Engine calls. Pages, hooks, components, schemas, and utils must not bypass it with direct `invoke(...)` calls.
 - `src-tauri/src/` contains the complete Rust backend. `adapters/` exposes Tauri commands, stdio Engine protocol, platform glue, CLI tooling, and background task state. `backend/` contains application workflows, capabilities, models, scanner, planner, executor, persistence, conversations, settings, backups, logs, and targeting.
 - `cli/` is the Go/Cobra client. It must call the Rust Engine rather than writing SQLite or mount links directly. CLI-specific code may own command UX, plugins, policies, output formatting, update flow, and external harvester orchestration.
-- Tests are colocated with source. Supporting material lives in `docs/`, `specs/`, and `scripts/`. See `docs/repository-structure.md` for ownership and migration guidance.
+- Tests are colocated with source. User-facing and long-lived knowledge lives in `docs/`; Agent workflow material lives in `agent-docs/`; helper scripts live in `scripts/`. See `docs/knowledge/repository-structure.md` for ownership and migration guidance.
 
 ## Runtime Architecture & Data Flow
 
@@ -76,14 +76,29 @@ Name frontend tests `*.test.ts(x)` and Go tests `*_test.go`; keep Rust unit test
 
 For behavior that crosses UI, Engine, and filesystem boundaries, prefer layered coverage: pure utility tests first, backend repository/service tests next, CLI contract/e2e tests when public commands change, and browser/Tauri manual verification for visible UI or desktop APIs.
 
-## Documentation & Specs
+## Documentation and source of truth
 
-- `docs/` describes current maintenance and usage facts.
-- `specs/requirements.md` describes product goals, non-goals, acceptance criteria, and current product phase.
-- `specs/design.md` describes the intended architecture and should be kept aligned with real module boundaries.
-- `specs/tasks.md` tracks milestone state; update it when Git history or implemented code proves a task changed state.
-- When code and specs disagree, inspect code and Git first. Mark unfinished goals as pending rather than documenting them as current behavior.
+- Code, tests, build configuration, and CLI `--help` are the source of truth for implemented behavior; documentation must not restate them as a competing snapshot.
+- GitHub Issues and their Agent Briefs are the source of truth for planned work and its execution contract.
+- `CONTEXT.md` is the concise domain glossary. Add a term only when its meaning is resolved; never turn it into a specification.
+- `agent-docs/adr/` records only hard-to-reverse, non-obvious decisions that resulted from a real trade-off. ADR numbering follows decision date, then recording date and Git evidence.
+- `docs/` contains user guides and distilled, durable knowledge. `agent-docs/` contains Agent governance, plans, work material, archives, and generated references.
+- Create documents lazily, keep each meaning in one place, and delete stale or duplicated material after extracting any enduring decision or knowledge.
 
 ## Commit & Pull Request Guidelines
 
 Use concise, imperative Conventional Commit subjects, for example `feat: add source filter` or `fix: refresh mount state`. Keep each commit focused. Pull requests should explain behavior and architectural impact, link the relevant issue or spec, list verification commands, and include screenshots for visible UI changes. Do not commit secrets, local logs, build output, or hand-edited generated contracts.
+
+## Agent skills
+
+### Issue tracker
+
+问题与规格通过本仓库的 GitHub Issues 跟踪。详见 `agent-docs/governance/issue-tracker.md`。
+
+### Triage labels
+
+使用默认的五个标准分诊标签。详见 `agent-docs/governance/triage-labels.md`。
+
+### Domain docs
+
+使用单上下文文档布局。详见 `agent-docs/governance/domain.md`。
