@@ -196,7 +196,7 @@ impl AppService {
                     &pool, &tenant_id, release,
                 )
                 .await
-                .map_err(AppError::Storage)?;
+                .map_err(|error| error)?;
             }
             Ok::<(), AppError>(())
         })?;
@@ -316,7 +316,7 @@ impl AppService {
                 )
                 .await
             })
-            .map_err(AppError::Storage)
+            .map_err(|error| error)
     }
 }
 

@@ -238,14 +238,35 @@ pub(crate) fn detect_target_provider(
     catalog: &TargetCatalog,
 ) -> Option<(String, Option<AppKind>)> {
     let filesystem = crate::backend::host_filesystem::HostFilesystem::current();
-    catalog.descriptors().iter().find_map(|descriptor| {
-        descriptor.default_targets.iter().find_map(|target| {
-            let target_path = expand_path(&target.path).ok()?;
-            filesystem
-                .is_within(path, &target_path)
-                .then(|| (descriptor.id.clone(), descriptor.app_kind_compat))
+    let mut matches = catalog
+        .descriptors()
+        .iter()
+        .flat_map(|descriptor| {
+            descriptor.default_targets.iter().filter_map(|target| {
+                let target_path = expand_path(&target.path).ok()?;
+                filesystem.is_within(path, &target_path).then(|| {
+                    (
+                        target_path.components().count(),
+                        descriptor.id.clone(),
+                        descriptor.app_kind_compat,
+                    )
+                })
+            })
         })
-    })
+        .collect::<Vec<_>>();
+    let max_depth = matches.iter().map(|candidate| candidate.0).max()?;
+    matches.retain(|candidate| candidate.0 == max_depth);
+    let provider_ids = matches
+        .iter()
+        .map(|candidate| candidate.1.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    if provider_ids.len() > 1 {
+        return None;
+    }
+    matches
+        .into_iter()
+        .next()
+        .map(|(_, provider_id, app_kind)| (provider_id, app_kind))
 }
 
 pub(crate) fn is_app_library_path(path: &Path) -> bool {
@@ -386,6 +407,37 @@ mod tests {
         assert_eq!(
             detect_target_provider(&nested, &catalog),
             Some(("fixture-provider".to_string(), Some(AppKind::Custom)))
+        );
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn target_detection_prefers_the_most_specific_matching_rule() {
+        let root = unique_temp_dir("assetiweave-target-provider-specificity");
+        let broad = root.join("skills");
+        let specific = broad.join("nested");
+        fs::create_dir_all(&specific).expect("create target fixture");
+        let descriptor = |id: &str, path: &Path| TargetProfileDescriptor {
+            id: id.to_string(),
+            name: id.to_string(),
+            app_kind_compat: Some(AppKind::Custom),
+            default_targets: vec![TargetPathRule {
+                asset_kind: AssetKind::Skill,
+                path: path.to_string_lossy().to_string(),
+            }],
+            supported_kinds: vec![AssetKind::Skill],
+            deployment_strategy: DeploymentStrategy::SymlinkToSource,
+            icon: None,
+        };
+        let catalog = TargetCatalog::from_descriptors(vec![
+            descriptor("broad", &broad),
+            descriptor("specific", &specific),
+        ])
+        .expect("nested target rules are valid");
+
+        assert_eq!(
+            detect_target_provider(&specific.join("item"), &catalog),
+            Some(("specific".to_string(), Some(AppKind::Custom)))
         );
         fs::remove_dir_all(root).ok();
     }

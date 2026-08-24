@@ -11,7 +11,7 @@ pub(super) fn build_glob_set(patterns: &[String], fallback: &[&str]) -> AppResul
         patterns.to_vec()
     };
     for pattern in effective {
-        builder.add(Glob::new(&pattern).map_err(|error| error.to_string())?);
+        builder.add(Glob::new(&pattern).map_err(AppError::external)?);
     }
-    builder.build().map_err(|error| error.to_string())
+    builder.build().map_err(AppError::external)
 }

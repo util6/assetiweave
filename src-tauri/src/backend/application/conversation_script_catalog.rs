@@ -198,12 +198,15 @@ impl AppService {
             })
             .map_err(AppError::external)?;
         reject_conversation_package_task_conflicts(&preflight)?;
-        let preview = crate::backend::conversations::register_external_adapter(
+        let settings =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let preview = crate::backend::conversations::register_external_adapter_with_settings(
             crate::backend::conversations::ExternalAdapterRegisterParams {
                 manifest_path: validation.adapter_manifest_path.clone(),
                 dry_run: params.dry_run,
                 yes: params.yes,
             },
+            &settings,
         )
         .map_err(AppError::external)?;
         if params.dry_run {
@@ -659,7 +662,7 @@ impl AppService {
                 crate::backend::store::list_conversation_adapter_packages_sqlx(&pool, &tenant_id)
                     .await
             })
-            .map_err(AppError::Storage)
+            .map_err(|error| error)
     }
 
     pub(crate) fn load_conversation_adapter_package(
@@ -678,7 +681,7 @@ impl AppService {
                 )
                 .await
             })
-            .map_err(AppError::Storage)
+            .map_err(|error| error)
     }
 
     pub(crate) fn load_conversation_adapter_package_versions(
@@ -697,7 +700,7 @@ impl AppService {
                 )
                 .await
             })
-            .map_err(AppError::Storage)
+            .map_err(|error| error)
     }
 
     pub(crate) fn list_installed_conversation_adapter_package_versions(
@@ -849,7 +852,7 @@ impl AppService {
             }
             Err(error) => {
                 let _ = fs::rename(&staged, &version_dir);
-                return Err(AppError::Storage(error));
+                return Err(error);
             }
         }
         self.runtime.refresh_conversation_adapter_catalog()?;
@@ -918,12 +921,15 @@ impl AppService {
                 json!({"dry_run": true, "package_id": package_id, "version": version, "install_path": target.install_dir}),
             );
         }
-        let preview = crate::backend::conversations::register_external_adapter(
+        let settings =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let preview = crate::backend::conversations::register_external_adapter_with_settings(
             crate::backend::conversations::ExternalAdapterRegisterParams {
                 manifest_path: validation.adapter_manifest_path.clone(),
                 dry_run: false,
                 yes: true,
             },
+            &settings,
         )
         .map_err(AppError::external)?;
         let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)
@@ -977,7 +983,7 @@ impl AppService {
                 )
                 .await
             })
-            .map_err(AppError::Storage)
+            .map_err(|error| error)
     }
 
     pub(crate) fn save_conversation_adapter_package(
@@ -994,7 +1000,7 @@ impl AppService {
                 )
                 .await
             })
-            .map_err(AppError::Storage)
+            .map_err(|error| error)
     }
 
     pub(crate) fn ensure_conversation_adapter_package_runtime_ready(
@@ -1022,7 +1028,7 @@ impl AppService {
         let evaluated = crate::backend::conversations::validate_conversation_adapter_package_dir(
             &install_dir,
         )
-        .map_err(AppError::Validation)
+        .map_err(|error| error)
         .and_then(|validation| {
             if validation.manifest.package_id != package.package_id {
                 return Err(AppError::Validation(format!(
@@ -1214,6 +1220,7 @@ fn promote_conversation_adapter_workspace_package(
         }));
     }
 
+    let settings = crate::backend::app_settings::read_app_settings_value_for_database(&service.db)?;
     let prepared_dir = package_root.join("prepared").join(short_uuid());
     if let Some(parent) = prepared_dir.parent() {
         fs::create_dir_all(parent).map_err(AppError::external)?;
@@ -1229,12 +1236,13 @@ fn promote_conversation_adapter_workspace_package(
                     .to_string(),
             ));
         }
-        crate::backend::conversations::register_external_adapter(
+        crate::backend::conversations::register_external_adapter_with_settings(
             crate::backend::conversations::ExternalAdapterRegisterParams {
                 manifest_path: prepared_validation.adapter_manifest_path,
                 dry_run: false,
                 yes: true,
             },
+            &settings,
         )
         .map_err(AppError::external)?;
 
@@ -1265,12 +1273,13 @@ fn promote_conversation_adapter_workspace_package(
         let final_validation =
             crate::backend::conversations::validate_conversation_adapter_package_dir(&version_dir)
                 .map_err(AppError::external)?;
-        let preview = crate::backend::conversations::register_external_adapter(
+        let preview = crate::backend::conversations::register_external_adapter_with_settings(
             crate::backend::conversations::ExternalAdapterRegisterParams {
                 manifest_path: final_validation.adapter_manifest_path.clone(),
                 dry_run: true,
                 yes: true,
             },
+            &settings,
         )
         .map_err(AppError::external)?;
         let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)
@@ -1330,7 +1339,7 @@ fn promote_conversation_adapter_workspace_package(
             if created_version_dir {
                 let _ = fs::remove_dir_all(&version_dir);
             }
-            return Err(AppError::Storage(error));
+            return Err(error);
         }
         let cleanup_warning =
             retain_only_active_workspace_runtime(&package_root, &version_dir).err();

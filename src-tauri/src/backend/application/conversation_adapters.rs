@@ -1,12 +1,12 @@
 use super::prelude::*;
 use crate::backend::runtime::{AppError, AppResult};
 
-fn conversation_storage_error(error: String) -> AppError {
-    AppError::Storage(error)
+fn conversation_storage_error(error: AppError) -> AppError {
+    error
 }
 
-fn conversation_external_error(error: String) -> AppError {
-    AppError::External(error)
+fn conversation_external_error(error: impl std::fmt::Display) -> AppError {
+    AppError::external(error)
 }
 
 impl AppService {
@@ -27,7 +27,13 @@ impl AppService {
     }
 
     pub(crate) fn list_conversation_adapters(&self) -> AppResult<Vec<ConversationAdapter>> {
-        Ok(self.runtime.conversation_adapter_catalog().adapters.clone())
+        let current = self.runtime.context();
+        let catalog = if current.tenant.id == self.tenant_id() {
+            current.conversation_adapter_catalog.clone()
+        } else {
+            self.conversation_adapter_catalog.clone()
+        };
+        Ok(catalog.adapters.clone())
     }
 
     pub(crate) fn scaffold_conversation_adapter(
@@ -42,8 +48,7 @@ impl AppService {
         &self,
         params: crate::backend::conversations::ExternalAdapterValidateParams,
     ) -> AppResult<crate::backend::conversations::ExternalAdapterValidationResult> {
-        crate::backend::conversations::validate_external_adapter(params)
-            .map_err(AppError::Validation)
+        crate::backend::conversations::validate_external_adapter(params).map_err(|error| error)
     }
 
     pub(crate) fn list_conversation_adapter_runtime_statuses(
@@ -51,8 +56,10 @@ impl AppService {
     ) -> AppResult<Vec<crate::backend::conversations::ConversationAdapterRuntimeStatus>> {
         let adapters = self.list_conversation_adapters()?;
         let sources = self.list_conversation_sources()?;
-        crate::backend::conversations::list_conversation_adapter_runtime_statuses(
-            &adapters, &sources,
+        let settings =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        crate::backend::conversations::list_conversation_adapter_runtime_statuses_with_settings(
+            &adapters, &sources, &settings,
         )
         .map_err(conversation_external_error)
     }
@@ -62,11 +69,15 @@ impl AppService {
         params: crate::backend::conversations::ExternalAdapterRegisterParams,
     ) -> AppResult<Value> {
         let dry_run = params.dry_run;
-        let preview = crate::backend::conversations::register_external_adapter(params)
-            .map_err(conversation_external_error)?;
+        let settings =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let preview = crate::backend::conversations::register_external_adapter_with_settings(
+            params, &settings,
+        )
+        .map_err(conversation_external_error)?;
         let mut adapter =
             crate::backend::conversations::adapter_from_registration_preview(preview.clone())
-                .map_err(AppError::Validation)?;
+                .map_err(|error| error)?;
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let adapter_id = adapter.id.clone();
@@ -233,7 +244,9 @@ impl AppService {
         &self,
         params: crate::backend::conversations::ExternalAdapterTryRunParams,
     ) -> AppResult<crate::backend::conversations::ExternalAdapterRunResult> {
-        crate::backend::conversations::try_run_external_adapter(params)
+        let settings =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        crate::backend::conversations::try_run_external_adapter_with_settings(params, &settings)
             .map_err(conversation_external_error)
     }
 
@@ -350,6 +363,8 @@ impl AppService {
         F: FnMut(usize, usize, Option<String>),
     {
         let record_kind = normalize_sync_record_kind(params.record_kind.as_deref())?;
+        let settings =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let sources = self
@@ -449,25 +464,28 @@ impl AppService {
                 .unwrap_or(Ok(()))
                 .and_then(|_| {
                     if !params.dry_run && web_record_source {
-                        crate::backend::conversations::run_conversation_harvester_for_adapter_source(
+                        crate::backend::conversations::run_conversation_harvester_for_adapter_source_with_settings(
                             adapter.as_ref(),
                             &source,
                             matches!(params.mode, ConversationSyncMode::Full),
+                            &settings,
                         )
                         .map_err(conversation_external_error)
                         .and_then(|_| {
-                            crate::backend::conversations::read_source_sessions_incrementally_with_adapter(
+                            crate::backend::conversations::read_source_sessions_incrementally_with_adapter_with_settings(
                                 adapter.as_ref(),
                                 &source,
                                 &known_versions,
+                                &settings,
                             )
                             .map_err(conversation_external_error)
                         })
                     } else {
-                        crate::backend::conversations::read_source_sessions_incrementally_with_adapter(
+                        crate::backend::conversations::read_source_sessions_incrementally_with_adapter_with_settings(
                             adapter.as_ref(),
                             &source,
                             &known_versions,
+                            &settings,
                         )
                         .map_err(conversation_external_error)
                     }

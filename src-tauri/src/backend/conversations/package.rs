@@ -90,7 +90,9 @@ fn clean_package_file_name(value: Option<&str>, default: &str) -> AppResult<Stri
             .and_then(|name| name.to_str())
             .is_none_or(|name| name.is_empty() || name == "." || name == "..")
     {
-        return Err(format!("package manifest file name is invalid: {value}"));
+        return Err(AppError::external(format!(
+            "package manifest file name is invalid: {value}"
+        )));
     }
     Ok(value.to_string())
 }
@@ -175,7 +177,7 @@ impl crate::backend::extension_kernel::DomainPackageSystem for ConversationAdapt
         let validation = validate_conversation_adapter_package_dir(dir).map_err(|reason| {
             crate::backend::extension_kernel::ExtensionError::ManifestInvalid {
                 package_id: dir.to_string_lossy().to_string(),
-                reason,
+                reason: reason.to_string(),
             }
         })?;
         let adapter_manifest = &validation.adapter_validation.manifest;
@@ -231,25 +233,25 @@ pub(crate) fn validate_conversation_adapter_package_dir(
     package_root: &Path,
 ) -> AppResult<ConversationAdapterPackageValidationResult> {
     if !package_root.is_dir() {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "conversation adapter package root is not a directory: {}",
             package_root.display()
-        ));
+        )));
     }
     let manifest_path = package_root.join(PACKAGE_MANIFEST_FILE);
-    let manifest_text = fs::read_to_string(&manifest_path).map_err(|error| error.to_string())?;
+    let manifest_text = fs::read_to_string(&manifest_path).map_err(AppError::external)?;
     let manifest: ConversationAdapterPackageManifest =
-        serde_json::from_str(&manifest_text).map_err(|error| error.to_string())?;
+        serde_json::from_str(&manifest_text).map_err(AppError::external)?;
     validate_package_manifest_shape(&manifest)?;
 
     let adapter_manifest_relative =
         safe_package_relative_path("adapter manifest", &manifest.adapter_manifest)?;
     let adapter_manifest_path = package_root.join(adapter_manifest_relative);
     if !adapter_manifest_path.is_file() {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "conversation adapter package adapter manifest not found: {}",
             adapter_manifest_path.display()
-        ));
+        )));
     }
     let adapter_validation = super::external::validate_external_adapter_manifest(
         &adapter_manifest_path.to_string_lossy(),
@@ -266,27 +268,29 @@ pub(crate) fn validate_conversation_adapter_package_dir(
 
 pub(crate) fn hash_conversation_adapter_package_dir(package_root: &Path) -> AppResult<String> {
     if !package_root.is_dir() {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "conversation adapter package root is not a directory: {}",
             package_root.display()
-        ));
+        )));
     }
     let mut file_paths = Vec::new();
     for entry in WalkDir::new(package_root).follow_links(false) {
-        let entry = entry.map_err(|error| error.to_string())?;
+        let entry = entry.map_err(AppError::external)?;
         let path = entry.path();
         if path == package_root {
             continue;
         }
-        let metadata = fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+        let metadata = fs::symlink_metadata(path).map_err(AppError::external)?;
         if metadata.file_type().is_symlink() {
-            return Err(format!(
+            return Err(AppError::external(format!(
                 "conversation adapter package must not contain symlinks: {}",
                 path.display()
-            ));
+            )));
         }
         if metadata.is_file() {
-            file_paths.push(path.to_path_buf());
+            if !is_ignored_package_file(path) {
+                file_paths.push(path.to_path_buf());
+            }
         }
     }
     file_paths.sort_by(|left, right| {
@@ -299,28 +303,42 @@ pub(crate) fn hash_conversation_adapter_package_dir(package_root: &Path) -> AppR
         let relative = relative_package_path_text(package_root, &path);
         hasher.update(relative.as_bytes());
         hasher.update(b"\0");
-        let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+        let bytes = fs::read(&path).map_err(AppError::external)?;
         hasher.update(bytes);
         hasher.update(b"\0");
     }
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+fn is_ignored_package_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| matches!(name, ".DS_Store" | "Thumbs.db" | "desktop.ini"))
+}
+
 fn validate_package_manifest_shape(manifest: &ConversationAdapterPackageManifest) -> AppResult<()> {
     if manifest.schema_version != 1 {
-        return Err("conversation adapter package schema_version must be 1".to_string());
+        return Err(AppError::external(
+            "conversation adapter package schema_version must be 1".to_string(),
+        ));
     }
     validate_safe_id("conversation adapter package id", &manifest.package_id)?;
     if manifest.name.trim().is_empty() {
-        return Err("conversation adapter package name is required".to_string());
+        return Err(AppError::external(
+            "conversation adapter package name is required".to_string(),
+        ));
     }
     if manifest.version.trim().is_empty() {
-        return Err("conversation adapter package version is required".to_string());
+        return Err(AppError::external(
+            "conversation adapter package version is required".to_string(),
+        ));
     }
     validate_min_core_version(&manifest.min_core_version)?;
     safe_package_relative_path("adapter manifest", &manifest.adapter_manifest)?;
     if manifest.capabilities.is_empty() {
-        return Err("conversation adapter package capabilities are required".to_string());
+        return Err(AppError::external(
+            "conversation adapter package capabilities are required".to_string(),
+        ));
     }
     Ok(())
 }
@@ -336,7 +354,9 @@ fn validate_safe_id(field: &str, value: &str) -> AppResult<()> {
                 || matches!(character, '-' | '_' | '.')
         });
     if !valid {
-        return Err(format!("{field} must be a safe path segment: {value}"));
+        return Err(AppError::external(format!(
+            "{field} must be a safe path segment: {value}"
+        )));
     }
     Ok(())
 }
@@ -344,12 +364,14 @@ fn validate_safe_id(field: &str, value: &str) -> AppResult<()> {
 fn validate_min_core_version(value: &str) -> AppResult<()> {
     let minimum = value.trim().trim_start_matches('v');
     if minimum.is_empty() {
-        return Err("conversation adapter package min_core_version is required".to_string());
+        return Err(AppError::external(
+            "conversation adapter package min_core_version is required".to_string(),
+        ));
     }
     if compare_core_versions(SUPPORTED_CORE_VERSION, minimum).is_lt() {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "conversation adapter package requires AssetIWeave core >= {minimum}"
-        ));
+        )));
     }
     Ok(())
 }
@@ -394,9 +416,9 @@ fn safe_package_relative_path(field: &str, raw: &str) -> AppResult<PathBuf> {
             .split(['/', '\\'])
             .any(|component| component.is_empty() || component == "." || component == "..")
     {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "conversation adapter package {field} must be a relative path inside the package"
-        ));
+        )));
     }
     Ok(PathBuf::from(trimmed))
 }

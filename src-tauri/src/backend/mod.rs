@@ -7,7 +7,6 @@ pub(crate) mod bootstrap;
 pub(crate) mod builtin_skills;
 pub(crate) mod capabilities;
 pub(crate) mod card_translation;
-pub(crate) mod compat;
 pub(crate) mod conversations;
 pub(crate) mod data_backup;
 pub(crate) mod defaults;

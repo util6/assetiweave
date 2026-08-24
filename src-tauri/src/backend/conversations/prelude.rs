@@ -9,12 +9,12 @@ pub(super) use super::external::{
 };
 pub(super) use super::io_utils::*;
 pub(super) use super::types::*;
-pub(super) use crate::backend::compat::LegacyResult as AppResult;
 pub(super) use crate::backend::models::{
     ConversationAdapter, ConversationAdapterKind, ConversationAdapterPackageRecordKind,
     ConversationAdapterTrustState, ConversationCardKindDefinition, ConversationSource,
     ConversationSourceKind, NormalizedConversationSession,
 };
+pub(super) use crate::backend::runtime::{AppError, AppResult};
 pub(super) use chrono::Utc;
 pub(super) use schemars::JsonSchema;
 pub(super) use serde::{Deserialize, Serialize};

@@ -382,7 +382,7 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
     .map_err(AppError::external)?;
     let questions = question_rows
         .iter()
-        .map(|row| map_sqlx_conversation_question(row).map_err(AppError::External))
+        .map(map_sqlx_conversation_question)
         .collect::<AppResult<Vec<_>>>()?;
 
     let turn_rows = sqlx::query(
@@ -455,8 +455,7 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
             parts.extend(parts_by_turn.remove(&turn.id).unwrap_or_default());
         }
         let (cards, content_nodes) =
-            project_conversation_cards_and_nodes(&parts, &session.adapter_id, &card_kinds)
-                .map_err(AppError::external)?;
+            project_conversation_cards_and_nodes(&parts, &session.adapter_id, &card_kinds)?;
         question_details.push(ConversationQuestionDetail {
             question,
             turns,
@@ -1067,9 +1066,7 @@ async fn load_web_record_parts_sqlx_tx(
     .fetch_all(&mut **tx)
     .await
     .map_err(AppError::external)?;
-    rows.iter()
-        .map(|row| map_sqlx_conversation_part(row).map_err(AppError::External))
-        .collect()
+    rows.iter().map(map_sqlx_conversation_part).collect()
 }
 
 async fn insert_sync_run_sqlx_tx(
@@ -1161,8 +1158,7 @@ mod tests {
                     TEST_TENANT_ID,
                     &source,
                 )
-                .await
-                .map_err(AppError::external)?;
+                .await?;
                 super::super::conversation_repo::import_conversation_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1170,8 +1166,7 @@ mod tests {
                     &[fixture_session()],
                     false,
                 )
-                .await
-                .map_err(AppError::external)?;
+                .await?;
                 let legacy_count_before_import =
                     count_legacy_conversation_sessions_sqlx(database.pool(), &source.id)
                         .await
@@ -1242,8 +1237,7 @@ mod tests {
                     TEST_TENANT_ID,
                     &source,
                 )
-                .await
-                .map_err(AppError::external)?;
+                .await?;
                 import_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1410,7 +1404,7 @@ mod tests {
                     &source,
                 )
                 .await
-                .map_err(AppError::external)?;
+                .map_err(|error| error.to_string())?;
                 import_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1419,14 +1413,14 @@ mod tests {
                     false,
                 )
                 .await
-                .map_err(AppError::external)?;
+                .map_err(|error| error.to_string())?;
                 sqlx::query(
                     "UPDATE web_record_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
                 )
                 .bind(&source.id)
                 .execute(database.pool())
                 .await
-                .map_err(AppError::external)?;
+                .map_err(|error| error.to_string())?;
                 import_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1434,7 +1428,8 @@ mod tests {
                     &[session],
                     false,
                 )
-                .await?;
+                .await
+                .map_err(|error| error.to_string())?;
                 sqlx::query_scalar::<_, String>(
                     "SELECT imported_at FROM web_record_sessions WHERE source_id = ?1",
                 )

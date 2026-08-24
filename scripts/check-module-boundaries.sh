@@ -27,69 +27,6 @@ check_max() {
   fi
 }
 
-check_allowlisted_count() {
-  pattern=$1
-  scope=$2
-  allowlist=$3
-  expected=0
-
-  while IFS='|' read -r allowed_path _symbol _owner _removal_task count; do
-    case "$allowed_path" in
-      ''|'#'*) continue ;;
-    esac
-    expected=$((expected + count))
-  done <"$allowlist"
-
-  if grep -R -n -E --include='*.rs' "$pattern" "$scope" >"$CHECK_OUTPUT" 2>/dev/null; then
-    actual=$(wc -l <"$CHECK_OUTPUT" | tr -d ' ')
-  else
-    actual=0
-    : >"$CHECK_OUTPUT"
-  fi
-  if [ "$actual" -gt "$expected" ]; then
-    printf '%s\n' "BOUNDARY VIOLATION: $pattern count $actual exceeds allowlist count $expected"
-    cat "$CHECK_OUTPUT"
-    fail=1
-  fi
-
-  while IFS=: read -r actual_file _line; do
-    [ -z "$actual_file" ] && continue
-    allowed=0
-    while IFS='|' read -r allowed_path _symbol _owner _removal_task _allowed_count; do
-      case "$allowed_path" in
-        ''|'#'*) continue ;;
-      esac
-      if [ "$actual_file" = "$ROOT/$allowed_path" ]; then
-        allowed=1
-        break
-      fi
-    done <"$allowlist"
-    if [ "$allowed" -eq 0 ]; then
-      printf '%s\n' "BOUNDARY VIOLATION: $pattern found outside the allowlist: $actual_file"
-      fail=1
-    fi
-  done <"$CHECK_OUTPUT"
-
-  while IFS='|' read -r allowed_path allowed_symbol _owner _removal_task allowed_count; do
-    case "$allowed_path" in
-      ''|'#'*) continue ;;
-    esac
-    [ -f "$ROOT/$allowed_path" ] || continue
-    actual_count=$(grep -n -E --include='*.rs' "$pattern" "$ROOT/$allowed_path" 2>/dev/null | wc -l | tr -d ' ')
-    if [ "$actual_count" -gt "$allowed_count" ]; then
-      printf '%s\n' "BOUNDARY VIOLATION: $allowed_path has $actual_count $pattern occurrences; allowlist permits $allowed_count"
-      grep -n -E --include='*.rs' "$pattern" "$ROOT/$allowed_path" 2>/dev/null || true
-      fail=1
-    fi
-    symbol_count=$(grep -F -n --include='*.rs' "$allowed_symbol(" "$ROOT/$allowed_path" 2>/dev/null | wc -l | tr -d ' ')
-    if [ "$symbol_count" -ne "$allowed_count" ]; then
-      printf '%s\n' "BOUNDARY VIOLATION: $allowed_path symbol $allowed_symbol has $symbol_count occurrences; allowlist requires $allowed_count"
-      grep -F -n --include='*.rs' "$allowed_symbol(" "$ROOT/$allowed_path" 2>/dev/null || true
-      fail=1
-    fi
-  done <"$allowlist"
-}
-
 # Tauri wrappers must reuse the process runtime and keyed locks, not reopen a
 # database or serialize all commands behind the removed global mutex.
 check_absent 'state\.lock|AppService::open_with_db_path' "$ROOT/src-tauri/src/adapters"
@@ -197,8 +134,9 @@ check_absent 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/application
 # repository bridges are explicit SQLite persistence seams; future changes
 # still cannot silently add new synchronous bridges or legacy string errors.
 check_max 335 'block_on' "$ROOT/src-tauri/src"
-check_allowlisted_count 'Legacy\(' "$ROOT/src-tauri/src" \
-  "$SCRIPT_DIR/legacy-error-allowlist.txt"
+check_max 0 'Legacy\(' "$ROOT/src-tauri/src"
+check_absent '(^|[^A-Za-z0-9_])LegacyResult([^A-Za-z0-9_]|$)' \
+  "$ROOT/src-tauri/src"
 check_max 0 'open_with_db_path' "$ROOT/src-tauri/src/adapters"
 # Application has no explicit Result<T, String> declarations or legacy result
 # aliases; compatibility string errors stay below the application boundary.

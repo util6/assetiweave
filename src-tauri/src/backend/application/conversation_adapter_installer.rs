@@ -80,12 +80,14 @@ pub(super) fn install_conversation_adapter_package_from_spec(
         }
     };
 
-    let preview = crate::backend::conversations::register_external_adapter(
+    let settings = crate::backend::app_settings::read_app_settings_value_for_database(&service.db)?;
+    let preview = crate::backend::conversations::register_external_adapter_with_settings(
         crate::backend::conversations::ExternalAdapterRegisterParams {
             manifest_path: installed.validation.adapter_manifest_path.clone(),
             dry_run: false,
             yes: true,
         },
+        &settings,
     )
     .map_err(AppError::external)?;
     let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)
@@ -171,7 +173,7 @@ pub(super) fn install_conversation_adapter_package_from_spec(
                 &error_message,
             )?;
         }
-        return Err(AppError::Storage(error));
+        return Err(error);
     }
 
     Ok(json!({
@@ -245,7 +247,7 @@ fn install_conversation_adapter_package_files(
                 .map_err(AppError::external)?;
         let kernel_inspection = crate::backend::conversations::ConversationAdapterPackageSystem
             .inspect(&prepared_dir)
-            .map_err(|error| AppError::Extension(error.to_string()))?;
+            .map_err(AppError::from)?;
         if kernel_inspection.identity.package_id != spec.package_id()
             || kernel_inspection.identity.version
                 != semver::Version::parse(&spec.version)
@@ -297,7 +299,7 @@ fn install_conversation_adapter_package_files(
             }),
             Err(error) => {
                 let _ = fs::remove_dir_all(version_dir);
-                Err(AppError::Storage(error))
+                Err(error)
             }
         }
     })();

@@ -30,7 +30,7 @@ impl AppService {
                     offset,
                 )
                 .await
-                .map_err(AppError::External)
+                .map_err(|error| error)
             } else {
                 crate::backend::store::list_conversation_sessions_sqlx(
                     &pool,
@@ -42,7 +42,7 @@ impl AppService {
                     offset,
                 )
                 .await
-                .map_err(AppError::External)
+                .map_err(|error| error)
             }
         })?)
     }
@@ -101,7 +101,7 @@ impl AppService {
                     offset,
                 )
                 .await
-                .map_err(AppError::External)
+                .map_err(|error| error)
             } else {
                 crate::backend::store::list_web_record_sessions_sqlx(
                     &pool,
@@ -468,6 +468,8 @@ impl AppService {
             AppResult::Ok((detail, adapter, source))
         })?;
         self.ensure_conversation_adapter_package_runtime_ready(&adapter)?;
+        let settings =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
         export_loaded_conversation_markdown(
             detail,
             adapter,
@@ -475,6 +477,7 @@ impl AppService {
             params,
             "session",
             "unknown-project",
+            &settings,
         )
     }
 
@@ -503,7 +506,11 @@ impl AppService {
             AppResult::Ok((detail, adapter, source))
         })?;
         self.ensure_conversation_adapter_package_runtime_ready(&adapter)?;
-        export_loaded_conversation_markdown(detail, adapter, source, params, "web", "web")
+        let settings =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        export_loaded_conversation_markdown(
+            detail, adapter, source, params, "web", "web", &settings,
+        )
     }
 
     pub(crate) fn list_conversation_questions(
@@ -708,7 +715,7 @@ impl AppService {
                         &translated_text,
                     )
                     .await
-                    .map_err(AppError::External)
+                    .map_err(|error| error)
                 }
                 crate::backend::dto::ConversationRecordKind::Web => {
                     let part_id = crate::backend::store::resolve_web_record_part_id_prefix_sqlx(
@@ -773,6 +780,7 @@ fn export_loaded_conversation_markdown(
     params: ConversationSessionExportParams,
     record_kind: &str,
     fallback_project_segment: &str,
+    settings: &Value,
 ) -> AppResult<Value> {
     validate_export_question_ids(&detail, &params.question_ids)?;
     let output_root = crate::backend::path_utils::expand_path(&params.output_root)?;
@@ -785,7 +793,7 @@ fn export_loaded_conversation_markdown(
             .iter()
             .any(|capability| capability == "export_markdown");
     let (content, relative_path_text) = if use_legacy_adapter_exporter {
-        let export = crate::backend::conversations::export_external_adapter_markdown(
+        let export = crate::backend::conversations::export_external_adapter_markdown_with_settings(
             &adapter,
             &source,
             &detail,
@@ -793,6 +801,7 @@ fn export_loaded_conversation_markdown(
             &params.content_filter,
             record_kind,
             &default_relative_path_text,
+            settings,
         )
         .map_err(AppError::external)?;
         (export.content, export.relative_path)

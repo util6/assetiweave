@@ -13,24 +13,28 @@ pub(crate) struct ConversationSourceReadResult {
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn read_source_sessions_with_adapter(
+pub(crate) fn read_source_sessions_with_adapter_with_settings(
     adapter: Option<&ConversationAdapter>,
     source: &ConversationSource,
+    settings: &Value,
 ) -> AppResult<Vec<NormalizedConversationSession>> {
-    let adapter =
-        adapter.ok_or_else(|| format!("conversation adapter not found: {}", source.adapter_id))?;
-    read_external_adapter_sessions(adapter, source).map(|result| result.sessions)
+    let adapter = adapter.ok_or_else(|| {
+        AppError::external({ format!("conversation adapter not found: {}", source.adapter_id) })
+    })?;
+    read_external_adapter_sessions(adapter, source, settings).map(|result| result.sessions)
 }
 
-pub(crate) fn read_source_sessions_incrementally_with_adapter(
+pub(crate) fn read_source_sessions_incrementally_with_adapter_with_settings(
     adapter: Option<&ConversationAdapter>,
     source: &ConversationSource,
     known_versions: &BTreeMap<String, String>,
+    settings: &Value,
 ) -> AppResult<ConversationSourceReadResult> {
-    let adapter =
-        adapter.ok_or_else(|| format!("conversation adapter not found: {}", source.adapter_id))?;
-    let Some(discovery) = discover_external_adapter_sessions(adapter, source)? else {
-        let result = read_external_adapter_sessions(adapter, source)?;
+    let adapter = adapter.ok_or_else(|| {
+        AppError::external({ format!("conversation adapter not found: {}", source.adapter_id) })
+    })?;
+    let Some(discovery) = discover_external_adapter_sessions(adapter, source, settings)? else {
+        let result = read_external_adapter_sessions(adapter, source, settings)?;
         let sessions = result.sessions;
         return Ok(ConversationSourceReadResult {
             session_descriptors: Vec::new(),
@@ -60,14 +64,15 @@ pub(crate) fn read_source_sessions_incrementally_with_adapter(
     let (sessions, empty_session_count, legacy_cards_upgraded) = if known_versions.is_empty()
         && active.len() == descriptors.len()
     {
-        let result = read_external_adapter_sessions(adapter, source)?;
+        let result = read_external_adapter_sessions(adapter, source, settings)?;
         (result.sessions, 0usize, result.legacy_cards_upgraded)
     } else {
         let mut sessions = Vec::with_capacity(active.len());
         let mut empty_count = 0usize;
         let mut legacy_cards_upgraded = 0usize;
         for descriptor in &active {
-            let result = read_external_adapter_session(adapter, source, &descriptor.external_id)?;
+            let result =
+                read_external_adapter_session(adapter, source, &descriptor.external_id, settings)?;
             legacy_cards_upgraded += result.legacy_cards_upgraded;
             let mut read = result.sessions;
             if read.is_empty() {
@@ -79,12 +84,12 @@ pub(crate) fn read_source_sessions_incrementally_with_adapter(
                 continue;
             }
             if read.len() != 1 || read[0].external_id != descriptor.external_id {
-                return Err(format!(
+                return Err(AppError::external(format!(
                     "conversation adapter {} returned {} sessions for active session {}",
                     adapter.id,
                     read.len(),
                     descriptor.external_id
-                ));
+                )));
             }
             sessions.append(&mut read);
         }
@@ -99,10 +104,12 @@ pub(crate) fn read_source_sessions_incrementally_with_adapter(
         let descriptor = descriptors_by_id
             .get(session.external_id.as_str())
             .ok_or_else(|| {
-                format!(
-                    "conversation adapter {} returned undiscovered session {}",
-                    adapter.id, session.external_id
-                )
+                AppError::external({
+                    format!(
+                        "conversation adapter {} returned undiscovered session {}",
+                        adapter.id, session.external_id
+                    )
+                })
             })?;
         validate_session_matches_descriptor(session, descriptor)?;
     }
@@ -120,17 +127,39 @@ pub(crate) fn read_source_sessions_incrementally_with_adapter(
     })
 }
 
+#[cfg(test)]
+pub(crate) fn read_source_sessions_with_adapter(
+    adapter: Option<&ConversationAdapter>,
+    source: &ConversationSource,
+) -> AppResult<Vec<NormalizedConversationSession>> {
+    read_source_sessions_with_adapter_with_settings(adapter, source, &serde_json::json!({}))
+}
+
+#[cfg(test)]
+pub(crate) fn read_source_sessions_incrementally_with_adapter(
+    adapter: Option<&ConversationAdapter>,
+    source: &ConversationSource,
+    known_versions: &BTreeMap<String, String>,
+) -> AppResult<ConversationSourceReadResult> {
+    read_source_sessions_incrementally_with_adapter_with_settings(
+        adapter,
+        source,
+        known_versions,
+        &serde_json::json!({}),
+    )
+}
+
 fn validate_session_matches_descriptor(
     session: &NormalizedConversationSession,
     descriptor: &ConversationSessionDescriptor,
 ) -> AppResult<()> {
     if session.source_fingerprint.as_deref() != Some(descriptor.version_token.as_str()) {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "conversation session {} changed while it was being read; expected version {}, got {}",
             descriptor.external_id,
             descriptor.version_token,
             session.source_fingerprint.as_deref().unwrap_or("<missing>")
-        ));
+        )));
     }
     Ok(())
 }
@@ -144,10 +173,10 @@ fn deduplicate_session_descriptors(
             if existing.version_token != descriptor.version_token
                 || existing.source_locator != descriptor.source_locator
             {
-                return Err(format!(
+                return Err(AppError::external(format!(
                     "conversation adapter returned conflicting descriptors for session {}",
                     descriptor.external_id
-                ));
+                )));
             }
             continue;
         }

@@ -446,16 +446,19 @@ mod tests {
         let resolver = macos_resolver();
 
         let stored = resolver
-            .normalize_input("specs/requirements.md")
+            .normalize_input("agent-docs/feature-plans/runtime-extension-refactor/00-overview.md")
             .expect("normalize workspace path");
 
-        assert_eq!(stored.as_str(), "specs/requirements.md");
+        assert_eq!(
+            stored.as_str(),
+            "agent-docs/feature-plans/runtime-extension-refactor/00-overview.md"
+        );
         assert_eq!(
             resolver
                 .resolve(&stored)
                 .expect("resolve workspace path")
                 .as_path(),
-            Path::new("/workspace/assetiweave/specs/requirements.md")
+            Path::new("/workspace/assetiweave/agent-docs/feature-plans/runtime-extension-refactor/00-overview.md")
         );
     }
 

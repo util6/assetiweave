@@ -27,10 +27,9 @@ pub(super) fn resolve_adapter_entry_path(
     if let Some(runtime) = manifest.runtime.as_ref() {
         return Ok(resolve_command_path(manifest_dir, &runtime.entry));
     }
-    let command = manifest
-        .command
-        .first()
-        .ok_or_else(|| "adapter command must include an executable".to_string())?;
+    let command = manifest.command.first().ok_or_else(|| {
+        AppError::external({ "adapter command must include an executable".to_string() })
+    })?;
     Ok(resolve_command_path(manifest_dir, command))
 }
 
@@ -40,21 +39,22 @@ pub(super) struct AdapterCommandInvocation {
     pub(super) display_path: PathBuf,
 }
 
-pub(super) fn build_adapter_invocation(
+pub(super) fn build_adapter_invocation_with_settings(
     manifest_dir: &Path,
     manifest: &ConversationAdapterManifest,
+    settings: &Value,
 ) -> AppResult<AdapterCommandInvocation> {
     if let Some(runtime) = adapter_execution_runtime(manifest) {
-        return Ok(build_adapter_runtime_invocation(
+        return Ok(build_adapter_runtime_invocation_with_settings(
             manifest_dir,
             &runtime,
             &[],
+            settings,
         ));
     }
-    let (command, args) = manifest
-        .command
-        .split_first()
-        .ok_or_else(|| "adapter command must include an executable".to_string())?;
+    let (command, args) = manifest.command.split_first().ok_or_else(|| {
+        AppError::external({ "adapter command must include an executable".to_string() })
+    })?;
     Ok(build_adapter_command_invocation(
         manifest_dir,
         command,
@@ -103,10 +103,11 @@ pub(super) fn build_adapter_command_invocation(
     }
 }
 
-pub(super) fn build_adapter_runtime_invocation(
+pub(super) fn build_adapter_runtime_invocation_with_settings(
     manifest_dir: &Path,
     runtime: &ConversationAdapterRuntime,
     call_args: &[String],
+    settings: &Value,
 ) -> AdapterCommandInvocation {
     let entry_path = resolve_command_path(manifest_dir, &runtime.entry);
     if matches!(runtime.kind, ConversationAdapterRuntimeKind::Executable) {
@@ -124,7 +125,7 @@ pub(super) fn build_adapter_runtime_invocation(
     args.extend_from_slice(call_args);
 
     AdapterCommandInvocation {
-        program: configured_runtime_program(&runtime.kind),
+        program: configured_runtime_program(&runtime.kind, settings),
         args,
         display_path: entry_path,
     }
@@ -146,14 +147,15 @@ pub(super) fn ensure_adapter_runtime_available(
     if status.available {
         Ok(())
     } else {
-        Err(status
-            .error
-            .unwrap_or_else(|| adapter_runtime_missing_message(runtime, &invocation.program)))
+        Err(AppError::external(status.error.unwrap_or_else(|| {
+            adapter_runtime_missing_message(runtime, &invocation.program)
+        })))
     }
 }
 
-pub(super) fn list_adapter_runtime_statuses(
+pub(super) fn list_adapter_runtime_statuses_with_settings(
     requirements: &[(ConversationAdapterRuntimeKind, String)],
+    settings: &Value,
 ) -> Vec<ConversationAdapterRuntimeStatus> {
     [
         ConversationAdapterRuntimeKind::Node,
@@ -162,7 +164,7 @@ pub(super) fn list_adapter_runtime_statuses(
     ]
     .into_iter()
     .map(|kind| {
-        let program = configured_runtime_program(&kind);
+        let program = configured_runtime_program(&kind, settings);
         let required_version = requirements
             .iter()
             .find(|(requirement_kind, _)| *requirement_kind == kind)
@@ -382,7 +384,7 @@ fn runtime_status_from_success(
                         requirement,
                         detected_version,
                     )),
-                    Err(error) => Some(error),
+                    Err(error) => Some(error.to_string()),
                 }
             }
             None => Some(format!(
@@ -508,7 +510,9 @@ pub(super) fn runtime_version_satisfies_constraint(
 ) -> AppResult<bool> {
     let minimum = parse_minimum_version_constraint(requirement)?;
     let detected = parse_detected_runtime_version(detected_version).ok_or_else(|| {
-        format!("could not parse adapter runtime version from output: {detected_version}")
+        AppError::external({
+            format!("could not parse adapter runtime version from output: {detected_version}")
+        })
     })?;
     Ok(compare_versions(&detected, &minimum) != std::cmp::Ordering::Less)
 }
@@ -516,10 +520,14 @@ pub(super) fn runtime_version_satisfies_constraint(
 fn parse_minimum_version_constraint(requirement: &str) -> AppResult<Vec<u64>> {
     let requirement = requirement.trim();
     let version = requirement.strip_prefix(">=").ok_or_else(|| {
-        format!("adapter runtime version constraint must use >=x[.y[.z]]: {requirement}")
+        AppError::external({
+            format!("adapter runtime version constraint must use >=x[.y[.z]]: {requirement}")
+        })
     })?;
     parse_exact_runtime_version(version.trim()).ok_or_else(|| {
-        format!("adapter runtime version constraint must use >=x[.y[.z]]: {requirement}")
+        AppError::Validation(format!(
+            "adapter runtime version constraint must use >=x[.y[.z]]: {requirement}"
+        ))
     })
 }
 
@@ -570,11 +578,37 @@ fn compare_versions(left: &[u64], right: &[u64]) -> std::cmp::Ordering {
     std::cmp::Ordering::Equal
 }
 
-fn configured_runtime_program(kind: &ConversationAdapterRuntimeKind) -> PathBuf {
-    crate::backend::app_settings::read_app_settings_value()
-        .ok()
-        .and_then(|settings| runtime_program_from_settings(kind, &settings))
-        .unwrap_or_else(|| default_runtime_program(kind))
+fn configured_runtime_program(kind: &ConversationAdapterRuntimeKind, settings: &Value) -> PathBuf {
+    runtime_program_from_settings(kind, settings).unwrap_or_else(|| default_runtime_program(kind))
+}
+
+#[cfg(test)]
+pub(super) fn build_adapter_invocation(
+    manifest_dir: &Path,
+    manifest: &ConversationAdapterManifest,
+) -> AppResult<AdapterCommandInvocation> {
+    build_adapter_invocation_with_settings(manifest_dir, manifest, &serde_json::json!({}))
+}
+
+#[cfg(test)]
+pub(super) fn build_adapter_runtime_invocation(
+    manifest_dir: &Path,
+    runtime: &ConversationAdapterRuntime,
+    call_args: &[String],
+) -> AdapterCommandInvocation {
+    build_adapter_runtime_invocation_with_settings(
+        manifest_dir,
+        runtime,
+        call_args,
+        &serde_json::json!({}),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn list_adapter_runtime_statuses(
+    requirements: &[(ConversationAdapterRuntimeKind, String)],
+) -> Vec<ConversationAdapterRuntimeStatus> {
+    list_adapter_runtime_statuses_with_settings(requirements, &serde_json::json!({}))
 }
 
 pub(super) fn runtime_program_from_settings(
@@ -714,7 +748,7 @@ fn is_javascript_adapter_command(path: &Path) -> bool {
 }
 
 pub(super) fn hash_file(path: &Path) -> AppResult<String> {
-    let bytes = fs::read(path).map_err(|error| error.to_string())?;
+    let bytes = fs::read(path).map_err(AppError::external)?;
     Ok(hash_bytes(&bytes))
 }
 

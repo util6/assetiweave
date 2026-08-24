@@ -3,13 +3,16 @@ use super::prelude::*;
 pub(super) fn scan_mixed_assets(source: &Source) -> AppResult<Vec<Asset>> {
     let root = expand_path(&source.root_path)?;
     if !root.exists() {
-        return Err(format!("source path does not exist: {}", root.display()));
+        return Err(AppError::external(format!(
+            "source path does not exist: {}",
+            root.display()
+        )));
     }
     if !root.is_dir() {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "source path is not a directory: {}",
             root.display()
-        ));
+        )));
     }
 
     let include_set = build_glob_set(&source.include_globs, &["**/*"])?;
@@ -19,7 +22,7 @@ pub(super) fn scan_mixed_assets(source: &Source) -> AppResult<Vec<Asset>> {
     let now = Utc::now().to_rfc3339();
 
     for entry in WalkDir::new(&root).follow_links(false) {
-        let entry = entry.map_err(|error| error.to_string())?;
+        let entry = entry.map_err(AppError::external)?;
         let path = entry.path();
         let relative = match path.strip_prefix(&root) {
             Ok(relative) if !relative.as_os_str().is_empty() => relative,

@@ -13,18 +13,19 @@ pub(crate) fn build_plan_with_catalog(
     enabled_mounts: &[AssetMount],
     requested_profile_id: Option<&str>,
     catalog: &crate::backend::target_catalog::TargetCatalog,
-) -> crate::backend::compat::LegacyResult<DeploymentPlan> {
+) -> crate::backend::runtime::AppResult<DeploymentPlan> {
     for profile in profiles
         .iter()
         .filter(|profile| requested_profile_id.is_none_or(|requested| requested == profile.id))
     {
         catalog.require_descriptor(&profile.target_provider_id)?;
     }
-    Ok(build_plan(
+    Ok(build_plan_internal(
         assets,
         profiles,
         enabled_mounts,
         requested_profile_id,
+        Some(catalog),
     ))
 }
 
@@ -33,6 +34,16 @@ pub(crate) fn build_plan(
     profiles: &[TargetProfile],
     enabled_mounts: &[AssetMount],
     requested_profile_id: Option<&str>,
+) -> DeploymentPlan {
+    build_plan_internal(assets, profiles, enabled_mounts, requested_profile_id, None)
+}
+
+fn build_plan_internal(
+    assets: &[Asset],
+    profiles: &[TargetProfile],
+    enabled_mounts: &[AssetMount],
+    requested_profile_id: Option<&str>,
+    catalog: Option<&crate::backend::target_catalog::TargetCatalog>,
 ) -> DeploymentPlan {
     let mut actions = Vec::new();
     let asset_map: HashMap<&str, &Asset> = assets
@@ -56,7 +67,13 @@ pub(crate) fn build_plan(
         };
         let supported = profile.supported_kinds.contains(&asset.kind)
             && profile.include.kinds.contains(&asset.kind);
-        let Ok(inspection) = crate::backend::targeting::inspect_mount(profile, asset) else {
+        let inspection = match catalog {
+            Some(catalog) => {
+                crate::backend::targeting::inspect_mount_with_catalog(profile, asset, catalog)
+            }
+            None => crate::backend::targeting::inspect_mount(profile, asset),
+        };
+        let Ok(inspection) = inspection else {
             continue;
         };
         let target_path = inspection.target_path;

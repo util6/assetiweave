@@ -1,11 +1,11 @@
 use super::prelude::*;
 
 pub(crate) fn scan_source(source: &Source) -> AppResult<Vec<Asset>> {
-    crate::backend::scanner::scan_source(source).map_err(AppError::external)
+    crate::backend::scanner::scan_source(source)
 }
 
 pub(crate) fn scan_skill_source(source: &Source) -> AppResult<Vec<Asset>> {
-    crate::backend::scanner::scan_skill_source(source).map_err(AppError::external)
+    crate::backend::scanner::scan_skill_source(source)
 }
 
 pub(crate) fn scan_selected_sources(

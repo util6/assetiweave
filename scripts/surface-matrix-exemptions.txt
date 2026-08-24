@@ -39,3 +39,9 @@ start_batch_mount
 get_batch_mount_task
 list_batch_mount_tasks
 cancel_batch_mount
+# Remote Skill task controls use the resident Tauri TaskRuntime; the canonical
+# Engine method `skill.acquire` remains the CLI/API entrypoint.
+start_skill_acquire
+get_skill_acquire_task
+list_skill_acquire_tasks
+cancel_skill_acquire_task
