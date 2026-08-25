@@ -175,6 +175,7 @@ pub(crate) async fn open_migrated_pool(db_path: &Path) -> AppResult<SqlitePool> 
         upgrade_legacy_schema(&pool).await?;
     }
     repair_known_modified_catalog_release_migration(&pool).await?;
+    repair_known_modified_conversation_question_contract_migration(&pool).await?;
     MIGRATOR.run(&pool).await.map_err(AppError::external)?;
     Ok(pool)
 }
@@ -440,6 +441,56 @@ async fn repair_known_modified_catalog_release_migration(pool: &SqlitePool) -> A
 const KNOWN_MODIFIED_CATALOG_RELEASE_DETAILS_CHECKSUM: &str =
     "863286E8B8E292E94EB63E42AC751D8EAD340500965B16ADCB4EEF61BEB38187B9E8FF4F19379B7C817F18DDD3BF0A83";
 
+async fn repair_known_modified_conversation_question_contract_migration(
+    pool: &SqlitePool,
+) -> AppResult<()> {
+    if !table_exists(pool, "_sqlx_migrations").await? {
+        return Ok(());
+    }
+    let checksum: Option<String> = sqlx::query_scalar(
+        "SELECT upper(hex(checksum)) FROM _sqlx_migrations WHERE version = 202608250005",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(AppError::external)?;
+    if checksum.as_deref() != Some(KNOWN_MODIFIED_QUESTION_CONTRACT_CHECKSUM) {
+        return Ok(());
+    }
+
+    for table in ["conversation_questions", "web_record_questions"] {
+        if !table_exists(pool, table).await? {
+            return Err(AppError::Validation(format!(
+                "cannot repair migration 202608250005 checksum: missing {table}"
+            )));
+        }
+        for removed_column in [
+            "question_index",
+            "question_text",
+            "answer_text",
+            "code_text",
+            "command_text",
+            "grouping_origin",
+        ] {
+            if column_exists(pool, table, removed_column).await? {
+                return Err(AppError::Validation(format!(
+                    "cannot repair migration 202608250005 checksum: {table}.{removed_column} still exists"
+                )));
+            }
+        }
+    }
+
+    sqlx::query(
+        "UPDATE _sqlx_migrations SET checksum = X'85BFCAA1EDBB892E90FB943086A77885E6A6C7D349106049CA71A43F9655A60682B18A9D69CCE576EEA3CCDCEE1E0CF2' WHERE version = 202608250005",
+    )
+    .execute(pool)
+    .await
+    .map_err(AppError::external)?;
+    Ok(())
+}
+
+const KNOWN_MODIFIED_QUESTION_CONTRACT_CHECKSUM: &str =
+    "E9A07424F1C86E99CED78966A8CB750B73D6C00E089576DD5C077B357B259BE2C34C14F0BEC320A2FB991B98B6BB9D38";
+
 async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> AppResult<bool> {
     let statement = format!("PRAGMA table_info({table})");
     let rows = sqlx::query(AssertSqlSafe(statement))
@@ -543,6 +594,16 @@ mod tests {
     }
 
     #[test]
+    fn released_conversation_question_contract_migration_remains_immutable() {
+        let migration =
+            include_str!("../../../migrations/202608250005_rebuild_conversation_questions.sql");
+        assert_eq!(
+            format!("{:x}", Sha384::digest(migration.as_bytes())),
+            "85bfcaa1edbb892e90fb943086a77885e6a6c7d349106049ca71a43f9655a60682b18a9d69cce576eea3ccdcee1e0cf2"
+        );
+    }
+
+    #[test]
     fn migrations_retain_recall_indexes_after_question_contract_rebuild() {
         let db_path = temp_database_path("memory-recall-index-upgrade");
         migrate_database(&db_path).expect("create current database");
@@ -615,7 +676,7 @@ mod tests {
         assert_eq!(memory_table_count, 3);
         assert_eq!(memory_recall_index_count, 2);
         assert_eq!(execution_projection_index_count, 0);
-        assert_eq!(migration_count, 35);
+        assert_eq!(migration_count, 36);
         cleanup_database(&db_path);
     }
 
@@ -737,8 +798,39 @@ mod tests {
                 'Legacy web command', 'imported', '2026-08-25T00:00:00Z',
                 '2026-08-25T00:00:00Z'
             );
+            INSERT INTO conversation_turns (
+                tenant_id, id, session_id, external_id, turn_index, user_text,
+                title, started_at, ended_at, fingerprint, missing, imported_at
+            ) VALUES (
+                'default', 'legacy-turn', 'legacy-session', 'legacy-turn-external', 0,
+                'Legacy question snapshot', NULL, NULL, NULL, 'legacy-turn-fingerprint', 0,
+                '2026-08-25T00:00:00Z'
+            );
+            INSERT INTO conversation_question_turns (
+                tenant_id, question_id, turn_id, turn_order, assignment_origin,
+                assigned_at, updated_at
+            ) VALUES (
+                'default', 'legacy-question', 'legacy-turn', 0, 'auto_merged',
+                '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z'
+            );
+            INSERT INTO web_record_turns (
+                tenant_id, id, session_id, external_id, turn_index, user_text,
+                title, started_at, ended_at, fingerprint, missing, imported_at
+            ) VALUES (
+                'default', 'legacy-web-turn', 'legacy-web-session',
+                'legacy-web-turn-external', 0, 'Legacy web question snapshot', NULL,
+                NULL, NULL, 'legacy-web-turn-fingerprint', 0,
+                '2026-08-25T00:00:00Z'
+            );
+            INSERT INTO web_record_question_turns (
+                tenant_id, question_id, turn_id, turn_order, assignment_origin,
+                assigned_at, updated_at
+            ) VALUES (
+                'default', 'legacy-web-question', 'legacy-web-turn', 0, 'imported',
+                '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z'
+            );
             DELETE FROM _sqlx_migrations
-            WHERE version IN (202608250004, 202608250005);
+            WHERE version IN (202608250004, 202608250005, 202608260001);
             "#,
         )
         .expect("seed representative legacy question schema");
@@ -875,7 +967,7 @@ mod tests {
             )
         );
         assert_eq!(cursor_target_path, "@config/Cursor/skills");
-        assert_eq!(migration_count, 35);
+        assert_eq!(migration_count, 36);
         cleanup_database(&db_path);
     }
 
@@ -936,7 +1028,60 @@ mod tests {
                 row.get(0)
             })
             .expect("query migrations");
-        assert_eq!(migration_count, 35);
+        assert_eq!(migration_count, 36);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn migrations_repair_the_known_modified_question_contract_checksum() {
+        let db_path = temp_database_path("question-contract-modified-checksum");
+        migrate_database(&db_path).expect("create current database");
+
+        let conn = Connection::open(&db_path).expect("open migrated database");
+        conn.execute_batch(
+            r#"
+            DROP INDEX idx_memory_recall_questions_created;
+            DROP INDEX idx_memory_recall_web_questions_created;
+            UPDATE _sqlx_migrations
+            SET checksum = X'E9A07424F1C86E99CED78966A8CB750B73D6C00E089576DD5C077B357B259BE2C34C14F0BEC320A2FB991B98B6BB9D38'
+            WHERE version = 202608250005;
+            DELETE FROM _sqlx_migrations WHERE version = 202608260001;
+            "#,
+        )
+        .expect("simulate database opened after the released migration was modified");
+        drop(conn);
+
+        migrate_database(&db_path).expect("repair known checksum and apply follow-up migration");
+
+        let conn = Connection::open(&db_path).expect("open repaired database");
+        let question_contract_checksum: String = conn
+            .query_row(
+                "SELECT lower(hex(checksum)) FROM _sqlx_migrations WHERE version = 202608250005",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query repaired question contract checksum");
+        let repair_migration_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 202608260001",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query follow-up migration");
+        let recall_index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_memory_recall_questions_created', 'idx_memory_recall_web_questions_created')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query restored Recall indexes");
+
+        assert_eq!(
+            question_contract_checksum,
+            "85bfcaa1edbb892e90fb943086a77885e6a6c7d349106049ca71a43f9655a60682b18a9d69cce576eea3ccdcee1e0cf2"
+        );
+        assert_eq!(repair_migration_count, 1);
+        assert_eq!(recall_index_count, 2);
         cleanup_database(&db_path);
     }
 
