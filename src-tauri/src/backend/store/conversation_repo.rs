@@ -1928,6 +1928,21 @@ pub(crate) async fn merge_conversation_questions_sqlx(
         .execute(&mut *tx)
         .await
         .map_err(AppError::external)?;
+    }
+    let question_mappings = canonical_question_ids[1..]
+        .iter()
+        .map(|question_id| (question_id.clone(), survivor_id.clone()))
+        .collect::<Vec<_>>();
+    super::memory_repo::reconcile_memory_evidence_for_session_tx(
+        &mut tx,
+        tenant_id,
+        crate::backend::models::MemoryEvidenceRecordKind::Session,
+        &session_id,
+        &canonical_question_ids,
+        &question_mappings,
+    )
+    .await?;
+    for question_id in &canonical_question_ids[1..] {
         sqlx::query("DELETE FROM conversation_questions WHERE tenant_id = ?1 AND id = ?2")
             .bind(tenant_id)
             .bind(question_id)
@@ -2100,6 +2115,15 @@ pub(crate) async fn split_conversation_question_sqlx(
     .execute(&mut *tx)
     .await
     .map_err(AppError::external)?;
+    super::memory_repo::reconcile_memory_evidence_for_session_tx(
+        &mut tx,
+        tenant_id,
+        crate::backend::models::MemoryEvidenceRecordKind::Session,
+        &question.session_id,
+        &[question_id.to_string(), new_question_id.clone()],
+        &[],
+    )
+    .await?;
     renumber_question_turns_sqlx_tx(&mut tx, tenant_id, question_id, &now).await?;
     renumber_questions_for_session_sqlx_tx(&mut tx, tenant_id, &question.session_id).await?;
     rebuild_session_question_aggregates_sqlx_tx(&mut tx, tenant_id, &question.session_id, &now)
@@ -3735,6 +3759,15 @@ async fn prune_conversation_turns_sqlx_tx(
         return Ok(());
     }
 
+    super::memory_repo::mark_memory_evidence_source_unavailable_for_turns_tx(
+        tx,
+        tenant_id,
+        crate::backend::models::MemoryEvidenceRecordKind::Session,
+        session_id,
+        &stale_turn_ids,
+    )
+    .await?;
+
     for turn_id in &stale_turn_ids {
         sqlx::query("DELETE FROM conversation_parts WHERE tenant_id = ?1 AND turn_id = ?2")
             .bind(tenant_id)
@@ -3804,8 +3837,25 @@ async fn ensure_question_groups_for_session_sqlx_tx(
     now: &str,
 ) -> AppResult<()> {
     reject_invalid_conversation_question_turns_sqlx_tx(tx, tenant_id).await?;
+    let existing_question_ids = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM conversation_questions WHERE tenant_id = ?1 AND session_id = ?2 ORDER BY question_index, id",
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(AppError::external)?;
     let turns = load_session_turns_sqlx_tx(tx, tenant_id, session_id).await?;
     if turns.is_empty() {
+        super::memory_repo::reconcile_memory_evidence_for_session_tx(
+            tx,
+            tenant_id,
+            crate::backend::models::MemoryEvidenceRecordKind::Session,
+            session_id,
+            &existing_question_ids,
+            &[],
+        )
+        .await?;
         return Ok(());
     }
 
@@ -3950,6 +4000,16 @@ async fn ensure_question_groups_for_session_sqlx_tx(
             }
         }
     }
+
+    super::memory_repo::reconcile_memory_evidence_for_session_tx(
+        tx,
+        tenant_id,
+        crate::backend::models::MemoryEvidenceRecordKind::Session,
+        session_id,
+        &existing_question_ids,
+        &[],
+    )
+    .await?;
 
     sqlx::query(
         r#"

@@ -1,22 +1,26 @@
 use crate::backend::models::{
-    MemoryDreamCandidateDraft, MemoryDreamCursor, MemoryDreamNote, MemoryDreamNoteDetail,
-    MemoryDreamNoteStatus, MemoryDreamPersistInput, MemoryDreamQuestionDeltaRow, MemoryDreamState,
-    MemoryEvidenceRecordKind, MemoryEvidenceSnapshot, MemoryExtraction,
-    MemoryExtractionValidationStatus, MemoryItem, MemoryItemDetail, MemoryItemFilter,
-    MemoryItemRevision, MemoryRawMemory, MemoryRecallEvidence, MemoryRecallQuestionRef,
-    MemoryRevisionChangeKind, MemoryRunKind, MemoryRunTrigger, MemoryScope,
-    NewMemoryEvidenceSnapshot, NewMemoryItem,
+    ConversationCardKindDefinition, MemoryDreamCandidateDraft, MemoryDreamCursor, MemoryDreamNote,
+    MemoryDreamNoteDetail, MemoryDreamNoteStatus, MemoryDreamPersistInput,
+    MemoryDreamQuestionDeltaRow, MemoryDreamState, MemoryEvidenceRecordKind,
+    MemoryEvidenceSnapshot, MemoryExtraction, MemoryExtractionValidationStatus, MemoryItem,
+    MemoryItemDetail, MemoryItemFilter, MemoryItemRevision, MemoryRawMemory, MemoryRecallEvidence,
+    MemoryRecallQuestionRef, MemoryRevisionChangeKind, MemoryRunKind, MemoryRunTrigger,
+    MemoryScope, NewMemoryEvidenceSnapshot, NewMemoryItem,
 };
 use crate::backend::runtime::{AppError, AppResult};
 use chrono::Utc;
 use sha2::{Digest, Sha256};
-use sqlx::{sqlite::SqliteRow, QueryBuilder, Row as SqlxRow, Sqlite, SqlitePool, Transaction};
-use std::collections::HashSet;
+use sqlx::{
+    sqlite::SqliteRow, AssertSqlSafe, QueryBuilder, Row as SqlxRow, Sqlite, SqlitePool, Transaction,
+};
+use std::collections::{BTreeSet, HashSet};
 use uuid::Uuid;
 
 use super::codec::{
     decode_enum, decode_json, decode_optional_enum, encode_enum, encode_json, encode_optional_enum,
 };
+use super::conversation_repo::map_sqlx_conversation_part;
+use crate::backend::projection::conversation_cards::project_conversation_content_cards;
 
 pub(crate) async fn list_memory_recall_question_refs_sqlx(
     pool: &SqlitePool,
@@ -491,6 +495,462 @@ pub(crate) async fn set_memory_run_phase_sqlx(
     Ok(())
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MemoryEvidenceRemapSummary {
+    pub(crate) checked: usize,
+    pub(crate) remapped: usize,
+    pub(crate) audited: usize,
+}
+
+pub(crate) async fn reconcile_memory_evidence_for_session_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    record_kind: MemoryEvidenceRecordKind,
+    session_id: &str,
+) -> AppResult<MemoryEvidenceRemapSummary> {
+    let (questions_table, _, _, _, _) = memory_conversation_tables_full(record_kind);
+    let question_ids = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!(
+        "SELECT id FROM {questions_table} WHERE tenant_id = ?1 AND session_id = ?2"
+    )))
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::external)?;
+    let mut tx = pool.begin().await.map_err(AppError::external)?;
+    let summary = reconcile_memory_evidence_for_session_tx(
+        &mut tx,
+        tenant_id,
+        record_kind,
+        session_id,
+        &question_ids,
+        &[],
+    )
+    .await?;
+    tx.commit().await.map_err(AppError::external)?;
+    Ok(summary)
+}
+
+pub(crate) async fn reconcile_memory_evidence_for_session_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+    record_kind: MemoryEvidenceRecordKind,
+    session_id: &str,
+    affected_question_ids: &[String],
+    question_mappings: &[(String, String)],
+) -> AppResult<MemoryEvidenceRemapSummary> {
+    let record_kind_label = memory_record_kind_label(record_kind);
+    let (questions_table, _, turns_table, parts_table, question_turns_table) =
+        memory_conversation_tables_full(record_kind);
+    let rows = sqlx::query(
+        r#"SELECT id, question_id, turn_id, part_id, block_id
+           FROM memory_evidence_snapshots
+           WHERE tenant_id = ?1 AND record_kind = ?2 AND session_id = ?3
+           ORDER BY id"#,
+    )
+    .bind(tenant_id)
+    .bind(record_kind_label)
+    .bind(session_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(AppError::external)?;
+    let now = Utc::now().to_rfc3339();
+    let mut summary = MemoryEvidenceRemapSummary::default();
+
+    for row in rows {
+        summary.checked += 1;
+        let evidence_id: String = row.try_get("id").map_err(AppError::external)?;
+        let previous_question_id: Option<String> =
+            row.try_get("question_id").map_err(AppError::external)?;
+        let evidence_turn_id: Option<String> =
+            row.try_get("turn_id").map_err(AppError::external)?;
+        let evidence_part_id: Option<String> =
+            row.try_get("part_id").map_err(AppError::external)?;
+        let block_id: String = row.try_get("block_id").map_err(AppError::external)?;
+
+        let mut candidates = BTreeSet::new();
+        let mut reason = None;
+        let mut fact_turn_id = evidence_turn_id.clone();
+        if let Some(part_id) = evidence_part_id.as_deref() {
+            if !memory_part_block_locator_matches(&block_id, part_id) {
+                reason = Some("locator_mismatch");
+            }
+            let part_turn_id = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!(
+                "SELECT t.id FROM {parts_table} p JOIN {turns_table} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id WHERE p.tenant_id = ?1 AND p.id = ?2 AND t.session_id = ?3"
+            )))
+            .bind(tenant_id)
+            .bind(part_id)
+            .bind(session_id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(AppError::external)?;
+            match part_turn_id {
+                Some(part_turn_id) => {
+                    if evidence_turn_id
+                        .as_deref()
+                        .is_some_and(|turn_id| turn_id != part_turn_id)
+                    {
+                        reason = Some("locator_mismatch");
+                    }
+                    fact_turn_id = Some(part_turn_id);
+                }
+                None => reason = Some("source_unavailable"),
+            }
+        } else if let Some(turn_id) = evidence_turn_id.as_deref() {
+            if block_id != format!("{turn_id}-question") {
+                reason = Some("locator_mismatch");
+            }
+        }
+
+        if reason.is_none() {
+            if let Some(turn_id) = fact_turn_id.as_deref() {
+                let turn_exists = sqlx::query_scalar::<_, i64>(AssertSqlSafe(format!(
+                    "SELECT 1 FROM {turns_table} WHERE tenant_id = ?1 AND id = ?2 AND session_id = ?3"
+                )))
+                .bind(tenant_id)
+                .bind(turn_id)
+                .bind(session_id)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(AppError::external)?
+                .is_some();
+                if !turn_exists {
+                    reason = Some("source_unavailable");
+                } else {
+                    let question_rows = sqlx::query(AssertSqlSafe(format!(
+                        "SELECT qt.question_id FROM {question_turns_table} qt JOIN {questions_table} q ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id WHERE qt.tenant_id = ?1 AND qt.turn_id = ?2 AND q.session_id = ?3 ORDER BY qt.question_id"
+                    )))
+                    .bind(tenant_id)
+                    .bind(turn_id)
+                    .bind(session_id)
+                    .fetch_all(&mut **tx)
+                    .await
+                    .map_err(AppError::external)?;
+                    for question_row in question_rows {
+                        candidates.insert(
+                            question_row
+                                .try_get::<String, _>(0)
+                                .map_err(AppError::external)?,
+                        );
+                    }
+                    if candidates.is_empty() {
+                        reason = Some("question_missing");
+                    } else if candidates.len() > 1 {
+                        reason = Some("ambiguous_question");
+                    }
+                }
+            } else if let Some(question_id) = previous_question_id.as_deref() {
+                if let Some((_, target)) = question_mappings
+                    .iter()
+                    .find(|(source, _)| source == question_id)
+                {
+                    candidates.insert(target.clone());
+                } else {
+                    let question_exists = sqlx::query_scalar::<_, i64>(AssertSqlSafe(format!(
+                        "SELECT 1 FROM {questions_table} WHERE tenant_id = ?1 AND id = ?2 AND session_id = ?3"
+                    )))
+                    .bind(tenant_id)
+                    .bind(question_id)
+                    .bind(session_id)
+                    .fetch_optional(&mut **tx)
+                    .await
+                    .map_err(AppError::external)?
+                    .is_some();
+                    if question_exists && !affected_question_ids.iter().any(|id| id == question_id)
+                    {
+                        candidates.insert(question_id.to_string());
+                    } else {
+                        let current_question_ids = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!(
+                            "SELECT id FROM {questions_table} WHERE tenant_id = ?1 AND session_id = ?2 ORDER BY question_index, id"
+                        )))
+                        .bind(tenant_id)
+                        .bind(session_id)
+                        .fetch_all(&mut **tx)
+                        .await
+                        .map_err(AppError::external)?;
+                        candidates.extend(current_question_ids);
+                        reason = Some(if candidates.is_empty() {
+                            "question_missing"
+                        } else {
+                            "ambiguous_question"
+                        });
+                    }
+                }
+            } else {
+                reason = Some("locator_missing");
+            }
+        }
+
+        if reason.is_none() && candidates.len() == 1 {
+            let question_id = candidates
+                .iter()
+                .next()
+                .expect("one evidence question candidate");
+            sqlx::query(
+                "UPDATE memory_evidence_snapshots SET question_id = ?1, source_unavailable = 0, updated_at = ?2 WHERE tenant_id = ?3 AND id = ?4",
+            )
+            .bind(question_id)
+            .bind(&now)
+            .bind(tenant_id)
+            .bind(&evidence_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(AppError::external)?;
+            sqlx::query(
+                "UPDATE memory_evidence_remap_audits SET status = 'resolved', resolved_at = ?1 WHERE tenant_id = ?2 AND evidence_id = ?3 AND status = 'open'",
+            )
+            .bind(&now)
+            .bind(tenant_id)
+            .bind(&evidence_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(AppError::external)?;
+            summary.remapped += 1;
+        } else {
+            let reason = reason.unwrap_or("locator_mismatch");
+            record_memory_evidence_remap_audit_tx(
+                tx,
+                tenant_id,
+                &evidence_id,
+                record_kind_label,
+                session_id,
+                previous_question_id.as_deref(),
+                evidence_turn_id.as_deref(),
+                evidence_part_id.as_deref(),
+                &block_id,
+                reason,
+                &candidates,
+                &now,
+            )
+            .await?;
+            summary.audited += 1;
+        }
+    }
+    Ok(summary)
+}
+
+pub(crate) async fn mark_memory_evidence_source_unavailable_for_session_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+    record_kind: MemoryEvidenceRecordKind,
+    session_id: &str,
+) -> AppResult<usize> {
+    let record_kind_label = memory_record_kind_label(record_kind);
+    let rows = sqlx::query(
+        "SELECT id, question_id, turn_id, part_id, block_id FROM memory_evidence_snapshots WHERE tenant_id = ?1 AND record_kind = ?2 AND session_id = ?3",
+    )
+    .bind(tenant_id)
+    .bind(record_kind_label)
+    .bind(session_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(AppError::external)?;
+    let now = Utc::now().to_rfc3339();
+    for row in &rows {
+        let evidence_id: String = row.try_get("id").map_err(AppError::external)?;
+        let previous_question_id: Option<String> =
+            row.try_get("question_id").map_err(AppError::external)?;
+        let turn_id: Option<String> = row.try_get("turn_id").map_err(AppError::external)?;
+        let part_id: Option<String> = row.try_get("part_id").map_err(AppError::external)?;
+        let block_id: String = row.try_get("block_id").map_err(AppError::external)?;
+        sqlx::query(
+            "UPDATE memory_evidence_snapshots SET source_unavailable = 1, updated_at = ?1 WHERE tenant_id = ?2 AND id = ?3",
+        )
+        .bind(&now)
+        .bind(tenant_id)
+        .bind(&evidence_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(AppError::external)?;
+        let candidates = BTreeSet::new();
+        record_memory_evidence_remap_audit_tx(
+            tx,
+            tenant_id,
+            &evidence_id,
+            record_kind_label,
+            session_id,
+            previous_question_id.as_deref(),
+            turn_id.as_deref(),
+            part_id.as_deref(),
+            &block_id,
+            "source_unavailable",
+            &candidates,
+            &now,
+        )
+        .await?;
+    }
+    Ok(rows.len())
+}
+
+pub(crate) async fn mark_memory_evidence_source_unavailable_for_turns_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+    record_kind: MemoryEvidenceRecordKind,
+    session_id: &str,
+    turn_ids: &[String],
+) -> AppResult<usize> {
+    let record_kind_label = memory_record_kind_label(record_kind);
+    let (_, _, _, parts_table, _) = memory_conversation_tables_full(record_kind);
+    let now = Utc::now().to_rfc3339();
+    let mut marked = 0;
+    for turn_id in turn_ids {
+        let rows = sqlx::query(AssertSqlSafe(format!(
+            "SELECT id, question_id, turn_id, part_id, block_id FROM memory_evidence_snapshots WHERE tenant_id = ?1 AND record_kind = ?2 AND session_id = ?3 AND (turn_id = ?4 OR part_id IN (SELECT id FROM {parts_table} WHERE tenant_id = ?1 AND turn_id = ?4))"
+        )))
+        .bind(tenant_id)
+        .bind(record_kind_label)
+        .bind(session_id)
+        .bind(turn_id)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(AppError::external)?;
+        for row in rows {
+            let evidence_id: String = row.try_get("id").map_err(AppError::external)?;
+            let previous_question_id: Option<String> =
+                row.try_get("question_id").map_err(AppError::external)?;
+            let evidence_turn_id: Option<String> =
+                row.try_get("turn_id").map_err(AppError::external)?;
+            let part_id: Option<String> = row.try_get("part_id").map_err(AppError::external)?;
+            let block_id: String = row.try_get("block_id").map_err(AppError::external)?;
+            sqlx::query(
+                "UPDATE memory_evidence_snapshots SET source_unavailable = 1, updated_at = ?1 WHERE tenant_id = ?2 AND id = ?3",
+            )
+            .bind(&now)
+            .bind(tenant_id)
+            .bind(&evidence_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(AppError::external)?;
+            record_memory_evidence_remap_audit_tx(
+                tx,
+                tenant_id,
+                &evidence_id,
+                record_kind_label,
+                session_id,
+                previous_question_id.as_deref(),
+                evidence_turn_id.as_deref().or(Some(turn_id.as_str())),
+                part_id.as_deref(),
+                &block_id,
+                "source_unavailable",
+                &BTreeSet::new(),
+                &now,
+            )
+            .await?;
+            marked += 1;
+        }
+    }
+    Ok(marked)
+}
+
+async fn record_memory_evidence_remap_audit_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+    evidence_id: &str,
+    record_kind: &str,
+    session_id: &str,
+    previous_question_id: Option<&str>,
+    turn_id: Option<&str>,
+    part_id: Option<&str>,
+    block_id: &str,
+    reason: &str,
+    candidates: &BTreeSet<String>,
+    detected_at: &str,
+) -> AppResult<()> {
+    let candidates_json = serde_json::to_string(&candidates.iter().collect::<Vec<_>>())
+        .map_err(AppError::external)?;
+    let updated = sqlx::query(
+        r#"
+        UPDATE memory_evidence_remap_audits
+        SET reason = ?1, candidate_question_ids_json = ?2, detected_at = ?3,
+            previous_question_id = ?4, turn_id = ?5, part_id = ?6, block_id = ?7,
+            resolved_at = NULL
+        WHERE tenant_id = ?8 AND evidence_id = ?9 AND status = 'open'
+        "#,
+    )
+    .bind(reason)
+    .bind(&candidates_json)
+    .bind(detected_at)
+    .bind(previous_question_id)
+    .bind(turn_id)
+    .bind(part_id)
+    .bind(block_id)
+    .bind(tenant_id)
+    .bind(evidence_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(AppError::external)?;
+    if updated.rows_affected() == 0 {
+        sqlx::query(
+            r#"
+            INSERT INTO memory_evidence_remap_audits (
+                tenant_id, id, evidence_id, record_kind, session_id,
+                previous_question_id, turn_id, part_id, block_id, reason,
+                candidate_question_ids_json, status, detected_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'open', ?12)
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(Uuid::new_v4().to_string())
+        .bind(evidence_id)
+        .bind(record_kind)
+        .bind(session_id)
+        .bind(previous_question_id)
+        .bind(turn_id)
+        .bind(part_id)
+        .bind(block_id)
+        .bind(reason)
+        .bind(candidates_json)
+        .bind(detected_at)
+        .execute(&mut **tx)
+        .await
+        .map_err(AppError::external)?;
+    }
+    Ok(())
+}
+
+fn memory_record_kind_label(record_kind: MemoryEvidenceRecordKind) -> &'static str {
+    match record_kind {
+        MemoryEvidenceRecordKind::Session => "session",
+        MemoryEvidenceRecordKind::Web => "web",
+    }
+}
+
+fn memory_part_block_locator_matches(block_id: &str, part_id: &str) -> bool {
+    if block_id == part_id {
+        return true;
+    }
+    block_id
+        .strip_prefix(&format!("{part_id}-node-"))
+        .is_some_and(|order| !order.is_empty() && order.chars().all(|value| value.is_ascii_digit()))
+}
+
+fn memory_conversation_tables_full(
+    record_kind: MemoryEvidenceRecordKind,
+) -> (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+) {
+    match record_kind {
+        MemoryEvidenceRecordKind::Session => (
+            "conversation_questions",
+            "conversation_sessions",
+            "conversation_turns",
+            "conversation_parts",
+            "conversation_question_turns",
+        ),
+        MemoryEvidenceRecordKind::Web => (
+            "web_record_questions",
+            "web_record_sessions",
+            "web_record_turns",
+            "web_record_parts",
+            "web_record_question_turns",
+        ),
+    }
+}
+
 pub(crate) async fn memory_evidence_stale_reason_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -518,23 +978,8 @@ pub(crate) async fn memory_evidence_stale_reason_sqlx(
         _ => {}
     }
 
-    let current_values = if let Some(part_id) = &evidence.part_id {
-        let sql = match evidence.record_kind {
-            MemoryEvidenceRecordKind::Session => {
-                "SELECT command,text,status,exit_code FROM conversation_parts WHERE tenant_id=?1 AND id=?2"
-            }
-            MemoryEvidenceRecordKind::Web => {
-                "SELECT command,text,status,exit_code FROM web_record_parts WHERE tenant_id=?1 AND id=?2"
-            }
-        };
-        sqlx::query(sql)
-            .bind(tenant_id)
-            .bind(part_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(AppError::external)?
-            .map(|row| memory_evidence_part_texts(&row))
-            .transpose()?
+    let current_values = if evidence.part_id.is_some() {
+        memory_evidence_projected_part_values(pool, tenant_id, evidence).await?
     } else if let Some(turn_id) = &evidence.turn_id {
         let sql = match evidence.record_kind {
             MemoryEvidenceRecordKind::Session => {
@@ -551,22 +996,6 @@ pub(crate) async fn memory_evidence_stale_reason_sqlx(
             .await
             .map_err(AppError::external)?
             .map(|value| vec![value])
-    } else if let Some(question_id) = &evidence.question_id {
-        let sql = match evidence.record_kind {
-            MemoryEvidenceRecordKind::Session => {
-                "SELECT question_text FROM conversation_questions WHERE tenant_id=?1 AND id=?2"
-            }
-            MemoryEvidenceRecordKind::Web => {
-                "SELECT question_text FROM web_record_questions WHERE tenant_id=?1 AND id=?2"
-            }
-        };
-        sqlx::query_scalar::<_, String>(sql)
-            .bind(tenant_id)
-            .bind(question_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(AppError::external)?
-            .map(|value| vec![value])
     } else {
         None
     };
@@ -579,38 +1008,64 @@ pub(crate) async fn memory_evidence_stale_reason_sqlx(
     Ok((!matches).then_some(MemoryStaleReason::EvidenceChanged))
 }
 
-fn memory_evidence_part_texts(row: &SqliteRow) -> AppResult<Vec<String>> {
-    let mut base_values = Vec::new();
-    for key in ["command", "text"] {
-        if let Some(value) = row
-            .try_get::<Option<String>, _>(key)
-            .map_err(AppError::external)?
-            .filter(|value| !value.trim().is_empty())
-        {
-            base_values.push(value);
-        }
+async fn memory_evidence_projected_part_values(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    evidence: &MemoryEvidenceSnapshot,
+) -> AppResult<Option<Vec<String>>> {
+    let Some(part_id) = evidence.part_id.as_deref() else {
+        return Ok(None);
+    };
+    let (_, sessions_table, turns_table, parts_table, _) =
+        memory_conversation_tables_full(evidence.record_kind);
+    let row = sqlx::query(AssertSqlSafe(format!(
+        "SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,\
+         p.command, p.cwd, p.status, p.exit_code, p.metadata_json, p.content_card_json,\
+         p.translated_text, p.source_execution_id, p.command_label\
+         FROM {parts_table} p\
+         JOIN {turns_table} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id\
+         JOIN {sessions_table} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id\
+         WHERE p.tenant_id = ?1 AND p.id = ?2 AND s.id = ?3"
+    )))
+    .bind(tenant_id)
+    .bind(part_id)
+    .bind(&evidence.session_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(AppError::external)?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let part = map_sqlx_conversation_part(&row)?;
+    let adapter_id = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!(
+        "SELECT adapter_id FROM {sessions_table} WHERE tenant_id = ?1 AND id = ?2"
+    )))
+    .bind(tenant_id)
+    .bind(&evidence.session_id)
+    .fetch_one(pool)
+    .await
+    .map_err(AppError::external)?;
+    let card_kinds_json = sqlx::query_scalar::<_, String>(
+        "SELECT card_kinds_json FROM conversation_adapters WHERE tenant_id = ?1 AND id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(&adapter_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(AppError::external)?
+    .unwrap_or_else(|| "[]".to_string());
+    let card_kinds: Vec<ConversationCardKindDefinition> = decode_json(card_kinds_json)?;
+    let cards = project_conversation_content_cards(&part, &adapter_id, &card_kinds)
+        .map_err(AppError::external)?;
+    let values = cards
+        .iter()
+        .filter(|card| card.card_id == evidence.block_id)
+        .map(|card| card.body.clone())
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return Ok(None);
     }
-    let mut enriched_values = base_values.clone();
-    if let Some(value) = row
-        .try_get::<Option<String>, _>("status")
-        .map_err(AppError::external)?
-        .filter(|value| !value.trim().is_empty())
-    {
-        enriched_values.push(format!("status: {value}"));
-    }
-    if let Some(value) = row
-        .try_get::<Option<i64>, _>("exit_code")
-        .map_err(AppError::external)?
-    {
-        enriched_values.push(format!("exit_code: {value}"));
-    }
-    let base = base_values.join("\n");
-    let enriched = enriched_values.join("\n");
-    if base == enriched {
-        Ok(vec![base])
-    } else {
-        Ok(vec![base, enriched])
-    }
+    Ok(Some(values))
 }
 
 const MEMORY_ITEM_COLUMNS: &str = r#"
@@ -774,8 +1229,19 @@ pub(crate) async fn load_memory_dream_delta_rows_sqlx(
         ), question_rows AS (
             SELECT 'session' AS record_kind, q.session_id, q.id AS question_id,
                    q.question_index,
-                   length(COALESCE(q.question_text, '') || COALESCE(q.answer_text, '') ||
-                          COALESCE(q.code_text, '') || COALESCE(q.command_text, '')) AS input_char_count
+                   COALESCE((
+                       SELECT SUM(length(t.user_text))
+                       FROM conversation_question_turns qt
+                       JOIN conversation_turns t
+                         ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
+                       WHERE qt.tenant_id = q.tenant_id AND qt.question_id = q.id
+                   ), 0) + COALESCE((
+                       SELECT SUM(length(COALESCE(p.text, '') || COALESCE(p.command, '')))
+                       FROM conversation_question_turns qt
+                       JOIN conversation_parts p
+                         ON p.tenant_id = qt.tenant_id AND p.turn_id = qt.turn_id
+                       WHERE qt.tenant_id = q.tenant_id AND qt.question_id = q.id
+                   ), 0) AS input_char_count
             FROM conversation_questions q
             JOIN conversation_sessions s
               ON s.tenant_id = q.tenant_id AND s.id = q.session_id
@@ -783,8 +1249,19 @@ pub(crate) async fn load_memory_dream_delta_rows_sqlx(
             UNION ALL
             SELECT 'web' AS record_kind, q.session_id, q.id AS question_id,
                    q.question_index,
-                   length(COALESCE(q.question_text, '') || COALESCE(q.answer_text, '') ||
-                          COALESCE(q.code_text, '') || COALESCE(q.command_text, '')) AS input_char_count
+                   COALESCE((
+                       SELECT SUM(length(t.user_text))
+                       FROM web_record_question_turns qt
+                       JOIN web_record_turns t
+                         ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
+                       WHERE qt.tenant_id = q.tenant_id AND qt.question_id = q.id
+                   ), 0) + COALESCE((
+                       SELECT SUM(length(COALESCE(p.text, '') || COALESCE(p.command, '')))
+                       FROM web_record_question_turns qt
+                       JOIN web_record_parts p
+                         ON p.tenant_id = qt.tenant_id AND p.turn_id = qt.turn_id
+                       WHERE qt.tenant_id = q.tenant_id AND qt.question_id = q.id
+                   ), 0) AS input_char_count
             FROM web_record_questions q
             JOIN web_record_sessions s
               ON s.tenant_id = q.tenant_id AND s.id = q.session_id
@@ -2080,6 +2557,20 @@ fn validate_evidence(draft: &NewMemoryEvidenceSnapshot) -> AppResult<()> {
             "memory evidence block_id is required".to_string(),
         ));
     }
+    if draft
+        .question_id
+        .as_deref()
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        return Err(AppError::Validation(
+            "memory evidence question_id is required for new evidence".to_string(),
+        ));
+    }
+    if draft.turn_id.is_none() && draft.part_id.is_none() {
+        return Err(AppError::Validation(
+            "memory evidence requires a turn_id or part_id locator".to_string(),
+        ));
+    }
     if draft.content_hash.trim().is_empty() {
         return Err(AppError::Validation(
             "memory evidence content_hash is required".to_string(),
@@ -2179,6 +2670,191 @@ mod tests {
 
         assert_eq!(first.id, second.id);
         assert_eq!(count, 1);
+        cleanup(database, &db_path);
+    }
+
+    #[test]
+    fn memory_evidence_remap_preserves_facts_and_audits_ambiguous_legacy_rows() {
+        let (database, db_path) = test_database("evidence-remap");
+        database
+            .block_on(async {
+                for question_id in ["question-a", "question-b"] {
+                    sqlx::query(
+                        r#"INSERT INTO conversation_questions (
+                            tenant_id, id, session_id, question_index, title,
+                            question_text, answer_text, code_text, command_text,
+                            grouping_origin, created_at, updated_at
+                        ) VALUES ('default', ?1, 'remap-session', ?2, NULL, '', '', '', '',
+                                  'imported', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"#,
+                    )
+                    .bind(question_id)
+                    .bind(if question_id == "question-a" { 0 } else { 1 })
+                    .execute(database.pool())
+                    .await
+                    .map_err(AppError::external)?;
+                }
+                sqlx::query(
+                    r#"INSERT INTO conversation_sessions (
+                        tenant_id, id, source_id, adapter_id, external_id, title,
+                        missing, created_at, imported_at
+                    ) VALUES ('default', 'remap-session', 'source', 'codex', 'remap',
+                              'Remap', 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"#,
+                )
+                .execute(database.pool())
+                .await
+                .map_err(AppError::external)?;
+                for (turn_id, question_id, turn_index) in [
+                    ("turn-a", "question-a", 0_i64),
+                    ("turn-b", "question-b", 1_i64),
+                ] {
+                    sqlx::query(
+                        r#"INSERT INTO conversation_turns (
+                            tenant_id, id, session_id, external_id, turn_index, user_text,
+                            fingerprint, missing, imported_at
+                        ) VALUES ('default', ?1, 'remap-session', ?1, ?2, ?1, 'fingerprint', 0,
+                                  '2026-01-01T00:00:00Z')"#,
+                    )
+                    .bind(turn_id)
+                    .bind(turn_index)
+                    .execute(database.pool())
+                    .await
+                    .map_err(AppError::external)?;
+                    sqlx::query(
+                        r#"INSERT INTO conversation_question_turns (
+                            tenant_id, question_id, turn_id, turn_order,
+                            assignment_origin, assigned_at, updated_at
+                        ) VALUES ('default', ?1, ?2, 0, 'imported',
+                                  '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"#,
+                    )
+                    .bind(question_id)
+                    .bind(turn_id)
+                    .execute(database.pool())
+                    .await
+                    .map_err(AppError::external)?;
+                }
+
+                let mut evidence = test_evidence();
+                evidence.session_id = "remap-session".to_string();
+                evidence.question_id = Some("question-b".to_string());
+                evidence.turn_id = Some("turn-b".to_string());
+                evidence.part_id = None;
+                evidence.block_id = "turn-b-question".to_string();
+                let snapshot = upsert_memory_evidence_snapshot_sqlx(
+                    database.pool(),
+                    "default",
+                    &evidence,
+                )
+                .await?;
+
+                sqlx::query(
+                    "UPDATE conversation_question_turns SET question_id = 'question-a' WHERE tenant_id = 'default' AND question_id = 'question-b' AND turn_id = 'turn-b'",
+                )
+                .execute(database.pool())
+                .await
+                .map_err(AppError::external)?;
+                let mut tx = database.pool().begin().await.map_err(AppError::external)?;
+                let summary = reconcile_memory_evidence_for_session_tx(
+                    &mut tx,
+                    "default",
+                    MemoryEvidenceRecordKind::Session,
+                    "remap-session",
+                    &["question-a".to_string(), "question-b".to_string()],
+                    &[("question-b".to_string(), "question-a".to_string())],
+                )
+                .await?;
+                tx.commit().await.map_err(AppError::external)?;
+                assert_eq!(summary.remapped, 1);
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT question_id FROM memory_evidence_snapshots WHERE tenant_id = 'default' AND id = ?1",
+                    )
+                    .bind(&snapshot.id)
+                    .fetch_one(database.pool())
+                    .await
+                    .map_err(AppError::external)?,
+                    "question-a"
+                );
+
+                let mut split_evidence = test_evidence();
+                split_evidence.session_id = "remap-session".to_string();
+                split_evidence.question_id = Some("question-a".to_string());
+                split_evidence.turn_id = Some("turn-b".to_string());
+                split_evidence.part_id = None;
+                split_evidence.block_id = "turn-b-question".to_string();
+                split_evidence.content_hash = "sha256:split".to_string();
+                let split_snapshot = upsert_memory_evidence_snapshot_sqlx(
+                    database.pool(),
+                    "default",
+                    &split_evidence,
+                )
+                .await?;
+                sqlx::query(
+                    "UPDATE conversation_question_turns SET question_id = 'question-b' WHERE tenant_id = 'default' AND question_id = 'question-a' AND turn_id = 'turn-b'",
+                )
+                .execute(database.pool())
+                .await
+                .map_err(AppError::external)?;
+                sqlx::query(
+                    r#"INSERT INTO memory_evidence_snapshots (
+                        tenant_id, id, record_kind, source_id, session_id, question_id,
+                        turn_id, part_id, block_id, content_hash, excerpt,
+                        event_time, source_revision, source_unavailable, created_at, updated_at
+                    ) VALUES ('default', 'legacy-q-only', 'session', 'source', 'remap-session',
+                              'question-a', NULL, NULL, 'legacy-block', 'sha256:legacy',
+                              'legacy', NULL, 1, 0, '2026-01-01T00:00:00Z',
+                              '2026-01-01T00:00:00Z')"#,
+                )
+                .execute(database.pool())
+                .await
+                .map_err(AppError::external)?;
+
+                let first = reconcile_memory_evidence_for_session_sqlx(
+                    database.pool(),
+                    "default",
+                    MemoryEvidenceRecordKind::Session,
+                    "remap-session",
+                )
+                .await?;
+                assert_eq!(first.remapped, 2);
+                assert_eq!(first.audited, 1);
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT question_id FROM memory_evidence_snapshots WHERE tenant_id = 'default' AND id = ?1",
+                    )
+                    .bind(&split_snapshot.id)
+                    .fetch_one(database.pool())
+                    .await
+                    .map_err(AppError::external)?,
+                    "question-b"
+                );
+                let audit_count = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM memory_evidence_remap_audits WHERE tenant_id = 'default' AND evidence_id = 'legacy-q-only' AND status = 'open'",
+                )
+                .fetch_one(database.pool())
+                .await
+                .map_err(AppError::external)?;
+                assert_eq!(audit_count, 1);
+
+                let second = reconcile_memory_evidence_for_session_sqlx(
+                    database.pool(),
+                    "default",
+                    MemoryEvidenceRecordKind::Session,
+                    "remap-session",
+                )
+                .await?;
+                assert_eq!(second.audited, 1);
+                assert_eq!(
+                    sqlx::query_scalar::<_, i64>(
+                        "SELECT COUNT(*) FROM memory_evidence_remap_audits WHERE tenant_id = 'default' AND evidence_id = 'legacy-q-only' AND status = 'open'",
+                    )
+                    .fetch_one(database.pool())
+                    .await
+                    .map_err(AppError::external)?,
+                    1
+                );
+                Ok::<_, AppError>(())
+            })
+            .expect("remap evidence by fact locator");
         cleanup(database, &db_path);
     }
 
@@ -2664,7 +3340,7 @@ mod tests {
                         record_kind: MemoryEvidenceRecordKind::Session,
                         source_id: Some("source".to_string()),
                         session_id: "fresh-session".to_string(),
-                        question_id: None,
+                        question_id: Some("fresh-question".to_string()),
                         turn_id: Some("fresh-turn".to_string()),
                         part_id: None,
                         block_id: "fresh-turn-question".to_string(),

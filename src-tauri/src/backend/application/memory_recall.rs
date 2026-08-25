@@ -99,7 +99,13 @@ impl AppService {
                     question_id: question_ref.question_id,
                     question_index: question_ref.question_index,
                     question_title: detail.question.title.clone().unwrap_or_else(|| {
-                        detail.question.question_text.chars().take(80).collect()
+                        detail
+                            .turns
+                            .iter()
+                            .map(|turn| turn.user_text.trim())
+                            .find(|text| !text.is_empty())
+                            .map(|text| text.chars().take(80).collect())
+                            .unwrap_or_else(|| "Question".to_string())
                     }),
                     evidence_ids: ids,
                     input_char_count: question_chars,
@@ -363,27 +369,13 @@ fn recall_evidence_parts(
             });
         }
     }
-    if result.is_empty() && !detail.question.question_text.trim().is_empty() {
+    for node in &detail.projected_content_nodes {
         result.push(RecallPart {
-            turn_id: None,
-            part_id: None,
-            block_id: format!("{}-question", detail.question.id),
-            card_type: "question".to_string(),
-            content: detail.question.question_text.clone(),
-        });
-    }
-    for card in &detail.cards {
-        let turn_id = detail
-            .parts
-            .iter()
-            .find(|part| part.id == card.part_id)
-            .map(|part| part.turn_id.clone());
-        result.push(RecallPart {
-            turn_id,
-            part_id: Some(card.part_id.clone()),
-            block_id: card.card_id.clone(),
-            card_type: card.kind.clone(),
-            content: card.body.clone(),
+            turn_id: Some(node.turn_id.clone()),
+            part_id: Some(node.part_id.clone()),
+            block_id: node.node_id.clone(),
+            card_type: node.node_type.clone(),
+            content: node.content.clone(),
         });
     }
     result
@@ -432,7 +424,9 @@ fn validate_recall_params(params: &MemoryRecallPreviewParams) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::dto::ConversationQuestionDetail;
+    use crate::backend::dto::{
+        ConversationContentNode, ConversationContentNodeLocator, ConversationQuestionDetail,
+    };
     use crate::backend::models::{
         ConversationGroupingOrigin, ConversationPart, ConversationPartKind, ConversationPartRole,
         ConversationQuestion, ConversationTurn,
@@ -596,6 +590,47 @@ mod tests {
                 legacy_anchor_ids: Vec::new(),
             })
             .collect();
+        detail.projected_content_nodes = detail
+            .cards
+            .iter()
+            .enumerate()
+            .map(|(node_order, card)| ConversationContentNode {
+                node_id: card.card_id.clone(),
+                locator: ConversationContentNodeLocator {
+                    question_id: detail.question.id.clone(),
+                    turn_id: turn_id_for_part(&detail.parts, &card.part_id),
+                    part_id: card.part_id.clone(),
+                    node_order,
+                },
+                question_id: detail.question.id.clone(),
+                turn_id: turn_id_for_part(&detail.parts, &card.part_id),
+                part_id: card.part_id.clone(),
+                turn_order: 0,
+                part_order: node_order as i64,
+                node_order,
+                node_type: card.kind.clone(),
+                semantic_role: card.semantic_role.clone(),
+                renderer: card.renderer,
+                role: card.role,
+                content: card.body.clone(),
+                language: card.language.clone(),
+                cwd: card.cwd.clone(),
+                status: card.status.clone(),
+                exit_code: card.exit_code,
+                source_execution_id: card.source_execution_id.clone(),
+                command_label: card.command_label.clone(),
+                translated_content: card.translated_body.clone(),
+                legacy_anchor_ids: card.legacy_anchor_ids.clone(),
+            })
+            .collect();
         detail
+    }
+
+    fn turn_id_for_part(parts: &[ConversationPart], part_id: &str) -> String {
+        parts
+            .iter()
+            .find(|part| part.id == part_id)
+            .map(|part| part.turn_id.clone())
+            .expect("fixture part turn")
     }
 }

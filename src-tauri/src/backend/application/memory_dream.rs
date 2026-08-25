@@ -738,27 +738,13 @@ fn memory_question_evidence_parts(
             });
         }
     }
-    if evidence.is_empty() && !detail.question.question_text.trim().is_empty() {
+    for node in &detail.projected_content_nodes {
         evidence.push(MemoryQuestionEvidencePart {
-            turn_id: None,
-            part_id: None,
-            block_id: format!("{}-question", detail.question.id),
-            card_type: "question".to_string(),
-            content: detail.question.question_text.clone(),
-        });
-    }
-    for card in &detail.cards {
-        let turn_id = detail
-            .parts
-            .iter()
-            .find(|part| part.id == card.part_id)
-            .map(|part| part.turn_id.clone());
-        evidence.push(MemoryQuestionEvidencePart {
-            turn_id,
-            part_id: Some(card.part_id.clone()),
-            block_id: card.card_id.clone(),
-            card_type: card.kind.clone(),
-            content: card.body.clone(),
+            turn_id: Some(node.turn_id.clone()),
+            part_id: Some(node.part_id.clone()),
+            block_id: node.node_id.clone(),
+            card_type: node.node_type.clone(),
+            content: node.content.clone(),
         });
     }
     evidence
