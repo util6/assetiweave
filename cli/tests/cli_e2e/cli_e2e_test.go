@@ -372,6 +372,13 @@ fi
 	if _, err := os.Stat(filepath.Join(dir, "exports", "cli", "export.md")); !os.IsNotExist(err) {
 		t.Fatalf("dry-run wrote export file or stat failed: %v", err)
 	}
+	rawExport := runCLIWithEnv(t, env, "conversation", "session", "export", session["id"].(string), "--output-root", filepath.Join(dir, "raw-exports"), "--format", "raw", "--dry-run")
+	rawData, ok := rawExport.Data.(map[string]any)
+	rawPath, pathOK := rawData["path"].(string)
+	rawBytes, bytesOK := rawData["bytes"].(float64)
+	if !ok || !pathOK || !bytesOK || rawData["format"] != "raw" || rawData["dry_run"] != true || rawData["written"] != false || rawBytes <= 0 || filepath.Ext(rawPath) != ".json" || !strings.Contains(rawPath, filepath.Join("raw-exports", "cli")) {
+		t.Fatalf("raw export dry-run data = %#v", rawExport.Data)
+	}
 }
 
 func TestRealCLIRejectsHighRiskRawCall(t *testing.T) {

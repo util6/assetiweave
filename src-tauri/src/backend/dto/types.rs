@@ -118,6 +118,21 @@ impl ConversationExportContentFilter {
     pub(crate) fn is_visible(&self, kind: &str) -> bool {
         self.0.get(kind).copied().unwrap_or(true)
     }
+
+    pub(crate) fn is_visible_node(&self, kind: &str, semantic_role: Option<&str>) -> bool {
+        if let Some(visible) = self.0.get(kind) {
+            return *visible;
+        }
+        if let Some(role) = semantic_role {
+            if let Some(visible) = self.0.get(role) {
+                return *visible;
+            }
+        }
+        self.0
+            .get(kind.rsplit('.').next().unwrap_or(kind))
+            .copied()
+            .unwrap_or(true)
+    }
 }
 
 impl Default for ConversationExportContentFilter {
@@ -130,6 +145,14 @@ impl Default for ConversationExportContentFilter {
             ("result".to_string(), true),
         ]))
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ConversationExportFormat {
+    #[default]
+    Rendered,
+    Raw,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -6,11 +6,12 @@ pub(super) use crate::backend::runtime::{AppError, AppResult};
 pub(super) use crate::backend::{
     dto::{
         AppOverview, AppShortcut, ApplyAssetGroupMountResult, ApplySkillGroupExclusiveMountResult,
-        AssetGroupInput, AssetMountStatus, AssetMountUpdateResult, CatalogAsset, ExecutionResult,
-        MemoryDreamNotePage, MemoryDreamPreview, MemoryDreamRunResult, MemoryItemPage,
-        MemoryOverview, MemoryRecallPreview, MemoryRecallRunResult, MemoryVerifyResult,
-        NavigationModel, SkillBackupSettings, SkillGroupExclusiveMountInput,
-        SkillGroupExclusiveMountPreview, SkillRemoteSource, SourceInput, TargetProfileInput,
+        AssetGroupInput, AssetMountStatus, AssetMountUpdateResult, CatalogAsset,
+        ConversationExportFormat, ExecutionResult, MemoryDreamNotePage, MemoryDreamPreview,
+        MemoryDreamRunResult, MemoryItemPage, MemoryOverview, MemoryRecallPreview,
+        MemoryRecallRunResult, MemoryVerifyResult, NavigationModel, SkillBackupSettings,
+        SkillGroupExclusiveMountInput, SkillGroupExclusiveMountPreview, SkillRemoteSource,
+        SourceInput, TargetProfileInput,
     },
     models::{
         Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,

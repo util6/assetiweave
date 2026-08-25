@@ -1621,7 +1621,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
     command!(
         "conversation.session.export",
         "conversation.session.export",
-        "Export one conversation session as Markdown",
+        "Export one conversation session as rendered Markdown or raw JSON facts",
         Write,
         Friendly,
         true,
@@ -1639,6 +1639,11 @@ const COMMAND_SPECS: &[CommandSpec] = &[
                 "content_filter",
                 "Optional content categories to include in Markdown export",
                 ["contentFilter"]
+            ),
+            param!(
+                "format",
+                "Export representation: rendered Markdown or raw JSON facts",
+                ["exportFormat"]
             ),
             param!("dry_run", "Preview without writing", ["dryRun"]),
         ],
@@ -1677,7 +1682,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
     command!(
         "conversation.web-record.export",
         "conversation.web-record.export",
-        "Export one web conversation record as Markdown",
+        "Export one web conversation record as rendered Markdown or raw JSON facts",
         Write,
         Friendly,
         true,
@@ -1695,6 +1700,11 @@ const COMMAND_SPECS: &[CommandSpec] = &[
                 "content_filter",
                 "Optional content categories to include in Markdown export",
                 ["contentFilter"]
+            ),
+            param!(
+                "format",
+                "Export representation: rendered Markdown or raw JSON facts",
+                ["exportFormat"]
             ),
             param!("dry_run", "Preview without writing", ["dryRun"]),
         ],
@@ -3535,7 +3545,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
     command!(
         "export_conversation_session",
         "conversation.session.export",
-        "Export one conversation session as Markdown",
+        "Export one conversation session as rendered Markdown or raw JSON facts",
         Write,
         App,
         false,
@@ -3553,6 +3563,11 @@ const COMMAND_SPECS: &[CommandSpec] = &[
                 "content_filter",
                 "Optional content categories to include in Markdown export",
                 ["contentFilter"]
+            ),
+            param!(
+                "format",
+                "Export representation: rendered Markdown or raw JSON facts",
+                ["exportFormat"]
             ),
             param!("dry_run", "Preview without writing", ["dryRun"]),
         ],
@@ -3663,7 +3678,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
     command!(
         "export_web_record_session",
         "conversation.web-record.export",
-        "Export one web conversation record as Markdown",
+        "Export one web conversation record as rendered Markdown or raw JSON facts",
         Write,
         App,
         false,
@@ -3681,6 +3696,11 @@ const COMMAND_SPECS: &[CommandSpec] = &[
                 "content_filter",
                 "Optional content categories to include in Markdown export",
                 ["contentFilter"]
+            ),
+            param!(
+                "format",
+                "Export representation: rendered Markdown or raw JSON facts",
+                ["exportFormat"]
             ),
             param!("dry_run", "Preview without writing", ["dryRun"]),
         ],

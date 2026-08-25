@@ -467,7 +467,9 @@ impl AppService {
             let source = load_export_source_for_detail(&pool, &tenant_id, &detail).await?;
             AppResult::Ok((detail, adapter, source))
         })?;
-        self.ensure_conversation_adapter_package_runtime_ready(&adapter)?;
+        if matches!(params.format, ConversationExportFormat::Rendered) {
+            self.ensure_conversation_adapter_package_runtime_ready(&adapter)?;
+        }
         let settings =
             crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
         export_loaded_conversation_markdown(
@@ -505,7 +507,9 @@ impl AppService {
             let source = load_export_source_for_detail(&pool, &tenant_id, &detail).await?;
             AppResult::Ok((detail, adapter, source))
         })?;
-        self.ensure_conversation_adapter_package_runtime_ready(&adapter)?;
+        if matches!(params.format, ConversationExportFormat::Rendered) {
+            self.ensure_conversation_adapter_package_runtime_ready(&adapter)?;
+        }
         let settings =
             crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
         export_loaded_conversation_markdown(
@@ -784,36 +788,47 @@ fn export_loaded_conversation_markdown(
 ) -> AppResult<Value> {
     validate_export_question_ids(&detail, &params.question_ids)?;
     let output_root = crate::backend::path_utils::expand_path(&params.output_root)?;
-    let default_relative_path =
-        default_export_relative_path(&detail, &params.question_ids, fallback_project_segment);
+    let default_relative_path = default_export_relative_path(
+        &detail,
+        &params.question_ids,
+        fallback_project_segment,
+        params.format,
+    );
     let default_relative_path_text = relative_path_text(&default_relative_path);
-    let use_legacy_adapter_exporter = adapter.card_contract_version != Some(1)
+    let use_legacy_adapter_exporter = matches!(params.format, ConversationExportFormat::Rendered)
+        && adapter.card_contract_version != Some(1)
         && adapter
             .capabilities
             .iter()
             .any(|capability| capability == "export_markdown");
-    let (content, relative_path_text) = if use_legacy_adapter_exporter {
-        let export = crate::backend::conversations::export_external_adapter_markdown_with_settings(
-            &adapter,
-            &source,
-            &detail,
-            &params.question_ids,
-            &params.content_filter,
-            record_kind,
-            &default_relative_path_text,
-            settings,
-        )
-        .map_err(AppError::external)?;
-        (export.content, export.relative_path)
-    } else {
-        (
-            export_conversation_cards_markdown(
+    let (content, relative_path_text) = match params.format {
+        ConversationExportFormat::Raw => (
+            export_conversation_raw_json(&detail, &source, &params.question_ids, record_kind)?,
+            default_relative_path_text,
+        ),
+        ConversationExportFormat::Rendered if use_legacy_adapter_exporter => {
+            let export =
+                crate::backend::conversations::export_external_adapter_markdown_with_settings(
+                    &adapter,
+                    &source,
+                    &detail,
+                    &params.question_ids,
+                    &params.content_filter,
+                    record_kind,
+                    &default_relative_path_text,
+                    settings,
+                )
+                .map_err(AppError::external)?;
+            (export.content, export.relative_path)
+        }
+        ConversationExportFormat::Rendered => (
+            export_conversation_rendered_markdown(
                 &detail,
                 &params.question_ids,
                 &params.content_filter,
             ),
             default_relative_path_text,
-        )
+        ),
     };
     let relative_path = validate_export_relative_path(&relative_path_text)?;
     let target_path = output_root.join(&relative_path);
@@ -823,6 +838,7 @@ fn export_loaded_conversation_markdown(
             &adapter.id,
             record_kind,
             true,
+            params.format,
             use_legacy_adapter_exporter,
         );
         return Ok(json!({
@@ -832,6 +848,7 @@ fn export_loaded_conversation_markdown(
             "bytes": content.len(),
             "question_ids": params.question_ids,
             "question_count": question_count,
+            "format": export_format_label(params.format),
             "legacy_adapter_exporter_used": use_legacy_adapter_exporter
         }));
     }
@@ -840,6 +857,7 @@ fn export_loaded_conversation_markdown(
         &adapter.id,
         record_kind,
         false,
+        params.format,
         use_legacy_adapter_exporter,
     );
     Ok(json!({
@@ -849,6 +867,7 @@ fn export_loaded_conversation_markdown(
         "bytes": content.len(),
         "question_ids": params.question_ids,
         "question_count": question_count,
+        "format": export_format_label(params.format),
         "legacy_adapter_exporter_used": use_legacy_adapter_exporter
     }))
 }
@@ -857,15 +876,17 @@ fn record_conversation_export_observation(
     adapter_id: &str,
     record_kind: &str,
     dry_run: bool,
+    format: ConversationExportFormat,
     legacy_adapter_exporter_used: bool,
 ) {
     crate::backend::logs::record_info(
         "conversation.export",
-        "Conversation Markdown export completed",
+        "Conversation export completed",
         &[
             ("adapter_id", adapter_id.to_string()),
             ("record_kind", record_kind.to_string()),
             ("dry_run", dry_run.to_string()),
+            ("format", export_format_label(format).to_string()),
             (
                 "legacy_adapter_exporter_used",
                 legacy_adapter_exporter_used.to_string(),
@@ -874,7 +895,7 @@ fn record_conversation_export_observation(
     );
 }
 
-fn export_conversation_cards_markdown(
+fn export_conversation_rendered_markdown(
     detail: &crate::backend::dto::ConversationSessionDetail,
     question_ids: &[String],
     content_filter: &crate::backend::dto::ConversationExportContentFilter,
@@ -885,50 +906,153 @@ fn export_conversation_cards_markdown(
         if !selected.is_empty() && !selected.contains(&question.question.id) {
             continue;
         }
+        let prompt = question
+            .turns
+            .iter()
+            .map(|turn| turn.user_text.trim())
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
         output.push_str(&format!(
             "\n## {}. {}\n\n{}\n",
             question.question.question_index + 1,
-            question
-                .question
-                .title
-                .as_deref()
-                .filter(|title| !title.trim().is_empty())
-                .unwrap_or("Question"),
-            question.question.question_text.trim(),
+            export_question_title(question),
+            prompt,
         ));
-        for card in &question.cards {
-            if !content_filter.is_visible(&card.kind) {
+        for node in &question.projected_content_nodes {
+            if !content_filter.is_visible_node(&node.node_type, node.semantic_role.as_deref()) {
                 continue;
             }
-            output.push_str(&format!("\n### {}\n\n", humanize_card_kind(&card.kind)));
-            match card.renderer {
+            output.push_str(&format!(
+                "\n### {}\n\n",
+                humanize_card_kind(&node.node_type)
+            ));
+            match node.renderer {
                 crate::backend::dto::ConversationCardRenderer::Markdown => {
-                    output.push_str(card.body.trim());
+                    output.push_str(node.content.trim());
                     output.push('\n');
                 }
                 crate::backend::dto::ConversationCardRenderer::Code => {
                     output.push_str(&format!(
                         "```{}\n{}\n```\n",
-                        card.language.as_deref().unwrap_or(""),
-                        card.body.trim_end()
+                        node.language.as_deref().unwrap_or(""),
+                        node.content.trim_end()
                     ));
                 }
                 crate::backend::dto::ConversationCardRenderer::Json => {
-                    output.push_str(&format!("```json\n{}\n```\n", card.body.trim_end()));
+                    output.push_str(&format!("```json\n{}\n```\n", node.content.trim_end()));
                 }
                 crate::backend::dto::ConversationCardRenderer::Command => {
-                    output.push_str(&format!("```sh\n{}\n```\n", card.body.trim_end()));
+                    output.push_str(&format!("```sh\n{}\n```\n", node.content.trim_end()));
                 }
                 crate::backend::dto::ConversationCardRenderer::Plain
                 | crate::backend::dto::ConversationCardRenderer::Path
                 | crate::backend::dto::ConversationCardRenderer::TerminalOutput
                 | crate::backend::dto::ConversationCardRenderer::Diff => {
-                    output.push_str(&format!("```text\n{}\n```\n", card.body.trim_end()));
+                    output.push_str(&format!("```text\n{}\n```\n", node.content.trim_end()));
                 }
             }
         }
     }
     output
+}
+
+#[derive(Debug, Serialize)]
+struct ConversationRawQuestion {
+    id: String,
+    session_id: String,
+    question_index: i64,
+    title: Option<String>,
+    grouping_origin: crate::backend::models::ConversationGroupingOrigin,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ConversationRawExport<'a> {
+    schema_version: u32,
+    format: &'static str,
+    record_kind: &'a str,
+    source: &'a ConversationSource,
+    session: &'a crate::backend::models::ConversationSession,
+    questions: Vec<ConversationRawQuestion>,
+    question_turns: Vec<crate::backend::models::ConversationQuestionTurn>,
+    turns: Vec<crate::backend::models::ConversationTurn>,
+    parts: Vec<crate::backend::models::ConversationPart>,
+}
+
+fn export_conversation_raw_json(
+    detail: &crate::backend::dto::ConversationSessionDetail,
+    source: &ConversationSource,
+    question_ids: &[String],
+    record_kind: &str,
+) -> AppResult<String> {
+    let selected = question_ids.iter().collect::<BTreeSet<_>>();
+    let selected_questions = detail
+        .questions
+        .iter()
+        .filter(|question| selected.is_empty() || selected.contains(&question.question.id))
+        .collect::<Vec<_>>();
+    let questions = selected_questions
+        .iter()
+        .map(|question| ConversationRawQuestion {
+            id: question.question.id.clone(),
+            session_id: question.question.session_id.clone(),
+            question_index: question.question.question_index,
+            title: question.question.title.clone(),
+            grouping_origin: question.question.grouping_origin,
+            created_at: question.question.created_at.clone(),
+            updated_at: question.question.updated_at.clone(),
+        })
+        .collect();
+    let question_turns = detail
+        .questions
+        .iter()
+        .filter(|question| selected.is_empty() || selected.contains(&question.question.id))
+        .flat_map(|question| question.question_turns.iter().cloned())
+        .collect();
+    let turns = detail
+        .questions
+        .iter()
+        .filter(|question| selected.is_empty() || selected.contains(&question.question.id))
+        .flat_map(|question| question.turns.iter().cloned())
+        .collect();
+    let parts = detail
+        .questions
+        .iter()
+        .filter(|question| selected.is_empty() || selected.contains(&question.question.id))
+        .flat_map(|question| question.parts.iter().cloned())
+        .collect();
+    serde_json::to_string_pretty(&ConversationRawExport {
+        schema_version: 1,
+        format: "raw",
+        record_kind,
+        source,
+        session: &detail.session,
+        questions,
+        question_turns,
+        turns,
+        parts,
+    })
+    .map_err(AppError::external)
+}
+
+fn export_question_title(question: &crate::backend::dto::ConversationQuestionDetail) -> String {
+    question
+        .question
+        .title
+        .as_deref()
+        .filter(|title| !title.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            question
+                .turns
+                .iter()
+                .map(|turn| turn.user_text.trim())
+                .find(|text| !text.is_empty())
+                .map(|text| text.chars().take(96).collect())
+        })
+        .unwrap_or_else(|| "Question".to_string())
 }
 
 fn humanize_card_kind(kind: &str) -> String {
@@ -965,6 +1089,7 @@ fn default_export_relative_path(
     detail: &crate::backend::dto::ConversationSessionDetail,
     question_ids: &[String],
     fallback_project_segment: &str,
+    format: ConversationExportFormat,
 ) -> PathBuf {
     let project_segment = detail
         .session
@@ -992,9 +1117,20 @@ fn default_export_relative_path(
             sanitize_path_segment(&detail.session.title)
         )
     };
+    let extension = match format {
+        ConversationExportFormat::Rendered => "md",
+        ConversationExportFormat::Raw => "json",
+    };
     PathBuf::from(sanitize_path_segment(&detail.session.adapter_id))
         .join(sanitize_path_segment(project_segment))
-        .join(format!("{file_stem}-{short_id}.md"))
+        .join(format!("{file_stem}-{short_id}.{extension}"))
+}
+
+fn export_format_label(format: ConversationExportFormat) -> &'static str {
+    match format {
+        ConversationExportFormat::Rendered => "rendered",
+        ConversationExportFormat::Raw => "raw",
+    }
 }
 
 fn relative_path_text(path: &Path) -> String {

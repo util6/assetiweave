@@ -1286,20 +1286,30 @@ func newCmdConversationSessionGet(f *cmdutil.Factory) *cobra.Command {
 
 func newCmdConversationSessionExport(f *cmdutil.Factory) *cobra.Command {
 	var outputRoot string
+	var format string
+	questionIDs := []string{}
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "export <session-id>",
-		Short: "Export one session as Markdown (accepts short ID prefix)",
+		Short: "Export one session as rendered Markdown or raw JSON facts (accepts short ID prefix)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ids := questionIDs
+			if ids == nil {
+				ids = []string{}
+			}
 			return callAndPrint(cmd, f, schema.MethodConversationSessionExport, map[string]any{
-				"session_id":  args[0],
-				"output_root": outputRoot,
-				"dry_run":     dryRun,
+				"session_id":   args[0],
+				"output_root":  outputRoot,
+				"question_ids": ids,
+				"format":       format,
+				"dry_run":      dryRun,
 			})
 		},
 	}
 	cmd.Flags().StringVar(&outputRoot, "output-root", "", "directory for exported Markdown")
+	cmd.Flags().StringVar(&format, "format", "rendered", "export representation: rendered or raw")
+	cmd.Flags().StringArrayVar(&questionIDs, "question-id", nil, "question ID to export; repeat for a selection")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without writing")
 	_ = cmd.MarkFlagRequired("output-root")
 	return cmd
@@ -1357,20 +1367,30 @@ func newCmdConversationWebRecordGet(f *cmdutil.Factory) *cobra.Command {
 
 func newCmdConversationWebRecordExport(f *cmdutil.Factory) *cobra.Command {
 	var outputRoot string
+	var format string
+	questionIDs := []string{}
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "export <record-id>",
-		Short: "Export one web conversation as Markdown (accepts short ID prefix)",
+		Short: "Export one web conversation as rendered Markdown or raw JSON facts (accepts short ID prefix)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ids := questionIDs
+			if ids == nil {
+				ids = []string{}
+			}
 			return callAndPrint(cmd, f, schema.MethodConversationWebRecordExport, map[string]any{
-				"session_id":  args[0],
-				"output_root": outputRoot,
-				"dry_run":     dryRun,
+				"session_id":   args[0],
+				"output_root":  outputRoot,
+				"question_ids": ids,
+				"format":       format,
+				"dry_run":      dryRun,
 			})
 		},
 	}
 	cmd.Flags().StringVar(&outputRoot, "output-root", "", "directory for exported Markdown")
+	cmd.Flags().StringVar(&format, "format", "rendered", "export representation: rendered or raw")
+	cmd.Flags().StringArrayVar(&questionIDs, "question-id", nil, "question ID to export; repeat for a selection")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without writing files")
 	_ = cmd.MarkFlagRequired("output-root")
 	return cmd

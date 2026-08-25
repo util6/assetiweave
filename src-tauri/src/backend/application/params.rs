@@ -659,6 +659,8 @@ pub(crate) struct ConversationSessionExportParams {
     pub(crate) question_ids: Vec<String>,
     #[serde(default, alias = "contentFilter")]
     pub(crate) content_filter: crate::backend::dto::ConversationExportContentFilter,
+    #[serde(default, alias = "exportFormat")]
+    pub(crate) format: crate::backend::dto::ConversationExportFormat,
     #[serde(default, alias = "dryRun")]
     pub(crate) dry_run: bool,
 }

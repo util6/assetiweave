@@ -751,6 +751,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             output_root: output_root.to_string_lossy().to_string(),
             question_ids: Vec::new(),
             content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: false,
         })
         .expect("export through adapter");
@@ -802,6 +803,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             output_root: output_root.to_string_lossy().to_string(),
             question_ids: Vec::new(),
             content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: true,
         })
         .expect("dry-run export through adapter");
@@ -850,6 +852,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             output_root: output_root.to_string_lossy().to_string(),
             question_ids: Vec::new(),
             content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: false,
         })
         .expect("export web record through adapter");
@@ -888,6 +891,7 @@ fn conversation_session_export_falls_back_to_core_without_adapter_markdown_capab
             output_root: root.join("exports").to_string_lossy().to_string(),
             question_ids: Vec::new(),
             content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: true,
         })
         .expect("Core exporter should handle adapters without export_markdown");
@@ -895,6 +899,77 @@ fn conversation_session_export_falls_back_to_core_without_adapter_markdown_capab
     assert_eq!(result["dry_run"], true);
     assert_eq!(result["written"], false);
     assert_eq!(result["legacy_adapter_exporter_used"], false);
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn conversation_raw_export_preserves_source_facts_and_excludes_question_snapshots() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-raw-export-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create test root");
+    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let session_id = upsert_conversation_export_fixture(
+        &service,
+        &root,
+        vec!["read_session".to_string()],
+        None,
+        false,
+    );
+    let session_result = service
+        .export_conversation_session(ConversationSessionExportParams {
+            session_id,
+            output_root: root.join("session-export").to_string_lossy().to_string(),
+            question_ids: Vec::new(),
+            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            format: crate::backend::dto::ConversationExportFormat::Raw,
+            dry_run: false,
+        })
+        .expect("export raw session facts");
+    let session_path = PathBuf::from(session_result["path"].as_str().expect("raw path"));
+    let session_json: Value =
+        serde_json::from_str(&fs::read_to_string(session_path).expect("read raw session export"))
+            .expect("parse raw session export");
+    assert_eq!(session_json["format"], "raw");
+    assert_eq!(session_json["record_kind"], "session");
+    assert_eq!(session_json["turns"][0]["user_text"], "Export this");
+    assert_eq!(
+        session_json["parts"][0]["text"],
+        "Rust fallback should not appear"
+    );
+    assert!(session_json["questions"][0].get("question_text").is_none());
+    assert!(session_json["questions"][0].get("answer_text").is_none());
+
+    let web_session_id = upsert_conversation_export_fixture(
+        &service,
+        &root,
+        vec!["read_session".to_string()],
+        None,
+        true,
+    );
+    let web_result = service
+        .export_web_record_session(ConversationSessionExportParams {
+            session_id: web_session_id,
+            output_root: root.join("web-export").to_string_lossy().to_string(),
+            question_ids: Vec::new(),
+            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            format: crate::backend::dto::ConversationExportFormat::Raw,
+            dry_run: true,
+        })
+        .expect("preview raw web facts");
+    assert_eq!(web_result["format"], "raw");
+    assert_eq!(
+        web_result["path"]
+            .as_str()
+            .unwrap_or_default()
+            .rsplit_once('.')
+            .map(|(_, ext)| ext),
+        Some("json")
+    );
+    assert_eq!(web_result["legacy_adapter_exporter_used"], false);
+
     drop(service);
     fs::remove_dir_all(root).ok();
 }
@@ -973,6 +1048,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             output_root: output_root.to_string_lossy().to_string(),
             question_ids: Vec::new(),
             content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: false,
         })
         .expect("export v1 reasoning through Core");
@@ -1056,6 +1132,7 @@ fn card_contract_v1_web_and_dry_run_exports_share_the_core_path() {
             output_root: output_root.to_string_lossy().to_string(),
             question_ids: Vec::new(),
             content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: true,
         })
         .expect("dry-run web export through Core");
@@ -1068,6 +1145,7 @@ fn card_contract_v1_web_and_dry_run_exports_share_the_core_path() {
             output_root: output_root.to_string_lossy().to_string(),
             question_ids: Vec::new(),
             content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: false,
         })
         .expect("write web export through Core");
@@ -1111,6 +1189,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             output_root: root.join("exports").to_string_lossy().to_string(),
             question_ids: Vec::new(),
             content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: true,
         })
         .expect_err("unsafe adapter relative path should fail");
@@ -1171,6 +1250,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             output_root: root.join("exports").to_string_lossy().to_string(),
             question_ids: Vec::new(),
             content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: true,
         })
         .expect_err("manifest missing export_markdown should fail");
@@ -1227,6 +1307,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             output_root: root.join("exports").to_string_lossy().to_string(),
             question_ids: Vec::new(),
             content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: true,
         })
         .expect_err("trusted hash mismatch should fail");
@@ -1311,6 +1392,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             output_root: root.join("exports").to_string_lossy().to_string(),
             question_ids: Vec::new(),
             content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: true,
         })
         .expect_err("manifest tampering should fail trusted hash check");
@@ -1459,6 +1541,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             output_root: output_root.to_string_lossy().to_string(),
             question_ids: Vec::new(),
             content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
+            format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: false,
         })
         .expect_err("symlink escape under output root should fail");

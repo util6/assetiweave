@@ -5000,7 +5000,7 @@
       "contract_version": 3,
       "method": "conversation.session.export",
       "canonical_method": "conversation.session.export",
-      "description": "Export one conversation session as Markdown",
+      "description": "Export one conversation session as rendered Markdown or raw JSON facts",
       "risk": "write",
       "confirmation_required": false,
       "exposure": "friendly",
@@ -5052,6 +5052,18 @@
             "description": "Optional content categories to include in Markdown export",
             "aliases": [
               "contentFilter"
+            ]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "rendered",
+              "raw"
+            ],
+            "default": "rendered",
+            "description": "Export representation: rendered Markdown or raw JSON facts",
+            "aliases": [
+              "exportFormat"
             ]
           },
           "dry_run": {
@@ -5167,7 +5179,7 @@
       "contract_version": 3,
       "method": "conversation.web-record.export",
       "canonical_method": "conversation.web-record.export",
-      "description": "Export one web conversation record as Markdown",
+      "description": "Export one web conversation record as rendered Markdown or raw JSON facts",
       "risk": "write",
       "confirmation_required": false,
       "exposure": "friendly",
@@ -5219,6 +5231,18 @@
             "description": "Optional content categories to include in Markdown export",
             "aliases": [
               "contentFilter"
+            ]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "rendered",
+              "raw"
+            ],
+            "default": "rendered",
+            "description": "Export representation: rendered Markdown or raw JSON facts",
+            "aliases": [
+              "exportFormat"
             ]
           },
           "dry_run": {
@@ -11772,7 +11796,7 @@
       "contract_version": 3,
       "method": "export_conversation_session",
       "canonical_method": "conversation.session.export",
-      "description": "Export one conversation session as Markdown",
+      "description": "Export one conversation session as rendered Markdown or raw JSON facts",
       "risk": "write",
       "confirmation_required": false,
       "exposure": "app",
@@ -11824,6 +11848,18 @@
             "description": "Optional content categories to include in Markdown export",
             "aliases": [
               "contentFilter"
+            ]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "rendered",
+              "raw"
+            ],
+            "default": "rendered",
+            "description": "Export representation: rendered Markdown or raw JSON facts",
+            "aliases": [
+              "exportFormat"
             ]
           },
           "dry_run": {
@@ -12315,7 +12351,7 @@
       "contract_version": 3,
       "method": "export_web_record_session",
       "canonical_method": "conversation.web-record.export",
-      "description": "Export one web conversation record as Markdown",
+      "description": "Export one web conversation record as rendered Markdown or raw JSON facts",
       "risk": "write",
       "confirmation_required": false,
       "exposure": "app",
@@ -12367,6 +12403,18 @@
             "description": "Optional content categories to include in Markdown export",
             "aliases": [
               "contentFilter"
+            ]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "rendered",
+              "raw"
+            ],
+            "default": "rendered",
+            "description": "Export representation: rendered Markdown or raw JSON facts",
+            "aliases": [
+              "exportFormat"
             ]
           },
           "dry_run": {
