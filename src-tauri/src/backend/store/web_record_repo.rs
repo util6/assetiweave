@@ -3,8 +3,8 @@ use crate::backend::dto::{
 };
 use crate::backend::models::{
     conversation_turn_fingerprint, group_turn_ids_by_question, ConversationPart,
-    ConversationSession, ConversationSource, ConversationSyncRun, ConversationSyncStatus,
-    ConversationTurn, NormalizedConversationSession,
+    ConversationQuestionTurn, ConversationSession, ConversationSource, ConversationSyncRun,
+    ConversationSyncStatus, ConversationTurn, NormalizedConversationSession,
 };
 use crate::backend::runtime::{AppError, AppResult};
 use chrono::Utc;
@@ -16,8 +16,10 @@ use super::{
     codec::{decode_json_app, encode_enum_app, encode_json_app},
     conversation_repo::{
         append_declared_card_to_question_aggregate, insert_conversation_sync_delta_sqlx_tx,
-        map_sqlx_conversation_part, map_sqlx_conversation_question, map_sqlx_conversation_session,
-        map_sqlx_conversation_turn, project_conversation_cards_and_nodes, ConversationImportResult,
+        map_sqlx_conversation_part, map_sqlx_conversation_question,
+        map_sqlx_conversation_question_turn, map_sqlx_conversation_session,
+        map_sqlx_conversation_turn, project_conversation_cards_and_nodes,
+        project_question_compatibility_fields, ConversationImportResult,
         CONVERSATION_IMPORT_BATCH_SIZE,
     },
 };
@@ -385,6 +387,36 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
         .map(map_sqlx_conversation_question)
         .collect::<AppResult<Vec<_>>>()?;
 
+    let question_turn_rows = sqlx::query(
+        r#"
+        SELECT qt.question_id, qt.turn_id, qt.turn_order,
+               qt.assignment_origin, qt.assigned_at, qt.updated_at
+        FROM web_record_question_turns qt
+        JOIN web_record_questions q
+          ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
+        JOIN web_record_turns t
+          ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
+        WHERE qt.tenant_id = ?1
+          AND q.session_id = ?2
+          AND q.session_id = t.session_id
+        ORDER BY q.question_index ASC, qt.turn_order ASC, t.turn_index ASC,
+                 qt.turn_id ASC
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::external)?;
+    let mut question_turns_by_question = BTreeMap::<String, Vec<ConversationQuestionTurn>>::new();
+    for row in &question_turn_rows {
+        let membership = map_sqlx_conversation_question_turn(row).map_err(AppError::external)?;
+        question_turns_by_question
+            .entry(membership.question_id.clone())
+            .or_default()
+            .push(membership);
+    }
+
     let turn_rows = sqlx::query(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
@@ -393,7 +425,9 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
         FROM web_record_question_turns qt
         JOIN web_record_turns t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
         JOIN web_record_questions q ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
-        WHERE q.tenant_id = ?1 AND q.session_id = ?2
+        WHERE q.tenant_id = ?1
+          AND q.session_id = ?2
+          AND q.session_id = t.session_id
         ORDER BY q.question_index ASC, qt.turn_order ASC, t.turn_index ASC
         "#,
     )
@@ -449,6 +483,9 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
         decode_json_app(card_kinds_json)?;
     let mut question_details = Vec::with_capacity(questions.len());
     for question in questions {
+        let question_turns = question_turns_by_question
+            .remove(&question.id)
+            .unwrap_or_default();
         let turns = turns_by_question.remove(&question.id).unwrap_or_default();
         let mut parts = Vec::new();
         for turn in &turns {
@@ -457,7 +494,13 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
         let (cards, content_nodes) =
             project_conversation_cards_and_nodes(&parts, &session.adapter_id, &card_kinds)?;
         question_details.push(ConversationQuestionDetail {
-            question,
+            question: project_question_compatibility_fields(
+                question,
+                &question_turns,
+                &turns,
+                &parts,
+            ),
+            question_turns,
             turns,
             parts,
             cards,
@@ -969,15 +1012,18 @@ async fn insert_web_record_questions_sqlx_tx(
             sqlx::query(
                 r#"
                 INSERT INTO web_record_question_turns (
-                    tenant_id, question_id, turn_id, turn_order
+                    tenant_id, question_id, turn_id, turn_order,
+                    assignment_origin, assigned_at, updated_at
                 )
-                VALUES (?1, ?2, ?3, ?4)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
                 "#,
             )
             .bind(tenant_id)
             .bind(&question_id)
             .bind(turn_id)
             .bind(order as i64)
+            .bind(encode_enum_app(group.origin)?)
+            .bind(now)
             .execute(&mut **tx)
             .await
             .map_err(AppError::external)?;
@@ -1665,6 +1711,11 @@ mod tests {
         assert_eq!(detail.questions.len(), 1);
         assert_eq!(detail.questions[0].turns.len(), 1);
         assert_eq!(detail.questions[0].parts.len(), 1);
+        assert_eq!(detail.questions[0].question_turns.len(), 1);
+        assert_eq!(
+            detail.questions[0].question_turns[0].turn_id,
+            detail.questions[0].turns[0].id
+        );
 
         drop(database);
         cleanup_database(&db_path);

@@ -1,11 +1,11 @@
 use crate::backend::models::{
     AppKind, Asset, AssetGroupRules, AssetKind, AssetMount, ConversationPart, ConversationPartRole,
-    ConversationQuestion, ConversationSession, ConversationTurn, DeploymentStrategy,
-    MemoryDreamCursor, MemoryDreamDeltaSession, MemoryDreamGateResult, MemoryDreamNote,
-    MemoryDreamNoteDetail, MemoryDreamState, MemoryDreamTrigger, MemoryExtraction, MemoryItem,
-    MemoryRecallCandidate, MemoryRecallClaim, MemoryRecallConflict, MemoryRecallEvidence,
-    MemoryRecallMode, MemoryRecallQuestion, MemoryScope, ProfileSafety, RuleSet, SourceKind,
-    SourceOrigin, SourceScannerKind,
+    ConversationQuestion, ConversationQuestionTurn, ConversationSession, ConversationTurn,
+    DeploymentStrategy, MemoryDreamCursor, MemoryDreamDeltaSession, MemoryDreamGateResult,
+    MemoryDreamNote, MemoryDreamNoteDetail, MemoryDreamState, MemoryDreamTrigger, MemoryExtraction,
+    MemoryItem, MemoryRecallCandidate, MemoryRecallClaim, MemoryRecallConflict,
+    MemoryRecallEvidence, MemoryRecallMode, MemoryRecallQuestion, MemoryScope, ProfileSafety,
+    RuleSet, SourceKind, SourceOrigin, SourceScannerKind,
 };
 use crate::backend::targeting::PhysicalMountState;
 use schemars::JsonSchema;
@@ -143,6 +143,7 @@ pub(crate) struct ConversationSessionListItem {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ConversationQuestionDetail {
     pub(crate) question: ConversationQuestion,
+    pub(crate) question_turns: Vec<ConversationQuestionTurn>,
     pub(crate) turns: Vec<ConversationTurn>,
     pub(crate) parts: Vec<ConversationPart>,
     pub(crate) cards: Vec<ConversationCard>,

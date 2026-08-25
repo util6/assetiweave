@@ -1,9 +1,9 @@
 use super::prelude::*;
 use crate::backend::models::{
     AssetFormat, AssetGroupRules, ConversationAdapterKind, ConversationAdapterTrustState,
-    ConversationPartKind, ConversationPartRole, ConversationSource, ConversationSourceKind,
-    DeploymentState, NormalizedConversationPart, NormalizedConversationSession,
-    NormalizedConversationTurn, SourceKind,
+    ConversationGroupingOrigin, ConversationPartKind, ConversationPartRole, ConversationSource,
+    ConversationSourceKind, DeploymentState, NormalizedConversationPart,
+    NormalizedConversationSession, NormalizedConversationTurn, SourceKind,
 };
 use sqlx::AssertSqlSafe;
 use std::fs;
@@ -3169,6 +3169,9 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
             question_id: result.hits[0].question_id.clone(),
         })
         .expect("load the same persisted Part through the detail DTO");
+    assert_eq!(detail.question_turns.len(), 1);
+    assert_eq!(detail.question_turns[0].turn_id, detail.turns[0].id);
+    assert_eq!(detail.question_turns[0].turn_order, 0);
     let part_id = result.hits[0].part_id.as_deref().expect("answer Part id");
     let card = detail
         .cards
@@ -3190,6 +3193,95 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
             .as_ref()
             .and_then(|counts| counts.get("answer")),
         Some(&1)
+    );
+
+    let second_turn_id = format!("app-membership-turn-{}", Uuid::new_v4());
+    let second_question_id = format!("app-membership-question-{}", Uuid::new_v4());
+    let now = "2026-08-25T00:00:00Z";
+    let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
+    let session_id = detail.question.session_id.clone();
+    let question_id = detail.question.id.clone();
+    let second_turn_id_for_db = second_turn_id.clone();
+    let second_question_id_for_db = second_question_id.clone();
+    service
+        .db
+        .block_on(async move {
+            sqlx::query(
+                r#"
+                INSERT INTO conversation_turns (
+                    tenant_id, id, session_id, external_id, turn_index, user_text, title,
+                    started_at, ended_at, fingerprint, missing, imported_at
+                )
+                VALUES (?1, ?2, ?3, ?4, 1, ?5, NULL, NULL, NULL, ?6, 0, ?7)
+                "#,
+            )
+            .bind(&tenant_id)
+            .bind(&second_turn_id_for_db)
+            .bind(&session_id)
+            .bind("app-membership-turn-2")
+            .bind("Second prompt")
+            .bind("app-membership-fingerprint")
+            .bind(now)
+            .execute(&pool)
+            .await
+            .map_err(AppError::external)?;
+            sqlx::query(
+                r#"
+                INSERT INTO conversation_questions (
+                    tenant_id, id, session_id, question_index, title, question_text, answer_text,
+                    code_text, command_text, grouping_origin, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, 1, NULL, '', '', '', '', 'imported', ?4, ?4)
+                "#,
+            )
+            .bind(&tenant_id)
+            .bind(&second_question_id_for_db)
+            .bind(&session_id)
+            .bind(now)
+            .execute(&pool)
+            .await
+            .map_err(AppError::external)?;
+            sqlx::query(
+                r#"
+                INSERT INTO conversation_question_turns (
+                    tenant_id, question_id, turn_id, turn_order,
+                    assignment_origin, assigned_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, 0, 'imported', ?4, ?4)
+                "#,
+            )
+            .bind(&tenant_id)
+            .bind(&second_question_id_for_db)
+            .bind(&second_turn_id_for_db)
+            .bind(now)
+            .execute(&pool)
+            .await
+            .map_err(AppError::external)?;
+            Ok::<_, AppError>(())
+        })
+        .expect("seed a second question for AppService mutation");
+
+    let merged = service
+        .merge_conversation_questions(ConversationQuestionMergeParams {
+            question_ids: vec![question_id.clone(), second_question_id],
+            dry_run: false,
+        })
+        .expect("merge question memberships through AppService");
+    assert_eq!(merged.questions.len(), 1);
+    assert_eq!(merged.questions[0].question.id, question_id);
+    assert_eq!(merged.questions[0].question_turns.len(), 2);
+    assert_eq!(
+        merged.questions[0].question_turns[1].turn_id,
+        second_turn_id
+    );
+    assert_eq!(
+        merged.questions[0].question_turns[1].assignment_origin,
+        ConversationGroupingOrigin::Manual
+    );
+    assert_eq!(
+        merged.questions[0].question.question_text,
+        "Export this\n\nSecond prompt"
     );
 
     let session_fragment =

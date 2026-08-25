@@ -449,8 +449,18 @@ export interface ConversationQuestion {
   updated_at: string;
 }
 
+export interface ConversationQuestionTurn {
+  question_id: string;
+  turn_id: string;
+  turn_order: number;
+  assignment_origin: ConversationGroupingOrigin;
+  assigned_at: string;
+  updated_at: string;
+}
+
 export interface ConversationQuestionDetail {
   question: ConversationQuestion;
+  question_turns?: ConversationQuestionTurn[];
   turns: ConversationTurn[];
   parts: ConversationPart[];
   cards?: ConversationCard[];

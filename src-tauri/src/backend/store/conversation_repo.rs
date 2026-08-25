@@ -11,8 +11,9 @@ use crate::backend::models::{
     ConversationAdapterPackageOrigin, ConversationAdapterPackageVersion,
     ConversationAdapterRuntimeGateStatus, ConversationAdapterTrustState,
     ConversationCardKindDefinition, ConversationGroupingOrigin, ConversationPart,
-    ConversationQuestion, ConversationSession, ConversationSource, ConversationSourceKind,
-    ConversationSyncRun, ConversationSyncStatus, ConversationTurn, NormalizedConversationSession,
+    ConversationQuestion, ConversationQuestionTurn, ConversationSession, ConversationSource,
+    ConversationSourceKind, ConversationSyncRun, ConversationSyncStatus, ConversationTurn,
+    NormalizedConversationSession,
 };
 use crate::backend::runtime::{AppError, AppResult};
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
@@ -1126,6 +1127,8 @@ async fn import_conversation_sessions_with_presence_sqlx(
         });
     }
 
+    audit_invalid_conversation_question_turns_sqlx(pool, tenant_id).await?;
+
     let now = Utc::now().to_rfc3339();
     let sync_run_id = stable_id("conversation-sync", &[&source.id, &now]);
     let mut warning_count = 0usize;
@@ -1455,6 +1458,7 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
         AppError::external({ format!("conversation question not found: {question_id}") })
     })?;
     let question = map_sqlx_conversation_question(&question_row)?;
+    let question_turns = load_question_turn_memberships_sqlx(pool, tenant_id, question_id).await?;
 
     let turn_rows = sqlx::query(
         r#"
@@ -1462,7 +1466,11 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
                t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at
         FROM conversation_question_turns qt
         JOIN conversation_turns t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
-        WHERE qt.tenant_id = ?1 AND qt.question_id = ?2
+        JOIN conversation_questions q
+          ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
+        WHERE qt.tenant_id = ?1
+          AND qt.question_id = ?2
+          AND q.session_id = t.session_id
         ORDER BY qt.turn_order ASC, t.turn_index ASC
         "#,
     )
@@ -1483,7 +1491,13 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
                p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
         FROM conversation_parts p
         JOIN conversation_question_turns qt ON qt.tenant_id = p.tenant_id AND qt.turn_id = p.turn_id
-        WHERE qt.tenant_id = ?1 AND qt.question_id = ?2
+        JOIN conversation_questions q
+          ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
+        JOIN conversation_turns t
+          ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
+        WHERE qt.tenant_id = ?1
+          AND qt.question_id = ?2
+          AND q.session_id = t.session_id
         ORDER BY qt.turn_order ASC, p.part_index ASC
         "#,
     )
@@ -1502,7 +1516,8 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
     let (cards, content_nodes) =
         project_conversation_cards_and_nodes(&parts, &adapter_id, &card_kinds)?;
     Ok(ConversationQuestionDetail {
-        question,
+        question: project_question_compatibility_fields(question, &question_turns, &turns, &parts),
+        question_turns,
         turns,
         parts,
         cards,
@@ -1712,6 +1727,7 @@ pub(crate) async fn merge_conversation_questions_sqlx(
         ));
     }
 
+    audit_invalid_conversation_question_turns_sqlx(pool, tenant_id).await?;
     let mut tx = pool.begin().await.map_err(AppError::external)?;
     let mut questions = Vec::with_capacity(question_ids.len());
     for question_id in question_ids {
@@ -1734,6 +1750,7 @@ pub(crate) async fn merge_conversation_questions_sqlx(
             "questions must belong to the same session".to_string(),
         ));
     }
+    reject_invalid_conversation_question_turns_sqlx_tx(&mut tx, tenant_id).await?;
     ensure_question_ids_are_adjacent_sqlx_tx(&mut tx, tenant_id, &session_id, question_ids).await?;
 
     if dry_run {
@@ -1761,12 +1778,17 @@ pub(crate) async fn merge_conversation_questions_sqlx(
             sqlx::query(
                 r#"
                 UPDATE conversation_question_turns
-                SET question_id = ?1, turn_order = ?2
-                WHERE tenant_id = ?3 AND question_id = ?4 AND turn_id = ?5
+                SET question_id = ?1,
+                    turn_order = ?2,
+                    assignment_origin = ?3,
+                    updated_at = ?4
+                WHERE tenant_id = ?5 AND question_id = ?6 AND turn_id = ?7
                 "#,
             )
             .bind(&survivor_id)
             .bind(next_order + offset as i64)
+            .bind(encode_enum(ConversationGroupingOrigin::Manual)?)
+            .bind(&now)
             .bind(tenant_id)
             .bind(question_id)
             .bind(turn_id)
@@ -1821,12 +1843,14 @@ pub(crate) async fn split_conversation_question_sqlx(
     before_turn_id: &str,
     dry_run: bool,
 ) -> AppResult<ConversationMutationResult> {
+    audit_invalid_conversation_question_turns_sqlx(pool, tenant_id).await?;
     let mut tx = pool.begin().await.map_err(AppError::external)?;
     let question = load_conversation_question_sqlx_tx(&mut tx, tenant_id, question_id)
         .await?
         .ok_or_else(|| {
             AppError::external({ format!("conversation question not found: {question_id}") })
         })?;
+    reject_invalid_conversation_question_turns_sqlx_tx(&mut tx, tenant_id).await?;
     let turns = load_question_turns_sqlx_tx(&mut tx, tenant_id, question_id).await?;
     let split_index = turns
         .iter()
@@ -1879,12 +1903,17 @@ pub(crate) async fn split_conversation_question_sqlx(
         sqlx::query(
             r#"
             UPDATE conversation_question_turns
-            SET question_id = ?1, turn_order = ?2
-            WHERE tenant_id = ?3 AND question_id = ?4 AND turn_id = ?5
+            SET question_id = ?1,
+                turn_order = ?2,
+                assignment_origin = ?3,
+                updated_at = ?4
+            WHERE tenant_id = ?5 AND question_id = ?6 AND turn_id = ?7
             "#,
         )
         .bind(&new_question_id)
         .bind(order as i64)
+        .bind(encode_enum(ConversationGroupingOrigin::Manual)?)
+        .bind(&now)
         .bind(tenant_id)
         .bind(question_id)
         .bind(&turn.id)
@@ -1902,7 +1931,7 @@ pub(crate) async fn split_conversation_question_sqlx(
     .execute(&mut *tx)
     .await
     .map_err(AppError::external)?;
-    renumber_question_turns_sqlx_tx(&mut tx, tenant_id, question_id).await?;
+    renumber_question_turns_sqlx_tx(&mut tx, tenant_id, question_id, &now).await?;
     renumber_questions_for_session_sqlx_tx(&mut tx, tenant_id, &question.session_id).await?;
     rebuild_session_question_aggregates_sqlx_tx(&mut tx, tenant_id, &question.session_id, &now)
         .await?;
@@ -1978,6 +2007,36 @@ async fn load_conversation_question_details_for_session_sqlx(
         .map(map_sqlx_conversation_question)
         .collect::<AppResult<Vec<_>>>()?;
 
+    let question_turn_rows = sqlx::query(
+        r#"
+        SELECT qt.question_id, qt.turn_id, qt.turn_order,
+               qt.assignment_origin, qt.assigned_at, qt.updated_at
+        FROM conversation_question_turns qt
+        JOIN conversation_questions q
+          ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
+        JOIN conversation_turns t
+          ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
+        WHERE qt.tenant_id = ?1
+          AND q.session_id = ?2
+          AND q.session_id = t.session_id
+        ORDER BY q.question_index ASC, qt.turn_order ASC, t.turn_index ASC,
+                 qt.turn_id ASC
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::external)?;
+    let mut question_turns_by_question = BTreeMap::<String, Vec<ConversationQuestionTurn>>::new();
+    for row in &question_turn_rows {
+        let membership = map_sqlx_conversation_question_turn(row)?;
+        question_turns_by_question
+            .entry(membership.question_id.clone())
+            .or_default()
+            .push(membership);
+    }
+
     let turn_rows = sqlx::query(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
@@ -1986,7 +2045,9 @@ async fn load_conversation_question_details_for_session_sqlx(
         FROM conversation_question_turns qt
         JOIN conversation_turns t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
         JOIN conversation_questions q ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
-        WHERE q.tenant_id = ?1 AND q.session_id = ?2
+        WHERE q.tenant_id = ?1
+          AND q.session_id = ?2
+          AND q.session_id = t.session_id
         ORDER BY q.question_index ASC, qt.turn_order ASC, t.turn_index ASC
         "#,
     )
@@ -2031,6 +2092,9 @@ async fn load_conversation_question_details_for_session_sqlx(
 
     let mut details = Vec::with_capacity(questions.len());
     for question in questions {
+        let question_turns = question_turns_by_question
+            .remove(&question.id)
+            .unwrap_or_default();
         let turns = turns_by_question.remove(&question.id).unwrap_or_default();
         let mut parts = Vec::new();
         for turn in &turns {
@@ -2039,7 +2103,13 @@ async fn load_conversation_question_details_for_session_sqlx(
         let (cards, content_nodes) =
             project_conversation_cards_and_nodes(&parts, &adapter_id, &card_kinds)?;
         details.push(ConversationQuestionDetail {
-            question,
+            question: project_question_compatibility_fields(
+                question,
+                &question_turns,
+                &turns,
+                &parts,
+            ),
+            question_turns,
             turns,
             parts,
             cards,
@@ -2047,6 +2117,81 @@ async fn load_conversation_question_details_for_session_sqlx(
         });
     }
     Ok(details)
+}
+
+async fn load_question_turn_memberships_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    question_id: &str,
+) -> AppResult<Vec<ConversationQuestionTurn>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT qt.question_id, qt.turn_id, qt.turn_order,
+               qt.assignment_origin, qt.assigned_at, qt.updated_at
+        FROM conversation_question_turns qt
+        JOIN conversation_questions q
+          ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
+        JOIN conversation_turns t
+          ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
+        WHERE qt.tenant_id = ?1
+          AND qt.question_id = ?2
+          AND q.session_id = t.session_id
+        ORDER BY qt.turn_order ASC, t.turn_index ASC, qt.turn_id ASC
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(question_id)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::external)?;
+    rows.iter()
+        .map(map_sqlx_conversation_question_turn)
+        .collect()
+}
+
+pub(crate) fn project_question_compatibility_fields(
+    mut question: ConversationQuestion,
+    question_turns: &[ConversationQuestionTurn],
+    turns: &[ConversationTurn],
+    parts: &[ConversationPart],
+) -> ConversationQuestion {
+    let turns_by_id = turns
+        .iter()
+        .map(|turn| (turn.id.as_str(), turn))
+        .collect::<BTreeMap<_, _>>();
+    let question_text = question_turns
+        .iter()
+        .filter_map(|membership| turns_by_id.get(membership.turn_id.as_str()))
+        .map(|turn| turn.user_text.as_str())
+        .filter(|text| !text.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let mut answer_text = Vec::new();
+    let mut code_text = Vec::new();
+    let mut command_text = Vec::new();
+    for part in parts {
+        append_declared_card_to_question_aggregate(
+            part,
+            &mut answer_text,
+            &mut code_text,
+            &mut command_text,
+        );
+    }
+
+    question.question_text = question_text;
+    question.answer_text = answer_text.join("\n\n");
+    question.code_text = code_text.join("\n\n");
+    question.command_text = command_text.join("\n\n");
+    if question
+        .title
+        .as_deref()
+        .is_none_or(|title| title.trim().is_empty())
+    {
+        question.title = Some(first_line(&question.question_text));
+    }
+    // `grouping_origin` remains in the compatibility Question shape until the
+    // later contract cleanup. Membership rows are the authority for new code.
+    question
 }
 
 async fn load_conversation_card_projection_context_sqlx(
@@ -2932,6 +3077,19 @@ pub(super) fn map_sqlx_conversation_question(row: &SqliteRow) -> AppResult<Conve
     })
 }
 
+pub(super) fn map_sqlx_conversation_question_turn(
+    row: &SqliteRow,
+) -> AppResult<ConversationQuestionTurn> {
+    Ok(ConversationQuestionTurn {
+        question_id: row.try_get(0).map_err(AppError::external)?,
+        turn_id: row.try_get(1).map_err(AppError::external)?,
+        turn_order: row.try_get(2).map_err(AppError::external)?,
+        assignment_origin: decode_enum(row.try_get::<String, _>(3).map_err(AppError::external)?)?,
+        assigned_at: row.try_get(4).map_err(AppError::external)?,
+        updated_at: row.try_get(5).map_err(AppError::external)?,
+    })
+}
+
 fn conversation_session_from_normalized(
     source: &ConversationSource,
     normalized: &NormalizedConversationSession,
@@ -3426,6 +3584,7 @@ async fn ensure_question_groups_for_session_sqlx_tx(
     session_id: &str,
     now: &str,
 ) -> AppResult<()> {
+    reject_invalid_conversation_question_turns_sqlx_tx(tx, tenant_id).await?;
     let turns = load_session_turns_sqlx_tx(tx, tenant_id, session_id).await?;
     let existing_memberships =
         load_turn_question_memberships_sqlx_tx(tx, tenant_id, session_id).await?;
@@ -3476,18 +3635,22 @@ async fn ensure_question_groups_for_session_sqlx_tx(
         }
         let start_order = max_question_turn_order_sqlx_tx(tx, tenant_id, &question_id).await? + 1;
         for (offset, turn_id) in group.turn_ids.iter().enumerate() {
+            ensure_question_turn_scope_sqlx_tx(tx, tenant_id, &question_id, turn_id).await?;
             sqlx::query(
                 r#"
-                INSERT OR IGNORE INTO conversation_question_turns (
-                    tenant_id, question_id, turn_id, turn_order
+                INSERT INTO conversation_question_turns (
+                    tenant_id, question_id, turn_id, turn_order,
+                    assignment_origin, assigned_at, updated_at
                 )
-                VALUES (?1, ?2, ?3, ?4)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
                 "#,
             )
             .bind(tenant_id)
             .bind(&question_id)
             .bind(turn_id)
             .bind(start_order + offset as i64)
+            .bind(encode_enum(group.origin)?)
+            .bind(now)
             .execute(&mut **tx)
             .await
             .map_err(AppError::external)?;
@@ -3495,6 +3658,128 @@ async fn ensure_question_groups_for_session_sqlx_tx(
     }
     renumber_questions_for_session_sqlx_tx(tx, tenant_id, session_id).await?;
     Ok(())
+}
+
+async fn ensure_question_turn_scope_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+    question_id: &str,
+    turn_id: &str,
+) -> AppResult<()> {
+    let same_session = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT 1
+        FROM conversation_questions q
+        JOIN conversation_turns t
+          ON t.tenant_id = q.tenant_id
+         AND t.session_id = q.session_id
+         AND t.id = ?3
+        WHERE q.tenant_id = ?1 AND q.id = ?2
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(question_id)
+    .bind(turn_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(AppError::external)?;
+    if same_session.is_none() {
+        return Err(AppError::Validation(format!(
+            "question turn membership must use the same tenant and session: question={question_id}, turn={turn_id}"
+        )));
+    }
+    Ok(())
+}
+
+async fn reject_invalid_conversation_question_turns_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+) -> AppResult<()> {
+    let rows = sqlx::query(
+        r#"
+        SELECT qt.question_id, qt.turn_id,
+               CASE
+                   WHEN q.id IS NULL THEN 'missing_question'
+                   WHEN t.id IS NULL THEN 'missing_turn'
+                   ELSE 'cross_session'
+               END AS reason
+        FROM conversation_question_turns qt
+        LEFT JOIN conversation_questions q
+          ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
+        LEFT JOIN conversation_turns t
+          ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
+        WHERE qt.tenant_id = ?1
+          AND (q.id IS NULL OR t.id IS NULL OR q.session_id <> t.session_id)
+        ORDER BY qt.question_id ASC, qt.turn_id ASC
+        "#,
+    )
+    .bind(tenant_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(AppError::external)?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let question_id: String = rows[0].try_get(0).map_err(AppError::external)?;
+    let turn_id: String = rows[0].try_get(1).map_err(AppError::external)?;
+    let reason: String = rows[0].try_get(2).map_err(AppError::external)?;
+    Err(AppError::Validation(format!(
+        "invalid question turn membership ({reason}): question={question_id}, turn={turn_id}"
+    )))
+}
+
+async fn audit_invalid_conversation_question_turns_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> AppResult<()> {
+    let rows = sqlx::query(
+        r#"
+        SELECT qt.question_id, qt.turn_id,
+               CASE
+                   WHEN q.id IS NULL THEN 'missing_question'
+                   WHEN t.id IS NULL THEN 'missing_turn'
+                   ELSE 'cross_session'
+               END AS reason
+        FROM conversation_question_turns qt
+        LEFT JOIN conversation_questions q
+          ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
+        LEFT JOIN conversation_turns t
+          ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
+        WHERE qt.tenant_id = ?1
+          AND (q.id IS NULL OR t.id IS NULL OR q.session_id <> t.session_id)
+        ORDER BY qt.question_id ASC, qt.turn_id ASC
+        "#,
+    )
+    .bind(tenant_id)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::external)?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let detected_at = Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await.map_err(AppError::external)?;
+    for row in &rows {
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO conversation_question_turn_audits (
+                tenant_id, record_kind, question_id, turn_id, reason, detected_at
+            )
+            VALUES (?1, 'session', ?2, ?3, ?4, ?5)
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(row.try_get::<String, _>(0).map_err(AppError::external)?)
+        .bind(row.try_get::<String, _>(1).map_err(AppError::external)?)
+        .bind(row.try_get::<String, _>(2).map_err(AppError::external)?)
+        .bind(&detected_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(AppError::external)?;
+    }
+    tx.commit().await.map_err(AppError::external)
 }
 
 async fn rebuild_session_question_aggregates_sqlx_tx(
@@ -3516,6 +3801,8 @@ async fn rebuild_question_aggregate_sqlx_tx(
     question_id: &str,
     now: &str,
 ) -> AppResult<()> {
+    // Keep the legacy snapshot and FTS row synchronized as a compatibility cache. Question Detail
+    // reads project from membership and Turn-Part facts through the seam above.
     let turns = load_question_turns_sqlx_tx(tx, tenant_id, question_id).await?;
     let mut question_text = Vec::new();
     let mut answer_text = Vec::new();
@@ -3882,17 +4169,19 @@ async fn renumber_question_turns_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     question_id: &str,
+    updated_at: &str,
 ) -> AppResult<()> {
     let turn_ids = load_question_turn_ids_sqlx_tx(tx, tenant_id, question_id).await?;
     for (index, turn_id) in turn_ids.iter().enumerate() {
         sqlx::query(
             r#"
             UPDATE conversation_question_turns
-            SET turn_order = ?1
-            WHERE tenant_id = ?2 AND question_id = ?3 AND turn_id = ?4
+            SET turn_order = ?1, updated_at = ?2
+            WHERE tenant_id = ?3 AND question_id = ?4 AND turn_id = ?5
             "#,
         )
         .bind(index as i64)
+        .bind(updated_at)
         .bind(tenant_id)
         .bind(question_id)
         .bind(turn_id)
@@ -5589,6 +5878,181 @@ mod tests {
             ConversationGroupingOrigin::Manual
         );
 
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_question_detail_projects_from_question_turn_membership_and_turn_facts() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-question-projection-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let adapter = test_conversation_adapter(
+            "question-projection-external",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let source = test_conversation_source(&adapter.id);
+
+        let detail = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[fixture_session("v1")],
+                    false,
+                )
+                .await?;
+                let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+                sqlx::query(
+                    r#"
+                    UPDATE conversation_questions
+                    SET question_text = 'stale snapshot',
+                        answer_text = 'stale answer',
+                        code_text = 'stale code',
+                        command_text = 'stale command'
+                    WHERE tenant_id = ?1 AND session_id = ?2
+                    "#,
+                )
+                .bind(TEST_TENANT_ID)
+                .bind(&session_id)
+                .execute(database.pool())
+                .await
+                .map_err(AppError::external)?;
+                load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
+                    .await
+            })
+            .expect("load projected question detail");
+
+        let first_question = &detail.questions[0];
+        assert_eq!(
+            first_question.question.question_text,
+            "How does sync work?\n\n继续"
+        );
+        assert_eq!(
+            first_question.question.answer_text,
+            "answer for t1\n\nanswer for t2"
+        );
+        assert_eq!(first_question.question_turns.len(), 2);
+        assert_eq!(
+            first_question
+                .question_turns
+                .iter()
+                .map(|membership| membership.turn_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                first_question.turns[0].id.as_str(),
+                first_question.turns[1].id.as_str()
+            ]
+        );
+        assert_eq!(
+            first_question.question_turns[0].assignment_origin,
+            ConversationGroupingOrigin::AutoMerged
+        );
+        assert_eq!(first_question.question_turns[0].turn_order, 0);
+        assert!(!first_question.question_turns[0].assigned_at.is_empty());
+        assert!(!first_question.question_turns[0].updated_at.is_empty());
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_rejects_cross_session_question_turn_membership_before_new_write() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-question-membership-scope-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let adapter = test_conversation_adapter(
+            "question-membership-scope-external",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let source = test_conversation_source(&adapter.id);
+        let mut second_session = fixture_session("v1");
+        second_session.external_id = "session-2".to_string();
+
+        let error = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[fixture_session("v1"), second_session],
+                    false,
+                )
+                .await?;
+
+                let first_session_id =
+                    stable_id("conversation-session", &[&source.id, "session-1"]);
+                let second_session_id =
+                    stable_id("conversation-session", &[&source.id, "session-2"]);
+                let first_turn_id = stable_id("conversation-turn", &[&first_session_id, "t1"]);
+                let second_turn_id = stable_id("conversation-turn", &[&second_session_id, "t1"]);
+                let first_question_id = stable_id(
+                    "conversation-question",
+                    &[&first_session_id, &first_turn_id],
+                );
+                sqlx::query(
+                    "DELETE FROM conversation_question_turns WHERE tenant_id = ?1 AND turn_id = ?2",
+                )
+                .bind(TEST_TENANT_ID)
+                .bind(&second_turn_id)
+                .execute(database.pool())
+                .await
+                .map_err(AppError::external)?;
+                sqlx::query(
+                    r#"
+                    INSERT INTO conversation_question_turns (
+                        tenant_id, question_id, turn_id, turn_order,
+                        assignment_origin, assigned_at, updated_at
+                    )
+                    VALUES (?1, ?2, ?3, 0, 'imported', ?4, ?4)
+                    "#,
+                )
+                .bind(TEST_TENANT_ID)
+                .bind(&first_question_id)
+                .bind(&second_turn_id)
+                .bind("2026-08-25T00:00:00Z")
+                .execute(database.pool())
+                .await
+                .map_err(AppError::external)?;
+
+                let result = import_conversation_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[fixture_session("v1")],
+                    false,
+                )
+                .await;
+                Ok::<_, AppError>(
+                    result.expect_err("cross-session membership must block the write"),
+                )
+            })
+            .expect("validate cross-session membership");
+
+        assert!(error.to_string().contains("cross_session"));
+        let audit_count = database
+            .block_on(async {
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM conversation_question_turn_audits WHERE tenant_id = ?1 AND record_kind = 'session' AND reason = 'cross_session'",
+                )
+                .bind(TEST_TENANT_ID)
+                .fetch_one(database.pool())
+                .await
+                .map_err(AppError::external)
+            })
+            .expect("persist cross-session audit");
+        assert_eq!(audit_count, 1);
         drop(database);
         cleanup_database(&db_path);
     }

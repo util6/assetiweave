@@ -338,6 +338,16 @@ pub struct ConversationQuestion {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ConversationQuestionTurn {
+    pub question_id: String,
+    pub turn_id: String,
+    pub turn_order: i64,
+    pub assignment_origin: ConversationGroupingOrigin,
+    pub assigned_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ConversationSyncRun {
     pub id: String,
     pub source_id: Option<String>,
