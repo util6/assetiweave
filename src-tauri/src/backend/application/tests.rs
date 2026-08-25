@@ -3349,6 +3349,104 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[cfg(unix)]
+#[test]
+fn conversation_question_detail_projects_canonical_nodes_through_app_service() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-content-node-app-service-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create content node app service root");
+    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let session_id = upsert_conversation_export_fixture(&service, &root, Vec::new(), None, false);
+    let initial = service
+        .list_conversation_questions(ConversationQuestionListParams {
+            session_id,
+            query: None,
+            limit: Some(10),
+            offset: Some(0),
+        })
+        .expect("load fixture question through AppService");
+    assert_eq!(initial.len(), 1);
+    assert_eq!(initial[0].parts.len(), 1);
+    assert_eq!(initial[0].projected_content_nodes.len(), 1);
+    let first_part_id = initial[0].parts[0].id.clone();
+    let first_node = &initial[0].projected_content_nodes[0];
+    assert_eq!(first_node.question_id, initial[0].question.id);
+    assert_eq!(first_node.turn_id, initial[0].turns[0].id);
+    assert_eq!(first_node.part_id, initial[0].parts[0].id);
+    assert_eq!(first_node.node_order, 0);
+    assert_eq!(first_node.locator.part_id, initial[0].parts[0].id);
+
+    let question_id = initial[0].question.id.clone();
+    let turn_id = initial[0].turns[0].id.clone();
+    let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
+    service
+        .db
+        .block_on(async move {
+            sqlx::query(
+                r#"
+                INSERT INTO conversation_parts (
+                    tenant_id, id, turn_id, part_index, role, kind, text, language,
+                    command, cwd, status, exit_code, metadata_json, translated_text,
+                    content_card_json, source_execution_id, command_label
+                )
+                VALUES (?1, 'app-service-second-part', ?2, 1, 'assistant', 'text',
+                    'Second projected Part', NULL, NULL, NULL, NULL, NULL, ?3, NULL,
+                    NULL, 'execution-second', 'second')
+                "#,
+            )
+            .bind(&tenant_id)
+            .bind(&turn_id)
+            .bind(r#"{"content_card":{"type":"answer","format":"markdown"}}"#)
+            .execute(&pool)
+            .await
+            .map_err(AppError::external)?;
+            sqlx::query(
+                r#"
+                INSERT INTO conversation_parts (
+                    tenant_id, id, turn_id, part_index, role, kind, text, language,
+                    command, cwd, status, exit_code, metadata_json, translated_text,
+                    content_card_json, source_execution_id, command_label
+                )
+                VALUES (?1, 'app-service-empty-part', ?2, 2, 'assistant', 'text',
+                    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+                "#,
+            )
+            .bind(&tenant_id)
+            .bind(&turn_id)
+            .execute(&pool)
+            .await
+            .map_err(AppError::external)?;
+            AppResult::Ok(())
+        })
+        .expect("seed multi-part and empty projection fixture");
+
+    let expanded = service
+        .get_conversation_question(ConversationQuestionGetParams { question_id })
+        .expect("reload canonical content nodes through AppService");
+    assert_eq!(expanded.parts.len(), 3);
+    assert_eq!(expanded.projected_content_nodes.len(), 2);
+    assert_eq!(
+        expanded
+            .projected_content_nodes
+            .iter()
+            .map(|node| node.part_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![first_part_id.as_str(), "app-service-second-part"]
+    );
+    assert!(expanded
+        .projected_content_nodes
+        .iter()
+        .all(|node| node.locator.question_id == expanded.question.id));
+    assert!(!expanded
+        .projected_content_nodes
+        .iter()
+        .any(|node| node.part_id == "app-service-empty-part"));
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_history() {
     let root = std::env::temp_dir().join(format!(

@@ -15,7 +15,7 @@ import {
   DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
   type ConversationCard,
   type ConversationCardRenderer,
-  type ConversationContentNode,
+  type LegacyConversationContentNode,
   type ConversationContentType,
   type ConversationContentVisibility,
   type ConversationPart,
@@ -111,7 +111,7 @@ export function buildConversationContentBlocks(
 
 export function buildConversationDisplayNodes(
   cards: ConversationCard[],
-  nodes: ConversationContentNode[],
+  nodes: LegacyConversationContentNode[],
 ): ConversationDisplayNode[] {
   return nodes.flatMap((node): ConversationDisplayNode[] => {
     if (node.type === "card") {

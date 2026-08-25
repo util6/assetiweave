@@ -18,9 +18,9 @@ use super::{
         append_declared_card_to_question_aggregate, insert_conversation_sync_delta_sqlx_tx,
         map_sqlx_conversation_part, map_sqlx_conversation_question,
         map_sqlx_conversation_question_turn, map_sqlx_conversation_session,
-        map_sqlx_conversation_turn, project_conversation_cards_and_nodes,
-        project_question_compatibility_fields, ConversationImportResult,
-        CONVERSATION_IMPORT_BATCH_SIZE,
+        map_sqlx_conversation_turn, project_conversation_legacy_cards_and_nodes,
+        project_question_compatibility_fields, project_question_content_nodes,
+        ConversationImportResult, CONVERSATION_IMPORT_BATCH_SIZE,
     },
 };
 
@@ -491,8 +491,15 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
         for turn in &turns {
             parts.extend(parts_by_turn.remove(&turn.id).unwrap_or_default());
         }
-        let (cards, content_nodes) =
-            project_conversation_cards_and_nodes(&parts, &session.adapter_id, &card_kinds)?;
+        let (cards, legacy_content_nodes) =
+            project_conversation_legacy_cards_and_nodes(&parts, &session.adapter_id, &card_kinds)?;
+        let projected_content_nodes = project_question_content_nodes(
+            &question.id,
+            &question_turns,
+            &parts,
+            &session.adapter_id,
+            &card_kinds,
+        )?;
         question_details.push(ConversationQuestionDetail {
             question: project_question_compatibility_fields(
                 question,
@@ -504,7 +511,8 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
             turns,
             parts,
             cards,
-            content_nodes,
+            legacy_content_nodes,
+            projected_content_nodes,
         });
     }
     Ok(ConversationSessionDetail {

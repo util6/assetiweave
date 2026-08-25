@@ -421,7 +421,39 @@ export interface ConversationCard {
   legacy_anchor_ids: string[];
 }
 
-export type ConversationContentNode =
+export interface ConversationContentNodeLocator {
+  question_id: string;
+  turn_id: string;
+  part_id: string;
+  node_order: number;
+}
+
+export interface ConversationContentNode {
+  node_id: string;
+  locator: ConversationContentNodeLocator;
+  question_id: string;
+  turn_id: string;
+  part_id: string;
+  turn_order: number;
+  part_order: number;
+  node_order: number;
+  node_type: string;
+  semantic_role?: string | null;
+  renderer: ConversationCardRenderer;
+  role: ConversationPartRole;
+  content: string;
+  language?: string | null;
+  cwd?: string | null;
+  status?: string | null;
+  exit_code?: number | null;
+  source_execution_id?: string | null;
+  command_label?: string | null;
+  translated_content?: string | null;
+  legacy_anchor_ids: string[];
+}
+
+/** Deprecated compatibility shape. Use ConversationContentNode instead. */
+export type LegacyConversationContentNode =
   | {
       type: "card";
       turn_id: string;
@@ -464,7 +496,9 @@ export interface ConversationQuestionDetail {
   turns: ConversationTurn[];
   parts: ConversationPart[];
   cards?: ConversationCard[];
-  content_nodes?: ConversationContentNode[];
+  /** Deprecated compatibility output; new consumers use projected_content_nodes. */
+  content_nodes?: LegacyConversationContentNode[];
+  projected_content_nodes?: ConversationContentNode[];
 }
 
 export interface ConversationSessionDetail {

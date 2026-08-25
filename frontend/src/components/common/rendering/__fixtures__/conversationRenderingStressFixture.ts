@@ -1,6 +1,6 @@
 import type {
   ConversationCard,
-  ConversationContentNode,
+  LegacyConversationContentNode,
   ConversationQuestionDetail,
   ConversationTurn,
 } from "../../../../types";
@@ -10,13 +10,13 @@ const TURN_COUNT = 80;
 
 export interface RenderingStressFixture extends ConversationQuestionDetail {
   cards: ConversationCard[];
-  content_nodes: ConversationContentNode[];
+  content_nodes: LegacyConversationContentNode[];
 }
 
 export function createConversationRenderingStressFixture(): RenderingStressFixture {
   const turns = Array.from({ length: TURN_COUNT }, (_, index) => createTurn(index));
   const cards: ConversationCard[] = [];
-  const contentNodes: ConversationContentNode[] = [];
+  const contentNodes: LegacyConversationContentNode[] = [];
 
   const appendCard = (turnId: string, card: Omit<ConversationCard, "card_id" | "part_id" | "legacy_anchor_ids">) => {
     const cardIndex = cards.length;

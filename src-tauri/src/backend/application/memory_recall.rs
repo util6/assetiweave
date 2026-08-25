@@ -567,7 +567,8 @@ mod tests {
                 ),
             ],
             cards: Vec::new(),
-            content_nodes: Vec::new(),
+            legacy_content_nodes: Vec::new(),
+            projected_content_nodes: Vec::new(),
         };
         detail.cards = detail
             .parts

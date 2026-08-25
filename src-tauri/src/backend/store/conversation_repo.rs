@@ -3,6 +3,7 @@ use crate::backend::dto::{
     ConversationContentNode, ConversationMutationResult, ConversationQuestionDetail,
     ConversationRecordKind, ConversationSearchCardType, ConversationSearchHit,
     ConversationSearchPage, ConversationSessionDetail, ConversationSessionListItem,
+    LegacyConversationContentNode,
 };
 use crate::backend::events::DomainEvent;
 use crate::backend::models::{
@@ -14,6 +15,9 @@ use crate::backend::models::{
     ConversationQuestion, ConversationQuestionTurn, ConversationSession, ConversationSource,
     ConversationSourceKind, ConversationSyncRun, ConversationSyncStatus, ConversationTurn,
     NormalizedConversationSession,
+};
+use crate::backend::projection::conversation_content_nodes::{
+    project_conversation_content_nodes, ConversationContentNodeCandidate,
 };
 use crate::backend::runtime::{AppError, AppResult};
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
@@ -1513,15 +1517,23 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
     let (adapter_id, card_kinds) =
         load_conversation_card_projection_context_sqlx(pool, tenant_id, &question.session_id)
             .await?;
-    let (cards, content_nodes) =
-        project_conversation_cards_and_nodes(&parts, &adapter_id, &card_kinds)?;
+    let (cards, legacy_content_nodes) =
+        project_conversation_legacy_cards_and_nodes(&parts, &adapter_id, &card_kinds)?;
+    let projected_content_nodes = project_question_content_nodes(
+        &question.id,
+        &question_turns,
+        &parts,
+        &adapter_id,
+        &card_kinds,
+    )?;
     Ok(ConversationQuestionDetail {
         question: project_question_compatibility_fields(question, &question_turns, &turns, &parts),
         question_turns,
         turns,
         parts,
         cards,
-        content_nodes,
+        legacy_content_nodes,
+        projected_content_nodes,
     })
 }
 
@@ -2100,8 +2112,15 @@ async fn load_conversation_question_details_for_session_sqlx(
         for turn in &turns {
             parts.extend(parts_by_turn.remove(&turn.id).unwrap_or_default());
         }
-        let (cards, content_nodes) =
-            project_conversation_cards_and_nodes(&parts, &adapter_id, &card_kinds)?;
+        let (cards, legacy_content_nodes) =
+            project_conversation_legacy_cards_and_nodes(&parts, &adapter_id, &card_kinds)?;
+        let projected_content_nodes = project_question_content_nodes(
+            &question.id,
+            &question_turns,
+            &parts,
+            &adapter_id,
+            &card_kinds,
+        )?;
         details.push(ConversationQuestionDetail {
             question: project_question_compatibility_fields(
                 question,
@@ -2113,7 +2132,8 @@ async fn load_conversation_question_details_for_session_sqlx(
             turns,
             parts,
             cards,
-            content_nodes,
+            legacy_content_nodes,
+            projected_content_nodes,
         });
     }
     Ok(details)
@@ -2299,16 +2319,17 @@ pub(super) fn project_conversation_cards(
     adapter_id: &str,
     card_kinds: &[ConversationCardKindDefinition],
 ) -> AppResult<Vec<crate::backend::dto::ConversationCard>> {
-    project_conversation_cards_and_nodes(parts, adapter_id, card_kinds).map(|(cards, _)| cards)
+    project_conversation_legacy_cards_and_nodes(parts, adapter_id, card_kinds)
+        .map(|(cards, _)| cards)
 }
 
-pub(super) fn project_conversation_cards_and_nodes(
+pub(super) fn project_conversation_legacy_cards_and_nodes(
     parts: &[ConversationPart],
     adapter_id: &str,
     card_kinds: &[ConversationCardKindDefinition],
 ) -> AppResult<(
     Vec<crate::backend::dto::ConversationCard>,
-    Vec<ConversationContentNode>,
+    Vec<LegacyConversationContentNode>,
 )> {
     let mut cards = Vec::new();
     let mut content_nodes = Vec::new();
@@ -2337,7 +2358,7 @@ pub(super) fn project_conversation_cards_and_nodes(
             let (Some(source_execution_id), Some(execution_role)) =
                 (source_execution_id, execution_role)
             else {
-                content_nodes.push(ConversationContentNode::Card {
+                content_nodes.push(LegacyConversationContentNode::Card {
                     turn_id: part.turn_id.clone(),
                     card_index,
                 });
@@ -2347,7 +2368,7 @@ pub(super) fn project_conversation_cards_and_nodes(
             let key = (part.turn_id.clone(), source_execution_id.to_string());
             if execution_role == "command" {
                 let node_index = content_nodes.len();
-                content_nodes.push(ConversationContentNode::Execution {
+                content_nodes.push(LegacyConversationContentNode::Execution {
                     turn_id: part.turn_id.clone(),
                     source_execution_id: source_execution_id.to_string(),
                     command_card_index: Some(card_index),
@@ -2358,7 +2379,7 @@ pub(super) fn project_conversation_cards_and_nodes(
             }
 
             if let Some(node_index) = execution_node_indices.get(&key).copied() {
-                if let ConversationContentNode::Execution {
+                if let LegacyConversationContentNode::Execution {
                     result_card_indices,
                     ..
                 } = &mut content_nodes[node_index]
@@ -2371,7 +2392,7 @@ pub(super) fn project_conversation_cards_and_nodes(
             }
 
             let node_index = content_nodes.len();
-            content_nodes.push(ConversationContentNode::Execution {
+            content_nodes.push(LegacyConversationContentNode::Execution {
                 turn_id: part.turn_id.clone(),
                 source_execution_id: source_execution_id.to_string(),
                 command_card_index: (execution_role == "command").then_some(card_index),
@@ -2387,12 +2408,12 @@ pub(super) fn project_conversation_cards_and_nodes(
     let content_nodes = content_nodes
         .into_iter()
         .map(|node| match node {
-            ConversationContentNode::Execution {
+            LegacyConversationContentNode::Execution {
                 turn_id,
                 command_card_index: Some(card_index),
                 result_card_indices,
                 ..
-            } if result_card_indices.is_empty() => ConversationContentNode::Card {
+            } if result_card_indices.is_empty() => LegacyConversationContentNode::Card {
                 turn_id,
                 card_index,
             },
@@ -2400,6 +2421,26 @@ pub(super) fn project_conversation_cards_and_nodes(
         })
         .collect();
     Ok((cards, content_nodes))
+}
+
+pub(super) fn project_question_content_nodes(
+    question_id: &str,
+    question_turns: &[ConversationQuestionTurn],
+    parts: &[ConversationPart],
+    adapter_id: &str,
+    card_kinds: &[ConversationCardKindDefinition],
+) -> AppResult<Vec<ConversationContentNode>> {
+    project_conversation_content_nodes(question_id, question_turns, parts, |part| {
+        let card =
+            crate::backend::projection::conversation_cards::project_conversation_content_card(
+                part, adapter_id, card_kinds,
+            )?;
+        Ok(card
+            .map(ConversationContentNodeCandidate::from)
+            .into_iter()
+            .collect())
+    })
+    .map_err(AppError::external)
 }
 
 pub(crate) async fn load_recent_conversation_sync_deltas_sqlx(
@@ -4930,7 +4971,8 @@ mod tests {
         ConversationAdapterPackageOrigin, ConversationAdapterPackageRecordKind,
         ConversationAdapterRuntimeGateStatus, ConversationCardKindDefinition,
         ConversationContentCardDescriptor, ConversationPackageUpdatePolicy, ConversationPartKind,
-        ConversationPartRole, NormalizedConversationPart, NormalizedConversationTurn,
+        ConversationPartRole,
+        NormalizedConversationPart, NormalizedConversationTurn,
     };
     use crate::backend::store::Database;
     use uuid::Uuid;
@@ -5064,8 +5106,9 @@ mod tests {
             part("result-a", 4, "call-a", false, None),
         ];
 
-        let (cards, nodes) = project_conversation_cards_and_nodes(&parts, "fixture", &card_kinds)
-            .expect("project execution nodes");
+        let (cards, nodes) =
+            project_conversation_legacy_cards_and_nodes(&parts, "fixture", &card_kinds)
+                .expect("project execution nodes");
 
         assert_eq!(cards.len(), 5);
         assert_eq!(cards[0].card_id, "command-a");
@@ -5074,17 +5117,17 @@ mod tests {
         assert_eq!(
             nodes,
             vec![
-                ConversationContentNode::Card {
+                LegacyConversationContentNode::Card {
                     turn_id: "turn-1".to_string(),
                     card_index: 0,
                 },
-                ConversationContentNode::Execution {
+                LegacyConversationContentNode::Execution {
                     turn_id: "turn-1".to_string(),
                     source_execution_id: "call-a".to_string(),
                     command_card_index: Some(1),
                     result_card_indices: vec![4],
                 },
-                ConversationContentNode::Execution {
+                LegacyConversationContentNode::Execution {
                     turn_id: "turn-1".to_string(),
                     source_execution_id: "call-b".to_string(),
                     command_card_index: Some(2),
@@ -5161,8 +5204,9 @@ mod tests {
             },
         ];
 
-        let (cards, nodes) = project_conversation_cards_and_nodes(&parts, "fixture", &card_kinds)
-            .expect("project standalone file change node");
+        let (cards, nodes) =
+            project_conversation_legacy_cards_and_nodes(&parts, "fixture", &card_kinds)
+                .expect("project standalone file change node");
 
         assert_eq!(cards.len(), 2);
         assert_eq!(cards[1].kind, "fixture.file-change");
@@ -5170,11 +5214,11 @@ mod tests {
         assert_eq!(
             nodes,
             vec![
-                ConversationContentNode::Card {
+                LegacyConversationContentNode::Card {
                     turn_id: "turn-1".to_string(),
                     card_index: 0,
                 },
-                ConversationContentNode::Card {
+                LegacyConversationContentNode::Card {
                     turn_id: "turn-1".to_string(),
                     card_index: 1,
                 },
@@ -6569,6 +6613,20 @@ mod tests {
         assert_eq!(nodes[1]["source_execution_id"], "call-export");
         assert_eq!(nodes[1]["command_card_index"], serde_json::json!(1));
         assert_eq!(nodes[1]["result_card_indices"], serde_json::json!([2]));
+        let projected_nodes = serialized["projected_content_nodes"]
+            .as_array()
+            .expect("projected content nodes");
+        assert_eq!(projected_nodes.len(), 3);
+        assert_eq!(projected_nodes[0]["question_id"], question.question.id);
+        assert_eq!(projected_nodes[0]["turn_id"], question.turns[0].id);
+        assert_eq!(projected_nodes[0]["part_id"], question.parts[0].id);
+        assert_eq!(projected_nodes[0]["node_order"], 0);
+        assert_eq!(
+            projected_nodes[0]["locator"]["part_id"],
+            question.parts[0].id
+        );
+        assert_eq!(projected_nodes[1]["source_execution_id"], "call-export");
+        assert_eq!(projected_nodes[2]["source_execution_id"], "call-export");
 
         drop(database);
         cleanup_database(&db_path);

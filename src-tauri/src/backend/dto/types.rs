@@ -147,12 +147,50 @@ pub(crate) struct ConversationQuestionDetail {
     pub(crate) turns: Vec<ConversationTurn>,
     pub(crate) parts: Vec<ConversationPart>,
     pub(crate) cards: Vec<ConversationCard>,
-    pub(crate) content_nodes: Vec<ConversationContentNode>,
+    /// Deprecated compatibility output. New consumers must use
+    /// `projected_content_nodes` and resolve each node from its own source identity.
+    #[serde(rename = "content_nodes")]
+    pub(crate) legacy_content_nodes: Vec<LegacyConversationContentNode>,
+    pub(crate) projected_content_nodes: Vec<ConversationContentNode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub(crate) struct ConversationContentNodeLocator {
+    pub(crate) question_id: String,
+    pub(crate) turn_id: String,
+    pub(crate) part_id: String,
+    pub(crate) node_order: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub(crate) struct ConversationContentNode {
+    pub(crate) node_id: String,
+    pub(crate) locator: ConversationContentNodeLocator,
+    pub(crate) question_id: String,
+    pub(crate) turn_id: String,
+    pub(crate) part_id: String,
+    pub(crate) turn_order: i64,
+    pub(crate) part_order: i64,
+    pub(crate) node_order: usize,
+    pub(crate) node_type: String,
+    pub(crate) semantic_role: Option<String>,
+    pub(crate) renderer: ConversationCardRenderer,
+    pub(crate) role: ConversationPartRole,
+    pub(crate) content: String,
+    pub(crate) language: Option<String>,
+    pub(crate) cwd: Option<String>,
+    pub(crate) status: Option<String>,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) source_execution_id: Option<String>,
+    pub(crate) command_label: Option<String>,
+    pub(crate) translated_content: Option<String>,
+    pub(crate) legacy_anchor_ids: Vec<String>,
+}
+
+/// Deprecated compatibility shape. It links display nodes through Card array indexes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum ConversationContentNode {
+pub(crate) enum LegacyConversationContentNode {
     Card {
         turn_id: String,
         card_index: usize,

@@ -18,7 +18,11 @@ import type {
   ConversationCardTranslationRequest,
   ConversationPartTranslationUpdateRequest,
 } from "../../services/cardTranslation";
-import type { ConversationCard, ConversationContentNode, ConversationPart } from "../../types";
+import type {
+  ConversationCard,
+  LegacyConversationContentNode,
+  ConversationPart,
+} from "../../types";
 
 const revealPath = vi.hoisted(() => vi.fn());
 vi.mock("../../services/catalog", () => ({ revealPath }));
@@ -319,7 +323,7 @@ describe("ConversationContentCards", () => {
       projectedCard("result-b", "result", "tests passed"),
       projectedCard("result-a", "result", "types passed"),
     ];
-    const nodes: ConversationContentNode[] = [
+    const nodes: LegacyConversationContentNode[] = [
       {
         type: "execution",
         turn_id: "turn-1",
@@ -555,7 +559,7 @@ describe("ConversationContentCards", () => {
       ].join("\n"),
       legacy_anchor_ids: [],
     }];
-    const contentNodes: ConversationContentNode[] = [{
+    const contentNodes: LegacyConversationContentNode[] = [{
       type: "card",
       turn_id: "turn-1",
       card_index: 0,
