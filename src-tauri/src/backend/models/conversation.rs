@@ -572,13 +572,79 @@ pub fn should_auto_merge_acknowledgement(user_text: &str) -> bool {
     )
 }
 
+fn should_auto_merge_interruption_recovery(user_text: &str) -> bool {
+    let normalized = user_text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    if normalized.is_empty()
+        || normalized.contains('?')
+        || normalized.contains('？')
+        || normalized.contains("```")
+    {
+        return false;
+    }
+
+    [
+        "continue where we left off",
+        "pick up where we left off",
+        "resume where we left off",
+        "continue the previous question",
+        "继续上一个问题",
+        "接着刚才",
+        "从刚才继续",
+        "恢复刚才",
+        "回到刚才",
+    ]
+    .iter()
+    .any(|prefix| normalized == *prefix || normalized.starts_with(&format!("{prefix} ")))
+}
+
+fn should_auto_merge_micro_follow_up(user_text: &str) -> bool {
+    let normalized = user_text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    if normalized.is_empty()
+        || normalized.chars().count() > 48
+        || normalized.contains('?')
+        || normalized.contains('？')
+        || normalized.contains("```")
+    {
+        return false;
+    }
+
+    [
+        "change it to ",
+        "change that to ",
+        "make it ",
+        "switch it to ",
+        "rename it to ",
+        "改成",
+        "改为",
+        "换成",
+        "加上",
+        "删掉",
+        "去掉",
+        "把它",
+        "调整",
+    ]
+    .iter()
+    .any(|prefix| normalized.starts_with(prefix))
+}
+
 pub fn group_turn_ids_by_question<I>(turns: I) -> Vec<ConversationGroupSeed>
 where
     I: IntoIterator<Item = (String, String)>,
 {
     let mut groups: Vec<ConversationGroupSeed> = Vec::new();
     for (turn_id, user_text) in turns {
-        if should_auto_merge_acknowledgement(&user_text) {
+        if should_auto_merge_acknowledgement(&user_text)
+            || should_auto_merge_interruption_recovery(&user_text)
+            || should_auto_merge_micro_follow_up(&user_text)
+        {
             if let Some(previous) = groups.last_mut() {
                 previous.turn_ids.push(turn_id);
                 if previous.origin == ConversationGroupingOrigin::Imported {
@@ -704,5 +770,21 @@ mod tests {
         assert_eq!(groups[0].turn_ids, vec!["t1", "t2"]);
         assert_eq!(groups[0].origin, ConversationGroupingOrigin::AutoMerged);
         assert_eq!(groups[1].turn_ids, vec!["t3"]);
+    }
+
+    #[test]
+    fn groups_interruption_recovery_and_micro_follow_up_with_previous_question() {
+        let groups = group_turn_ids_by_question(vec![
+            ("t1".to_string(), "Design the sync boundary".to_string()),
+            ("t2".to_string(), "继续上一个问题".to_string()),
+            ("t3".to_string(), "改成 Rust".to_string()),
+            ("t4".to_string(), "Now export it".to_string()),
+        ]);
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].turn_ids, vec!["t1", "t2", "t3"]);
+        assert_eq!(groups[0].origin, ConversationGroupingOrigin::AutoMerged);
+        assert_eq!(groups[1].turn_ids, vec!["t4"]);
+        assert_eq!(groups[1].origin, ConversationGroupingOrigin::Imported);
     }
 }

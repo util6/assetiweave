@@ -1727,6 +1727,33 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
     })
 }
 
+async fn resolve_conversation_question_redirect_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+    question_id: &str,
+) -> AppResult<String> {
+    let mut current = question_id.to_string();
+    let mut visited = BTreeSet::new();
+    loop {
+        if !visited.insert(current.clone()) {
+            return Err(AppError::Validation(format!(
+                "conversation question redirect cycle: {question_id}"
+            )));
+        }
+        let Some(target) = sqlx::query_scalar::<_, String>(
+            "SELECT target_question_id FROM conversation_question_redirects WHERE tenant_id = ?1 AND source_question_id = ?2",
+        )
+        .bind(tenant_id)
+        .bind(&current)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(AppError::external)? else {
+            return Ok(current);
+        };
+        current = target;
+    }
+}
+
 pub(crate) async fn merge_conversation_questions_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -1743,8 +1770,10 @@ pub(crate) async fn merge_conversation_questions_sqlx(
     let mut tx = pool.begin().await.map_err(AppError::external)?;
     let mut questions = Vec::with_capacity(question_ids.len());
     for question_id in question_ids {
+        let resolved_question_id =
+            resolve_conversation_question_redirect_sqlx_tx(&mut tx, tenant_id, question_id).await?;
         questions.push(
-            load_conversation_question_sqlx_tx(&mut tx, tenant_id, question_id)
+            load_conversation_question_sqlx_tx(&mut tx, tenant_id, &resolved_question_id)
                 .await?
                 .ok_or_else(|| {
                     AppError::external({
@@ -1762,13 +1791,38 @@ pub(crate) async fn merge_conversation_questions_sqlx(
             "questions must belong to the same session".to_string(),
         ));
     }
+    let mut canonical_question_ids = Vec::with_capacity(questions.len());
+    for question in &questions {
+        if !canonical_question_ids.contains(&question.id) {
+            canonical_question_ids.push(question.id.clone());
+        }
+    }
+    if canonical_question_ids.len() < 2 {
+        let session_id = questions[0].session_id.clone();
+        tx.rollback().await.map_err(AppError::external)?;
+        return Ok(ConversationMutationResult {
+            dry_run,
+            session_id,
+            affected_question_ids: question_ids.to_vec(),
+            questions: vec![
+                load_conversation_question_detail_sqlx(pool, tenant_id, &canonical_question_ids[0])
+                    .await?,
+            ],
+        });
+    }
     reject_invalid_conversation_question_turns_sqlx_tx(&mut tx, tenant_id).await?;
-    ensure_question_ids_are_adjacent_sqlx_tx(&mut tx, tenant_id, &session_id, question_ids).await?;
+    ensure_question_ids_are_adjacent_sqlx_tx(
+        &mut tx,
+        tenant_id,
+        &session_id,
+        &canonical_question_ids,
+    )
+    .await?;
 
     if dry_run {
         tx.rollback().await.map_err(AppError::external)?;
-        let mut details = Vec::with_capacity(question_ids.len());
-        for question_id in question_ids {
+        let mut details = Vec::with_capacity(canonical_question_ids.len());
+        for question_id in &canonical_question_ids {
             details
                 .push(load_conversation_question_detail_sqlx(pool, tenant_id, question_id).await?);
         }
@@ -1781,8 +1835,18 @@ pub(crate) async fn merge_conversation_questions_sqlx(
     }
 
     let now = Utc::now().to_rfc3339();
-    let survivor_id = question_ids[0].clone();
-    for question_id in &question_ids[1..] {
+    let survivor_id = canonical_question_ids[0].clone();
+    sqlx::query(
+        "UPDATE conversation_question_turns SET assignment_origin = ?1, updated_at = ?2 WHERE tenant_id = ?3 AND question_id = ?4",
+    )
+    .bind(encode_enum(ConversationGroupingOrigin::Manual)?)
+    .bind(&now)
+    .bind(tenant_id)
+    .bind(&survivor_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(AppError::external)?;
+    for question_id in &canonical_question_ids[1..] {
         let next_order =
             max_question_turn_order_sqlx_tx(&mut tx, tenant_id, &survivor_id).await? + 1;
         let turn_ids = load_question_turn_ids_sqlx_tx(&mut tx, tenant_id, question_id).await?;
@@ -1808,6 +1872,40 @@ pub(crate) async fn merge_conversation_questions_sqlx(
             .await
             .map_err(AppError::external)?;
         }
+        sqlx::query(
+            r#"
+            UPDATE conversation_question_redirects
+            SET target_question_id = ?1, updated_at = ?2
+            WHERE tenant_id = ?3 AND target_question_id = ?4
+            "#,
+        )
+        .bind(&survivor_id)
+        .bind(&now)
+        .bind(tenant_id)
+        .bind(question_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(AppError::external)?;
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_question_redirects (
+                tenant_id, source_question_id, target_question_id,
+                operation_kind, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, 'merge', ?4, ?4)
+            ON CONFLICT(tenant_id, source_question_id) DO UPDATE SET
+                target_question_id = excluded.target_question_id,
+                operation_kind = excluded.operation_kind,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(question_id)
+        .bind(&survivor_id)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await
+        .map_err(AppError::external)?;
         sqlx::query("DELETE FROM conversation_questions WHERE tenant_id = ?1 AND id = ?2")
             .bind(tenant_id)
             .bind(question_id)
@@ -1864,12 +1962,41 @@ pub(crate) async fn split_conversation_question_sqlx(
         })?;
     reject_invalid_conversation_question_turns_sqlx_tx(&mut tx, tenant_id).await?;
     let turns = load_question_turns_sqlx_tx(&mut tx, tenant_id, question_id).await?;
-    let split_index = turns
-        .iter()
-        .position(|turn| turn.id == before_turn_id)
-        .ok_or_else(|| {
-            AppError::external({ format!("turn is not in question: {before_turn_id}") })
-        })?;
+    let new_question_id = stable_id(
+        "conversation-question",
+        &["split", question_id, before_turn_id],
+    );
+    let split_index = turns.iter().position(|turn| turn.id == before_turn_id);
+    let Some(split_index) = split_index else {
+        let existing_question_id = sqlx::query_scalar::<_, String>(
+            "SELECT question_id FROM conversation_question_turns WHERE tenant_id = ?1 AND turn_id = ?2",
+        )
+        .bind(tenant_id)
+        .bind(before_turn_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(AppError::external)?;
+        if existing_question_id.as_deref() == Some(new_question_id.as_str())
+            && load_conversation_question_sqlx_tx(&mut tx, tenant_id, &new_question_id)
+                .await?
+                .is_some()
+        {
+            tx.rollback().await.map_err(AppError::external)?;
+            return Ok(ConversationMutationResult {
+                dry_run,
+                session_id: question.session_id.clone(),
+                affected_question_ids: vec![question_id.to_string(), new_question_id.clone()],
+                questions: vec![
+                    load_conversation_question_detail_sqlx(pool, tenant_id, question_id).await?,
+                    load_conversation_question_detail_sqlx(pool, tenant_id, &new_question_id)
+                        .await?,
+                ],
+            });
+        }
+        return Err(AppError::external({
+            format!("turn is not in question: {before_turn_id}")
+        }));
+    };
     if split_index == 0 {
         return Err(AppError::Validation(
             "split turn must not be the first turn in the question".to_string(),
@@ -1889,10 +2016,18 @@ pub(crate) async fn split_conversation_question_sqlx(
     }
 
     let now = Utc::now().to_rfc3339();
-    let new_question_id = stable_id(
-        "conversation-question",
-        &[question_id, before_turn_id, &now],
-    );
+    sqlx::query(
+        "UPDATE conversation_question_turns SET assignment_origin = ?1, updated_at = ?2 WHERE tenant_id = ?3 AND question_id = ?4",
+    )
+    .bind(encode_enum(ConversationGroupingOrigin::Manual)?)
+    .bind(&now)
+    .bind(tenant_id)
+    .bind(question_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(AppError::external)?;
+    let new_question_index =
+        next_question_index_sqlx_tx(&mut tx, tenant_id, &question.session_id).await?;
     sqlx::query(
         r#"
         INSERT INTO conversation_questions (
@@ -1905,7 +2040,7 @@ pub(crate) async fn split_conversation_question_sqlx(
     .bind(tenant_id)
     .bind(&new_question_id)
     .bind(&question.session_id)
-    .bind(question.question_index + 1)
+    .bind(new_question_index)
     .bind(encode_enum(ConversationGroupingOrigin::Manual)?)
     .bind(&now)
     .execute(&mut *tx)
@@ -3255,7 +3390,7 @@ async fn conversation_session_turns_are_unchanged_sqlx_tx(
         SELECT external_id, fingerprint, missing
         FROM conversation_turns
         WHERE tenant_id = ?1 AND session_id = ?2
-        ORDER BY turn_index ASC
+        ORDER BY turn_index ASC, external_id ASC
         "#,
     )
     .bind(tenant_id)
@@ -3627,76 +3762,217 @@ async fn ensure_question_groups_for_session_sqlx_tx(
 ) -> AppResult<()> {
     reject_invalid_conversation_question_turns_sqlx_tx(tx, tenant_id).await?;
     let turns = load_session_turns_sqlx_tx(tx, tenant_id, session_id).await?;
-    let existing_memberships =
-        load_turn_question_memberships_sqlx_tx(tx, tenant_id, session_id).await?;
-    let missing_turns = turns
-        .iter()
-        .filter(|turn| !existing_memberships.contains_key(&turn.id))
-        .map(|turn| (turn.id.clone(), turn.user_text.clone()))
-        .collect::<Vec<_>>();
-    if missing_turns.is_empty() {
+    if turns.is_empty() {
         return Ok(());
     }
 
-    for group in group_turn_ids_by_question(missing_turns) {
-        let first_turn_id = group.turn_ids.first().ok_or_else(|| {
-            AppError::external({ "empty conversation question group".to_string() })
-        })?;
-        let previous_question_id =
-            previous_question_id_for_turn_sqlx_tx(tx, tenant_id, session_id, first_turn_id).await?;
-        let question_id = if group.origin == ConversationGroupingOrigin::AutoMerged {
-            previous_question_id
-                .unwrap_or_else(|| stable_id("conversation-question", &[session_id, first_turn_id]))
+    // A manual question is a reconciliation fence. Older rows may only carry the
+    // compatibility question-level marker, so promote that marker to every
+    // membership before rebuilding automatic assignments.
+    sqlx::query(
+        r#"
+        UPDATE conversation_question_turns
+        SET assignment_origin = 'manual', updated_at = ?1
+        WHERE tenant_id = ?2
+          AND question_id IN (
+              SELECT q.id
+              FROM conversation_questions q
+              WHERE q.tenant_id = ?2
+                AND q.session_id = ?3
+                AND q.grouping_origin = 'manual'
+          )
+        "#,
+    )
+    .bind(now)
+    .bind(tenant_id)
+    .bind(session_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(AppError::external)?;
+
+    let manual_fenced_turn_ids = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT qt.turn_id
+        FROM conversation_question_turns qt
+        JOIN conversation_questions q
+          ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
+        JOIN conversation_turns t
+          ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
+        WHERE qt.tenant_id = ?1
+          AND t.session_id = ?2
+          AND (qt.assignment_origin = 'manual' OR q.grouping_origin = 'manual')
+        ORDER BY t.turn_index ASC, t.id ASC
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(AppError::external)?
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+
+    // Automatic rows are a derived relationship. Rebuilding only these rows
+    // makes full, repeated full, and equivalent incremental imports converge to
+    // the same stable question IDs while preserving all manual rows.
+    sqlx::query(
+        r#"
+        DELETE FROM conversation_question_turns
+        WHERE tenant_id = ?1
+          AND assignment_origin <> 'manual'
+          AND turn_id IN (
+              SELECT id FROM conversation_turns
+              WHERE tenant_id = ?1 AND session_id = ?2
+          )
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(AppError::external)?;
+
+    let mut automatic_segment = Vec::new();
+    let mut automatic_segments = Vec::new();
+    for turn in &turns {
+        if manual_fenced_turn_ids.contains(&turn.id) {
+            if !automatic_segment.is_empty() {
+                automatic_segments.push(std::mem::take(&mut automatic_segment));
+            }
         } else {
-            stable_id("conversation-question", &[session_id, first_turn_id])
-        };
-        if load_conversation_question_sqlx_tx(tx, tenant_id, &question_id)
-            .await?
-            .is_none()
-        {
-            let question_index = next_question_index_sqlx_tx(tx, tenant_id, session_id).await?;
-            sqlx::query(
-                r#"
-                INSERT INTO conversation_questions (
-                    tenant_id, id, session_id, question_index, title, question_text, answer_text,
-                    code_text, command_text, grouping_origin, created_at, updated_at
-                )
-                VALUES (?1, ?2, ?3, ?4, NULL, '', '', '', '', ?5, ?6, ?6)
-                "#,
-            )
-            .bind(tenant_id)
-            .bind(&question_id)
-            .bind(session_id)
-            .bind(question_index)
-            .bind(encode_enum(group.origin)?)
-            .bind(now)
-            .execute(&mut **tx)
-            .await
-            .map_err(AppError::external)?;
-        }
-        let start_order = max_question_turn_order_sqlx_tx(tx, tenant_id, &question_id).await? + 1;
-        for (offset, turn_id) in group.turn_ids.iter().enumerate() {
-            ensure_question_turn_scope_sqlx_tx(tx, tenant_id, &question_id, turn_id).await?;
-            sqlx::query(
-                r#"
-                INSERT INTO conversation_question_turns (
-                    tenant_id, question_id, turn_id, turn_order,
-                    assignment_origin, assigned_at, updated_at
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
-                "#,
-            )
-            .bind(tenant_id)
-            .bind(&question_id)
-            .bind(turn_id)
-            .bind(start_order + offset as i64)
-            .bind(encode_enum(group.origin)?)
-            .bind(now)
-            .execute(&mut **tx)
-            .await
-            .map_err(AppError::external)?;
+            automatic_segment.push((turn.id.clone(), turn.user_text.clone()));
         }
     }
+    if !automatic_segment.is_empty() {
+        automatic_segments.push(automatic_segment);
+    }
+
+    for segment in automatic_segments {
+        for group in group_turn_ids_by_question(segment) {
+            let first_turn_id = group.turn_ids.first().ok_or_else(|| {
+                AppError::external("empty conversation question group".to_string())
+            })?;
+            let question_id = stable_id("conversation-question", &[session_id, first_turn_id]);
+            match load_conversation_question_sqlx_tx(tx, tenant_id, &question_id).await? {
+                Some(question) if question.session_id != session_id => {
+                    return Err(AppError::Validation(format!(
+                        "question id belongs to another session: {question_id}"
+                    )));
+                }
+                Some(_) => {}
+                None => {
+                    let question_index =
+                        next_question_index_sqlx_tx(tx, tenant_id, session_id).await?;
+                    sqlx::query(
+                        r#"
+                        INSERT INTO conversation_questions (
+                            tenant_id, id, session_id, question_index, title, question_text, answer_text,
+                            code_text, command_text, grouping_origin, created_at, updated_at
+                        )
+                        VALUES (?1, ?2, ?3, ?4, NULL, '', '', '', '', ?5, ?6, ?6)
+                        "#,
+                    )
+                    .bind(tenant_id)
+                    .bind(&question_id)
+                    .bind(session_id)
+                    .bind(question_index)
+                    .bind(encode_enum(group.origin)?)
+                    .bind(now)
+                    .execute(&mut **tx)
+                    .await
+                    .map_err(AppError::external)?;
+                }
+            }
+
+            for (turn_order, turn_id) in group.turn_ids.iter().enumerate() {
+                ensure_question_turn_scope_sqlx_tx(tx, tenant_id, &question_id, turn_id).await?;
+                sqlx::query(
+                    r#"
+                    INSERT INTO conversation_question_turns (
+                        tenant_id, question_id, turn_id, turn_order,
+                        assignment_origin, assigned_at, updated_at
+                    )
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(&question_id)
+                .bind(turn_id)
+                .bind(turn_order as i64)
+                .bind(encode_enum(group.origin)?)
+                .bind(now)
+                .execute(&mut **tx)
+                .await
+                .map_err(AppError::external)?;
+            }
+        }
+    }
+
+    sqlx::query(
+        r#"
+        DELETE FROM conversation_question_fts
+        WHERE tenant_id = ?1
+          AND question_id IN (
+              SELECT q.id
+              FROM conversation_questions q
+              LEFT JOIN conversation_question_turns qt
+                ON qt.tenant_id = q.tenant_id AND qt.question_id = q.id
+              WHERE q.tenant_id = ?1 AND q.session_id = ?2
+              GROUP BY q.id
+              HAVING COUNT(qt.turn_id) = 0
+          )
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(AppError::external)?;
+    sqlx::query(
+        r#"
+        DELETE FROM conversation_questions
+        WHERE tenant_id = ?1 AND session_id = ?2
+          AND NOT EXISTS (
+              SELECT 1
+              FROM conversation_question_turns qt
+              WHERE qt.tenant_id = conversation_questions.tenant_id
+                AND qt.question_id = conversation_questions.id
+          )
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(AppError::external)?;
+    sqlx::query(
+        r#"
+        UPDATE conversation_questions
+        SET grouping_origin = CASE
+                WHEN EXISTS (
+                    SELECT 1 FROM conversation_question_turns qt
+                    WHERE qt.tenant_id = conversation_questions.tenant_id
+                      AND qt.question_id = conversation_questions.id
+                      AND qt.assignment_origin = 'manual'
+                ) THEN 'manual'
+                WHEN EXISTS (
+                    SELECT 1 FROM conversation_question_turns qt
+                    WHERE qt.tenant_id = conversation_questions.tenant_id
+                      AND qt.question_id = conversation_questions.id
+                      AND qt.assignment_origin = 'auto_merged'
+                ) THEN 'auto_merged'
+                ELSE 'imported'
+            END,
+            updated_at = ?1
+        WHERE tenant_id = ?2 AND session_id = ?3
+        "#,
+    )
+    .bind(now)
+    .bind(tenant_id)
+    .bind(session_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(AppError::external)?;
     renumber_questions_for_session_sqlx_tx(tx, tenant_id, session_id).await?;
     Ok(())
 }
@@ -3997,7 +4273,7 @@ async fn load_session_turns_sqlx_tx(
                started_at, ended_at, fingerprint, missing, imported_at
         FROM conversation_turns
         WHERE tenant_id = ?1 AND session_id = ?2
-        ORDER BY turn_index ASC, imported_at ASC
+        ORDER BY turn_index ASC, id ASC, imported_at ASC
         "#,
     )
     .bind(tenant_id)
@@ -4052,63 +4328,6 @@ async fn load_turn_parts_sqlx_tx(
     .await
     .map_err(AppError::external)?;
     rows.iter().map(map_sqlx_conversation_part).collect()
-}
-
-async fn load_turn_question_memberships_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    session_id: &str,
-) -> AppResult<BTreeMap<String, String>> {
-    let rows = sqlx::query(
-        r#"
-        SELECT qt.turn_id, qt.question_id
-        FROM conversation_question_turns qt
-        JOIN conversation_turns t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
-        WHERE t.tenant_id = ?1 AND t.session_id = ?2
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(AppError::external)?;
-    let mut memberships = BTreeMap::new();
-    for row in rows {
-        memberships.insert(
-            row.try_get(0).map_err(AppError::external)?,
-            row.try_get(1).map_err(AppError::external)?,
-        );
-    }
-    Ok(memberships)
-}
-
-async fn previous_question_id_for_turn_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    session_id: &str,
-    turn_id: &str,
-) -> AppResult<Option<String>> {
-    sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT qt.question_id
-        FROM conversation_turns current
-        JOIN conversation_turns previous
-          ON previous.tenant_id = current.tenant_id
-         AND previous.session_id = current.session_id
-         AND previous.turn_index < current.turn_index
-        JOIN conversation_question_turns qt
-          ON qt.tenant_id = previous.tenant_id AND qt.turn_id = previous.id
-        WHERE current.tenant_id = ?1 AND current.session_id = ?2 AND current.id = ?3
-        ORDER BY previous.turn_index DESC
-        LIMIT 1
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .bind(turn_id)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(AppError::external)
 }
 
 async fn next_question_index_sqlx_tx(
@@ -4971,8 +5190,7 @@ mod tests {
         ConversationAdapterPackageOrigin, ConversationAdapterPackageRecordKind,
         ConversationAdapterRuntimeGateStatus, ConversationCardKindDefinition,
         ConversationContentCardDescriptor, ConversationPackageUpdatePolicy, ConversationPartKind,
-        ConversationPartRole,
-        NormalizedConversationPart, NormalizedConversationTurn,
+        ConversationPartRole, NormalizedConversationPart, NormalizedConversationTurn,
     };
     use crate::backend::store::Database;
     use uuid::Uuid;
@@ -5927,6 +6145,291 @@ mod tests {
     }
 
     #[test]
+    fn sqlx_reconciliation_rebuilds_changed_automatic_grouping_deterministically() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-reconciliation-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let adapter = test_conversation_adapter(
+            "reconciliation-external",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let source = test_conversation_source(&adapter.id);
+        let (detail, membership_rows) = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+                let mut initial = fixture_session("v1");
+                initial.turns[1].user_text = "Export it".to_string();
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[initial],
+                    false,
+                )
+                .await?;
+
+                let mut reconciled = fixture_session("v1");
+                reconciled.turns[1].user_text = "继续".to_string();
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[reconciled],
+                    false,
+                )
+                .await?;
+                let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+                let detail = load_conversation_session_detail_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &session_id,
+                )
+                .await?;
+                let membership_rows = sqlx::query_as::<_, (String, String, String)>(
+                    "SELECT question_id, turn_id, assignment_origin FROM conversation_question_turns WHERE tenant_id = ?1 ORDER BY turn_id",
+                )
+                .bind(TEST_TENANT_ID)
+                .fetch_all(database.pool())
+                .await
+                .map_err(AppError::external)?;
+                Ok::<_, AppError>((detail, membership_rows))
+            })
+            .expect("reconcile changed grouping");
+
+        assert_eq!(detail.questions.len(), 2);
+        assert_eq!(detail.questions[0].turns.len(), 2);
+        assert_eq!(detail.questions[0].turns[0].external_id, "t1");
+        assert_eq!(detail.questions[0].turns[1].external_id, "t2");
+        assert_eq!(detail.questions[1].turns[0].external_id, "t3");
+        assert!(membership_rows
+            .iter()
+            .all(|(_, _, origin)| origin == "imported" || origin == "auto_merged"));
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_manual_membership_is_a_reconciliation_fence() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-manual-fence-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let adapter = test_conversation_adapter(
+            "manual-fence-external",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let source = test_conversation_source(&adapter.id);
+        let detail = database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+                let mut initial = fixture_session("v1");
+                initial.turns.truncate(2);
+                initial.turns[1].user_text = "Export it".to_string();
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[initial],
+                    false,
+                )
+                .await?;
+                let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+                let initial_detail = load_conversation_session_detail_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &session_id,
+                )
+                .await?;
+                let question_ids = initial_detail
+                    .questions
+                    .iter()
+                    .map(|question| question.question.id.clone())
+                    .collect::<Vec<_>>();
+                merge_conversation_questions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &question_ids,
+                    false,
+                )
+                .await?;
+
+                let mut updated = fixture_session("v1");
+                updated.turns[1].user_text = "Export it".to_string();
+                updated.turns[2].user_text = "继续".to_string();
+                import_conversation_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[updated],
+                    false,
+                )
+                .await?;
+                load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
+                    .await
+            })
+            .expect("preserve manual fence");
+
+        assert_eq!(detail.questions.len(), 2);
+        assert_eq!(detail.questions[0].turns.len(), 2);
+        assert!(detail.questions[0]
+            .question_turns
+            .iter()
+            .all(|membership| membership.assignment_origin == ConversationGroupingOrigin::Manual));
+        assert_eq!(detail.questions[1].turns.len(), 1);
+        assert_eq!(detail.questions[1].turns[0].external_id, "t3");
+
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_full_repeat_and_equivalent_incremental_imports_converge() {
+        let full_db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-full-convergence-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let incremental_db_path = std::env::temp_dir().join(format!(
+            "assetiweave-conversation-incremental-convergence-sqlx-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let full_database = Database::open(&full_db_path).expect("open full database");
+        let incremental_database =
+            Database::open(&incremental_db_path).expect("open incremental database");
+        let adapter = test_conversation_adapter(
+            "convergence-external",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let source = test_conversation_source(&adapter.id);
+        let mut full_session = fixture_session("v1");
+        full_session.turns[1].user_text = "继续上一个问题".to_string();
+        let mut partial_session = full_session.clone();
+        partial_session.turns.remove(1);
+
+        let snapshot = |detail: &ConversationSessionDetail| {
+            detail
+                .questions
+                .iter()
+                .map(|question| {
+                    (
+                        question.question.id.clone(),
+                        question
+                            .turns
+                            .iter()
+                            .map(|turn| turn.id.clone())
+                            .collect::<Vec<_>>(),
+                        question
+                            .question_turns
+                            .iter()
+                            .map(|membership| {
+                                (membership.turn_id.clone(), membership.assignment_origin)
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let (full_snapshot, repeated_snapshot) = full_database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(full_database.pool(), TEST_TENANT_ID, &adapter)
+                    .await?;
+                upsert_conversation_source_sqlx(full_database.pool(), TEST_TENANT_ID, &source)
+                    .await?;
+                import_conversation_sessions_sqlx(
+                    full_database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[full_session.clone()],
+                    false,
+                )
+                .await?;
+                let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+                let full_detail = load_conversation_session_detail_sqlx(
+                    full_database.pool(),
+                    TEST_TENANT_ID,
+                    &session_id,
+                )
+                .await?;
+                import_conversation_sessions_sqlx(
+                    full_database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[full_session.clone()],
+                    false,
+                )
+                .await?;
+                let repeated_detail = load_conversation_session_detail_sqlx(
+                    full_database.pool(),
+                    TEST_TENANT_ID,
+                    &session_id,
+                )
+                .await?;
+                Ok::<_, AppError>((snapshot(&full_detail), snapshot(&repeated_detail)))
+            })
+            .expect("full and repeated imports");
+
+        let incremental_snapshot = incremental_database
+            .block_on(async {
+                upsert_conversation_adapter_sqlx(
+                    incremental_database.pool(),
+                    TEST_TENANT_ID,
+                    &adapter,
+                )
+                .await?;
+                upsert_conversation_source_sqlx(
+                    incremental_database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                )
+                .await?;
+                import_incremental_conversation_sessions_sqlx(
+                    incremental_database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[partial_session],
+                    &BTreeSet::from(["session-1".to_string()]),
+                    false,
+                )
+                .await?;
+                import_incremental_conversation_sessions_sqlx(
+                    incremental_database.pool(),
+                    TEST_TENANT_ID,
+                    &source,
+                    &[full_session.clone()],
+                    &BTreeSet::from(["session-1".to_string()]),
+                    false,
+                )
+                .await?;
+                let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+                let detail = load_conversation_session_detail_sqlx(
+                    incremental_database.pool(),
+                    TEST_TENANT_ID,
+                    &session_id,
+                )
+                .await?;
+                Ok::<_, AppError>(snapshot(&detail))
+            })
+            .expect("equivalent incremental import");
+
+        assert_eq!(full_snapshot, repeated_snapshot);
+        assert_eq!(full_snapshot, incremental_snapshot);
+
+        drop(full_database);
+        drop(incremental_database);
+        cleanup_database(&full_db_path);
+        cleanup_database(&incremental_db_path);
+    }
+
+    #[test]
     fn sqlx_question_detail_projects_from_question_turn_membership_and_turn_facts() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-question-projection-{}.sqlite",
@@ -6739,7 +7242,7 @@ mod tests {
         );
         let source = test_conversation_source(&adapter.id);
 
-        let detail = database
+        let (detail, original_part_ids) = database
             .block_on(async {
                 upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
                 upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
@@ -6762,6 +7265,11 @@ mod tests {
                     .iter()
                     .map(|question| question.question.id.clone())
                     .collect::<Vec<_>>();
+                let original_part_ids = detail
+                    .questions
+                    .iter()
+                    .flat_map(|question| question.parts.iter().map(|part| part.id.clone()))
+                    .collect::<BTreeSet<_>>();
                 let dry_run = merge_conversation_questions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -6788,6 +7296,15 @@ mod tests {
                     false,
                 )
                 .await?;
+                let repeated_merge = merge_conversation_questions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &question_ids,
+                    false,
+                )
+                .await?;
+                assert_eq!(repeated_merge.questions.len(), 1);
+                assert_eq!(repeated_merge.questions[0].turns.len(), 3);
                 let first_turn_error = split_conversation_question_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -6799,7 +7316,7 @@ mod tests {
                 .expect_err("split at first turn should fail");
                 assert!(first_turn_error.contains("must not be the first turn"));
                 let split_turn_id = merged.questions[0].turns[2].id.clone();
-                split_conversation_question_sqlx(
+                let split = split_conversation_question_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
                     &merged.questions[0].question.id,
@@ -6807,12 +7324,25 @@ mod tests {
                     false,
                 )
                 .await?;
-                load_conversation_session_detail_sqlx(
+                let repeated_split = split_conversation_question_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &merged.questions[0].question.id,
+                    &split_turn_id,
+                    false,
+                )
+                .await?;
+                assert_eq!(
+                    split.affected_question_ids,
+                    repeated_split.affected_question_ids
+                );
+                let final_detail = load_conversation_session_detail_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
                     &detail.session.id,
                 )
-                .await
+                .await?;
+                Ok::<_, AppError>((final_detail, original_part_ids))
             })
             .expect("merge and split through SQLx");
 
@@ -6822,6 +7352,22 @@ mod tests {
         assert!(detail.questions.iter().all(|question| {
             question.question.grouping_origin == ConversationGroupingOrigin::Manual
         }));
+        let final_part_ids = detail
+            .questions
+            .iter()
+            .flat_map(|question| question.parts.iter().map(|part| part.id.clone()))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(final_part_ids, original_part_ids);
+        let final_turn_ids = detail
+            .questions
+            .iter()
+            .flat_map(|question| question.turns.iter().map(|turn| turn.id.clone()))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(final_turn_ids.len(), 3);
+        assert!(detail.questions.iter().all(|question| question
+            .question_turns
+            .iter()
+            .all(|membership| membership.assignment_origin == ConversationGroupingOrigin::Manual)));
         assert_eq!(
             detail.questions[0].question.question_text,
             "How does sync work?\n\n继续"

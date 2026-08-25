@@ -1004,8 +1004,14 @@ async fn insert_web_record_questions_sqlx_tx(
     turns: &[ConversationTurn],
     now: &str,
 ) -> AppResult<()> {
+    let mut ordered_turns = turns.to_vec();
+    ordered_turns.sort_by(|left, right| {
+        left.turn_index
+            .cmp(&right.turn_index)
+            .then_with(|| left.id.cmp(&right.id))
+    });
     let groups = group_turn_ids_by_question(
-        turns
+        ordered_turns
             .iter()
             .map(|turn| (turn.id.clone(), turn.user_text.clone()))
             .collect::<Vec<_>>(),
