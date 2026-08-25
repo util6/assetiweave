@@ -902,7 +902,7 @@ fn export_conversation_rendered_markdown(
 ) -> String {
     let selected = question_ids.iter().collect::<BTreeSet<_>>();
     let mut output = format!("# {}\n", detail.session.title.trim());
-    for question in &detail.questions {
+    for (question_index, question) in detail.questions.iter().enumerate() {
         if !selected.is_empty() && !selected.contains(&question.question.id) {
             continue;
         }
@@ -915,7 +915,7 @@ fn export_conversation_rendered_markdown(
             .join("\n\n");
         output.push_str(&format!(
             "\n## {}. {}\n\n{}\n",
-            question.question.question_index + 1,
+            question_index + 1,
             export_question_title(question),
             prompt,
         ));
@@ -961,9 +961,7 @@ fn export_conversation_rendered_markdown(
 struct ConversationRawQuestion {
     id: String,
     session_id: String,
-    question_index: i64,
     title: Option<String>,
-    grouping_origin: crate::backend::models::ConversationGroupingOrigin,
     created_at: String,
     updated_at: String,
 }
@@ -998,9 +996,7 @@ fn export_conversation_raw_json(
         .map(|question| ConversationRawQuestion {
             id: question.question.id.clone(),
             session_id: question.question.session_id.clone(),
-            question_index: question.question.question_index,
             title: question.question.title.clone(),
-            grouping_origin: question.question.grouping_origin,
             created_at: question.question.created_at.clone(),
             updated_at: question.question.updated_at.clone(),
         })

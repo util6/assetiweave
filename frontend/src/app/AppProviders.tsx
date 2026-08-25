@@ -10,6 +10,7 @@ import { MemoryTaskProvider } from "./backgroundTasks/MemoryTaskProvider";
 import { AppUpdateProvider } from "./updates/AppUpdateProvider";
 import { ConversationCardKindRegistryProvider } from "../components/conversations/ConversationCardKindRegistry";
 import { CatalogTaskProvider } from "./backgroundTasks/CatalogTaskProvider";
+import { ConversationDataMaintenanceProvider } from "./backgroundTasks/ConversationDataMaintenanceProvider";
 
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
@@ -17,19 +18,21 @@ export function AppProviders({ children }: { children: ReactNode }) {
       <AppSettingsProvider>
         <ConversationCardKindRegistryProvider>
           <ConversationSyncProvider>
-            <AiExecutionTaskProvider>
-              <AgentLifecycleTaskProvider>
-                <MemoryTaskProvider>
-                  <SearchIndexProvider>
-                  <SkillBackupProvider>
-                      <CatalogTaskProvider>
-                        <AppUpdateProvider>{children}</AppUpdateProvider>
-                      </CatalogTaskProvider>
-                    </SkillBackupProvider>
-                  </SearchIndexProvider>
-                </MemoryTaskProvider>
-              </AgentLifecycleTaskProvider>
-            </AiExecutionTaskProvider>
+            <ConversationDataMaintenanceProvider>
+              <AiExecutionTaskProvider>
+                <AgentLifecycleTaskProvider>
+                  <MemoryTaskProvider>
+                    <SearchIndexProvider>
+                      <SkillBackupProvider>
+                        <CatalogTaskProvider>
+                          <AppUpdateProvider>{children}</AppUpdateProvider>
+                        </CatalogTaskProvider>
+                      </SkillBackupProvider>
+                    </SearchIndexProvider>
+                  </MemoryTaskProvider>
+                </AgentLifecycleTaskProvider>
+              </AiExecutionTaskProvider>
+            </ConversationDataMaintenanceProvider>
           </ConversationSyncProvider>
         </ConversationCardKindRegistryProvider>
       </AppSettingsProvider>

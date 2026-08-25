@@ -169,11 +169,6 @@ pub(crate) struct ConversationQuestionDetail {
     pub(crate) question_turns: Vec<ConversationQuestionTurn>,
     pub(crate) turns: Vec<ConversationTurn>,
     pub(crate) parts: Vec<ConversationPart>,
-    pub(crate) cards: Vec<ConversationCard>,
-    /// Deprecated compatibility output. New consumers must use
-    /// `projected_content_nodes` and resolve each node from its own source identity.
-    #[serde(rename = "content_nodes")]
-    pub(crate) legacy_content_nodes: Vec<LegacyConversationContentNode>,
     pub(crate) projected_content_nodes: Vec<ConversationContentNode>,
 }
 
@@ -210,22 +205,6 @@ pub(crate) struct ConversationContentNode {
     pub(crate) legacy_anchor_ids: Vec<String>,
 }
 
-/// Deprecated compatibility shape. It links display nodes through Card array indexes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum LegacyConversationContentNode {
-    Card {
-        turn_id: String,
-        card_index: usize,
-    },
-    Execution {
-        turn_id: String,
-        source_execution_id: String,
-        command_card_index: Option<usize>,
-        result_card_indices: Vec<usize>,
-    },
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ConversationCardRenderer {
@@ -237,26 +216,6 @@ pub(crate) enum ConversationCardRenderer {
     Command,
     TerminalOutput,
     Diff,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
-pub(crate) struct ConversationCard {
-    pub(crate) card_id: String,
-    pub(crate) part_id: String,
-    pub(crate) adapter_id: String,
-    pub(crate) kind: String,
-    pub(crate) semantic_role: Option<String>,
-    pub(crate) renderer: ConversationCardRenderer,
-    pub(crate) role: ConversationPartRole,
-    pub(crate) body: String,
-    pub(crate) language: Option<String>,
-    pub(crate) cwd: Option<String>,
-    pub(crate) status: Option<String>,
-    pub(crate) exit_code: Option<i32>,
-    pub(crate) source_execution_id: Option<String>,
-    pub(crate) command_label: Option<String>,
-    pub(crate) translated_body: Option<String>,
-    pub(crate) legacy_anchor_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -1407,14 +1407,14 @@ function sortConversationQuestions(
     } else if (sortBy === "updated") {
       primary = compareOptionalDate(left.question.updated_at, right.question.updated_at);
     } else {
-      primary = left.question.question_index - right.question.question_index;
+      primary = conversationQuestionOrder(left) - conversationQuestionOrder(right);
     }
 
     if (primary !== 0) {
       return primary * direction;
     }
 
-    return left.question.question_index - right.question.question_index || left.question.id.localeCompare(right.question.id);
+    return conversationQuestionOrder(left) - conversationQuestionOrder(right) || left.question.id.localeCompare(right.question.id);
   });
 }
 
@@ -2507,7 +2507,7 @@ function QuestionListItem({
             </span>
           </div>
           <p className="mt-2 line-clamp-2 text-body-sm text-on-surface-variant">{answerPreview}</p>
-          <p className="mt-auto pt-2 text-label-caps text-on-surface-muted">{questionOriginLabel(question.question.grouping_origin, t)}</p>
+          <p className="mt-auto pt-2 text-label-caps text-on-surface-muted">{questionOriginLabel(question, t)}</p>
         </button>
       </div>
       {onMergeWithPrevious ? (
@@ -2621,7 +2621,7 @@ export function QuestionPreview({
           <div className="flex min-w-0 flex-1 items-start gap-3">
             {questionListToggle}
             <div className="min-w-0">
-              <p className="text-label-caps text-primary">{questionOriginLabel(question.question.grouping_origin, t)}</p>
+              <p className="text-label-caps text-primary">{questionOriginLabel(question, t)}</p>
               <h2 className="mt-1 text-title-md text-on-surface">{title}</h2>
               {recordKind !== "web" ? (
                 <p className="mt-1 text-body-sm text-on-surface-variant">
@@ -2691,9 +2691,15 @@ export function QuestionPreview({
   );
 }
 
-function questionOriginLabel(origin: string, t: Translator) {
+function questionOriginLabel(question: ConversationQuestionDetail, t: Translator) {
+  const origins = new Set(question.question_turns.map((membership) => membership.assignment_origin));
+  const origin = origins.has("manual") ? "manual" : origins.has("auto_merged") ? "auto_merged" : "imported";
   const key = `conversation.question.origin.${origin}` as TranslationKey;
   return t(key);
+}
+
+function conversationQuestionOrder(question: ConversationQuestionDetail) {
+  return Math.min(...question.turns.map((turn) => turn.turn_index), Number.MAX_SAFE_INTEGER);
 }
 
 function EmptyPanel({ children }: { children: ReactNode }) {

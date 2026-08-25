@@ -424,12 +424,10 @@ fn validate_recall_params(params: &MemoryRecallPreviewParams) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::dto::{
-        ConversationContentNode, ConversationContentNodeLocator, ConversationQuestionDetail,
-    };
+    use crate::backend::dto::ConversationQuestionDetail;
     use crate::backend::models::{
         ConversationGroupingOrigin, ConversationPart, ConversationPartKind, ConversationPartRole,
-        ConversationQuestion, ConversationTurn,
+        ConversationQuestion, ConversationQuestionTurn, ConversationTurn,
     };
 
     #[test]
@@ -507,130 +505,93 @@ mod tests {
                 metadata_json: None,
                 translated_text: None,
             };
-        let mut detail = ConversationQuestionDetail {
+        let question_turns = vec![ConversationQuestionTurn {
+            question_id: "q-1".into(),
+            turn_id: "turn-1".into(),
+            turn_order: 0,
+            assignment_origin: ConversationGroupingOrigin::Imported,
+            assigned_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        }];
+        let parts = vec![
+            part(
+                "answer",
+                ConversationPartRole::Assistant,
+                ConversationPartKind::Text,
+                Some("answer"),
+                None,
+            ),
+            part(
+                "result",
+                ConversationPartRole::Tool,
+                ConversationPartKind::Text,
+                Some("result"),
+                None,
+            ),
+            part(
+                "tool",
+                ConversationPartRole::Assistant,
+                ConversationPartKind::Tool,
+                Some("tool"),
+                None,
+            ),
+            part(
+                "command",
+                ConversationPartRole::Assistant,
+                ConversationPartKind::Command,
+                None,
+                Some("pwd"),
+            ),
+            part(
+                "code",
+                ConversationPartRole::Assistant,
+                ConversationPartKind::CodeBlock,
+                Some("let x = 1;"),
+                None,
+            ),
+        ];
+        let projected_content_nodes = parts
+            .iter()
+            .flat_map(|part| {
+                let candidate = crate::backend::projection::conversation_content_nodes::ConversationContentNodeCandidate {
+                    node_type: part.id.clone(),
+                    semantic_role: None,
+                    renderer: crate::backend::dto::ConversationCardRenderer::Plain,
+                    role: part.role,
+                    content: part
+                        .text
+                        .clone()
+                        .or_else(|| part.command.clone())
+                        .unwrap_or_default(),
+                    language: None,
+                    cwd: None,
+                    status: None,
+                    exit_code: None,
+                    source_execution_id: None,
+                    command_label: None,
+                    translated_content: None,
+                    legacy_anchor_ids: Vec::new(),
+                };
+                crate::backend::projection::conversation_content_nodes::project_content_nodes_for_part(
+                    "q-1",
+                    0,
+                    part,
+                    &[candidate],
+                )
+            })
+            .collect();
+        ConversationQuestionDetail {
             question: ConversationQuestion {
                 id: "q-1".into(),
                 session_id: "session-1".into(),
-                question_index: 0,
                 title: None,
-                question_text: "Why?".into(),
-                answer_text: String::new(),
-                code_text: String::new(),
-                command_text: String::new(),
-                grouping_origin: ConversationGroupingOrigin::Imported,
                 created_at: "2026-01-01T00:00:00Z".into(),
                 updated_at: "2026-01-01T00:00:00Z".into(),
             },
-            question_turns: Vec::new(),
+            question_turns,
             turns: vec![turn],
-            parts: vec![
-                part(
-                    "answer",
-                    ConversationPartRole::Assistant,
-                    ConversationPartKind::Text,
-                    Some("answer"),
-                    None,
-                ),
-                part(
-                    "result",
-                    ConversationPartRole::Tool,
-                    ConversationPartKind::Text,
-                    Some("result"),
-                    None,
-                ),
-                part(
-                    "tool",
-                    ConversationPartRole::Assistant,
-                    ConversationPartKind::Tool,
-                    Some("tool"),
-                    None,
-                ),
-                part(
-                    "command",
-                    ConversationPartRole::Assistant,
-                    ConversationPartKind::Command,
-                    None,
-                    Some("pwd"),
-                ),
-                part(
-                    "code",
-                    ConversationPartRole::Assistant,
-                    ConversationPartKind::CodeBlock,
-                    Some("let x = 1;"),
-                    None,
-                ),
-            ],
-            cards: Vec::new(),
-            legacy_content_nodes: Vec::new(),
-            projected_content_nodes: Vec::new(),
-        };
-        detail.cards = detail
-            .parts
-            .iter()
-            .map(|part| crate::backend::dto::ConversationCard {
-                card_id: part.id.clone(),
-                part_id: part.id.clone(),
-                adapter_id: "fixture".to_string(),
-                kind: part.id.clone(),
-                semantic_role: None,
-                renderer: crate::backend::dto::ConversationCardRenderer::Plain,
-                role: part.role,
-                body: part
-                    .text
-                    .clone()
-                    .or_else(|| part.command.clone())
-                    .unwrap_or_default(),
-                language: None,
-                cwd: None,
-                status: None,
-                exit_code: None,
-                source_execution_id: None,
-                command_label: None,
-                translated_body: None,
-                legacy_anchor_ids: Vec::new(),
-            })
-            .collect();
-        detail.projected_content_nodes = detail
-            .cards
-            .iter()
-            .enumerate()
-            .map(|(node_order, card)| ConversationContentNode {
-                node_id: card.card_id.clone(),
-                locator: ConversationContentNodeLocator {
-                    question_id: detail.question.id.clone(),
-                    turn_id: turn_id_for_part(&detail.parts, &card.part_id),
-                    part_id: card.part_id.clone(),
-                    node_order,
-                },
-                question_id: detail.question.id.clone(),
-                turn_id: turn_id_for_part(&detail.parts, &card.part_id),
-                part_id: card.part_id.clone(),
-                turn_order: 0,
-                part_order: node_order as i64,
-                node_order,
-                node_type: card.kind.clone(),
-                semantic_role: card.semantic_role.clone(),
-                renderer: card.renderer,
-                role: card.role,
-                content: card.body.clone(),
-                language: card.language.clone(),
-                cwd: card.cwd.clone(),
-                status: card.status.clone(),
-                exit_code: card.exit_code,
-                source_execution_id: card.source_execution_id.clone(),
-                command_label: card.command_label.clone(),
-                translated_content: card.translated_body.clone(),
-                legacy_anchor_ids: card.legacy_anchor_ids.clone(),
-            })
-            .collect();
-        detail
-    }
-
-    fn turn_id_for_part(parts: &[ConversationPart], part_id: &str) -> String {
-        parts
-            .iter()
-            .find(|part| part.id == part_id)
-            .map(|part| part.turn_id.clone())
-            .expect("fixture part turn")
+            parts,
+            projected_content_nodes,
+        }
     }
 }

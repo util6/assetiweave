@@ -1,6 +1,6 @@
+use super::conversation_cards::ConversationCard;
 use crate::backend::dto::{
-    ConversationCard, ConversationCardRenderer, ConversationContentNode,
-    ConversationContentNodeLocator,
+    ConversationCardRenderer, ConversationContentNode, ConversationContentNodeLocator,
 };
 use crate::backend::models::{ConversationPart, ConversationPartRole, ConversationQuestionTurn};
 use std::collections::BTreeMap;
@@ -56,7 +56,16 @@ pub(crate) fn project_content_nodes_for_part(
         .iter()
         .enumerate()
         .map(|(node_order, candidate)| {
-            let node_id = format!("{}-node-{node_order}", part.id);
+            let legacy_node_id = format!("{}-node-{node_order}", part.id);
+            let node_id = if candidates.len() == 1 {
+                part.id.clone()
+            } else {
+                legacy_node_id.clone()
+            };
+            let mut legacy_anchor_ids = candidate.legacy_anchor_ids.clone();
+            if candidates.len() == 1 && !legacy_anchor_ids.contains(&legacy_node_id) {
+                legacy_anchor_ids.push(legacy_node_id);
+            }
             ConversationContentNode {
                 node_id,
                 locator: ConversationContentNodeLocator {
@@ -83,7 +92,7 @@ pub(crate) fn project_content_nodes_for_part(
                 source_execution_id: candidate.source_execution_id.clone(),
                 command_label: candidate.command_label.clone(),
                 translated_content: candidate.translated_content.clone(),
-                legacy_anchor_ids: candidate.legacy_anchor_ids.clone(),
+                legacy_anchor_ids,
             }
         })
         .collect()
@@ -204,6 +213,21 @@ mod tests {
         assert_eq!(nodes[1].legacy_anchor_ids, vec!["part-1-detail"]);
 
         assert!(project_content_nodes_for_part("question-1", 3, &part, &[]).is_empty());
+    }
+
+    #[test]
+    fn projects_a_single_node_with_the_source_part_identity() {
+        let part = test_part("part-single", "turn-1", 0);
+        let mut single_candidate = candidate("answer", "answer");
+        single_candidate.legacy_anchor_ids = vec!["part-single-answer".to_string()];
+        let nodes = project_content_nodes_for_part("question-1", 0, &part, &[single_candidate]);
+
+        assert_eq!(nodes[0].node_id, "part-single");
+        assert_eq!(nodes[0].locator.node_order, 0);
+        assert_eq!(
+            nodes[0].legacy_anchor_ids,
+            vec!["part-single-answer", "part-single-node-0"]
+        );
     }
 
     #[test]

@@ -73,6 +73,257 @@ fn load_test_assets(service: &AppService) -> Vec<Asset> {
 }
 
 #[test]
+fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotently() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-maintenance-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create maintenance test root");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+
+    let pool = service.db.pool().clone();
+    service
+        .db
+        .block_on(async move {
+            let mut connection = pool.acquire().await.map_err(AppError::external)?;
+            sqlx::query("PRAGMA foreign_keys = OFF")
+                .execute(&mut *connection)
+                .await
+                .map_err(AppError::external)?;
+            sqlx::query(
+                r#"
+                INSERT INTO conversation_parts (
+                    tenant_id, id, turn_id, part_index, role, kind, text, language,
+                    command, cwd, status, exit_code, metadata_json, content_card_json,
+                    translated_text, source_execution_id, command_label
+                ) VALUES ('default', 'maintenance-orphan-part', 'maintenance-missing-turn', 0,
+                    'assistant', 'text', 'orphan', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                    NULL, NULL, NULL)
+                "#,
+            )
+            .execute(&mut *connection)
+            .await
+            .map_err(AppError::external)?;
+            sqlx::query(
+                r#"
+                INSERT INTO conversation_question_turns (
+                    tenant_id, question_id, turn_id, turn_order, assignment_origin,
+                    assigned_at, updated_at
+                ) VALUES ('default', 'maintenance-missing-question', 'maintenance-missing-turn', 0,
+                    'imported', '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z')
+                "#,
+            )
+            .execute(&mut *connection)
+            .await
+            .map_err(AppError::external)?;
+            sqlx::query("PRAGMA foreign_keys = ON")
+                .execute(&mut *connection)
+                .await
+                .map_err(AppError::external)?;
+            AppResult::Ok(())
+        })
+        .expect("seed orphan conversation rows");
+
+    let audit = service
+        .audit_conversation_data(ConversationDataAuditParams {
+            source_id: None,
+            record_kind: Some("session".to_string()),
+            include_resolved: false,
+        })
+        .expect("audit conversation data");
+    assert!(audit["issue_count"].as_i64().unwrap_or_default() >= 2);
+    assert!(audit["issues"]
+        .as_array()
+        .expect("audit issues")
+        .iter()
+        .any(|issue| issue["category"] == "orphan_parts"));
+    assert!(audit["issues"]
+        .as_array()
+        .expect("audit issues")
+        .iter()
+        .any(|issue| issue["category"] == "orphan_memberships"));
+
+    let dry_run = service
+        .repair_conversation_data(ConversationDataRepairParams {
+            record_kind: Some("session".to_string()),
+            dry_run: true,
+            create_backup: false,
+            yes: false,
+            resync: false,
+            ..ConversationDataRepairParams::default()
+        })
+        .expect("dry-run conversation repair");
+    assert_eq!(dry_run["dry_run"], true);
+    let orphan_count: i64 = service
+        .db
+        .block_on(async {
+            sqlx::query_scalar(
+                "SELECT COUNT(*) FROM conversation_parts WHERE id = 'maintenance-orphan-part'",
+            )
+            .fetch_one(service.db.pool())
+            .await
+            .map_err(AppError::external)
+        })
+        .expect("count orphan after dry-run");
+    assert_eq!(orphan_count, 1);
+
+    let resync_error = service.repair_conversation_data(ConversationDataRepairParams {
+        source_id: Some("missing-source".to_string()),
+        record_kind: Some("session".to_string()),
+        create_backup: false,
+        yes: true,
+        resync: true,
+        ..ConversationDataRepairParams::default()
+    });
+    assert!(resync_error.is_err());
+    let orphan_count_after_failed_resync: i64 = service
+        .db
+        .block_on(async {
+            sqlx::query_scalar(
+                "SELECT COUNT(*) FROM conversation_parts WHERE id = 'maintenance-orphan-part'",
+            )
+            .fetch_one(service.db.pool())
+            .await
+            .map_err(AppError::external)
+        })
+        .expect("count orphan after failed resync");
+    assert_eq!(orphan_count_after_failed_resync, 1);
+
+    let scoped_repair = service
+        .repair_conversation_data(ConversationDataRepairParams {
+            source_id: Some("unrelated-source".to_string()),
+            record_kind: Some("session".to_string()),
+            create_backup: false,
+            yes: true,
+            resync: false,
+            ..ConversationDataRepairParams::default()
+        })
+        .expect("apply source-scoped conversation repair");
+    assert_eq!(scoped_repair["applied"]["deleted_parts"], 0);
+    assert_eq!(scoped_repair["applied"]["deleted_memberships"], 0);
+
+    let repaired = service
+        .repair_conversation_data(ConversationDataRepairParams {
+            record_kind: Some("session".to_string()),
+            create_backup: false,
+            yes: true,
+            resync: false,
+            ..ConversationDataRepairParams::default()
+        })
+        .expect("apply conversation repair");
+    assert_eq!(repaired["dry_run"], false);
+    assert_eq!(repaired["applied"]["deleted_parts"], 1);
+    assert_eq!(repaired["applied"]["deleted_memberships"], 1);
+    let resolved_issue_count: i64 = service
+        .db
+        .block_on(async {
+            sqlx::query_scalar(
+                "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE tenant_id = 'default' AND status = 'resolved' AND category IN ('orphan_parts', 'orphan_memberships')",
+            )
+            .fetch_one(service.db.pool())
+            .await
+            .map_err(AppError::external)
+        })
+        .expect("count resolved audit issues");
+    assert_eq!(resolved_issue_count, 2);
+    let second = service
+        .repair_conversation_data(ConversationDataRepairParams {
+            record_kind: Some("session".to_string()),
+            create_backup: false,
+            yes: true,
+            resync: false,
+            ..ConversationDataRepairParams::default()
+        })
+        .expect("repeat conversation repair");
+    assert_eq!(second["applied"]["deleted_parts"], 0);
+    assert_eq!(second["applied"]["deleted_memberships"], 0);
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn conversation_data_rollback_previews_requires_confirmation_and_restores_backup() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-rollback-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create rollback test root");
+    let db_path = root.join("app.db");
+    let backup_path = root.join("maintenance-backup.db");
+    let service = AppService::open_with_db_path(db_path.clone()).expect("open rollback service");
+
+    service
+        .db
+        .block_on(async {
+            crate::backend::store::checkpoint_database_wal_sqlx(service.db.pool()).await
+        })
+        .expect("checkpoint database before backup");
+    fs::copy(&db_path, &backup_path).expect("copy rollback fixture backup");
+
+    execute_test_sql(
+        &service,
+        r#"
+        INSERT INTO conversation_data_audit_issues (
+            tenant_id, id, category, fingerprint, severity, status,
+            first_seen_at, last_seen_at
+        ) VALUES (
+            'default', 'rollback-marker', 'search_index_mismatch',
+            'rollback-marker', 'warning', 'open',
+            '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z'
+        )
+        "#,
+    )
+    .expect("write post-backup marker");
+
+    let preview = service
+        .rollback_conversation_data(ConversationDataRollbackParams {
+            backup_path: backup_path.to_string_lossy().into_owned(),
+            dry_run: true,
+            yes: false,
+        })
+        .expect("preview rollback");
+    assert_eq!(preview["dry_run"], true);
+    assert_eq!(preview["restored"], false);
+    assert_eq!(preview["requires_app_restart"], true);
+
+    let confirmation_error = service.rollback_conversation_data(ConversationDataRollbackParams {
+        backup_path: backup_path.to_string_lossy().into_owned(),
+        dry_run: false,
+        yes: false,
+    });
+    assert!(confirmation_error.is_err());
+
+    let restored = service
+        .rollback_conversation_data(ConversationDataRollbackParams {
+            backup_path: backup_path.to_string_lossy().into_owned(),
+            dry_run: false,
+            yes: true,
+        })
+        .expect("restore rollback backup");
+    assert_eq!(restored["restored"], true);
+    drop(service);
+
+    let reopened = AppService::open_with_db_path(db_path).expect("reopen restored database");
+    let marker_count: i64 = reopened
+        .db
+        .block_on(async {
+            sqlx::query_scalar(
+                "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE id = 'rollback-marker'",
+            )
+            .fetch_one(reopened.db.pool())
+            .await
+            .map_err(AppError::external)
+        })
+        .expect("query restored database");
+    assert_eq!(marker_count, 0);
+
+    drop(reopened);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn creating_tenant_seeds_isolated_skill_backup_library_root() {
     let root = std::env::temp_dir().join(format!("assetiweave-tenant-root-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create temp dir");
@@ -3177,11 +3428,6 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
     fs::create_dir_all(&root).expect("create temp search index query directory");
     let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
     upsert_conversation_export_fixture(&service, &root, vec![], None, false);
-    execute_test_sql(
-        &service,
-        "UPDATE conversation_questions SET title = NULL, question_text = 'stale-question-snapshot', answer_text = 'stale-answer-snapshot', code_text = 'stale-code-snapshot', command_text = 'stale-command-snapshot'",
-    )
-    .expect("seed stale question compatibility snapshot");
     let stale_legacy = service
         .search_conversation_records(ConversationSearchParams {
             record_kind: Some("session".to_string()),
@@ -3294,20 +3540,20 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
     assert_eq!(detail.question_turns[0].turn_id, detail.turns[0].id);
     assert_eq!(detail.question_turns[0].turn_order, 0);
     let part_id = result.hits[0].part_id.as_deref().expect("answer Part id");
-    let card = detail
-        .cards
+    let node = detail
+        .projected_content_nodes
         .iter()
-        .find(|card| card.part_id == part_id)
-        .expect("detail Card for indexed Part");
-    assert_eq!(card.kind, result.hits[0].card_type.as_str());
-    assert_eq!(card.semantic_role.as_deref(), Some("answer"));
-    assert_eq!(card.body, result.hits[0].snippet);
+        .find(|node| node.part_id == part_id)
+        .expect("detail Content Node for indexed Part");
+    assert_eq!(node.node_type, result.hits[0].card_type.as_str());
+    assert_eq!(node.semantic_role.as_deref(), Some("answer"));
+    assert_eq!(node.content, result.hits[0].snippet);
     let memory_card = super::memory_recall::recall_card_projection_for_test(&detail)
         .into_iter()
         .find(|(candidate_part_id, _, _)| candidate_part_id == part_id)
         .expect("Memory evidence for the same Part");
-    assert_eq!(memory_card.1, card.kind);
-    assert_eq!(memory_card.2, card.body);
+    assert_eq!(memory_card.1, node.node_type);
+    assert_eq!(memory_card.2, node.content);
     assert_eq!(
         result
             .semantic_role_counts
@@ -3350,10 +3596,9 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
             sqlx::query(
                 r#"
                 INSERT INTO conversation_questions (
-                    tenant_id, id, session_id, question_index, title, question_text, answer_text,
-                    code_text, command_text, grouping_origin, created_at, updated_at
+                    tenant_id, id, session_id, title, created_at, updated_at
                 )
-                VALUES (?1, ?2, ?3, 1, NULL, '', '', '', '', 'imported', ?4, ?4)
+                VALUES (?1, ?2, ?3, NULL, ?4, ?4)
                 "#,
             )
             .bind(&tenant_id)
@@ -3401,8 +3646,8 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
         ConversationGroupingOrigin::Manual
     );
     assert_eq!(
-        merged.questions[0].question.question_text,
-        "Export this\n\nSecond prompt"
+        merged.questions[0].question.title.as_deref(),
+        Some("Export this")
     );
 
     let session_fragment =
@@ -3694,11 +3939,11 @@ fn conversation_question_detail_projects_one_codex_shell_part_into_multiple_node
     );
     assert_eq!(
         detail
-            .cards
+            .projected_content_nodes
             .iter()
-            .filter(|card| card.part_id == "conversation-part-codex-shell-command")
+            .filter(|node| node.part_id == "conversation-part-codex-shell-command")
             .count(),
-        1
+        2
     );
 
     execute_test_sql(

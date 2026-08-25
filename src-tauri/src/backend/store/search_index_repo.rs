@@ -231,7 +231,15 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
             JOIN {question_turns} qt ON qt.tenant_id = q.tenant_id AND qt.question_id = q.id
             JOIN {turns} t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
             WHERE s.tenant_id = ?1 AND s.missing = 0 AND t.missing = 0
-            ORDER BY s.id, q.question_index, qt.turn_order
+            ORDER BY s.id, COALESCE((
+                SELECT MIN(t_order.turn_index)
+                FROM {question_turns} qt_order
+                JOIN {turns} t_order
+                  ON t_order.tenant_id = qt_order.tenant_id
+                 AND t_order.id = qt_order.turn_id
+                WHERE qt_order.tenant_id = q.tenant_id
+                  AND qt_order.question_id = q.id
+            ), 9223372036854775807), qt.turn_order
             "#,
             sessions = tables.sessions,
             questions = tables.questions,
@@ -279,7 +287,15 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
             JOIN {parts} p ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
             LEFT JOIN conversation_adapters a ON a.tenant_id = s.tenant_id AND a.id = s.adapter_id
             WHERE s.tenant_id = ?1 AND s.missing = 0 AND t.missing = 0
-            ORDER BY s.id, q.question_index, qt.turn_order, p.part_index
+            ORDER BY s.id, COALESCE((
+                SELECT MIN(t_order.turn_index)
+                FROM {question_turns} qt_order
+                JOIN {turns} t_order
+                  ON t_order.tenant_id = qt_order.tenant_id
+                 AND t_order.id = qt_order.turn_id
+                WHERE qt_order.tenant_id = q.tenant_id
+                  AND qt_order.question_id = q.id
+            ), 9223372036854775807), qt.turn_order, p.part_index
             "#,
             sessions = tables.sessions,
             questions = tables.questions,
@@ -325,7 +341,7 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
                     question_id: row.try_get(1)?,
                     turn_id: row.try_get(2)?,
                     part_id: part.id.clone(),
-                    block_id: card.card_id,
+                    block_id: card.node_id,
                     card_kind,
                     semantic_role,
                     question_title: question_title.clone(),

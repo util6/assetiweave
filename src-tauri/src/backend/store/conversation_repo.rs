@@ -3,7 +3,6 @@ use crate::backend::dto::{
     ConversationContentNode, ConversationMutationResult, ConversationQuestionDetail,
     ConversationRecordKind, ConversationSearchCardType, ConversationSearchHit,
     ConversationSearchPage, ConversationSessionDetail, ConversationSessionListItem,
-    LegacyConversationContentNode,
 };
 use crate::backend::events::DomainEvent;
 use crate::backend::models::{
@@ -16,6 +15,7 @@ use crate::backend::models::{
     ConversationSourceKind, ConversationSyncRun, ConversationSyncStatus, ConversationTurn,
     NormalizedConversationSession,
 };
+use crate::backend::projection::conversation_cards::ConversationCard;
 use crate::backend::projection::conversation_content_nodes::{
     project_conversation_content_nodes, ConversationContentNodeCandidate,
 };
@@ -1329,16 +1329,14 @@ pub(crate) async fn list_conversation_sessions_sqlx(
               OR instr(lower(s.external_id), ?4) > 0
               OR (?5 IS NOT NULL AND instr(lower(s.id), ?5) > 0)
               OR EXISTS (
-                  SELECT 1
+                SELECT 1
                   FROM conversation_question_fts f
                   WHERE f.tenant_id = s.tenant_id
                     AND f.session_id = s.id
-                    AND (
-                        instr(lower(f.question_text), ?4) > 0
-                        OR instr(lower(f.answer_text), ?4) > 0
-                        OR instr(lower(f.code_text), ?4) > 0
-                        OR instr(lower(f.command_text), ?4) > 0
-                    )
+                    AND instr(lower(
+                        f.question_text || char(10) || f.answer_text || char(10) ||
+                        f.code_text || char(10) || f.command_text
+                    ), ?4) > 0
               )
           )
         ORDER BY COALESCE(s.updated_at, s.imported_at) DESC, s.title ASC
@@ -1424,15 +1422,18 @@ pub(crate) async fn list_conversation_question_details_sqlx(
         .filter(|detail| {
             needle.as_ref().is_none_or(|needle| {
                 let question = &detail.question;
-                format!(
-                    "{}\n{}\n{}\n{}",
-                    question.question_text,
-                    question.answer_text,
-                    question.code_text,
-                    question.command_text
-                )
-                .to_lowercase()
-                .contains(needle)
+                std::iter::once(question.title.clone().unwrap_or_default())
+                    .chain(detail.turns.iter().map(|turn| turn.user_text.clone()))
+                    .chain(
+                        detail
+                            .projected_content_nodes
+                            .iter()
+                            .map(|node| node.content.clone()),
+                    )
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .to_lowercase()
+                    .contains(needle)
             })
         })
         .skip(offset)
@@ -1447,9 +1448,7 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
 ) -> AppResult<ConversationQuestionDetail> {
     let question_row = sqlx::query(
         r#"
-        SELECT id, session_id, question_index, title,
-               '' AS question_text, '' AS answer_text, '' AS code_text, '' AS command_text,
-               grouping_origin, created_at, updated_at
+        SELECT id, session_id, title, created_at, updated_at
         FROM conversation_questions
         WHERE tenant_id = ?1 AND id = ?2
         "#,
@@ -1518,8 +1517,6 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
     let (adapter_id, card_kinds) =
         load_conversation_card_projection_context_sqlx(pool, tenant_id, &question.session_id)
             .await?;
-    let (cards, legacy_content_nodes) =
-        project_conversation_legacy_cards_and_nodes(&parts, &adapter_id, &card_kinds)?;
     let projected_content_nodes = project_question_content_nodes(
         &question.id,
         &question_turns,
@@ -1528,12 +1525,10 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
         &card_kinds,
     )?;
     Ok(ConversationQuestionDetail {
-        question: project_question_compatibility_fields(question, &question_turns, &turns, &parts),
+        question: project_question_title(question, &turns),
         question_turns,
         turns,
         parts,
-        cards,
-        legacy_content_nodes,
         projected_content_nodes,
     })
 }
@@ -1730,7 +1725,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
     .map_err(AppError::external)?;
     let card = cards
         .iter()
-        .find(|card| card.card_id == block_id)
+        .find(|card| card.node_id == block_id)
         .or_else(|| (block_id == part.id).then(|| cards.first()).flatten())
         .ok_or_else(|| {
             AppError::external({
@@ -1958,16 +1953,6 @@ pub(crate) async fn merge_conversation_questions_sqlx(
         .await
         .map_err(AppError::external)?;
     }
-    sqlx::query(
-        "UPDATE conversation_questions SET grouping_origin = ?1, updated_at = ?2 WHERE tenant_id = ?3 AND id = ?4",
-    )
-    .bind(encode_enum(ConversationGroupingOrigin::Manual)?)
-    .bind(&now)
-    .bind(tenant_id)
-    .bind(&survivor_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(AppError::external)?;
     renumber_questions_for_session_sqlx_tx(&mut tx, tenant_id, &session_id).await?;
     rebuild_session_question_aggregates_sqlx_tx(&mut tx, tenant_id, &session_id, &now).await?;
     super::bump_conversation_search_source_revision_sqlx_tx(&mut *tx, tenant_id).await?;
@@ -2063,22 +2048,17 @@ pub(crate) async fn split_conversation_question_sqlx(
     .execute(&mut *tx)
     .await
     .map_err(AppError::external)?;
-    let new_question_index =
-        next_question_index_sqlx_tx(&mut tx, tenant_id, &question.session_id).await?;
     sqlx::query(
         r#"
         INSERT INTO conversation_questions (
-            tenant_id, id, session_id, question_index, title, question_text, answer_text,
-            code_text, command_text, grouping_origin, created_at, updated_at
+            tenant_id, id, session_id, title, created_at, updated_at
         )
-        VALUES (?1, ?2, ?3, ?4, NULL, '', '', '', '', ?5, ?6, ?6)
+        VALUES (?1, ?2, ?3, NULL, ?4, ?4)
         "#,
     )
     .bind(tenant_id)
     .bind(&new_question_id)
     .bind(&question.session_id)
-    .bind(new_question_index)
-    .bind(encode_enum(ConversationGroupingOrigin::Manual)?)
     .bind(&now)
     .execute(&mut *tx)
     .await
@@ -2105,16 +2085,6 @@ pub(crate) async fn split_conversation_question_sqlx(
         .await
         .map_err(AppError::external)?;
     }
-    sqlx::query(
-        "UPDATE conversation_questions SET grouping_origin = ?1, updated_at = ?2 WHERE tenant_id = ?3 AND id = ?4",
-    )
-    .bind(encode_enum(ConversationGroupingOrigin::Manual)?)
-    .bind(&now)
-    .bind(tenant_id)
-    .bind(question_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(AppError::external)?;
     super::memory_repo::reconcile_memory_evidence_for_session_tx(
         &mut tx,
         tenant_id,
@@ -2183,12 +2153,17 @@ async fn load_conversation_question_details_for_session_sqlx(
         load_conversation_card_projection_context_sqlx(pool, tenant_id, session_id).await?;
     let question_rows = sqlx::query(
         r#"
-        SELECT id, session_id, question_index, title,
-               '' AS question_text, '' AS answer_text, '' AS code_text, '' AS command_text,
-               grouping_origin, created_at, updated_at
+        SELECT id, session_id, title, created_at, updated_at
         FROM conversation_questions
         WHERE tenant_id = ?1 AND session_id = ?2
-        ORDER BY question_index ASC
+        ORDER BY COALESCE((
+            SELECT MIN(t.turn_index)
+            FROM conversation_question_turns qt_order
+            JOIN conversation_turns t
+              ON t.tenant_id = qt_order.tenant_id AND t.id = qt_order.turn_id
+            WHERE qt_order.tenant_id = conversation_questions.tenant_id
+              AND qt_order.question_id = conversation_questions.id
+        ), 9223372036854775807) ASC, created_at ASC, id ASC
         "#,
     )
     .bind(tenant_id)
@@ -2213,7 +2188,7 @@ async fn load_conversation_question_details_for_session_sqlx(
         WHERE qt.tenant_id = ?1
           AND q.session_id = ?2
           AND q.session_id = t.session_id
-        ORDER BY q.question_index ASC, qt.turn_order ASC, t.turn_index ASC,
+        ORDER BY COALESCE((SELECT MIN(t_order.turn_index) FROM conversation_question_turns qt_order JOIN conversation_turns t_order ON t_order.tenant_id = qt_order.tenant_id AND t_order.id = qt_order.turn_id WHERE qt_order.tenant_id = q.tenant_id AND qt_order.question_id = q.id), 9223372036854775807) ASC, qt.turn_order ASC, t.turn_index ASC,
                  qt.turn_id ASC
         "#,
     )
@@ -2242,7 +2217,7 @@ async fn load_conversation_question_details_for_session_sqlx(
         WHERE q.tenant_id = ?1
           AND q.session_id = ?2
           AND q.session_id = t.session_id
-        ORDER BY q.question_index ASC, qt.turn_order ASC, t.turn_index ASC
+        ORDER BY COALESCE((SELECT MIN(t_order.turn_index) FROM conversation_question_turns qt_order JOIN conversation_turns t_order ON t_order.tenant_id = qt_order.tenant_id AND t_order.id = qt_order.turn_id WHERE qt_order.tenant_id = q.tenant_id AND qt_order.question_id = q.id), 9223372036854775807) ASC, qt.turn_order ASC, t.turn_index ASC
         "#,
     )
     .bind(tenant_id)
@@ -2294,8 +2269,6 @@ async fn load_conversation_question_details_for_session_sqlx(
         for turn in &turns {
             parts.extend(parts_by_turn.remove(&turn.id).unwrap_or_default());
         }
-        let (cards, legacy_content_nodes) =
-            project_conversation_legacy_cards_and_nodes(&parts, &adapter_id, &card_kinds)?;
         let projected_content_nodes = project_question_content_nodes(
             &question.id,
             &question_turns,
@@ -2304,17 +2277,10 @@ async fn load_conversation_question_details_for_session_sqlx(
             &card_kinds,
         )?;
         details.push(ConversationQuestionDetail {
-            question: project_question_compatibility_fields(
-                question,
-                &question_turns,
-                &turns,
-                &parts,
-            ),
+            question: project_question_title(question, &turns),
             question_turns,
             turns,
             parts,
-            cards,
-            legacy_content_nodes,
             projected_content_nodes,
         });
     }
@@ -2351,48 +2317,19 @@ async fn load_question_turn_memberships_sqlx(
         .collect()
 }
 
-pub(crate) fn project_question_compatibility_fields(
+pub(crate) fn project_question_title(
     mut question: ConversationQuestion,
-    question_turns: &[ConversationQuestionTurn],
     turns: &[ConversationTurn],
-    parts: &[ConversationPart],
 ) -> ConversationQuestion {
-    let turns_by_id = turns
-        .iter()
-        .map(|turn| (turn.id.as_str(), turn))
-        .collect::<BTreeMap<_, _>>();
-    let question_text = question_turns
-        .iter()
-        .filter_map(|membership| turns_by_id.get(membership.turn_id.as_str()))
-        .map(|turn| turn.user_text.as_str())
-        .filter(|text| !text.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    let mut answer_text = Vec::new();
-    let mut code_text = Vec::new();
-    let mut command_text = Vec::new();
-    for part in parts {
-        append_declared_card_to_question_aggregate(
-            part,
-            &mut answer_text,
-            &mut code_text,
-            &mut command_text,
-        );
-    }
-
-    question.question_text = question_text;
-    question.answer_text = answer_text.join("\n\n");
-    question.code_text = code_text.join("\n\n");
-    question.command_text = command_text.join("\n\n");
     if question
         .title
         .as_deref()
         .is_none_or(|title| title.trim().is_empty())
     {
-        question.title = Some(first_line(&question.question_text));
+        if let Some(turn) = turns.iter().find(|turn| !turn.user_text.trim().is_empty()) {
+            question.title = Some(first_line(&turn.user_text));
+        }
     }
-    // `grouping_origin` remains in the compatibility Question shape until the
-    // later contract cleanup. Membership rows are the authority for new code.
     question
 }
 
@@ -2468,14 +2405,14 @@ fn conversation_card_block_locator(
     session_id: &str,
     question_id: &str,
     part: &ConversationPart,
-    card: &crate::backend::dto::ConversationCard,
+    card: &ConversationCard,
 ) -> ConversationBlockLocator {
     ConversationBlockLocator {
         record_kind: conversation_record_kind_label(record_kind).to_string(),
         session_id: session_id.to_string(),
         question_id: question_id.to_string(),
         turn_id: part.turn_id.clone(),
-        block_id: card.card_id.clone(),
+        block_id: card.node_id.clone(),
         part_id: Some(part.id.clone()),
         kind: card.kind.clone(),
         semantic_role: card.semantic_role.clone().or_else(|| {
@@ -2506,106 +2443,6 @@ fn conversation_record_kind_label(record_kind: ConversationRecordKind) -> &'stat
         ConversationRecordKind::Session => "session",
         ConversationRecordKind::Web => "web",
     }
-}
-
-pub(super) fn project_conversation_legacy_cards_and_nodes(
-    parts: &[ConversationPart],
-    adapter_id: &str,
-    card_kinds: &[ConversationCardKindDefinition],
-) -> AppResult<(
-    Vec<crate::backend::dto::ConversationCard>,
-    Vec<LegacyConversationContentNode>,
-)> {
-    let mut cards = Vec::new();
-    let mut content_nodes = Vec::new();
-    let mut execution_node_indices = BTreeMap::<(String, String), usize>::new();
-    for part in parts {
-        if let Some(card) =
-            crate::backend::projection::conversation_cards::project_conversation_content_card(
-                part, adapter_id, card_kinds,
-            )
-            .map_err(AppError::external)?
-        {
-            let card_index = cards.len();
-            let execution_role = card
-                .semantic_role
-                .as_deref()
-                .or_else(|| card.kind.rsplit('.').next())
-                .filter(|role| matches!(*role, "command" | "result"))
-                .map(str::to_string);
-            let source_execution_id = part
-                .source_execution_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty());
-            cards.push(card);
-
-            let (Some(source_execution_id), Some(execution_role)) =
-                (source_execution_id, execution_role)
-            else {
-                content_nodes.push(LegacyConversationContentNode::Card {
-                    turn_id: part.turn_id.clone(),
-                    card_index,
-                });
-                continue;
-            };
-
-            let key = (part.turn_id.clone(), source_execution_id.to_string());
-            if execution_role == "command" {
-                let node_index = content_nodes.len();
-                content_nodes.push(LegacyConversationContentNode::Execution {
-                    turn_id: part.turn_id.clone(),
-                    source_execution_id: source_execution_id.to_string(),
-                    command_card_index: Some(card_index),
-                    result_card_indices: Vec::new(),
-                });
-                execution_node_indices.insert(key, node_index);
-                continue;
-            }
-
-            if let Some(node_index) = execution_node_indices.get(&key).copied() {
-                if let LegacyConversationContentNode::Execution {
-                    result_card_indices,
-                    ..
-                } = &mut content_nodes[node_index]
-                {
-                    if execution_role == "result" {
-                        result_card_indices.push(card_index);
-                        continue;
-                    }
-                }
-            }
-
-            let node_index = content_nodes.len();
-            content_nodes.push(LegacyConversationContentNode::Execution {
-                turn_id: part.turn_id.clone(),
-                source_execution_id: source_execution_id.to_string(),
-                command_card_index: (execution_role == "command").then_some(card_index),
-                result_card_indices: if execution_role == "result" {
-                    vec![card_index]
-                } else {
-                    Vec::new()
-                },
-            });
-            execution_node_indices.insert(key, node_index);
-        }
-    }
-    let content_nodes = content_nodes
-        .into_iter()
-        .map(|node| match node {
-            LegacyConversationContentNode::Execution {
-                turn_id,
-                command_card_index: Some(card_index),
-                result_card_indices,
-                ..
-            } if result_card_indices.is_empty() => LegacyConversationContentNode::Card {
-                turn_id,
-                card_index,
-            },
-            node => node,
-        })
-        .collect();
-    Ok((cards, content_nodes))
 }
 
 pub(super) fn project_question_content_nodes(
@@ -2822,7 +2659,12 @@ pub(crate) async fn search_conversation_cards_sqlx(
             }
         }
 
-        for question in questions_by_session.remove(&session.id).unwrap_or_default() {
+        for (question_index, question) in questions_by_session
+            .remove(&session.id)
+            .unwrap_or_default()
+            .into_iter()
+            .enumerate()
+        {
             let question_turns = turns_by_question.remove(&question.id).unwrap_or_default();
             let question_title = search_question_title_from_turns(&question, &question_turns);
             for turn in question_turns {
@@ -2834,6 +2676,7 @@ pub(crate) async fn search_conversation_cards_sqlx(
                         &all_types,
                         &session_item,
                         &question,
+                        question_index as i64,
                         &question_title,
                         Some(turn.id.clone()),
                         None,
@@ -2872,6 +2715,7 @@ pub(crate) async fn search_conversation_cards_sqlx(
                             &allowed_types,
                             &session_item,
                             &question,
+                            question_index as i64,
                             &question_title,
                             Some(turn.id.clone()),
                             Some(part.id.clone()),
@@ -2929,7 +2773,7 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
     .into_iter()
     .map(|item| (item.session.id.clone(), item))
     .collect::<BTreeMap<_, _>>();
-    let questions = load_search_questions_sqlx(
+    let question_groups = load_search_questions_sqlx(
         pool,
         tenant_id,
         tables,
@@ -2937,11 +2781,17 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
         source_id,
         Some(&session_ids_json),
     )
-    .await?
-    .into_values()
-    .flatten()
-    .map(|item| (item.id.clone(), item))
-    .collect::<BTreeMap<_, _>>();
+    .await?;
+    let question_indices = question_groups
+        .values()
+        .flat_map(|questions| questions.iter().enumerate())
+        .map(|(index, question)| (question.id.clone(), index as i64))
+        .collect::<BTreeMap<_, _>>();
+    let questions = question_groups
+        .into_values()
+        .flatten()
+        .map(|item| (item.id.clone(), item))
+        .collect::<BTreeMap<_, _>>();
     let turns_by_question = load_search_turns_sqlx(
         pool,
         tenant_id,
@@ -3031,7 +2881,7 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
                 .map_err(AppError::external)?;
             let card = cards
                 .iter()
-                .find(|card| card.card_id == matched.document_id)
+                .find(|card| card.node_id == matched.document_id)
                 .ok_or_else(|| {
                     AppError::external({
                         "conversation search index hydration missed a projected card".to_string()
@@ -3056,7 +2906,7 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
         hits.push(ConversationSearchHit {
             session: session.clone(),
             question_id: question.id.clone(),
-            question_index: question.question_index,
+            question_index: question_indices.get(&question.id).copied().unwrap_or(0),
             question_title,
             turn_id: Some(matched.turn_id),
             part_id,
@@ -3308,15 +3158,9 @@ pub(super) fn map_sqlx_conversation_question(row: &SqliteRow) -> AppResult<Conve
     Ok(ConversationQuestion {
         id: row.try_get(0).map_err(AppError::external)?,
         session_id: row.try_get(1).map_err(AppError::external)?,
-        question_index: row.try_get(2).map_err(AppError::external)?,
-        title: row.try_get(3).map_err(AppError::external)?,
-        question_text: row.try_get(4).map_err(AppError::external)?,
-        answer_text: row.try_get(5).map_err(AppError::external)?,
-        code_text: row.try_get(6).map_err(AppError::external)?,
-        command_text: row.try_get(7).map_err(AppError::external)?,
-        grouping_origin: decode_enum(row.try_get::<String, _>(8).map_err(AppError::external)?)?,
-        created_at: row.try_get(9).map_err(AppError::external)?,
-        updated_at: row.try_get(10).map_err(AppError::external)?,
+        title: row.try_get(2).map_err(AppError::external)?,
+        created_at: row.try_get(3).map_err(AppError::external)?,
+        updated_at: row.try_get(4).map_err(AppError::external)?,
     })
 }
 
@@ -3838,7 +3682,7 @@ async fn ensure_question_groups_for_session_sqlx_tx(
 ) -> AppResult<()> {
     reject_invalid_conversation_question_turns_sqlx_tx(tx, tenant_id).await?;
     let existing_question_ids = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM conversation_questions WHERE tenant_id = ?1 AND session_id = ?2 ORDER BY question_index, id",
+        "SELECT id FROM conversation_questions WHERE tenant_id = ?1 AND session_id = ?2 ORDER BY created_at, id",
     )
     .bind(tenant_id)
     .bind(session_id)
@@ -3859,30 +3703,6 @@ async fn ensure_question_groups_for_session_sqlx_tx(
         return Ok(());
     }
 
-    // A manual question is a reconciliation fence. Older rows may only carry the
-    // compatibility question-level marker, so promote that marker to every
-    // membership before rebuilding automatic assignments.
-    sqlx::query(
-        r#"
-        UPDATE conversation_question_turns
-        SET assignment_origin = 'manual', updated_at = ?1
-        WHERE tenant_id = ?2
-          AND question_id IN (
-              SELECT q.id
-              FROM conversation_questions q
-              WHERE q.tenant_id = ?2
-                AND q.session_id = ?3
-                AND q.grouping_origin = 'manual'
-          )
-        "#,
-    )
-    .bind(now)
-    .bind(tenant_id)
-    .bind(session_id)
-    .execute(&mut **tx)
-    .await
-    .map_err(AppError::external)?;
-
     let manual_fenced_turn_ids = sqlx::query_scalar::<_, String>(
         r#"
         SELECT qt.turn_id
@@ -3893,7 +3713,7 @@ async fn ensure_question_groups_for_session_sqlx_tx(
           ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
         WHERE qt.tenant_id = ?1
           AND t.session_id = ?2
-          AND (qt.assignment_origin = 'manual' OR q.grouping_origin = 'manual')
+          AND qt.assignment_origin = 'manual'
         ORDER BY t.turn_index ASC, t.id ASC
         "#,
     )
@@ -3954,22 +3774,17 @@ async fn ensure_question_groups_for_session_sqlx_tx(
                 }
                 Some(_) => {}
                 None => {
-                    let question_index =
-                        next_question_index_sqlx_tx(tx, tenant_id, session_id).await?;
                     sqlx::query(
                         r#"
                         INSERT INTO conversation_questions (
-                            tenant_id, id, session_id, question_index, title, question_text, answer_text,
-                            code_text, command_text, grouping_origin, created_at, updated_at
+                            tenant_id, id, session_id, title, created_at, updated_at
                         )
-                        VALUES (?1, ?2, ?3, ?4, NULL, '', '', '', '', ?5, ?6, ?6)
+                        VALUES (?1, ?2, ?3, NULL, ?4, ?4)
                         "#,
                     )
                     .bind(tenant_id)
                     .bind(&question_id)
                     .bind(session_id)
-                    .bind(question_index)
-                    .bind(encode_enum(group.origin)?)
                     .bind(now)
                     .execute(&mut **tx)
                     .await
@@ -4043,34 +3858,6 @@ async fn ensure_question_groups_for_session_sqlx_tx(
           )
         "#,
     )
-    .bind(tenant_id)
-    .bind(session_id)
-    .execute(&mut **tx)
-    .await
-    .map_err(AppError::external)?;
-    sqlx::query(
-        r#"
-        UPDATE conversation_questions
-        SET grouping_origin = CASE
-                WHEN EXISTS (
-                    SELECT 1 FROM conversation_question_turns qt
-                    WHERE qt.tenant_id = conversation_questions.tenant_id
-                      AND qt.question_id = conversation_questions.id
-                      AND qt.assignment_origin = 'manual'
-                ) THEN 'manual'
-                WHEN EXISTS (
-                    SELECT 1 FROM conversation_question_turns qt
-                    WHERE qt.tenant_id = conversation_questions.tenant_id
-                      AND qt.question_id = conversation_questions.id
-                      AND qt.assignment_origin = 'auto_merged'
-                ) THEN 'auto_merged'
-                ELSE 'imported'
-            END,
-            updated_at = ?1
-        WHERE tenant_id = ?2 AND session_id = ?3
-        "#,
-    )
-    .bind(now)
     .bind(tenant_id)
     .bind(session_id)
     .execute(&mut **tx)
@@ -4221,8 +4008,8 @@ async fn rebuild_question_aggregate_sqlx_tx(
     question_id: &str,
     now: &str,
 ) -> AppResult<()> {
-    // Keep the legacy snapshot and FTS row synchronized as a compatibility cache. Question Detail
-    // reads project from membership and Turn-Part facts through the seam above.
+    // FTS remains an independently rebuildable projection. Question Detail reads
+    // only membership and Turn-Part source facts.
     let turns = load_question_turns_sqlx_tx(tx, tenant_id, question_id).await?;
     let mut question_text = Vec::new();
     let mut answer_text = Vec::new();
@@ -4274,22 +4061,9 @@ async fn rebuild_question_aggregate_sqlx_tx(
     let title = first_line(&question_text);
 
     sqlx::query(
-        r#"
-        UPDATE conversation_questions
-        SET title = COALESCE(NULLIF(title, ''), ?1),
-            question_text = ?2,
-            answer_text = ?3,
-            code_text = ?4,
-            command_text = ?5,
-            updated_at = ?6
-        WHERE tenant_id = ?7 AND id = ?8
-        "#,
+        "UPDATE conversation_questions SET title = COALESCE(NULLIF(title, ''), ?1), updated_at = ?2 WHERE tenant_id = ?3 AND id = ?4",
     )
     .bind(&title)
-    .bind(&question_text)
-    .bind(&answer_text)
-    .bind(&code_text)
-    .bind(&command_text)
     .bind(now)
     .bind(tenant_id)
     .bind(question_id)
@@ -4459,22 +4233,6 @@ async fn load_turn_parts_sqlx_tx(
     rows.iter().map(map_sqlx_conversation_part).collect()
 }
 
-async fn next_question_index_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    session_id: &str,
-) -> AppResult<i64> {
-    let max_index: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
-        "SELECT MAX(question_index) FROM conversation_questions WHERE tenant_id = ?1 AND session_id = ?2",
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(AppError::external)?;
-    Ok(max_index.unwrap_or(-1) + 1)
-}
-
 async fn max_question_turn_order_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
@@ -4498,9 +4256,7 @@ async fn load_conversation_question_sqlx_tx(
 ) -> AppResult<Option<ConversationQuestion>> {
     sqlx::query(
         r#"
-        SELECT id, session_id, question_index, title,
-               '' AS question_text, '' AS answer_text, '' AS code_text, '' AS command_text,
-               grouping_origin, created_at, updated_at
+        SELECT id, session_id, title, created_at, updated_at
         FROM conversation_questions
         WHERE tenant_id = ?1 AND id = ?2
         "#,
@@ -4525,7 +4281,14 @@ async fn question_ids_for_session_sqlx_tx(
         SELECT q.id
         FROM conversation_questions q
         WHERE q.tenant_id = ?1 AND q.session_id = ?2
-        ORDER BY q.question_index ASC
+        ORDER BY COALESCE((SELECT MIN(t.turn_index)
+                          FROM conversation_question_turns qt
+                          JOIN conversation_turns t
+                            ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
+                          WHERE qt.tenant_id = q.tenant_id AND qt.question_id = q.id),
+                         9223372036854775807),
+                 q.created_at ASC,
+                 q.id ASC
         "#,
     )
     .bind(tenant_id)
@@ -4626,46 +4389,7 @@ async fn renumber_questions_for_session_sqlx_tx(
     tenant_id: &str,
     session_id: &str,
 ) -> AppResult<()> {
-    let question_ids = sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT q.id
-        FROM conversation_questions q
-        JOIN conversation_question_turns qt
-          ON qt.tenant_id = q.tenant_id AND qt.question_id = q.id
-        JOIN conversation_turns t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
-        WHERE q.tenant_id = ?1 AND q.session_id = ?2
-        GROUP BY q.id
-        ORDER BY MIN(t.turn_index) ASC
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(AppError::external)?;
-
-    for (index, question_id) in question_ids.iter().enumerate() {
-        sqlx::query(
-            "UPDATE conversation_questions SET question_index = ?1 WHERE tenant_id = ?2 AND id = ?3",
-        )
-            .bind(1_000_000i64 + index as i64)
-            .bind(tenant_id)
-            .bind(question_id)
-            .execute(&mut **tx)
-            .await
-            .map_err(AppError::external)?;
-    }
-    for (index, question_id) in question_ids.iter().enumerate() {
-        sqlx::query(
-            "UPDATE conversation_questions SET question_index = ?1 WHERE tenant_id = ?2 AND id = ?3",
-        )
-            .bind(index as i64)
-            .bind(tenant_id)
-            .bind(question_id)
-            .execute(&mut **tx)
-            .await
-            .map_err(AppError::external)?;
-    }
+    let _ = (tx, tenant_id, session_id);
     Ok(())
 }
 
@@ -4890,9 +4614,7 @@ async fn load_search_questions_sqlx(
 ) -> AppResult<BTreeMap<String, Vec<ConversationQuestion>>> {
     let query = format!(
         r#"
-        SELECT q.id, q.session_id, q.question_index, q.title,
-               '' AS question_text, '' AS answer_text, '' AS code_text, '' AS command_text,
-               q.grouping_origin,
+        SELECT q.id, q.session_id, q.title,
                q.created_at, q.updated_at
         FROM {questions} q
         JOIN {sessions} s ON s.tenant_id = q.tenant_id AND s.id = q.session_id
@@ -4900,10 +4622,17 @@ async fn load_search_questions_sqlx(
           AND (?2 IS NULL OR s.adapter_id = ?2)
           AND (?3 IS NULL OR s.source_id = ?3)
           AND (?4 IS NULL OR s.id IN (SELECT value FROM json_each(?4)))
-        ORDER BY q.session_id ASC, q.question_index ASC
+        ORDER BY q.session_id ASC,
+                 COALESCE((SELECT MIN(t.turn_index)
+                           FROM {question_turns} qt_order
+                           JOIN {turns} t ON t.tenant_id = qt_order.tenant_id AND t.id = qt_order.turn_id
+                           WHERE qt_order.tenant_id = q.tenant_id AND qt_order.question_id = q.id), 9223372036854775807),
+                 q.created_at ASC, q.id ASC
         "#,
         questions = tables.questions,
         sessions = tables.sessions,
+        question_turns = tables.question_turns,
+        turns = tables.turns,
     );
     let rows = sqlx::query(AssertSqlSafe(query))
         .bind(tenant_id)
@@ -5150,6 +4879,7 @@ fn push_search_hit_if_matching(
     allowed_types: &BTreeSet<ConversationSearchCardType>,
     session: &ConversationSessionListItem,
     question: &ConversationQuestion,
+    question_index: i64,
     question_title: &str,
     turn_id: Option<String>,
     part_id: Option<String>,
@@ -5174,7 +4904,7 @@ fn push_search_hit_if_matching(
     hits.push(ConversationSearchHit {
         session: session.clone(),
         question_id: question.id.clone(),
-        question_index: question.question_index,
+        question_index,
         question_title: question_title.to_string(),
         turn_id,
         part_id,
@@ -5255,7 +4985,7 @@ fn search_entries_for_part(
             });
         ConversationSearchEntry {
             card_type: ConversationSearchCardType::new(card.kind),
-            block_id: card.card_id,
+            block_id: card.node_id,
             text: card.body,
             semantic_role,
         }
@@ -5496,194 +5226,6 @@ mod tests {
         assert_eq!(command_text, vec!["printf first", "printf second"]);
         assert!(answer_text.is_empty());
         assert!(code_text.is_empty());
-    }
-
-    #[test]
-    fn conversation_content_nodes_group_interleaved_results_by_source_id() {
-        let card_kinds = [
-            ConversationCardKindDefinition {
-                id: "fixture.command".to_string(),
-                semantic_role: Some("command".to_string()),
-                label: "Command".to_string(),
-                default_renderer: "command".to_string(),
-                allowed_renderers: vec!["command".to_string()],
-                icon_hint: None,
-            },
-            ConversationCardKindDefinition {
-                id: "fixture.result".to_string(),
-                semantic_role: Some("result".to_string()),
-                label: "Result".to_string(),
-                default_renderer: "terminal_output".to_string(),
-                allowed_renderers: vec!["terminal_output".to_string()],
-                icon_hint: None,
-            },
-        ];
-        let part = |id: &str,
-                    part_index: i64,
-                    source_execution_id: &str,
-                    command: bool,
-                    command_label: Option<&str>| {
-            ConversationPart {
-                id: id.to_string(),
-                turn_id: "turn-1".to_string(),
-                part_index,
-                role: ConversationPartRole::Tool,
-                kind: if command {
-                    ConversationPartKind::Command
-                } else {
-                    ConversationPartKind::Tool
-                },
-                text: (!command).then(|| format!("result-{id}")),
-                language: None,
-                command: command.then(|| format!("command-{id}")),
-                cwd: None,
-                status: None,
-                exit_code: None,
-                command_label: command_label.map(str::to_string),
-                source_execution_id: Some(source_execution_id.to_string()),
-                content_card: Some(ConversationContentCardDescriptor {
-                    schema_version: 1,
-                    kind: if command {
-                        "fixture.command".to_string()
-                    } else {
-                        "fixture.result".to_string()
-                    },
-                    renderer: Some(if command {
-                        "command".to_string()
-                    } else {
-                        "terminal_output".to_string()
-                    }),
-                }),
-                metadata_json: None,
-                translated_text: None,
-            }
-        };
-        let parts = vec![
-            part("command-a", 0, "call-a", true, None),
-            part("command-a-2", 1, "call-a", true, Some("DEBUG")),
-            part("command-b", 2, "call-b", true, None),
-            part("result-b", 3, "call-b", false, None),
-            part("result-a", 4, "call-a", false, None),
-        ];
-
-        let (cards, nodes) =
-            project_conversation_legacy_cards_and_nodes(&parts, "fixture", &card_kinds)
-                .expect("project execution nodes");
-
-        assert_eq!(cards.len(), 5);
-        assert_eq!(cards[0].card_id, "command-a");
-        assert_eq!(cards[1].card_id, "command-a-2");
-        assert_eq!(cards[1].command_label.as_deref(), Some("DEBUG"));
-        assert_eq!(
-            nodes,
-            vec![
-                LegacyConversationContentNode::Card {
-                    turn_id: "turn-1".to_string(),
-                    card_index: 0,
-                },
-                LegacyConversationContentNode::Execution {
-                    turn_id: "turn-1".to_string(),
-                    source_execution_id: "call-a".to_string(),
-                    command_card_index: Some(1),
-                    result_card_indices: vec![4],
-                },
-                LegacyConversationContentNode::Execution {
-                    turn_id: "turn-1".to_string(),
-                    source_execution_id: "call-b".to_string(),
-                    command_card_index: Some(2),
-                    result_card_indices: vec![3],
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn conversation_content_nodes_keep_file_changes_outside_execution_results() {
-        let card_kinds = [
-            ConversationCardKindDefinition {
-                id: "fixture.command".to_string(),
-                semantic_role: Some("command".to_string()),
-                label: "Command".to_string(),
-                default_renderer: "command".to_string(),
-                allowed_renderers: vec!["command".to_string()],
-                icon_hint: None,
-            },
-            ConversationCardKindDefinition {
-                id: "fixture.file-change".to_string(),
-                semantic_role: Some("file-change".to_string()),
-                label: "文件更改".to_string(),
-                default_renderer: "diff".to_string(),
-                allowed_renderers: vec!["diff".to_string()],
-                icon_hint: None,
-            },
-        ];
-        let parts = vec![
-            ConversationPart {
-                id: "command".to_string(),
-                turn_id: "turn-1".to_string(),
-                part_index: 0,
-                role: ConversationPartRole::Tool,
-                kind: ConversationPartKind::Command,
-                text: None,
-                language: None,
-                command: Some("apply patch".to_string()),
-                cwd: None,
-                status: Some("completed".to_string()),
-                exit_code: Some(0),
-                command_label: None,
-                source_execution_id: Some("call-1".to_string()),
-                content_card: Some(ConversationContentCardDescriptor {
-                    schema_version: 1,
-                    kind: "fixture.command".to_string(),
-                    renderer: Some("command".to_string()),
-                }),
-                metadata_json: None,
-                translated_text: None,
-            },
-            ConversationPart {
-                id: "file-change".to_string(),
-                turn_id: "turn-1".to_string(),
-                part_index: 1,
-                role: ConversationPartRole::Tool,
-                kind: ConversationPartKind::FileChange,
-                text: Some("--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new\n".to_string()),
-                language: None,
-                command: None,
-                cwd: None,
-                status: None,
-                exit_code: None,
-                command_label: None,
-                source_execution_id: Some("call-1".to_string()),
-                content_card: Some(ConversationContentCardDescriptor {
-                    schema_version: 1,
-                    kind: "fixture.file-change".to_string(),
-                    renderer: Some("diff".to_string()),
-                }),
-                metadata_json: None,
-                translated_text: None,
-            },
-        ];
-
-        let (cards, nodes) =
-            project_conversation_legacy_cards_and_nodes(&parts, "fixture", &card_kinds)
-                .expect("project standalone file change node");
-
-        assert_eq!(cards.len(), 2);
-        assert_eq!(cards[1].kind, "fixture.file-change");
-        assert_eq!(cards[1].semantic_role.as_deref(), Some("file-change"));
-        assert_eq!(
-            nodes,
-            vec![
-                LegacyConversationContentNode::Card {
-                    turn_id: "turn-1".to_string(),
-                    card_index: 0,
-                },
-                LegacyConversationContentNode::Card {
-                    turn_id: "turn-1".to_string(),
-                    card_index: 1,
-                },
-            ]
-        );
     }
 
     #[test]
@@ -6377,10 +5919,10 @@ mod tests {
         assert_eq!(initial_first_question_turn_count, 2);
         assert_eq!(detail.questions.len(), 1);
         assert_eq!(detail.questions[0].turns.len(), 3);
-        assert_eq!(
-            detail.questions[0].question.grouping_origin,
-            ConversationGroupingOrigin::Manual
-        );
+        assert!(detail.questions[0]
+            .question_turns
+            .iter()
+            .all(|membership| membership.assignment_origin == ConversationGroupingOrigin::Manual));
 
         drop(database);
         cleanup_database(&db_path);
@@ -6698,21 +6240,6 @@ mod tests {
                 )
                 .await?;
                 let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
-                sqlx::query(
-                    r#"
-                    UPDATE conversation_questions
-                    SET question_text = 'stale snapshot',
-                        answer_text = 'stale answer',
-                        code_text = 'stale code',
-                        command_text = 'stale command'
-                    WHERE tenant_id = ?1 AND session_id = ?2
-                    "#,
-                )
-                .bind(TEST_TENANT_ID)
-                .bind(&session_id)
-                .execute(database.pool())
-                .await
-                .map_err(AppError::external)?;
                 load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
                     .await
             })
@@ -6720,13 +6247,21 @@ mod tests {
 
         let first_question = &detail.questions[0];
         assert_eq!(
-            first_question.question.question_text,
-            "How does sync work?\n\n继续"
+            first_question.question.title.as_deref(),
+            Some("How does sync work?")
         );
         assert_eq!(
-            first_question.question.answer_text,
-            "answer for t1\n\nanswer for t2"
+            first_question
+                .turns
+                .iter()
+                .map(|turn| turn.user_text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["How does sync work?", "继续"]
         );
+        assert!(first_question
+            .projected_content_nodes
+            .iter()
+            .any(|node| node.content.contains("answer for t1")));
         assert_eq!(first_question.question_turns.len(), 2);
         assert_eq!(
             first_question
@@ -7336,7 +6871,10 @@ mod tests {
         assert_eq!(sessions[0].turn_count, 3);
         assert_eq!(detail.questions.len(), 2);
         assert_eq!(filtered_questions.len(), 1);
-        assert_eq!(filtered_questions[0].question.question_text, "Export it");
+        assert_eq!(
+            filtered_questions[0].question.title.as_deref(),
+            Some("Export it")
+        );
         assert_eq!(question.turns.len(), 1);
         assert_eq!(question.parts.len(), 3);
         assert_eq!(
@@ -7348,16 +6886,6 @@ mod tests {
             Some("call-export")
         );
         let serialized = serde_json::to_value(&question).expect("serialize question detail");
-        let nodes = serialized["content_nodes"]
-            .as_array()
-            .expect("content nodes");
-        assert_eq!(nodes.len(), 2);
-        assert_eq!(nodes[0]["type"], "card");
-        assert_eq!(nodes[0]["card_index"], 0);
-        assert_eq!(nodes[1]["type"], "execution");
-        assert_eq!(nodes[1]["source_execution_id"], "call-export");
-        assert_eq!(nodes[1]["command_card_index"], serde_json::json!(1));
-        assert_eq!(nodes[1]["result_card_indices"], serde_json::json!([2]));
         let projected_nodes = serialized["projected_content_nodes"]
             .as_array()
             .expect("projected content nodes");
@@ -7591,9 +7119,10 @@ mod tests {
         assert_eq!(detail.questions.len(), 2);
         assert_eq!(detail.questions[0].turns.len(), 2);
         assert_eq!(detail.questions[1].turns.len(), 1);
-        assert!(detail.questions.iter().all(|question| {
-            question.question.grouping_origin == ConversationGroupingOrigin::Manual
-        }));
+        assert!(detail.questions.iter().all(|question| question
+            .question_turns
+            .iter()
+            .all(|membership| membership.assignment_origin == ConversationGroupingOrigin::Manual)));
         let final_part_ids = detail
             .questions
             .iter()
@@ -7611,10 +7140,13 @@ mod tests {
             .iter()
             .all(|membership| membership.assignment_origin == ConversationGroupingOrigin::Manual)));
         assert_eq!(
-            detail.questions[0].question.question_text,
-            "How does sync work?\n\n继续"
+            detail.questions[0].question.title.as_deref(),
+            Some("How does sync work?")
         );
-        assert_eq!(detail.questions[1].question.question_text, "Export it");
+        assert_eq!(
+            detail.questions[1].question.title.as_deref(),
+            Some("Export it")
+        );
 
         drop(database);
         cleanup_database(&db_path);
@@ -7886,10 +7418,17 @@ mod tests {
             })
             .expect("search declared content cards through SQLx");
 
-        assert_eq!(detail.questions[0].question.answer_text, "");
+        assert!(!detail.questions[0]
+            .projected_content_nodes
+            .iter()
+            .any(|node| node.semantic_role.as_deref() == Some("answer")));
         assert_eq!(
-            detail.questions[1].question.answer_text,
-            "declared answer needle"
+            detail.questions[1]
+                .projected_content_nodes
+                .iter()
+                .find(|node| node.semantic_role.as_deref() == Some("answer"))
+                .map(|node| node.content.as_str()),
+            Some("declared answer needle")
         );
         assert!(undeclared_list.is_empty());
         assert_eq!(undeclared_page.total_count, 0);
@@ -8023,17 +7562,17 @@ mod tests {
         assert_eq!(alpha_detail.session.id, session_id);
         assert_eq!(beta_detail.session.id, session_id);
         assert!(alpha_detail.questions[0]
-            .question
-            .answer_text
-            .contains("alpha tenant answer"));
+            .projected_content_nodes
+            .iter()
+            .any(|node| node.content.contains("alpha tenant answer")));
         assert!(!alpha_detail.questions[0]
-            .question
-            .answer_text
-            .contains("beta tenant answer"));
+            .projected_content_nodes
+            .iter()
+            .any(|node| node.content.contains("beta tenant answer")));
         assert!(beta_detail.questions[0]
-            .question
-            .answer_text
-            .contains("beta tenant answer"));
+            .projected_content_nodes
+            .iter()
+            .any(|node| node.content.contains("beta tenant answer")));
         assert_eq!(alpha_page.total_count, 0);
         assert_eq!(beta_page.total_count, 0);
 
@@ -8142,10 +7681,10 @@ mod tests {
             Some("fixture-cards.analysis")
         );
         let projected = detail.questions[0]
-            .cards
+            .projected_content_nodes
             .iter()
-            .find(|card| card.card_id == part_id)
-            .expect("projected structured card");
+            .find(|node| node.part_id == part_id)
+            .expect("projected structured Content Node");
         assert_eq!(projected.semantic_role.as_deref(), Some("reasoning"));
         assert_eq!(projected.command_label.as_deref(), Some("DEBUG"));
         assert_eq!(stored_adapter.card_contract_version, Some(1));

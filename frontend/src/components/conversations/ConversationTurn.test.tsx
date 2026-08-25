@@ -26,13 +26,7 @@ const question: ConversationQuestionDetail = {
   question: {
     id: "question-1",
     session_id: "session-1",
-    question_index: 0,
     title: "Turn preview",
-    question_text: "First question",
-    answer_text: "Answer",
-    code_text: "",
-    command_text: "",
-    grouping_origin: "auto_merged",
     created_at: now,
     updated_at: now,
   },
@@ -107,13 +101,13 @@ describe("ConversationTurn", () => {
     const models = buildConversationTurnPresentations(question);
     expect(models).toHaveLength(2);
     expect(models[0]?.promptBlockId).toBe("turn-1-question");
-    expect(models[0]?.displayNodes?.[0]).toMatchObject({ type: "card", block: { id: "part-1-node-0" } });
-    expect(models[1]?.displayNodes?.[0]).toMatchObject({ type: "card", block: { id: "part-2-node-0" } });
-    expect(collectConversationTurnBlocks(models).map((block) => block.id)).toEqual(["part-1-node-0", "part-2-node-0"]);
+    expect(models[0]?.displayNodes?.[0]).toMatchObject({ type: "card", block: { id: "part-1" } });
+    expect(models[1]?.displayNodes?.[0]).toMatchObject({ type: "card", block: { id: "part-2" } });
+    expect(collectConversationTurnBlocks(models).map((block) => block.id)).toEqual(["part-1", "part-2"]);
 
     const index = buildConversationBlockTurnIndex(models);
     expect(index.get("turn-1-question")).toBe("turn-1");
-    expect(index.get("part-2-node-0")).toBe("turn-2");
+    expect(index.get("part-2")).toBe("turn-2");
   });
 
   it("keeps prompt, split, empty, and content card presentation inside one memoized turn", () => {
@@ -146,7 +140,7 @@ describe("ConversationTurn", () => {
     expect(html).toContain('data-conversation-turn-id="turn-1"');
     expect(html).toContain("First question");
     expect(html).toContain("First answer");
-    expect(html).toContain('data-conversation-card-id="part-1-node-0"');
+    expect(html).toContain('data-conversation-card-id="part-1"');
   });
 
   it("renders multiple projected command nodes from one source execution", () => {
@@ -182,7 +176,7 @@ function projectedNode(
   content: string,
 ): ConversationContentNode {
   return {
-    node_id: `${partId}-node-0`,
+    node_id: partId,
     locator: {
       question_id: "question-1",
       turn_id: turnId,

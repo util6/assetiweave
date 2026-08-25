@@ -110,14 +110,8 @@ export function createConversationRenderingStressFixture(): RenderingStressFixtu
   return {
     parts: [],
     question: {
-      answer_text: "Deterministic rendering stress fixture",
-      code_text: "",
-      command_text: "",
       created_at: FIXTURE_TIMESTAMP,
-      grouping_origin: "imported",
       id: "rendering-stress-question",
-      question_index: 0,
-      question_text: "Render the deterministic conversation stress fixture.",
       session_id: "rendering-stress-session",
       title: "Rendering stress fixture",
       updated_at: FIXTURE_TIMESTAMP,

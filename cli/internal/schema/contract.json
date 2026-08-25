@@ -84,6 +84,9 @@
     "conversation.adapter_package.update",
     "conversation.adapter_package.uninstall",
     "conversation.sync",
+    "conversation.data.audit",
+    "conversation.data.repair",
+    "conversation.data.rollback",
     "conversation.session.list",
     "conversation.search",
     "conversation.search.incremental",
@@ -221,6 +224,9 @@
     "uninstall_conversation_adapter_package",
     "install_conversation_script",
     "sync_conversations",
+    "audit_conversation_data",
+    "repair_conversation_data",
+    "rollback_conversation_data",
     "list_conversation_sessions",
     "get_conversation_session",
     "export_conversation_session",
@@ -4523,6 +4529,166 @@
         "required": []
       },
       "cli": "assetiweave-cli conversation sync",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "conversation.data.audit",
+      "canonical_method": "conversation.data.audit",
+      "description": "Audit conversation membership, source facts, and search index consistency",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "properties": {
+          "source_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Optional source identifier",
+            "aliases": [
+              "sourceId"
+            ]
+          },
+          "record_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Optional conversation record kind",
+            "aliases": [
+              "recordKind"
+            ]
+          },
+          "include_resolved": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include resolved audit records",
+            "aliases": [
+              "includeResolved"
+            ]
+          }
+        },
+        "type": "object",
+        "additionalProperties": false,
+        "required": []
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "conversation.data.repair",
+      "canonical_method": "conversation.data.repair",
+      "description": "Repair safe conversation data issues and rebuild conversation search",
+      "risk": "high-risk-write",
+      "confirmation_required": true,
+      "exposure": "friendly",
+      "supports_dry_run": true,
+      "params_schema": {
+        "properties": {
+          "source_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Optional source identifier",
+            "aliases": [
+              "sourceId"
+            ]
+          },
+          "record_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Optional conversation record kind",
+            "aliases": [
+              "recordKind"
+            ]
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Preview repairs without writing",
+            "aliases": [
+              "dryRun"
+            ]
+          },
+          "create_backup": {
+            "type": "boolean",
+            "default": true,
+            "description": "Create a verified database backup before apply",
+            "aliases": [
+              "createBackup"
+            ]
+          },
+          "yes": {
+            "type": "boolean",
+            "default": false,
+            "description": "Confirm applying repairs"
+          },
+          "resync": {
+            "type": "boolean",
+            "default": false,
+            "description": "resync"
+          }
+        },
+        "type": "object",
+        "additionalProperties": false,
+        "required": []
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "conversation.data.rollback",
+      "canonical_method": "conversation.data.rollback",
+      "description": "Restore the database from a conversation maintenance backup; restart afterward",
+      "risk": "high-risk-write",
+      "confirmation_required": true,
+      "exposure": "friendly",
+      "supports_dry_run": true,
+      "params_schema": {
+        "required": [
+          "backup_path"
+        ],
+        "type": "object",
+        "properties": {
+          "backup_path": {
+            "type": "string",
+            "description": "Verified database backup path",
+            "aliases": [
+              "backupPath"
+            ]
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Preview rollback without replacing the database",
+            "aliases": [
+              "dryRun"
+            ]
+          },
+          "yes": {
+            "type": "boolean",
+            "default": false,
+            "description": "Confirm restoring the backup"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
       "since": "0.1.0",
       "deprecated": false
     },
@@ -11693,6 +11859,166 @@
         "type": "object",
         "additionalProperties": false,
         "required": []
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "audit_conversation_data",
+      "canonical_method": "conversation.data.audit",
+      "description": "Audit conversation membership, source facts, and search index consistency",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "properties": {
+          "source_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Optional source identifier",
+            "aliases": [
+              "sourceId"
+            ]
+          },
+          "record_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Optional conversation record kind",
+            "aliases": [
+              "recordKind"
+            ]
+          },
+          "include_resolved": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include resolved audit records",
+            "aliases": [
+              "includeResolved"
+            ]
+          }
+        },
+        "type": "object",
+        "additionalProperties": false,
+        "required": []
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "repair_conversation_data",
+      "canonical_method": "conversation.data.repair",
+      "description": "Repair safe conversation data issues and rebuild conversation search",
+      "risk": "high-risk-write",
+      "confirmation_required": true,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "properties": {
+          "source_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Optional source identifier",
+            "aliases": [
+              "sourceId"
+            ]
+          },
+          "record_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Optional conversation record kind",
+            "aliases": [
+              "recordKind"
+            ]
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Preview repairs without writing",
+            "aliases": [
+              "dryRun"
+            ]
+          },
+          "create_backup": {
+            "type": "boolean",
+            "default": true,
+            "description": "Create a verified database backup before apply",
+            "aliases": [
+              "createBackup"
+            ]
+          },
+          "yes": {
+            "type": "boolean",
+            "default": false,
+            "description": "Confirm applying repairs"
+          },
+          "resync": {
+            "type": "boolean",
+            "default": false,
+            "description": "resync"
+          }
+        },
+        "type": "object",
+        "additionalProperties": false,
+        "required": []
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "rollback_conversation_data",
+      "canonical_method": "conversation.data.rollback",
+      "description": "Restore the database from a conversation maintenance backup; restart afterward",
+      "risk": "high-risk-write",
+      "confirmation_required": true,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "backup_path"
+        ],
+        "type": "object",
+        "properties": {
+          "backup_path": {
+            "type": "string",
+            "description": "Verified database backup path",
+            "aliases": [
+              "backupPath"
+            ]
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Preview rollback without replacing the database",
+            "aliases": [
+              "dryRun"
+            ]
+          },
+          "yes": {
+            "type": "boolean",
+            "default": false,
+            "description": "Confirm restoring the backup"
+          }
+        },
+        "additionalProperties": false
       },
       "cli": null,
       "since": "0.1.0",

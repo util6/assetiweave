@@ -1517,6 +1517,56 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli conversation sync")
     ),
     command!(
+        "conversation.data.audit",
+        "conversation.data.audit",
+        "Audit conversation membership, source facts, and search index consistency",
+        Read,
+        Friendly,
+        false,
+        crate::backend::application::ConversationDataAuditParams,
+        Service => |service, params| service.audit_conversation_data(params),
+        &[
+            param!("source_id", "Optional source identifier", ["sourceId"]),
+            param!("record_kind", "Optional conversation record kind", ["recordKind"]),
+            param!("include_resolved", "Include resolved audit records", ["includeResolved"]),
+        ],
+        None
+    ),
+    command!(
+        "conversation.data.repair",
+        "conversation.data.repair",
+        "Repair safe conversation data issues and rebuild conversation search",
+        HighRiskWrite,
+        Friendly,
+        true,
+        crate::backend::application::ConversationDataRepairParams,
+        Service => |service, params| service.repair_conversation_data(params),
+        &[
+            param!("source_id", "Optional source identifier", ["sourceId"]),
+            param!("record_kind", "Optional conversation record kind", ["recordKind"]),
+            param!("dry_run", "Preview repairs without writing", ["dryRun"]),
+            param!("create_backup", "Create a verified database backup before apply", ["createBackup"]),
+            param!("yes", "Confirm applying repairs"),
+        ],
+        None
+    ),
+    command!(
+        "conversation.data.rollback",
+        "conversation.data.rollback",
+        "Restore the database from a conversation maintenance backup; restart afterward",
+        HighRiskWrite,
+        Friendly,
+        true,
+        crate::backend::application::ConversationDataRollbackParams,
+        Service => |service, params| service.rollback_conversation_data(params),
+        &[
+            param!("backup_path", "Verified database backup path", ["backupPath"]),
+            param!("dry_run", "Preview rollback without replacing the database", ["dryRun"]),
+            param!("yes", "Confirm restoring the backup"),
+        ],
+        None
+    ),
+    command!(
         "conversation.session.list",
         "conversation.session.list",
         "List imported conversation sessions",
@@ -3509,6 +3559,56 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("adapter_id", "Optional adapter identifier", ["adapterId"]),
             param!("record_kind", "Conversation record kind", ["recordKind"]),
             param!("dry_run", "Preview without importing", ["dryRun"]),
+        ],
+        None
+    ),
+    command!(
+        "audit_conversation_data",
+        "conversation.data.audit",
+        "Audit conversation membership, source facts, and search index consistency",
+        Read,
+        App,
+        false,
+        crate::backend::application::ConversationDataAuditParams,
+        Service => |service, params| service.audit_conversation_data(params),
+        &[
+            param!("source_id", "Optional source identifier", ["sourceId"]),
+            param!("record_kind", "Optional conversation record kind", ["recordKind"]),
+            param!("include_resolved", "Include resolved audit records", ["includeResolved"]),
+        ],
+        None
+    ),
+    command!(
+        "repair_conversation_data",
+        "conversation.data.repair",
+        "Repair safe conversation data issues and rebuild conversation search",
+        HighRiskWrite,
+        App,
+        false,
+        crate::backend::application::ConversationDataRepairParams,
+        Service => |service, params| service.repair_conversation_data(params),
+        &[
+            param!("source_id", "Optional source identifier", ["sourceId"]),
+            param!("record_kind", "Optional conversation record kind", ["recordKind"]),
+            param!("dry_run", "Preview repairs without writing", ["dryRun"]),
+            param!("create_backup", "Create a verified database backup before apply", ["createBackup"]),
+            param!("yes", "Confirm applying repairs"),
+        ],
+        None
+    ),
+    command!(
+        "rollback_conversation_data",
+        "conversation.data.rollback",
+        "Restore the database from a conversation maintenance backup; restart afterward",
+        HighRiskWrite,
+        App,
+        false,
+        crate::backend::application::ConversationDataRollbackParams,
+        Service => |service, params| service.rollback_conversation_data(params),
+        &[
+            param!("backup_path", "Verified database backup path", ["backupPath"]),
+            param!("dry_run", "Preview rollback without replacing the database", ["dryRun"]),
+            param!("yes", "Confirm restoring the backup"),
         ],
         None
     ),

@@ -10,10 +10,10 @@ use crate::adapters::prompt_clipboard::{
 use crate::adapters::tauri::app_icon::set_application_icon;
 use crate::adapters::tauri::background_tasks::{
     AiExecutionTaskGetParams, AiExecutionTaskSnapshot, BackgroundTaskRegistry,
-    BackgroundTaskStatus, BatchMountTaskSnapshot, ConversationScriptInstallTaskSnapshot,
-    ConversationSearchIndexTaskSnapshot, ConversationSyncTaskSnapshot, MemoryTaskSnapshot,
-    RemoteSkillAcquireTaskSnapshot, SkillBackupTaskSnapshot, SourceScanScope,
-    SourceScanTaskSnapshot,
+    BackgroundTaskStatus, BatchMountTaskSnapshot, ConversationDataMaintenanceTaskSnapshot,
+    ConversationScriptInstallTaskSnapshot, ConversationSearchIndexTaskSnapshot,
+    ConversationSyncTaskSnapshot, MemoryTaskSnapshot, RemoteSkillAcquireTaskSnapshot,
+    SkillBackupTaskSnapshot, SourceScanScope, SourceScanTaskSnapshot,
 };
 #[cfg(test)]
 use crate::backend::capabilities::{
@@ -34,14 +34,15 @@ use crate::{
         AiExecutionPhase, AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
     },
     backend::application::{
-        AppService, ConversationAdapterCatalogRefreshParams,
+        AppService, BackgroundTaskGetParams, ConversationAdapterCatalogRefreshParams,
         ConversationAdapterLocalRegisterParams, ConversationAdapterPackageCatalogParams,
         ConversationAdapterPackageChangeParams, ConversationAdapterPackageInspectParams,
         ConversationAdapterPackageInstallParams, ConversationAdapterPackageReleaseListParams,
         ConversationAdapterPackageUninstallParams, ConversationAdapterPackageUpdateCheckParams,
         ConversationAdapterPackageUpdatePolicyParams,
         ConversationAdapterPackageVersionChangeParams, ConversationAdapterUnregisterParams,
-        ConversationBlockGetParams, ConversationBlockListParams,
+        ConversationBlockGetParams, ConversationBlockListParams, ConversationDataAuditParams,
+        ConversationDataRepairParams, ConversationDataRollbackParams,
         ConversationPartTranslationUpdateParams, ConversationQuestionGetParams,
         ConversationQuestionListParams, ConversationQuestionMergeParams,
         ConversationQuestionSplitParams, ConversationScriptCatalogParams,
@@ -52,10 +53,10 @@ use crate::{
         MemoryCandidateAcceptParams, MemoryDreamGetParams, MemoryDreamListParams,
         MemoryDreamPreviewParams, MemoryDreamRunParams, MemoryDreamScopeParams,
         MemoryItemCreateParams, MemoryItemGetParams, MemoryItemListParams, MemoryItemUpdateParams,
-        MemoryRecallPreviewParams, MemoryRecallRunParams, MemoryTaskGetParams,
-        MemoryTaskStartParams, MemoryVerifyParams, SkillAcquireParams, SkillRemoteCheckParams,
-        SkillSearchParams, SkillSearchResult, SourceRemoveParams, SourceScanParams,
-        TenantCreateParams, UpdateSkillBackupSettingsParams,
+        MemoryRecallPreviewParams, MemoryRecallRunParams, MemoryTaskStartParams,
+        MemoryVerifyParams, SkillAcquireParams, SkillRemoteCheckParams, SkillSearchParams,
+        SkillSearchResult, SourceRemoveParams, SourceScanParams, TenantCreateParams,
+        UpdateSkillBackupSettingsParams,
     },
     backend::card_translation::{
         prepare_opencode_agent_translation, ConversationTranslationConnectionRequest,
@@ -548,7 +549,7 @@ pub(crate) fn start_memory_task(
 #[tauri::command]
 pub(crate) fn get_memory_task(
     state: State<'_, AppState>,
-    params: MemoryTaskGetParams,
+    params: BackgroundTaskGetParams,
 ) -> RuntimeAppResult<Option<MemoryTaskSnapshot>> {
     let tenant_id = state.runtime.context().tenant.id.clone();
     state
@@ -570,7 +571,7 @@ pub(crate) fn list_memory_tasks(
 pub(crate) fn cancel_memory_task(
     app: AppHandle,
     state: State<'_, AppState>,
-    params: MemoryTaskGetParams,
+    params: BackgroundTaskGetParams,
 ) -> RuntimeAppResult<MemoryTaskSnapshot> {
     let tenant_id = state.runtime.context().tenant.id.clone();
     let snapshot = state
@@ -2717,6 +2718,161 @@ pub(crate) fn list_conversation_sync_tasks(
 }
 
 #[tauri::command]
+pub(crate) fn audit_conversation_data(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: ConversationDataAuditParams,
+) -> RuntimeAppResult<ConversationDataMaintenanceTaskSnapshot> {
+    start_conversation_data_maintenance_background(
+        app,
+        state.runtime.clone(),
+        state.background_tasks.clone(),
+        "audit",
+        params,
+        None,
+    )
+}
+
+#[tauri::command]
+pub(crate) fn repair_conversation_data(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: ConversationDataRepairParams,
+) -> RuntimeAppResult<ConversationDataMaintenanceTaskSnapshot> {
+    let audit_params = ConversationDataAuditParams {
+        source_id: params.source_id.clone(),
+        record_kind: params.record_kind.clone(),
+        include_resolved: false,
+    };
+    start_conversation_data_maintenance_background(
+        app,
+        state.runtime.clone(),
+        state.background_tasks.clone(),
+        "repair",
+        audit_params,
+        Some(params),
+    )
+}
+
+fn start_conversation_data_maintenance_background(
+    app: AppHandle,
+    runtime: std::sync::Arc<crate::backend::runtime::AppRuntime>,
+    background_tasks: std::sync::Arc<BackgroundTaskRegistry>,
+    operation: &'static str,
+    audit_params: ConversationDataAuditParams,
+    repair_params: Option<ConversationDataRepairParams>,
+) -> RuntimeAppResult<ConversationDataMaintenanceTaskSnapshot> {
+    let tenant_id = runtime.context().tenant.id.clone();
+    let dry_run = repair_params
+        .as_ref()
+        .map(|params| params.dry_run)
+        .unwrap_or(true);
+    let (snapshot, should_start) = background_tasks
+        .begin_conversation_data_maintenance_for_tenant(
+            &tenant_id,
+            operation,
+            audit_params.source_id.clone(),
+            audit_params.record_kind.clone(),
+            dry_run,
+        )?;
+    if !should_start {
+        return Ok(snapshot);
+    }
+
+    let task_id = snapshot.id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let service = AppService::from_runtime(&runtime);
+            let progress_tasks = background_tasks.clone();
+            let progress_app = app.clone();
+            let progress_task_id = task_id.clone();
+            let mut on_progress = move |completed_stage: usize,
+                                        total_stage: usize,
+                                        note: Option<String>| {
+                if let Ok(snapshot) = progress_tasks.update_conversation_data_maintenance_progress(
+                    &progress_task_id,
+                    completed_stage,
+                    total_stage,
+                    note.clone(),
+                ) {
+                    if let Err(error) =
+                        progress_app.emit("conversation-data-maintenance-task-updated", &snapshot)
+                    {
+                        log_error(
+                            "conversation.data.maintenance",
+                            "推送对话数据维护进度失败",
+                            &error.to_string(),
+                            &[("task_id", progress_task_id.clone())],
+                        );
+                    }
+                }
+            };
+            if let Some(params) = repair_params {
+                service.repair_conversation_data_with_progress(params, &mut on_progress)
+            } else {
+                service.audit_conversation_data_with_progress(audit_params, &mut on_progress)
+            }
+        }))
+        .unwrap_or_else(|_| {
+            Err(AppError::Process(
+                "conversation data maintenance task panicked".to_string(),
+            ))
+        });
+        match background_tasks.finish_conversation_data_maintenance(&task_id, result) {
+            Ok(snapshot) => {
+                let _ = app.emit("conversation-data-maintenance-task-updated", &snapshot);
+            }
+            Err(error) => log_error(
+                "conversation.data.maintenance",
+                "更新对话数据维护任务状态失败",
+                &error,
+                &[("task_id", task_id)],
+            ),
+        }
+    });
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub(crate) fn get_conversation_data_maintenance_task(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Option<ConversationDataMaintenanceTaskSnapshot>> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    state
+        .background_tasks
+        .conversation_data_maintenance_snapshot_for_tenant(&tenant_id)
+}
+
+#[tauri::command]
+pub(crate) fn list_conversation_data_maintenance_tasks(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Vec<ConversationDataMaintenanceTaskSnapshot>> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    state
+        .background_tasks
+        .conversation_data_maintenance_snapshots_for_tenant(&tenant_id)
+}
+
+#[tauri::command]
+pub(crate) fn cancel_conversation_data_maintenance(
+    state: State<'_, AppState>,
+    params: BackgroundTaskGetParams,
+) -> RuntimeAppResult<ConversationDataMaintenanceTaskSnapshot> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    state
+        .background_tasks
+        .cancel_conversation_data_maintenance_for_tenant(&tenant_id, &params.task_id)
+}
+
+#[tauri::command]
+pub(crate) fn rollback_conversation_data(
+    state: State<'_, AppState>,
+    params: ConversationDataRollbackParams,
+) -> RuntimeAppResult<Value> {
+    AppService::from_runtime(&state.runtime).rollback_conversation_data(params)
+}
+
+#[tauri::command]
 pub(crate) async fn list_conversation_sessions(
     state: State<'_, AppState>,
     params: ConversationSessionListParams,
@@ -3447,6 +3603,12 @@ pub(crate) fn command_handler(
         sync_conversations,
         get_conversation_sync_task,
         list_conversation_sync_tasks,
+        audit_conversation_data,
+        repair_conversation_data,
+        get_conversation_data_maintenance_task,
+        list_conversation_data_maintenance_tasks,
+        cancel_conversation_data_maintenance,
+        rollback_conversation_data,
         list_conversation_sessions,
         get_conversation_session,
         export_conversation_session,

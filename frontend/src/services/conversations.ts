@@ -139,6 +139,7 @@ export type ConversationSyncTaskStatus = "running" | "completed" | "failed";
 
 const CONVERSATION_SYNC_TASK_UPDATED_EVENT = "conversation-sync-task-updated";
 const CONVERSATION_SEARCH_INDEX_TASK_UPDATED_EVENT = "conversation-search-index-task-updated";
+const CONVERSATION_DATA_MAINTENANCE_TASK_UPDATED_EVENT = "conversation-data-maintenance-task-updated";
 
 export type ConversationScriptCatalogSourceKind = "github" | "artifact_zip" | "local_directory";
 
@@ -317,6 +318,46 @@ export interface ConversationSyncTaskProgress {
   completed_source_count: number;
   total_source_count: number;
   current_source_name: string | null;
+}
+
+export type ConversationDataMaintenanceOperation = "audit" | "repair";
+export type ConversationDataMaintenanceTaskStatus =
+  | "running"
+  | "cancelling"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface ConversationDataMaintenanceTaskSnapshot {
+  id: string;
+  status: ConversationDataMaintenanceTaskStatus;
+  operation: ConversationDataMaintenanceOperation;
+  source_id: string | null;
+  record_kind: ConversationRecordKind | null;
+  dry_run: boolean;
+  progress: {
+    phase: string;
+    completed_stage: number;
+    total_stage: number;
+    note: string | null;
+  };
+  started_at: string;
+  finished_at: string | null;
+  result: unknown | null;
+  error: AppErrorView | null;
+}
+
+export interface ConversationDataAuditParams {
+  source_id?: string | null;
+  record_kind?: ConversationRecordKind | null;
+  include_resolved?: boolean;
+}
+
+export interface ConversationDataRepairParams extends ConversationDataAuditParams {
+  dry_run?: boolean;
+  create_backup?: boolean;
+  yes?: boolean;
+  resync?: boolean;
 }
 
 export interface ConversationSearchIndexStatus {
@@ -1094,6 +1135,103 @@ export async function getConversationSyncTask(): Promise<ConversationSyncTaskSna
   }
 }
 
+export async function auditConversationData(
+  params: ConversationDataAuditParams = {},
+): Promise<ConversationDataMaintenanceTaskSnapshot> {
+  try {
+    return await invoke<ConversationDataMaintenanceTaskSnapshot>("audit_conversation_data", { params });
+  } catch (error) {
+    if (isTauriRuntime()) throw error;
+    return previewConversationDataMaintenanceTask("audit", params, false);
+  }
+}
+
+export async function repairConversationData(
+  params: ConversationDataRepairParams = {},
+): Promise<ConversationDataMaintenanceTaskSnapshot> {
+  try {
+    return await invoke<ConversationDataMaintenanceTaskSnapshot>("repair_conversation_data", { params });
+  } catch (error) {
+    if (isTauriRuntime()) throw error;
+    return previewConversationDataMaintenanceTask("repair", params, Boolean(params.dry_run));
+  }
+}
+
+export async function getConversationDataMaintenanceTask(): Promise<ConversationDataMaintenanceTaskSnapshot | null> {
+  try {
+    return await invoke<ConversationDataMaintenanceTaskSnapshot | null>(
+      "get_conversation_data_maintenance_task",
+    );
+  } catch (error) {
+    if (isTauriRuntime()) throw error;
+    return null;
+  }
+}
+
+export async function listConversationDataMaintenanceTasks(): Promise<ConversationDataMaintenanceTaskSnapshot[]> {
+  try {
+    return await invoke<ConversationDataMaintenanceTaskSnapshot[]>(
+      "list_conversation_data_maintenance_tasks",
+    );
+  } catch (error) {
+    if (isTauriRuntime()) throw error;
+    return [];
+  }
+}
+
+export function subscribeConversationDataMaintenanceTasks(
+  listener: (snapshot: ConversationDataMaintenanceTaskSnapshot) => void,
+) {
+  if (!isTauriRuntime()) {
+    return Promise.resolve(() => undefined);
+  }
+  return listen<ConversationDataMaintenanceTaskSnapshot>(
+    CONVERSATION_DATA_MAINTENANCE_TASK_UPDATED_EVENT,
+    (event) => listener(event.payload),
+  );
+}
+
+export async function cancelConversationDataMaintenance(taskId: string) {
+  return invoke<ConversationDataMaintenanceTaskSnapshot>(
+    "cancel_conversation_data_maintenance",
+    { params: { task_id: taskId } },
+  );
+}
+
+export async function rollbackConversationData(params: {
+  backup_path: string;
+  dry_run?: boolean;
+  yes?: boolean;
+}) {
+  return invoke<unknown>("rollback_conversation_data", { params });
+}
+
+function previewConversationDataMaintenanceTask(
+  operation: ConversationDataMaintenanceOperation,
+  params: ConversationDataAuditParams,
+  dryRun: boolean,
+): ConversationDataMaintenanceTaskSnapshot {
+  const now = new Date().toISOString();
+  return {
+    id: `preview-conversation-data-${operation}`,
+    status: "completed",
+    operation,
+    source_id: params.source_id ?? null,
+    record_kind: params.record_kind ?? null,
+    dry_run: dryRun,
+    progress: {
+      phase: "completed",
+      completed_stage: 10,
+      total_stage: 10,
+      note: "browser preview",
+    },
+    started_at: now,
+    finished_at: now,
+    result: { preview: true },
+    error: null,
+  };
+}
+
 export function subscribeConversationSyncTasks(
   listener: (snapshot: ConversationSyncTaskSnapshot) => void,
 ) {
@@ -1457,7 +1595,7 @@ function fallbackConversationSearch(params: Required<Pick<ConversationSearchPara
     ?? (allowedTypes.size === 0 || allowedCardKinds.size > 0 || allowedSemanticRoles.size > 0);
   const hits: ConversationSearchHit[] = [];
 
-  for (const questionDetail of detail.questions) {
+  for (const [questionIndex, questionDetail] of detail.questions.entries()) {
     const questionTitle = conversationQuestionTitle(questionDetail) ?? "Untitled question";
     for (const turn of questionDetail.turns) {
       if (includeQuestions) pushFallbackHit(hits, {
@@ -1466,6 +1604,7 @@ function fallbackConversationSearch(params: Required<Pick<ConversationSearchPara
         needle,
         partId: null,
         questionDetail,
+        questionIndex,
         questionTitle,
         session,
         text: turn.user_text,
@@ -1488,6 +1627,7 @@ function fallbackConversationSearch(params: Required<Pick<ConversationSearchPara
           needle,
           partId: node.part_id,
           questionDetail,
+          questionIndex,
           questionTitle,
           session,
           text: node.content,
@@ -1558,6 +1698,7 @@ function pushFallbackHit(
     needle: string;
     partId: string | null;
     questionDetail: ConversationQuestionDetail;
+    questionIndex: number;
     questionTitle: string;
     session: ConversationSessionListItem;
     text?: string | null;
@@ -1573,7 +1714,7 @@ function pushFallbackHit(
     card_type: params.cardType,
     part_id: params.partId,
     question_id: params.questionDetail.question.id,
-    question_index: params.questionDetail.question.question_index,
+    question_index: params.questionIndex,
     question_title: params.questionTitle,
     score: Math.max(1, text.toLowerCase().split(params.needle).length - 1) * 100,
     session: params.session,
@@ -2023,13 +2164,7 @@ const fallbackSessionDetail: ConversationSessionDetail = {
       question: {
         id: "preview-question-1",
         session_id: "preview-session",
-        question_index: 0,
         title: "How does conversation sync work?",
-        question_text: "How does conversation sync work?\n\n继续",
-        answer_text: "AssetIWeave imports source sessions into normalized turns, then groups adjacent turns into question records.",
-        code_text: "",
-        command_text: "assetiweave-cli conversation sync --source codex-live",
-        grouping_origin: "auto_merged",
         created_at: now,
         updated_at: now,
       },
@@ -2099,7 +2234,7 @@ const fallbackSessionDetail: ConversationSessionDetail = {
       ],
       projected_content_nodes: [
         fallbackContentNode({
-          nodeId: "preview-part-1-node-0",
+          nodeId: "preview-part-1",
           questionId: "preview-question-1",
           turnId: "preview-turn-1",
           partId: "preview-part-1",
@@ -2110,7 +2245,7 @@ const fallbackSessionDetail: ConversationSessionDetail = {
           content: "AssetIWeave imports source sessions into normalized turns, then groups adjacent turns into question records.",
         }),
         fallbackContentNode({
-          nodeId: "preview-part-2-node-0",
+          nodeId: "preview-part-2",
           questionId: "preview-question-1",
           turnId: "preview-turn-2",
           partId: "preview-part-2",
@@ -2126,13 +2261,7 @@ const fallbackSessionDetail: ConversationSessionDetail = {
       question: {
         id: "preview-question-2",
         session_id: "preview-session",
-        question_index: 1,
         title: "Export this session",
-        question_text: "Export this session",
-        answer_text: "Use session export to write one Markdown file per session.",
-        code_text: "",
-        command_text: "",
-        grouping_origin: "imported",
         created_at: now,
         updated_at: now,
       },
@@ -2173,7 +2302,7 @@ const fallbackSessionDetail: ConversationSessionDetail = {
       ],
       projected_content_nodes: [
         fallbackContentNode({
-          nodeId: "preview-part-3-node-0",
+          nodeId: "preview-part-3",
           questionId: "preview-question-2",
           turnId: "preview-turn-3",
           partId: "preview-part-3",
@@ -2230,7 +2359,7 @@ const fallbackWebSessionDetail: ConversationSessionDetail = {
       const questionId = `preview-web-question-${questionIndex + 1}`;
       return {
         ...node,
-        node_id: `${partId}-node-${node.node_order}`,
+        node_id: node.node_order === 0 ? partId : `${partId}-node-${node.node_order}`,
         question_id: questionId,
         turn_id: turnId,
         part_id: partId,

@@ -6,6 +6,10 @@ import {
   getConversationSearchIndexStatus,
   getConversationSearchIndexTask,
   getConversationSyncTask,
+  auditConversationData,
+  cancelConversationDataMaintenance,
+  listConversationDataMaintenanceTasks,
+  repairConversationData,
   listConversationSyncTasks,
   installConversationAdapterPackage,
   installConversationScript,
@@ -73,7 +77,7 @@ describe("conversation services", () => {
       record_kind: "session",
     })).resolves.toMatchObject({
       hits: [expect.objectContaining({
-        block_id: "preview-part-2-node-0",
+        block_id: "preview-part-2",
         card_type: "command",
         part_id: "preview-part-2",
       })],
@@ -593,6 +597,27 @@ describe("conversation services", () => {
 
     await expect(listConversationSyncTasks()).resolves.toHaveLength(2);
     expect(invokeMock).toHaveBeenCalledWith("list_conversation_sync_tasks");
+  });
+
+  it("starts and controls conversation data maintenance tasks", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock
+      .mockResolvedValueOnce({ id: "audit-1", status: "running", operation: "audit" })
+      .mockResolvedValueOnce({ id: "repair-1", status: "running", operation: "repair" })
+      .mockResolvedValueOnce([{ id: "repair-1", status: "completed", operation: "repair" }])
+      .mockResolvedValueOnce({ id: "repair-1", status: "cancelling", operation: "repair" });
+
+    await auditConversationData({ record_kind: "session" });
+    await repairConversationData({ dry_run: true, create_backup: false, resync: true });
+    await listConversationDataMaintenanceTasks();
+    await cancelConversationDataMaintenance("repair-1");
+
+    expect(invokeMock.mock.calls).toEqual([
+      ["audit_conversation_data", { params: { record_kind: "session" } }],
+      ["repair_conversation_data", { params: { dry_run: true, create_backup: false, resync: true } }],
+      ["list_conversation_data_maintenance_tasks"],
+      ["cancel_conversation_data_maintenance", { params: { task_id: "repair-1" } }],
+    ]);
   });
 
   it("summarizes completed sync task results for user-facing completion messages", () => {

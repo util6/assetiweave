@@ -6,6 +6,7 @@ mod card_translation;
 mod conversation_adapter_catalog_v2;
 mod conversation_adapter_installer;
 mod conversation_adapters;
+mod conversation_maintenance;
 mod conversation_records;
 mod conversation_script_catalog;
 mod conversation_search;

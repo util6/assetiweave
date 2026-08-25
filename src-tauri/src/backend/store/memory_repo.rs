@@ -49,7 +49,8 @@ pub(crate) async fn list_memory_recall_question_refs_sqlx(
       WITH all_questions AS (
         SELECT 'session' AS record_kind, s.source_id, s.id AS session_id,
                s.title AS session_title, s.project_path, q.id AS question_id,
-               q.question_index, q.created_at AS sort_time
+               ROW_NUMBER() OVER (PARTITION BY q.tenant_id, q.session_id ORDER BY q.created_at, q.id) - 1 AS question_index,
+               q.created_at AS sort_time
         FROM conversation_questions q
         JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id
         WHERE q.tenant_id=?1 AND (?2 IS NULL OR s.adapter_id=?2)
@@ -58,7 +59,8 @@ pub(crate) async fn list_memory_recall_question_refs_sqlx(
           AND (?7 IS NULL OR q.created_at>=?7) AND (?8 IS NULL OR q.created_at<=?8)
         UNION ALL
         SELECT 'web', s.source_id, s.id, s.title, NULL, q.id,
-               q.question_index, q.created_at
+               ROW_NUMBER() OVER (PARTITION BY q.tenant_id, q.session_id ORDER BY q.created_at, q.id) - 1 AS question_index,
+               q.created_at
         FROM web_record_questions q
         JOIN web_record_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id
         WHERE q.tenant_id=?1 AND (?2 IS NULL OR s.adapter_id=?2)
@@ -86,7 +88,8 @@ pub(crate) async fn list_memory_recall_question_refs_sqlx(
       WITH all_questions AS (
         SELECT 'session' AS record_kind, s.source_id, s.id AS session_id,
                s.title AS session_title, s.project_path, q.id AS question_id,
-               q.question_index, q.created_at AS sort_time
+               ROW_NUMBER() OVER (PARTITION BY q.tenant_id, q.session_id ORDER BY q.created_at, q.id) - 1 AS question_index,
+               q.created_at AS sort_time
         FROM conversation_questions q
         JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id
         WHERE q.tenant_id=?1 AND (?2 IS NULL OR s.adapter_id=?2)
@@ -95,7 +98,8 @@ pub(crate) async fn list_memory_recall_question_refs_sqlx(
           AND (?7 IS NULL OR q.created_at>=?7) AND (?8 IS NULL OR q.created_at<=?8)
         UNION ALL
         SELECT 'web', s.source_id, s.id, s.title, NULL, q.id,
-               q.question_index, q.created_at
+               ROW_NUMBER() OVER (PARTITION BY q.tenant_id, q.session_id ORDER BY q.created_at, q.id) - 1 AS question_index,
+               q.created_at
         FROM web_record_questions q
         JOIN web_record_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id
         WHERE q.tenant_id=?1 AND (?2 IS NULL OR s.adapter_id=?2)
@@ -159,11 +163,11 @@ async fn list_session_memory_recall_question_refs_sqlx(
         .map_err(AppError::external)?;
 
     let mut page = QueryBuilder::<Sqlite>::new(
-        "SELECT 'session' AS record_kind,s.source_id,s.id AS session_id,s.title AS session_title,s.project_path,q.id AS question_id,q.question_index FROM conversation_questions q JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id WHERE q.tenant_id=",
+        "SELECT 'session' AS record_kind,s.source_id,s.id AS session_id,s.title AS session_title,s.project_path,q.id AS question_id,ROW_NUMBER() OVER (PARTITION BY q.tenant_id, q.session_id ORDER BY q.created_at, q.id) - 1 AS question_index FROM conversation_questions q JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id WHERE q.tenant_id=",
     );
     page.push_bind(tenant_id);
     push_session_recall_scope(&mut page, scope, since, until, include_unavailable);
-    page.push(" ORDER BY q.created_at DESC,s.id,q.question_index,q.id LIMIT ");
+    page.push(" ORDER BY q.created_at DESC,s.id,q.created_at,q.id LIMIT ");
     page.push_bind(
         i64::try_from(limit)
             .map_err(|_| AppError::Validation("invalid Recall limit".to_string()))?,
@@ -661,7 +665,7 @@ pub(crate) async fn reconcile_memory_evidence_for_session_tx(
                         candidates.insert(question_id.to_string());
                     } else {
                         let current_question_ids = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!(
-                            "SELECT id FROM {questions_table} WHERE tenant_id = ?1 AND session_id = ?2 ORDER BY question_index, id"
+                            "SELECT id FROM {questions_table} WHERE tenant_id = ?1 AND session_id = ?2 ORDER BY created_at, id"
                         )))
                         .bind(tenant_id)
                         .bind(session_id)
@@ -1059,7 +1063,7 @@ async fn memory_evidence_projected_part_values(
         .map_err(AppError::external)?;
     let values = cards
         .iter()
-        .filter(|card| card.card_id == evidence.block_id)
+        .filter(|card| card.node_id == evidence.block_id)
         .map(|card| card.body.clone())
         .collect::<Vec<_>>();
     if values.is_empty() {
@@ -1228,7 +1232,7 @@ pub(crate) async fn load_memory_dream_delta_rows_sqlx(
               AND s.imported_at <= ?6
         ), question_rows AS (
             SELECT 'session' AS record_kind, q.session_id, q.id AS question_id,
-                   q.question_index,
+                   ROW_NUMBER() OVER (PARTITION BY q.tenant_id, q.session_id ORDER BY q.created_at, q.id) - 1 AS question_index,
                    COALESCE((
                        SELECT SUM(length(t.user_text))
                        FROM conversation_question_turns qt
@@ -1248,7 +1252,7 @@ pub(crate) async fn load_memory_dream_delta_rows_sqlx(
             WHERE q.tenant_id = ?1 AND s.missing = 0
             UNION ALL
             SELECT 'web' AS record_kind, q.session_id, q.id AS question_id,
-                   q.question_index,
+                   ROW_NUMBER() OVER (PARTITION BY q.tenant_id, q.session_id ORDER BY q.created_at, q.id) - 1 AS question_index,
                    COALESCE((
                        SELECT SUM(length(t.user_text))
                        FROM web_record_question_turns qt
@@ -2678,21 +2682,6 @@ mod tests {
         let (database, db_path) = test_database("evidence-remap");
         database
             .block_on(async {
-                for question_id in ["question-a", "question-b"] {
-                    sqlx::query(
-                        r#"INSERT INTO conversation_questions (
-                            tenant_id, id, session_id, question_index, title,
-                            question_text, answer_text, code_text, command_text,
-                            grouping_origin, created_at, updated_at
-                        ) VALUES ('default', ?1, 'remap-session', ?2, NULL, '', '', '', '',
-                                  'imported', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"#,
-                    )
-                    .bind(question_id)
-                    .bind(if question_id == "question-a" { 0 } else { 1 })
-                    .execute(database.pool())
-                    .await
-                    .map_err(AppError::external)?;
-                }
                 sqlx::query(
                     r#"INSERT INTO conversation_sessions (
                         tenant_id, id, source_id, adapter_id, external_id, title,
@@ -2703,6 +2692,18 @@ mod tests {
                 .execute(database.pool())
                 .await
                 .map_err(AppError::external)?;
+                for question_id in ["question-a", "question-b"] {
+                    sqlx::query(
+                        r#"INSERT INTO conversation_questions (
+                            tenant_id, id, session_id, title, created_at, updated_at
+                        ) VALUES ('default', ?1, 'remap-session', NULL,
+                                  '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"#,
+                    )
+                    .bind(question_id)
+                    .execute(database.pool())
+                    .await
+                    .map_err(AppError::external)?;
+                }
                 for (turn_id, question_id, turn_index) in [
                     ("turn-a", "question-a", 0_i64),
                     ("turn-b", "question-b", 1_i64),
@@ -3254,10 +3255,9 @@ mod tests {
                       VALUES(0) UNION ALL SELECT value+1 FROM ids WHERE value<99999
                     )
                     INSERT INTO conversation_questions (
-                      tenant_id,id,session_id,question_index,title,question_text,answer_text,
-                      code_text,command_text,grouping_origin,created_at,updated_at
-                    ) SELECT 'default','perf-question-'||value,'perf-session',value,
-                      'Question','question','answer','','','fixture',
+                      tenant_id,id,session_id,title,created_at,updated_at
+                    ) SELECT 'default','perf-question-'||value,'perf-session',
+                      'Question',
                       printf('2026-01-%02dT00:00:00Z',(value % 28)+1),
                       '2026-01-01T00:00:00Z' FROM ids"#,
                 )

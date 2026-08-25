@@ -20,6 +20,7 @@ pub(crate) const TASK_TERMINAL_LIMIT: usize = 100;
 #[serde(rename_all = "PascalCase")]
 pub(crate) enum TaskKind {
     ConversationSync,
+    ConversationDataMaintenance,
     SearchIndexRebuild,
     ScriptInstall,
     ExtensionLifecycle,

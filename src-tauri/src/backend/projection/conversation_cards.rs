@@ -1,4 +1,4 @@
-use crate::backend::dto::{ConversationCard, ConversationCardRenderer};
+use crate::backend::dto::ConversationCardRenderer;
 use crate::backend::models::ConversationCardKindDefinition;
 use crate::backend::models::{
     ConversationContentCardDescriptor, ConversationPart, NormalizedConversationPart,
@@ -8,6 +8,28 @@ use std::collections::BTreeSet;
 
 const CONTENT_CARD_SCHEMA_VERSION: u64 = 1;
 const MAX_CARD_KIND_LENGTH: usize = 128;
+
+/// Internal projection candidate. Cards are not part of the conversation read-model contract;
+/// they are converted to source-addressable Content Nodes before a detail DTO is returned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConversationCard {
+    pub(crate) node_id: String,
+    pub(crate) part_id: String,
+    pub(crate) adapter_id: String,
+    pub(crate) kind: String,
+    pub(crate) semantic_role: Option<String>,
+    pub(crate) renderer: ConversationCardRenderer,
+    pub(crate) role: crate::backend::models::ConversationPartRole,
+    pub(crate) body: String,
+    pub(crate) language: Option<String>,
+    pub(crate) cwd: Option<String>,
+    pub(crate) status: Option<String>,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) source_execution_id: Option<String>,
+    pub(crate) command_label: Option<String>,
+    pub(crate) translated_body: Option<String>,
+    pub(crate) legacy_anchor_ids: Vec<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedConversationContentCard {
@@ -84,7 +106,7 @@ pub(crate) fn project_conversation_content_card(
         }
     }
     Ok(Some(ConversationCard {
-        card_id: part.id.clone(),
+        node_id: part.id.clone(),
         part_id: part.id.clone(),
         adapter_id: adapter_id.to_string(),
         kind: card.kind,
@@ -128,7 +150,7 @@ pub(crate) fn project_conversation_content_cards(
         .enumerate()
         .map(|(node_order, (command, command_label))| {
             let mut card = base.clone();
-            card.card_id = format!("{}-node-{node_order}", part.id);
+            card.node_id = format!("{}-node-{node_order}", part.id);
             card.body = command;
             card.command_label = command_label;
             card.translated_body = None;
@@ -792,7 +814,7 @@ mod tests {
         assert_eq!(card.semantic_role.as_deref(), Some("reasoning"));
         assert_eq!(card.renderer, ConversationCardRenderer::Markdown);
         assert_eq!(card.body, "Visible body");
-        assert_eq!(card.card_id, "part-1");
+        assert_eq!(card.node_id, "part-1");
         assert_eq!(card.adapter_id, "claude-code");
     }
 
@@ -808,7 +830,7 @@ mod tests {
 
         assert_eq!(card.kind, "result");
         assert_eq!(card.renderer, ConversationCardRenderer::TerminalOutput);
-        assert_eq!(card.card_id, "part-1");
+        assert_eq!(card.node_id, "part-1");
         assert_eq!(card.legacy_anchor_ids, vec!["part-1-result"]);
     }
 
@@ -1027,8 +1049,8 @@ mod tests {
             .expect("project Codex shell nodes");
 
         assert_eq!(cards.len(), 2);
-        assert_eq!(cards[0].card_id, "part-1-node-0");
-        assert_eq!(cards[1].card_id, "part-1-node-1");
+        assert_eq!(cards[0].node_id, "part-1-node-0");
+        assert_eq!(cards[1].node_id, "part-1-node-1");
         assert_eq!(cards[0].part_id, "part-1");
         assert_eq!(cards[1].part_id, "part-1");
         assert_eq!(cards[0].body, "rg TODO");

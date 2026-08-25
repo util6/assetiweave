@@ -183,7 +183,7 @@ pub(crate) struct MemoryTaskStartParams {
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub(crate) struct MemoryTaskGetParams {
+pub(crate) struct BackgroundTaskGetParams {
     #[serde(alias = "taskId")]
     pub(crate) task_id: String,
 }
@@ -630,6 +630,46 @@ pub(crate) struct ConversationSyncParams {
     pub(crate) mode: ConversationSyncMode,
     #[serde(default, alias = "dryRun")]
     pub(crate) dry_run: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub(crate) struct ConversationDataAuditParams {
+    #[serde(default, alias = "sourceId")]
+    pub(crate) source_id: Option<String>,
+    #[serde(default, alias = "recordKind")]
+    pub(crate) record_kind: Option<String>,
+    #[serde(default, alias = "includeResolved")]
+    pub(crate) include_resolved: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub(crate) struct ConversationDataRepairParams {
+    #[serde(default, alias = "sourceId")]
+    pub(crate) source_id: Option<String>,
+    #[serde(default, alias = "recordKind")]
+    pub(crate) record_kind: Option<String>,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+    #[serde(default = "default_true", alias = "createBackup")]
+    pub(crate) create_backup: bool,
+    #[serde(default)]
+    pub(crate) yes: bool,
+    #[serde(default)]
+    pub(crate) resync: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct ConversationDataRollbackParams {
+    #[serde(alias = "backupPath")]
+    pub(crate) backup_path: String,
+    #[serde(default, alias = "dryRun")]
+    pub(crate) dry_run: bool,
+    #[serde(default)]
+    pub(crate) yes: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

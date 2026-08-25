@@ -7,9 +7,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ConversationContentCards,
   buildConversationContentBlocks,
-  buildConversationDisplayNodes,
+  buildConversationDisplayNodesFromNodes,
   conversationCardColor,
   type ConversationTranslationTaskController,
+  type ConversationContentBlockSeed,
 } from "./ConversationContentCards";
 import type { Translator } from "../../i18n/I18nProvider";
 import { messages, type TranslationParams } from "../../i18n/messages";
@@ -19,8 +20,7 @@ import type {
   ConversationPartTranslationUpdateRequest,
 } from "../../services/cardTranslation";
 import type {
-  ConversationCard,
-  LegacyConversationContentNode,
+  ConversationContentNode,
   ConversationPart,
 } from "../../types";
 
@@ -131,7 +131,7 @@ describe("ConversationContentCards", () => {
 
   it("renders an unknown namespaced kind through its Core renderer and stable card id", () => {
     const blocks = buildConversationContentBlocks([], [{
-      card_id: "conversation-part-stable",
+      node_id: "conversation-part-stable",
       part_id: "conversation-part-stable",
       adapter_id: "claude-code",
       kind: "claude-code.reasoning",
@@ -171,7 +171,7 @@ describe("ConversationContentCards", () => {
     revealPath.mockResolvedValue(undefined);
     const skillPath = "/Users/test/.codex/skills/session-exporter/SKILL.md";
     const blocks = buildConversationContentBlocks([], [{
-      card_id: "conversation-part-skill",
+      node_id: "conversation-part-skill",
       part_id: "conversation-part-skill",
       adapter_id: "codex",
       kind: "codex.skill",
@@ -203,7 +203,7 @@ describe("ConversationContentCards", () => {
 
   it("collapses namespaced built-in semantics to the existing card presentation type", () => {
     const blocks = buildConversationContentBlocks([], [{
-      card_id: "conversation-part-answer",
+      node_id: "conversation-part-answer",
       part_id: "conversation-part-answer",
       adapter_id: "claude-code",
       kind: "claude-code.answer",
@@ -317,64 +317,50 @@ describe("ConversationContentCards", () => {
   });
 
   it("builds Execution parents from backend indices without rematching interleaved results", () => {
-    const cards: ConversationCard[] = [
+    const cards = [
       projectedCard("command-a", "command", "pnpm typecheck"),
       projectedCard("command-b", "command", "pnpm test"),
       projectedCard("result-b", "result", "tests passed"),
       projectedCard("result-a", "result", "types passed"),
     ];
-    const nodes: LegacyConversationContentNode[] = [
-      {
-        type: "execution",
-        turn_id: "turn-1",
-        source_execution_id: "call-a",
-        command_card_index: 0,
-        result_card_indices: [3],
-      },
-      {
-        type: "execution",
-        turn_id: "turn-1",
-        source_execution_id: "call-b",
-        command_card_index: 1,
-        result_card_indices: [2],
-      },
-    ];
-
-    const displayNodes = buildConversationDisplayNodes(cards, nodes);
+    const displayNodes = buildConversationDisplayNodesFromNodes([
+      projectedNodeFromSeed(cards[0], "call-a", 0),
+      projectedNodeFromSeed(cards[1], "call-b", 1),
+      projectedNodeFromSeed(cards[2], "call-b", 2),
+      projectedNodeFromSeed(cards[3], "call-a", 3),
+    ]);
 
     expect(displayNodes).toEqual([
       {
         type: "execution",
         turnId: "turn-1",
         sourceExecutionId: "call-a",
-        command: expect.objectContaining({ id: "command-a", text: "pnpm typecheck" }),
+        commands: [expect.objectContaining({ id: "command-a", text: "pnpm typecheck" })],
         results: [expect.objectContaining({ id: "result-a", text: "types passed" })],
       },
       {
         type: "execution",
         turnId: "turn-1",
         sourceExecutionId: "call-b",
-        command: expect.objectContaining({ id: "command-b", text: "pnpm test" }),
+        commands: [expect.objectContaining({ id: "command-b", text: "pnpm test" })],
         results: [expect.objectContaining({ id: "result-b", text: "tests passed" })],
       },
     ]);
   });
 
   it("renders command and results as children of one Execution unit", () => {
-    const displayNodes = buildConversationDisplayNodes(
-      [
+    const displayNodes = buildConversationDisplayNodesFromNodes([
+      projectedNodeFromSeed(
         projectedCard("command-a", "command", "pnpm typecheck"),
+        "call-a",
+        0,
+      ),
+      projectedNodeFromSeed(
         projectedCard("result-a", "result", "types passed"),
-      ],
-      [{
-        type: "execution",
-        turn_id: "turn-1",
-        source_execution_id: "call-a",
-        command_card_index: 0,
-        result_card_indices: [1],
-      }],
-    );
-
+        "call-a",
+        1,
+      ),
+    ]);
     const html = renderToStaticMarkup(
       <ConversationContentCards
         blocks={[]}
@@ -413,29 +399,23 @@ describe("ConversationContentCards", () => {
   });
 
   it("removes command-only Execution shells while preserving paired executions", () => {
-    const displayNodes = buildConversationDisplayNodes(
-      [
+    const displayNodes = buildConversationDisplayNodesFromNodes([
+      projectedNodeFromSeed(
         projectedCard("command-format", "command", "cargo fmt --check"),
+        "call-checks:command:1",
+        0,
+      ),
+      projectedNodeFromSeed(
         projectedCard("command-test", "command", "cargo test"),
+        "call-checks:command:2",
+        1,
+      ),
+      projectedNodeFromSeed(
         projectedCard("result-test", "result", "tests passed"),
-      ],
-      [
-        {
-          type: "execution",
-          turn_id: "turn-1",
-          source_execution_id: "call-checks:command:1",
-          command_card_index: 0,
-          result_card_indices: [],
-        },
-        {
-          type: "execution",
-          turn_id: "turn-1",
-          source_execution_id: "call-checks:command:2",
-          command_card_index: 1,
-          result_card_indices: [2],
-        },
-      ],
-    );
+        "call-checks:command:2",
+        2,
+      ),
+    ]);
 
     const html = renderToStaticMarkup(
       <ConversationContentCards
@@ -447,8 +427,8 @@ describe("ConversationContentCards", () => {
     );
 
     expect(displayNodes[0]).toMatchObject({
-      type: "card",
-      block: { id: "command-format" },
+      type: "execution",
+      commands: [expect.objectContaining({ id: "command-format" })],
     });
     expect(html.match(/data-conversation-execution-id=/g)).toHaveLength(1);
     expect(html).not.toContain('data-conversation-execution-id="call-checks:command:1"');
@@ -509,7 +489,7 @@ describe("ConversationContentCards", () => {
 
   it("renders diff-language code cards with the unified diff viewer", () => {
     const blocks = buildConversationContentBlocks([], [{
-      card_id: "conversation-part-diff",
+      node_id: "conversation-part-diff",
       part_id: "conversation-part-diff",
       adapter_id: "codex",
       kind: "codex.code",
@@ -542,8 +522,8 @@ describe("ConversationContentCards", () => {
   });
 
   it("renders an adapter-defined file change as a standalone Diff card", () => {
-    const cards: ConversationCard[] = [{
-      card_id: "conversation-part-file-change",
+    const cards: ConversationContentBlockSeed[] = [{
+      node_id: "conversation-part-file-change",
       part_id: "conversation-part-file-change",
       adapter_id: "codex",
       kind: "codex.file-change",
@@ -559,13 +539,10 @@ describe("ConversationContentCards", () => {
       ].join("\n"),
       legacy_anchor_ids: [],
     }];
-    const contentNodes: LegacyConversationContentNode[] = [{
-      type: "card",
-      turn_id: "turn-1",
-      card_index: 0,
-    }];
     const blocks = buildConversationContentBlocks([], cards);
-    const nodes = buildConversationDisplayNodes(cards, contentNodes);
+    const nodes = buildConversationDisplayNodesFromNodes([
+      projectedNodeFromSeed(cards[0], undefined, 0),
+    ]);
 
     expect(nodes).toMatchObject([{
       type: "card",
@@ -593,7 +570,7 @@ describe("ConversationContentCards", () => {
 
   it("keeps standalone Diff statistics accurate when the collapsed preview is truncated", () => {
     const blocks = buildConversationContentBlocks([], [{
-      card_id: "conversation-part-collapsed-file-change",
+      node_id: "conversation-part-collapsed-file-change",
       part_id: "conversation-part-collapsed-file-change",
       adapter_id: "codex",
       kind: "codex.file-change",
@@ -630,7 +607,7 @@ describe("ConversationContentCards", () => {
 
   it("summarizes terminal output cards whose body is a unified diff", () => {
     const blocks = buildConversationContentBlocks([], [{
-      card_id: "conversation-part-terminal-diff",
+      node_id: "conversation-part-terminal-diff",
       part_id: "conversation-part-terminal-diff",
       adapter_id: "opencode",
       kind: "opencode.result",
@@ -663,7 +640,7 @@ describe("ConversationContentCards", () => {
 
   it("opens a result diff in the Diff component on demand", async () => {
     const card = {
-      card_id: "conversation-part-expandable-diff",
+      node_id: "conversation-part-expandable-diff",
       part_id: "conversation-part-expandable-diff",
       adapter_id: "opencode",
       kind: "opencode.result",
@@ -695,7 +672,7 @@ describe("ConversationContentCards", () => {
 
   it("splits one persisted multi-file result diff into separate visual file sections", async () => {
     const card = {
-      card_id: "conversation-part-multi-file-diff",
+      node_id: "conversation-part-multi-file-diff",
       part_id: "conversation-part-multi-file-diff",
       adapter_id: "codex",
       kind: "codex.result",
@@ -736,7 +713,7 @@ describe("ConversationContentCards", () => {
 
   it("keeps ordinary plain output and shell transcripts in the plain viewer", () => {
     const blocks = buildConversationContentBlocks([], [{
-      card_id: "conversation-part-plain-output",
+      node_id: "conversation-part-plain-output",
       part_id: "conversation-part-plain-output",
       adapter_id: "claude-code",
       kind: "claude-code.result",
@@ -761,7 +738,7 @@ describe("ConversationContentCards", () => {
 
   it("does not treat git show transcripts with commit headers as unified diffs", () => {
     const blocks = buildConversationContentBlocks([], [{
-      card_id: "conversation-part-git-show",
+      node_id: "conversation-part-git-show",
       part_id: "conversation-part-git-show",
       adapter_id: "opencode",
       kind: "opencode.result",
@@ -795,7 +772,7 @@ describe("ConversationContentCards", () => {
   });
   it("summarizes plain result cards whose body is a unified diff", () => {
     const blocks = buildConversationContentBlocks([], [{
-      card_id: "conversation-part-git-diff",
+      node_id: "conversation-part-git-diff",
       part_id: "conversation-part-git-diff",
       adapter_id: "claude-code",
       kind: "claude-code.result",
@@ -832,7 +809,7 @@ describe("ConversationContentCards", () => {
     const html = renderToStaticMarkup(
       <ConversationContentCards
         blocks={buildConversationContentBlocks([], [{
-          card_id: "conversation-part-success-result",
+          node_id: "conversation-part-success-result",
           part_id: "conversation-part-success-result",
           adapter_id: "opencode",
           kind: "opencode.result",
@@ -859,7 +836,7 @@ describe("ConversationContentCards", () => {
     const html = renderToStaticMarkup(
       <ConversationContentCards
         blocks={buildConversationContentBlocks([], [{
-          card_id: "conversation-part-empty-object-result",
+          node_id: "conversation-part-empty-object-result",
           part_id: "conversation-part-empty-object-result",
           adapter_id: "codex",
           kind: "codex.result",
@@ -888,7 +865,7 @@ describe("ConversationContentCards", () => {
           type: "execution",
           turnId: "turn-1",
           sourceExecutionId: "call-1",
-          command: {
+          commands: [{
             id: "command-1",
             type: "command",
             renderer: "command",
@@ -896,7 +873,7 @@ describe("ConversationContentCards", () => {
             text: "pnpm test",
             status: "completed",
             exitCode: 0,
-          },
+          }],
           results: [{
             id: "result-1",
             type: "result",
@@ -1260,9 +1237,9 @@ function projectedCard(
   semanticRole: "command" | "result",
   body: string,
   commandLabel?: string,
-): ConversationCard {
+): ConversationContentBlockSeed {
   return {
-    card_id: id,
+    node_id: id,
     part_id: `part-${id}`,
     adapter_id: "codex",
     kind: `codex.${semanticRole}`,
@@ -1272,6 +1249,41 @@ function projectedCard(
     body,
     command_label: commandLabel,
     legacy_anchor_ids: [],
+  };
+}
+
+function projectedNodeFromSeed(
+  seed: ReturnType<typeof projectedCard>,
+  sourceExecutionId: string | undefined,
+  nodeOrder: number,
+): ConversationContentNode {
+  return {
+    node_id: seed.node_id,
+    locator: {
+      question_id: "question-1",
+      turn_id: "turn-1",
+      part_id: seed.part_id,
+      node_order: nodeOrder,
+    },
+    question_id: "question-1",
+    turn_id: "turn-1",
+    part_id: seed.part_id,
+    turn_order: 0,
+    part_order: nodeOrder,
+    node_order: nodeOrder,
+    node_type: seed.kind,
+    semantic_role: seed.semantic_role,
+    renderer: seed.renderer,
+    role: seed.role,
+    content: seed.body,
+    language: seed.language,
+    cwd: seed.cwd,
+    status: seed.status,
+    exit_code: seed.exit_code,
+    source_execution_id: sourceExecutionId,
+    command_label: seed.command_label,
+    translated_content: seed.translated_body,
+    legacy_anchor_ids: seed.legacy_anchor_ids,
   };
 }
 

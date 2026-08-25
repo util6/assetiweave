@@ -262,8 +262,6 @@ describe("MarkdownContent", () => {
       question: {
         ...questionDetail.question,
         id: "empty-imported-question",
-        question_index: 0,
-        question_text: "Imported context without assistant content",
       },
       turns: [
         {
@@ -1555,13 +1553,7 @@ const questionDetail: ConversationQuestionDetail = {
   question: {
     id: "question-1",
     session_id: "session-1",
-    question_index: 0,
     title: "同步流程",
-    question_text: "AssetIWeave 如何同步对话记录？\n\n继续",
-    answer_text: "导入后按问题预览。",
-    code_text: "",
-    command_text: "assetiweave-cli conversation sync --dry-run",
-    grouping_origin: "auto_merged",
     created_at: now,
     updated_at: now,
   },

@@ -316,6 +316,21 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
+        canonical_method: "conversation.data.audit",
+        tauri_command: Some("audit_conversation_data"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "conversation.data.repair",
+        tauri_command: Some("repair_conversation_data"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "conversation.data.rollback",
+        tauri_command: Some("rollback_conversation_data"),
+        note: None,
+    },
+    SurfaceMapping {
         canonical_method: "conversation.session.list",
         tauri_command: Some("list_conversation_sessions"),
         note: None,

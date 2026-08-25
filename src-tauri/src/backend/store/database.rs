@@ -543,24 +543,11 @@ mod tests {
     }
 
     #[test]
-    fn migrations_upgrade_an_existing_memory_database_with_recall_indexes() {
+    fn migrations_retain_recall_indexes_after_question_contract_rebuild() {
         let db_path = temp_database_path("memory-recall-index-upgrade");
         migrate_database(&db_path).expect("create current database");
 
         let conn = Connection::open(&db_path).expect("open migrated database");
-        conn.execute_batch(
-            r#"
-            DROP INDEX idx_memory_recall_questions_created;
-            DROP INDEX idx_memory_recall_web_questions_created;
-            DELETE FROM _sqlx_migrations WHERE version = 202607240001;
-            "#,
-        )
-        .expect("simulate database at the Memory domain migration");
-        drop(conn);
-
-        migrate_database(&db_path).expect("upgrade existing Memory database");
-
-        let conn = Connection::open(&db_path).expect("open upgraded database");
         let index_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_memory_recall_questions_created', 'idx_memory_recall_web_questions_created')",
@@ -628,7 +615,192 @@ mod tests {
         assert_eq!(memory_table_count, 3);
         assert_eq!(memory_recall_index_count, 2);
         assert_eq!(execution_projection_index_count, 0);
-        assert_eq!(migration_count, 33);
+        assert_eq!(migration_count, 35);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn conversation_question_contract_contains_only_stable_metadata() {
+        let db_path = temp_database_path("conversation-question-contract");
+        migrate_database(&db_path).expect("run migrations");
+
+        let conn = Connection::open(&db_path).expect("open migrated database");
+        for table in ["conversation_questions", "web_record_questions"] {
+            let columns = conn
+                .prepare(&format!(
+                    "SELECT name FROM pragma_table_info('{table}') ORDER BY cid"
+                ))
+                .expect("prepare question columns")
+                .query_map([], |row| row.get::<_, String>(0))
+                .expect("query question columns")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("collect question columns");
+            assert_eq!(
+                columns,
+                vec![
+                    "tenant_id",
+                    "id",
+                    "session_id",
+                    "title",
+                    "created_at",
+                    "updated_at"
+                ]
+            );
+        }
+        let audit_table_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'conversation_data_audit_issues'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query conversation audit table");
+        assert_eq!(audit_table_count, 1);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn migrations_rebuild_representative_legacy_question_rows_and_audit_snapshots() {
+        let db_path = temp_database_path("conversation-question-legacy-rebuild");
+        migrate_database(&db_path).expect("create current database");
+
+        let conn = Connection::open(&db_path).expect("open current database");
+        conn.execute_batch(
+            r#"
+            PRAGMA foreign_keys = OFF;
+            INSERT INTO conversation_sessions (
+                tenant_id, id, source_id, adapter_id, external_id, title, project_path,
+                started_at, updated_at, source_locator, source_fingerprint, missing,
+                created_at, imported_at
+            ) VALUES (
+                'default', 'legacy-session', 'legacy-source', 'legacy-adapter',
+                'legacy-external', 'Legacy session', NULL, NULL, NULL, NULL, NULL, 0,
+                '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z'
+            );
+            INSERT INTO web_record_sessions (
+                tenant_id, id, source_id, adapter_id, external_id, title,
+                started_at, updated_at, source_locator, source_fingerprint, missing,
+                created_at, imported_at
+            ) VALUES (
+                'default', 'legacy-web-session', 'legacy-source', 'legacy-adapter',
+                'legacy-web-external', 'Legacy web session', NULL, NULL, NULL, NULL, 0,
+                '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z'
+            );
+            DROP TABLE conversation_data_audit_issues;
+            DROP TABLE conversation_questions;
+            DROP TABLE web_record_questions;
+            CREATE TABLE conversation_questions (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                question_index INTEGER NOT NULL,
+                title TEXT,
+                question_text TEXT NOT NULL,
+                answer_text TEXT NOT NULL,
+                code_text TEXT NOT NULL,
+                command_text TEXT NOT NULL,
+                grouping_origin TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, id),
+                UNIQUE (tenant_id, session_id, question_index)
+            );
+            CREATE TABLE web_record_questions (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                question_index INTEGER NOT NULL,
+                title TEXT,
+                question_text TEXT NOT NULL,
+                answer_text TEXT NOT NULL,
+                code_text TEXT NOT NULL,
+                command_text TEXT NOT NULL,
+                grouping_origin TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, id),
+                UNIQUE (tenant_id, session_id, question_index)
+            );
+            INSERT INTO conversation_questions (
+                tenant_id, id, session_id, question_index, title, question_text,
+                answer_text, code_text, command_text, grouping_origin, created_at, updated_at
+            ) VALUES (
+                'default', 'legacy-question', 'legacy-session', 7, NULL,
+                'Legacy question snapshot', 'Legacy answer', 'Legacy code', 'Legacy command',
+                'auto_merged', '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z'
+            );
+            INSERT INTO web_record_questions (
+                tenant_id, id, session_id, question_index, title, question_text,
+                answer_text, code_text, command_text, grouping_origin, created_at, updated_at
+            ) VALUES (
+                'default', 'legacy-web-question', 'legacy-web-session', 3, NULL,
+                'Legacy web question snapshot', 'Legacy web answer', 'Legacy web code',
+                'Legacy web command', 'imported', '2026-08-25T00:00:00Z',
+                '2026-08-25T00:00:00Z'
+            );
+            DELETE FROM _sqlx_migrations
+            WHERE version IN (202608250004, 202608250005);
+            "#,
+        )
+        .expect("seed representative legacy question schema");
+        drop(conn);
+
+        migrate_database(&db_path).expect("rebuild legacy question schema");
+
+        let conn = Connection::open(&db_path).expect("open rebuilt database");
+        for table in ["conversation_questions", "web_record_questions"] {
+            let columns = conn
+                .prepare(&format!(
+                    "SELECT name FROM pragma_table_info('{table}') ORDER BY cid"
+                ))
+                .expect("prepare rebuilt question columns")
+                .query_map([], |row| row.get::<_, String>(0))
+                .expect("query rebuilt question columns")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("collect rebuilt question columns");
+            assert_eq!(
+                columns,
+                vec![
+                    "tenant_id",
+                    "id",
+                    "session_id",
+                    "title",
+                    "created_at",
+                    "updated_at"
+                ]
+            );
+        }
+        let question_title: String = conn
+            .query_row(
+                "SELECT title FROM conversation_questions WHERE id = 'legacy-question'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query rebuilt conversation question");
+        let web_question_title: String = conn
+            .query_row(
+                "SELECT title FROM web_record_questions WHERE id = 'legacy-web-question'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query rebuilt web question");
+        let snapshot_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE category = 'question_snapshot_dependencies' AND status = 'open'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query question snapshot audit");
+        let snapshot_affected_count: i64 = conn
+            .query_row(
+                "SELECT affected_count FROM conversation_data_audit_issues WHERE category = 'question_snapshot_dependencies' AND status = 'open'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query question snapshot audit count");
+        assert_eq!(question_title, "Legacy question snapshot");
+        assert_eq!(web_question_title, "Legacy web question snapshot");
+        assert_eq!(snapshot_count, 1);
+        assert_eq!(snapshot_affected_count, 2);
         cleanup_database(&db_path);
     }
 
@@ -703,7 +875,7 @@ mod tests {
             )
         );
         assert_eq!(cursor_target_path, "@config/Cursor/skills");
-        assert_eq!(migration_count, 33);
+        assert_eq!(migration_count, 35);
         cleanup_database(&db_path);
     }
 
@@ -764,7 +936,7 @@ mod tests {
                 row.get(0)
             })
             .expect("query migrations");
-        assert_eq!(migration_count, 33);
+        assert_eq!(migration_count, 35);
         cleanup_database(&db_path);
     }
 

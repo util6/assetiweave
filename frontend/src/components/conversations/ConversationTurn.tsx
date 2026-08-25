@@ -58,7 +58,7 @@ export function collectConversationTurnBlocks(
     model.displayNodes
       ? model.displayNodes.flatMap((node) => node.type === "card"
         ? [node.block]
-        : [...(node.commands ?? (node.command ? [node.command] : [])), ...node.results])
+        : [...node.commands, ...node.results])
       : model.blocks
   ));
 }
@@ -80,8 +80,7 @@ export function buildConversationBlockTurnIndex(
         continue;
       }
       index.set(node.sourceExecutionId, model.turn.id);
-      for (const block of [...(node.commands ?? (node.command ? [node.command] : [])), ...node.results]) {
-        if (!block) continue;
+      for (const block of [...node.commands, ...node.results]) {
         index.set(block.id, model.turn.id);
         for (const legacyAnchorId of block.legacyAnchorIds ?? []) index.set(legacyAnchorId, model.turn.id);
       }

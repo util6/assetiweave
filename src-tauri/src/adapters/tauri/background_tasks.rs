@@ -145,6 +145,29 @@ pub(crate) struct ConversationSyncTaskSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub(crate) struct ConversationDataMaintenanceTaskProgress {
+    pub(crate) phase: String,
+    pub(crate) completed_stage: usize,
+    pub(crate) total_stage: usize,
+    pub(crate) note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub(crate) struct ConversationDataMaintenanceTaskSnapshot {
+    pub(crate) id: String,
+    pub(crate) status: BackgroundTaskStatus,
+    pub(crate) operation: String,
+    pub(crate) source_id: Option<String>,
+    pub(crate) record_kind: Option<String>,
+    pub(crate) dry_run: bool,
+    pub(crate) progress: ConversationDataMaintenanceTaskProgress,
+    pub(crate) started_at: String,
+    pub(crate) finished_at: Option<String>,
+    pub(crate) result: Option<Value>,
+    pub(crate) error: Option<AppErrorView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub(crate) struct ConversationSearchIndexTaskSnapshot {
     pub(crate) id: String,
     pub(crate) status: BackgroundTaskStatus,
@@ -1484,6 +1507,118 @@ impl BackgroundTaskRegistry {
         Ok(snapshots)
     }
 
+    pub(crate) fn begin_conversation_data_maintenance_for_tenant(
+        &self,
+        tenant_id: &str,
+        operation: &str,
+        source_id: Option<String>,
+        record_kind: Option<String>,
+        dry_run: bool,
+    ) -> AppResult<(ConversationDataMaintenanceTaskSnapshot, bool)> {
+        let snapshot = ConversationDataMaintenanceTaskSnapshot {
+            id: Uuid::new_v4().to_string(),
+            status: BackgroundTaskStatus::Running,
+            operation: operation.to_string(),
+            source_id,
+            record_kind,
+            dry_run,
+            progress: ConversationDataMaintenanceTaskProgress {
+                phase: "preparing".to_string(),
+                completed_stage: 0,
+                total_stage: 10,
+                note: None,
+            },
+            started_at: Utc::now().to_rfc3339(),
+            finished_at: None,
+            result: None,
+            error: None,
+        };
+        let registration = self.register_projection_for_tenant(
+            Some(tenant_id),
+            TaskKind::ConversationDataMaintenance,
+            &snapshot.id,
+            Some(format!("{tenant_id}:conversation-data-maintenance")),
+            [format!("{tenant_id}:conversation-data-maintenance")],
+            &snapshot,
+        )?;
+        match registration {
+            ExternalRegistrationOutcome::Started(ref runtime)
+            | ExternalRegistrationOutcome::Existing(ref runtime)
+            | ExternalRegistrationOutcome::Conflict(ref runtime) => Ok((
+                self.projection_from_runtime(runtime)?,
+                matches!(&registration, ExternalRegistrationOutcome::Started(_)),
+            )),
+        }
+    }
+
+    pub(crate) fn update_conversation_data_maintenance_progress(
+        &self,
+        task_id: &str,
+        completed_stage: usize,
+        total_stage: usize,
+        note: Option<String>,
+    ) -> AppResult<ConversationDataMaintenanceTaskSnapshot> {
+        let runtime = self.external_task_snapshot(task_id)?;
+        let mut snapshot: ConversationDataMaintenanceTaskSnapshot = self.decode(&runtime)?;
+        if runtime.state == TaskState::Running {
+            snapshot.progress = ConversationDataMaintenanceTaskProgress {
+                phase: note.clone().unwrap_or_else(|| "running".to_string()),
+                completed_stage: completed_stage.min(total_stage),
+                total_stage,
+                note,
+            };
+        }
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
+    }
+
+    pub(crate) fn finish_conversation_data_maintenance(
+        &self,
+        task_id: &str,
+        result: AppResult<Value>,
+    ) -> AppResult<ConversationDataMaintenanceTaskSnapshot> {
+        let runtime = self.finish_external_task(task_id, result)?;
+        let mut snapshot: ConversationDataMaintenanceTaskSnapshot = self.decode(&runtime)?;
+        snapshot.result = runtime.result.clone();
+        self.write_projection(task_id, &snapshot)?;
+        self.projection(task_id)
+    }
+
+    pub(crate) fn conversation_data_maintenance_snapshot_for_tenant(
+        &self,
+        tenant_id: &str,
+    ) -> AppResult<Option<ConversationDataMaintenanceTaskSnapshot>> {
+        Ok(self
+            .list_projections_for_tenant::<ConversationDataMaintenanceTaskSnapshot>(
+                tenant_id,
+                TaskKind::ConversationDataMaintenance,
+            )?
+            .into_iter()
+            .max_by(|left, right| left.started_at.cmp(&right.started_at)))
+    }
+
+    pub(crate) fn conversation_data_maintenance_snapshots_for_tenant(
+        &self,
+        tenant_id: &str,
+    ) -> AppResult<Vec<ConversationDataMaintenanceTaskSnapshot>> {
+        let mut snapshots = self
+            .list_projections_for_tenant::<ConversationDataMaintenanceTaskSnapshot>(
+                tenant_id,
+                TaskKind::ConversationDataMaintenance,
+            )?;
+        snapshots.sort_by(|left, right| left.started_at.cmp(&right.started_at));
+        Ok(snapshots)
+    }
+
+    pub(crate) fn cancel_conversation_data_maintenance_for_tenant(
+        &self,
+        tenant_id: &str,
+        task_id: &str,
+    ) -> AppResult<ConversationDataMaintenanceTaskSnapshot> {
+        self.cancel_external_task_for_tenant(tenant_id, task_id)?;
+        self.projection_for_tenant(tenant_id, task_id)
+    }
+
     #[cfg(test)]
     fn begin_conversation_script_projection(
         &self,
@@ -2311,6 +2446,7 @@ macro_rules! impl_basic_projection {
 }
 
 impl_basic_projection!(ConversationSyncTaskSnapshot);
+impl_basic_projection!(ConversationDataMaintenanceTaskSnapshot);
 impl_basic_projection!(ConversationSearchIndexTaskSnapshot);
 impl_basic_projection!(ConversationScriptInstallTaskSnapshot);
 impl_basic_projection!(BatchMountTaskSnapshot);
@@ -2626,6 +2762,76 @@ mod tests {
         assert!(!should_start_second);
         assert_eq!(first.id, second.id);
         assert!(registry.has_running_tasks());
+    }
+
+    #[test]
+    fn conversation_data_maintenance_tracks_progress_failure_and_cancellation() {
+        let registry = BackgroundTaskRegistry::default();
+        let (first, first_started) = registry
+            .begin_conversation_data_maintenance_for_tenant(
+                "tenant-a",
+                "audit",
+                Some("source-a".to_string()),
+                Some("session".to_string()),
+                true,
+            )
+            .unwrap();
+        let (duplicate, duplicate_started) = registry
+            .begin_conversation_data_maintenance_for_tenant(
+                "tenant-a",
+                "repair",
+                Some("source-b".to_string()),
+                Some("web".to_string()),
+                false,
+            )
+            .unwrap();
+        assert!(first_started);
+        assert!(!duplicate_started);
+        assert_eq!(first.id, duplicate.id);
+        assert_eq!(duplicate.operation, "audit");
+
+        let progress = registry
+            .update_conversation_data_maintenance_progress(
+                &first.id,
+                4,
+                10,
+                Some("reindex".to_string()),
+            )
+            .unwrap();
+        assert_eq!(progress.progress.completed_stage, 4);
+        assert_eq!(progress.progress.note.as_deref(), Some("reindex"));
+
+        let failed = registry
+            .finish_conversation_data_maintenance(
+                &first.id,
+                Err(crate::backend::runtime::AppError::Validation(
+                    "maintenance failed".to_string(),
+                )),
+            )
+            .unwrap();
+        assert_eq!(failed.status, BackgroundTaskStatus::Failed);
+        assert_eq!(
+            failed.error.as_ref().map(|error| error.message.as_str()),
+            Some("maintenance failed")
+        );
+
+        let (second, _) = registry
+            .begin_conversation_data_maintenance_for_tenant("tenant-a", "repair", None, None, false)
+            .unwrap();
+        let cancelling = registry
+            .cancel_conversation_data_maintenance_for_tenant("tenant-a", &second.id)
+            .unwrap();
+        assert_eq!(cancelling.status, BackgroundTaskStatus::Cancelling);
+        let cancelled = registry
+            .finish_conversation_data_maintenance(
+                &second.id,
+                Err(crate::backend::runtime::AppError::Canceled(
+                    "cancelled".to_string(),
+                )),
+            )
+            .unwrap();
+        assert_eq!(cancelled.status, BackgroundTaskStatus::Cancelled);
+        assert!(!registry.has_running_tasks());
     }
 
     #[test]

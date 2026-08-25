@@ -402,25 +402,6 @@ export type ConversationCardRenderer =
   | "terminal_output"
   | "diff";
 
-export interface ConversationCard {
-  card_id: string;
-  part_id: string;
-  adapter_id: string;
-  kind: string;
-  semantic_role?: string | null;
-  renderer: ConversationCardRenderer;
-  role: ConversationPartRole;
-  body: string;
-  language?: string | null;
-  cwd?: string | null;
-  status?: string | null;
-  exit_code?: number | null;
-  translated_body?: string | null;
-  source_execution_id?: string | null;
-  command_label?: string | null;
-  legacy_anchor_ids: string[];
-}
-
 export interface ConversationContentNodeLocator {
   question_id: string;
   turn_id: string;
@@ -452,31 +433,10 @@ export interface ConversationContentNode {
   legacy_anchor_ids: string[];
 }
 
-/** Deprecated compatibility shape. Use ConversationContentNode instead. */
-export type LegacyConversationContentNode =
-  | {
-      type: "card";
-      turn_id: string;
-      card_index: number;
-    }
-  | {
-      type: "execution";
-      turn_id: string;
-      source_execution_id: string;
-      command_card_index?: number | null;
-      result_card_indices: number[];
-    };
-
 export interface ConversationQuestion {
   id: string;
   session_id: string;
-  question_index: number;
   title?: string | null;
-  question_text: string;
-  answer_text: string;
-  code_text: string;
-  command_text: string;
-  grouping_origin: ConversationGroupingOrigin;
   created_at: string;
   updated_at: string;
 }
@@ -495,9 +455,6 @@ export interface ConversationQuestionDetail {
   question_turns: ConversationQuestionTurn[];
   turns: ConversationTurn[];
   parts: ConversationPart[];
-  cards?: ConversationCard[];
-  /** Deprecated compatibility output; new consumers use projected_content_nodes. */
-  content_nodes?: LegacyConversationContentNode[];
   projected_content_nodes: ConversationContentNode[];
 }
 

@@ -18,8 +18,7 @@ use super::{
         append_projected_cards_to_question_aggregate, insert_conversation_sync_delta_sqlx_tx,
         map_sqlx_conversation_part, map_sqlx_conversation_question,
         map_sqlx_conversation_question_turn, map_sqlx_conversation_session,
-        map_sqlx_conversation_turn, project_conversation_legacy_cards_and_nodes,
-        project_question_compatibility_fields, project_question_content_nodes,
+        map_sqlx_conversation_turn, project_question_content_nodes, project_question_title,
         ConversationImportResult, CONVERSATION_IMPORT_BATCH_SIZE,
     },
 };
@@ -379,12 +378,17 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
 
     let question_rows = sqlx::query(
         r#"
-        SELECT id, session_id, question_index, title,
-               '' AS question_text, '' AS answer_text, '' AS code_text, '' AS command_text,
-               grouping_origin, created_at, updated_at
+        SELECT id, session_id, title, created_at, updated_at
         FROM web_record_questions
         WHERE tenant_id = ?1 AND session_id = ?2
-        ORDER BY question_index ASC
+        ORDER BY COALESCE((
+            SELECT MIN(t.turn_index)
+            FROM web_record_question_turns qt_order
+            JOIN web_record_turns t
+              ON t.tenant_id = qt_order.tenant_id AND t.id = qt_order.turn_id
+            WHERE qt_order.tenant_id = web_record_questions.tenant_id
+              AND qt_order.question_id = web_record_questions.id
+        ), 9223372036854775807) ASC, created_at ASC, id ASC
         "#,
     )
     .bind(tenant_id)
@@ -409,7 +413,7 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
         WHERE qt.tenant_id = ?1
           AND q.session_id = ?2
           AND q.session_id = t.session_id
-        ORDER BY q.question_index ASC, qt.turn_order ASC, t.turn_index ASC,
+        ORDER BY COALESCE((SELECT MIN(t_order.turn_index) FROM web_record_question_turns qt_order JOIN web_record_turns t_order ON t_order.tenant_id = qt_order.tenant_id AND t_order.id = qt_order.turn_id WHERE qt_order.tenant_id = q.tenant_id AND qt_order.question_id = q.id), 9223372036854775807) ASC, qt.turn_order ASC, t.turn_index ASC,
                  qt.turn_id ASC
         "#,
     )
@@ -438,7 +442,7 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
         WHERE q.tenant_id = ?1
           AND q.session_id = ?2
           AND q.session_id = t.session_id
-        ORDER BY q.question_index ASC, qt.turn_order ASC, t.turn_index ASC
+        ORDER BY COALESCE((SELECT MIN(t_order.turn_index) FROM web_record_question_turns qt_order JOIN web_record_turns t_order ON t_order.tenant_id = qt_order.tenant_id AND t_order.id = qt_order.turn_id WHERE qt_order.tenant_id = q.tenant_id AND qt_order.question_id = q.id), 9223372036854775807) ASC, qt.turn_order ASC, t.turn_index ASC
         "#,
     )
     .bind(tenant_id)
@@ -501,8 +505,6 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
         for turn in &turns {
             parts.extend(parts_by_turn.remove(&turn.id).unwrap_or_default());
         }
-        let (cards, legacy_content_nodes) =
-            project_conversation_legacy_cards_and_nodes(&parts, &session.adapter_id, &card_kinds)?;
         let projected_content_nodes = project_question_content_nodes(
             &question.id,
             &question_turns,
@@ -511,17 +513,10 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
             &card_kinds,
         )?;
         question_details.push(ConversationQuestionDetail {
-            question: project_question_compatibility_fields(
-                question,
-                &question_turns,
-                &turns,
-                &parts,
-            ),
+            question: project_question_title(question, &turns),
             question_turns,
             turns,
             parts,
-            cards,
-            legacy_content_nodes,
             projected_content_nodes,
         });
     }
@@ -1054,7 +1049,7 @@ async fn insert_web_record_questions_sqlx_tx(
             .map(|turn| (turn.id.clone(), turn.user_text.clone()))
             .collect::<Vec<_>>(),
     );
-    for (index, group) in groups.into_iter().enumerate() {
+    for (_index, group) in groups.into_iter().enumerate() {
         let first_turn_id = group
             .turn_ids
             .first()
@@ -1085,22 +1080,15 @@ async fn insert_web_record_questions_sqlx_tx(
         sqlx::query(
             r#"
             INSERT INTO web_record_questions (
-                tenant_id, id, session_id, question_index, title, question_text, answer_text,
-                code_text, command_text, grouping_origin, created_at, updated_at
+                tenant_id, id, session_id, title, created_at, updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?5)
             "#,
         )
         .bind(tenant_id)
         .bind(&question_id)
         .bind(session_id)
-        .bind(index as i64)
         .bind(first_line(&aggregate.question_text))
-        .bind(&aggregate.question_text)
-        .bind(&aggregate.answer_text)
-        .bind(&aggregate.code_text)
-        .bind(&aggregate.command_text)
-        .bind(encode_enum_app(group.origin)?)
         .bind(now)
         .execute(&mut **tx)
         .await
@@ -1359,7 +1347,10 @@ mod tests {
         assert_eq!(sessions[0].turn_count, 1);
         assert_eq!(detail.questions.len(), 1);
         assert_eq!(detail.questions[0].turns[0].user_text, "Hello from the web");
-        assert_eq!(detail.questions[0].question.answer_text, "Web answer");
+        assert!(detail.questions[0]
+            .projected_content_nodes
+            .iter()
+            .any(|node| node.content == "Web answer"));
 
         drop(database);
         cleanup_database(&db_path);
@@ -1989,10 +1980,17 @@ mod tests {
             })
             .expect("aggregate declared web content cards through SQLx");
 
-        assert_eq!(detail.questions[0].question.answer_text, "");
+        assert!(!detail.questions[0]
+            .projected_content_nodes
+            .iter()
+            .any(|node| node.semantic_role.as_deref() == Some("answer")));
         assert_eq!(
-            detail.questions[1].question.answer_text,
-            "declared web answer"
+            detail.questions[1]
+                .projected_content_nodes
+                .iter()
+                .find(|node| node.semantic_role.as_deref() == Some("answer"))
+                .map(|node| node.content.as_str()),
+            Some("declared web answer")
         );
 
         drop(database);
@@ -2119,14 +2117,14 @@ mod tests {
 
         assert_eq!(alpha_detail.session.id, session_id);
         assert_eq!(beta_detail.session.id, session_id);
-        assert_eq!(
-            alpha_detail.questions[0].question.answer_text,
-            "alpha web answer"
-        );
-        assert_eq!(
-            beta_detail.questions[0].question.answer_text,
-            "beta web answer"
-        );
+        assert!(alpha_detail.questions[0]
+            .projected_content_nodes
+            .iter()
+            .any(|node| node.content == "alpha web answer"));
+        assert!(beta_detail.questions[0]
+            .projected_content_nodes
+            .iter()
+            .any(|node| node.content == "beta web answer"));
         assert_eq!(alpha_page.total_count, 0);
         assert_eq!(beta_page.total_count, 0);
 
@@ -2210,10 +2208,13 @@ mod tests {
             part.content_card.as_ref().map(|card| card.kind.as_str()),
             Some("qwen-web.analysis")
         );
-        assert_eq!(detail.questions[0].cards.len(), 1);
-        assert_eq!(detail.questions[0].cards[0].card_id, part_id);
+        assert_eq!(detail.questions[0].projected_content_nodes.len(), 1);
         assert_eq!(
-            detail.questions[0].cards[0].renderer,
+            detail.questions[0].projected_content_nodes[0].part_id,
+            part_id
+        );
+        assert_eq!(
+            detail.questions[0].projected_content_nodes[0].renderer,
             crate::backend::dto::ConversationCardRenderer::Markdown
         );
 

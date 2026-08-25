@@ -1279,16 +1279,18 @@ fn example_session_detail() -> Value {
             "question": {
                 "id": "example-question",
                 "session_id": "example-session",
-                "question_index": 0,
-                "title": null,
-                "question_text": "Example question",
-                "answer_text": "Example answer",
-                "code_text": null,
-                "command_text": null,
-                "grouping_origin": "imported",
+                "title": "Example question",
                 "created_at": "2026-01-01T00:00:00Z",
                 "updated_at": "2026-01-01T00:00:00Z"
             },
+            "question_turns": [{
+                "question_id": "example-question",
+                "turn_id": "example-turn",
+                "turn_order": 0,
+                "assignment_origin": "imported",
+                "assigned_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z"
+            }],
             "turns": [{
                 "id": "example-turn",
                 "session_id": "example-session",
@@ -1315,6 +1317,34 @@ fn example_session_detail() -> Value {
                 "status": null,
                 "exit_code": null,
                 "metadata_json": "{\"content_card\":{\"type\":\"answer\",\"format\":\"markdown\"}}"
+            }],
+            "projected_content_nodes": [{
+                "node_id": "example-part",
+                "locator": {
+                    "question_id": "example-question",
+                    "turn_id": "example-turn",
+                    "part_id": "example-part",
+                    "node_order": 0
+                },
+                "question_id": "example-question",
+                "turn_id": "example-turn",
+                "part_id": "example-part",
+                "turn_order": 0,
+                "part_order": 0,
+                "node_order": 0,
+                "node_type": "answer",
+                "semantic_role": "answer",
+                "renderer": "markdown",
+                "role": "assistant",
+                "content": "Example answer",
+                "language": null,
+                "cwd": null,
+                "status": null,
+                "exit_code": null,
+                "source_execution_id": null,
+                "command_label": null,
+                "translated_content": null,
+                "legacy_anchor_ids": ["example-part-answer", "example-part-node-0"]
             }]
         }]
     })

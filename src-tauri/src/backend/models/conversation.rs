@@ -326,13 +326,7 @@ pub struct ConversationPart {
 pub struct ConversationQuestion {
     pub id: String,
     pub session_id: String,
-    pub question_index: i64,
     pub title: Option<String>,
-    pub question_text: String,
-    pub answer_text: String,
-    pub code_text: String,
-    pub command_text: String,
-    pub grouping_origin: ConversationGroupingOrigin,
     pub created_at: String,
     pub updated_at: String,
 }
